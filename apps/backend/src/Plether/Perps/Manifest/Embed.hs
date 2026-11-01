@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Embed the canonical future release. Prepared metadata is buildable but can
+-- | Embed the selected canonical release. Prepared metadata is buildable but can
 -- never authorize perps requests or workers. Null pins become internal inactive
 -- sentinels only; they are never written back to the release document.
 module Plether.Perps.Manifest.Embed
@@ -20,8 +20,8 @@ import System.Directory (doesFileExist, makeAbsolute)
 
 manifestRoot :: Q Value
 manifestRoot = do
-  let repositoryPath = "../../config/perps/mock-usdg-prepared.json"
-      dockerPath = "config/perps/mock-usdg-prepared.json"
+  let repositoryPath = "../../config/perps/arbitrum-sepolia-v2.0.0.json"
+      dockerPath = "config/perps/arbitrum-sepolia-v2.0.0.json"
   inRepository <- runIO $ doesFileExist repositoryPath
   path <- runIO $ makeAbsolute $ if inRepository then repositoryPath else dockerPath
   addDependentFile path
@@ -66,7 +66,7 @@ releaseIsDeployed root = do
     String value | value `elem` ["deployed", "seeded", "active"] -> Right True
     _ -> Left "Invalid perps release phase"
   contracts <- fieldAt root ["contracts"]
-  forM_ ["settlementToken", "marginClearinghouse", "cfdEngine", "terminalNavBookV2", "cfdEnginePlanner", "cfdEngineSettlementSidecar", "cfdEngineAdmin", "housePoolRedemptionMathSidecar", "housePool", "cfdEngineProtocolLens", "seniorVault", "juniorVault", "cfdEngineAccountLens", "cfdEngineLens", "cfdEngineOpenQuoter", "cfdOrderPolicyEvaluator", "cfdClosePreview", "orderRouterExecutionSidecar", "orderRecoverySidecar", "pletherOracle", "orderRouterLiquidationBatchSidecar", "orderLifecycleBook", "orderRouter", "orderRouterAdmin", "positionProtectionBook", "perpsPublicLens", "settlementMonitorLens", "settlementMonitorLensSidecar", "emergencyPauseCoordinator"] $ \name -> do
+  forM_ ["settlementToken", "marginClearinghouse", "cfdEngine", "terminalNavBookV2", "cfdEnginePlanner", "cfdEnginePlanningReader", "cfdEngineSettlementSidecar", "cfdEngineAdmin", "housePoolRedemptionMathSidecar", "housePool", "cfdEngineProtocolLens", "seniorVault", "juniorVault", "cfdEngineAccountLens", "cfdEngineLens", "cfdEngineOpenQuoter", "cfdOrderPolicyEvaluator", "cfdClosePreview", "orderRouterExecutionSidecar", "orderRecoverySidecar", "pletherOracle", "orderRouterLiquidationBatchSidecar", "orderLifecycleBook", "orderRouter", "orderRouterAdmin", "positionProtectionBook", "perpsPublicLens", "settlementMonitorLens", "settlementMonitorLensSidecar", "emergencyPauseCoordinator"] $ \name -> do
     _ <- fieldAt root ["contracts", name, "address"]
     pure ()
   case contracts of

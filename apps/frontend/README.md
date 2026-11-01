@@ -1,8 +1,8 @@
 # Plether Frontend
 
-Current perps source uses the checksum-pinned SDK 0.4.0 and the prepared
-MockUSDG release. See `../../config/perps/ORDER_V3_TIMING.md` for provenance.
-Perps stays unavailable until verified deployment evidence is reviewed.
+Current perps source selects Core v2.0.0 and the checksum-pinned SDK 0.4.0.
+See `../../config/perps/ORDER_V3_TIMING.md` for provenance. The public AA manifest
+binds the new MockUSDG market with sponsorship disabled and no paymaster.
 
 React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 
@@ -189,10 +189,10 @@ AGPL-3.0-only
 
 ### Preparing a MockUSDG perps release
 
-The frontend selects `config/perps/mock-usdg-prepared.json`: canonical schema 4,
-order interface 3 and six-decimal MockUSDG metadata. Its null deployment pins
-keep perps trading, funding and vault hooks unavailable. Spot remains separately
-configured. Historical USDC manifests are archived evidence; current perps
+The frontend selects `config/perps/arbitrum-sepolia-v2.0.0.json`: canonical schema 4,
+order interface 3 and six-decimal MockUSDG metadata, with the complete deployed
+contract graph. AA trading/funding requires a separately configured paymaster
+and backend rollout. Spot remains separately configured. Historical USDC manifests are archived evidence; current perps
 consumers do not accept their keys or ABI.
 
 The breaking SDK 0.4.0 and current APIs use `settlementToken`, `Assets` and

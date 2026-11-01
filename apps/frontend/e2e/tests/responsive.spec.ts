@@ -2,7 +2,7 @@ import type { Locator, Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { expect, test } from '../fixtures/wallet'
 
-const release = JSON.parse(readFileSync(new URL('../../../../config/perps/mock-usdg-prepared.json', import.meta.url), 'utf8'))
+const release = JSON.parse(readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
 const isPreparedRelease = release.release.phase === 'prepared'
 const perpsHeading = isPreparedRelease
   ? `${release.settlementToken.symbol} perps are being prepared`
@@ -70,14 +70,9 @@ async function expectPerpsLayout(page: Page, viewportWidth: number) {
   const tradeTicket = sections.filter({
     has: page.getByRole('button', { name: 'Long plDXY Perp', exact: true }),
   })
-  const chart = sections
-    .filter({ has: page.getByText('plDXY Perp Price', { exact: true }) })
-    .filter({
-      has: page.getByRole('button', {
-        name: '1 minute interval',
-        exact: true,
-      }),
-    })
+  const chart = page.getByRole('region', {
+    name: 'Interactive TradingView chart for the plDXY perpetual market', exact: true,
+  })
   const account = sections.filter({
     has: page.getByRole('button', { name: 'Open Orders', exact: true }),
   })
@@ -112,23 +107,25 @@ async function expectPerpsLayout(page: Page, viewportWidth: number) {
   const instrumentMetrics = instrument.locator('[data-perps-instrument-stat]')
   await expect(instrumentMetrics).toHaveCount(6)
 
-  if (viewportWidth >= 360 && viewportWidth < 640) {
-    const metricBoxes = await Promise.all(
-      [0, 1, 2, 3].map((index) => instrumentMetrics.nth(index).boundingBox())
+  if (viewportWidth < 640) {
+    const metricsBox = await instrument.locator('[data-perps-instrument-metrics]').boundingBox()
+    expect(metricsBox).not.toBeNull()
+    if (!metricsBox) return
+    // The deployed instrument uses two columns below 22rem of available
+    // panel width, then three columns. Both layouts must keep rows aligned.
+    const columns = metricsBox.width >= 352 ? 3 : 2
+    const boxes = await Promise.all(
+      [0, 1, 2, 3].map(index => instrumentMetrics.nth(index).boundingBox())
     )
-    const [firstMetric, secondMetric, thirdMetric, fourthMetric] = metricBoxes
-
-    expect(firstMetric).not.toBeNull()
-    expect(secondMetric).not.toBeNull()
-    expect(thirdMetric).not.toBeNull()
-    expect(fourthMetric).not.toBeNull()
-
-    if (firstMetric && secondMetric && thirdMetric && fourthMetric) {
-      expect(Math.abs(firstMetric.y - secondMetric.y)).toBeLessThanOrEqual(1)
-      expect(Math.abs(secondMetric.y - thirdMetric.y)).toBeLessThanOrEqual(1)
-      expect(secondMetric.x).toBeGreaterThan(firstMetric.x)
-      expect(thirdMetric.x).toBeGreaterThan(secondMetric.x)
-      expect(fourthMetric.y).toBeGreaterThan(firstMetric.y)
+    for (const box of boxes) expect(box).not.toBeNull()
+    const first = boxes[0]
+    const lastInRow = boxes[columns - 1]
+    const nextRow = boxes[columns]
+    if (first && lastInRow && nextRow) {
+      expect(Math.abs(first.y - lastInRow.y)).toBeLessThanOrEqual(1)
+      expect(lastInRow.x).toBeGreaterThan(first.x)
+      expect(nextRow.y).toBeGreaterThan(first.y)
+      expect(Math.abs(nextRow.x - first.x)).toBeLessThanOrEqual(1)
     }
   }
 

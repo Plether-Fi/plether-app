@@ -1421,7 +1421,7 @@ jobs:
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
         env:
           CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
-        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/config/perps/mock-usdg-prepared.json "$CLOSE_ASSISTANCE_MODE"
+        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/config/perps/arbitrum-sepolia-v2.0.0.json "$CLOSE_ASSISTANCE_MODE"
 
       - name: Configure liquidation worker reliability controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
@@ -1464,7 +1464,7 @@ jobs:
             --query taskDefinition > canonical-api-task-def.json
 
           node deployment-policy/scripts/validate-perps-deployment.mjs backend \
-            deployment-policy/config/perps/mock-usdg-prepared.json \
+            deployment-policy/config/perps/arbitrum-sepolia-v2.0.0.json \
             task-def.json canonical-api-task-def.json
 
       - name: Require active Alto with reviewed validation policy for public native API

@@ -139,6 +139,10 @@
     "emergencyPauseCoordinator": {
       "address": null,
       "runtimeCodeHash": null
+    },
+    "cfdEnginePlanningReader": {
+      "address": null,
+      "runtimeCodeHash": null
     }
   },
   "settlementToken": {

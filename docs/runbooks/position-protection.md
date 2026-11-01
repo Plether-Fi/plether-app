@@ -1,8 +1,8 @@
 # Full-position TP/SL — canonical MockUSDG source
 
-The current source uses SDK 0.4.0 and `config/perps/mock-usdg-prepared.json`.
-Its null pins keep protection consumers unavailable until a verified new deployment
-exists. See `config/perps/ORDER_V3_TIMING.md` and the MockUSDG integration runbook.
+The current source uses SDK 0.4.0 and `config/perps/arbitrum-sepolia-v2.0.0.json`.
+It pins the deployed v2.0.0 contract graph. Worker execution remains an explicit
+operator rollout step. See `config/perps/ORDER_V3_TIMING.md` and the MockUSDG integration runbook.
 Historical Book addresses and SDKs are not compatible with current consumers.
 
 ## User behavior
@@ -80,7 +80,7 @@ old perps schema before additive setup.
 Required environment: `DATABASE_URL`, `PERPS_RPC_URL`; optionally
 `PERPS_RPC_AUTH_TOKEN` for the authenticated RPC. Production PostgreSQL must
 retain certificate-verified TLS. The release manifest defaults to the checked-in
-file; the container uses `/app/config/perps/mock-usdg-prepared.json`.
+file; the container uses `/app/config/perps/arbitrum-sepolia-v2.0.0.json`.
 
 The default is observe-only: `PROTECTION_WORKER_EXECUTION_ENABLED=false`.
 Execution requires `PROTECTION_WORKER_PRIVATE_KEY`, a dedicated funded EOA.

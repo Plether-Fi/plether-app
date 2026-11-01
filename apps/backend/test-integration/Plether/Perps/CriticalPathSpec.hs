@@ -88,8 +88,8 @@ criticalPathSpec databaseUrl =
             (Aeson.object ["error" Aeson..= Aeson.object
               ["code" Aeson..= ("PERPS_RELEASE_NOT_DEPLOYED" :: Text),
                "message" Aeson..= ("Perps release is prepared; deployment is required" :: Text)]])
-          -- This chain fixture is a deployed historical V2 release. The current
-          -- repository's prepared release remains guarded by the control above.
+          -- This chain fixture is a deployed historical V2 release. Prepared
+          -- deployments remain guarded independently by the control above.
           apiApplication <-
             makeApiApplication True manager pool config (fixtureRpcUrl chain)
           (runScenario manager pool apiApplication chain)

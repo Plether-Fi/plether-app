@@ -17,7 +17,7 @@ const client = createPublicClient({ chain: arbitrumSepolia, transport: http(rpcU
 const wallet = createWalletClient({ chain: arbitrumSepolia, transport: http(rpcUrl) })
 const rpc = (method, params = []) => client.request({ method, params })
 if (!(await rpc('web3_clientVersion')).toLowerCase().includes('anvil') || await client.getChainId() !== 421614) throw new Error('Expected isolated Anvil fork on port 18545')
-const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/mock-usdg-prepared.json', 'utf8'))
+const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/arbitrum-sepolia-v2.0.0.json', 'utf8'))
 const manifest = JSON.parse(fs.readFileSync('public/perps-aa-manifest.json', 'utf8'))
 const token = settlementContract(release)
 const addresses = Object.fromEntries(Object.entries(release.contracts).map(([k, v]) => [k, v.address]))

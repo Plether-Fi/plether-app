@@ -139,6 +139,10 @@
     "emergencyPauseCoordinator": {
       "address": "0x000000000000000000000000000000000000001d",
       "runtimeCodeHash": "0x5cfec82df84254eeeaa14e192c72ed25aed55807d876cc752bc845dd62d0ac71"
+    },
+    "cfdEnginePlanningReader": {
+      "address": "0x000000000000000000000000000000000000001e",
+      "runtimeCodeHash": "0x2222222222222222222222222222222222222222222222222222222222222222"
     }
   },
   "settlementToken": {

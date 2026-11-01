@@ -1,0 +1,18 @@
+{
+  "kind": "app-consumer-evidence-bundle",
+  "sourceCommit": "1209ca8a5b94a4fb6323c7c4585846ed93db3932",
+  "files": {
+    "config/perps/evidence/v2.0.0/manifest.json": "584cdacada35f8225d2a88811edfbd9622764fe0e6da4b275ba8f33d6f8c0c74",
+    "config/perps/evidence/v2.0.0/sdk-compatibility.json": "9fa06d5717e715807f95e8410c3951538214fa4c411978d65f830d5fa74d05f8",
+    "config/perps/evidence/v2.0.0/deployment-block.json": "35250dac266a4db82fa5f7813060e8fb9bc5cb3a32d4b0c1f6fb432d23ceb864",
+    "config/perps/evidence/v2.0.0/runtime-verification.json": "b9c77b20ec462c9f1e07452fa7ec673bc2316836a0c92e0ef6bb5dddec86ec22",
+    "apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-source-abis.json": "bfc1dca9bd2fc1b6c35bbab3eb1f05152f077ddeb9664b92318f96d4240e153e",
+    "apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-source-abis.provenance.json": "7ab8c96f23e094a004abf93a05cbba81905acd3af34ed42d293e5244bc4ee118",
+    "apps/frontend/src/contracts/abis/Perps.ts": "5052a6ecdd8623d101d36ec89240b747dc45f2e5eadc32a898658c3d171301f1",
+    "apps/frontend/src/contracts/abis/TrancheVault.ts": "c0c0f8ce3f5c1c2014ed799956b9a14e9fc3904c6a3f3090d976fe9205aa7da6",
+    "apps/frontend/src/contracts/abis/CfdClosePreview.ts": "efe90f34e6b23d942891fe9c4fe689d7845ff6a3ed4db6d05192175272cc8806",
+    "apps/backend/protection-worker/abi.mjs": "39fb8b98a220f822f582c6c09ede9a9881da456cb994fbdbb581b62412fd17cb",
+    "apps/frontend/vendor/perps-aa-client/plether-fi-perps-aa-client-0.4.0.tgz": "177b5d1b649b6da3d0d71362c4f61cb00ec2c3f0355d715d424d19d5703043a7",
+    "apps/frontend/vendor/perps-aa-client/release.json": "a14339b6bb8db774b49a7a6716db34e984c58fc9f8b017f8bc3c11e77695d61f"
+  }
+}

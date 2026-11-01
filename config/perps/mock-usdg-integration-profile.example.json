@@ -11,6 +11,7 @@
     "bundlerRpcUrl": "/api/perps/v1/aa/rpc",
     "paymasterRpcUrl": "/api/perps/v1/aa/rpc",
     "paymasterAddress": null,
+    "sponsorshipEnabled": false,
     "paymasterVersion": "plether-verifying-v1",
     "preparationRpcVersion": 1,
     "smartAccountMode": "simple",

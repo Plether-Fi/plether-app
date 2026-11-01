@@ -30,7 +30,7 @@ try {
     const module = join(tree, 'infra/terraform')
     mkdirSync(join(module, 'tests'), { recursive: true })
     mkdirSync(join(tree, 'config/perps'), { recursive: true })
-    copyFileSync(join(source, 'tests/fixtures/deployed-core.json'), join(tree, 'config/perps/mock-usdg-prepared.json'))
+    copyFileSync(join(source, 'tests/fixtures/deployed-core.json'), join(tree, 'config/perps/arbitrum-sepolia-v2.0.0.json'))
     if (scope === 'guard-unit') {
       // Execute the entire actual target guard, with only its AA activation
       // context stubbed inactive. Nonempty canonical bindings activate it.

@@ -1,7 +1,7 @@
 import { test, expect, waitForPageLoad } from '../fixtures/wallet'
 import { readFileSync } from 'node:fs'
 
-const release = JSON.parse(readFileSync(new URL('../../../../config/perps/mock-usdg-prepared.json', import.meta.url), 'utf8'))
+const release = JSON.parse(readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
 
 const perpsHeading = release.release.phase === 'prepared'
   ? `${release.settlementToken.symbol} perps are being prepared`
@@ -10,9 +10,12 @@ const perpsHeading = release.release.phase === 'prepared'
 test.describe('Application smoke', () => {
   test('homepage renders the configured perps release state', async ({ page }) => {
     await page.goto('/')
-    await waitForPageLoad(page)
+    await expect(page.getByRole('main')).toBeVisible()
     await expect(page).toHaveTitle(/plether/i)
-    await expect(page.getByRole('heading', { level: 1, name: perpsHeading, exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', {
+      level: release.release.phase === 'prepared' ? 1 : 2,
+      name: perpsHeading, exact: true,
+    })).toBeVisible()
   })
 
   test('displays the real primary navigation links', async ({ page }) => {

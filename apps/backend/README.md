@@ -1,9 +1,10 @@
-The current perps backend targets the prepared MockUSDG release in
-`config/perps/mock-usdg-prepared.json`. Perps, AA, testnet-faucet and Insights
-routes return HTTP 503 while that release is prepared. Perps workers stop before
-opening RPC or database connections. Spot API routes remain available. A future
-activation requires verified schema-four deployment pins and a rebuilt binary;
-environment overrides cannot activate the prepared manifest.
+The current perps backend embeds Core v2.0.0 from
+`config/perps/arbitrum-sepolia-v2.0.0.json`: six-decimal MockUSDG, all 30 contract
+pins, and fresh indexing boundaries. Workers and startup binding checks use this
+same release. `infra/terraform/sepolia-core-v2.0.0.tfvars.json` supplies matching
+environment bindings. Deploying requires the settlement-assets database migration
+and release-isolated history. AA sponsorship and close-assistance issuance remain
+disabled until separately configured. See `docs/runbooks/perps-mock-usdg.md`.
 
 The new API uses `settlementToken` for token identity and `Assets` for amounts
 (for example `executionBountyAssets` and `amountAssets`). Amounts remain integer

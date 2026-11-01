@@ -33,13 +33,23 @@ spec = describe "bounded V2 release configuration" $ do
     B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
       `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
 
-  it "rejects perps activation while the canonical release is prepared" $
+  it "accepts the exact deployed v2.0.0 graph" $
     validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter
-      (Just perpsV2OrderLifecycleBook) (address "3") (address "4") (address "5") perpsV2DeploymentBlock
+      (Just perpsV2OrderLifecycleBook)
+      "0xca18a6783d7542f9d2f28f4f259772b74c4d6baa"
+      "0xb5b851f627d6df3cf3f096e23e20a58884d7b89a"
+      "0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e"
+      perpsV2DeploymentBlock `shouldBe` Right ()
+
+  it "rejects prepared pins independently of the selected deployed release" $
+    validatePerpsV2ReleaseConfigWithPins (deployedPins {prcpDeployed = False})
+      421614 (prcpRouter deployedPins) (Just $ prcpLifecycleBook deployedPins)
+      (prcpEngine deployedPins) (prcpClearinghouse deployedPins)
+      (prcpHousePool deployedPins) 100
       `shouldBe` Left "Perps release is prepared; deployment is required"
 
-  it "does not invent a volume history boundary for an undeployed release" $
-    perpsV2VolumeHistoryStartTimestamp `shouldBe` 0
+  it "starts volume at the first whole minute after deployment" $
+    perpsV2VolumeHistoryStartTimestamp `shouldBe` 1793185200
 
   it "accepts a complete deployed release and case-insensitive address spellings" $ do
     validateInput deployedPins (Just $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
@@ -69,8 +79,14 @@ spec = describe "bounded V2 release configuration" $ do
     validateInput deployedPins (Just wrong)
       `shouldBe` Left ("PERPS_ORDER_LIFECYCLE_BOOK must match the pinned bounded V3 release " <> prcpLifecycleBook deployedPins)
 
-  it "rejects an indexer bound to prepared internal pins before startup" $
-    validatePerpsIndexerReleaseConfig 421614 defaultPerpsAddresses (address "5") perpsV2DeploymentBlock
+  it "accepts an indexer bound to the new deployment boundary" $
+    validatePerpsIndexerReleaseConfig 421614 defaultPerpsAddresses
+      "0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e" perpsV2DeploymentBlock
+      `shouldBe` Right ()
+
+  it "rejects an indexer bound to prepared pins before startup" $
+    validatePerpsIndexerReleaseConfigWithPins (deployedPins {prcpDeployed = False})
+      421614 deployedAddresses (prcpHousePool deployedPins) 100
       `shouldBe` Left "Perps release is prepared; deployment is required"
 
   it "validates the effective deployed indexer LifecycleBook independently" $ do

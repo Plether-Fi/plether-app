@@ -1,7 +1,7 @@
 locals {
   # Preserve existing resource identity and Terraform state addresses.
   deployment_name = var.environment
-  sepolia_core    = jsondecode(file("${path.module}/../../config/perps/mock-usdg-prepared.json"))
+  sepolia_core    = jsondecode(file("${path.module}/../../config/perps/arbitrum-sepolia-v2.0.0.json"))
 }
 resource "terraform_data" "deployment_target_guard" {
   lifecycle {
@@ -43,7 +43,7 @@ resource "terraform_data" "deployment_target_guard" {
           lower(var.vault_history_junior_vault_address) == try(lower(local.sepolia_core.contracts.juniorVault.address), ""),
         ])
       )
-      error_message = "Configured perps consumers, native AA and the bound Insights competition require the complete verified canonical Core deployment bindings and indexing anchor; the prepared release is unavailable."
+      error_message = "Configured perps consumers, native AA and the bound Insights competition require the complete verified canonical Core deployment bindings and indexing anchor."
     }
     precondition {
       condition     = !var.enable_aa_readiness_enforcement || (var.environment == "sepolia" && var.aws_region == "ap-southeast-1" && local.native_aa_backend_configured)

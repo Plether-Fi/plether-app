@@ -1,5 +1,5 @@
 import { zeroAddress, type Address } from 'viem'
-import release from '../../../../config/perps/mock-usdg-prepared.json'
+import release from '../../../../config/perps/arbitrum-sepolia-v2.0.0.json'
 import { parsePerpsReleaseConfiguration, settlementTokenContract } from './perpsRelease'
 
 export const PERPS_RELEASE = parsePerpsReleaseConfiguration(release)
@@ -26,6 +26,7 @@ export const PERPS_ARBITRUM_SEPOLIA = {
   cfdEngine: contractAddress('cfdEngine'),
   terminalNavBookV2: contractAddress('terminalNavBookV2'),
   cfdEnginePlanner: contractAddress('cfdEnginePlanner'),
+  cfdEnginePlanningReader: contractAddress('cfdEnginePlanningReader'),
   cfdEngineSettlementSidecar: contractAddress('cfdEngineSettlementSidecar'),
   cfdEngineAdmin: contractAddress('cfdEngineAdmin'),
   housePoolRedemptionMathSidecar: contractAddress('housePoolRedemptionMathSidecar'),

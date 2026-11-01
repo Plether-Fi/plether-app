@@ -353,7 +353,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     await invalidateSnapshot()
     return refetchDynamicContracts()
   }, [invalidateSnapshot, refetchDynamicContracts])
-  // Engine configuration changes atomically behind a 48-hour timelock. Keep
+  // Engine configuration changes atomically behind a 72-hour timelock. Keep
   // this batch aligned with usePerpsMarket so both hooks share one cached read.
   const {
     isLoading: isEngineConfigurationLoading,

@@ -88,7 +88,7 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs
 
       - name: Install pinned local EVM for AA execution regressions
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
@@ -106,11 +106,11 @@ jobs:
         working-directory: .
         run: node --test scripts/aa-execution-regression.test.mjs
 
-      - name: Fetch the SDK's immutable Core lifecycle source
+      - name: Fetch the deployed Core lifecycle source
         uses: actions/checkout@v4
         with:
           repository: Plether-Fi/plether-core
-          ref: e35cf0e0e9b880e07812e36321dee98bd299dcbd
+          ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
           path: .ci-core
           submodules: recursive
           persist-credentials: false
@@ -118,6 +118,10 @@ jobs:
       - name: Cache the pinned Core compiler (no RPC)
         working-directory: .ci-core/packages/perps
         run: forge build --skip test --skip script
+
+      - name: Verify generated v2 consumer ABIs
+        working-directory: .
+        run: node scripts/generate-perps-consumer-abis.mjs --artifacts-dir .ci-core/packages/perps/out --source-root .ci-core/packages/perps --check
 
       - name: Require AA lifecycle, bounty drift and keeper gas regressions (offline)
         working-directory: .

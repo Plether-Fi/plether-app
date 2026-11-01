@@ -2235,11 +2235,11 @@ candleRollupSpec databaseUrl =
         writerResult <- timeout 5_000_000 $ takeMVar writerDone
         writerResult `shouldSatisfy` maybe False isRight
 
-    it "rejects prepared profiles through the production and explicit-profile entrypoints" $ do
+    it "validates the deployed production CLI and still rejects explicit prepared profiles" $ do
       (canonicalCode, canonicalOut, canonicalErr) <-
         readCreateProcessWithExitCode (proc "plether-candle-admin" ["finalizer-probe"]) ""
       canonicalCode `shouldSatisfy` (/= ExitSuccess)
-      (canonicalOut <> canonicalErr) `shouldContain` "Perps release is prepared"
+      (canonicalOut <> canonicalErr) `shouldContain` "requires --boundary"
       (profileCode, profileOut, profileErr) <-
         runCandleAdminWithProfile "../../config/perps/mock-usdg-prepared.json"
           databaseUrl testChainId testRouter ["finalizer-probe"]

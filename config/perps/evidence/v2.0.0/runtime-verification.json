@@ -1,0 +1,135 @@
+{
+  "chainId": 421614,
+  "rpcUrl": "https://sepolia-rollup.arbitrum.io/rpc",
+  "block": {
+    "number": 324965084,
+    "hash": "0x914a18dd6ef275b3c42b8c07093b738034bc1674ff50a53026ded7edd5190339",
+    "timestamp": 1793529890
+  },
+  "contracts": {
+    "settlementToken": {
+      "address": "0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d",
+      "runtimeCodeHash": "0x12233a5f6b0abf6a0f8447e56f9507afdd142a78cc42ebb0d041a3997bd299f6"
+    },
+    "marginClearinghouse": {
+      "address": "0xb5b851f627d6df3cf3f096e23e20a58884d7b89a",
+      "runtimeCodeHash": "0xc8e4965893dbd7073303303e9d5ab9c775aabcc1259635e4993fc7fdb0681398"
+    },
+    "cfdEngine": {
+      "address": "0xca18a6783d7542f9d2f28f4f259772b74c4d6baa",
+      "runtimeCodeHash": "0xa0f8e5be6e622a5a83e46e88f6b012757ef924cf613a50cba52a2b5c66b76a6b"
+    },
+    "cfdEnginePlanningReader": {
+      "address": "0x7fcc97330a21074c388fdef729d582df261b883d",
+      "runtimeCodeHash": "0xda0a1f2e3ede6134ff938541a61890db5c4ccc4c0cafdfed0b6a2196303ef219"
+    },
+    "terminalNavBookV2": {
+      "address": "0x61c7f7cf91c295a86250e1e05a91901e8e1e51a3",
+      "runtimeCodeHash": "0x181223a2ac1c4fc3811d6bac5bc882310ff933d5450ffce6de5cf0c44aeb55b9"
+    },
+    "cfdEnginePlanner": {
+      "address": "0x802a0755413fb966b397155b5c5cc0198e6bed3f",
+      "runtimeCodeHash": "0x16f6c8107b8f2965f1074df12878802c20aac2a54121c4c60854b29e1f18a9f1"
+    },
+    "cfdEngineSettlementSidecar": {
+      "address": "0xd3ede337e042d5aa6ba68e03d0c885b3d4a062dc",
+      "runtimeCodeHash": "0x540083c758046571c5770f9950282eef938986ff41d78538109ddf549534b059"
+    },
+    "cfdEngineAdmin": {
+      "address": "0xfa444c18c90f1b5f768eddbb56cd1d92710a8327",
+      "runtimeCodeHash": "0x2f1694c1e8bf3aa9c79ebaf2a3589fdfe2acb9c7b169866bf79a4f8c0f85702d"
+    },
+    "housePoolRedemptionMathSidecar": {
+      "address": "0x70cd3b39bc5a006784777048c7b690f10642cbf1",
+      "runtimeCodeHash": "0x6bd056f471727898e21e8cb0d2a77efcb5a0f87e1d853a17a3a12b316812c65a"
+    },
+    "housePool": {
+      "address": "0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e",
+      "runtimeCodeHash": "0x5e684cc82bfc5b697a24c80ef26910cfbe25efbe6fb2ca184c421808b5ced957"
+    },
+    "cfdEngineProtocolLens": {
+      "address": "0x82fc00d77e86c52e2480459d07ad6220f1106413",
+      "runtimeCodeHash": "0xffcf90edaa061400b7fbf0272a3bc6bed52aab23833bbf6346654b23a4598e2f"
+    },
+    "seniorVault": {
+      "address": "0x5dc42ba5a1e8dd3e1b6868d10f66a9bf8fb5b83d",
+      "runtimeCodeHash": "0x1ef72eae70097e0207bbe8b4399d0b0e79910c40d6665a42f2c933b037355d8a"
+    },
+    "juniorVault": {
+      "address": "0x4a8b67184a1e3224c11a191cc69f22c50eef734e",
+      "runtimeCodeHash": "0x8d00d3d0273b7a321cbf61232ea79ef0b503fe0d83bb52609321765a0a04f3bf"
+    },
+    "cfdEngineAccountLens": {
+      "address": "0x1629ec69b815b9d423b7fcde1a6ecd8d17a6271d",
+      "runtimeCodeHash": "0x9c44b43da7dc931469a58efd485da34c8b7522f1e9e4d4146cf50d50469c9856"
+    },
+    "cfdEngineLens": {
+      "address": "0xfca322c6868cef53bd5c344628f9874712e48108",
+      "runtimeCodeHash": "0x3af6c7539add5ddd3b517ad7397e717259f63637635cd947495675164d82d1a4"
+    },
+    "cfdEngineOpenQuoter": {
+      "address": "0x992d1d284b9029bdb8bc65f2feac6153aa796577",
+      "runtimeCodeHash": "0x89fafe96e2732544506f30b3df46aea77a20834154718ceac1d9f9daa02889e5"
+    },
+    "cfdOrderPolicyEvaluator": {
+      "address": "0x7e51e12d77e77d33835cbafe17ce11398714974b",
+      "runtimeCodeHash": "0x39aabdb68c7d12701493d8d35b1e62c538f63a5ed673de6f716eb938321a9458"
+    },
+    "cfdClosePreview": {
+      "address": "0xb5ec32b9fa4a749f89648848cc702831cc803237",
+      "runtimeCodeHash": "0xa1cba2aba27ed0743b3a3337ede38b8ecaef1417c173c0c2f6e09a9b9ca3a26e"
+    },
+    "orderRouterExecutionSidecar": {
+      "address": "0x0ae016ef599bcdf0bbbedba441401c3b6c6184ea",
+      "runtimeCodeHash": "0xfc72fcbe4496d0d5356e96d259536cd4edcb926dd7fe1473a4275ddfb09cb57e"
+    },
+    "orderRecoverySidecar": {
+      "address": "0x2df705806c0013e75e36fad4d6595c998f4295be",
+      "runtimeCodeHash": "0x8fb495ac2ca692f9d40f7ad29907bdb8a0154140294cf0f16b263ca0db7cb7ff"
+    },
+    "pletherOracle": {
+      "address": "0x4f2c62a0e03657f52c633c19c11f88d8f0897bb2",
+      "runtimeCodeHash": "0x1ecb1ca760e7ba51d958697eeefe06ff7ba1a3ad162b3e7978af3df30393bc13"
+    },
+    "orderRouterLiquidationBatchSidecar": {
+      "address": "0x7b605d7c57c191379822705d8510109d4b2573aa",
+      "runtimeCodeHash": "0x8420be926293c70a880b5f12c07674861563727a04aca954323004855807c8f7"
+    },
+    "orderLifecycleBook": {
+      "address": "0x327d5fd04e17d96dd5c4f845a0b4256a9e19645c",
+      "runtimeCodeHash": "0xc3f34d5c32716e1818e1ae1cf5e14892a639bc35f15894610e619afe648ba554"
+    },
+    "orderRouter": {
+      "address": "0x918663d6da8cb33b325a04c4a5e8c51d42f3b444",
+      "runtimeCodeHash": "0x6c65de67ef2824572537e3641a71100100c49d909b196c43e5d271312534d3cf"
+    },
+    "orderRouterAdmin": {
+      "address": "0xd2c1b1ab8461126bde0a51dcace05e314a303405",
+      "runtimeCodeHash": "0xc5900f97db18d49f6539d5d3e85f86796d3615dc1007be1c19a3060cca89c369"
+    },
+    "positionProtectionBook": {
+      "address": "0x81e3b03cf29865b6c0f85925839567e2bc61073d",
+      "runtimeCodeHash": "0xe15987a99e503d6bbd5d871090b9bfea06383bb37fa7af8dfd9cf457fdc4eed5"
+    },
+    "perpsPublicLens": {
+      "address": "0xe1c9c8d3c068c49d933396c9591a55126f29d10e",
+      "runtimeCodeHash": "0xd8db2962bbc7bfde5d38d8ef022325b9b06dca5a213b15159fb7a840cdc9d73b"
+    },
+    "settlementMonitorLens": {
+      "address": "0x87d2eae2783fea3055ce142d060e8db14d8e04d8",
+      "runtimeCodeHash": "0xaf5d03ce2e9d3cacab39b75f4e6578feca89ed86759af69813b7358dc2b85f8a"
+    },
+    "settlementMonitorLensSidecar": {
+      "address": "0x96ce8cd97b09843544dd1248bad2042563e0452a",
+      "runtimeCodeHash": "0xcf640216aefee0489d0bd038c324856604d20eb8b68e275241959dbd4d4ce7ba"
+    },
+    "emergencyPauseCoordinator": {
+      "address": "0x736ead1f7a23f980e9fb51f023822c53d739ca2c",
+      "runtimeCodeHash": "0x5dfb50481c44f5bb0e47c51ccf0d6d9b7b7eb4c93cc5e13ee23062aebe5594f6"
+    }
+  },
+  "bindings": {
+    "planningReader": "0x7fcc97330a21074c388fdef729d582df261b883d",
+    "settlementTokenDecimals": 6
+  }
+}
