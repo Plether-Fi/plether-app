@@ -1153,14 +1153,19 @@ recoverBasketPriceCoverageGap
     unless (checkedThrough > expectedCoverageEnd) $
       fail "Closed price-gap recovery must advance beyond the expected coverage end"
 
+    -- Distinct authenticated updates may share a second. Observation hashes
+    -- are identities, not an ordering of those updates; match the verified
+    -- signed state at the greatest stored timestamp without accepting an older state.
     latestObservations <-
       query
         conn
         "SELECT publish_time, basket_price, component_prices \
         \FROM perps_basket_observations \
-        \WHERE series_id = ? AND publish_time < ? AND source_priority = 100 \
-        \ORDER BY publish_time DESC, source_priority DESC, observation_id DESC LIMIT 1"
-        (seriesId, expectedCoverageEnd) :: IO [(Integer, Integer, Value)]
+        \WHERE series_id = ? AND source_priority = 100 \
+        \AND publish_time = (SELECT MAX(publish_time) FROM perps_basket_observations \
+        \ WHERE series_id = ? AND publish_time < ? AND source_priority = 100) \
+        \AND basket_price = ? AND component_prices = ?::jsonb LIMIT 1"
+        (seriesId, seriesId, expectedCoverageEnd, expectedBasketPrice, encode expectedComponents) :: IO [(Integer, Integer, Value)]
     case latestObservations of
       [(publishTime, basketPrice, components)]
         | publishTime == expectedObservationTime
