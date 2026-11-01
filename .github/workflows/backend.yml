@@ -58,7 +58,9 @@ jobs:
 
       - name: Reject Blockscout runtime dependencies
         working-directory: .
-        run: ./scripts/check-no-blockscout-runtime.sh
+        run: |
+          node --test scripts/check-no-blockscout-runtime.test.mjs
+          ./scripts/check-no-blockscout-runtime.sh
 
       - name: Setup Terraform for offline AA guard tests
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3

@@ -1462,9 +1462,13 @@ hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
                   Left err -> do
                     logInvariantFailure "competing_settlement_event" err
                     pure False
-                  Right events ->
+                  Right events -> do
                     let qualifyingEvents = filter (isQualifyingCompetitor fromBlock) events
-                     in if null qualifyingEvents
+                    if null qualifyingEvents
+                      then pure False
+                      else do
+                        canonicalBefore <- competingBlocksAreCanonical qualifyingEvents
+                        if not canonicalBefore
                           then pure False
                           else
                             ethEstimateGasAtBlock
@@ -1476,7 +1480,8 @@ hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
                               (receiptBlockNumber receipt)
                               >>= \case
                                 Left replayError
-                                  | Perps.isNoLpEpochProgressRpcError replayError -> pure True
+                                  | Perps.isNoLpEpochProgressRpcError replayError ->
+                                      competingBlocksAreCanonical qualifyingEvents
                                   | otherwise -> do
                                       logWarn
                                         "lp_settlement_supersession_replay_failed"
@@ -1487,6 +1492,35 @@ hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
                                       pure False
                                 Right _ -> pure False
  where
+  -- A log range and a numbered eth_call/estimate can straddle a reorg. Bind
+  -- every qualifying event to a canonical header and keep the reverted receipt
+  -- as the range anchor on both sides of the exact no-progress replay.
+  competingBlocksAreCanonical events = do
+    checked <- runExceptT $ do
+      forM_ events $ \event ->
+        ExceptT $ pure $ unlessEither
+          ( Perps.lpesBlockNumber event /= receiptBlockNumber receipt
+              || normalizeHex (Perps.lpesBlockHash event) == normalizeHex (receiptBlockHash receipt)
+          )
+          "same-block competing settlement log differs from the reverted receipt block"
+      let identities = nub $
+            (receiptBlockNumber receipt, normalizeHex $ receiptBlockHash receipt)
+              : [(Perps.lpesBlockNumber event, normalizeHex $ Perps.lpesBlockHash event) | event <- events]
+      forM_ identities $ \(number, expectedHash) -> do
+        canonical <- ExceptT $ rpcStep "competing LP settlement canonical block" $
+          ethGetBlockByNumber client number
+        ExceptT $ pure $ unlessEither
+          (rpcBlockNumber canonical == number && normalizeHex (rpcBlockHash canonical) == expectedHash)
+          "competing LP settlement evidence is not on the canonical receipt branch"
+    case checked of
+      Right () -> pure True
+      Left err -> do
+        logWarn
+          "lp_settlement_competing_event_lookup_failed"
+          "Competing LP settlement block identity could not be verified; the nonce lane remains active"
+          [field "transaction_hash" $ receiptTxHash receipt, field "error" err]
+        pure False
+
   isQualifyingCompetitor fromBlock event =
     Perps.lpesCutoffEpoch event == lstrEpoch transaction
       && normalizeHex (Perps.lpesTxHash event)

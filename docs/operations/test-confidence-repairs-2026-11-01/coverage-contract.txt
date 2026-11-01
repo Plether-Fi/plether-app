@@ -55,5 +55,5 @@ Optional local fork runs explicitly skip unavailable suites. A skip is not
 successful deployed-interface coverage. The current prepared perps manifest
 cannot supply a live deployed fork control; this work does not remove that guard.
 
-Implementation failures are ordinary required red tests, listed individually
-in report.txt. There are no expected-failure markers or CI bypasses for them.
+The fixed defects retain ordinary required regression tests, listed in
+report.txt. Failures block merging; there are no expected-failure markers or CI bypasses.

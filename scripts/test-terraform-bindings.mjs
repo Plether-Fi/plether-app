@@ -37,7 +37,8 @@ try {
       for (const file of ['variables.tf', 'deployment_target.tf']) copyFileSync(join(source, file), join(module, file))
       writeFileSync(join(module, 'context.tf'), 'locals { native_aa_backend_configured = false }\n')
       writeFileSync(join(module, 'tests/deployed-bindings.tftest.hcl'), suite.slice(suite.indexOf('variables {'))
-        .replace(', terraform_data.perps_candle_rollout_guard', ''))
+        .replace(', terraform_data.perps_candle_rollout_guard', '')
+        .replace(', terraform_data.lp_settlement_keeper_guard', ''))
     } else {
       for (const file of readdirSync(source)) {
         if (file.endsWith('.tf') || file === '.terraform.lock.hcl') copyFileSync(join(source, file), join(module, file))

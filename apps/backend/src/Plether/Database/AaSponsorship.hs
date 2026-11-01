@@ -536,13 +536,16 @@ verifyAaSponsorshipSchema conn = do
   unless (sort indexes == sort expectedAaSchemaIndexes) $
     fail "native AA database schema index fingerprint mismatch"
 
+  -- Catalog names can repeat in other schemas and concurrent startups. Bind
+  -- both sides to the intended persistent and session-local objects.
   predicates <- query_ conn
     "SELECT pg_get_expr(actual.indpred,actual.indrelid,true) \
     \= pg_get_expr(expected.indpred,expected.indrelid,true) \
-    \FROM pg_index actual JOIN pg_class actual_class ON actual_class.oid=actual.indexrelid \
-    \CROSS JOIN pg_index expected JOIN pg_class expected_class ON expected_class.oid=expected.indexrelid \
-    \WHERE actual_class.relname='idx_aa_sponsorship_active_request_key' \
-    \AND expected_class.relname='aa_expected_active_request_key'" :: IO [Only Bool]
+    \FROM pg_index actual CROSS JOIN pg_index expected \
+    \WHERE actual.indexrelid=to_regclass(format('%I.%I',current_schema(),'idx_aa_sponsorship_active_request_key')) \
+    \AND actual.indrelid=to_regclass(format('%I.%I',current_schema(),'aa_sponsorship_authorizations')) \
+    \AND expected.indexrelid='pg_temp.aa_expected_active_request_key'::regclass \
+    \AND expected.indrelid='pg_temp.aa_expected_check_fingerprint'::regclass" :: IO [Only Bool]
   unless (predicates == [Only True]) $
     fail "native AA active request-key index predicate mismatch"
 
@@ -705,11 +708,8 @@ aaSchemaChecksQuery =
   \FROM pg_constraint con JOIN pg_class table_class ON table_class.oid=con.conrelid \
   \JOIN pg_namespace ns ON ns.oid=table_class.relnamespace \
   \JOIN pg_constraint expected ON expected.conname=con.conname \
-  \JOIN pg_class expected_table ON expected_table.oid=expected.conrelid \
-  \JOIN pg_namespace expected_ns ON expected_ns.oid=expected_table.relnamespace \
   \WHERE ns.nspname=current_schema() AND con.contype='c' \
-  \AND expected_ns.nspname LIKE 'pg_temp_%' \
-  \AND expected_table.relname='aa_expected_check_fingerprint' \
+  \AND expected.conrelid='pg_temp.aa_expected_check_fingerprint'::regclass \
   \AND con.conname IN ('aa_authorization_invariants_ck','aa_ledger_invariants_ck',\
   \'aa_event_invariants_ck','aa_cursor_invariants_ck','aa_health_invariants_ck',\
   \'aa_recovery_invariants_ck','aa_rate_invariants_ck','aa_control_singleton_ck',\
@@ -738,14 +738,13 @@ aaSchemaIndexesQuery =
   \WHEN 'idx_aa_user_operation_events_digest' THEN 'aa_expected_digest' \
   \WHEN 'idx_aa_recovery_expiry' THEN 'aa_expected_recovery_expiry' \
   \WHEN 'idx_aa_rate_window_expiry' THEN 'aa_expected_rate_expiry' END \
-  \JOIN pg_namespace expected_ns ON expected_ns.oid=expected_class.relnamespace \
   \JOIN pg_index expected ON expected.indexrelid=expected_class.oid \
   \WHERE ns.nspname=current_schema() AND index_class.relname IN (\
   \'idx_aa_sponsorship_active_request_key','idx_aa_sponsorship_sender_state',\
   \'idx_aa_sponsorship_client_state','idx_aa_sponsorship_submitted',\
   \'idx_aa_user_operation_events_finalized_at','idx_aa_user_operation_events_digest',\
   \'idx_aa_recovery_expiry','idx_aa_rate_window_expiry') \
-  \AND expected_ns.nspname LIKE 'pg_temp_%'"
+  \AND expected.indrelid='pg_temp.aa_expected_check_fingerprint'::regclass"
 
 expectedAaSchemaColumns :: [(Text, Text, Text, Bool)]
 expectedAaSchemaColumns =

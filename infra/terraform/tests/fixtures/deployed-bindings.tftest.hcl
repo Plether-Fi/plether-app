@@ -98,7 +98,7 @@ run "reject_mismatched_perps_order_router" {
 run "reject_mismatched_perps_order_lifecycle_book" {
   command = plan
   variables { perps_order_lifecycle_book = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
-  expect_failures = [terraform_data.deployment_target_guard, terraform_data.perps_candle_rollout_guard]
+  expect_failures = [terraform_data.deployment_target_guard, terraform_data.perps_candle_rollout_guard, terraform_data.lp_settlement_keeper_guard]
 }
 run "reject_mismatched_perps_cfd_engine" {
   command = plan

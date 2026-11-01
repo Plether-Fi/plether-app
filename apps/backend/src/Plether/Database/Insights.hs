@@ -898,7 +898,13 @@ ensureInsightsSchema conn rules chainId releaseRouter settlementTokenAddress mar
   -- from the private registration schema.  Every core consumer (API, worker,
   -- admin, and integration harness) runs this initializer, so a rolling start
   -- cannot reach the strict query before the proof table exists.
-  installed <- query_ conn "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='insights_integrity_cursor_epoch')" :: IO [Only Bool]
+  installed <- query_ conn
+    "SELECT COUNT(*)=3 FROM pg_trigger \
+    \WHERE (tgname='insights_integrity_history_epoch' AND tgrelid IN (\
+    \to_regclass(format('%I.%I',current_schema(),'perps_account_activity')),\
+    \to_regclass(format('%I.%I',current_schema(),'perps_asset_transfers')))) \
+    \OR (tgname='insights_integrity_cursor_epoch' \
+    \AND tgrelid=to_regclass(format('%I.%I',current_schema(),'perps_indexer_state')))" :: IO [Only Bool]
   unless (installed == [Only True]) $ withTransaction conn $ do
     void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
     void $ execute_ conn integritySchemaSql

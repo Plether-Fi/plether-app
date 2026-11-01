@@ -70,6 +70,13 @@ run "reject_insights_on_prepared_release" {
     error_message = "The API, indexer, and snapshot worker must share the September release binding without requiring native AA."
   }
 }
+run "reject_historical_lifecycle_on_prepared_release" {
+  command = plan
+  variables {
+    perps_order_lifecycle_book = "0x519f57a34fb440c42bfd2d8328d2f80349af3872"
+  }
+  expect_failures = [terraform_data.deployment_target_guard, terraform_data.perps_candle_rollout_guard, terraform_data.lp_settlement_keeper_guard]
+}
 run "preserve_singapore_identity" {
   command = plan
   assert {

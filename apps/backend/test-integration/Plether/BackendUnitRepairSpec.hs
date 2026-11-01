@@ -20,9 +20,12 @@ import Plether.Database.Schema
   , ensureTestnetFaucetSchema, beginTestnetFaucetClaim, getTestnetFaucetClaim
   , markTestnetFaucetClaimSubmitted, markTestnetFaucetClaimSuccess, markTestnetFaucetClaimReverted )
 import Plether.Database.Insights.Registration (openRegistrationIfConfigured)
+import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..), ensureVaultPerformanceSchema
   , getVaultPerformanceSnapshots, upsertVaultPerformanceSnapshot )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..), CompetitionRules (..), july2026Competition )
 import Test.Hspec
 
 -- Every example owns a fresh schema on the explicitly supplied test database.
@@ -42,6 +45,23 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
         installStaticSchema conn
         ensureAaSponsorshipSchema conn
 
+    it "bootstraps the complete preparation migrations and retains diagnostic metadata on retry" $
+      withSchema databaseUrl $ \conn -> do
+        installStaticSchema conn
+        actual <- preparationSchemaFingerprint conn
+        expected <- withSchema databaseUrl $ \migrated -> do
+          ensureAaSponsorshipSchema migrated
+          installPreparationMigrations migrated
+          preparationSchemaFingerprint migrated
+        actual `shouldBe` expected
+        void $ execute conn
+          "INSERT INTO aa_preparations(client_key,sender,preparation_id,intent_hash,diagnostic_attempt_id,diagnostic_chain_id,diagnostic_deployment,recovery_paymaster) VALUES('bootstrap',?,?,?,'00000000-0000-0000-0000-000000000001',421614,'bootstrap-release',?)"
+          (account,hash "b",hash "c",address "6")
+        installStaticSchema conn
+        ensureAaSponsorshipSchema conn
+        (query_ conn "SELECT diagnostic_attempt_id::TEXT,diagnostic_chain_id,diagnostic_deployment,recovery_paymaster FROM aa_preparations WHERE client_key='bootstrap'" :: IO [(Text,Integer,Text,Text)])
+          `shouldReturn` [("00000000-0000-0000-0000-000000000001",421614,"bootstrap-release",address "6")]
+
     it "accepts valid startup when an unrelated schema has a same-named index" $
       withSchema databaseUrl $ \conn -> do
         ensureAaSponsorshipSchema conn
@@ -50,12 +70,63 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
           void $ execute_ other "CREATE UNIQUE INDEX idx_aa_sponsorship_active_request_key ON unrelated(request_key) WHERE state IN ('reserved','signed','submitted')"
           ensureAaSponsorshipSchema conn
 
+    it "binds expected fingerprints to its own temporary table during concurrent connections" $
+      withSchema databaseUrl $ \conn -> do
+        ensureAaSponsorshipSchema conn
+        withSchema databaseUrl $ \other -> do
+          ensureAaSponsorshipSchema other
+          void $ execute_ other "CREATE TEMP TABLE aa_expected_check_fingerprint (LIKE aa_sponsorship_authorizations INCLUDING CONSTRAINTS)"
+          void $ execute_ other "CREATE UNIQUE INDEX aa_expected_active_request_key ON aa_expected_check_fingerprint(request_key) WHERE state IN ('reserved','signed','submitted')"
+          ensureAaSponsorshipSchema conn
+
     forM_ aaDrifts $ \(name, mutation, message) ->
       it ("fails actual startup after isolated " <> name <> " drift") $
         withSchema databaseUrl $ \conn -> do
           ensureAaSponsorshipSchema conn
           void $ execute_ conn mutation
           expectFailureContaining message $ ensureAaSponsorshipSchema conn
+
+  describe "standalone bootstrap history initialization" $ do
+    it "installs working history invalidation on actual startup despite a foreign epoch marker" $
+      withSchema databaseUrl $ \conn -> do
+        installStaticSchema conn
+        historyEpochTriggers conn `shouldReturn` []
+        ensurePerpsHistorySchema conn
+        withSchema databaseUrl $ \other -> do
+          ensurePerpsHistorySchema other
+          void $ execute_ other "CREATE FUNCTION foreign_epoch_marker() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$"
+          void $ execute_ other "CREATE TRIGGER insights_integrity_cursor_epoch AFTER UPDATE ON perps_indexer_state FOR EACH ROW EXECUTE FUNCTION foreign_epoch_marker()"
+          ensureInsightsSchema conn bootstrapRules 421614 router (address "6") (address "7") (address "8") bootstrapManifest
+        historyEpochTriggers conn `shouldReturn`
+          [ ("perps_account_activity","insights_integrity_history_epoch")
+          , ("perps_asset_transfers","insights_integrity_history_epoch")
+          , ("perps_indexer_state","insights_integrity_cursor_epoch")
+          ]
+        before <- query_ conn "SELECT integrity_input_epoch FROM insights_competitions WHERE slug='bootstrap-integrity'" :: IO [Only Integer]
+        insertActivity conn router "bootstrap-activity" 1 101 (-17)
+        void $ execute_ conn "DELETE FROM perps_account_activity WHERE event_key='bootstrap-activity'"
+        case before of
+          [Only epoch] ->
+            (query_ conn "SELECT integrity_input_epoch FROM insights_competitions WHERE slug='bootstrap-integrity'" :: IO [Only Integer])
+              `shouldReturn` [Only $ epoch+1]
+          _ -> expectationFailure "Actual startup did not seed the bootstrap competition"
+
+    it "repairs a partial epoch trigger installation on actual startup" $
+      withSchema databaseUrl $ \conn -> do
+        installStaticSchema conn
+        ensurePerpsHistorySchema conn
+        ensureInsightsSchema conn bootstrapRules 421614 router (address "6") (address "7") (address "8") bootstrapManifest
+        void $ execute_ conn "DROP TRIGGER insights_integrity_history_epoch ON perps_account_activity"
+        historyEpochTriggers conn `shouldReturn`
+          [ ("perps_asset_transfers","insights_integrity_history_epoch")
+          , ("perps_indexer_state","insights_integrity_cursor_epoch")
+          ]
+        ensureInsightsSchema conn bootstrapRules 421614 router (address "6") (address "7") (address "8") bootstrapManifest
+        historyEpochTriggers conn `shouldReturn`
+          [ ("perps_account_activity","insights_integrity_history_epoch")
+          , ("perps_asset_transfers","insights_integrity_history_epoch")
+          , ("perps_indexer_state","insights_integrity_cursor_epoch")
+          ]
 
   describe "vault performance persistence" $ do
     it "isolates vault-only redeployments and returns the newest limited rows chronologically" $
@@ -201,6 +272,46 @@ installStaticSchema conn = do
   let sql = BS8.unlines $ filter (not . BS8.isPrefixOf "\\") $ BS8.lines schema
   void $ execute_ conn $ Query sql
 
+installPreparationMigrations :: Connection -> IO ()
+installPreparationMigrations conn =
+  forM_
+    [ "aa-preparation-v1.sql", "aa-preparation-recovery-v1.sql"
+    , "aa-observability-v1.sql", "aa-observability-v2.sql"
+    , "aa-attempt-events-v1.sql", "aa-attempt-failure-v1.sql"
+    ] $ \name -> do
+      sql <- BS8.readFile $ "config/migrations/" <> name
+      void $ execute_ conn $ Query sql
+
+-- Compare PostgreSQL's parsed objects after each real installation path, so
+-- missing columns, defaults, constraints and index definitions cannot be hidden
+-- by the bootstrap merely containing migration text.
+preparationSchemaFingerprint :: Connection -> IO [(Text,Text,Text)]
+preparationSchemaFingerprint conn = query_ conn
+  "WITH tables AS (SELECT c.oid,c.relname FROM pg_class c \
+  \JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() \
+  \AND c.relname IN ('aa_preparations','aa_preparation_registry','aa_preparation_authorizations',\
+  \'aa_preparation_recovery_challenges','aa_preparation_recovery_sessions',\
+  \'aa_worker_readiness','aa_attempt_diagnostics','aa_attempt_events')) \
+  \SELECT 'column'::TEXT,t.relname||'.'||a.attname,\
+  \format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull::TEXT||':'||COALESCE(pg_get_expr(d.adbin,d.adrelid),'') \
+  \FROM tables t JOIN pg_attribute a ON a.attrelid=t.oid \
+  \LEFT JOIN pg_attrdef d ON d.adrelid=t.oid AND d.adnum=a.attnum \
+  \WHERE a.attnum>0 AND NOT a.attisdropped \
+  \UNION ALL SELECT 'constraint',t.relname||'.'||c.conname,pg_get_constraintdef(c.oid,true) \
+  \FROM tables t JOIN pg_constraint c ON c.conrelid=t.oid \
+  \UNION ALL SELECT 'index',t.relname||'.'||c.relname,\
+  \replace(pg_get_indexdef(i.indexrelid),quote_ident(current_schema())||'.','') \
+  \FROM tables t JOIN pg_index i ON i.indrelid=t.oid JOIN pg_class c ON c.oid=i.indexrelid \
+  \ORDER BY 1,2,3"
+
+historyEpochTriggers :: Connection -> IO [(Text,Text)]
+historyEpochTriggers conn = query_ conn
+  "SELECT c.relname::TEXT,t.tgname::TEXT FROM pg_trigger t \
+  \JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace \
+  \WHERE n.nspname=current_schema() \
+  \AND t.tgname IN ('insights_integrity_history_epoch','insights_integrity_cursor_epoch') \
+  \ORDER BY 1,2"
+
 expectFailureContaining :: String -> IO () -> Expectation
 expectFailureContaining message action = do
   outcome <- try action :: IO (Either SomeException ())
@@ -235,6 +346,18 @@ hash digit = "0x" <> T.replicate 64 digit
 router, account :: Text
 router = address "4"
 account = address "5"
+
+bootstrapRules :: CompetitionRules
+bootstrapRules = july2026Competition {crSlug = "bootstrap-integrity"}
+
+bootstrapManifest :: CompetitionReleaseManifest
+bootstrapManifest = CompetitionReleaseManifest
+  { crmReleaseId = crSlug bootstrapRules, crmChainId = 421614
+  , crmSettlementToken = address "6", crmOrderRouter = router
+  , crmMarginClearinghouse = address "7", crmAccountLens = address "8"
+  , crmCfdEngine = address "9", crmCfdEngineLens = address "a"
+  , crmSettlementSidecar = address "b", crmPletherOracle = address "c"
+  , crmIndexerStartBlock = 1 }
 
 insertOrder :: Connection -> Text -> Integer -> Maybe Text -> IO ()
 insertOrder conn release orderId clientId = void $ execute conn

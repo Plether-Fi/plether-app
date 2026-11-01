@@ -311,6 +311,26 @@ spec = do
         parseEventLog (mkLog (esTopic event) (esTopic event : indexed) (BS.init dat)) [] [] testMorphoMarkets
           `shouldSatisfy` isNothing
 
+      it ("rejects every shorter ABI payload for " <> name) $
+        forM_ [0 .. BS.length dat - 1] $ \lengthBytes ->
+          parseEventLog (mkLog (esTopic event) (esTopic event : indexed) (BS.take lengthBytes dat)) [] [] testMorphoMarkets
+            `shouldSatisfy` isNothing
+
+      it ("rejects trailing bytes or an extra ABI word for " <> name) $
+        forM_ [BS.singleton 0, encodeUint256 0] $ \extra ->
+          parseEventLog (mkLog (esTopic event) (esTopic event : indexed) (dat <> extra)) [] [] testMorphoMarkets
+            `shouldSatisfy` isNothing
+
+  describe "full-width uint256 economic boundaries" $
+    forM_ [0, 2 ^ (256 :: Int) - 1] $ \amount ->
+      it ("preserves the complete uint256 mint amount " <> show amount) $
+        case parseEventLog
+          (mkLog (esTopic mintEvent)
+            [esTopic mintEvent, padAddress "0x1111111111111111111111111111111111111111"]
+            (encodeUint256 amount)) [] [] noMorphoMarkets of
+          Just parsed -> peData parsed `shouldBe` economicPayload [("amount", amount)]
+          Nothing -> expectationFailure "Expected a complete uint256 mint amount"
+
   describe "determineSide" $ do
     it "identifies bear contracts" $ do
       let bearContract = "0xbear000000000000000000000000000000000000"
