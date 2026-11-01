@@ -1080,9 +1080,9 @@ settlementStatusBytes hasMaturedWork =
 
 settlementObservationBytes :: Bool -> BS.ByteString
 settlementObservationBytes hasMaturedWork =
-  replaceWord 191 (hexBytes 64 "c") $
+  replaceWord 192 (hexBytes 64 "c") $
     setWords
-      194
+      195
       [ (0, supportedObservationSchemaVersion)
       , (2, monitorObservedBlock)
       , (5, fixtureEpoch)
@@ -1094,8 +1094,8 @@ settlementObservationBytes hasMaturedWork =
       , (88, cachedMark)
       , (89, cachedMarkTime)
       , (100, if hasMaturedWork then 1 else 0)
-      , (159, 1)
-      , (193, 1)
+      , (160, 1)
+      , (194, 1)
       ]
 
 setWords :: Int -> [(Int, Integer)] -> BS.ByteString
