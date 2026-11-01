@@ -6,7 +6,7 @@
   "entryPointVersion": "0.8",
   "bundlerRpcUrl": "/api/perps/v1/aa/rpc",
   "paymasterRpcUrl": "/api/perps/v1/aa/rpc",
-  "paymasterAddress": null,
+  "paymasterAddress": "0x9761091045616A388f5fE1433721B272c78fe31b",
   "paymasterVersion": "plether-verifying-v1",
   "preparationRpcVersion": 1,
   "smartAccountMode": "simple",
@@ -26,5 +26,5 @@
   "userOperationExplorerUrlTemplate": "https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}",
   "transactionExplorerUrlTemplate": "https://arbitrum-sepolia.blockscout.com/tx/{transactionHash}",
   "testnetFaucet": null,
-  "sponsorshipEnabled": false
+  "sponsorshipEnabled": true
 }

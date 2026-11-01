@@ -18,12 +18,12 @@ describe('v2.0.0 canonical release', () => {
       expect(PERPS_RELEASE.contracts[key]).toMatchObject({ address: pin.address, runtimeCodeHash: pin.runtimeCodeHash })
     }
   })
-  it('binds AA to the new market while leaving sponsorship unconfigured', () => {
+  it('binds AA to the new market with the reviewed paymaster', () => {
     expect(publicManifest.settlementToken).toBe(release.contracts.settlementToken.address)
     expect(publicManifest.orderRouter).toBe(release.contracts.orderRouter.address)
     expect(publicManifest.version).toBe(release.integration.aaManifestVersion)
-    expect(publicManifest.sponsorshipEnabled).toBe(false)
-    expect(publicManifest.paymasterAddress).toBeNull()
+    expect(publicManifest.sponsorshipEnabled).toBe(true)
+    expect(publicManifest.paymasterAddress).toBe('0x9761091045616A388f5fE1433721B272c78fe31b')
     expect(publicManifest.settlementTokenSupportsEip3009).toBe(false)
   })
   it('retains historical deployment artifacts without selecting them', () => {

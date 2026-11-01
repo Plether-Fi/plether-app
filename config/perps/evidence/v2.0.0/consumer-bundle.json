@@ -13,6 +13,7 @@
     "apps/frontend/src/contracts/abis/CfdClosePreview.ts": "efe90f34e6b23d942891fe9c4fe689d7845ff6a3ed4db6d05192175272cc8806",
     "apps/backend/protection-worker/abi.mjs": "39fb8b98a220f822f582c6c09ede9a9881da456cb994fbdbb581b62412fd17cb",
     "apps/frontend/vendor/perps-aa-client/plether-fi-perps-aa-client-0.4.0.tgz": "177b5d1b649b6da3d0d71362c4f61cb00ec2c3f0355d715d424d19d5703043a7",
-    "apps/frontend/vendor/perps-aa-client/release.json": "a14339b6bb8db774b49a7a6716db34e984c58fc9f8b017f8bc3c11e77695d61f"
+    "apps/frontend/vendor/perps-aa-client/release.json": "a14339b6bb8db774b49a7a6716db34e984c58fc9f8b017f8bc3c11e77695d61f",
+    "config/perps/evidence/v2.0.0/aa-activation.json": "83de15959ce757f61c45b94a5d5020f1ac6b0295cb34967f1a86132f16efe6bc"
   }
 }
