@@ -139,20 +139,20 @@ spec = do
       receiptMatchesPersistedTransaction txHash (matchingReceipt {receiptTxHash = ""})
         `shouldBe` False
 
-  describe "faucet claim persistence SQL" $ do
-    it "uses a recoverable preparing lease before any transaction can be broadcast" $ do
+  describe "faucet SQL source support (transitions are tested in BackendUnitRepairSpec)" $ do
+    it "contains preparing-lease and reclaim predicates" $ do
       queryContains beginTestnetFaucetClaimSql "'preparing'"
       queryContains beginTestnetFaucetClaimSql "status = 'failed'"
       queryContains beginTestnetFaucetClaimSql "INTERVAL '5 minutes'"
       queryContains beginTestnetFaucetClaimSql "raw_tx = NULL"
 
-    it "atomically persists the signed transaction before marking it submitted" $ do
+    it "contains the signed transaction and submitted-state assignments" $ do
       queryContains markTestnetFaucetClaimSubmittedSql "tx_hash = ?"
       queryContains markTestnetFaucetClaimSubmittedSql "raw_tx = ?"
       queryContains markTestnetFaucetClaimSubmittedSql "status = 'submitted'"
       queryContains markTestnetFaucetClaimSubmittedSql "status = 'preparing'"
 
-    it "finalizes only the exact durable submitted transaction" $ do
+    it "contains exact-transaction and durable-state predicates for finalization" $ do
       queryContains markTestnetFaucetClaimSuccessSql "tx_hash = ?"
       queryContains markTestnetFaucetClaimSuccessSql "mint_block_number = ?"
       queryContains markTestnetFaucetClaimSuccessSql "status IN ('submitted', 'success')"

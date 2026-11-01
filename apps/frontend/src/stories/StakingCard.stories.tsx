@@ -1,6 +1,35 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState, type ReactNode } from 'react'
 import { expect, userEvent, within } from 'storybook/test'
 import { StakingCard } from '../components/StakingCard'
+import { apiQueryKeys, type ApiResponse, type ProtocolStatus } from '../api'
+
+// 1,250 underlying tokens back 1,000 shares (18 asset / 21 share decimals).
+// A 100-token stake therefore returns 80 shares, not 100 or 125.
+const protocolStatus: ApiResponse<ProtocolStatus> = {
+  data: {
+    prices: { bear: '100000000', bull: '100000000', cap: '200000000', priceChange24h: null },
+    status: 'ACTIVE', oracle: { price: '100000000', updatedAt: 1_800_000_000, decimals: 8 },
+    staking: {
+      bear: { totalAssets: '1250000000000000000000', totalShares: '1000000000000000000000000', exchangeRate: '1250000000000000000' },
+      bull: { totalAssets: '1250000000000000000000', totalShares: '1000000000000000000000000', exchangeRate: '1250000000000000000' },
+      apy7d: { bear: null, bull: null },
+    },
+    apy: { bear: { supply: 0, borrow: 0, utilization: 0 }, bull: { supply: 0, borrow: 0, utilization: 0 } },
+    timestamp: 1_800_000_000,
+  },
+  meta: { cached: false, blockNumber: 1, chainId: 1 },
+}
+
+function StakingProtocolFixture({ children }: { children: ReactNode }) {
+  const [client] = useState(() => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { enabled: false } } })
+    queryClient.setQueryData(apiQueryKeys.protocol.status(), protocolStatus)
+    return queryClient
+  })
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>
+}
 
 interface StakingCardArgs {
   side: 'BEAR' | 'BULL'
@@ -11,6 +40,7 @@ interface StakingCardArgs {
 const meta: Meta<StakingCardArgs> = {
   title: 'Components/StakingCard',
   tags: ['autodocs'],
+  decorators: [(Story) => <StakingProtocolFixture><Story /></StakingProtocolFixture>],
   argTypes: {
     side: {
       control: 'radio',
@@ -113,7 +143,11 @@ export const StakeBearFlow: Story = {
     })
 
     await step('Verify output display shows expected shares', async () => {
-      expect(canvas.getByText(/you will receive/i)).toBeInTheDocument()
+      const output = canvas.getByText('You will receive').parentElement!
+      await expect(within(output).getByText('80 splDXY-BEAR')).toBeVisible()
+      await userEvent.clear(canvas.getByLabelText('plDXY-BEAR to stake'))
+      await userEvent.type(canvas.getByLabelText('plDXY-BEAR to stake'), '250')
+      await expect(within(output).getByText('200 splDXY-BEAR')).toBeVisible()
     })
   },
 }
@@ -147,6 +181,8 @@ export const UnstakeBullFlow: Story = {
       await userEvent.clear(input)
       await userEvent.type(input, '50')
       expect(input).toHaveValue('50')
+      const output = canvas.getByText('You will receive').parentElement!
+      await expect(within(output).getByText('62.5 plDXY-BULL')).toBeVisible()
     })
   },
 }

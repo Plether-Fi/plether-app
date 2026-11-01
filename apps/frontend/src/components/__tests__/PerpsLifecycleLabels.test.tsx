@@ -1700,27 +1700,28 @@ describe('perps lifecycle labels', () => {
     }
   )
 
-  it('shows resulting position leverage in the margin action modal', () => {
+  it('keeps free-margin deposits separate from live position margin and leverage', () => {
     mockIsConnected = true
 
     render(
       <PerpsTradeTicket
         enableLiveTrading
+        oraclePriceRaw={100_000_000n}
         walletAssetsRaw={1000000000n}
         settlementBalanceAssetsRaw={1000000000n}
         currentPosition={{
           exists: true,
           side: 0,
           direction: 'long',
-          size: 0n,
-          entryPrice: 98300000n,
+          size: 2_000n * 10n ** 18n,
+          entryPrice: 100_000_000n,
           marginAssets: 400000000n,
           unrealizedPnlAssets: 0n,
           maintenanceMarginAssets: 0n,
           liquidatable: false,
           estimatedNotionalAssets: 2000000000n,
           entryNotionalAssets: 2000000000n,
-          dxyExposureAssets: 2069380000n,
+          dxyExposureAssets: 2000000000n,
         }}
       />
     )
@@ -1731,11 +1732,17 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Position margin')).toBeInTheDocument()
     expect(screen.getByText(/Deposit and withdraw change free margin only/i)).toBeInTheDocument()
     expect(screen.queryByText('Current leverage')).not.toBeInTheDocument()
+    const positionMarginRow = within(screen.getByRole('dialog')).getByText('Position margin').closest('div')!
+    expect(within(positionMarginRow).getByText('400')).toBeVisible()
 
     fireEvent.change(screen.getByDisplayValue(''), { target: { value: '500' } })
 
+    expect(within(positionMarginRow).getByText('400')).toBeVisible()
+    expect(within(positionMarginRow).queryByText('900')).not.toBeInTheDocument()
     expect(screen.queryByText('Resulting leverage')).not.toBeInTheDocument()
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.addPositionMargin).not.toHaveBeenCalled()
   })
 
   it('combines owner and Trading Account USDG in the supported deposit flow', () => {

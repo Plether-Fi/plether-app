@@ -1,4 +1,12 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { expect, test } from '../fixtures/wallet'
+
+const release = JSON.parse(readFileSync(new URL('../../../../config/perps/mock-usdg-prepared.json', import.meta.url), 'utf8'))
+const isPreparedRelease = release.release.phase === 'prepared'
+const perpsHeading = isPreparedRelease
+  ? `${release.settlementToken.symbol} perps are being prepared`
+  : 'plDXY Perp'
 
 const viewports = [
   { name: 'compact mobile', width: 320, height: 568 },
@@ -10,7 +18,7 @@ const viewports = [
 ] as const
 
 const primaryRoutes = [
-  { path: '/', heading: 'plDXY Perp' },
+  { path: '/', heading: perpsHeading },
   { path: '/spot', heading: 'Dashboard' },
   { path: '/leverage', heading: 'Dashboard' },
   { path: '/lending', heading: 'Dashboard' },
@@ -18,13 +26,6 @@ const primaryRoutes = [
   { path: '/stake', heading: 'Stake' },
   { path: '/history', heading: 'Transaction History' },
 ] as const
-
-const dismissedWelcomeSettings = JSON.stringify({
-  state: {
-    sepoliaWelcomeDismissed: true,
-  },
-  version: 0,
-})
 
 async function expectWithinViewport(
   page: Page,
@@ -156,11 +157,23 @@ async function expectPerpsLayout(page: Page, viewportWidth: number) {
   expect(Math.abs(chartToAccountGap - 24)).toBeLessThanOrEqual(2)
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript((settings) => {
-    window.localStorage.setItem('plether_settings', settings)
-  }, dismissedWelcomeSettings)
-})
+async function expectConfiguredPerpsLayout(page: Page, viewportWidth: number) {
+  if (!isPreparedRelease) {
+    await expectPerpsLayout(page, viewportWidth)
+    return
+  }
+
+  // A prepared deployment intentionally has no live ticket or chart. Require
+  // its explicit release state instead of silently accepting missing panels.
+  const main = page.getByRole('main')
+  const pending = main.getByRole('status')
+  await expectWithinViewport(page, pending, 'prepared perps status')
+  await expect(pending.getByRole('heading', { name: perpsHeading, exact: true })).toBeVisible()
+  await expect(pending).toContainText('Trading, testnet funding, and vault deposits will be available after deployment.')
+  await expect(main.getByRole('button', { name: 'Long plDXY Perp', exact: true })).toHaveCount(0)
+  await expect(main.getByRole('button', { name: 'Short plDXY Perp', exact: true })).toHaveCount(0)
+  await expect(main.getByRole('button', { name: 'Open Orders', exact: true })).toHaveCount(0)
+}
 
 for (const { name, width, height } of viewports) {
   test.describe(`${name} (${width.toString()}x${height.toString()})`, () => {
@@ -180,10 +193,10 @@ for (const { name, width, height } of viewports) {
       await expectWithinViewport(page, logo, 'Plether logo')
       await expectWithinViewport(page, connectWallet, 'Connect Wallet button')
       await expectWithinViewport(page, main, 'main content')
-      await expect(page.getByRole('heading', { name: 'plDXY Perp' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: perpsHeading, exact: true })).toBeVisible()
 
       await expectNoDocumentHorizontalOverflow(page)
-      await expectPerpsLayout(page, width)
+      await expectConfiguredPerpsLayout(page, width)
     })
 
     test('keeps primary application routes free of horizontal overflow', async ({

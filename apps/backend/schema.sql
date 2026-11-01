@@ -3014,6 +3014,130 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_nonce_recoveries (
     CHECK (original_tx_hash <> replacement_tx_hash)
 );
 
+-- Preparation and observability prerequisites, in migration dependency order.
+-- Keep the standalone bootstrap equivalent to the additive operator migrations.
+
+-- aa-preparation-v1.sql
+-- Additive, operator-approved migration. No startup DDL or runtime grants.
+-- Keep rows through rollback: reusing an ID must never silently issue new work.
+CREATE TABLE IF NOT EXISTS aa_preparations (
+  client_key TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  preparation_id TEXT NOT NULL,
+  intent_hash TEXT NOT NULL,
+  operation JSONB,
+  authorization_digest TEXT REFERENCES aa_sponsorship_authorizations(digest),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()+interval '5 minutes',
+  lease_token TEXT,
+  lease_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (client_key,sender,preparation_id),
+  CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+  CHECK (preparation_id ~ '^0x[0-9a-f]{64}$'),
+  CHECK (intent_hash ~ '^0x[0-9a-f]{64}$'),
+  CHECK (operation IS NULL OR jsonb_typeof(operation)='object'),
+  CHECK ((lease_token IS NULL) = (lease_until IS NULL))
+);
+
+-- aa-preparation-recovery-v1.sql
+-- Apply before deploying the fenced gateway. Retirement is separately gated
+-- until ALL serving instances use this registry. Never drop retirement records.
+ALTER TABLE aa_preparations ADD COLUMN IF NOT EXISTS recovery_paymaster TEXT CHECK (recovery_paymaster ~ '^0x[0-9a-f]{40}$');
+CREATE TABLE IF NOT EXISTS aa_preparation_registry (
+  chain_id BIGINT NOT NULL CHECK (chain_id = 421614),
+  paymaster TEXT NOT NULL CHECK (paymaster ~ '^0x[0-9a-f]{40}$'),
+  sender TEXT NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+  preparation_id TEXT NOT NULL CHECK (preparation_id ~ '^0x[0-9a-f]{64}$'),
+  generation BIGINT NOT NULL DEFAULT 0,
+  retired BOOLEAN NOT NULL DEFAULT FALSE,
+  lease_token TEXT,
+  lease_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (chain_id,paymaster,sender,preparation_id)
+);
+CREATE TABLE IF NOT EXISTS aa_preparation_authorizations (
+  chain_id BIGINT NOT NULL, paymaster TEXT NOT NULL, sender TEXT NOT NULL,
+  preparation_id TEXT NOT NULL, digest TEXT NOT NULL REFERENCES aa_sponsorship_authorizations(digest),
+  PRIMARY KEY (chain_id,paymaster,sender,preparation_id,digest),
+  FOREIGN KEY (chain_id,paymaster,sender,preparation_id)
+    REFERENCES aa_preparation_registry(chain_id,paymaster,sender,preparation_id)
+);
+CREATE TABLE IF NOT EXISTS aa_preparation_recovery_challenges (
+  id TEXT PRIMARY KEY, chain_id BIGINT NOT NULL, paymaster TEXT NOT NULL,
+  sender TEXT NOT NULL, preparation_id TEXT NOT NULL, owner TEXT NOT NULL,
+  message TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, consumed BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE TABLE IF NOT EXISTS aa_preparation_recovery_sessions (
+  token_hash TEXT PRIMARY KEY, chain_id BIGINT NOT NULL, paymaster TEXT NOT NULL,
+  sender TEXT NOT NULL, preparation_id TEXT NOT NULL, owner TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS aa_preparation_recovery_challenge_expiry ON aa_preparation_recovery_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS aa_preparation_recovery_session_expiry ON aa_preparation_recovery_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS aa_preparation_by_sender_id ON aa_preparations(sender,preparation_id);
+UPDATE aa_preparations p SET recovery_paymaster=lower(a.operation->>'paymaster')
+FROM aa_sponsorship_authorizations a WHERE a.digest=p.authorization_digest
+AND a.operation->>'paymaster' ~ '^0x[0-9a-fA-F]{40}$' AND p.recovery_paymaster IS NULL;
+-- A historical paymaster is derived only from durable authorization evidence.
+-- Unbound records remain intact and are classified conservatively at recovery.
+INSERT INTO aa_preparation_registry(chain_id,paymaster,sender,preparation_id)
+SELECT DISTINCT 421614,lower(a.operation->>'paymaster'),p.sender,p.preparation_id
+FROM aa_preparations p JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest
+WHERE a.operation->>'paymaster' ~ '^0x[0-9a-fA-F]{40}$'
+ON CONFLICT DO NOTHING;
+INSERT INTO aa_preparation_authorizations(chain_id,paymaster,sender,preparation_id,digest)
+SELECT 421614,lower(a.operation->>'paymaster'),p.sender,p.preparation_id,a.digest
+FROM aa_preparations p JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest
+WHERE a.operation->>'paymaster' ~ '^0x[0-9a-fA-F]{40}$'
+ON CONFLICT DO NOTHING;
+
+-- aa-observability-v1.sql
+-- Additive, operator-applied migration. No authorization tables or invariants change.
+ALTER TABLE aa_preparations
+  ADD COLUMN IF NOT EXISTS diagnostic_attempt_id UUID,
+  ADD COLUMN IF NOT EXISTS diagnostic_chain_id BIGINT,
+  ADD COLUMN IF NOT EXISTS diagnostic_deployment TEXT;
+CREATE TABLE IF NOT EXISTS aa_worker_readiness (
+  chain_id BIGINT NOT NULL,
+  deployment TEXT NOT NULL,
+  component TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('ready','blocked','unknown')),
+  reason TEXT NOT NULL,
+  required_cost_wei NUMERIC(78,0),
+  signer_address TEXT,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(chain_id, deployment, component)
+);
+CREATE TABLE IF NOT EXISTS aa_attempt_diagnostics (
+  attempt_id UUID PRIMARY KEY,
+  client_key TEXT NOT NULL,
+  chain_id BIGINT NOT NULL,
+  deployment TEXT NOT NULL,
+  preparation_id TEXT,
+  operation_hash TEXT,
+  sender TEXT,
+  order_id BIGINT,
+  stage TEXT NOT NULL,
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  terminal_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS aa_attempt_diagnostics_operation ON aa_attempt_diagnostics(operation_hash);
+CREATE INDEX IF NOT EXISTS aa_attempt_diagnostics_terminal ON aa_attempt_diagnostics(terminal_at) WHERE terminal_at IS NOT NULL;
+-- Operator grants SELECT/INSERT/UPDATE to API/worker roles; the maintenance role
+-- alone deletes mappings after terminal_at + 7 days. Unresolved rows never expire.
+
+-- aa-observability-v2.sql
+-- Apply after aa-observability-v1.sql, before the new API image. Additive only.
+ALTER TABLE aa_attempt_diagnostics
+  ADD COLUMN IF NOT EXISTS correlation_checked_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS correlation_resolved_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS execution_observed_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS aa_diagnostics_pending_correlation
+  ON aa_attempt_diagnostics(chain_id,deployment,correlation_checked_at,created_at)
+  WHERE correlation_resolved_at IS NULL AND order_id IS NULL AND terminal_at IS NULL;
+
 -- Advisory only. Apply before the backend rollout. Missing table drops telemetry,
 -- never blocks sponsorship/submission. Do not use browser reports as chain proof.
 CREATE INDEX IF NOT EXISTS aa_preparations_diagnostic_attempt
@@ -3113,13 +3237,6 @@ BEGIN
       (SELECT 1 FROM removed_history h WHERE h.chain_id=c.chain_id AND h.release_router=c.release_router);
   RETURN NULL;
 END $$;
-DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_account_activity;
-CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_account_activity
-REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
-DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_asset_transfers;
-CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_asset_transfers
-REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
-
 CREATE OR REPLACE FUNCTION insights_integrity_cursor_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.last_indexed_block < OLD.last_indexed_block
@@ -3130,8 +3247,25 @@ BEGIN
   END IF;
   RETURN NULL;
 END $$;
-CREATE OR REPLACE TRIGGER insights_integrity_cursor_epoch AFTER UPDATE ON perps_indexer_state
-FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
+-- History source tables are initialized by ensurePerpsHistorySchema. Install
+-- this group only when every source exists; the absent cursor trigger makes
+-- ensureInsightsSchema apply the complete epoch migration after initialization.
+DO $insights_history$
+BEGIN
+  IF to_regclass(format('%I.perps_account_activity', current_schema())) IS NOT NULL
+     AND to_regclass(format('%I.perps_asset_transfers', current_schema())) IS NOT NULL
+     AND to_regclass(format('%I.perps_indexer_state', current_schema())) IS NOT NULL THEN
+    DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_account_activity;
+    CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_account_activity
+    REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
+    DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_asset_transfers;
+    CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_asset_transfers
+    REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
+    CREATE OR REPLACE TRIGGER insights_integrity_cursor_epoch AFTER UPDATE ON perps_indexer_state
+    FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
+  END IF;
+END
+$insights_history$;
 
 -- Backward compatible: existing writers still check immediately. Only the new
 -- atomic publisher explicitly defers this FK until its short publication phase.

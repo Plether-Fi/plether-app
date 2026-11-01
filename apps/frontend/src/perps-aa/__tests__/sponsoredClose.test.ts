@@ -19,15 +19,18 @@ const funding: SponsoredCloseFunding = { amountAssets: 198_000n, depositCarryAss
     paymasterAddress: '0x5555555555555555555555555555555555555555' } }
 
 describe('sponsored close action', () => {
-  it('rejects subsidy batches for the replacement deployment', () => {
-    expect(() => buildSponsoredCloseAction(manifest, account, request, funding)).toThrow('Close assistance is retired')
-  })
-
-  it('rejects opening orders and zero or excessive grants', () => {
-    expect(() => buildSponsoredCloseAction(manifest, account, { ...request, isClose: false }, funding)).toThrow()
-    for (const amountAssets of [0n, -1n, 200_001n]) {
-      expect(() => buildSponsoredCloseAction(manifest, account, request, { ...funding, amountAssets })).toThrow()
-    }
+  it.each([
+    { name: 'an otherwise valid close', isClose: true, amountAssets: funding.amountAssets },
+    { name: 'an opening order', isClose: false, amountAssets: funding.amountAssets },
+    { name: 'a zero grant', isClose: true, amountAssets: 0n },
+    { name: 'a negative grant', isClose: true, amountAssets: -1n },
+    { name: 'an excessive grant', isClose: true, amountAssets: 200_001n },
+  ])('keeps close assistance retired for $name', ({ isClose, amountAssets }) => {
+    expect(() => buildSponsoredCloseAction(
+      manifest, account, { ...request, isClose }, { ...funding, amountAssets }
+    )).toThrow(new Error(
+      'Close assistance is retired for v1.3.0; submit an ordinary pledge-backed close.'
+    ))
   })
 
   it('uses the native route without changing the trading account profile', () => {

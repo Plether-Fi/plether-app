@@ -1,0 +1,73 @@
+{
+  "name": "Required test evidence on master",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/master"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "Protection worker tests",
+            "integration_id": 15368
+          },
+          {
+            "context": "Credential hygiene",
+            "integration_id": 15368
+          },
+          {
+            "context": "Frontend unit and build",
+            "integration_id": 15368
+          },
+          {
+            "context": "Insights unit and build",
+            "integration_id": 15368
+          },
+          {
+            "context": "Faucet and publication database tests",
+            "integration_id": 15368
+          },
+          {
+            "context": "Backend unit tests",
+            "integration_id": 15368
+          },
+          {
+            "context": "Infrastructure policy tests",
+            "integration_id": 15368
+          },
+          {
+            "context": "Perps critical path integration",
+            "integration_id": 15368
+          },
+          {
+            "context": "Native AA integration",
+            "integration_id": 15368
+          },
+          {
+            "context": "Delayed approval and canonical recovery",
+            "integration_id": 15368
+          },
+          {
+            "context": "Frontend E2E",
+            "integration_id": 15368
+          },
+          {
+            "context": "Storybook interactions",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ]
+}

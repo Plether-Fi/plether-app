@@ -1,5 +1,6 @@
 module Plether.Api
   ( app
+  , appWithReleaseState
   , perpsReleaseMiddleware
   , handleBasketCurrentCandleAt
   ) where
@@ -191,8 +192,13 @@ instance FromJSON TestnetFaucetRequest where
     pure $ TestnetFaucetRequest address acceptsAsync
 
 app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
-  middleware $ perpsReleaseMiddleware Manifest.releaseIsDeployed
+app = appWithReleaseState Manifest.releaseIsDeployed
+
+-- Deployment state is fixed by the production manifest. Historical scripted
+-- deployments can exercise the same routes with their own explicit state.
+appWithReleaseState :: Bool -> AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
+appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
+  middleware $ perpsReleaseMiddleware deployed
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"
@@ -230,7 +236,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
 
-  case if Manifest.releaseIsDeployed then mPool else Nothing of
+  case if deployed then mPool else Nothing of
     Just pool -> do
       registerInsightsRegistrationRoutes pool perpsClient cfg manager
       registerDivisionsRegistrationRoutes pool perpsClient cfg manager discordConfig

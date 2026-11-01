@@ -1,17 +1,20 @@
 module Plether.Perps.ReleaseSpec (spec) where
 
-import Data.Either (isLeft)
+import Control.Monad (forM_)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Base16 as B16
 import Plether.Ethereum.Abi (keccak256)
 import Plether.Perps.Release
-  ( orderV3IntentDomain
+  ( PerpsReleaseConfigPins (..)
+  , orderV3IntentDomain
   , perpsV2DeploymentBlock
   , perpsV2OrderLifecycleBook
   , perpsV2OrderRouter
   , perpsV2VolumeHistoryStartTimestamp
   , validatePerpsV2ReleaseConfig
+  , validatePerpsV2ReleaseConfigWithPins
   )
 import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
@@ -20,93 +23,89 @@ import Plether.Perps.HistoryIndexer
   , perpsIndexerNameForLifecycleBook
   , perpsV2IndexerName
   , validatePerpsIndexerReleaseConfig
+  , validatePerpsIndexerReleaseConfigWithPins
   )
 import Test.Hspec
 
-engine, clearinghouse, housePool :: Text
-engine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
-clearinghouse = "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-housePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
-
-validReleaseConfig :: Either Text ()
-validReleaseConfig =
-  validatePerpsV2ReleaseConfig
-    421614
-    perpsV2OrderRouter
-    (Just perpsV2OrderLifecycleBook)
-    engine
-    clearinghouse
-    housePool
-    perpsV2DeploymentBlock
-
 spec :: Spec
-spec =
-  describe "bounded V2 release configuration" $ do
-    it "pins the USDG V3 intent type hash" $
-      B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
-        `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
+spec = describe "bounded V2 release configuration" $ do
+  it "pins the USDG V3 intent type hash" $
+    B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
+      `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
 
-    it "rejects perps activation while the canonical release is prepared" $
-      validReleaseConfig `shouldSatisfy` isLeft
+  it "rejects perps activation while the canonical release is prepared" $
+    validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter
+      (Just perpsV2OrderLifecycleBook) (address "3") (address "4") (address "5") perpsV2DeploymentBlock
+      `shouldBe` Left "Perps release is prepared; deployment is required"
 
-    it "does not invent a volume history boundary for an undeployed release" $
-      perpsV2VolumeHistoryStartTimestamp `shouldBe` 0
+  it "does not invent a volume history boundary for an undeployed release" $
+    perpsV2VolumeHistoryStartTimestamp `shouldBe` 0
 
-    it "rejects a missing LifecycleBook" $
-      validatePerpsV2ReleaseConfig
-        421614
-        perpsV2OrderRouter
-        Nothing
-        engine
-        clearinghouse
-        housePool
-        perpsV2DeploymentBlock
-        `shouldSatisfy` isLeft
+  it "accepts a complete deployed release and case-insensitive address spellings" $ do
+    validateInput deployedPins (Just $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
+    validateInput (deployedPins {prcpRouter = T.toUpper $ prcpRouter deployedPins})
+      (Just $ T.toUpper $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
 
-    it "rejects a cursor that could suppress the V2 backfill" $
-      validatePerpsV2ReleaseConfig
-        421614
-        perpsV2OrderRouter
-        (Just perpsV2OrderLifecycleBook)
-        engine
-        clearinghouse
-        housePool
-        (perpsV2DeploymentBlock - 1)
-        `shouldSatisfy` isLeft
+  it "rejects a missing LifecycleBook after the deployed positive control" $ do
+    validateInput deployedPins (Just $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
+    validateInput deployedPins Nothing
+      `shouldBe` Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V3 sponsorship"
 
-    it "rejects every mismatched startup binding input" $ do
-      let wrong = "0x0000000000000000000000000000000000000001"
-          mismatchCases =
-            [ validatePerpsV2ReleaseConfig 1 perpsV2OrderRouter (Just perpsV2OrderLifecycleBook) engine clearinghouse housePool perpsV2DeploymentBlock
-            , validatePerpsV2ReleaseConfig 421614 wrong (Just perpsV2OrderLifecycleBook) engine clearinghouse housePool perpsV2DeploymentBlock
-            , validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter (Just wrong) engine clearinghouse housePool perpsV2DeploymentBlock
-            , validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter (Just perpsV2OrderLifecycleBook) wrong clearinghouse housePool perpsV2DeploymentBlock
-            , validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter (Just perpsV2OrderLifecycleBook) engine wrong housePool perpsV2DeploymentBlock
-            , validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter (Just perpsV2OrderLifecycleBook) engine clearinghouse wrong perpsV2DeploymentBlock
-            ]
-      mismatchCases `shouldSatisfy` all isLeft
+  forM_
+    [ ("PERPS_CHAIN_ID", deployedPins {prcpChainId = 1}, "421614")
+    , ("PERPS_ORDER_ROUTER", deployedPins {prcpRouter = wrong}, prcpRouter deployedPins)
+    , ("PERPS_CFD_ENGINE", deployedPins {prcpEngine = wrong}, prcpEngine deployedPins)
+    , ("PERPS_MARGIN_CLEARINGHOUSE", deployedPins {prcpClearinghouse = wrong}, prcpClearinghouse deployedPins)
+    , ("PERPS_HOUSE_POOL", deployedPins {prcpHousePool = wrong}, prcpHousePool deployedPins)
+    , ("PERPS_INDEXER_START_BLOCK", deployedPins {prcpDeploymentBlock = 99}, "100")
+    ] $ \(label, invalid, expected) ->
+      it ("rejects only the changed deployed binding " <> T.unpack label) $ do
+        validateInput deployedPins (Just $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
+        validateInput invalid (Just $ prcpLifecycleBook deployedPins)
+          `shouldBe` Left (label <> " must match the pinned bounded V3 release " <> expected)
 
-    it "rejects an indexer bound to prepared internal pins before startup" $
-      validatePerpsIndexerReleaseConfig
-        421614
-        defaultPerpsAddresses
-        housePool
-        perpsV2DeploymentBlock
-        `shouldSatisfy` isLeft
+  it "rejects a different deployed LifecycleBook with the specific binding error" $ do
+    validateInput deployedPins (Just $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
+    validateInput deployedPins (Just wrong)
+      `shouldBe` Left ("PERPS_ORDER_LIFECYCLE_BOOK must match the pinned bounded V3 release " <> prcpLifecycleBook deployedPins)
 
-    it "fails indexer startup when the effective LifecycleBook is absent or wrong" $ do
-      let wrong = "0x0000000000000000000000000000000000000001"
-          missingLifecycle = defaultPerpsAddresses {paOrderLifecycleBook = Nothing}
-          wrongLifecycle = defaultPerpsAddresses {paOrderLifecycleBook = Just wrong}
-      validatePerpsIndexerReleaseConfig 421614 missingLifecycle housePool perpsV2DeploymentBlock
-        `shouldSatisfy` isLeft
-      validatePerpsIndexerReleaseConfig 421614 wrongLifecycle housePool perpsV2DeploymentBlock
-        `shouldSatisfy` isLeft
+  it "rejects an indexer bound to prepared internal pins before startup" $
+    validatePerpsIndexerReleaseConfig 421614 defaultPerpsAddresses (address "5") perpsV2DeploymentBlock
+      `shouldBe` Left "Perps release is prepared; deployment is required"
 
-    it "selects the indexer format independently of deployment addresses" $ do
-      perpsV2IndexerName `shouldBe` "perps-history-costs-v2:finalized-abi3"
-      perpsIndexerNameForLifecycleBook (Just perpsV2OrderLifecycleBook)
-        `shouldBe` perpsV2IndexerName
-      perpsIndexerNameForLifecycleBook (Just "0x1111111111111111111111111111111111111111")
-        `shouldBe` perpsV2IndexerName
-      perpsIndexerNameForLifecycleBook Nothing `shouldBe` perpsIndexerName
+  it "validates the effective deployed indexer LifecycleBook independently" $ do
+    let validate = validatePerpsIndexerReleaseConfigWithPins deployedPins 421614
+    validate deployedAddresses (prcpHousePool deployedPins) 100 `shouldBe` Right ()
+    validate (deployedAddresses {paOrderLifecycleBook = Nothing}) (prcpHousePool deployedPins) 100
+      `shouldBe` Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V3 sponsorship"
+    validate (deployedAddresses {paOrderLifecycleBook = Just wrong}) (prcpHousePool deployedPins) 100
+      `shouldBe` Left ("PERPS_ORDER_LIFECYCLE_BOOK must match the pinned bounded V3 release " <> prcpLifecycleBook deployedPins)
+
+  it "selects the indexer format independently of deployment addresses" $ do
+    perpsV2IndexerName `shouldBe` "perps-history-costs-v2:finalized-abi3"
+    perpsIndexerNameForLifecycleBook (Just perpsV2OrderLifecycleBook) `shouldBe` perpsV2IndexerName
+    perpsIndexerNameForLifecycleBook (Just wrong) `shouldBe` perpsV2IndexerName
+    perpsIndexerNameForLifecycleBook Nothing `shouldBe` perpsIndexerName
+
+validateInput :: PerpsReleaseConfigPins -> Maybe Text -> Either Text ()
+validateInput actual = \book -> validatePerpsV2ReleaseConfigWithPins deployedPins
+  (prcpChainId actual) (prcpRouter actual) book (prcpEngine actual)
+  (prcpClearinghouse actual) (prcpHousePool actual) (prcpDeploymentBlock actual)
+
+deployedPins :: PerpsReleaseConfigPins
+deployedPins = PerpsReleaseConfigPins True 421614 (address "1") (address "2")
+  (address "3") (address "4") (address "5") 100
+
+deployedAddresses :: PerpsAddresses
+deployedAddresses = defaultPerpsAddresses
+  { paOrderRouter = prcpRouter deployedPins
+  , paOrderLifecycleBook = Just $ prcpLifecycleBook deployedPins
+  , paCfdEngine = prcpEngine deployedPins
+  , paMarginClearinghouse = prcpClearinghouse deployedPins
+  }
+
+address :: Text -> Text
+address digit = "0x" <> T.replicate 40 digit
+
+wrong :: Text
+wrong = address "f"

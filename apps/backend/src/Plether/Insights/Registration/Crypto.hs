@@ -10,6 +10,7 @@ module Plether.Insights.Registration.Crypto
   , generateUuidV4
   , uuidV4FromDigest
   , generatePkcePair
+  , pkceS256Challenge
   , base64UrlNoPad
   , constantTimeEqual
   , registrationFieldAad
@@ -169,8 +170,11 @@ uuidV4FromDigest digest
 generatePkcePair :: IO (Text, Text)
 generatePkcePair = do
   verifier <- generateOpaqueToken 32
-  let challenge = base64UrlNoPad $ convert (hash (TE.encodeUtf8 verifier) :: Digest SHA256)
-  pure (verifier, challenge)
+  pure (verifier, pkceS256Challenge verifier)
+
+pkceS256Challenge :: Text -> Text
+pkceS256Challenge verifier =
+  base64UrlNoPad $ convert (hash (TE.encodeUtf8 verifier) :: Digest SHA256)
 
 base64UrlNoPad :: ByteString -> Text
 base64UrlNoPad =

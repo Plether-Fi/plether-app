@@ -12,8 +12,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run --project unit && npm run test:worker && npm run test:mainnet-redirect && npm run test:deploy-validator",
+    "test": "vitest run --project unit && npm run test:worker && npm run test:mainnet-redirect && npm run test:deploy-validator && npm run test:diagnostics",
     "test:deploy-validator": "node --test test/candle-volume-deployment-validator.test.mjs scripts/remove-source-maps.test.mjs",
+    "test:diagnostics": "node --test scripts/reproduce-close-review.test.mjs",
     "test:mainnet-redirect": "node --test test/mainnet-redirect-worker.test.mjs",
     "test:oracle-sync-fork": "node scripts/test-oracle-sync-fork.mjs",
     "test:worker": "node --test test/cloudflare-worker.test.mjs test/perps-oracle-worker.test.mjs",
@@ -30,6 +31,7 @@
     "build-storybook": "storybook build",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
+    "test:storybook": "vitest run --project storybook --reporter=default --reporter=junit --outputFile.junit=.test-results/storybook.xml",
     "tradingview:install": "node scripts/install-tradingview-charting-library.mjs",
     "test:order-v3-local": "node ../../scripts/test-order-v3-local.mjs",
     "verify:perps-sdk": "node ../../scripts/verify-vendored-perps-aa-client.mjs"

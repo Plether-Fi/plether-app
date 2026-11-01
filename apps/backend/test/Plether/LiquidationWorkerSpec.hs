@@ -178,14 +178,16 @@ spec = do
         `shouldBe` map getAccountLedgerSnapshotCall accounts
 
     it "decodes successful snapshots without changing account order" $ do
-      let results =
-            [ Multicall.CallResult True $ encodedAccountSnapshot openHealthySnapshot
-            , Multicall.CallResult True $ encodedAccountSnapshot openRiskySnapshot
-            ]
+      let healthy = openHealthySnapshot {alsSize = 200_000_000_000_000_000_000,
+            alsMargin = 11_000_000, alsUnrealizedPnlAssets = -17}
+          risky = openRiskySnapshot {alsMargin = 777_000, alsUnrealizedPnlAssets = 23}
+          results = [Multicall.CallResult True $ encodedAccountSnapshot healthy,
+            Multicall.CallResult True $ encodedAccountSnapshot risky]
+      decodeLiquidationSnapshotResults 2 results `shouldBe` Right [Right healthy, Right risky]
       case decodeLiquidationSnapshotResults 2 results of
-        Right [Right first, Right second] ->
-          map alsSize [first, second] `shouldBe` [alsSize openHealthySnapshot, alsSize openRiskySnapshot]
-        other -> expectationFailure $ "expected two ordered snapshots, got " <> show other
+        Right snapshots -> selectLiquidationSimulationCandidates Nothing (zip [account,otherAccount] snapshots)
+          `shouldBe` [otherAccount]
+        other -> expectationFailure $ "expected two ordered complete snapshots: " <> show other
 
     it "isolates failed and malformed subcalls instead of treating them as safe" $ do
       let results =
@@ -528,7 +530,7 @@ spec = do
       retryCount `shouldBe` 0
       result `shouldBe` Left unrelatedError
 
-    it "refreshes the executable payload after retry and snapshot work" $ do
+    it "rejects an expired cached payload and loads fresh data at the supplied current time" $ do
       clock <- newIORef 100
       payloadFetchTimes <- newIORef []
       let advanceClock :: Int -> IO ()
@@ -587,7 +589,7 @@ spec = do
       readIORef payloadFetchTimes `shouldReturn` [112]
       executionPayload `shouldBe` Right [BS.pack [0xaa]]
 
-    it "refreshes and requotes every batch after receipt time advances" $ do
+    it "invokes the supplied preparation callback for every batch" $ do
       clock <- newIORef (100 :: Integer)
       availablePayloads <-
         newIORef
@@ -706,7 +708,7 @@ spec = do
         (\batch -> modifyIORef' calls (<> [batch]) >> pure (Just ()))
         (\_ _ -> pure BatchStopped)
       readIORef calls `shouldReturn` [[1]]
-    it "visits all 8000 accounts and executes 250 risks distributed across pages" $ do
+    it "iterates every supplied page and batch without dropping callback work" $ do
       seen <- newIORef ([] :: [Int])
       liquidated <- newIORef ([] :: [Int])
       completed <- runLiquidationSweep 1000 [1..8000] $ \page -> do
@@ -721,7 +723,7 @@ spec = do
       completed `shouldBe` True
       readIORef seen `shouldReturn` [1..8000]
       readIORef liquidated `shouldReturn` [32,64..8000]
-    it "waits for the extra confirmation then continues without an idle sweep" $ do
+    it "polls until the required confirmation head is observed" $ do
       heads <- newIORef ([100,100,101] :: [Integer])
       sleeps <- newIORef (0 :: Int)
       let readHead = do
@@ -732,7 +734,7 @@ spec = do
       result <- waitForLiquidationConfirmation 3 101 readHead (modifyIORef' sleeps (+1))
       result `shouldBe` Right 101
       readIORef sleeps `shouldReturn` 2
-    it "bounds confirmation waits and retains unresolved work for recovery" $ do
+    it "returns a bounded confirmation timeout" $ do
       result <- waitForLiquidationConfirmation 2 101 (pure $ Right 100) (pure ())
       result `shouldSatisfy` isLeft
 

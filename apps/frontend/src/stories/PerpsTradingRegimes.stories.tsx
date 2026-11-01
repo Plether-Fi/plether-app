@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, within } from 'storybook/test'
+import { expect, userEvent, within } from 'storybook/test'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import {
@@ -235,12 +235,21 @@ const meta: Meta<typeof TradingRegimeStory> = {
 export default meta
 type Story = StoryObj<typeof meta>
 
+async function expandPreview(canvasElement: HTMLElement) {
+  const canvas = within(canvasElement)
+  const showMore = canvas.getByRole('button', { name: 'Show more...' })
+  expect(showMore).toHaveAttribute('aria-expanded', 'false')
+  await userEvent.click(showMore)
+  expect(canvas.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true')
+  return canvas
+}
+
 export const LiveMarketClose: Story = {
   args: {
     regime: 'live',
   },
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
+    const canvas = await expandPreview(canvasElement)
     await expect(canvas.getByText('~0.0200%')).toBeInTheDocument()
     await expect(canvas.getByText('0.1%')).toBeInTheDocument()
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
@@ -254,7 +263,7 @@ export const FadOnlyClose: Story = {
     regime: 'fad-only',
   },
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
+    const canvas = await expandPreview(canvasElement)
     await expect(canvas.getByText('~0.0200%')).toBeInTheDocument()
     await expect(canvas.getByText('0.1%')).toBeInTheDocument()
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
@@ -267,7 +276,7 @@ export const OracleFrozenClose: Story = {
     regime: 'oracle-frozen',
   },
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
+    const canvas = await expandPreview(canvasElement)
     await expect(canvas.queryByText('Adverse oracle confidence spread')).not.toBeInTheDocument()
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
     await expect(canvas.getByText('Estimated frozen close spread')).toBeInTheDocument()

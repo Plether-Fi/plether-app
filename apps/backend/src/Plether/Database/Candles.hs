@@ -31,6 +31,8 @@ module Plether.Database.Candles
   , getBasketCandlePage
   , getBasketCandlePageSnapshot
   , getBasketCandleRange
+  , candleRangeRowsSql
+  , invalidateMarketVolumeFromBlockSql
   , getCurrentBasketCandle
   , getBasketCurrentCandleSnapshot
   , backfillLegacyBasketSnapshots
@@ -1379,21 +1381,7 @@ invalidateMarketVolumeFromBlock conn chainId releaseRouter rewindBlock = do
   lockDataset conn "volume" router chainId
   assertGenerationCapacity conn VolumeRollup Nothing (Just chainId) (Just router)
   affected <- query conn
-    "WITH affected_minutes AS MATERIALIZED (\
-    \ SELECT DISTINCT (timestamp / 60) * 60 AS minute \
-    \ FROM perps_account_activity \
-    \ WHERE chain_id = ? AND release_router = ? AND block_number >= ? \
-    \ AND activity_type IN ('Open', 'Close', 'Liquidated') \
-    \ AND size_delta IS NOT NULL AND price IS NOT NULL\
-    \), deleted AS (\
-    \ DELETE FROM perps_market_volume_rollups rollup USING affected_minutes affected \
-    \ WHERE rollup.chain_id = ? AND rollup.release_router = ? \
-    \ AND affected.minute >= rollup.bucket_start \
-    \ AND affected.minute < rollup.bucket_start + rollup.interval_seconds \
-    \ RETURNING 1\
-    \), deletion_barrier AS (SELECT COUNT(*) FROM deleted) \
-    \SELECT affected.minute FROM affected_minutes affected CROSS JOIN deletion_barrier \
-    \ORDER BY affected.minute"
+    invalidateMarketVolumeFromBlockSql
     (chainId, router, rewindBlock, chainId, router) :: IO [Only Integer]
   _ <- execute conn
     "WITH next_generation AS (\
@@ -1408,6 +1396,25 @@ invalidateMarketVolumeFromBlock conn chainId releaseRouter rewindBlock = do
     \AND coverage.chain_id = ? AND coverage.release_router = ?"
     (chainId, router, chainId, router)
   pure [timestamp | Only timestamp <- affected]
+
+-- Shared with plan verification so tests explain the statement the writer executes.
+invalidateMarketVolumeFromBlockSql :: Query
+invalidateMarketVolumeFromBlockSql =
+  "WITH affected_minutes AS MATERIALIZED (\
+    \ SELECT DISTINCT (timestamp / 60) * 60 AS minute \
+    \ FROM perps_account_activity \
+    \ WHERE chain_id = ? AND release_router = ? AND block_number >= ? \
+    \ AND activity_type IN ('Open', 'Close', 'Liquidated') \
+    \ AND size_delta IS NOT NULL AND price IS NOT NULL\
+    \), deleted AS (\
+    \ DELETE FROM perps_market_volume_rollups rollup USING affected_minutes affected \
+    \ WHERE rollup.chain_id = ? AND rollup.release_router = ? \
+    \ AND affected.minute >= rollup.bucket_start \
+    \ AND affected.minute < rollup.bucket_start + rollup.interval_seconds \
+    \ RETURNING 1\
+    \), deletion_barrier AS (SELECT COUNT(*) FROM deleted) \
+    \SELECT affected.minute FROM affected_minutes affected CROSS JOIN deletion_barrier \
+    \ORDER BY affected.minute"
 
 getActiveBasketSeriesId :: Connection -> Integer -> IO (Maybe Text)
 getActiveBasketSeriesId conn timestamp =

@@ -6,7 +6,7 @@ import Test.Hspec
 
 spec :: Spec
 spec =
-  describe "native AA schema migration parity" $ do
+  describe "native AA schema source parity (startup behavior is exercised in BackendUnitRepairSpec)" $ do
     it "keeps the static bootstrap and runtime request-key migration aligned" $ do
       runtime <- normalized <$> readFile "src/Plether/Database/AaSponsorship.hs"
       static <- normalized <$> readFile "schema.sql"
@@ -21,7 +21,7 @@ spec =
         , "wherestatein('reserved','signed','submitted')"
         ]
 
-    it "installs every named security invariant in both schema paths" $ do
+    it "declares every named security invariant in both schema sources" $ do
       runtime <- normalized <$> readFile "src/Plether/Database/AaSponsorship.hs"
       static <- normalized <$> readFile "schema.sql"
       mapM_ (assertBoth runtime static)
@@ -37,41 +37,7 @@ spec =
         , "aa_control_event_invariants_ck"
         ]
 
-    it "fails startup against drifted columns, keys, checks, indexes, or defaults" $ do
-      runtime <- normalized <$> readFile "src/Plether/Database/AaSponsorship.hs"
-      mapM_ (\needle -> runtime `shouldSatisfy` isInfixOf (normalized needle))
-        [ "table durability/row-security fingerprint mismatch"
-        , "schema column fingerprint mismatch"
-        , "schema key/foreign-key fingerprint mismatch"
-        , "schema check-constraint fingerprint mismatch"
-        , "schema index fingerprint mismatch"
-        , "schema default fingerprint mismatch"
-        , "pg_get_constraintdef(con.oid,true)=pg_get_constraintdef(expected.oid,true)"
-        , "pg_get_expr(actual.indpred,actual.indrelid,true)=pg_get_expr(expected.indpred,expected.indrelid,true)"
-        , "key_index.indisuniqueandkey_index.indisvalidandkey_index.indisready"
-        , "key_index.indnullsnotdistinct"
-        , "attrelid='pg_catalog.pg_index'::regclass"
-        , "attname='indnullsnotdistinct'andnotattisdropped"
-        , "aaschemakeysquerysupportsnullsnotdistinct"
-        , "aaschemakeysquerypg15"
-        , "aaschemakeysquerypg14"
-        , "\\false"
-        , "con.confupdtype"
-        , "con.confdeltype"
-        , "con.confmatchtype"
-        , "con.condeferrable,con.condeferred,con.convalidated"
-        , "c.relpersistence"
-        , "c.relrowsecurity,c.relforcerowsecurity"
-        , "idx.indnkeyatts"
-        , "idx.indnatts"
-        , "idx.indexprsisnull"
-        , "idx.indclass=expected.indclass"
-        , "idx.indcollation=expected.indcollation"
-        , "idx.indoption=expected.indoption"
-        , "target.relnamespace=source.relnamespace"
-        , "aa_sponsorship_ledger_id_seq"
-        , "aa_sponsorship_control_events_id_seq"
-        ]
+
  where
   normalized = map toLower . filter (\char -> not (isSpace char) && char /= '\\')
   assertBoth runtime static needle = do

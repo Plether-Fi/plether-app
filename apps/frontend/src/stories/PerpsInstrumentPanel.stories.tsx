@@ -431,8 +431,14 @@ export const HoverOverlayOnChart: Story = {
     await userEvent.hover(trigger)
 
     await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(canvas.getByText('Total LONG exposure')).toBeVisible()
-    await expect(canvas.getByText('Net LONG exposure')).toBeVisible()
+    // Expansion animates from zero height/opacity after aria-expanded changes.
+    // Wait for its visible content and final anchor before comparing geometry.
+    await waitFor(() => {
+      expect(canvas.getByText('Total LONG exposure')).toBeVisible()
+      expect(canvas.getByText('Net LONG exposure')).toBeVisible()
+      expect(overlay.getBoundingClientRect().top).toBe(panel.getBoundingClientRect().bottom - 1)
+      expect(getComputedStyle(overlay).opacity).toBe('1')
+    })
     expect(panel.getBoundingClientRect().height).toBe(panelHeight)
     expect(chart.getBoundingClientRect().top).toBe(chartTop)
 
@@ -665,7 +671,13 @@ export const PoolLiquidityNearlyReserved: Story = {
     await userEvent.keyboard('{Enter}')
     await expect(trigger).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => expect(canvas.getByText('>99.9%')).toBeVisible())
-    await expect(canvas.getByText('Total pool assets')).toBeVisible()
+    const total = canvas.getByText('Total pool USDG')
+    const reserved = canvas.getByText('Reserved pool USDG')
+    await expect(total).toBeVisible()
+    await expect(within(total.parentElement!).getByText('590 100 000')).toBeVisible()
+    await expect(within(total.parentElement!).getByText('USDG', { exact: true })).toBeVisible()
+    await expect(within(reserved.parentElement!).getByText('590 098 900')).toBeVisible()
+    await expect(within(reserved.parentElement!).getByText('USDG', { exact: true })).toBeVisible()
     await expect(canvas.getByText('What this means for trading')).toBeVisible()
     await expect(canvas.queryByText(/trading capacity/i)).not.toBeInTheDocument()
   },

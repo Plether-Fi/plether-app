@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { Result } from 'better-result';
 import type { PropsWithChildren } from 'react';
@@ -70,33 +70,44 @@ afterEach(() => {
 });
 
 describe('usePerpsVaultHistory', () => {
-  it('uses one shared key and refreshes the complete two-tranche response every minute', async () => {
-    vi.spyOn(perpsApi, 'getPerpsVaultHistory').mockResolvedValue(Result.ok(completeHistory));
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+  it('shares the two-tranche query and automatically refreshes both consumers after sixty seconds', async () => {
+    vi.useFakeTimers()
+    focusManager.setFocused(true)
+    const refreshedHistory = {
+      ...completeHistory,
+      data: { ...completeHistory.data, senior: { ...completeHistory.data.senior, apy7d: 0.06 } },
+    }
+    const getHistory = vi.spyOn(perpsApi, 'getPerpsVaultHistory')
+      .mockResolvedValueOnce(Result.ok(completeHistory))
+      .mockResolvedValue(Result.ok(refreshedHistory))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { result, unmount } = renderHook(() => ({
+      senior: usePerpsVaultHistory(), junior: usePerpsVaultHistory(),
+    }), { wrapper: createWrapper(queryClient) })
 
-    const { result } = renderHook(() => usePerpsVaultHistory(), {
-      wrapper: createWrapper(queryClient),
-    });
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(result.current.senior.data).toEqual(completeHistory)
+      expect(result.current.junior.data).toEqual(completeHistory)
+      expect(apiQueryKeys.perps.vaultHistory()).toEqual(['perps', 'perps', 'vaultHistory', '7d', 3600])
+      expect(VAULT_HISTORY_QUERY_POLICY).toEqual({ staleTime: 60_000, refetchInterval: 60_000 })
+      expect(getHistory).toHaveBeenCalledTimes(1)
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual(completeHistory);
-    expect(apiQueryKeys.perps.vaultHistory()).toEqual([
-      'perps',
-      'perps',
-      'vaultHistory',
-      '7d',
-      3600,
-    ]);
-    expect(VAULT_HISTORY_QUERY_POLICY).toEqual({
-      staleTime: 60_000,
-      refetchInterval: 60_000,
-    });
-    expect(perpsApi.getPerpsVaultHistory).toHaveBeenCalledTimes(1);
-
-    queryClient.clear();
-  });
+      await act(async () => { await vi.advanceTimersByTimeAsync(59_999) })
+      expect(getHistory).toHaveBeenCalledTimes(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(getHistory).toHaveBeenCalledTimes(2)
+      // TanStack notifies React on a subsequent timer after the fetch resolves.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(result.current.senior.data).toEqual(refreshedHistory)
+      expect(result.current.junior.data).toEqual(refreshedHistory)
+    } finally {
+      unmount()
+      queryClient.clear()
+      focusManager.setFocused(undefined)
+      vi.useRealTimers()
+    }
+  })
 
   it('requests and caches thirty-day assets separately from seven-day performance', async () => {
     const getHistory = vi.spyOn(perpsApi, 'getPerpsVaultHistory').mockResolvedValue(Result.ok(completeHistory));

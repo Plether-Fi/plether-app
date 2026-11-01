@@ -196,9 +196,19 @@ describe('Cloudflare Pages Worker', () => {
       const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))
       vi.stubGlobal('fetch', fetchMock)
 
+      // The anonymous request must be cacheable, otherwise a missing bypass
+      // guard would be indistinguishable from an endpoint with no cache TTL.
+      await worker.fetch(apiRequest(), {
+        INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+        ASSETS: assets,
+      })
+      expect(proxiedFetchOptions(fetchMock).cf?.cacheTtlByStatus['200-299']).toBe(30)
+      expect(proxiedFetchOptions(fetchMock).cache).toBeUndefined()
+      fetchMock.mockClear()
+
       await worker.fetch(
         new Request(
-          'https://insights.plether.com/api/insights/v1/competitions/current',
+          apiRequest().url,
           { headers: { [headerName]: headerValue } },
         ),
         {
@@ -507,14 +517,19 @@ describe('Cloudflare Pages Worker', () => {
     })
   })
 
-  it('rejects registration on Pages preview hosts before exposing the origin credential', async () => {
-    const fetchMock = vi.fn()
+  it.each([
+    ['POST', 'session'],
+    ['GET', 'x/callback?code=provider-code&state=opaque'],
+  ])('rejects preview-host registration %s %s before exposing the origin credential', async (method, path) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))
     vi.stubGlobal('fetch', fetchMock)
 
     const response = await worker.fetch(
       new Request(
-        'https://deployment.plether-insights.pages.dev/api/insights/v1/competitions/testnet-trading-2026-09/registrations/session',
-        { method: 'POST' },
+        `https://deployment.plether-insights.pages.dev/api/insights/v1/competitions/testnet-trading-2026-09/registrations/${path}`,
+        // Supply valid browser provenance so only the preview-host binding
+        // rejects this request. OAuth callbacks bypass that provenance gate.
+        { method, headers: { Origin: 'https://insights.plether.com' } },
       ),
       {
         INSIGHTS_BACKEND_URL: 'https://backend.example.com',
