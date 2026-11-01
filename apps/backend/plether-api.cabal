@@ -17,6 +17,7 @@ extra-source-files: schema.sql
                     test/fixtures/insights-funding-integrity-baseline.sql
                     test/fixtures/token-neutral-close-waiver.json
                     test/fixtures/token-neutral-close-rebate.json
+                    test/fixtures/candle-admin-deployed-release.json
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -43,6 +44,7 @@ library
         Plether.AA.RecoveryReceipt
         Plether.AA.OrderDiagnostics
         Plether.AA.Preparation
+        Plether.AA.PreparationGas
         Plether.AA.EvidenceCache
         Plether.AA.Kms
         Plether.AA.Paymaster
@@ -130,9 +132,11 @@ library
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
         Plether.Perps.CandleFinalizerProbe
+        Plether.Perps.CandleAdmin
         Plether.Perps.ClosedPriceGap
         Plether.Perps.HistoryIndexer
         Plether.Perps.Release
+        Plether.Perps.Workers
         Plether.Perps.Manifest
         Plether.Perps.IndexerFormat
         Plether.Perps.Manifest.Embed
@@ -356,6 +360,21 @@ executable plether-insights-admin
         RecordWildCards
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+-- An internal integration tool, never selected by production entrypoints.
+executable plether-candle-admin-fixture
+    import:           warnings
+    scope:            private
+    main-is:          CandleAdminFixtureMain.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        aeson >= 2.1,
+        plether-api
+    hs-source-dirs:   test-support
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1
+
 executable plether-candle-admin
     import:           warnings
     main-is:          CandleAdmin.hs
@@ -467,6 +486,8 @@ test-suite plether-api-test
         aeson >= 2.1,
         bytestring >= 0.11,
         containers >= 0.6,
+        crypton >= 0.34,
+        memory >= 0.18,
         directory >= 1.3,
         http-types >= 0.12,
         http-client >= 0.7,
@@ -493,6 +514,8 @@ test-suite plether-api-integration-test
         Plether.Keeper.BroadcastSpec
         Plether.Keeper.ReliabilitySpec
         Plether.DatabaseDiagnosticsSpec
+        Plether.BackendUnitRepairSpec
+        Plether.LiquidationWorkerIntegrationSpec
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
@@ -525,7 +548,8 @@ test-suite plether-api-integration-test
         wai-extra >= 3.1,
         warp >= 3.3
     build-tool-depends:
-        plether-api:plether-candle-admin
+        plether-api:plether-candle-admin,
+        plether-api:plether-candle-admin-fixture
     hs-source-dirs:   test-integration
     default-language: GHC2021
     default-extensions:

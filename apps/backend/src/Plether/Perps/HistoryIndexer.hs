@@ -7,6 +7,7 @@ module Plether.Perps.HistoryIndexer
   , applyPerpsAddressEnvironment
   , perpsContractAddressesFor
   , validatePerpsIndexerReleaseConfig
+  , validatePerpsIndexerReleaseConfigWithPins
   , perpsIndexerName
   , perpsV2IndexerName
   , perpsIndexerNameForLifecycleBook
@@ -131,7 +132,11 @@ import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (LogField, field, logError, logErrorEvery, logInfo, logInfoEvery, logWarn, logWarnEvery)
 import Plether.Perps.IndexerOptions (ReplayOptions (..), validateReplayOptions)
 import qualified Plether.Perps.IndexerFormat as IndexerFormat
-import Plether.Perps.Release (validatePerpsV2ReleaseConfig)
+import Plether.Perps.Release
+  ( PerpsReleaseConfigPins
+  , canonicalPerpsReleaseConfigPins
+  , validatePerpsV2ReleaseConfigWithPins
+  )
 import Plether.Perps.ExecutionOracle
   ( ExecutionOracleSnapshot (..)
   , decodeExecutionUpdateData
@@ -222,9 +227,16 @@ validatePerpsIndexerReleaseConfig
   -> Text
   -> Integer
   -> Either Text ()
-validatePerpsIndexerReleaseConfig chainId addresses housePool startBlock
+validatePerpsIndexerReleaseConfig =
+  validatePerpsIndexerReleaseConfigWithPins canonicalPerpsReleaseConfigPins
+
+validatePerpsIndexerReleaseConfigWithPins
+  :: PerpsReleaseConfigPins
+  -> Integer -> PerpsAddresses -> Text -> Integer
+  -> Either Text ()
+validatePerpsIndexerReleaseConfigWithPins pins chainId addresses housePool startBlock
   | chainId == 421614 =
-      validatePerpsV2ReleaseConfig
+      validatePerpsV2ReleaseConfigWithPins pins
         chainId
         (paOrderRouter addresses)
         (paOrderLifecycleBook addresses)

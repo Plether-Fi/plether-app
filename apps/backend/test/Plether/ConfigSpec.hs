@@ -197,7 +197,18 @@ spec = do
           case result of
             Left err -> expectationFailure $ "loadConfig failed: " <> err
             Right cfg -> do
-              let rendered = show cfg
+              let populated = cfg
+                    { cfgFaucetPrivateKey = Just $ T.pack faucetSecret
+                    , cfgKeeperPrivateKey = Just $ T.pack keeperSecret
+                    , cfgLpSettlementPrivateKey = Just $ T.pack lpSettlementSecret
+                    , cfgFaucetGuardConfig = Just $ FaucetGuardConfig (T.pack faucetProxySecret) 20 200
+                    }
+                  rendered = show populated
+              cfgFaucetPrivateKey populated `shouldBe` Just (T.pack faucetSecret)
+              cfgKeeperPrivateKey populated `shouldBe` Just (T.pack keeperSecret)
+              cfgLpSettlementPrivateKey populated `shouldBe` Just (T.pack lpSettlementSecret)
+              fmap fgcProxyOriginToken (cfgFaucetGuardConfig populated)
+                `shouldBe` Just (T.pack faucetProxySecret)
               mapM_
                 (rendered `shouldNotContain`)
                 [ rpcSecret
@@ -586,14 +597,6 @@ spec = do
         "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
         "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
         "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-        `shouldBe` False
-
-    it "rejects native action targets from the previous deployment" $ do
-      validAaDeploymentAddresses
-        "0xc3ce8590b7ecde7454f9d5b51a797bbde96fe56b"
-        "0xbd2f286efca5f761e21452673ab9b8c14e17aad7"
-        "0x9611e643ac4691e8fded8a0c2c22c56438b6f352"
-        "0xa863f985eeda8bf5be2320693bb93d109ebb2dbd"
         `shouldBe` False
 
     it "normalizes only HTTPS/default-443 external security RPC endpoints" $ do

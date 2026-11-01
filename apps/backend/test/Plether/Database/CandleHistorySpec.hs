@@ -179,7 +179,7 @@ spec = do
 
     it "bounds native page volume reads and refreshes index visibility after migration" $ do
       migration <- readFile "src/Plether/Database/Candles.hs"
-      admin <- readFile "app/CandleAdmin.hs"
+      admin <- readFile "src/Plether/Perps/CandleAdmin.hs"
       migration
         `shouldContain` "volume.bucket_start >= GREATEST(bounds.effective_start, bounds.volume_coverage_start)"
       migration

@@ -166,6 +166,8 @@ module Plether.Database.Schema
   , setPerpsIndexerState
   , setPerpsIndexerStateWithTimestamp
   , deletePerpsHistoryFromBlock
+  , deletePerpsActivityFromBlockSql
+  , deletePerpsEventsFromBlockSql
   ) where
 
 import qualified Plether.LiquidationWorker.Monitoring as LiquidationMonitoring
@@ -5476,16 +5478,24 @@ scopedIndexerName :: Text -> Text -> Text
 scopedIndexerName indexerName releaseRouter =
   indexerName <> ":" <> normalizeRouter releaseRouter
 
+deletePerpsActivityFromBlockSql :: Query
+deletePerpsActivityFromBlockSql =
+  "DELETE FROM perps_account_activity WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
+
+deletePerpsEventsFromBlockSql :: Query
+deletePerpsEventsFromBlockSql =
+  "DELETE FROM perps_events WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
+
 deletePerpsHistoryFromBlock :: Connection -> Integer -> Text -> Integer -> IO ()
 deletePerpsHistoryFromBlock conn chainId releaseRouter blockNumber = do
   _ <- execute conn
     "DELETE FROM perps_asset_transfers WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
     (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn
-    "DELETE FROM perps_account_activity WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
+    deletePerpsActivityFromBlockSql
     (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn
-    "DELETE FROM perps_events WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
+    deletePerpsEventsFromBlockSql
     (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn
     "UPDATE perps_orders SET terminal_tx_hash = NULL, terminal_block_number = NULL, terminal_timestamp = NULL, \

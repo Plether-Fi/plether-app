@@ -16,7 +16,7 @@ const mockUseSignTypedData = vi.fn()
 
 vi.mock('wagmi', () => ({
   useAccount: () => mockUseAccount(),
-  useReadContract: () => mockUseReadContract(),
+  useReadContract: (parameters: unknown) => mockUseReadContract(parameters),
   useWriteContract: () => mockUseWriteContract(),
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
   useSignTypedData: () => mockUseSignTypedData(),
@@ -557,14 +557,11 @@ describe('useStakeWithPermit', () => {
     expect(Result.isError(stakeResult!)).toBe(true)
   })
 
-  it('provides reset function that clears permit state', async () => {
-    let readCallCount = 0
-    mockUseReadContract.mockImplementation(() => {
-      readCallCount++
-      if (readCallCount === 1) {
-        return { data: 0n }
-      }
-      return { data: 'plDXY-BEAR' }
+  it('clears the local permit error after a rejected signature is reset', async () => {
+    mockUseReadContract.mockImplementation(({ functionName }) => {
+      if (functionName === 'nonces') return { data: 0n }
+      if (functionName === 'name') return { data: 'plDXY-BEAR' }
+      throw new Error(`Unexpected permit read: ${functionName}`)
     })
 
     mockSignTypedDataAsync.mockRejectedValue(new Error('User rejected'))
@@ -575,12 +572,46 @@ describe('useStakeWithPermit', () => {
       await result.current.stakeWithPermit(1000000000000000000n)
     })
 
-    expect(result.current.error).toBeDefined()
+    expect(result.current.error).toBeInstanceOf(Error)
+    expect(result.current.permitCompleted).toBe(false)
+    expect(result.current.isSigningPermit).toBe(false)
+    expect(mockWriteContractAsync).not.toHaveBeenCalled()
 
     act(() => {
       result.current.reset()
     })
 
-    expect(mockReset).toHaveBeenCalled()
+    expect(mockReset).toHaveBeenCalledTimes(1)
+    expect(result.current.error).toBeNull()
+    expect(result.current.permitCompleted).toBe(false)
+    expect(result.current.isSigningPermit).toBe(false)
+    expect(result.current.isPending).toBe(false)
+  })
+
+  it('clears completed permit state after a successful submission is reset', async () => {
+    mockUseReadContract.mockImplementation(({ functionName }) => {
+      if (functionName === 'nonces') return { data: 0n }
+      if (functionName === 'name') return { data: 'plDXY-BEAR' }
+      throw new Error(`Unexpected permit read: ${functionName}`)
+    })
+    mockSignTypedDataAsync.mockResolvedValue('0x' + '1'.repeat(64) + '2'.repeat(64) + '1b')
+    mockWriteContractAsync.mockResolvedValue('0xstakepermithash')
+    const { result } = renderHook(() => useStakeWithPermit('BEAR'))
+    await act(async () => {
+      const submission = await result.current.stakeWithPermit(1_000_000_000_000_000_000n)
+      expect(Result.isOk(submission)).toBe(true)
+    })
+    expect(result.current.permitCompleted).toBe(true)
+    expect(result.current.error).toBeNull()
+    expect(result.current.isSigningPermit).toBe(false)
+    expect(mockWriteContractAsync).toHaveBeenCalledTimes(1)
+
+    act(() => { result.current.reset() })
+
+    expect(mockReset).toHaveBeenCalledTimes(1)
+    expect(result.current.permitCompleted).toBe(false)
+    expect(result.current.error).toBeNull()
+    expect(result.current.isSigningPermit).toBe(false)
+    expect(result.current.isPending).toBe(false)
   })
 })

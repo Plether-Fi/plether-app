@@ -528,7 +528,7 @@ describe('SponsoredOperationRecovery', () => {
     expect(status).toHaveBeenCalledTimes(1)
   })
 
-  it('clears a recovered EIP-3009 authorization after exact inclusion', async () => {
+  it('marks the recovered authorization consumed without replacing a newer authorization', async () => {
     const initialAuthorization = getOrCreateDepositAuthorization({
       chainId: 421614,
       ownerAddress: OWNER,
@@ -543,6 +543,26 @@ describe('SponsoredOperationRecovery', () => {
       authorizationToken: TOKEN,
       authorizationNonce: initialAuthorization.nonce,
     })
+    // A later deposit invocation can create its authorization before acquiring
+    // the lane. Completing the older deposit must preserve that newer entry.
+    const newerAuthorization = getOrCreateDepositAuthorization({
+      chainId: 421614,
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      token: TOKEN,
+      amount: 30_000_000n,
+      nowSeconds: 1_100n,
+    })
+    const newerStoredAuthorization = globalThis.localStorage.getItem(
+      CURRENT_AUTHORIZATION_KEY
+    )
+    expect(JSON.parse(newerStoredAuthorization ?? '{}')).toMatchObject({
+      nonce: newerAuthorization.nonce,
+      value: '30000000',
+    })
+    expect(globalThis.localStorage.getItem(
+      `${CURRENT_AUTHORIZATION_KEY}:consumed`
+    )).toBeNull()
     const receipt = {
       actualGasCost: 1n,
       actualGasUsed: 1n,
@@ -575,15 +595,11 @@ describe('SponsoredOperationRecovery', () => {
       ).toBe('confirmed')
     })
 
-    const nextAuthorization = getOrCreateDepositAuthorization({
-      chainId: 421614,
-      ownerAddress: OWNER,
-      accountAddress: ACCOUNT,
-      token: TOKEN,
-      amount: 25_000_000n,
-      nowSeconds: 1_000n,
-    })
-    expect(nextAuthorization.nonce).not.toBe(initialAuthorization.nonce)
+    expect(globalThis.localStorage.getItem(
+      `${CURRENT_AUTHORIZATION_KEY}:consumed`
+    )).toBe(initialAuthorization.nonce.toLowerCase())
+    expect(globalThis.localStorage.getItem(CURRENT_AUTHORIZATION_KEY))
+      .toBe(newerStoredAuthorization)
   })
 
   it('retires legacy authorization only at safe confirmation without deleting v2', async () => {

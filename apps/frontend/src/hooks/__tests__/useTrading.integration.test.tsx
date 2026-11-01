@@ -15,6 +15,7 @@ import {
 import { SEPOLIA_ADDRESSES } from '../../contracts/addresses'
 import { ERC20_ABI, CURVE_POOL_ABI, ZAP_ROUTER_ABI } from '../../contracts/abis'
 import { useCurveQuote, useZapQuote } from '../useTrading'
+import { frontendIntegrationState, integrationPrerequisitesAvailable } from '../../test/integrationPrerequisites'
 
 const USER = TEST_ACCOUNTS[0]
 const USDC_DECIMALS = 6
@@ -22,12 +23,14 @@ const TOKEN_DECIMALS = 18
 
 async function verifyContractsExist(): Promise<boolean> {
   try {
-    const [curveCode, zapCode] = await Promise.all([
-      publicClient.getCode({ address: SEPOLIA_ADDRESSES.CURVE_POOL }),
-      publicClient.getCode({ address: SEPOLIA_ADDRESSES.ZAP_ROUTER }),
-    ])
-    return (curveCode !== undefined && curveCode !== '0x') &&
-           (zapCode !== undefined && zapCode !== '0x')
+    const codes = await Promise.all([
+      SEPOLIA_ADDRESSES.CURVE_POOL,
+      SEPOLIA_ADDRESSES.ZAP_ROUTER,
+      SEPOLIA_ADDRESSES.USDC,
+      SEPOLIA_ADDRESSES.DXY_BEAR,
+      SEPOLIA_ADDRESSES.DXY_BULL,
+    ].map(address => publicClient.getCode({ address })))
+    return codes.every(code => code !== undefined && code !== '0x')
   } catch {
     return false
   }
@@ -118,7 +121,11 @@ describe('useTrading Integration Tests', () => {
   let contractsExist = false
 
   beforeAll(async () => {
-    contractsExist = await verifyContractsExist()
+    contractsExist = frontendIntegrationState.anvilAvailable && await verifyContractsExist()
+    integrationPrerequisitesAvailable('FRONTEND_INTEGRATION_REQUIRED', 'useTrading integration', [{
+      available: contractsExist,
+      requirement: 'the configured Sepolia Curve Pool, Zap Router, USDC, BEAR and BULL contracts on the local fork',
+    }])
     if (!contractsExist) {
       console.warn(
         '\n⚠️  Trading contracts not found on forked chain.\n' +
@@ -166,13 +173,32 @@ describe('useTrading Integration Tests', () => {
       expect(result.current.error).toBeNull()
     })
 
-    it('calculates price impact for large swaps', async (ctx) => {
+    it('matches independently read output and price impact for a large swap', async (ctx) => {
       if (!contractsExist) {
         ctx.skip()
         return
       }
       const wrapper = createTestWrapper()
       const largeAmount = parseUnits('10000', USDC_DECIMALS)
+      const referenceAmount = parseUnits('1', USDC_DECIMALS)
+      const blockNumber = await publicClient.getBlockNumber()
+      const [largeOutput, referenceOutput] = await Promise.all([
+        publicClient.readContract({
+          address: SEPOLIA_ADDRESSES.CURVE_POOL, abi: CURVE_POOL_ABI,
+          functionName: 'get_dy', args: [0n, 1n, largeAmount], blockNumber,
+        }),
+        publicClient.readContract({
+          address: SEPOLIA_ADDRESSES.CURVE_POOL, abi: CURVE_POOL_ABI,
+          functionName: 'get_dy', args: [0n, 1n, referenceAmount], blockNumber,
+        }),
+      ])
+      expect(largeOutput).toBeGreaterThan(0n)
+      expect(referenceOutput).toBeGreaterThan(0n)
+      const referenceValue = referenceOutput * largeAmount
+      const executionValue = largeOutput * referenceAmount
+      const impactBps = referenceValue > executionValue
+        ? (referenceValue - executionValue) * 10_000n / referenceValue
+        : 0n
 
       const { result } = renderHook(
         () => useConnectedCurveQuote('USDC', largeAmount),
@@ -189,9 +215,11 @@ describe('useTrading Integration Tests', () => {
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false)
+        expect(result.current.error).toBeNull()
+        expect(result.current.amountOut).toBe(largeOutput)
+        expect(result.current.priceImpact).toBe(Number(impactBps) / 100)
       }, { timeout: 10000 })
-
-      expect(result.current.priceImpact).toBeGreaterThanOrEqual(0)
+      expect(await publicClient.getBlockNumber()).toBe(blockNumber)
     })
   })
 

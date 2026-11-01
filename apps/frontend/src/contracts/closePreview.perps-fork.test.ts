@@ -1,20 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { createPublicClient, http, type Address } from 'viem'
+import { createPublicClient, http, isAddress, type Address } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import rawManifest from '../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../perps-aa/manifest'
 import { preparePerpsOrderV3 } from './preparePerpsOrderV3'
 import { verifyClosePreviewDeployment } from './verifyPerpsV3Bindings'
 import { PERPS_RELEASE_IS_DEPLOYED, PERPS_CLOSE_PREVIEW_ADDRESS } from './perpsAddresses'
+import { integrationPrerequisitesAvailable } from '../test/integrationPrerequisites'
 
-const url = process.env.ARB_SEPOLIA_RPC_URL
+const url = process.env.ARB_SEPOLIA_RPC_URL ?? process.env.ARBITRUM_SEPOLIA_RPC_URL
 const account = process.env.PERPS_INTEGRATION_ACCOUNT as Address | undefined
 const size = process.env.PERPS_INTEGRATION_CLOSE_SIZE
 const manifest = PERPS_RELEASE_IS_DEPLOYED ? parsePerpsAaManifest(rawManifest) : undefined
+const configured = integrationPrerequisitesAvailable('PERPS_FORK_REQUIRED', 'Close-preview fork integration', [
+  { available: Boolean(url), requirement: 'ARB_SEPOLIA_RPC_URL or ARBITRUM_SEPOLIA_RPC_URL' },
+  { available: Boolean(manifest), requirement: 'the current deployed canonical release and matching manifest' },
+  { available: Boolean(account && isAddress(account)), requirement: 'an explicit valid PERPS_INTEGRATION_ACCOUNT' },
+  { available: Boolean(size && /^[1-9]\d*$/.test(size)), requirement: 'a positive integer PERPS_INTEGRATION_CLOSE_SIZE' },
+])
 
 // Read-only current-release check. Prepared configuration has no chain target;
 // historical samples require their matching archived consumer and ABI.
-describe.skipIf(!url || !account || !size || !manifest)('deployed close-preview frontend compatibility', () => {
+describe.skipIf(!configured)('deployed close-preview frontend compatibility', () => {
   it('verifies the current lens and reviews an explicitly supplied close', async () => {
     if (!url || !account || !size || !manifest) throw new Error('Current deployment inputs are required')
     const client = createPublicClient({ chain: arbitrumSepolia, transport: http(url) })

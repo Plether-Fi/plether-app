@@ -9,6 +9,9 @@ module Plether.Keeper
   , auditLpSettlementStartup
   , runLpSettlementPreflight
   , processLpSettlementCycle
+  , buildLpSettlementTransaction
+  , buildLpSettlementTransactionWith
+  , buildLpSettlementReplacement
   , processLpSettlementCycleWithCodeHashes
   , assessLpSettlementStatus
   , isLpSettlementObservationSafe
@@ -1635,17 +1638,7 @@ replaceStaleLpSettlementTransaction cfg conn client transaction = do
               priorityBase
               (lstrMaxPriorityFeePerGas transaction)
               (lstrMaxFeePerGas transaction)
-          replacementTx =
-            Tx1559
-              { txChainId = lstrChainId transaction
-              , txNonce = lstrNonce transaction
-              , txMaxPriorityFeePerGas = replacementPriorityFee
-              , txMaxFeePerGas = replacementMaxFee
-              , txGasLimit = lstrGasLimit transaction
-              , txTo = lstrTargetAddress transaction
-              , txValue = lstrValue transaction
-              , txData = lstrCalldata transaction
-              }
+          replacementTx = buildLpSettlementReplacement transaction replacementPriorityFee replacementMaxFee
           maximumCost = transactionMaximumCost replacementTx
       balanceResult <- ethGetBalance client (lstrSignerAddress transaction)
       case balanceResult of
@@ -1692,6 +1685,20 @@ replaceStaleLpSettlementTransaction cfg conn client transaction = do
                     , field "maximum_transaction_cost_wei" maximumCost
                     ]
                   pure LpReconcilePending
+
+-- Replacements preserve the persisted nonce and complete transaction intent.
+buildLpSettlementReplacement :: LpSettlementTransactionRow -> Integer -> Integer -> Tx1559
+buildLpSettlementReplacement transaction priority maxFee =
+  Tx1559
+    { txChainId = lstrChainId transaction
+    , txNonce = lstrNonce transaction
+    , txMaxPriorityFeePerGas = priority
+    , txMaxFeePerGas = maxFee
+    , txGasLimit = lstrGasLimit transaction
+    , txTo = lstrTargetAddress transaction
+    , txValue = lstrValue transaction
+    , txData = lstrCalldata transaction
+    }
 
 ageSeconds :: UTCTime -> UTCTime -> Int
 ageSeconds now thenTime = max 0 $ floor $ diffUTCTime now thenTime
@@ -1855,7 +1862,20 @@ buildLpSettlementTransaction
   -> EthClient
   -> SettlementMonitor.SettlementStatus
   -> IO (Either Text (Text, Integer, ByteString))
-buildLpSettlementTransaction cfg conn client status =
+buildLpSettlementTransaction cfg conn client =
+  buildLpSettlementTransactionWith cfg
+    (getLatestPythUpdatePayloadAtOrAfter conn)
+    (Perps.getUpdateFee client (cfgPerpsPletherOracle cfg))
+
+-- The production builder owns selection, admission and exact transaction bytes.
+-- IO dependencies permit deterministic boundary tests without replacing this flow.
+buildLpSettlementTransactionWith
+  :: Config
+  -> (Integer -> IO (Maybe PythUpdatePayloadRow))
+  -> ([ByteString] -> IO (Either RpcError Integer))
+  -> SettlementMonitor.SettlementStatus
+  -> IO (Either Text (Text, Integer, ByteString))
+buildLpSettlementTransactionWith cfg loadPayload quoteFee status =
   case SettlementMonitor.ssRequiredExecutionPath status of
     SettlementMonitor.CachedMark ->
       pure $
@@ -1868,9 +1888,7 @@ buildLpSettlementTransaction cfg conn client status =
           )
     SettlementMonitor.AtomicOracleRefresh -> do
       payload <-
-        getLatestPythUpdatePayloadAtOrAfter
-          conn
-          (SettlementMonitor.ssMinimumAtomicPublishTime status)
+        loadPayload (SettlementMonitor.ssMinimumAtomicPublishTime status)
       case payload of
         Nothing -> pure $ Left "no admitted latest six-feed Pyth payload is cached"
         Just cachedPayload ->
@@ -1883,7 +1901,7 @@ buildLpSettlementTransaction cfg conn client status =
                 updateData of
                 Left err -> pure $ Left err
                 Right () -> do
-                  feeResult <- Perps.getUpdateFee client (cfgPerpsPletherOracle cfg) updateData
+                  feeResult <- quoteFee updateData
                   pure $ case feeResult of
                     Left err -> Left $ rpcErrorText err
                     Right exactFee ->

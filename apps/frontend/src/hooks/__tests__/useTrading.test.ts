@@ -16,7 +16,7 @@ const mockUseSignTypedData = vi.fn()
 
 vi.mock('wagmi', () => ({
   useAccount: () => mockUseAccount(),
-  useReadContract: () => mockUseReadContract(),
+  useReadContract: (parameters: unknown) => mockUseReadContract(parameters),
   useWriteContract: () => mockUseWriteContract(),
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
   useSignTypedData: () => mockUseSignTypedData(),
@@ -92,17 +92,20 @@ describe('useCurveQuote', () => {
   })
 
   it('calculates positive price impact when actual rate is worse than spot rate', () => {
-    let callCount = 0
-    mockUseReadContract.mockImplementation(() => {
-      callCount++
-      if (callCount === 1) {
-        return { data: 900000000000000000n, isLoading: false, error: null, refetch: vi.fn() }
-      }
-      return { data: 1000000000000000000n, isLoading: false, error: null, refetch: vi.fn() }
+    // Ten USDC buys nine tokens, while the one-USDC reference buys one.
+    // Distinct input amounts keep the two responses coherent with wagmi's cache.
+    const amountIn = 10_000_000n
+    const outputs = new Map([[amountIn, 9_000_000_000_000_000_000n], [1_000_000n, 1_000_000_000_000_000_000n]])
+    mockUseReadContract.mockImplementation(({ functionName, args }) => {
+      expect(functionName).toBe('get_dy')
+      expect(args.slice(0, 2)).toEqual([0n, 1n])
+      expect(outputs.has(args[2])).toBe(true)
+      return { data: outputs.get(args[2]), isLoading: false, error: null, refetch: vi.fn() }
     })
 
-    const { result } = renderHook(() => useCurveQuote('USDC', 1000000n))
-    expect(result.current.priceImpact).toBeGreaterThanOrEqual(0)
+    const { result } = renderHook(() => useCurveQuote('USDC', amountIn))
+    expect(result.current.amountOut).toBe(9_000_000_000_000_000_000n)
+    expect(result.current.priceImpact).toBe(10)
   })
 })
 

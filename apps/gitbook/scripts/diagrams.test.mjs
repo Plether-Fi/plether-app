@@ -101,5 +101,10 @@ test('claim payout branches and isolated price/action funding are retained', () 
 })
 test('sponsorship data is prepared before the owner signature', () => {
   const flow = get('authorization-and-gas-sponsorship').blocks[0].steps
-  assert.ok(flow.findIndex(s => s.title === 'Prepare sponsorship') < flow.findIndex(s => s.title === 'Sign in your wallet'))
+  for (const title of ['Prepare sponsorship', 'Sign in your wallet']) {
+    assert.equal(flow.filter(step => step.title === title).length, 1, `${title} must occur exactly once`)
+  }
+  const preparation = flow.findIndex(step => step.title === 'Prepare sponsorship')
+  const signature = flow.findIndex(step => step.title === 'Sign in your wallet')
+  assert.ok(preparation >= 0 && signature >= 0 && preparation < signature)
 })

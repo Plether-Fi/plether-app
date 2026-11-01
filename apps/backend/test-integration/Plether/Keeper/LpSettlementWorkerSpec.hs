@@ -13,7 +13,7 @@ import Control.Concurrent
   , tryPutMVar
   )
 import Control.Exception (AsyncException (ThreadKilled), bracket, finally, fromException)
-import Control.Monad (foldM, unless, void, when)
+import Control.Monad (foldM, forM_, unless, void, when)
 import Data.Aeson (Value (..), decode, encode, object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -358,6 +358,46 @@ lpSettlementWorkerSpec databaseUrl =
             readIORef (rfSentRawTransactions fixture) `shouldReturn` []
             assertNoUnexpectedRequests fixture
 
+    forM_
+      [ "no competitor", "wrong epoch", "own transaction", "senior backlog"
+      , "junior backlog", "deferred entries", "at observation block"
+      , "before observation block", "same transaction index", "later transaction index"
+      , "later block", "orphaned same-block event", "successful replay", "unrelated replay revert"
+      ] $ \scenario ->
+        it ("retains manual review when supersession evidence has " <> scenario) $
+          withWorkerDatabase databaseUrl $ \pool ->
+            withRpcFixture False $ \fixture client ->
+              withDb pool $ \conn -> do
+                signed <- fixtureSignedTransaction 9
+                recordLpSettlementObservationV2 conn $
+                  fixtureObservation
+                    { lsoiObservedBlock = 100
+                    , lsoiObservedBlockHash = Just $ blockHash 100
+                    }
+                prepared <- prepareLpSettlementTransaction conn $ fixtureIntent signed
+                _ <- appendLpSettlementBroadcast conn $
+                  LpSettlementBroadcastInput (lstrId prepared) "ambiguous" Nothing (Just "lost response")
+                let receiptBlock = 914
+                    receiptHash = blockHash receiptBlock
+                    reverted = revertedReceipt (signedTransactionHash signed) receiptBlock receiptHash 1
+                    competitor = supersessionCompetitor scenario signed receiptBlock receiptHash
+                writeIORef (rfReceipts fixture) [(T.toLower $ signedTransactionHash signed, reverted)]
+                writeIORef (rfLogs fixture) $ if scenario == "no competitor" then [] else [competitor]
+                writeIORef (rfReplayNoProgress fixture) $ scenario /= "successful replay"
+                writeIORef (rfReplayOtherError fixture) $ scenario == "unrelated replay revert"
+                writeIORef (rfHasMaturedWork fixture) False
+
+                processLpSettlementCycle (workerConfig LpSettlementExecute) conn client
+
+                reviewed <- getLpSettlementTransactionById conn $ lstrId prepared
+                active <- getActiveLpSettlementTransaction conn fixtureChainId monitor fixtureSigner
+                fmap lstrStatus reviewed `shouldBe` Just "manual_review"
+                fmap lstrReceiptSucceeded reviewed `shouldBe` Just (Just False)
+                fmap lstrReceiptBlockHash reviewed `shouldBe` Just (Just receiptHash)
+                fmap lstrId active `shouldBe` Just (lstrId prepared)
+                readIORef (rfSentRawTransactions fixture) `shouldReturn` []
+                assertNoUnexpectedRequests fixture
+
     it "retains the active nonce lane when a previously seen receipt block is reorged" $
       withWorkerDatabase databaseUrl $ \pool ->
         withRpcFixture False $ \fixture client ->
@@ -502,6 +542,7 @@ data RpcFixture = RpcFixture
   , rfConfirmedNonce :: IORef Integer
   , rfHasMaturedWork :: IORef Bool
   , rfLogs :: IORef [Value]
+  , rfReplayOtherError :: IORef Bool
   , rfReplayNoProgress :: IORef Bool
   , rfUnexpectedRequests :: IORef [Text]
   }
@@ -519,6 +560,7 @@ withRpcFixture autoMine action = do
   confirmedNonce <- newIORef 0
   hasMaturedWork <- newIORef True
   logs <- newIORef []
+  replayOtherError <- newIORef False
   replayNoProgress <- newIORef False
   unexpectedRequests <- newIORef []
   let fixture =
@@ -535,6 +577,7 @@ withRpcFixture autoMine action = do
           , rfConfirmedNonce = confirmedNonce
           , rfHasMaturedWork = hasMaturedWork
           , rfLogs = logs
+          , rfReplayOtherError = replayOtherError
           , rfReplayNoProgress = replayNoProgress
           , rfUnexpectedRequests = unexpectedRequests
           }
@@ -550,6 +593,7 @@ rpcApplication fixture request respond = do
         Just ("eth_estimateGas", [_call, String _blockTag]) -> True
         _ -> False
   replayNoProgress <- readIORef $ rfReplayNoProgress fixture
+  replayOtherError <- readIORef $ rfReplayOtherError fixture
   responseValue <-
     if replayRequest && replayNoProgress
       then
@@ -561,7 +605,7 @@ rpcApplication fixture request respond = do
                 .= object
                   [ "code" .= (-32000 :: Int)
                   , "message" .= ("execution reverted" :: Text)
-                  , "data" .= ("0x86cca6b8" :: Text)
+                  , "data" .= (if replayOtherError then "0xdeadbeef" else "0x86cca6b8" :: Text)
                   ]
             ]
       else do
@@ -836,6 +880,30 @@ competitorSettlementLog eventBlock eventBlockHash transactionIndex =
         .= bytesHex
           (mconcat $ map encodeUint256 [11, 12, 13, 14, 0, 0, 0])
     ]
+
+-- Each mutation changes one guard in the otherwise accepted worker scenario.
+-- The RPC response is still decoded by the production Ethereum client.
+supersessionCompetitor :: String -> SignedTransaction -> Integer -> Text -> Value
+supersessionCompetitor scenario signed receiptBlock receiptHash =
+  case competitorSettlementLog receiptBlock receiptHash 0 of
+    Object fields -> Object $ case scenario of
+      "wrong epoch" -> put "topics" (toJSON [bytesHex lpEpochSettledTopic, bytesHex $ encodeUint256 $ fixtureEpoch + 1]) fields
+      "own transaction" -> put "transactionHash" (String $ signedTransactionHash signed) fields
+      "senior backlog" -> backlog [11, 12, 13, 14, 1, 0, 0] fields
+      "junior backlog" -> backlog [11, 12, 13, 14, 0, 1, 0] fields
+      "deferred entries" -> backlog [11, 12, 13, 14, 0, 0, 1] fields
+      "at observation block" -> atBlock 100 fields
+      "before observation block" -> atBlock 99 fields
+      "same transaction index" -> put "transactionIndex" (String $ quantity 1) fields
+      "later transaction index" -> put "transactionIndex" (String $ quantity 2) fields
+      "later block" -> atBlock (receiptBlock + 1) fields
+      "orphaned same-block event" -> put "blockHash" (String $ hexText 64 "e") fields
+      _ -> fields
+    _ -> error "competitor fixture must be an object"
+ where
+  put name = KeyMap.insert (Key.fromText name)
+  backlog values = put "data" (String $ bytesHex $ mconcat $ map encodeUint256 values)
+  atBlock number = put "blockHash" (String $ blockHash number) . put "blockNumber" (String $ quantity number)
 
 settlementStatusBytes :: Bool -> BS.ByteString
 settlementStatusBytes hasMaturedWork =

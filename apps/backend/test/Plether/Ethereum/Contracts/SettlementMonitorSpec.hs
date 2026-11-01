@@ -9,7 +9,7 @@ import qualified Data.Text.Encoding as TE
 import Network.HTTP.Types (status200)
 import Network.Wai (Application, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
-import Plether.Ethereum.Abi (encodeAddress, encodeUint256, selector)
+import Plether.Ethereum.Abi (encodeAddress, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..), newClient)
 import Plether.Ethereum.Contracts.SettlementMonitor
   ( ExecutionPath (..)
@@ -23,6 +23,7 @@ import Plether.Ethereum.Contracts.SettlementMonitor
   , validateSettlementDeployment
   , verifyBindings
   )
+import Plether.Ethereum.Contracts.Perps (settleLpEpochPoolCall, settleLpEpochRouterCall)
 import Test.Hspec
 
 spec :: Spec
@@ -148,7 +149,10 @@ spec = do
 
   describe "LP settlement call selectors" $ do
     it "uses the canonical pool and router settlement signatures" $ do
-      selector "settleLpEpoch(uint256,uint256)" `shouldNotBe` selector "settleLpEpoch(bytes[])"
+      BS.take 4 (settleLpEpochPoolCall 123 456)
+        `shouldBe` BS.pack [0x4c, 0x9b, 0xff, 0xad]
+      BS.take 4 (settleLpEpochRouterCall [BS.singleton 1])
+        `shouldBe` BS.pack [0x0a, 0xd6, 0xdd, 0x2e]
 
   describe "settlement deployment validation" $ do
     it "accepts the exact schema and address graph case-insensitively" $ do

@@ -9,6 +9,9 @@ module Plether.Perps.Release
   , perpsV2PositionProtectionBook
   , perpsV2PublicLens
   , validatePerpsV2ReleaseConfig
+  , PerpsReleaseConfigPins (..)
+  , canonicalPerpsReleaseConfigPins
+  , validatePerpsV2ReleaseConfigWithPins
   , orderV3IntentDomain
   , verifyPerpsV3ReleaseBindings
   ) where
@@ -71,6 +74,26 @@ perpsV2Clearinghouse = Manifest.marginClearinghouseAddress
 perpsV2HousePool :: Text
 perpsV2HousePool = Manifest.housePoolAddress
 
+-- Explicit inputs keep prepared-release gating and deployed-binding validation
+-- independently testable. Production always supplies the canonical manifest.
+data PerpsReleaseConfigPins = PerpsReleaseConfigPins
+  { prcpDeployed :: Bool
+  , prcpChainId :: Integer
+  , prcpRouter :: Text
+  , prcpLifecycleBook :: Text
+  , prcpEngine :: Text
+  , prcpClearinghouse :: Text
+  , prcpHousePool :: Text
+  , prcpDeploymentBlock :: Integer
+  }
+  deriving stock (Show, Eq)
+
+canonicalPerpsReleaseConfigPins :: PerpsReleaseConfigPins
+canonicalPerpsReleaseConfigPins = PerpsReleaseConfigPins
+  Manifest.releaseIsDeployed Manifest.releaseChainId perpsV2OrderRouter
+  perpsV2OrderLifecycleBook perpsV2Engine perpsV2Clearinghouse
+  perpsV2HousePool perpsV2DeploymentBlock
+
 validatePerpsV2ReleaseConfig
   :: Integer
   -> Text
@@ -80,17 +103,23 @@ validatePerpsV2ReleaseConfig
   -> Text
   -> Integer
   -> Either Text ()
-validatePerpsV2ReleaseConfig chainId router lifecycleBook engine clearinghouse housePool startBlock = do
-  unless Manifest.releaseIsDeployed $ Left "Perps release is prepared; deployment is required"
-  expectNumber "PERPS_CHAIN_ID" chainId Manifest.releaseChainId
-  expectAddress "PERPS_ORDER_ROUTER" router perpsV2OrderRouter
+validatePerpsV2ReleaseConfig = validatePerpsV2ReleaseConfigWithPins canonicalPerpsReleaseConfigPins
+
+validatePerpsV2ReleaseConfigWithPins
+  :: PerpsReleaseConfigPins
+  -> Integer -> Text -> Maybe Text -> Text -> Text -> Text -> Integer
+  -> Either Text ()
+validatePerpsV2ReleaseConfigWithPins pins chainId router lifecycleBook engine clearinghouse housePool startBlock = do
+  unless (prcpDeployed pins) $ Left "Perps release is prepared; deployment is required"
+  expectNumber "PERPS_CHAIN_ID" chainId (prcpChainId pins)
+  expectAddress "PERPS_ORDER_ROUTER" router (prcpRouter pins)
   case lifecycleBook of
     Nothing -> Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V3 sponsorship"
-    Just address -> expectAddress "PERPS_ORDER_LIFECYCLE_BOOK" address perpsV2OrderLifecycleBook
-  expectAddress "PERPS_CFD_ENGINE" engine perpsV2Engine
-  expectAddress "PERPS_MARGIN_CLEARINGHOUSE" clearinghouse perpsV2Clearinghouse
-  expectAddress "PERPS_HOUSE_POOL" housePool perpsV2HousePool
-  expectNumber "PERPS_INDEXER_START_BLOCK" startBlock perpsV2DeploymentBlock
+    Just address -> expectAddress "PERPS_ORDER_LIFECYCLE_BOOK" address (prcpLifecycleBook pins)
+  expectAddress "PERPS_CFD_ENGINE" engine (prcpEngine pins)
+  expectAddress "PERPS_MARGIN_CLEARINGHOUSE" clearinghouse (prcpClearinghouse pins)
+  expectAddress "PERPS_HOUSE_POOL" housePool (prcpHousePool pins)
+  expectNumber "PERPS_INDEXER_START_BLOCK" startBlock (prcpDeploymentBlock pins)
  where
   expectAddress label actual expected =
     unless (T.toLower actual == T.toLower expected) $

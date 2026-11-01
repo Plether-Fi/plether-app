@@ -57,7 +57,7 @@ describe('Divisions ranking and progression', () => {
     expect(qualified.standings.find((row) => row.address === account().address)).toMatchObject({ tier: 'Bronze', qualifying: true, nonQualifyingWeeks: 0 })
   })
 
-  it('uses all profitable accounts for percentiles, includes cutoff ties and rounds up', () => {
+  it('includes every trader tied at a percentile cutoff', () => {
     const accounts = Array.from({ length: 20 }, (_, i) => account(i + 1, { closingEquityAssets: String(120000000000 - i * 1000000000) }))
     let first = publishWeek(input(0, accounts), null)
     let second = publishWeek(input(1, accounts), first)
@@ -69,6 +69,43 @@ describe('Divisions ranking and progression', () => {
     second = publishWeek(input(1, ties), first)
     expect(publishWeek(input(2, ties), second).standings.slice(0, 5).every((row) => row.tier === 'Gold')).toBe(true)
     expect(first.standings.slice(0, 5).map((row) => row.rank)).toEqual([1, 1, 1, 1, 1])
+  })
+
+  it('counts profitable one-day traders in the percentile pool without promoting them', () => {
+    // MethodologyPage's policy counts all profitable returns, while promotion
+    // requires two active days. Eleven profits give three Gold and six Silver
+    // places, independently of how many traders satisfy the activity rule.
+    const accounts = Array.from({ length: 11 }, (_, index) => account(index + 1, {
+      closingEquityAssets: String(120000000000 - index * 1000000000),
+      ...([0, 2, 3].includes(index) ? {} : { executedTradeTimes: ['2026-10-12T10:00:00Z'] }),
+    }))
+    let publication: DivisionPublication | null = null
+    for (let week = 0; week < 3; week += 1) publication = publishWeek(input(week, accounts), publication)
+
+    expect(publication!.standings[1]).toMatchObject({ address: account(2).address, rank: 2, qualifying: false, tier: 'Iron' })
+    expect(publication!.standings[2]).toMatchObject({ address: account(3).address, rank: 3, qualifying: true, tier: 'Gold' })
+    expect(publication!.standings[3]).toMatchObject({ address: account(4).address, rank: 4, qualifying: true, tier: 'Silver' })
+  })
+
+  it.each([0, 31])('rounds all percentile cutoffs up with eleven distinct profits and %i nonprofitable traders', (nonprofitableCount) => {
+    const profitable = Array.from({ length: 11 }, (_, index) => account(index + 1, {
+      closingEquityAssets: String(120000000000 - index * 1000000000),
+    }))
+    const nonprofitable = Array.from({ length: nonprofitableCount }, (_, index) => account(index + 12, {
+      closingEquityAssets: String(100000000000 - index * 1000000000),
+    }))
+    let publication: DivisionPublication | null = null
+    for (let week = 0; week < 5; week += 1) publication = publishWeek(input(week, [...profitable, ...nonprofitable]), publication)
+
+    // Public policy: top 5%, 10%, 20%, 50% of eleven profitable traders means
+    // ranks 1, 2, 3, 6 respectively. These literal boundary expectations do not
+    // reuse the engine's percentile helper or its rounding expression.
+    expect(publication!.standings.slice(0, 11).map(({ rank, tier }) => [rank, tier])).toEqual([
+      [1, 'Diamond'], [2, 'Platinum'], [3, 'Gold'],
+      [4, 'Silver'], [5, 'Silver'], [6, 'Silver'],
+      [7, 'Bronze'], [8, 'Bronze'], [9, 'Bronze'], [10, 'Bronze'], [11, 'Bronze'],
+    ])
+    expect(publication!.standings.slice(11).every((row) => !row.qualifying && row.tier === 'Iron')).toBe(true)
   })
 
   it('does not rank nonpositive capital and never assigns a tier to an untraded wallet', () => {

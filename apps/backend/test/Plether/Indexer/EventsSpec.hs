@@ -1,10 +1,11 @@
 module Plether.Indexer.EventsSpec (spec) where
 
-import Data.Aeson (Value (..), decode, encode)
+import Control.Monad (forM_)
+import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson.Key as Key
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Lazy as LBS
 import Data.Maybe (isJust, isNothing)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -282,7 +283,9 @@ spec = do
             ]
             (padAddress "0x00000000000000000000000000000000000000ec" <> encodeUint256 42 <> encodeUint256 99)
       let result = parseEventLog log [] [] testMorphoMarkets
-      result `shouldSatisfy` isJust
+      case result of
+        Just pe -> peData pe `shouldBe` economicPayload [("assets", 42), ("shares", 99)]
+        Nothing -> expectationFailure "Expected decoded Morpho withdrawal"
 
   describe "ParsedEvent JSON serialization" $ do
     it "peData contains expected fields for mint" $ do
@@ -294,9 +297,19 @@ spec = do
       let result = parseEventLog log [] [] noMorphoMarkets
       case result of
         Just pe -> do
-          let json = encode (peData pe)
-          LBS.length json `shouldSatisfy` (> 0)
+          peData pe `shouldBe` economicPayload [("amount", 1000000)]
         Nothing -> expectationFailure "Expected Just"
+
+  describe "complete economic event payloads" $
+    forM_ economicFixtures $ \(name, event, indexed, dat, expected) -> do
+      it ("preserves every economic field for " <> name) $
+        case parseEventLog (mkLog (esTopic event) (esTopic event : indexed) dat) [] [] testMorphoMarkets of
+          Just parsed -> peData parsed `shouldBe` economicPayload expected
+          Nothing -> expectationFailure $ "Expected " <> name
+
+      it ("rejects truncated economic data for " <> name) $
+        parseEventLog (mkLog (esTopic event) (esTopic event : indexed) (BS.init dat)) [] [] testMorphoMarkets
+          `shouldSatisfy` isNothing
 
   describe "determineSide" $ do
     it "identifies bear contracts" $ do
@@ -447,3 +460,34 @@ hexToBytes txt =
   in case B16.decode (TE.encodeUtf8 stripped) of
     Right bs -> bs
     Left _ -> BS.replicate 32 0
+
+economicPayload :: [(Text, Integer)] -> Value
+economicPayload fields = object [Key.fromText name .= value | (name, value) <- fields]
+
+economicFixtures :: [(String, EventSignature, [ByteString], ByteString, [(Text, Integer)])]
+economicFixtures =
+  [ fixture "Minted" mintEvent [owner] [101] [("amount",101)]
+  , fixture "Burned" burnEvent [owner] [102] [("amount",102)]
+  , fixture "TokenExchange" tokenExchangeEvent [owner] [0,103,1,104,105,106]
+      [("soldId",0),("tokensSold",103),("boughtId",1),("tokensBought",104),("fee",105),("packedPriceScale",106)]
+  , fixture "ZapMint" zapMintEvent [owner] [107,108,109,110]
+      [("usdcIn",107),("tokensOut",108),("maxSlippageBps",109),("actualSwapOut",110)]
+  , fixture "ZapBurn" zapBurnEvent [owner] [111,112] [("amountIn",111),("amountOut",112)]
+  , fixture "staking Deposit" stakingDepositEvent [sender,owner] [113,114] [("assets",113),("shares",114)]
+  , fixture "staking Withdraw" stakingWithdrawEvent [sender,receiver,owner] [115,116] [("assets",115),("shares",116)]
+  , fixture "LeverageOpened" leverageOpenedEvent [owner] [117,118,119,120,121,122]
+      [("principal",117),("leverage",118),("loanAmount",119),("tokensReceived",120),("debtIncurred",121),("maxSlippageBps",122)]
+  , fixture "LeverageClosed" leverageClosedEvent [owner] [123,124,125,126]
+      [("debtRepaid",123),("collateralWithdrawn",124),("usdcReturned",125),("maxSlippageBps",126)]
+  , fixture "Morpho Supply" morphoSupplyEvent morphoTopics [127,128] [("assets",127),("shares",128)]
+  , ("Morpho Withdraw",morphoWithdrawEvent,morphoTopics,receiver <> encodeUint256 129 <> encodeUint256 130,[("assets",129),("shares",130)])
+  , ("Morpho Borrow",morphoBorrowEvent,morphoTopics,receiver <> encodeUint256 131 <> encodeUint256 132,[("assets",131),("shares",132)])
+  , fixture "Morpho Repay" morphoRepayEvent morphoTopics [133,134] [("assets",133),("shares",134)]
+  ]
+ where
+  owner = padAddress "0x1111111111111111111111111111111111111111"
+  sender = padAddress "0x2222222222222222222222222222222222222222"
+  receiver = padAddress "0x3333333333333333333333333333333333333333"
+  morphoTopics = [hexToBytes testBearMarketId,sender,owner]
+  fixture name event indexed values expected =
+    (name,event,indexed,mconcat $ map encodeUint256 values,expected)

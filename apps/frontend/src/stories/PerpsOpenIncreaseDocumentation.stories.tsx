@@ -12,6 +12,8 @@ import type {
   PerpsPendingOrder,
   PerpsPosition,
 } from '../hooks'
+import { PerpsIdentityContext, type PerpsIdentityContextValue } from '../perps-aa'
+import { accountStoryIdentity } from './perpsAccountFixtures'
 
 type TicketProps = ComponentProps<typeof PerpsTradeTicket>
 type OpenPreviewFixture = NonNullable<TicketProps['openPreviewFixture']>
@@ -23,6 +25,11 @@ const CURRENT_EXPOSURE = 8_200n
 const ADDED_EXPOSURE = 5_000n
 const RESULTING_EXPOSURE = CURRENT_EXPOSURE + ADDED_EXPOSURE
 const STORY_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+const STORY_IDENTITY: PerpsIdentityContextValue = {
+  ...accountStoryIdentity,
+  ownerAddress: STORY_ACCOUNT,
+  accountAddress: STORY_ACCOUNT,
+}
 
 const latestBasket = {
   timestamp: 1_700_000_000,
@@ -161,6 +168,7 @@ function OpenIncreaseDocumentation() {
 const meta: Meta<typeof OpenIncreaseDocumentation> = {
   title: 'Documentation/Open or Increase Position',
   component: OpenIncreaseDocumentation,
+  decorators: [(Story) => <PerpsIdentityContext.Provider value={STORY_IDENTITY}><Story /></PerpsIdentityContext.Provider>],
   parameters: {
     layout: 'fullscreen',
   },

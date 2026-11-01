@@ -1,5 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { useSettingsStore } from '../settingsStore'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   DEFAULT_SLIPPAGE,
   MAX_SLIPPAGE,
@@ -7,14 +6,14 @@ import {
   MAX_PRICE_IMPACT,
 } from '../../config/constants'
 
+let useSettingsStore: typeof import('../settingsStore')['useSettingsStore']
+
 describe('settingsStore', () => {
-  beforeEach(() => {
-    useSettingsStore.setState({
-      slippage: DEFAULT_SLIPPAGE,
-      maxPriceImpact: DEFAULT_MAX_PRICE_IMPACT,
-      riskAccepted: false,
-      sepoliaWelcomeDismissed: false,
-    })
+  beforeEach(async () => {
+    // Observe the real initializer before any setter or test reset can hide it.
+    localStorage.clear()
+    vi.resetModules()
+    ;({ useSettingsStore } = await import('../settingsStore'))
   })
 
   describe('initial state', () => {
@@ -32,6 +31,19 @@ describe('settingsStore', () => {
       const state = useSettingsStore.getState()
       expect(state.riskAccepted).toBe(false)
       expect(state.sepoliaWelcomeDismissed).toBe(false)
+    })
+  })
+
+  it('restores saved settings after a fresh module load without replacing independent disclaimers', async () => {
+    useSettingsStore.getState().setSlippage(0.75)
+    useSettingsStore.getState().setMaxPriceImpact(3)
+    useSettingsStore.getState().acceptRisk()
+
+    vi.resetModules()
+    const { useSettingsStore: restored } = await import('../settingsStore')
+    expect(restored.getState()).toMatchObject({
+      slippage: 0.75, maxPriceImpact: 3,
+      riskAccepted: true, sepoliaWelcomeDismissed: false,
     })
   })
 

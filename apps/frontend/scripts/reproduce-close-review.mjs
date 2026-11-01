@@ -4,11 +4,20 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createPublicClient, http, keccak256, parseUnits } from 'viem'
 
-// Read-only reproduction: calls the deployed pure planner and evaluator with
-// explicitly synthetic account snapshots. Never submits a transaction.
-const release = JSON.parse(fs.readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v3.json', import.meta.url)))
+// Historical v1.2.3 incident reproduction, not a health check of the current
+// prepared deployment. Read-only planner/evaluator calls with synthetic account
+// snapshots; original USDC field names and bounty are part of that old ABI.
+const release = JSON.parse(fs.readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.json', import.meta.url)))
+const INCIDENT_BLOCK = 308891788n
+// The incident predates v1.3.1. Reject a moved/relabeled manifest before reading
+// a bundle or touching RPC; do not silently reproduce against another release.
+assert.equal(release.release.version, 'v1.2.3', 'Unsupported historical reproduction release')
+assert.equal(release.release.sourceCommit, 'ffe45937b7f38133133ad292c5435828bf99357d', 'Unsupported historical reproduction source')
+assert.equal(release.release.bundleSha256, '5705b875ea07f26b872724d3559a3a686fc0332695e657398a85d2fa65ab7256', 'Unsupported historical reproduction bundle')
+assert(Number.isSafeInteger(release.release.deploymentBlock) && release.release.deploymentBlock > 0, 'Historical release requires its deployment block')
+assert(BigInt(release.release.deploymentBlock) <= INCIDENT_BLOCK, 'Historical reproduction block predates the selected deployment')
 const bundle = process.argv[2]
-if (!bundle) throw new Error('Usage: node scripts/reproduce-close-review.mjs <pinned ABI bundle.tar.gz>')
+if (!bundle) throw new Error('Usage: node scripts/reproduce-close-review.mjs <v1.2.3 ABI bundle.tar.gz> (historical block 308891788)')
 if (createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('ABI bundle checksum mismatch')
 const abi = name => JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' }))
 const plannerAbi = abi('CfdEnginePlanner')
@@ -17,7 +26,7 @@ const engineAbi = abi('CfdEngine')
 const routerAbi = abi('ArbitrumSepoliaReleaseRouter')
 const client = createPublicClient({ transport: http('https://sepolia-rollup.arbitrum.io/rpc') })
 // Pin deployed parameters and code to the block used for the recorded reproduction.
-const block = await client.getBlock({ blockNumber: 308891788n })
+const block = await client.getBlock({ blockNumber: INCIDENT_BLOCK })
 for (const key of ['cfdEnginePlanner', 'cfdOrderPolicyEvaluator']) {
   if (keccak256(await client.getCode({ address: release.contracts[key].address, blockNumber: block.number })) !== release.contracts[key].runtimeCodeHash) throw new Error(`Deployed ${key} bytecode mismatch`)
 }
@@ -26,7 +35,7 @@ const read = (key, contractAbi, functionName, args = []) => client.readContract(
 })
 const [riskValues, bounty, executionFeeBps] = await Promise.all([
   read('cfdEngine', engineAbi, 'riskParams'),
-  Promise.resolve(0n),
+  read('orderRouter', routerAbi, 'closeOrderExecutionBountyUsdc'),
   read('cfdEngine', engineAbi, 'executionFeeBps'),
 ])
 const planFunction = plannerAbi.find(item => item.name === 'planClose')
@@ -51,30 +60,30 @@ for (const field of boundsParameter.components) {
 }
 bounds.allowedExecutionModes = 7
 
-function snapshot(marginAssets) {
+function snapshot(marginUsdc) {
   const snap = empty(planFunction.inputs[0])
   snap.currentTimestamp = block.timestamp
   snap.lastMarkTime = block.timestamp
   snap.lastMarkPrice = PRICE
   snap.capPrice = CAP
   snap.executionFeeBps = executionFeeBps
-  snap.poolAssets = parseUnits('1000000000', 6)
-  snap.poolCashAssets = snap.poolAssets
+  snap.poolAssetsUsdc = parseUnits('1000000000', 6)
+  snap.poolCashUsdc = snap.poolAssetsUsdc
   const fields = planFunction.inputs[0].components.find(item => item.name === 'riskParams').components
   snap.riskParams = Array.isArray(riskValues)
     ? Object.fromEntries(fields.map((item, index) => [item.name, riskValues[index]])) : riskValues
-  Object.assign(snap.position, { size: SIZE, margin: marginAssets, entryPrice: PRICE,
-    side: 1, maxProfitAssets: LOTS * (CAP - PRICE), lastUpdateTime: block.timestamp, lastCarryTimestamp: block.timestamp })
-  snap.positionEntryCostAssetAtoms = LOTS * PRICE
-  Object.assign(snap.shortSide, { maxProfitAssets: snap.position.maxProfitAssets, openInterest: SIZE,
-    entryNotional: snap.positionEntryCostAssetAtoms * 10n ** 12n, totalMargin: marginAssets })
-  Object.assign(snap.accountBuckets, { settlementBalanceAssets: marginAssets, totalLockedMarginAssets: marginAssets, activePositionMarginAssets: marginAssets })
-  Object.assign(snap.lockedBuckets, { positionMarginAssets: marginAssets, totalLockedMarginAssets: marginAssets })
+  Object.assign(snap.position, { size: SIZE, margin: marginUsdc, entryPrice: PRICE,
+    side: 1, maxProfitUsdc: LOTS * (CAP - PRICE), lastUpdateTime: block.timestamp, lastCarryTimestamp: block.timestamp })
+  snap.positionEntryCostUsdcAtoms = LOTS * PRICE
+  Object.assign(snap.shortSide, { maxProfitUsdc: snap.position.maxProfitUsdc, openInterest: SIZE,
+    entryNotional: snap.positionEntryCostUsdcAtoms * 10n ** 12n, totalMargin: marginUsdc })
+  Object.assign(snap.accountBuckets, { settlementBalanceUsdc: marginUsdc, totalLockedMarginUsdc: marginUsdc, activePositionMarginUsdc: marginUsdc })
+  Object.assign(snap.lockedBuckets, { positionMarginUsdc: marginUsdc, totalLockedMarginUsdc: marginUsdc })
   return snap
 }
 const output = { release: release.release.version, blockNumber: block.number,
   screenshot: { size: SIZE, inferredRawPrice: PRICE, targetPrice, displayedPrice: CAP - PRICE,
-    exposureAssets: LOTS * (CAP - PRICE), displayedExecutionLimit: CAP - targetPrice },
+    exposureUsdc: LOTS * (CAP - PRICE), displayedExecutionLimit: CAP - targetPrice },
   assumptions: 'Synthetic full short close; entry price equals current price; no pending orders, carry or claims; one-sided pool with 1 billion USDC; varied remaining settlement/margin. Not the screenshot account.',
   riskParams: snapshot(0n).riskParams, cases: [] }
 for (const margin of ['3000000', '10000']) {
@@ -82,16 +91,16 @@ for (const margin of ['3000000', '10000']) {
   const snap = snapshot(parseUnits(margin, 6))
   const order = { account: snap.account, sizeDelta: SIZE, marginDelta: 0n, targetPrice,
     commitTime: block.timestamp, commitBlock: block.number, orderId: 0n, side: 1, isClose: true }
-  const result = { marginAssets: snap.position.margin, assessedRawPrice: assessedPrice, executionBountyAssets: bounty }
+  const result = { marginUsdc: snap.position.margin, assessedRawPrice: assessedPrice, executionBountyUsdc: bounty }
   try {
     const delta = await read('cfdEnginePlanner', plannerAbi, 'planClose', [snap, order, assessedPrice, block.timestamp])
-    result.planner = { valid: delta.valid, revertCode: delta.revertCode, executionFeeAssets: delta.closeState.executionFeeAssets,
-      realizedCarryAssets: delta.realizedCarryAssets, pricePnlPledgeConsumedAssets: delta.pricePnlPledgeConsumedAssets,
-      actionChargeCollectedAssets: delta.actionChargeCollectedAssets, actionRebatePaidAssets: delta.actionRebatePaidAssets,
-      actionChargeWaivedAssets: delta.actionChargeWaivedAssets, deletePosition: delta.deletePosition }
+    result.planner = { valid: delta.valid, revertCode: delta.revertCode, executionFeeUsdc: delta.closeState.executionFeeUsdc,
+      realizedCarryUsdc: delta.realizedCarryUsdc, pricePnlPledgeConsumedUsdc: delta.pricePnlPledgeConsumedUsdc,
+      actionChargeCollectedUsdc: delta.actionChargeCollectedUsdc, actionRebatePaidUsdc: delta.actionRebatePaidUsdc,
+      actionChargeWaivedUsdc: delta.actionChargeWaivedUsdc, deletePosition: delta.deletePosition }
     result.stage = 'evaluateClose'
     const assessment = await read('cfdOrderPolicyEvaluator', evaluatorAbi, 'evaluateClose', [snap, delta, bounds, bounty])
-    result.assessment = { postSettlementBalanceAssets: assessment.postSettlementBalanceAssets, postPositionSize: assessment.postPositionSize }
+    result.assessment = { postSettlementBalanceUsdc: assessment.postSettlementBalanceUsdc, postPositionSize: assessment.postPositionSize }
   } catch (error) {
     const cause = error.walk?.(item => item.name === 'ContractFunctionRevertedError')
     result.error = { name: cause?.data?.errorName, args: cause?.data?.args, raw: cause?.raw, message: error.shortMessage }

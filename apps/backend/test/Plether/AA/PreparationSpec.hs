@@ -305,10 +305,18 @@ spec = do
       wait first `shouldReturn` Right ("verified" :: T.Text)
       wait second `shouldReturn` Right "verified"
     it "evicts the least recently used key at capacity" $ do
-      cache <- newEvidenceCache 1 :: IO (EvidenceCache T.Text T.Text)
-      evidence cache "hash" "a" (pure $ Right "a") `shouldReturn` Right ("a" :: T.Text)
-      evidence cache "hash" "b" (pure $ Right "b") `shouldReturn` Right "b"
-      evidence cache "hash" "a" (pure $ Right "new") `shouldReturn` Right "new"
+      cache <- newEvidenceCache 2 :: IO (EvidenceCache T.Text T.Text)
+      fetched <- newIORef ([] :: [T.Text])
+      let fetch key = modifyIORef' fetched (<> [key]) >> pure (Right key)
+          cached key = evidence cache "hash" key (fetch key)
+      cached "a" `shouldReturn` Right "a"
+      cached "b" `shouldReturn` Right "b"
+      cached "a" `shouldReturn` Right "a" -- a is newer than b now
+      cached "c" `shouldReturn` Right "c"
+      cached "a" `shouldReturn` Right "a" -- FIFO/key-order eviction would refetch a
+      readIORef fetched `shouldReturn` ["a","b","c"]
+      cached "b" `shouldReturn` Right "b" -- b, rather than a, was evicted
+      readIORef fetched `shouldReturn` ["a","b","c","b"]
     it "waits for capacity without evicting in-flight evidence" $ do
       cache <- newEvidenceCache 1 :: IO (EvidenceCache T.Text T.Text)
       started <- newEmptyMVar

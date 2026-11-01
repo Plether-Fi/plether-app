@@ -8,6 +8,7 @@ on:
 
 jobs:
   faucet-recovery:
+    name: Faucet and publication database tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -40,11 +41,9 @@ jobs:
           FAUCET_NODE_PACKAGE: ${{ github.workspace }}/apps/backend/oracle-worker/package.json
           FAUCET_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/faucet_test
 
-  test:
+  infrastructure:
+    name: Infrastructure policy tests
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
-    defaults:
-      run:
-        working-directory: apps/backend
 
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +77,19 @@ jobs:
           AA_TERRAFORM_TEST_REQUIRED: '1'
         working-directory: .
         run: node --test scripts/aa-rpc-mode.test.mjs
+
+      - name: Test deployed release bindings with independent positive controls
+        working-directory: .
+        run: node scripts/test-terraform-bindings.mjs
+
+  test:
+    name: Backend unit tests
+    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
