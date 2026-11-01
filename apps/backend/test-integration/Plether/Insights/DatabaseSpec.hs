@@ -63,6 +63,7 @@ import Plether.Database.Insights
   , refreshCompetitionIntegrityFlags
   , setCompetitionBoundaryBlocks
   , seedCompetition
+  , seedCompetitionWithReleaseVersion
   , stageCompetitionParticipantWalletRemap
   )
 import Plether.Database.Insights.Registration (ensureRegistrationSchema)
@@ -276,9 +277,9 @@ insightsDatabaseSpec databaseUrl =
           competition <- requireCompetition conn competitionSlug
           icrIntegrityCheckedAt competition `shouldBe` Nothing
 
-    it "backfills settlement receipts idempotently without changing activity or scores" $
+    it "backfills scoped settlement amounts idempotently without changing activity or scores" $
       withInsightsDatabase databaseUrl $ \pool -> do
-        decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/v3-insights-close-waiver.json"
+        decoded <- eitherDecodeFileStrict' "test/fixtures/token-neutral-close-waiver.json"
         fixture <- either fail pure decoded
         receipt <- case fixture of
           Object value | Just (Object receipt) <- KM.lookup "receipt" value -> pure receipt
@@ -295,6 +296,12 @@ insightsDatabaseSpec databaseUrl =
               | entry <- logs, Just (ParsedOrderFinalized oid account _ receiptHash _ _ _ _ _ economics payload) <- [parsePerpsLog entry]]
         -- Fail at the ABI boundary rather than silently seeding an empty database.
         length finalized `shouldBe` 1
+        beforeScores <- withDb pool $ \conn -> do
+          insertParticipant conn walletA "receipt-enrichment-control"
+          setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+          publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+          publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll+gain)]
+          getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         withDb pool $ \conn -> forM_ finalized $ \(entry, oid, account, receiptHash, economics, payload) -> do
           void $ execute conn
             "INSERT INTO perps_orders (chain_id, order_router, order_id, account, terminal_tx_hash, terminal_block_number, \
@@ -302,32 +309,52 @@ insightsDatabaseSpec databaseUrl =
             (fixtureChain, fixtureRouter, oid, account, tx, blockNumber, timestamp, receiptHash, encode economics)
           insertPerpsEvent conn fixtureChain fixtureRouter (rlAddress entry) "OrderFinalized" tx blockNumber blockHash
             (rlTxIndex entry) (rlLogIndex entry) timestamp (Just account) (Just oid) Nothing payload
+        observedRpc <- newIORef ([] :: [Text])
         let app request respond = do
               body <- strictRequestBody request
-              let method = case decode body of Just (Object o) -> KM.lookup "method" o; _ -> Nothing
-                  result = if method == Just (String "eth_getTransactionReceipt") then Object receipt else
-                    object ["number" .= ("0x126c1080" :: Text), "hash" .= blockHash, "timestamp" .= ("0x6aa00000" :: Text)]
+              let Just (Object requestFields) = decode body
+                  Just (String method) = KM.lookup "method" requestFields
+              modifyIORef' observedRpc (<> [method])
+              result <- case method of
+                "eth_getTransactionReceipt" -> do
+                  KM.lookup "params" requestFields `shouldBe` Just (toJSON [tx])
+                  pure $ Object receipt
+                "eth_getBlockByNumber" -> do
+                  KM.lookup "params" requestFields `shouldBe` Just (toJSON [String "0x126c1080",Bool False])
+                  pure $ object ["number" .= ("0x126c1080" :: Text), "hash" .= blockHash, "timestamp" .= ("0x6aa00000" :: Text)]
+                _ -> expectationFailure ("Unexpected settlement RPC: " <> T.unpack method) >> pure Null
               respond $ responseLBS status200 [("Content-Type", "application/json")]
-                (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= result])
+                (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= KM.lookup "id" requestFields, "result" .= result])
         testWithApplication (pure app) $ \port -> do
           manager <- newManager defaultManagerSettings
           req <- newIORef 1
           let cfg = PerpsIndexerConfig
                 { picRpcUrls = ["http://127.0.0.1:" <> T.pack (show port)], picRpcAuthToken = Nothing,
-                  picChainId = fixtureChain, picAddresses = defaultPerpsAddresses {paOrderRouter = fixtureRouter},
+                  picChainId = fixtureChain, picAddresses = defaultPerpsAddresses
+                    { paOrderRouter = fixtureRouter
+                    , paSettlementToken = "0x1111111111111111111111111111111111111111"
+                    , paCfdEngine = "0x3333333333333333333333333333333333333333"
+                    , paCfdEngineSettlementSidecar = "0x4444444444444444444444444444444444444444"
+                    , paMarginClearinghouse = "0x5555555555555555555555555555555555555555"
+                    , paOrderLifecycleBook = Just "0x6666666666666666666666666666666666666666" },
                   picStartBlock = 1, picConfirmations = 0, picBatchSize = 20, picPollIntervalMicros = 1000000,
                   picIndexerName = indexerName BoundedV2, picMode = PerpsIndexerOnce,
                   picCandleWriteMode = PerpsCandleWritesOff, picCandleLatenessSeconds = 0,
                   picDeploymentEnvironment = Nothing }
           enrichSettlementReceipts manager pool cfg req
           enrichSettlementReceipts manager pool cfg req
+        readIORef observedRpc `shouldReturn` ["eth_getTransactionReceipt","eth_getBlockByNumber"]
         withDb pool $ \conn -> do
           markers <- query conn "SELECT settlement_evidence_version FROM perps_orders WHERE chain_id = ? AND order_router = ?"
             (fixtureChain, fixtureRouter) :: IO [Only (Maybe Int)]
           markers `shouldBe` [Only (Just 1)]
-          events <- query conn "SELECT data->>'protocolFeeCollectedAssets' FROM perps_events WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
-            (fixtureChain, fixtureRouter) :: IO [Only Text]
-          events `shouldBe` [Only "222311115"]
+          events <- query conn "SELECT data->>'assessedAssets',data->>'recoveredAssets',data->>'waivedAssets',data->>'protocolFeeCollectedAssets' FROM perps_events WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
+            (fixtureChain, fixtureRouter) :: IO [(Text,Text,Text,Maybe Text)]
+          -- The test deployment is not the verified current release. Exact
+          -- settlement economics are public; unbound internal treasury-credit
+          -- attribution must remain absent (as in the receipt decoder units).
+          events `shouldBe` [("7813390015","6930609697","882780318",Nothing)]
+          getCompetitionLeaderboard conn competitionSlug Nothing 20 0 `shouldReturn` beforeScores
           counts <- query conn "SELECT COUNT(*) FROM perps_account_activity WHERE chain_id = ? AND release_router = ?"
             (fixtureChain, fixtureRouter) :: IO [Only Int]
           counts `shouldBe` [Only 0]
@@ -379,13 +406,29 @@ insightsDatabaseSpec databaseUrl =
         markers `shouldBe` [(Nothing, Nothing), (Nothing, Nothing)]
         getCompetitionWalletActivity conn competitionSlug walletA 20 `shouldReturn` []
 
+    it "binds the eligible historical release during trading before any boundary or snapshot exists" $
+      withPendingV123Competition databaseUrl $ \conn rules -> do
+        insertParticipant conn walletA "existing-registration"
+        before <- requireCompetition conn competitionSlug
+        seedHistoricalRelease conn rules september2026ReleaseManifest
+        after <- requireCompetition conn competitionSlug
+        icrReleaseReady before `shouldBe` False
+        icrReleaseReady after `shouldBe` True
+        icrStartTimestamp after `shouldBe` icrStartTimestamp before
+        icrScoreCutoffTimestamp after `shouldBe` icrScoreCutoffTimestamp before
+        roster <- query conn
+          "SELECT wallet,trader_reference FROM insights_competition_participants WHERE competition_slug=?"
+          (Only competitionSlug) :: IO [(Text, Text)]
+        roster `shouldBe` [(walletA, "existing-registration")]
+
     it "rejects the replacement deployment during September late binding without changing the roster or schedule" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
         insertParticipant conn walletA "existing-registration"
         before <- requireCompetition conn competitionSlug
         -- The late-binding exception is exclusive to v1.2.3. Switching the
         -- active app manifest must not bind the replacement to September.
-        seedRelease conn rules september2026ReleaseManifest `shouldThrow` anyIOException
+        seedRelease conn rules september2026ReleaseManifest
+          `shouldThrow` (\err -> "late binding requires the pinned September v1.2.3 release before scoring closes" `T.isInfixOf` T.pack (show (err :: IOError)))
         after <- requireCompetition conn competitionSlug
         after `shouldBe` before
         icrReleaseReady after `shouldBe` False
@@ -393,26 +436,25 @@ insightsDatabaseSpec databaseUrl =
           "SELECT wallet, trader_reference FROM insights_competition_participants WHERE competition_slug = ?"
           (Only competitionSlug) :: IO [(Text, Text)]
         rows `shouldBe` [(walletA, "existing-registration")]
-        seedRelease conn rules september2026ReleaseManifest `shouldThrow` anyIOException
+        seedRelease conn rules september2026ReleaseManifest
+          `shouldThrow` (\err -> "late binding requires the pinned September v1.2.3 release before scoring closes" `T.isInfixOf` T.pack (show (err :: IOError)))
         requireCompetition conn competitionSlug `shouldReturn` after
 
     it "rejects a different release during late binding" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
-        seedRelease conn rules (september2026ReleaseManifest {crmAccountLens = fixtureLens})
-          `shouldThrow` anyIOException
-        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+        assertHistoricalBindingRejected conn rules (september2026ReleaseManifest {crmAccountLens = fixtureLens})
 
     it "rejects late binding after baseline resolution" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
         void $ execute conn "UPDATE insights_competitions SET start_block = 307400000 WHERE slug = ?" (Only competitionSlug)
-        seedRelease conn rules september2026ReleaseManifest `shouldThrow` anyIOException
-        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+        assertHistoricalBindingRejected conn rules september2026ReleaseManifest
 
     it "rejects late binding when the stored schedule differs" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
-        seedRelease conn (rules {crStartAt = addUTCTime 1 $ crStartAt rules}) september2026ReleaseManifest
-          `shouldThrow` anyIOException
-        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+        before <- requireCompetition conn competitionSlug
+        seedHistoricalRelease conn (rules {crStartAt = addUTCTime 1 $ crStartAt rules}) september2026ReleaseManifest
+          `shouldThrow` (\err -> "competition metadata mismatch" `T.isInfixOf` T.pack (show (err :: IOError)))
+        requireCompetition conn competitionSlug `shouldReturn` before
 
     it "rejects late binding after scoring closes" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
@@ -423,8 +465,7 @@ insightsDatabaseSpec databaseUrl =
         void $ execute conn
           "UPDATE insights_competitions SET new_risk_cutoff_timestamp = start_timestamp, score_cutoff_timestamp = start_timestamp WHERE slug = ?"
           (Only competitionSlug)
-        seedRelease conn closed september2026ReleaseManifest `shouldThrow` anyIOException
-        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+        assertHistoricalBindingRejected conn closed september2026ReleaseManifest
 
     it "preserves finalized July data while selecting the configured September competition" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
@@ -845,6 +886,18 @@ seedRelease conn rules manifest =
   seedCompetition conn rules (crmChainId manifest) (crmOrderRouter manifest)
     (crmSettlementToken manifest) (crmMarginClearinghouse manifest) (crmAccountLens manifest) manifest
 
+seedHistoricalRelease :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
+seedHistoricalRelease conn rules manifest =
+  seedCompetitionWithReleaseVersion "v1.2.3" conn rules (crmChainId manifest) (crmOrderRouter manifest)
+    (crmSettlementToken manifest) (crmMarginClearinghouse manifest) (crmAccountLens manifest) manifest
+
+assertHistoricalBindingRejected :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
+assertHistoricalBindingRejected conn rules manifest = do
+  before <- requireCompetition conn competitionSlug
+  seedHistoricalRelease conn rules manifest
+    `shouldThrow` (\err -> "late binding requires the pinned September v1.2.3 release before scoring closes" `T.isInfixOf` T.pack (show (err :: IOError)))
+  requireCompetition conn competitionSlug `shouldReturn` before
+
 withPendingV123Competition :: Text -> (Connection -> CompetitionRules -> IO a) -> IO a
 withPendingV123Competition databaseUrl action =
   withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
@@ -855,7 +908,14 @@ withPendingV123Competition databaseUrl action =
           , crScoreCutoffAt = addUTCTime 3600 now
           }
     void $ execute conn "DELETE FROM insights_competitions WHERE slug = ?" (Only competitionSlug)
-    seedRelease conn rules (september2026ReleaseManifest {crmReleaseId = "release-pending"})
+    let pending = september2026ReleaseManifest {crmReleaseId = "release-pending"}
+    seedRelease conn rules pending
+    -- Every negative starts from a fixture proved bindable through the real
+    -- transaction, then recreates the same pending row before one mutation.
+    seedHistoricalRelease conn rules september2026ReleaseManifest
+    icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` True
+    void $ execute conn "DELETE FROM insights_competitions WHERE slug = ?" (Only competitionSlug)
+    seedRelease conn rules pending
     action conn rules
 
 withInsightsDatabase :: Text -> (DbPool -> IO a) -> IO a

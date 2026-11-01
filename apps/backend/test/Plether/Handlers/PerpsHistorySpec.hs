@@ -45,19 +45,19 @@ spec = do
       perpsHistoryRouter testConfig (Just "  0x485703D16FE36369C134DEe2A61C057733E7830F  ")
         `shouldBe` "0x485703d16fe36369c134dee2a61c057733e7830f"
 
-  describe "terminal execution evidence" $ do
-    it "hydrates and verifies the account from a standalone lifecycle finalization" $ do
+  describe "terminal evidence serializers and SQL source support (query results are tested in BackendUnitRepairSpec)" $ do
+    it "contains account hydration and identity-match predicates" $ do
       queryContains updatePerpsOrderLifecycleReceiptSql "account = COALESCE(perps_orders.account, ?)"
       queryContains updatePerpsOrderLifecycleReceiptSql "AND (account IS NULL OR account = ?)"
 
-    it "persists canonical oracle-frozen state from the lifecycle execution mode" $ do
+    it "maps execution modes and contains the oracle-frozen assignment" $ do
       executionModeOracleFrozen "Live" `shouldBe` Just False
       executionModeOracleFrozen "FAD" `shouldBe` Just False
       executionModeOracleFrozen "Frozen" `shouldBe` Just True
       executionModeOracleFrozen "Unknown(0)" `shouldBe` Nothing
       queryContains updatePerpsOrderLifecycleReceiptSql "execution_oracle_frozen = ?"
 
-    it "reserves two recent evidence slots and three fair-backlog slots" $ do
+    it "calculates lane sizes and contains recent/backlog SQL ordering" $ do
       perpsExecutionEvidenceLaneLimits 5 `shouldBe` (2, 3)
       queryContains pendingPerpsExecutionEvidenceSql "WHERE execution_evidence_last_attempt_at IS NULL"
       queryContains pendingPerpsExecutionEvidenceSql "ORDER BY terminal_block_number DESC, order_id DESC"
@@ -65,21 +65,21 @@ spec = do
       queryContains pendingPerpsExecutionEvidenceSql "execution_evidence_last_attempt_at < NOW() - INTERVAL '5 minutes'"
       queryContains pendingPerpsExecutionEvidenceSql "ORDER BY lane ASC, lane_order ASC"
 
-    it "projects exact execution VPI independently from activity data" $ do
+    it "contains separate execution and activity VPI projections" $ do
       queryContains perpsOrderBaseSelectSql "o.execution_vpi_assets"
       queryContains perpsOrderBaseSelectSql "data->>'vpiAssets'"
 
-    it "hydrates legacy receipt economics with the indexed execution bounty" $ do
+    it "contains the legacy execution-bounty fallback expression" $ do
       queryContains perpsOrderBaseSelectSql "data->>'executionBountyAssets'"
       queryContains perpsOrderBaseSelectSql "jsonb_build_object('executionBountyAssets'"
       queryContains perpsOrderBaseSelectSql "e.event_name = 'IntentRegistered'"
 
-    it "projects the canonical terminal event block hash" $ do
+    it "contains the canonical terminal-event block-hash projection" $ do
       queryContains perpsOrderBaseSelectSql "terminal_event.block_hash"
       queryContains perpsOrderBaseSelectSql "e.block_number = o.terminal_block_number"
       queryContains perpsOrderBaseSelectSql "e.event_name = 'OrderFinalized'"
 
-    it "correlates batched activity with the nearest preceding V2 finalization" $ do
+    it "contains preceding-finalization bounds for batched activity" $ do
       queryContains perpsOrderBaseSelectSql "e.order_id = o.order_id"
       queryContains perpsOrderBaseSelectSql "'OrderFinalized'"
       queryContains perpsOrderBaseSelectSql "o.terminal_status = 'Executed'"
@@ -88,7 +88,7 @@ spec = do
       queryContains perpsOrderBaseSelectSql "a.log_index > previous_terminal_event.log_index"
       queryContains perpsOrderBaseSelectSql "ORDER BY a.log_index DESC"
 
-    it "excludes V1 orders that have no lifecycle client identity" $
+    it "contains the lifecycle client-identity predicate" $
       queryContains perpsOrderBaseSelectSql "o.client_order_id IS NOT NULL"
 
     it "serializes signed activity VPI as a lossless decimal string" $

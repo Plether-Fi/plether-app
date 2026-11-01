@@ -1,0 +1,59 @@
+Test execution and merge contract — 2026-11-01
+
+Master requires the following 12 automatic GitHub Actions contexts. The active
+ruleset has no bypass actors and requires the branch to be up to date.
+The desired policy is versioned in .github/rulesets/master-test-quality.json.
+
+Protection worker tests
+  apps/backend/protection-worker: npm test, with disposable PostgreSQL.
+Credential hygiene
+  Reject committed Alchemy credentials; report only redacted endpoints.
+Frontend unit and build
+  apps/frontend: npm test and npm run build, migration/release checks,
+  production gas-policy-backed local EVM replay and existing AA controls.
+Insights unit and build
+  apps/insights: npm test and build/type checks.
+Faucet and publication database tests
+  Node tests exercise disposable PostgreSQL recovery/publication behavior.
+Backend unit tests
+  Normal Cabal build and plether-api-test, without test compile overlays.
+Infrastructure policy tests
+  Terraform prepared-release tests and mandatory valid-deployment controls,
+  plus existing deployment-control, IAM and RPC-mode assertions.
+Perps critical path integration
+  Required database mode; real Haskell workers/handlers against scripted RPC
+  and dedicated PostgreSQL, including all registered repair integration specs.
+Native AA integration
+  Required database mode; native AA integration suite with real database state.
+Delayed approval and canonical recovery
+  Existing deterministic local-contract lifecycle and canonical recovery harness.
+Frontend E2E
+  All Playwright Chromium tests; CI retries cannot turn a flaky result green.
+Storybook interactions
+  All Vitest Storybook Chromium plays, including asserted rendered interactions.
+
+Browser results and traces are saved under apps/frontend/.test-results/ and
+uploaded even when assertions fail. Test-result artifacts are ignored by Git.
+
+Live-fork suites have a separate explicit workflow, fork-tests.yml. They are
+not claimed as automatic PR coverage or as passing tests in this repair report.
+
+Spot command: npm run test:integration
+  Required mode: FRONTEND_INTEGRATION_REQUIRED=1
+  Workflow prerequisite: ETHEREUM_SEPOLIA_FORK_RPC_URL secret.
+  Writes occur only on a private Anvil fork on loopback, chain 31337, port8546.
+  Missing or unhealthy Anvil is a hard failure when required.
+
+Perps commands: npm run test:perps-integration; npm run test:perps-fork
+  Required mode: PERPS_FORK_REQUIRED=1
+  Workflow prerequisites: ARBITRUM_SEPOLIA_FORK_RPC_URL secret, a verified
+  deployed schema-four release, explicit existing account/open position,
+  and exact positive close size. Calls are read-only remote eth_call/RPC.
+  Prepared deployment or missing prerequisites hard-fail requested runs.
+
+Optional local fork runs explicitly skip unavailable suites. A skip is not
+successful deployed-interface coverage. The current prepared perps manifest
+cannot supply a live deployed fork control; this work does not remove that guard.
+
+The fixed defects retain ordinary required regression tests, listed in
+report.txt. Failures block merging; there are no expected-failure markers or CI bypasses.

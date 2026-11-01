@@ -143,6 +143,14 @@ function renderTicket(overrides: Partial<Parameters<typeof PerpsTradeTicket>[0]>
   )
 }
 
+function expectSafeTicketProperties(properties: Record<string, unknown>, extraKeys: string[] = []) {
+  const allowedKeys = new Set([
+    'surface', 'market_phase', 'lifecycle_state', 'direction', 'reduce_only',
+    'connected_state', 'chain_state', 'size_bucket', ...extraKeys,
+  ])
+  expect(Object.keys(properties).filter((key) => !allowedKeys.has(key))).toEqual([])
+}
+
 describe('Perps analytics', () => {
   beforeEach(() => {
     mockIsConnected = true
@@ -200,12 +208,14 @@ describe('Perps analytics', () => {
       size_bucket: '100_999',
     }))
     await waitFor(() => {
-      expect(analyticsMocks.trackPerpsModalOpened).toHaveBeenCalledWith('trade_review', expect.not.objectContaining({
-        address: expect.anything(),
-        amount: expect.anything(),
-        tx_hash: expect.anything(),
-      }))
+      expect(analyticsMocks.trackPerpsModalOpened).toHaveBeenCalledWith('trade_review', expect.any(Object))
     })
+    for (const [event, properties] of analyticsMocks.trackPerpsModalOpened.mock.calls) {
+      if (event === 'trade_review') expectSafeTicketProperties(properties)
+    }
+    for (const [event, properties] of analyticsMocks.trackPerpsButtonClicked.mock.calls) {
+      if (event === 'review_trade') expectSafeTicketProperties(properties)
+    }
   })
 
   it('tracks margin modal and margin lifecycle events', async () => {
@@ -242,10 +252,9 @@ describe('Perps analytics', () => {
         error_category: 'unknown',
       }))
     })
-    expect(analyticsMocks.trackPerpsOrderLifecycle).not.toHaveBeenCalledWith('commit_failed', expect.objectContaining({
-      tx_hash: expect.anything(),
-      order_id: expect.anything(),
-    }))
+    for (const [event, properties] of analyticsMocks.trackPerpsOrderLifecycle.mock.calls) {
+      if (event === 'commit_failed') expectSafeTicketProperties(properties, ['error_category'])
+    }
   })
 
   it('tracks validation blocked with a category instead of the display message', async () => {

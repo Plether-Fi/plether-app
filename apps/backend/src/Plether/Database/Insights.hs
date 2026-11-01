@@ -13,6 +13,7 @@ module Plether.Database.Insights
   , ensureInsightsSchema
   , validateCompetitionReleaseManifest
   , seedCompetition
+  , seedCompetitionWithReleaseVersion
   , competitionSeedMetadataFor
   , competitionSeedMismatches
   , isLegacyPaymentDeadlineOnlyMismatch
@@ -897,7 +898,13 @@ ensureInsightsSchema conn rules chainId releaseRouter settlementTokenAddress mar
   -- from the private registration schema.  Every core consumer (API, worker,
   -- admin, and integration harness) runs this initializer, so a rolling start
   -- cannot reach the strict query before the proof table exists.
-  installed <- query_ conn "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='insights_integrity_cursor_epoch')" :: IO [Only Bool]
+  installed <- query_ conn
+    "SELECT COUNT(*)=3 FROM pg_trigger \
+    \WHERE (tgname='insights_integrity_history_epoch' AND tgrelid IN (\
+    \to_regclass(format('%I.%I',current_schema(),'perps_account_activity')),\
+    \to_regclass(format('%I.%I',current_schema(),'perps_asset_transfers')))) \
+    \OR (tgname='insights_integrity_cursor_epoch' \
+    \AND tgrelid=to_regclass(format('%I.%I',current_schema(),'perps_indexer_state')))" :: IO [Only Bool]
   unless (installed == [Only True]) $ withTransaction conn $ do
     void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
     void $ execute_ conn integritySchemaSql
@@ -971,7 +978,13 @@ ensureInsightsSchema conn rules chainId releaseRouter settlementTokenAddress mar
   pure ()
 
 seedCompetition :: Connection -> CompetitionRules -> Integer -> Text -> Text -> Text -> Text -> CompetitionReleaseManifest -> IO ()
-seedCompetition conn rules chainId releaseRouter settlementTokenAddress marginClearinghouseAddress accountLensAddress releaseManifest =
+seedCompetition = seedCompetitionWithReleaseVersion Manifest.releaseVersion
+
+-- The deployed release version is an explicit input to historical recovery.
+-- Normal startup always uses the embedded identity above; replay verification
+-- can exercise an older reviewed release through the same transaction path.
+seedCompetitionWithReleaseVersion :: Text -> Connection -> CompetitionRules -> Integer -> Text -> Text -> Text -> Text -> CompetitionReleaseManifest -> IO ()
+seedCompetitionWithReleaseVersion releaseVersion conn rules chainId releaseRouter settlementTokenAddress marginClearinghouseAddress accountLensAddress releaseManifest =
   withTransaction conn $ do
     let releaseBound = competitionReleaseIsBound rules releaseManifest
         pendingAddress = "0x0000000000000000000000000000000000000000"
@@ -1059,7 +1072,7 @@ seedCompetition conn rules chainId releaseRouter settlementTokenAddress marginCl
         case () of
           _ | releaseBound && not storedReleaseBound -> do
                 validateCompetitionRulesSeed expected storedAfterExtension
-                bindPendingCompetitionRelease conn expected
+                bindPendingCompetitionRelease releaseVersion conn expected
                 validateOrMigrateCompetitionSeed conn expected expected
             | releaseBound -> validateOrMigrateCompetitionSeed conn expected storedAfterExtension
             | storedReleaseBound -> validateCompetitionRulesSeed expected storedAfterExtension
@@ -1077,10 +1090,10 @@ seedCompetition conn rules chainId releaseRouter settlementTokenAddress marginCl
 -- deployed before the original baseline, and workers replay that historical
 -- baseline. The explicit release ID is still required; no existing bound
 -- release, schedule, participant, boundary, or snapshot is rewritten.
-bindPendingCompetitionRelease :: Connection -> CompetitionSeedMetadata -> IO ()
-bindPendingCompetitionRelease conn expected = do
+bindPendingCompetitionRelease :: Text -> Connection -> CompetitionSeedMetadata -> IO ()
+bindPendingCompetitionRelease releaseVersion conn expected = do
   let allowSeptemberRecovery =
-        Manifest.releaseVersion == "v1.2.3"
+        releaseVersion == "v1.2.3"
           && csmSlug expected == september2026CompetitionSlug
           && csmChainId expected == Manifest.releaseChainId
           && csmReleaseManifest expected == competitionReleaseManifestText september2026ReleaseManifest

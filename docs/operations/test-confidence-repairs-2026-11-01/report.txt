@@ -1,0 +1,80 @@
+Plether-app test-confidence repairs — 2026-11-01
+PR: https://github.com/Plether-Fi/plether-app/pull/382
+
+Scope: repair the 51 plether-app test-confidence findings and fix the five exposed implementation defects. The separate plether-core repository remains outside this audit.
+Raw audit ledgers and validation/mutation logs are archived outside this PR. Executable test fixtures remain in the repository.
+
+Validation
+- Frontend unit: 1,953 tests pass; default Node diagnostics also pass.
+- Browser: 28 E2E tests pass with no skips/flakes; all 448 Storybook plays pass.
+- Insights: 201 tests pass. Frontend production build and all backend executable builds pass.
+- Normal Cabal unit suite: 1,375 examples, 0 failures.
+- Fresh PostgreSQL integration suite: 282 examples, 0 failures, through the canonical CI wrapper.
+- Native AA integration suite: 34 examples, 0 failures. Fresh standalone schema installation and repeat application also pass.
+- Terraform: all 23 prepared-release, 19 deployment-target guard and 19 mandatory full-module checks pass.
+- Changed/new workflows pass actionlint. Master ruleset26307791 requires all 12 automatic test contexts.
+- The dependency guard passes 10 subprocess regressions, fails scanner errors, and rejects runtime targets even without ripgrep.
+- Live remote forks were not executed; optional absence is an explicit skip and required absence is a failure.
+
+Implementation defects fixed
+1. Economic event decoders require their exact ABI widths and reject incomplete or oversized data; valid values are preserved.
+2. Standalone schema initialization includes dependency-ordered preparation/recovery/diagnostic DDL. History triggers install after source initialization and self-repair partial installations.
+3. AA catalog verification binds actual objects to the current schema and expected fingerprints to this connection's temporary objects; foreign/concurrent objects cannot interfere.
+4. LP supersession verifies exact canonical receipt and competitor block identities before and after the unchanged no-progress replay. Missing, orphaned or changing evidence retains manual review.
+5. The LP Terraform guard uses the canonical release binding. Prepared-release safety and the unsupported legacy-Pimlico compatibility guard remain intact.
+
+Testability changes preserve production defaults. The largest source move places the existing candle CLI in Plether.Perps.CandleAdmin, with the original manifest guard and a private validated-profile integration driver.
+Additional harness corrections cover stale UI assumptions, provider/state isolation, and historical fixtures. The integration wrapper now compiles the real manifest instead of replacing deployment data.
+
+Finding-by-finding repairs
+CI-001: Require all 12 automatic test contexts on master with strict up-to-date checking and no bypass actors.
+AK01: Observe real settlement builder/call behavior instead of searching source for a call graph.
+AK02: Use distinct account snapshots and assert every economic/risk field in the correct order.
+AK03: Require the complete readiness action set before checking individual blocked actions.
+AK04: Exercise the real liquidation worker with PostgreSQL and scripted RPC to verify fresh snapshots replace cached risk.
+AK05: Verify persisted signed bytes, hash and nonce survive confirmation failure and are recovered before new work.
+AK06: Run the production liquidation sweep over 8,000 database candidates and verify actual batching and receipts.
+BIW-02: Prove historical release binding succeeds before independently mutating each rejection precondition.
+BIW-03: Require canonical block evidence for LP supersession; all 40 real-worker cases pass, including the original rejection matrix and header/reorg recovery controls.
+BU-001: Assert value, calldata and replacement behavior from production settlement constructors.
+BU-002: Supply a valid deployed-release control so the prepared-release guard cannot mask downstream binding checks.
+BU-003: Verify all economic fields for 13 event shapes and reject incomplete/oversized ABI data; all 80 focused event cases pass.
+BU-004: Use a fresh accepted Turnstile response before independently testing hostname, action and age rejection.
+BU-005: Check fresh GCM nonces/ciphertexts and independent RFC PKCE-S256 vectors.
+BU-006: Verify real bootstrap, migration parity, retry persistence, isolated drift, foreign/concurrent schemas, and actual trigger initialization/repair.
+BU-008: Observe actual vault upserts, faucet transitions and registration persistence/transaction effects.
+CI-002: Run E2E and Storybook in required CI; fail flaky CI results; report optional fork skips and hard-fail missing required prerequisites.
+FCAA-002: Explicitly skip unavailable optional vault forks; required execution fails when prerequisites are absent.
+FCH-01: Reject every individual sensitive analytics field rather than only a complete leaking object.
+FCH-02: Use unequal routed quotes and require an exact nonzero positive price impact.
+FCH-03: Verify actual borrowing capacity from independently routed market/account fixtures.
+FCH-04: Aggregate distinct nonzero positions with different asset/share ratios.
+FCH-05: Assert exact sponsored call targets, order, amounts, recipient and native value.
+FEO-001: Require real routes and controls; use deterministic HTTP/wallet fixtures and explicit prepared/live UI contracts.
+FEO-002: Assert exact quote output transitions and action enabled/disabled state rather than visibility alone.
+FEO-004: Round-trip a valid protocol snapshot through the independent compiled ABI and assert price sensitivity.
+INSIGHTS-001: Prove the anonymous endpoint is cacheable before requiring credential/header requests to bypass caching.
+INSIGHTS-002: Supply valid Origin controls so preview-host rejection reaches its intended hostname gate.
+INSIGHTS-003: Use non-tied percentile fixtures that distinguish the population denominator and fractional cutoff policy.
+SI-001: Require valid deployed controls plus 18 independent binding mutations; both isolated and full-module suites pass with the canonical LP guard.
+SI-002: Require unique IAM statements and exact role/actions/resources so missing grants cannot satisfy empty comprehensions.
+STORYBOOK-002: Use a non-1:1 staking ratio and verify the computed received shares.
+AK07: Distinguish LRU from FIFO with a capacity-two cache and a recency-changing hit.
+BIW-01: Block the real Perps RPC path and prove production-launched vault workers still advance and the Perps cursor later resumes.
+BIW-04: EXPLAIN the exact production SQL on populated tables and observe actual bounded deletion effects.
+BU-007: Use populated database rows for ranking, history correlation and deployment/account query scoping.
+BU-009: Assert selectors and calldata produced by actual pool/router settlement builders.
+BU-010: Populate every signer-secret field before checking configuration redaction.
+FCAA-001: Verify consumed authorization state and remove the recovered cache entry while preserving newer entries.
+FCAA-003: Replace impossible invalid-grant claims with exact universal-retirement reason assertions.
+FCH-06: Establish a permit error first, then verify reset clears error and all local completion/pending state.
+FCH-07: Require recoverable transaction identity while excluding a private nested diagnostic canary.
+FCH-08: Name the resulting-leverage case according to the free-margin deposit behavior it actually asserts.
+FEO-003: Hydrate a freshly imported settings store from controlled storage before observing defaults.
+FEO-005: Mount real query consumers and verify polling at the actual minute boundary.
+FEO-006: Pin historical diagnostics to matching manifest/source/bundle/block provenance and reject incoherent inputs before RPC.
+SI-003: Require both sponsorship preparation and wallet signature nodes before asserting their order.
+SI-004: Reject every insufficient run/action mix even when warm sample totals remain successful.
+SI-005: Drive EVM replay through the actual Haskell gas policy, including rejection of double-applied headroom.
+STORYBOOK-001: Assert rendered transaction dialogs, lifecycle steps, explorer links, error state and retry behavior.
+STORYBOOK-003: Select intended modes/sides explicitly and assert resulting behavior rather than obsolete defaults or styling.

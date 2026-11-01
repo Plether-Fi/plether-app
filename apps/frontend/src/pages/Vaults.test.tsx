@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { decodeFunctionResult, encodeFunctionResult, type Abi } from 'viem'
+import canonicalAbis from '../contracts/__tests__/fixtures/perps-canonical-source-abis.json'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vaults } from './Vaults'
 import { PERPS_ARBITRUM_SEPOLIA } from '../contracts/perpsAddresses'
@@ -228,6 +230,23 @@ function success(result: unknown) {
   return { status: 'success' as const, result }
 }
 
+// Encode against the independent compiled-source fixture before wagmi's decode
+// boundary. A uint8 phase must arrive as a number, not a hand-written bigint.
+function protocolStatusFixture(settlementPaused: boolean) {
+  const abi = canonicalAbis.PERPS_PUBLIC_LENS_ABI as Abi
+  return decodeFunctionResult({
+    abi, functionName: 'getProtocolStatus',
+    data: encodeFunctionResult({
+      abi, functionName: 'getProtocolStatus',
+      result: {
+        phase: 1, lastMarkPrice: 100_000_000n, lastMarkTime: 1_800_000_000n,
+        oracleFrozen: false, fadWindow: false, tradingActive: true,
+        withdrawalLive: true, lpEpochSettlementPaused: settlementPaused,
+      },
+    }),
+  })
+}
+
 function liveReadFixture({
   degradedMode = false,
   markFresh = true,
@@ -303,9 +322,9 @@ function liveReadFixture({
     success([500_001n, 1_800_003_300n]),
     success(2n * 10n ** 24n),
     success(10n ** 24n),
-    success([0n, 10n ** 18n, 0n, false, false, true, true, settlementPaused]),
-    success([0n, 40n * 10n ** 18n, 0n, 0n]),
-    success([0n, 30n * 10n ** 18n, 0n, 0n]),
+    success(protocolStatusFixture(settlementPaused)),
+    success([0n, 40_000_000n * 10n ** 18n, 0n, 0n]),
+    success([0n, 30_000_000n * 10n ** 18n, 0n, 0n]),
     success([0n, 5n * 10n ** 17n, 0n, 0n, 0n, 0n, 0n, 0n]),
     success([
       assets(70_000_000),
@@ -1016,19 +1035,36 @@ describe('Vaults page', () => {
     expect(section.previousElementSibling).toHaveAttribute('id', 'overview')
     expect(section.nextElementSibling).toHaveAttribute('id', 'performance')
     expect(screen.getByRole('button', { name: 'Market exposure' })).toBeInTheDocument()
+    // 10M net displayed notional / 50M Junior capital gives ±0.20%
+    // Junior PnL for a 1% index move, distinct from the 2.40% capital-loss example.
+    expect(within(section).getByText('+0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(section).getByText('-0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(section).queryByText(/Market sensitivity is unavailable/)).not.toBeInTheDocument()
     expect(within(section).getByText('41.67%')).toBeInTheDocument()
     expect(within(section).getByText('11.20%')).toBeInTheDocument()
     expect(within(section).getByText('2.40%')).toBeInTheDocument()
     expect(within(section).getByRole('img', { name: 'Cash unavailable for LP withdrawals: 25.00%' })).toBeInTheDocument()
   })
 
-  it('withholds market sensitivity when the pool mark is stale', () => {
-    mocks.readContractsData = liveReadFixture({ markFresh: false })
-    renderVaults('/vaults/junior')
+  it.each([
+    ['stale', { markFresh: false }],
+    ['frozen', { oracleFrozen: true }],
+  ] as const)('withholds previously available sensitivity when the pool mark is %s', (_label, changes) => {
+    mocks.readContractsData = liveReadFixture()
+    const fresh = renderVaults('/vaults/junior')
+    const freshSection = screen.getByRole('region', { name: 'The market exposure' })
+    expect(within(freshSection).getByText('+0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(freshSection).getByText('-0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(freshSection).queryByText(/Market sensitivity is unavailable/)).not.toBeInTheDocument()
+    fresh.unmount()
 
+    mocks.readContractsData = liveReadFixture(changes)
+    renderVaults('/vaults/junior')
     const section = screen.getByRole('region', { name: 'The market exposure' })
     expect(within(section).getByText(/Market sensitivity is unavailable/)).toBeInTheDocument()
     expect(within(section).getByText(/live pricing is unavailable/)).toBeInTheDocument()
+    expect(within(section).queryByText('+0.20%', { exact: true })).not.toBeInTheDocument()
+    expect(within(section).queryByText('-0.20%', { exact: true })).not.toBeInTheDocument()
     expect(within(section).getByText('11.20%')).toBeInTheDocument()
   })
 

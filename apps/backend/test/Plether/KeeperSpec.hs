@@ -1,9 +1,7 @@
 module Plether.KeeperSpec (spec) where
 
-import Control.Monad (filterM)
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Plether.Config (LpSettlementMode (..))
 import Plether.Keeper.Deferrals (Deferral(..), observeDeferral, pendingReasonCode)
 import Plether.Database.Schema
@@ -41,7 +39,6 @@ import Plether.Ethereum.Contracts.SettlementMonitor
   , SettlementStatus (..)
   , supportedObservationSchemaVersion
   )
-import System.Directory (doesFileExist)
 import Test.Hspec
 
 spec :: Spec
@@ -63,9 +60,6 @@ spec = do
       pendingReasonCode 2 `shouldBe` "KEEPER_SAME_BLOCK"
       pendingReasonCode 7 `shouldBe` "KEEPER_ENGINE_FAILURE"
       pendingReasonCode 999 `shouldBe` "KEEPER_PENDING_UNKNOWN"
-  keeperSource <- runIO loadKeeperSource
-  let normalizedKeeperSource = T.unwords $ T.words keeperSource
-
   describe "adaptive keeper pacing" $ do
     it "uses the idle cadence only when no pending order exists" $ do
       keeperPollDelayMicros 1 5 KeeperIdle `shouldBe` 5_000_000
@@ -75,22 +69,8 @@ spec = do
     it "keeps every delay positive" $
       keeperPollDelayMicros 0 0 KeeperIdle `shouldBe` 1_000_000
 
-  describe "LP epoch settlement call graph" $ do
-    it "wires cached settlement only to HousePool with zero value" $ do
-      normalizedKeeperSource
-        `shouldSatisfy` T.isInfixOf
-          "( cfgPerpsHousePool cfg , 0 , Perps.settleLpEpochPoolCall"
-
-    it "wires atomic settlement only to Router with the exact quoted Pyth fee" $ do
-      normalizedKeeperSource
-        `shouldSatisfy` T.isInfixOf
-          "( cfgPerpsOrderRouter cfg , exactFee , Perps.settleLpEpochRouterCall updateData )"
-
-    it "does not invoke any user claim or refund path" $ do
-      let foldedSource = T.toCaseFold keeperSource
-      foldedSource `shouldNotSatisfy` T.isInfixOf "claim"
-      foldedSource `shouldNotSatisfy` T.isInfixOf "refund"
-
+  -- Exact cached/atomic targets, values, calldata and replacement intent are
+  -- exercised through the production builders in Ethereum.TransactionSpec.
   describe "LP epoch settlement gating" $ do
     it "distinguishes no-work, held, dependency-unknown, and executable paths" $ do
       assessLpSettlementStatus (settlementStatus CachedMark) `shouldBe` LpSettlementReady CachedMark
@@ -457,17 +437,6 @@ withSettlementStatus
   -> SettlementObservation
 withSettlementStatus update observation =
   observation {soStatus = update $ soStatus observation}
-
-loadKeeperSource :: IO T.Text
-loadKeeperSource = do
-  let candidates =
-        [ "src/Plether/Keeper.hs"
-        , "apps/backend/src/Plether/Keeper.hs"
-        ]
-  existing <- filterM doesFileExist candidates
-  case existing of
-    path : _ -> TIO.readFile path
-    [] -> fail "could not locate Plether/Keeper.hs for call-graph invariant tests"
 
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True

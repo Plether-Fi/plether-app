@@ -24,7 +24,7 @@ import Network.HTTP.Client
   , defaultManagerSettings
   , newManager
   )
-import Network.HTTP.Types.Status (status200)
+import Network.HTTP.Types.Status (status200, status503)
 import Network.Wai (Application)
 import Network.Wai.Test
   ( SResponse (..)
@@ -35,7 +35,7 @@ import Network.Wai.Test
   )
 import Plether.AA.Gateway (newNativeGatewayState)
 import Plether.AA.Pimlico (newPimlicoProxyState)
-import Plether.Api (app)
+import Plether.Api (appWithReleaseState)
 import Plether.Cache (newAppCache)
 import Plether.Config
   ( Config (..)
@@ -77,12 +77,21 @@ criticalPathSpec databaseUrl =
       withScriptedChain $ \chain ->
         withCriticalPathDatabase databaseUrl $ \pool -> do
           manager <- newManager defaultManagerSettings
+          let config = testConfig databaseUrl $ fixtureRpcUrl chain
+          preparedApplication <-
+            makeApiApplication False manager pool config (fixtureRpcUrl chain)
+          preparedResponse <- runSession
+            (request $ setPath defaultRequest $ Text.encodeUtf8 waitPath)
+            preparedApplication
+          simpleStatus preparedResponse `shouldBe` status503
+          Aeson.eitherDecode (simpleBody preparedResponse) `shouldBe` Right
+            (Aeson.object ["error" Aeson..= Aeson.object
+              ["code" Aeson..= ("PERPS_RELEASE_NOT_DEPLOYED" :: Text),
+               "message" Aeson..= ("Perps release is prepared; deployment is required" :: Text)]])
+          -- This chain fixture is a deployed historical V2 release. Prepared
+          -- deployments remain guarded independently by the control above.
           apiApplication <-
-            makeApiApplication
-              manager
-              pool
-              (testConfig databaseUrl $ fixtureRpcUrl chain)
-              (fixtureRpcUrl chain)
+            makeApiApplication True manager pool config (fixtureRpcUrl chain)
           (runScenario manager pool apiApplication chain)
             `finally` assertNoUnexpectedRequests chain
 
@@ -198,12 +207,13 @@ runIndexer manager pool chain =
   runPerpsIndexer manager pool $ testIndexerConfig chain
 
 makeApiApplication
-  :: Manager
+  :: Bool
+  -> Manager
   -> DbPool
   -> Config
   -> Text
   -> IO Application
-makeApiApplication manager pool config rpcUrl = do
+makeApiApplication deployed manager pool config rpcUrl = do
   cache <- newAppCache
   proxyState <- newPimlicoProxyState
   faucetGuardState <- newFaucetGuardState
@@ -221,7 +231,7 @@ makeApiApplication manager pool config rpcUrl = do
       (RpcClientOptions rpcUrl Nothing "integration-api-perps")
   nativeGatewayState <- newNativeGatewayState manager config perpsClient
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState Nothing
+    appWithReleaseState deployed cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState Nothing
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =

@@ -5,6 +5,8 @@ import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
 import { TokenAmount } from '../components/ui'
 import type { PerpsPosition } from '../hooks'
+import { PerpsIdentityContext } from '../perps-aa'
+import { accountStoryIdentity } from './perpsAccountFixtures'
 
 const ASSETS = 1_000_000n
 
@@ -89,6 +91,7 @@ function MetricDetailsDocumentation() {
 const meta: Meta<typeof MetricDetailsDocumentation> = {
   title: 'Documentation/Metric Details',
   component: MetricDetailsDocumentation,
+  decorators: [(Story) => <PerpsIdentityContext.Provider value={accountStoryIdentity}><Story /></PerpsIdentityContext.Provider>],
   parameters: {
     layout: 'fullscreen',
   },

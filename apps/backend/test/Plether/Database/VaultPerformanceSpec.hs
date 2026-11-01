@@ -4,8 +4,8 @@ import Test.Hspec
 
 spec :: Spec
 spec =
-  describe "vault performance persistence" $ do
-    it "isolates vault-only redeployments in both runtime and static primary keys" $ do
+  describe "vault performance SQL source support (row behavior is exercised in BackendUnitRepairSpec)" $ do
+    it "declares deployment identity columns and primary-key SQL in both schema sources" $ do
       runtime <- readFile "src/Plether/Database/VaultPerformance.hs"
       static <- readFile "schema.sql"
       let identity =
@@ -16,13 +16,13 @@ spec =
       static `shouldContain` "junior_vault_address VARCHAR(42) NOT NULL"
       static `shouldContain` "PRIMARY KEY ("
 
-    it "uses exact deployment identity and newest-first limiting for API reads" $ do
+    it "contains deployment predicates and newest-first limiting SQL" $ do
       runtime <- readFile "src/Plether/Database/VaultPerformance.hs"
       runtime `shouldContain` "AND senior_vault_address = ? AND junior_vault_address = ?"
       runtime `shouldContain` "ORDER BY epoch_timestamp DESC LIMIT ?"
       runtime `shouldContain` ") AS latest ORDER BY epoch_timestamp ASC"
 
-    it "keeps hourly boundaries and canonical block identities constrained" $ do
+    it "declares hourly-boundary and block-hash CHECK expressions" $ do
       runtime <- readFile "src/Plether/Database/VaultPerformance.hs"
       static <- readFile "schema.sql"
       runtime `shouldContain` "epoch_timestamp >= 0 AND epoch_timestamp % 3600 = 0"
@@ -30,7 +30,7 @@ spec =
       static `shouldContain` "epoch_timestamp >= 0 AND epoch_timestamp % 3600 = 0"
       static `shouldContain` "block_hash ~ '^0x[0-9a-f]{64}$'"
 
-    it "persists mark freshness and migrates legacy snapshot tables" $ do
+    it "contains freshness column, migration and upsert assignments" $ do
       runtime <- readFile "src/Plether/Database/VaultPerformance.hs"
       static <- readFile "schema.sql"
       runtime `shouldContain` "mark_fresh BOOLEAN NOT NULL"

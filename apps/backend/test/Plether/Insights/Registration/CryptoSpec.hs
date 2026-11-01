@@ -4,6 +4,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Crypto.Hash (Digest, SHA256, hash)
+import Data.ByteArray (convert)
 import Plether.Insights.Registration.Crypto
 import Test.Hspec
 
@@ -20,6 +22,14 @@ spec = do
           BS.length (evTag value) `shouldBe` 16
           evCiphertext value `shouldNotBe` plaintext
           decryptValue keyV1 rowAad value `shouldBe` Right plaintext
+
+    it "uses a different nonce for repeated encryption under the same key" $ do
+      Right first <- encryptValue "v1" keyV1 rowAad plaintext
+      Right second <- encryptValue "v1" keyV1 rowAad plaintext
+      evNonce first `shouldNotBe` evNonce second
+      evCiphertext first `shouldNotBe` evCiphertext second
+      decryptValue keyV1 rowAad first `shouldBe` Right plaintext
+      decryptValue keyV1 rowAad second `shouldBe` Right plaintext
 
     it "authenticates row AAD, key version, ciphertext, and tag" $ do
       Right value <- encryptValue "v1" keyV1 rowAad plaintext
@@ -114,6 +124,12 @@ spec = do
       verifier `shouldSatisfy` T.all isBase64UrlCharacter
       challenge `shouldSatisfy` T.all isBase64UrlCharacter
       verifier `shouldNotBe` challenge
+      challenge `shouldBe`
+        base64UrlNoPad (convert (hash (TE.encodeUtf8 verifier) :: Digest SHA256))
+
+    it "matches the RFC 7636 Appendix B S256 challenge vector" $
+      pkceS256Challenge "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        `shouldBe` "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
     it "encodes base64url without padding" $ do
       base64UrlNoPad "f" `shouldBe` "Zg"

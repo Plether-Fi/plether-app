@@ -2,7 +2,6 @@ module Main (main) where
 
 import qualified Plether.Perps.Manifest as Manifest
 
-import Control.Concurrent (forkIO)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -36,12 +35,8 @@ import Plether.Perps.HistoryIndexer
   )
 import Plether.Vaults.ActivityIndexer
   ( VaultActivityIndexerConfig (..)
-  , startVaultActivityIndexer
-  , verifyVaultActivityBindings
   )
-import Plether.Vaults.DepositAttributionIndexer
-  ( startVaultDepositAttributionIndexer
-  )
+import Plether.Perps.Workers (runPerpsIndexerWithVaults)
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
@@ -237,14 +232,8 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
                   , vaicBatchSize = 5_000
                   , vaicPollIntervalMicros = 12_000_000
                   }
-          -- Binding failures are startup failures, rather than silent failures in
-          -- the independently supervised vault-indexer thread.
-          verifyVaultActivityBindings vaultClient vaultIndexerCfg
-          _ <- forkIO $ startVaultActivityIndexer vaultClient pool vaultIndexerCfg
-          _ <- forkIO $ startVaultDepositAttributionIndexer vaultClient pool vaultIndexerCfg
-          pure ()
-        IndexerOptions.PerpsIndexerReplay _ -> pure ()
-      runPerpsIndexer manager pool indexerCfg
+          runPerpsIndexerWithVaults manager pool indexerCfg vaultClient vaultIndexerCfg
+        IndexerOptions.PerpsIndexerReplay _ -> runPerpsIndexer manager pool indexerCfg
 
 whenReleaseBound
   :: Config

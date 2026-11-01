@@ -3,6 +3,7 @@ module Plether.LiquidationWorker
   , LiquidationWorkerConfig (..)
   , loadLiquidationWorkerConfig
   , runLiquidationWorker
+  , processCandidates
   , decodeCachedPythPayload
   , validateLiquidationExecutionPayload
   , loadFreshLiquidationExecutionPayload

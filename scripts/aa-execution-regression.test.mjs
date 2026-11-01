@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import { before, after, test } from 'node:test'
 import fs from 'node:fs'
 import net from 'node:net'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 const require = createRequire(new URL('../apps/frontend/package.json', import.meta.url))
 const { createPublicClient, createWalletClient, http, parseAbi, encodeFunctionData, decodeFunctionData, decodeEventLog, decodeErrorResult, decodeAbiParameters, concatHex, toHex, padHex, keccak256, parseEther } = require('viem')
@@ -26,9 +29,26 @@ const pmAbi = [
 const accountAbi = parseAbi(['function owner() view returns(address)', 'function executeBatch((address target,uint256 value,bytes data)[] calls)'])
 const tokenAbi = parseAbi(['function balanceOf(address) view returns(uint256)', 'function approve(address,uint256) returns(bool)'])
 const depositAbi = parseAbi(['function depositMargin(uint256)'])
-const gasPolicy = estimate => (estimate * 3n + 1n) / 2n > estimate + 100000n ? (estimate * 3n + 1n) / 2n : estimate + 100000n
+let policyDirectory, policyExecutable
+const gasPolicy = estimate => {
+  const result = spawnSync(policyExecutable, [String(estimate)], { encoding: 'utf8' })
+  assert.ifError(result.error)
+  assert.equal(result.status, 0, result.stderr)
+  return BigInt(result.stdout.trim())
+}
 
 before(async () => {
+  policyDirectory = fs.mkdtempSync(join(tmpdir(), 'plether-aa-production-gas-'))
+  policyExecutable = join(policyDirectory, 'execution-gas-policy')
+  const sourceRoot = fileURLToPath(new URL('../apps/backend/src/', import.meta.url))
+  const adapter = fileURLToPath(new URL('../apps/backend/test-local/ExecutionGasPolicy.hs', import.meta.url))
+  const compiled = spawnSync(process.env.GHC_BIN ?? 'ghc', [
+    `-i${sourceRoot}`, '-outputdir', policyDirectory, '-o', policyExecutable, adapter,
+  ], { encoding: 'utf8' })
+  assert.ifError(compiled.error)
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr)
+  assert.equal(gasPolicy(419155n), 628733n, 'the replay must use the production once-padded allowance')
+
   assert.deepEqual(fixture.scenarios.map(s=>s.name),['open_commit','close_commit','protection_create'])
   assert.deepEqual(fixture.scenarios.map(s=>s.expectedSuccess),[false,true,false], 'fixture regeneration cannot silently redefine expected execution outcomes')
   assert.equal(fixture.accounts[fixture.entryPoint.toLowerCase()].codeHash,'0xe3f30f78ae55058acdefea00952c8e44f2263215cf720fe1b27b6f148add0278')
@@ -67,7 +87,10 @@ before(async () => {
   assert.equal((await client.readContract({address:paymaster,abi:pmAbi,functionName:'sponsorSigner'})).toLowerCase(),signer.address.toLowerCase())
   baseline = await rpc('evm_snapshot')
 })
-after(() => { child?.kill() })
+after(() => {
+  child?.kill()
+  if (policyDirectory) fs.rmSync(policyDirectory, { recursive: true, force: true })
+})
 
 async function reset() {
   assert.equal(await rpc('evm_revert',[baseline]),true)
@@ -188,7 +211,7 @@ test('historical deposit executes through real account, paymaster, EntryPoint an
   assert.ok(padded.actualGasCost>0n)
 })
 
-test('repeat deposit succeeds without applying gas headroom twice', async () => {
+test('repeat deposits execute at the production once-padded allowance', async () => {
   await reset()
   assert.equal((await execute(gasPolicy(419155n))).success,true)
   assert.equal((await execute(gasPolicy(419155n))).success,true)

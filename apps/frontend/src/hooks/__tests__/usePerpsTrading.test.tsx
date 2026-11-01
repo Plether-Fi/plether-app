@@ -936,15 +936,26 @@ describe('usePerpsTrading', () => {
   it('shows the transaction hash and support reference without a diagnostic dump when submission fails opaquely', async () => {
     mocks.identityReady = true
     const failedHash = `0x${'11'.repeat(32)}` as Hex
+    const diagnosticCanary = 'private-rpc-diagnostic-canary'
     mocks.executeSponsoredPerpsAction.mockRejectedValueOnce(
       new Error('Transaction failed', {
-        cause: new Error(`Failed transaction: ${failedHash}`),
+        cause: new Error(`Failed transaction: ${failedHash}`, {
+          cause: new Error(`Request body: {"calldata":"${diagnosticCanary}"}`),
+        }),
       })
     )
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.commitOrder(commitInput())).rejects.toThrow(`Transaction: ${failedHash}\n\nSupport reference:`)
+    const failure = await result.current.commitOrder(commitInput()).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    const message = (failure as Error).message
+    expect(message.split('\n\n')).toEqual([
+      `We could not determine why this transaction failed. Check account activity before retrying, or contact support with your support reference.\nTransaction: ${failedHash}`,
+      expect.stringMatching(/^Support reference: tx-[0-9a-f-]{36}$/),
+    ])
+    expect(message).not.toContain(diagnosticCanary)
+    expect(message).not.toMatch(/Request body:|Current account state:|calldata/i)
   })
 
   it('adds isolated margin through the Trading Account and invalidates only perps reads', async () => {

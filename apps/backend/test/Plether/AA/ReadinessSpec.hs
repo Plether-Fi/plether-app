@@ -1,9 +1,9 @@
 module Plether.AA.ReadinessSpec (spec) where
 import Test.Hspec
 import Plether.AA.Readiness
-import Data.Aeson (Value(..))
+import Data.Aeson (Value(..), object, toJSON, (.=))
+import Data.Text (Text)
 import qualified Data.Aeson.KeyMap as KM
-import Data.Foldable (toList)
 
 spec :: Spec
 spec = describe "Readiness funding evidence" $ do
@@ -26,12 +26,21 @@ spec = describe "Readiness funding evidence" $ do
         oracle = Check "oracle" "ready" "READY"
         workers = [Check c "blocked" "WORKER_INSUFFICIENT_FUNDS" | c <- ["lp_settlement","liquidation","oracle","protection"]]
         snapshot = snapshotWithWorkers 1000 True [] ready (oracle,oracle,oracle) workers
-        action key = case snapshot of
-          Object o | Just (Object actions) <- KM.lookup "actions" o, Just (Array xs) <- KM.lookup key actions -> toList xs
-          _ -> []
-        blocked (Object o) = KM.lookup "status" o == Just (String "blocked")
-        blocked _ = False
-    any blocked (action "close") `shouldBe` False
-    any blocked (action "open") `shouldBe` False
-    any blocked (action "deposit") `shouldBe` False
-    any blocked (action "protection") `shouldBe` False -- cancellation/retry must remain available
+        expected component status reason = object
+          ["component" .= (component :: Text), "status" .= (status :: Text), "reason" .= (reason :: Text)]
+        keeperCheck = expected "keeper" "ready" "READY"
+        oracleCheck = expected "oracle" "ready" "READY"
+    case snapshot of
+      Object fields -> do
+        KM.lookup "workers" fields `shouldBe` Just (toJSON
+          [expected c "blocked" "WORKER_INSUFFICIENT_FUNDS" | c <- ["lp_settlement","liquidation","oracle","protection"]])
+        case KM.lookup "actions" fields of
+          Just (Object actions) -> do
+            KM.keys actions `shouldMatchList` ["deposit","open","close","protection"]
+            KM.lookup "deposit" actions `shouldBe` Just (toJSON ([] :: [Value]))
+            KM.lookup "open" actions `shouldBe` Just (toJSON [keeperCheck,oracleCheck])
+            KM.lookup "close" actions `shouldBe` Just (toJSON [keeperCheck,oracleCheck])
+            KM.lookup "protection" actions `shouldBe` Just (toJSON
+              [keeperCheck,oracleCheck,expected "protection" "unknown" "WORKER_INSUFFICIENT_FUNDS"])
+          other -> expectationFailure $ "missing or malformed action evidence: " <> show other
+      other -> expectationFailure $ "missing readiness object: " <> show other
