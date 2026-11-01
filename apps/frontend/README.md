@@ -2,7 +2,8 @@
 
 Current perps source selects Core v2.0.0 and the checksum-pinned SDK 0.4.0.
 See `../../config/perps/ORDER_V3_TIMING.md` for provenance. The public AA manifest
-binds the new MockUSDG market with sponsorship disabled and no paymaster.
+binds the new MockUSDG market to the reviewed existing paymaster. Backend
+readiness remains authoritative for sponsored funding and order submission.
 
 React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 

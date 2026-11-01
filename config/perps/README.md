@@ -19,11 +19,14 @@ not an upstream compiler archive. The runtime verification records read-only
 checks of all 30 contracts at one safe block. ABI provenance separately identifies
 compiled source and does not claim bytecode reproduction.
 
-The public AA manifest binds this market with a fresh version. Sponsorship is
-false and its paymaster remains null: Core's release does not deploy AA
-infrastructure. See [the integration runbook](../../docs/runbooks/perps-mock-usdg.md)
+The public AA manifest binds this market with a fresh version and the reviewed
+existing paymaster. `evidence/v2.0.0/aa-activation.json` records its runtime hash,
+EntryPoint/account policy, signer, pause state, deposit and stake. The paymaster
+source is unchanged between the prior protocol and v2.0.0 and contains no market
+target bindings. Sponsorship is enabled in the public manifest; the backend must
+independently verify the v2 graph and its native-AA readiness before issuance. See [the integration runbook](../../docs/runbooks/perps-mock-usdg.md)
 for the remaining database, worker and AA rollout steps. This source update does
-not deploy services, apply Terraform, migrate databases or enable sponsorship.
+not by itself deploy services, apply Terraform or migrate databases.
 
 Current token metadata is `settlementToken`; the token pin is
 `contracts.settlementToken`. Quantities use `Assets` and `AssetAtoms`, AA metadata

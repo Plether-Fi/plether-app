@@ -48,13 +48,13 @@ const deployed = () => {
 test('prepared release cannot pass either deployment guard', () => {
   const prepared = JSON.parse(read('config/perps/mock-usdg-prepared.json'))
   assert.equal(coreManifest.release.version, 'v2.0.0')
-  assert.equal(manifest.sponsorshipEnabled, false)
+  assert.equal(manifest.sponsorshipEnabled, true)
   assert.equal(manifest.settlementToken, coreManifest.contracts.settlementToken.address)
-  assert.equal(manifest.paymasterAddress, null)
+  assert.equal(manifest.paymasterAddress, JSON.parse(read('config/perps/evidence/v2.0.0/aa-activation.json')).paymasterAddress)
   assert.throws(() => validateAaDeployment(prepared, manifest), /Prepared manifests/)
   assert.throws(() => validateBackendDeployment(prepared, {}, {}), /Prepared manifests/)
   validateAaDeployment(coreManifest, manifest)
-  assert.throws(() => validateAaDeployment(coreManifest, { ...manifest, sponsorshipEnabled: true }), /paymasterAddress|paymaster/)
+  assert.throws(() => validateAaDeployment(coreManifest, { ...manifest, paymasterAddress: null, sponsorshipEnabled: true }), /paymasterAddress|paymaster/)
 })
 
 test('frontend deployment validates the complete canonical AA identity', () => {
