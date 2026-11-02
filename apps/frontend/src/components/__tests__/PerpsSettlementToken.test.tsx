@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_LABEL } from '../../contracts/perpsAddresses'
@@ -33,17 +33,16 @@ describe('USDG perps display', () => {
     expect(screen.getByText(/Carry collected when/)).toHaveTextContent('0.05 USDG')
   })
 
-  it.each(['idle', 'deposited'] as const)('allows another mint after a completed claim in %s phase', (fundingPhase) => {
+  it.each(['idle', 'deposited'] as const)('keeps a completed backend allocation from minting again in %s phase', (fundingPhase) => {
     const onRequestFunds = vi.fn()
     render(<TestnetWelcomeModalView isOpen isWalletConnected isTradingAccountRecipient
       walletAddress={account} fundingPhase={fundingPhase}
       claim={{ address: account, amount: '100000000000', token: account, txHash: null, status: 'minted' }}
       onClose={vi.fn()} onWalletAddressChange={vi.fn()} onConnectWallet={vi.fn()} onRequestFunds={onRequestFunds} />)
 
-    const mint = screen.getByRole('button', { name: 'Get 100,000 USDG' })
-    expect(mint).toBeEnabled()
-    expect(screen.getByText(/Your wallet needs Arbitrum Sepolia ETH/)).toHaveTextContent('Plether covers gas for the deposit.')
-    fireEvent.click(mint)
-    expect(onRequestFunds).toHaveBeenCalledOnce()
+    const mint = screen.getByRole('button', { name: fundingPhase === 'deposited' ? 'USDG deposited' : 'Get 100,000 USDG' })
+    expect(mint).toBeDisabled()
+    expect(screen.getByText(/Plether covers gas for minting/)).toHaveTextContent('You do not need Arbitrum Sepolia ETH for this funding flow.')
+    expect(onRequestFunds).not.toHaveBeenCalled()
   })
 })

@@ -80,7 +80,7 @@ Unrealized profit can increase Position equity without increasing Available to T
 
 ### Depositing USDG
 
-To get test funds, select **Get USDG**, then **Get 100,000 USDG**. Confirm the MockUSDG mint in your owner wallet using Arbitrum Sepolia ETH for gas. The app then requests a sponsored deposit into your Margin Account. If that deposit fails, the minted USDG remains in your Trading Account for a retry.
+To get test funds, select **Get USDG**, then **Get 100,000 USDG**. The backend mints MockUSDG to your Trading Account and pays the mint gas. The app then requests a sponsored deposit into your Margin Account; confirm in your wallet when prompted. If that deposit fails, the minted USDG remains in your Trading Account for a retry. This funding flow does not require Arbitrum Sepolia ETH in your owner wallet.
 
 To deposit:
 

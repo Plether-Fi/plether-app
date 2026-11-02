@@ -8,7 +8,7 @@ The USDG release is being prepared. Follow these steps after funding and trading
 
 Your wallet controls a separate **Plether Trading Account**. That account holds your collateral and positions. You do not receive a LONG or SHORT token in your wallet.
 
-You need MetaMask or another compatible wallet and time to watch the order finish. Your owner wallet needs Arbitrum Sepolia ETH to mint test USDG. Eligible deposits and trades are gas-sponsored while sponsorship is available. Use only the official app and never share your seed phrase.
+You need MetaMask or another compatible wallet and time to watch the order finish. Plether pays gas to mint your test USDG allocation and sponsor its deposit; your owner wallet does not need Arbitrum Sepolia ETH for this funding flow. Eligible deposits and trades are gas-sponsored while sponsorship is available. Use only the official app and never share your seed phrase.
 
 ### 1. Connect and get test funds
 
@@ -16,11 +16,11 @@ Open [Plether on Arbitrum Sepolia](https://app.sepolia.plether.com), select `Con
 
 In MetaMask, check **app.sepolia.plether.com** and select your intended owner account. Connect it, then confirm that the app and wallet use **Arbitrum Sepolia**, chain ID **421614**.
 
-Select `Get USDG` in the testnet banner. Check the pre-filled **Trading Account address**, then select `Get 100,000 USDG`. Confirm the mint transaction in your owner wallet. It needs Arbitrum Sepolia ETH for gas and sends test USDG to your Trading Account.
+Select `Get USDG` in the testnet banner. Check the pre-filled **Trading Account address**, then select `Get 100,000 USDG`. The backend mints your 100,000 USDG allocation to your Trading Account and pays the mint gas. Confirm the sponsored deposit in your owner wallet when prompted.
 
 After the mint confirms, authorize the sponsored deposit when prompted. If confirmation is delayed, use `Check confirmation` to resume the saved transaction.
 
-![Get 100,000 USDG for your Trading Account. The wallet pays mint gas; Plether sponsors the deposit.](.gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png)
+![Get 100,000 USDG for your Trading Account. Plether pays mint gas and sponsors the deposit.](.gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png)
 
 ### 2. Check your USDG balance
 

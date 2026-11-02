@@ -1,4 +1,4 @@
-import { PERPS_RELEASE_IS_DEPLOYED, PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { PERPS_RELEASE_IS_DEPLOYED, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useEffect, useRef, useState } from 'react'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
@@ -11,7 +11,6 @@ import { usePerpsIdentity } from '../perps-aa'
 import { useTestnetFunding, type TestnetFundingPhase } from '../hooks/useTestnetFunding'
 import { Button, Input, Modal } from './ui'
 
-const DIRECT_MOCK_MINT = PERPS_SETTLEMENT_TOKEN.isMock && PERPS_SETTLEMENT_TOKEN.name === 'Mock USDG'
 const MOCK_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN_LABEL
 
 interface TestnetWelcomeModalViewProps {
@@ -81,14 +80,14 @@ export function TestnetWelcomeModalView({
             isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
             disabled={
               isWalletConnected &&
-              (!isRecipientReady || (!DIRECT_MOCK_MINT && (isDeposited || (!!activeClaim && !isPendingClaim && !submitError))))
+              (!isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError))
             }
             className="w-full"
           >
             {isRecipientReady ? (
               fundingPhase === 'waiting' ? `Waiting for ${MOCK_TOKEN_LABEL}`
                 : fundingPhase === 'depositing' ? `Depositing ${MOCK_TOKEN_LABEL}`
-                : isDeposited && !DIRECT_MOCK_MINT ? `${MOCK_TOKEN_LABEL} deposited`
+                : isDeposited ? `${MOCK_TOKEN_LABEL} deposited`
                 : isPendingClaim ? 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL}`
             ) : isWalletConnected ? (
               recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
@@ -123,12 +122,11 @@ export function TestnetWelcomeModalView({
               ? `We will send 100,000 USDG to your ${isTradingAccountRecipient ? 'Trading Account and deposit it into your Margin Account' : 'wallet'}. Confirm in your wallet when prompted.`
               : 'Preparing your Trading Account to receive USDG.'}
         </p>
-        {DIRECT_MOCK_MINT ? (
-          <p>
-            You can get more USDG anytime. Your wallet needs Arbitrum Sepolia ETH for the mint transaction.
-            {isTradingAccountRecipient ? ' Plether covers gas for the deposit.' : ''}
-          </p>
-        ) : null}
+        <p>
+          {isTradingAccountRecipient
+            ? 'Plether covers gas for minting and depositing your test USDG. You do not need Arbitrum Sepolia ETH for this funding flow.'
+            : 'Plether covers gas to mint your test USDG.'}
+        </p>
         <p>Test funds have no real value. Balances and positions may be reset.</p>
 
         {isRecipientReady ? (
