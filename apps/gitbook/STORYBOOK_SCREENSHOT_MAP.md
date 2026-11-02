@@ -111,7 +111,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trader-quickstart.md:23` | Get 100,000 USDG for your Trading Account. Plether pays mint gas and sponsors the deposit. | [USDG component](http://localhost:6006/?path=/story/testnet-welcome-modal--request-funds) | Current production component, illustrative values |
+| `trader-quickstart.md:23` | Get 100,000 USDG directly in your Margin Account. Plether pays all funding gas. | [USDG component](http://localhost:6006/?path=/story/testnet-welcome-modal--request-funds) | Current production component, illustrative values |
 | `trader-quickstart.md:31` | A 10,000 USDG deposit from the Trading Account. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--deposit-margin) | Current production component, illustrative values |
 | `trader-quickstart.md:48` | The example long order uses 2,000 plDXY and 2x leverage. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-order) | Current production component, illustrative values |
 | `trader-quickstart.md:62` | Commit Preview shows the example order's margin, leverage, price limit and costs. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-preview) | Current production component, illustrative values |

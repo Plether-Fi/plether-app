@@ -96,6 +96,12 @@ spec = do
       classifyTestnetFaucetClaim (Just $ claimRow "submitted" Nothing (Just "0x02abcd"))
         `shouldBe` FaucetInvalidState
 
+    it "keeps direct allocations out of legacy mint retries" $ do
+      classifyTestnetFaucetClaim (Just $ claimRow "margin_reserved" Nothing Nothing)
+        `shouldBe` FaucetDirectMargin
+      classifyTestnetFaucetClaim (Just $ claimRow "margin_funded" Nothing Nothing)
+        `shouldBe` FaucetDirectMargin
+
     it "returns completed claims without another submission" $
       classifyTestnetFaucetClaim (Just $ claimRow "success" (Just txHash) Nothing)
         `shouldBe` FaucetAlreadyClaimed
@@ -237,6 +243,7 @@ testConfig chainId perpsChainId =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5

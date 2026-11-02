@@ -88,6 +88,8 @@ COPY apps/backend/config/migrations/insights-integrity-epoch-v2.sql /app/config/
 COPY apps/backend/config/migrations/insights-snapshot-deferred-fk-v1.sql /app/config/migrations/insights-snapshot-deferred-fk-v1.sql
 COPY apps/backend/config/migrations/insights-integrity-indexes-v2.sql /app/config/migrations/insights-integrity-indexes-v2.sql
 COPY apps/backend/scripts/recover-faucet-nonce.mjs /app/scripts/recover-faucet-nonce.mjs
+COPY apps/backend/scripts/recover-margin-funding-nonce.mjs /app/scripts/recover-margin-funding-nonce.mjs
+COPY apps/backend/config/migrations/testnet-margin-funding-v1.sql /app/config/migrations/testnet-margin-funding-v1.sql
 COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql
 
 WORKDIR /app

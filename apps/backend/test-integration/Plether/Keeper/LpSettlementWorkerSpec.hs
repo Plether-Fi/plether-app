@@ -1487,6 +1487,7 @@ workerConfig mode =
     , cfgNativeAaConfig = Nothing
     , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 15
     , cfgKeeperIdlePollSeconds = 15

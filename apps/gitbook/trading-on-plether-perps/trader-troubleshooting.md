@@ -282,7 +282,7 @@ Check:
 * Sponsorship status
 * Owner-wallet Arbitrum Sepolia ETH when a transfer is required
 
-The deposit modal includes both Trading Account and owner-wallet MockUSDG in **Available to deposit**. The testnet welcome flow normally funds the derived Trading Account directly. If the requested amount exceeds that balance, the application first transfers the exact shortfall from the owner wallet. That regular token transfer requires Arbitrum Sepolia ETH for gas.
+The deposit modal includes both Trading Account and owner-wallet MockUSDG in **Available to deposit**. The testnet welcome flow normally credits the Margin Account directly without a wallet approval. Earlier funding allocations remain in the Trading Account until deposited. If the requested amount exceeds that balance, the application first transfers the exact shortfall from the owner wallet. That regular token transfer requires Arbitrum Sepolia ETH for gas.
 
 After the required USDG is at the Trading Account address, the owner wallet authorizes one sponsored Trading Account operation. It batches:
 

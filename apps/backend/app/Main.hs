@@ -23,6 +23,8 @@ import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
 import Plether.Handlers.DivisionsRegistration (ensureDivisionsSchema, loadDiscordConfig)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
+import Plether.Database.TestnetFunding (ensureMarginFundingSchema)
+import Plether.Handlers.TestnetMarginFunding (startMarginFundingProcessor)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
@@ -89,6 +91,7 @@ main = do
             withDb pool ensureDivisionsLiveSchema
             withDb pool ensureProtectionSchema
             withDb pool ensureTestnetFaucetSchema
+            withDb pool ensureMarginFundingSchema
             withDb pool ensureVaultPerformanceSchema
             withDb pool ensureVaultActivitySchema
             withDb pool ensureAaSponsorshipSchema
@@ -185,6 +188,12 @@ main = do
             "Database is not configured; history endpoints are disabled"
             [field "history_enabled" False]
           pure Nothing
+
+      case mPool of
+        Just pool | Manifest.releaseIsDeployed -> do
+          _ <- forkIO $ startMarginFundingProcessor pool perpsClient cfg
+          pure ()
+        _ -> pure ()
 
       client <-
         newClientWithOptions $

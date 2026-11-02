@@ -4,18 +4,18 @@ import { Result } from 'better-result'
 import { isAddressEqual, isHash, type Address } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { perpsApi, testnetFaucetErrorMessage } from '../api'
-import type { TestnetFaucetClaim } from '../api/types'
+import type { LegacyMarginFunding, MarginFundingProgress, TestnetFaucetClaim } from '../api/types'
 import { ERC20_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_RELEASE_IS_DEPLOYED } from '../contracts/perpsAddresses'
 import { usePerpsIdentity } from '../perps-aa'
 import { usePerpsTrading } from './usePerpsTrading'
 
-export type TestnetFundingPhase = 'idle' | 'claiming' | 'waiting' | 'depositing' | 'deposited'
+export type TestnetFundingPhase = 'idle' | 'claiming' | 'approving' | 'waiting' | 'depositing' | 'deposited'
 
 export function useTestnetFunding(recipient: string, enabled: boolean) {
   const identity = usePerpsIdentity()
   const client = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
-  const { depositMargin } = usePerpsTrading()
+  const { depositMargin, refreshAccount } = usePerpsTrading()
   const [claim, setClaim] = useState<TestnetFaucetClaim | null>(null)
   const [phase, setPhase] = useState<TestnetFundingPhase>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -40,6 +40,8 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
     const isCancelled = () => signal.aborted
     setError(null)
     setPhase('claiming')
+    let supportId: string | undefined
+    let failureStage = 'funding'
 
     try {
       if (!PERPS_SETTLEMENT_TOKEN.isMock || PERPS_SETTLEMENT_TOKEN.symbol !== 'USDG') {
@@ -56,8 +58,55 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
         throw new Error('USDG funding is unavailable for this Trading Account. Please refresh and try again.')
       }
 
-      // The backend pays mint gas and persists the signed transaction before
-      // submission. Retrying this endpoint resumes the same allocation.
+      const started = await perpsApi.claimMarginFunding(identity.ownerAddress, address)
+      if (isCancelled()) return
+      if (Result.isError(started)) {
+        throw new Error(testnetFaucetErrorMessage(started.error), { cause: started.error })
+      }
+      const initial = started.value.data
+      validateFundingEnvelope(initial)
+      if (started.value.meta.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
+          !isAddressEqual(initial.address as Address, address) ||
+          !isAddressEqual(initial.token as Address, PERPS_ARBITRUM_SEPOLIA.settlementToken)) {
+        throw new Error('The funding response could not be verified. Refresh and check account activity.')
+      }
+      if (initial.destination === 'margin') {
+        const claimId = initial.claimId
+        supportId = claimId
+        let progress = initial
+        const deadline = Date.now() + 120_000
+        while (!isCancelled()) {
+          validateMarginFunding(progress, claimId, address)
+          failureStage = 'funding_' + progress.phase
+          setClaim({
+            address, token: progress.token, amount: progress.amount, destination: 'margin',
+            txHash: progress.depositTxHash, status: progress.status === 'funded' ? 'margin_funded' : 'submitted',
+          })
+          if (progress.status === 'funded') {
+            setPhase('deposited')
+            refreshAccount()
+            return
+          }
+          if (progress.status === 'failed') {
+            throw Object.assign(new Error('Plether could not complete this funding step. Retry to resume the same allocation.'), { reason: 'FUNDING_STEP_FAILED' })
+          }
+          if (progress.status === 'recovery') {
+            throw Object.assign(new Error('Your funding needs a recovery check. Contact support with your funding reference.'), { reason: 'FUNDING_RECOVERY_REQUIRED' })
+          }
+          setPhase(progress.phase === 'mint' ? 'claiming' : progress.phase === 'approval' ? 'approving' : 'depositing')
+          if (Date.now() >= deadline) throw Object.assign(new Error('Funding is still processing in the background. Use Check funding to check the same allocation.'), { reason: 'FUNDING_PENDING' })
+          await waitForFundingPoll(signal)
+          if (isCancelled()) return
+          const next = await perpsApi.getMarginFunding(claimId)
+          if (isCancelled()) return
+          if (Result.isError(next)) throw new Error('Funding status is unavailable. Use Check funding to resume checking the same allocation.', { cause: next.error })
+          if (next.value.meta.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID) throw new Error('The funding response could not be verified.')
+          progress = next.value.data
+        }
+        return
+      }
+      // Only an explicit legacy response can enter the old wallet-funded flow.
+      // Failed or unavailable direct funding never falls back to another mint.
       const result = await perpsApi.claimTestnetFaucet(address)
       if (isCancelled()) return
       if (Result.isError(result)) {
@@ -134,7 +183,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
       }
     } catch (cause) {
       if (!isCancelled()) {
-        setError(reportedTransactionError(cause, cause instanceof Error ? cause.message : 'Unable to fund your Margin Account. Please try again.', { surface: 'perps', action: 'testnet_funding', stage: 'funding' }).message)
+        setError(reportedTransactionError(cause, cause instanceof Error ? cause.message : 'Unable to fund your Margin Account. Please try again.', { surface: 'perps', action: 'testnet_funding', stage: failureStage, attemptId: supportId }).message)
         setPhase('idle')
       }
     } finally {
@@ -143,4 +192,42 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
   }
 
   return { claim, phase, error, requestFunds }
+}
+
+function validateFundingEnvelope(value: unknown): asserts value is MarginFundingProgress | LegacyMarginFunding {
+  const invalid = () => new Error('The funding response could not be verified. Check account activity.')
+  if (!value || typeof value !== 'object') throw invalid()
+  const data = value as Record<string, unknown>
+  if (data.version !== 1 || typeof data.address !== 'string' || typeof data.token !== 'string') throw invalid()
+  if (data.destination === 'wallet' && data.status === 'legacy_wallet') return
+  if (data.destination !== 'margin' || typeof data.claimId !== 'string' || typeof data.clearinghouse !== 'string' ||
+      typeof data.amount !== 'string' || typeof data.phase !== 'string' || typeof data.status !== 'string' ||
+      !(data.depositTxHash === null || typeof data.depositTxHash === 'string')) throw invalid()
+}
+
+function validateMarginFunding(progress: unknown, claimId: string, address: Address): asserts progress is MarginFundingProgress {
+  validateFundingEnvelope(progress)
+  if (progress.destination !== 'margin' || progress.claimId !== claimId ||
+      !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(claimId) ||
+      !isAddressEqual(progress.address as Address, address) ||
+      !isAddressEqual(progress.clearinghouse as Address, PERPS_ARBITRUM_SEPOLIA.marginClearinghouse) ||
+      !isAddressEqual(progress.token as Address, PERPS_ARBITRUM_SEPOLIA.settlementToken) ||
+      progress.amount !== '100000000000' ||
+      (progress.status === 'funded' && (progress.phase !== 'deposit' || !progress.depositTxHash || !isHash(progress.depositTxHash))) ||
+      !['pending', 'funded', 'failed', 'recovery'].includes(progress.status) ||
+      !['mint', 'approval', 'deposit'].includes(progress.phase)) {
+    throw new Error('The funding response could not be verified. Check account activity.')
+  }
+}
+
+function waitForFundingPoll(signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, 5_000)
+    signal.addEventListener('abort', finish, { once: true })
+  })
 }

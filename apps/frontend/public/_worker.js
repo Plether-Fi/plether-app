@@ -10,6 +10,11 @@ const AA_PROXY_PATHS = new Set([
 ]);
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
+const MARGIN_FUNDING_PROXY_PATH = '/api/perps/v1/testnet/margin-funding';
+function isFaucetProxyPath(pathname) {
+  return pathname === FAUCET_PROXY_PATH || pathname === MARGIN_FUNDING_PROXY_PATH ||
+    /^\/api\/perps\/v1\/testnet\/margin-funding\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(pathname);
+}
 const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
 const PERPS_AA_MANIFEST_PATH = '/perps-aa-manifest.json';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
@@ -652,7 +657,7 @@ const requestHandler = {
           }
           headers.set(AA_PROXY_AUTH_HEADER, env.AA_PROXY_ORIGIN_TOKEN);
         }
-        if (url.pathname === FAUCET_PROXY_PATH) {
+        if (isFaucetProxyPath(url.pathname)) {
           if (!env.FAUCET_PROXY_ORIGIN_TOKEN) {
             return new Response('Faucet proxy authentication not configured', {
               status: 502,

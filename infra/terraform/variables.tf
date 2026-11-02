@@ -201,6 +201,12 @@ variable "liquidation_keeper_private_key" {
   sensitive = true
 }
 
+variable "testnet_margin_funding_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable new Sepolia direct margin allocations. Existing journaled transactions continue recovery while disabled."
+}
+
 variable "faucet_private_key" {
   type      = string
   default   = ""

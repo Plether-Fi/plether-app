@@ -26,6 +26,10 @@ const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
 const FAUCET_BACKEND_PROXY_PATH = '/api/testnet/faucet';
 const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
+function isFaucetProxyPath(pathname: string) {
+  return pathname === FAUCET_PROXY_PATH || pathname === FAUCET_BACKEND_PROXY_PATH ||
+    /^\/api(?:\/perps\/v1)?\/testnet\/margin-funding(?:\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})?$/i.test(pathname);
+}
 
 type RuntimeEnv = Record<string, string | undefined>;
 
@@ -70,8 +74,7 @@ function apiProxyConfig(
             }
             if (
               (
-                requestPath === FAUCET_PROXY_PATH ||
-                requestPath === FAUCET_BACKEND_PROXY_PATH
+                requestPath !== undefined && isFaucetProxyPath(requestPath)
               ) &&
               env.FAUCET_PROXY_ORIGIN_TOKEN
             ) {

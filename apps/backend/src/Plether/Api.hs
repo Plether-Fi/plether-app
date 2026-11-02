@@ -8,9 +8,10 @@ module Plether.Api
 import Control.Exception (evaluate)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:?), (.=))
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
@@ -123,6 +124,7 @@ import Plether.Handlers.VaultActivity
 import Plether.Handlers.TestnetFaucet
   ( claimTestnetFaucet
   )
+import qualified Plether.Handlers.TestnetMarginFunding as MarginFunding
 import Plether.Handlers.TestnetFaucetGuard
   ( FaucetClientId (..)
   , FaucetGuardFailure (..)
@@ -130,6 +132,7 @@ import Plether.Handlers.TestnetFaucetGuard
   , FaucetGuardState
   , authenticateFaucetRequest
   , checkFaucetRequest
+  , checkFaucetStatusRequest
   , faucetGuardFailureReasonText
   , faucetQuotaScopeText
   )
@@ -180,6 +183,14 @@ perpsReleaseMiddleware deployed application req respond
   isPerpsPath _ = False
 
 data TestnetFaucetRequest = TestnetFaucetRequest (Maybe Text) Bool
+
+data MarginFundingRequest = MarginFundingRequest Text Text
+instance FromJSON MarginFundingRequest where
+  parseJSON = withObject "MarginFundingRequest" $ \v -> do
+    version <- v .: "version"
+    when (version /= (1 :: Int) || any (not . (\key -> key == "version" || key == "owner" || key == "address")) (KM.keys v)) $
+      fail "Unsupported direct margin funding request"
+    MarginFundingRequest <$> v .: "owner" <*> v .: "address"
 
 instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v -> do
@@ -266,6 +277,7 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
     json $
       Aeson.object
         [ "manifestVersion" .= perpsV2ManifestVersion
+        , "testnetMarginFundingEnabled" .= cfgTestnetMarginFundingEnabled cfg
         , "chainId" .= cfgPerpsChainId cfg
         , "deploymentBlock" .= perpsV2DeploymentBlock
         , "settlementToken" .= cfgPerpsSettlementToken cfg
@@ -284,6 +296,28 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
         , "bindingsVerified" .= releaseConfigured
         , "sponsorshipEnabled" .= sponsorshipEnabled
         ]
+
+  post "/api/testnet/margin-funding" $ do
+    setHeader "Cache-Control" "no-store"
+    accepted <- marginFundingGuard faucetGuardState cfg False
+    when accepted $ do
+      MarginFundingRequest owner address <- jsonData
+      if not (isValidAddress owner && isValidAddress address) ||
+          T.toLower owner == "0x0000000000000000000000000000000000000000" ||
+          T.toLower address == "0x0000000000000000000000000000000000000000"
+        then handleError $ E.invalidAddress "A nonzero owner and Trading Account are required."
+        else case mPool of
+          Just pool -> liftIO (MarginFunding.claimMarginFunding pool perpsClient cfg owner address) >>= handleResult
+          Nothing -> handleServiceUnavailable $ E.networkError "Test funding is unavailable."
+
+  get "/api/testnet/margin-funding/:id" $ do
+    setHeader "Cache-Control" "no-store"
+    accepted <- marginFundingGuard faucetGuardState cfg True
+    when accepted $ do
+      identifier <- pathParam "id"
+      case mPool of
+        Just pool -> liftIO (MarginFunding.marginFundingStatus pool cfg identifier) >>= handleResult
+        Nothing -> handleServiceUnavailable $ E.networkError "Test funding is unavailable."
 
   post "/api/testnet/faucet" $ do
     suppliedToken <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
@@ -1068,6 +1102,19 @@ handleError err = do
       E.InternalError -> status500
       _ -> status400
   json err
+
+marginFundingGuard :: FaucetGuardState -> Config -> Bool -> ActionM Bool
+marginFundingGuard state cfg statusRead = do
+  token <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
+  ip <- fmap LT.toStrict <$> header "CF-Connecting-IP"
+  case authenticateFaucetRequest (cfgFaucetGuardConfig cfg) token ip of
+    Left failure -> handleFaucetGuardFailure failure >> pure False
+    Right (config,client) -> do
+      result <- liftIO $ if statusRead then checkFaucetStatusRequest state client
+        else checkFaucetRequest state config client True
+      case result of
+        Left failure -> handleFaucetGuardFailure failure >> pure False
+        Right () -> pure True
 
 handleFaucetGuardFailure :: FaucetGuardFailure -> ActionM ()
 handleFaucetGuardFailure failure = do

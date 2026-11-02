@@ -1,6 +1,8 @@
 # Sepolia faucet signer isolation and nonce recovery
 
-The Arbitrum Sepolia mock USDC deployed at
+This runbook covers legacy wallet-mint claims. For direct Margin Account allocations, use [direct margin funding](testnet-margin-funding.md) and its phase-aware repair tool.
+
+The earlier Arbitrum Sepolia mock USDC deployed at
 `0x4b44312d1f94d3d79a36a875691d768dd6c0575f` has unrestricted `mint(address,uint256)`.
 It has no owner/minter-role requirement. The faucet needs a dedicated EOA and
 Arbitrum Sepolia ETH for gas. Do not transfer token ownership or reuse the keeper

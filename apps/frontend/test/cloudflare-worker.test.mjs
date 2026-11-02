@@ -522,6 +522,31 @@ describe('Cloudflare Sepolia faucet proxy authentication', () => {
   const faucetUrl = 'https://app.plether.com/api/perps/v1/testnet/faucet';
   const faucetHeader = 'X-Plether-Faucet-Proxy-Token';
 
+  for (const path of [
+    '/api/perps/v1/testnet/margin-funding',
+    '/api/perps/v1/testnet/margin-funding/a6415ba2-5668-4ba5-a058-f627bd1b938d',
+  ]) {
+    it(`authenticates the bounded direct funding path ${path}`, async () => {
+      const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+      await worker.fetch(new Request('https://app.plether.com' + path, {
+        method: path.endsWith('margin-funding') ? 'POST' : 'GET',
+        headers: { [faucetHeader]: 'browser-spoof', 'CF-Connecting-IP': '203.0.113.8' },
+      }), { ...workerEnv(), FAUCET_PROXY_ORIGIN_TOKEN: 'trusted-faucet-origin-token' });
+      const [url, options] = fetchMock.mock.calls[0].arguments;
+      assert.equal(url.href, 'https://sepolia-api.plether.test/api' + path.slice('/api/perps/v1'.length));
+      assert.equal(options.headers.get(faucetHeader), 'trusted-faucet-origin-token');
+      assert.equal(options.headers.get('CF-Connecting-IP'), '203.0.113.8');
+    });
+  }
+
+  it('does not send credentials to arbitrary funding subpaths', async () => {
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+    await worker.fetch(new Request('https://app.plether.com/api/perps/v1/testnet/margin-funding/not-a-claim', {
+      headers: { [faucetHeader]: 'browser-spoof' },
+    }), { ...workerEnv(), FAUCET_PROXY_ORIGIN_TOKEN: 'trusted-faucet-origin-token' });
+    assert.equal(fetchMock.mock.calls[0].arguments[1].headers.has(faucetHeader), false);
+  });
+
   it('injects the trusted token only on the exact faucet path and preserves the Cloudflare IP', async () => {
     const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
     const request = new Request(`${faucetUrl}?source=welcome`, {

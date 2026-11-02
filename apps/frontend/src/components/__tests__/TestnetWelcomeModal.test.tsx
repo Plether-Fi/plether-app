@@ -46,6 +46,23 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
     expect(onRequestFunds).not.toHaveBeenCalled()
   })
 
+  it('explains direct funding without wallet approval', () => {
+    render(<TestnetWelcomeModalView isOpen isWalletConnected isTradingAccountRecipient
+      walletAddress={walletAddress} onClose={() => {}} onConnectWallet={() => {}}
+      onWalletAddressChange={() => {}} onRequestFunds={() => {}} />)
+    expect(screen.getByText(/directly to your Margin Account. No wallet approval is needed/)).toBeInTheDocument()
+    expect(screen.getByText(/You do not need Arbitrum Sepolia ETH/)).toBeInTheDocument()
+  })
+
+  it('offers checking pending direct funding without opening a deposit', () => {
+    render(<TestnetWelcomeModalView isOpen isWalletConnected isTradingAccountRecipient
+      walletAddress={walletAddress} claim={{address:walletAddress,token:walletAddress,amount:'100000000000',
+        destination:'margin',status:'submitted',txHash:null}} onClose={() => {}} onConnectWallet={() => {}}
+      onWalletAddressChange={() => {}} onRequestFunds={() => {}} />)
+    expect(screen.getByRole('button',{name:'Check funding'})).toBeEnabled()
+    expect(screen.queryByRole('button',{name:'Deposit'})).not.toBeInTheDocument()
+  })
+
   it('shows the connected wallet address and the green funding action', () => {
     render(
       <TestnetWelcomeModalView
