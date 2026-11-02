@@ -14,7 +14,7 @@ export function Announcements({ publication }: { publication: DivisionPublicatio
   </Panel>
 }
 
-export function Standings({ standings }: { standings: DivisionStanding[] }) {
+export function Standings({ standings, linkToCurrentWallet = true }: { standings: DivisionStanding[]; linkToCurrentWallet?: boolean }) {
   if (!standings.length) return <EmptyState title="No traders found" message="Try a different name or wallet address." />
   return <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
     <caption className="sr-only">Published weekly percentage P&amp;L and division badges</caption>
@@ -22,7 +22,7 @@ export function Standings({ standings }: { standings: DivisionStanding[] }) {
     <tbody>{standings.map((row) => <tr key={row.address} className="border-b border-brand-border/15 last:border-0">
       <td className="px-4 py-5 font-mono">{row.rank ?? '—'}</td>
       <td className="px-4 py-5"><TierBadge tier={row.tier} showLabel /></td>
-      <td className="px-4 py-5 font-mono"><Link to={`/divisions/wallets/${row.address}`} className="text-brand-peach hover:underline focus-visible:underline" title={row.address} aria-label={`View trader ${row.address}`}>{shortAddress(row.address)}</Link></td>
+      <td className="px-4 py-5 font-mono">{linkToCurrentWallet ? <Link to={`/divisions/wallets/${row.address}`} className="text-brand-peach hover:underline focus-visible:underline" title={row.address} aria-label={`View trader ${row.address}`}>{shortAddress(row.address)}</Link> : <span title={row.address}>{shortAddress(row.address)}</span>}</td>
       <td className="px-4 py-5">{row.displayName ? <span className="break-all">@{row.displayName.replace(/^@/, '')}</span> : <span className="text-content-tertiary" aria-label="Discord not linked">—</span>}</td>
       <td className="px-4 py-5 font-mono">{formatReturn(row.weeklyPnlAssets, row.adjustedEquityAssets)}</td>
       <td className="px-4 py-5">{row.activeDays} / 2</td>

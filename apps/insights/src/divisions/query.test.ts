@@ -129,4 +129,37 @@ describe('published week pagination', () => {
     }
     expect(fetcher).not.toHaveBeenCalled()
   })
+
+  it('requests an archived deployment without confusing it with the current deployment', async () => {
+    const current = `0x${'a'.repeat(40)}`
+    const previous = `0x${'b'.repeat(40)}`
+    const data = { publication, olderCursor: null, newerCursor: null,
+      releaseRouter: previous, currentReleaseRouter: current, deployments: [current, previous] }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    const signal = new AbortController().signal
+    expect(await getDivisionsHistory(cursor, signal, `0x${'B'.repeat(40)}`)).toEqual(data)
+    expect(fetcher).toHaveBeenCalledWith(`/api/insights/v1/divisions/history?week=${cursor}&releaseRouter=${previous}`, expect.objectContaining({ signal }))
+  })
+
+  it('rejects missing, mismatched or malformed deployment identities', async () => {
+    const current = `0x${'a'.repeat(40)}`
+    const previous = `0x${'b'.repeat(40)}`
+    const data = { publication, olderCursor: null, newerCursor: null,
+      releaseRouter: previous, currentReleaseRouter: current, deployments: [current, previous] }
+    for (const badData of [
+      { publication, olderCursor: null, newerCursor: null },
+      { ...data, releaseRouter: current },
+      { ...data, deployments: [current] },
+      { ...data, currentReleaseRouter: 'bad' },
+      { ...data, deployments: [current, previous, previous] },
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: badData })))
+      await expect(getDivisionsHistory(null, undefined, previous)).rejects.toThrow(/invalid|unavailable/)
+    }
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    await expect(getDivisionsHistory(null, undefined, 'bad')).rejects.toThrow('Invalid contract deployment')
+    expect(fetcher).not.toHaveBeenCalled()
+  })
 })

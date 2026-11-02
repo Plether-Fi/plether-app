@@ -23,6 +23,40 @@ cursors in the URL. `/api/insights/v1/divisions/history?week=<epoch-seconds>` re
 one saved publication plus `olderCursor` and `newerCursor`; omitting `week` selects
 the latest published week. Empty published weeks remain browsable.
 
+The results page includes a **Contract deployment** selector. History defaults
+to the current router; `releaseRouter=<address>` selects a previous deployment.
+The history response also includes `releaseRouter`, `currentReleaseRouter`, and
+`deployments` (routers with saved publications on this chain, plus the current
+router). Week navigation and latest-results links preserve the selected router.
+The API maps historical `weeklyPnlUsdc` / `adjustedEquityUsdc` fields to their
+current `*Assets` names when reading, without rewriting the saved publication.
+An unknown deployment or unpublished requested week returns 404 without falling
+back to another deployment. Saved rankings and badges remain specific to their
+deployment; historical wallet rows do not link to current-deployment metrics.
+Deploy the backend before the Insights frontend. No schema migration is needed.
+
+This exposes existing publications; it does not rebuild missing weeks from a
+retired release. Before switching contracts, verify that its final completed
+week has been published, or arrange a replay with that release's original
+contract manifest, finalized indexed history and archive RPC access. Never copy
+or relabel a new deployment's empty weeks as the previous deployment's results.
+
+To check whether a retired release already has the needed publication, use the
+existing restricted database access with a read-only transaction. This lists
+publication coverage and trader counts without exposing account balances:
+
+```sql
+BEGIN READ ONLY;
+SELECT release_router, publication->'week'->>'startsAt' AS starts_at,
+       publication->'week'->>'closesAt' AS closes_at,
+       jsonb_array_length(publication->'standings') AS traders,
+       publication->>'publishedAt' AS published_at
+FROM divisions_publications
+WHERE chain_id = 421614
+ORDER BY week_start DESC, release_router;
+ROLLBACK;
+```
+
 The UI reads `/api/insights/v1/divisions/current` from the backend. The Insights
 worker captures finalized boundary values for every traded account, checks
 external funding against indexed USDC transfers, and appends each completed

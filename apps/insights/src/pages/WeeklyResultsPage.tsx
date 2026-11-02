@@ -3,33 +3,50 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { Announcements, Standings } from '../divisions/PublishedResults'
 import { useDivisionsHistory } from '../divisions/query'
-import { formatUtc } from '../utils/format'
+import { formatUtc, shortAddress } from '../utils/format'
 
 export function WeeklyResultsPage() {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const week = params.get('week')
-  const query = useDivisionsHistory(week)
+  const release = params.get('releaseRouter')
+  const query = useDivisionsHistory(week, release)
   const [search, setSearch] = useState('')
   const history = query.data
   const publication = history?.publication
   const standings = publication?.standings.filter((row) => `${row.address} ${row.displayName ? `@${row.displayName}` : ''}`.toLowerCase().includes(search.trim().toLowerCase())) ?? []
-  const pageLink = (cursor: string) => `/results?week=${encodeURIComponent(cursor)}`
+  const archived = history?.releaseRouter !== undefined && history.releaseRouter !== history.currentReleaseRouter
+  const pageLink = (cursor: string | null) => {
+    const next = new URLSearchParams()
+    if (cursor !== null) next.set('week', cursor)
+    const router = history?.releaseRouter ?? release
+    if (router !== null) next.set('releaseRouter', router)
+    return `/results${next.size ? `?${next.toString()}` : ''}`
+  }
   const buttonClass = 'border border-brand-border/40 px-4 py-2 text-sm font-semibold hover:bg-brand-peach/10'
 
   return <div className="space-y-6">
     <Link to="/" className="text-sm text-brand-peach hover:underline">← Live leaderboard</Link>
     <div>
-      <h1 className="text-3xl font-semibold sm:text-4xl">{week === null ? 'Last week’s results' : 'Past weekly results'}</h1>
+      <h1 className="text-3xl font-semibold sm:text-4xl">{week === null && !archived ? 'Last week’s results' : 'Past weekly results'}</h1>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-content-secondary">Final weekly rankings and awarded badges. Browse earlier weeks to see their results, promotions, and Traders of the Week.</p>
     </div>
+    {history?.deployments && history.releaseRouter ? <Panel className="space-y-3 p-5">
+      <label htmlFor="results-deployment" className="block text-sm font-semibold">Contract deployment</label>
+      <select id="results-deployment" value={history.releaseRouter} onChange={(event) => { setSearch(''); setParams({ releaseRouter: event.target.value }) }} className="w-full border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm sm:max-w-lg">
+        {history.deployments.map((router) => <option key={router} value={router}>{router === history.currentReleaseRouter ? 'Current deployment' : 'Previous deployment'} · {shortAddress(router)}</option>)}
+      </select>
+      <p className="break-all font-mono text-xs text-content-tertiary">{history.releaseRouter}</p>
+      <p className="text-sm text-content-secondary">{archived ? 'Showing saved results from a previous contract deployment. Rankings and badges are specific to that deployment.' : 'Select a previous deployment to see results from before the contracts changed.'}</p>
+    </Panel> : null}
     {query.isLoading ? <Panel><LoadingState /></Panel> : query.isError && !history ? <>
       <ErrorState title="Weekly results are unavailable" message={query.error.message} onRetry={() => void query.refetch()} />
-      {week !== null ? <Link to="/results" className="text-sm text-brand-peach underline">Latest results</Link> : null}
+      {week !== null ? <Link to={pageLink(null)} className="text-sm text-brand-peach underline">Latest results</Link> : null}
+      {release !== null ? <Link to="/results" className="text-sm text-brand-peach underline">Current deployment results</Link> : null}
     </> : publication ? <>
       <nav aria-label="Results weeks" className="flex flex-wrap items-center justify-between gap-3">
         {history.olderCursor ? <Link to={pageLink(history.olderCursor)} className={buttonClass}>← Older week</Link> : <button type="button" disabled className={`${buttonClass} opacity-40`}>← Older week</button>}
         <div className="flex flex-wrap gap-3">
-          {week !== null ? <Link to="/results" className={buttonClass}>Latest results</Link> : null}
+          {week !== null ? <Link to={pageLink(null)} className={buttonClass}>Latest results</Link> : null}
           {history.newerCursor ? <Link to={pageLink(history.newerCursor)} className={buttonClass}>Newer week →</Link> : <button type="button" disabled className={`${buttonClass} opacity-40`}>Newer week →</button>}
         </div>
       </nav>
@@ -40,7 +57,7 @@ export function WeeklyResultsPage() {
         </div>
         {query.isError ? <p role="status" className="text-sm text-brand-yellow">Could not refresh results. Showing the saved week. <button type="button" onClick={() => void query.refetch()} className="underline">Retry</button></p> : null}
         <p className="text-sm leading-6 text-content-secondary">Ranked by weekly profit as a percentage of cash-flow-adjusted equity. Badges show the tier awarded for this completed week.</p>
-        <Panel>{publication.standings.length ? <Standings standings={standings} /> : <EmptyState title="No traders this week" message="This week was published with no trading accounts." />}</Panel>
+        <Panel>{publication.standings.length ? <Standings standings={standings} linkToCurrentWallet={!archived} /> : <EmptyState title="No traders this week" message="This week was published with no trading accounts for this contract deployment. Select another deployment to check its results." />}</Panel>
       </section>
       <Announcements publication={publication} />
     </> : <Panel><EmptyState title="No published results yet" message="The first completed week’s results will appear after Monday publication." /></Panel>}

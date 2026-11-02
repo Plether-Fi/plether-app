@@ -139,6 +139,15 @@ live feed. Awards are append-only in `divisions_publications`, scoped by chain
 and release, and remain available across worker restarts and frontend deployments.
 Failed capture or missing prior wallets prevents advancement and retries next cycle.
 
+Past weekly results can select any deployment with saved publications on the
+current chain. `/api/insights/v1/divisions/history` accepts optional `releaseRouter`
+and `week` parameters. It defaults to the configured current release, returns
+deployment identities for the selector, and scopes all week cursors to the
+selected release. Switching contracts must not hide previously published weeks,
+combine different deployments' standings, or transfer their awarded tiers.
+Missing historical publications require a replay against the original release;
+exposing the archive does not create or overwrite awards.
+
 `/api/insights/v1/divisions/current` serves the latest publication (or explicit
 null before the first publication), enriched with registered Discord handles.
 The leaderboard uses only these published tiers; a newly traded wallet waits

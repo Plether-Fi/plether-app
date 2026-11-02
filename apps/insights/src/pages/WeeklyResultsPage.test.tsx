@@ -52,7 +52,7 @@ describe('published weekly results', () => {
   })
   it('opens an older week directly and leaves navigation available when search finds nothing', () => {
     show(`/results?week=${firstCursor}`)
-    expect(historyQuery).toHaveBeenCalledWith(firstCursor)
+    expect(historyQuery).toHaveBeenCalledWith(firstCursor, null)
     expect(screen.getByText('No traders this week')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('link', { name: 'Newer week →' }))
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing' } })
@@ -80,5 +80,49 @@ describe('published weekly results', () => {
     show()
     expect(screen.getByText('No published results yet')).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Results weeks' })).not.toBeInTheDocument()
+  })
+
+  it('switches deployments and keeps the archive selected through week navigation', () => {
+    const current = `0x${'1'.repeat(40)}`
+    const previous = `0x${'2'.repeat(40)}`
+    historyQuery.mockImplementation((week: string | null, release: string | null) => ({ data: {
+      publication: release === previous && week === firstCursor ? first : latest,
+      olderCursor: week === firstCursor ? null : firstCursor,
+      newerCursor: week === firstCursor ? latestCursor : null,
+      releaseRouter: release ?? current, currentReleaseRouter: current, deployments: [current, previous],
+    } }))
+    show(`/results?week=${latestCursor}`)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Contract deployment' }), { target: { value: previous } })
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(`?releaseRouter=${previous}`)
+    expect(historyQuery).toHaveBeenLastCalledWith(null, previous)
+    expect(screen.getByText(/Showing saved results from a previous/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Past weekly results' })).toBeInTheDocument()
+    expect(within(screen.getByRole('table')).queryByRole('link')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: '← Older week' }))
+    expect(historyQuery).toHaveBeenLastCalledWith(firstCursor, previous)
+    fireEvent.click(screen.getByRole('link', { name: 'Newer week →' }))
+    expect(historyQuery).toHaveBeenLastCalledWith(latestCursor, previous)
+    fireEvent.click(screen.getByRole('link', { name: 'Latest results' }))
+    expect(historyQuery).toHaveBeenLastCalledWith(null, previous)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Contract deployment' }), { target: { value: current } })
+    expect(within(screen.getByRole('table')).getAllByRole('link')).toHaveLength(2)
+  })
+
+  it('lets traders find a previous deployment when the current deployment has no publications', () => {
+    const current = `0x${'1'.repeat(40)}`
+    const previous = `0x${'2'.repeat(40)}`
+    historyQuery.mockReturnValue({ data: { publication: null, olderCursor: null, newerCursor: null,
+      releaseRouter: current, currentReleaseRouter: current, deployments: [current, previous] } })
+    show()
+    expect(screen.getByText('No published results yet')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Previous deployment/ })).toHaveValue(previous)
+  })
+
+  it('keeps recovery links on the selected deployment when a bookmarked week is unavailable', () => {
+    const release = `0x${'2'.repeat(40)}`
+    historyQuery.mockReturnValue({ isError: true, error: new Error('Week unavailable'), refetch: vi.fn() })
+    show(`/results?week=0&releaseRouter=${release}`)
+    expect(screen.getByRole('link', { name: 'Latest results' })).toHaveAttribute('href', `/results?releaseRouter=${release}`)
+    expect(screen.getByRole('link', { name: 'Current deployment results' })).toHaveAttribute('href', '/results')
   })
 })
