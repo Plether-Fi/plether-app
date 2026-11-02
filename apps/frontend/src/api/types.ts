@@ -301,18 +301,41 @@ export interface VaultHistoryPoint {
   blockNumber: string;
   /** Whether this hourly observation used a fresh protocol mark; false values carry the last fresh valuation. */
   markFresh: boolean;
-  /** Fee-free accounting assets per share as a raw 1e18-scaled integer. */
+  /** convertToAssets price (1e18 USDC/share); includes junior maintenance dilution, excludes exit fees. */
   sharePrice: string;
   totalAssets: string;
   totalSupply: string;
 }
 
 export interface VaultHistoryTranche {
+  /** Optional audited attribution for this response's coverage; never infer it from dollar totals. */
+  returnAttribution?: JuniorReturnAttribution | null;
   /** Realized trailing return annualized from the covered share-price window. */
   apy7d: number | null;
   /** Raw return over the covered seven-day share-price window. */
   return7d: number | null;
   points: VaultHistoryPoint[];
+}
+
+export type JuniorReturnComponent =
+  | 'netVpi' | 'liquidationFees' | 'realizedCarry' | 'oracleSpread'
+  | 'settledTraderPnl' | 'openPositionValuation' | 'seniorCoupon' | 'maintenanceDilution';
+
+/** Backend contract for flow-adjusted, diluted junior share-price attribution. */
+export interface JuniorReturnAttribution {
+  method: 'diluted-share-price-v1';
+  startTimestamp: number;
+  endTimestamp: number;
+  startDilutedSharePrice: string;
+  endDilutedSharePrice: string;
+  components: Record<JuniorReturnComponent, {
+    /** Additive percentage points, already adjusted for changes in liquidity. */
+    contributionPp: number;
+    /** Signed raw USDC (6 decimals), from the pool's perspective. */
+    amountUsdc: string;
+  }>;
+  /** Economic gain after coupon and dilution; excludes deposits and withdrawals. */
+  netReturnUsdc: string;
 }
 
 export interface VaultHistory {

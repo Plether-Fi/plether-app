@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { VaultAssetChart } from '../components/VaultAssetChart'
 import { PerpsDeploymentPending } from '../components/PerpsDeploymentPending'
+import { JuniorVaultReturnBreakdownSection } from '../components/JuniorVaultReturnBreakdown'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
@@ -2058,6 +2059,7 @@ function VaultActivitySection({
           isLoading={assetHistoryLoading}
           isError={assetHistoryError}
         />
+        {tranche === 'junior' && <JuniorVaultReturnBreakdownSection />}
         {isStale ? (
           <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-content-secondary">
             Vault activity is temporarily stale. The last confirmed holder and request data remains visible while the backend catches up.

@@ -1,0 +1,149 @@
+import { useId, useState } from 'react'
+import { usePerpsVaultHistory } from '../api'
+import type { JuniorReturnAttribution, VaultHistoryRange } from '../api/types'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { buildJuniorReturnBreakdown, juniorReturnPeriod, type JuniorReturnPeriod } from '../utils/juniorReturnAttribution'
+import { Tooltip } from './ui/Tooltip'
+import { Spinner } from './ui/Spinner'
+
+const signed = (value: number, digits = 3) => new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: digits, maximumFractionDigits: digits, signDisplay: 'exceptZero',
+}).format(value)
+const usdc = (raw: string | null) => raw === null ? 'Unavailable' : `${new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero',
+}).format(Number(raw) / 1e6)} USDC`
+const date = (timestamp: number) => `${new Date(timestamp * 1000).toLocaleString('en-GB', {
+  day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
+})} UTC`
+
+/** Fetch each reporting period separately; deployment identities must never be spliced. */
+export function JuniorVaultReturnBreakdownSection() {
+  const [range, setRange] = useState<VaultHistoryRange>('7d')
+  const query = usePerpsVaultHistory(range)
+  const history = query.data?.data
+  const matches = history?.range === range && history.deployment.chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+    && history.deployment.housePool.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.housePool.toLowerCase()
+    && history.deployment.juniorVault.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.juniorVault.toLowerCase()
+    && history.deployment.seniorVault.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.seniorVault.toLowerCase()
+  return <JuniorVaultReturnBreakdown
+    key={range}
+    period={matches ? juniorReturnPeriod(history) : undefined}
+    attribution={matches ? history.junior.returnAttribution : undefined}
+    range={range}
+    onRangeChange={setRange}
+    isLoading={query.isLoading}
+    isError={query.isError}
+  />
+}
+
+export function JuniorVaultReturnBreakdown({ period, attribution, range, onRangeChange, isLoading, isError }: {
+  period?: JuniorReturnPeriod
+  attribution?: JuniorReturnAttribution | null
+  range?: VaultHistoryRange
+  onRangeChange?: (range: VaultHistoryRange) => void
+  isLoading?: boolean
+  isError?: boolean
+}) {
+  const headingId = useId()
+  const tooltipId = useId()
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const data = buildJuniorReturnBreakdown(period, attribution)
+  const bars = data?.bars
+  const selected = bars?.find((bar) => bar.id === activeId)
+  const width = Math.max(1040, (bars?.length ?? 9) * 112 + 72)
+  const left = 72
+  const right = width - 20
+  const top = 45
+  const bottom = 280
+  const low = Math.min(0, ...bars?.flatMap((bar) => [bar.start, bar.end]) ?? [])
+  const high = Math.max(0, ...bars?.flatMap((bar) => [bar.start, bar.end]) ?? [])
+  const span = Math.max(high - low, 0.01)
+  const minimum = low < 0 ? low - span * 0.08 : 0
+  const maximum = high + span * 0.18
+  const y = (value: number) => bottom - (value - minimum) / (maximum - minimum) * (bottom - top)
+  const step = (right - left) / (bars?.length ?? 9)
+  const barWidth = step * 0.64
+
+  return <figure aria-labelledby={headingId} className="overflow-hidden rounded-lg border border-white/10 bg-[#0b1422] text-[#e5edf7]">
+    <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
+      <div>
+        <h3 id={headingId} className="text-lg font-semibold">Junior vault return breakdown</h3>
+        <p className="mt-1 text-sm text-[#9daebe]">How income, trading outcomes and deductions add up to your share-price return.</p>
+        <p className="mt-2 text-xs text-[#9daebe]">Percentage-point contributions · after maintenance dilution</p>
+      </div>
+      {onRangeChange && <div className="flex gap-1 rounded border border-white/15 p-1" role="group" aria-label="Return reporting period">
+        {(['7d', '30d'] as const).map((option) => <button key={option} type="button" aria-pressed={range === option}
+          className={`rounded px-3 py-1.5 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${range === option ? 'bg-white/15 text-white' : 'text-[#9daebe] hover:bg-white/10'}`}
+          onClick={() => { onRangeChange(option) }}>{option === '7d' ? '7 days' : '30 days'}</button>)}
+      </div>}
+    </div>
+    {bars ? <>
+      <div className="overflow-x-auto px-3 pb-2 sm:px-5" tabIndex={0} role="region" aria-label="Return waterfall; scroll horizontally to see all components">
+        <svg viewBox={`0 0 ${String(width)} 350`} style={{ minWidth: width }} className="block w-full" role="group" aria-label="Junior share-price return waterfall">
+          <title>Junior return contributions in percentage points</title>
+          <text x={left} y={17} fill="#9daebe" fontSize={11}>Return contribution (%)</text>
+          {Array.from({ length: 6 }, (_, index) => minimum + (maximum - minimum) * index / 5).map((value) => <g key={value}>
+            <line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke="#ffffff" strokeOpacity={0.07} />
+            <text x={left - 10} y={y(value) + 4} textAnchor="end" fill="#9daebe" fontSize={11}>{signed(value, 2)}%</text>
+          </g>)}
+          <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#ffffff" strokeOpacity={0.22} />
+          {bars.map((bar, index) => {
+            const x = left + index * step + (step - barWidth) / 2
+            const barTop = y(Math.max(bar.start, bar.end))
+            const height = Math.max(1.5, Math.abs(y(bar.start) - y(bar.end)))
+            return <g key={bar.id} tabIndex={0} role="button"
+              aria-label={`${bar.label}: ${signed(bar.contributionPp, 6)} percentage points; ${usdc(bar.amountUsdc)}. ${bar.description}`}
+              aria-describedby={activeId === bar.id ? tooltipId : undefined}
+              aria-pressed={activeId === bar.id}
+              className="cursor-pointer outline-none"
+              onPointerEnter={(event) => { if (event.pointerType === 'mouse') setActiveId(bar.id) }}
+              onPointerLeave={(event) => { if (event.pointerType === 'mouse') setActiveId(null) }}
+              onFocus={() => { setActiveId(bar.id) }}
+              onBlur={() => { setActiveId(null) }}
+              onClick={() => { setActiveId(bar.id) }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setActiveId(null)
+                if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveId(bar.id) }
+                const target = event.key === 'ArrowRight' ? event.currentTarget.nextElementSibling : event.key === 'ArrowLeft' ? event.currentTarget.previousElementSibling : null
+                if (target instanceof SVGElement && target.getAttribute('role') === 'button') { event.preventDefault(); target.focus() }
+              }}>
+              <rect x={x - 8} y={top - 10} width={barWidth + 16} height={290} fill={activeId === bar.id ? '#ffffff08' : 'transparent'} stroke={activeId === bar.id ? '#ffffff40' : 'none'} rx={4} />
+              {index < bars.length - 2 && <line x1={x + barWidth} x2={x + step} y1={y(bar.end)} y2={y(bar.end)} stroke="#ffffff" strokeOpacity={0.2} strokeDasharray="3 3" />}
+              <rect data-bar={bar.id} data-start={bar.start} data-end={bar.end} x={x} y={barTop} width={barWidth} height={height}
+                fill={bar.id === 'unexplained' ? 'transparent' : bar.color} stroke={bar.color} strokeDasharray={bar.id === 'unexplained' ? '4 3' : undefined} />
+              <text x={x + barWidth / 2} y={barTop - 8} textAnchor="middle" fill="#e5edf7" fontSize={12} fontWeight={600}>{signed(bar.contributionPp)}%</text>
+              <text x={x + barWidth / 2} y={305} textAnchor="middle" fill="#b6c3d1" fontSize={12}>
+                {bar.lines.map((line, lineIndex) => <tspan key={line} x={x + barWidth / 2} dy={lineIndex === 0 ? 0 : 16}>{line}</tspan>)}
+              </text>
+            </g>
+          })}
+        </svg>
+      </div>
+      <div className="mx-5 mb-5 min-h-24 rounded border border-white/10 bg-white/[0.025] px-4 py-3 sm:mx-6" id={tooltipId} role="status" aria-live="polite">
+        {selected ? <>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-sm font-semibold" style={{ color: selected.color }}>{selected.label}</p>
+            <p className="font-mono text-sm">{signed(selected.contributionPp, 6)} pp <span className="mx-2 text-[#9daebe]">·</span> {usdc(selected.amountUsdc)}</p>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-[#b6c3d1]">{selected.description}</p>
+        </> : <p className="text-xs leading-relaxed text-[#9daebe]">Hover, tap or focus a bar to see its contribution and USDC amount. On smaller screens, scroll horizontally to explore all components.</p>}
+      </div>
+      {data.residualPp !== null && <p role="alert" className="mx-5 mb-5 text-sm text-[#f0bd70] sm:mx-6">
+        Unexplained reconciliation difference: {signed(data.residualPp, 8)} pp. Shown separately; not assigned to trader PnL or open-position valuation. Inspect the outlined bar for the USDC difference.
+      </p>}
+    </> : <div className="flex min-h-52 items-center justify-center px-6 py-8 text-center text-sm leading-relaxed text-[#9daebe]" role="status">
+      {isLoading ? <Spinner /> : data?.reason ?? (isError ? 'Return history is temporarily unavailable.' : 'Complete, fresh diluted share-price history is not yet available for the selected period.')}
+    </div>}
+    <dl className="grid gap-5 border-t border-white/10 p-5 sm:p-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))' }}>
+      <div><dt className="text-xs uppercase tracking-wider text-[#9daebe]">Period return</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data ? `${signed(data.returnPp)}%` : '—'}</dd></div>
+      <div><dt className="text-xs uppercase tracking-wider text-[#9daebe]">Selected reporting period</dt><dd className="mt-2 text-lg font-semibold">{data ? `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(data.elapsedSeconds / 86400)} days` : range === '30d' ? '30 days' : '7 days'}</dd>
+        {data && <dd className="mt-1 text-xs text-[#9daebe]">{date(data.startTimestamp)} – {date(data.endTimestamp)}</dd>}
+      </div>
+      <div><dt className="text-xs uppercase tracking-wider text-[#9daebe]"><Tooltip content="Compounds the observed diluted share-price return over a 365-day year using the actual elapsed seconds. Assumes the same return repeats with reinvestment; this is not a forecast.">
+        <button type="button" className="text-left uppercase tracking-wider underline decoration-dotted underline-offset-4">APY equivalent</button>
+      </Tooltip></dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data?.apyPercent != null ? `${signed(data.apyPercent, 2)}%` : '—'}</dd></div>
+    </dl>
+    <p className="px-5 pb-5 text-xs leading-relaxed text-[#9daebe] sm:px-6">Return follows a share held throughout the period. Deposits and withdrawals are not earnings. USDC amounts describe pool economics; contributions account for liquidity changes.</p>
+    {isError && data && <p className="px-5 pb-5 text-xs text-[#f0bd70] sm:px-6">Refresh failed. Showing the last received reporting period.</p>}
+  </figure>
+}
