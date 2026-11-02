@@ -411,7 +411,30 @@ export interface TestnetFaucetClaim {
   amount: string;
   token: string;
   txHash: string | null;
-  status: 'submitted' | 'minted' | 'already_claimed' | 'already_funded';
+  status: 'submitted' | 'minted' | 'already_claimed' | 'already_funded' | 'margin_funded';
+  destination?: 'wallet' | 'margin';
+}
+
+export interface MarginFundingProgress {
+  version: 1;
+  destination: 'margin';
+  claimId: string;
+  address: string;
+  token: string;
+  clearinghouse: string;
+  amount: string;
+  phase: 'mint' | 'approval' | 'deposit';
+  status: 'pending' | 'funded' | 'failed' | 'recovery';
+  reason: string | null;
+  depositTxHash: string | null;
+}
+
+export interface LegacyMarginFunding {
+  version: 1;
+  destination: 'wallet';
+  status: 'legacy_wallet';
+  address: string;
+  token: string;
 }
 
 // =============================================================================

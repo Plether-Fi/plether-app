@@ -120,6 +120,7 @@ data Config = Config
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetGuardConfig :: Maybe FaucetGuardConfig
   , cfgNativeAaConfig :: Maybe NativeAaConfig
+  , cfgTestnetMarginFundingEnabled :: Bool
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
@@ -687,6 +688,7 @@ loadConfig = do
       paymasterGlobalDailyWeiStr <- fromMaybe "250000000000000000" <$> lookupEnv "AA_PAYMASTER_GLOBAL_DAILY_WEI"
       nativeCanaryOwnersStr <- fromMaybe "" <$> lookupEnv "AA_NATIVE_CANARY_OWNERS"
       nativeGlobalRolloutEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED"
+      marginFundingEnabledStr <- fromMaybe "false" <$> lookupEnv "TESTNET_MARGIN_FUNDING_ENABLED"
       mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
       mFaucetProxyOriginToken <- lookupEnv "FAUCET_PROXY_ORIGIN_TOKEN"
       faucetClientRequestsPerHourStr <- fromMaybe "20" <$> lookupEnv "FAUCET_CLIENT_REQUESTS_PER_HOUR"
@@ -813,7 +815,10 @@ loadConfig = do
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
-          faucetGuardConfig = if not Manifest.releaseIsDeployed then Right Nothing else
+          faucetGuardConfig = if not Manifest.releaseIsDeployed then Right Nothing else do
+            enabled <- maybe (Left "TESTNET_MARGIN_FUNDING_ENABLED must be a boolean") Right (parseBoolStrict marginFundingEnabledStr)
+            unlessEither (not enabled || isJust (nonBlankText mFaucetPrivateKey))
+              "TESTNET_MARGIN_FUNDING_ENABLED requires the dedicated FAUCET_PRIVATE_KEY"
             validateFaucetGuardConfig
               mFaucetPrivateKey
               mFaucetProxyOriginToken
@@ -1284,6 +1289,7 @@ loadConfig = do
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetGuardConfig = resolvedFaucetGuardConfig
                 , cfgNativeAaConfig = resolvedNativeAaConfig
+                , cfgTestnetMarginFundingEnabled = Manifest.releaseIsDeployed && parseBoolStrict marginFundingEnabledStr == Just True
                 , cfgFaucetPrivateKey = if Manifest.releaseIsDeployed then nonBlankText mFaucetPrivateKey else Nothing
                 , cfgKeeperPrivateKey = if Manifest.releaseIsDeployed then fmap T.pack mKeeperPrivateKey else Nothing
                 , cfgKeeperPollSeconds = keeperPollSeconds

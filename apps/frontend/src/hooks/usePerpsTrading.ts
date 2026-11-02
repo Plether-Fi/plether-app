@@ -1298,6 +1298,7 @@ export function usePerpsTrading() {
     approveSettlementTokenForMargin,
     fundTradingAccount,
     depositMargin,
+    refreshAccount: invalidatePerpsReads,
     abandonDepositAuthorization,
     withdrawMargin,
     addPositionMargin,

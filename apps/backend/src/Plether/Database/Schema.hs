@@ -265,12 +265,15 @@ ensureTestnetFaucetSchema conn = do
     \updated_at TIMESTAMP DEFAULT NOW(),\
     \PRIMARY KEY (address, token_address)\
     \)"
+  _ <- execute_ conn "ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS delivery_mode VARCHAR(16) NOT NULL DEFAULT 'wallet'"
   _ <- execute_ conn "ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS raw_tx TEXT"
   _ <- execute_ conn "ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS mint_block_number BIGINT"
-  _ <- execute_ conn "ALTER TABLE testnet_faucet_claims DROP CONSTRAINT IF EXISTS testnet_faucet_claims_pkey"
   _ <- execute_ conn
-    "ALTER TABLE testnet_faucet_claims \
-    \ADD CONSTRAINT testnet_faucet_claims_pkey PRIMARY KEY (address, token_address)"
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testnet_faucet_claims'::regclass \
+    \AND contype='p' AND pg_get_constraintdef(oid)='PRIMARY KEY (address, token_address)') THEN \
+    \ALTER TABLE testnet_faucet_claims DROP CONSTRAINT IF EXISTS testnet_faucet_claims_pkey; \
+    \ALTER TABLE testnet_faucet_claims ADD CONSTRAINT testnet_faucet_claims_pkey PRIMARY KEY (address,token_address); \
+    \END IF; END $$"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status \
     \ON testnet_faucet_claims(status)"
@@ -306,9 +309,9 @@ beginTestnetFaucetClaimSql =
   \status = 'preparing',\
   \error = NULL,\
   \updated_at = NOW() \
-  \WHERE testnet_faucet_claims.status = 'failed' \
+  \WHERE testnet_faucet_claims.delivery_mode = 'wallet' AND (testnet_faucet_claims.status = 'failed' \
   \OR (testnet_faucet_claims.status = 'preparing' \
-  \AND testnet_faucet_claims.updated_at <= NOW() - INTERVAL '5 minutes')"
+  \AND testnet_faucet_claims.updated_at <= NOW() - INTERVAL '5 minutes'))"
 
 markTestnetFaucetClaimSubmitted :: Connection -> Text -> Text -> Text -> Text -> IO Bool
 markTestnetFaucetClaimSubmitted conn address tokenAddress txHash rawTx = do

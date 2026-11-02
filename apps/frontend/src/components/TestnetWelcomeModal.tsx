@@ -53,6 +53,8 @@ export function TestnetWelcomeModalView({
   const isCompletedClaim = !!activeClaim && !isPendingClaim
   const isAutomaticFunding = isTradingAccountRecipient && isSubmitting
   const isDeposited = fundingPhase === 'deposited'
+  const isDirectFunding = activeClaim?.destination === 'margin'
+  const isLegacyFunding = !!activeClaim && !isDirectFunding
   const handleSecondaryAction = isCompletedClaim && !isSubmitting && onDeposit ? onDeposit : onClose
   const isRecipientReady =
     isWalletConnected &&
@@ -86,9 +88,10 @@ export function TestnetWelcomeModalView({
           >
             {isRecipientReady ? (
               fundingPhase === 'waiting' ? `Waiting for ${MOCK_TOKEN_LABEL}`
+                : fundingPhase === 'approving' ? 'Preparing margin funding'
                 : fundingPhase === 'depositing' ? `Depositing ${MOCK_TOKEN_LABEL}`
                 : isDeposited ? `${MOCK_TOKEN_LABEL} deposited`
-                : isPendingClaim ? 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL}`
+                : isPendingClaim ? isDirectFunding ? 'Check funding' : 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL}`
             ) : isWalletConnected ? (
               recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
             ) : (
@@ -119,7 +122,9 @@ export function TestnetWelcomeModalView({
             : recipientError
               ? 'We could not prepare your Trading Account. Please refresh and try again.'
             : isRecipientReady
-              ? `We will send 100,000 USDG to your ${isTradingAccountRecipient ? 'Trading Account and deposit it into your Margin Account' : 'wallet'}. Confirm in your wallet when prompted.`
+              ? isTradingAccountRecipient && !isLegacyFunding
+                ? 'Plether will add 100,000 USDG directly to your Margin Account. No wallet approval is needed.'
+                : `We will send 100,000 USDG to your ${isTradingAccountRecipient ? 'Trading Account and deposit it into your Margin Account' : 'wallet'}. Confirm in your wallet when prompted.`
               : 'Preparing your Trading Account to receive USDG.'}
         </p>
         <p>
@@ -167,6 +172,7 @@ export function TestnetWelcomeModalView({
             <p className="font-medium">
               {isDeposited
                 ? `${MOCK_TOKEN_LABEL} deposited into your Margin Account. You are ready to trade.`
+                : isDirectFunding ? 'Plether is funding your Margin Account.'
                 : isPendingClaim
                 ? 'Faucet transaction submitted. Waiting for Arbitrum Sepolia confirmation.'
                 : activeClaim.status === 'already_funded'
@@ -177,7 +183,8 @@ export function TestnetWelcomeModalView({
             </p>
             <p className="text-content-secondary">
               {isDeposited
-                ? 'Your sponsored deposit is confirmed.'
+                ? isDirectFunding ? 'Your backend-funded deposit is confirmed.' : 'Your sponsored deposit is confirmed.'
+                : isDirectFunding ? 'Funding continues in the background. No wallet approval is needed. Use Check funding to check its progress.'
                 : isAutomaticFunding
                 ? fundingPhase === 'depositing'
                   ? `Depositing ${MOCK_TOKEN_LABEL} into your Margin Account. Confirm in your wallet if prompted.`
@@ -244,7 +251,7 @@ function LiveTestnetWelcomeModal() {
   const { claim, phase, error: submitError, requestFunds: fundAccount } = useTestnetFunding(
     displayedWalletAddress, isConnected
   )
-  const isSubmitting = phase === 'claiming' || phase === 'waiting' || phase === 'depositing'
+  const isSubmitting = phase === 'claiming' || phase === 'approving' || phase === 'waiting' || phase === 'depositing'
   const displayedClaim =
     claim?.address.toLowerCase() === displayedWalletAddress.toLowerCase() ? claim : null
   const recipientError =

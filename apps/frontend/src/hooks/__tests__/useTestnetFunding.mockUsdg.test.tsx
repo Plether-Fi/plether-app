@@ -1,10 +1,10 @@
 import { act, renderHook } from '@testing-library/react'
 import { Result } from 'better-result'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TestnetFaucetClaim } from '../../api/types'
 
 const mocks = vi.hoisted(() => ({
-  claim: vi.fn(), mint: vi.fn(), receipt: vi.fn(), balance: vi.fn(), deposit: vi.fn(),
+  start: vi.fn(), status: vi.fn(), refresh: vi.fn(), claim: vi.fn(), mint: vi.fn(), receipt: vi.fn(), balance: vi.fn(), deposit: vi.fn(),
   identity: {
     accountAddress: '0x2222222222222222222222222222222222222222',
     ownerAddress: '0x1111111111111111111111111111111111111111',
@@ -28,7 +28,7 @@ const faucetResponse = (overrides: Partial<TestnetFaucetClaim> = {}, chainId = 4
 })
 
 vi.mock('../../api', () => ({
-  perpsApi: { claimTestnetFaucet: mocks.claim },
+  perpsApi: { claimTestnetFaucet: mocks.claim, claimMarginFunding: mocks.start, getMarginFunding: mocks.status },
   testnetFaucetErrorMessage: (error: { message: string }) => error.message,
 }))
 vi.mock('wagmi', () => ({
@@ -43,17 +43,132 @@ vi.mock('../../contracts/perpsAddresses', () => ({
   PERPS_SETTLEMENT_TOKEN_LABEL: 'USDG',
 }))
 vi.mock('../../perps-aa', () => ({ usePerpsIdentity: () => mocks.identity }))
-vi.mock('../usePerpsTrading', () => ({ usePerpsTrading: () => ({ depositMargin: mocks.deposit }) }))
+vi.mock('../usePerpsTrading', () => ({ usePerpsTrading: () => ({ depositMargin: mocks.deposit, refreshAccount: mocks.refresh }) }))
 import { useTestnetFunding } from '../useTestnetFunding'
 
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.identity.status = 'ready'
   mocks.identity.chainId = 421614
+  mocks.start.mockResolvedValue(Result.ok({ data: { version: 1, destination: 'wallet', status: 'legacy_wallet', address: account, token: mocks.identity.manifest.settlementToken }, meta: { chainId: 421614 } }))
   mocks.claim.mockResolvedValue(faucetResponse())
   mocks.receipt.mockResolvedValue({ status: 'success' })
   mocks.balance.mockResolvedValue(amount)
   mocks.deposit.mockResolvedValue('0xdeposit')
+})
+afterEach(() => vi.useRealTimers())
+
+const fundingId = 'a6415ba2-5668-4ba5-a058-f627bd1b938d'
+function marginResponse(status = 'pending', phase = 'mint', overrides = {}) {
+  return Result.ok({
+    data: {
+      version: 1, destination: 'margin', claimId: fundingId, address: account,
+      token: mocks.identity.manifest.settlementToken,
+      clearinghouse: mocks.identity.manifest.marginClearinghouse,
+      amount: amount.toString(), phase, status, reason: null,
+      depositTxHash: status === 'funded' ? hash : null, ...overrides,
+    },
+    meta: { chainId: 421614, blockNumber: 1, cached: false },
+  })
+}
+
+describe('direct margin funding', () => {
+  it('follows all three backend phases without a wallet mint or sponsored user deposit', async () => {
+    vi.useFakeTimers()
+    mocks.start.mockResolvedValue(marginResponse())
+    mocks.status.mockResolvedValueOnce(marginResponse('pending', 'approval'))
+      .mockResolvedValueOnce(marginResponse('pending', 'deposit'))
+      .mockResolvedValueOnce(marginResponse('funded', 'deposit'))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    let pending!: Promise<void>
+    await act(async () => { pending = result.current.requestFunds(account) })
+    expect(mocks.start).toHaveBeenCalledExactlyOnceWith(mocks.identity.ownerAddress, account)
+    expect(result.current.phase).toBe('claiming')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(result.current.phase).toBe('approving')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(result.current.phase).toBe('depositing')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await pending })
+    expect(result.current.phase).toBe('deposited')
+    expect(result.current.claim).toMatchObject({ destination: 'margin', status: 'margin_funded', txHash: hash })
+    expect(mocks.refresh).toHaveBeenCalledOnce()
+    expect(mocks.status).toHaveBeenCalledTimes(3)
+    expect(mocks.claim).not.toHaveBeenCalled()
+    expect(mocks.mint).not.toHaveBeenCalled()
+    expect(mocks.deposit).not.toHaveBeenCalled()
+    expect(mocks.receipt).not.toHaveBeenCalled()
+    expect(mocks.balance).not.toHaveBeenCalled()
+  })
+
+  it('recovers completed funding after reload without another deposit', async () => {
+    mocks.start.mockResolvedValue(marginResponse('funded', 'deposit'))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(mocks.start).toHaveBeenCalledOnce()
+    expect(mocks.deposit).not.toHaveBeenCalled()
+    expect(result.current.phase).toBe('deposited')
+  })
+
+  it('resumes a known failed phase only after an explicit retry', async () => {
+    mocks.start.mockResolvedValueOnce(marginResponse('failed', 'deposit'))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(result.current.error).toContain('resume the same allocation')
+    expect(mocks.status).not.toHaveBeenCalled()
+    mocks.start.mockResolvedValue(marginResponse('funded', 'deposit'))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(result.current.phase).toBe('deposited')
+    expect(mocks.claim).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to a wallet mint when the direct endpoint is unavailable', async () => {
+    mocks.start.mockResolvedValue(Result.err(new Error('Direct funding unavailable.')))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(mocks.claim).not.toHaveBeenCalled()
+    expect(mocks.deposit).not.toHaveBeenCalled()
+    expect(result.current.phase).toBe('idle')
+  })
+
+  it.each([
+    { address: '0x5555555555555555555555555555555555555555' },
+    { token: '0x5555555555555555555555555555555555555555' },
+    { clearinghouse: '0x5555555555555555555555555555555555555555' },
+    { amount: '200000000000' }, { claimId: 'invalid' }, { depositTxHash: null },
+  ])('rejects an invalid credit response %j', async override => {
+    mocks.start.mockResolvedValue(marginResponse('funded', 'deposit', override))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(result.current.phase).toBe('idle')
+    expect(result.current.error).toContain('could not be verified')
+    expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(mocks.deposit).not.toHaveBeenCalled()
+  })
+
+  it('checks the beneficiary again when polling a previously verified claim', async () => {
+    vi.useFakeTimers()
+    mocks.start.mockResolvedValue(marginResponse())
+    mocks.status.mockResolvedValue(marginResponse('funded', 'deposit', { address: '0x5555555555555555555555555555555555555555' }))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    let pending!: Promise<void>
+    await act(async () => { pending = result.current.requestFunds(account) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await pending })
+    expect(result.current.phase).toBe('idle')
+    expect(mocks.refresh).not.toHaveBeenCalled()
+  })
+
+  it('stops polling after disconnect while backend funding continues independently', async () => {
+    vi.useFakeTimers()
+    mocks.start.mockResolvedValue(marginResponse())
+    const { result, rerender } = renderHook(({ enabled }) => useTestnetFunding(account, enabled), { initialProps: { enabled: true } })
+    let pending!: Promise<void>
+    await act(async () => { pending = result.current.requestFunds(account) })
+    rerender({ enabled: false })
+    await act(async () => { await pending; await vi.advanceTimersByTimeAsync(10_000) })
+    expect(mocks.status).not.toHaveBeenCalled()
+    expect(mocks.refresh).not.toHaveBeenCalled()
+  })
 })
 
 describe('backend MockUSDG testnet funding', () => {

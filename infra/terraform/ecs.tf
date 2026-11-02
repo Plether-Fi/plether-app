@@ -452,6 +452,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AA_MAX_REQUEST_BYTES", value = var.aa_max_request_bytes },
       { name = "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR", value = var.aa_sponsored_gas_alert_wei_per_hour },
       { name = "FAUCET_CLIENT_REQUESTS_PER_HOUR", value = tostring(var.faucet_client_requests_per_hour) },
+      { name = "TESTNET_MARGIN_FUNDING_ENABLED", value = tostring(var.testnet_margin_funding_enabled) },
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },

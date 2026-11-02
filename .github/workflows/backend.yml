@@ -36,7 +36,7 @@ jobs:
         env:
           PGDATABASE: postgresql://postgres:postgres@127.0.0.1:5432/faucet_test
       - name: Verify nonce recovery proofs and atomic database recovery
-        run: node --test apps/backend/scripts/recover-faucet-nonce.test.mjs
+        run: node --test apps/backend/scripts/recover-faucet-nonce.test.mjs apps/backend/scripts/recover-margin-funding-nonce.test.mjs
         env:
           FAUCET_NODE_PACKAGE: ${{ github.workspace }}/apps/backend/oracle-worker/package.json
           FAUCET_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/faucet_test

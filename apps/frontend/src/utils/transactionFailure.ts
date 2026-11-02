@@ -1,5 +1,8 @@
 /** Public failure copy and bounded inspection of error envelopes, never request payloads. */
 export const TRANSACTION_FAILURE_MESSAGES: Record<string, string> = {
+  FUNDING_STEP_FAILED: 'Plether could not complete this funding step. Retry to resume the same allocation.',
+  FUNDING_RECOVERY_REQUIRED: 'Your funding needs a recovery check. Contact support with your funding reference.',
+  FUNDING_PENDING: 'Funding is still processing in the background. Use Check funding to check the same allocation.',
   DEADLINE_TOO_CLOSE: 'Approval finished too close to the submission deadline. This request was not sent. Review the order again. If an earlier attempt is still pending, check Trading Account activity first.',
   INVALID_ORDER_DEADLINE: 'The order deadline is invalid. Refresh the order and review it again.',
   WALLET_DECLINED: 'You declined the request in your wallet. Review the transaction again when you are ready.',

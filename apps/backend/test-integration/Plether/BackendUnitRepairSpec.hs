@@ -20,6 +20,7 @@ import Plether.Database.Schema
   , ensureTestnetFaucetSchema, beginTestnetFaucetClaim, getTestnetFaucetClaim
   , markTestnetFaucetClaimSubmitted, markTestnetFaucetClaimSuccess, markTestnetFaucetClaimReverted )
 import Plether.Database.Insights.Registration (openRegistrationIfConfigured)
+import qualified Plether.Database.TestnetFunding as Funding
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..), ensureVaultPerformanceSchema
@@ -217,6 +218,77 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
         fmap tfcRawTx completed `shouldBe` Just Nothing
         beginTestnetFaucetClaim conn account 100 (address "6") `shouldReturn` False
 
+  describe "direct margin funding journal" $ do
+    it "shares allocation eligibility and completes exactly one three-phase credit" $
+      withSchema databaseUrl $ \conn -> do
+        ensureTestnetFaucetSchema conn
+        Funding.ensureMarginFundingSchema conn
+        -- Both current and supported older startup paths remain safe.
+        void $ execute_ conn "ALTER TABLE testnet_faucet_claims DROP CONSTRAINT testnet_faucet_claims_pkey"
+        void $ execute_ conn "ALTER TABLE testnet_faucet_claims ADD PRIMARY KEY(address,token_address)"
+        ensureTestnetFaucetSchema conn
+        Funding.ensureMarginFundingSchema conn
+        Just initial <- Funding.reserveMarginFunding conn fundingClaim
+        beginTestnetFaucetClaim conn account 100_000_000_000 (address "6") `shouldReturn` False
+        finishPhase conn initial 0 True
+        Just approved <- Funding.getMarginFunding conn $ Funding.fcId initial
+        Funding.fcPhase approved `shouldBe` "approval"
+        finishPhase conn approved 1 True
+        Just depositing <- Funding.getMarginFunding conn $ Funding.fcId initial
+        Funding.fcPhase depositing `shouldBe` "deposit"
+        finishPhase conn depositing 2 True
+        Just completed <- Funding.reserveMarginFunding conn fundingClaim
+        Funding.fcId completed `shouldBe` Funding.fcId initial
+        Funding.fcStatus completed `shouldBe` "funded"
+        Funding.fcDepositBlock completed `shouldBe` Just 102
+        legacy <- getTestnetFaucetClaim conn account (address "6")
+        fmap tfcStatus legacy `shouldBe` Just "margin_funded"
+        fmap tfcMintBlockNumber legacy `shouldBe` Just Nothing
+        counts <- query_ conn "SELECT COUNT(*) FROM testnet_margin_funding_transactions WHERE status='confirmed'" :: IO [Only Int]
+        counts `shouldBe` [Only 3]
+
+    it "preserves successful mint evidence when a deposit reverts and an explicit retry refreshes approval" $
+      withSchema databaseUrl $ \conn -> do
+        ensureTestnetFaucetSchema conn
+        Funding.ensureMarginFundingSchema conn
+        Just initial <- Funding.reserveMarginFunding conn fundingClaim
+        finishPhase conn initial 0 True
+        Just approval <- Funding.getMarginFunding conn $ Funding.fcId initial
+        finishPhase conn approval 1 True
+        Just deposit <- Funding.getMarginFunding conn $ Funding.fcId initial
+        finishPhase conn deposit 2 False
+        Just failed <- Funding.getMarginFunding conn $ Funding.fcId initial
+        Funding.fcStatus failed `shouldBe` "failed"
+        Just retried <- Funding.reserveMarginFunding conn fundingClaim
+        Funding.fcPhase retried `shouldBe` "approval"
+        Funding.fcStatus retried `shouldBe` "pending"
+        counts <- query_ conn "SELECT COUNT(*) FROM testnet_margin_funding_transactions WHERE phase='mint'" :: IO [Only Int]
+        counts `shouldBe` [Only 1]
+
+    it "refuses a second signer transaction until the original journal entry is resolved" $
+      withSchema databaseUrl $ \conn -> do
+        ensureTestnetFaucetSchema conn
+        Funding.ensureMarginFundingSchema conn
+        Just initial <- Funding.reserveMarginFunding conn fundingClaim
+        Funding.persistFundingTransaction conn initial 0 (address "6") "0x40" (hash "a") "0x02abcd"
+        Just original <- Funding.submittedFundingTransaction conn
+        blocked <- try (Funding.persistFundingTransaction conn initial 1 (address "6") "0x40" (hash "b") "0x02beef") :: IO (Either SomeException ())
+        either (const True) (const False) blocked `shouldBe` True
+        wrong <- try (Funding.finishFundingTransaction conn initial original {Funding.ftHash=hash "c"} True 100 (hash "d")) :: IO (Either SomeException ())
+        either (const True) (const False) wrong `shouldBe` True
+        Funding.hasSubmittedFundingTransaction conn `shouldReturn` True
+
+    it "leaves existing wallet grants in the legacy flow and rolls back incomplete new reservations" $
+      withSchema databaseUrl $ \conn -> do
+        ensureTestnetFaucetSchema conn
+        Funding.ensureMarginFundingSchema conn
+        beginTestnetFaucetClaim conn account 100_000_000_000 (address "6") `shouldReturn` True
+        existing <- Funding.reserveMarginFunding conn fundingClaim
+        fmap Funding.fcId existing `shouldBe` Nothing
+        invalid <- try (Funding.reserveMarginFunding conn fundingClaim {Funding.fcAddress=address "9",Funding.fcAmount=1}) :: IO (Either SomeException (Maybe Funding.FundingClaim))
+        either (const True) (const False) invalid `shouldBe` True
+        beginTestnetFaucetClaim conn (address "9") 100_000_000_000 (address "6") `shouldReturn` True
+
   describe "registration opening persistence" $
     it "records the requested privacy version and opening time together and rejects conflicts" $
       withSchema databaseUrl $ \conn -> do
@@ -252,6 +324,16 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
         map porTerminalBlockHash orders `shouldBe` replicate 3 (Just $ hash "a")
         otherChain <- getPerpsOrdersByAccount conn 1 router account 10 Nothing
         map porOrderId otherChain `shouldBe` []
+
+fundingClaim :: Funding.FundingClaim
+fundingClaim = Funding.FundingClaim "" (address "1") account (address "6") 421614 (address "7") (address "8")
+  "v2.0.0" 100_000_000_000 "mint" "pending" Nothing Nothing Nothing
+
+finishPhase :: Connection -> Funding.FundingClaim -> Integer -> Bool -> IO ()
+finishPhase conn claim nonce succeeded = do
+  Funding.persistFundingTransaction conn claim nonce (address "6") "0x40" (hash $ T.pack $ show nonce) "0x02abcd"
+  Just tx <- Funding.submittedFundingTransaction conn
+  Funding.finishFundingTransaction conn claim tx succeeded (100+nonce) (hash "e")
 
 withSchema :: Text -> (Connection -> IO a) -> IO a
 withSchema databaseUrl action = bracket (connectPostgreSQL $ TE.encodeUtf8 databaseUrl) close $ \conn -> do

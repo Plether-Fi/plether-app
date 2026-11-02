@@ -43,6 +43,35 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "direct margin funding activation" $ around_ (withEnvironmentVariables
+    [("RPC_URL",Just "http://127.0.0.1:1"),("LP_SETTLEMENT_MODE",Just "off")]) $ do
+    it "defaults to disabled" $
+      withEnvironmentVariables [("TESTNET_MARGIN_FUNDING_ENABLED",Nothing)] $ do
+        result <- loadConfig
+        case result of
+          Right cfg -> cfgTestnetMarginFundingEnabled cfg `shouldBe` False
+          Left err -> expectationFailure err
+    it "enables issuance only with its dedicated signer and request guard" $
+      withEnvironmentVariables
+        [("TESTNET_MARGIN_FUNDING_ENABLED",Just "true"),
+         ("FAUCET_PRIVATE_KEY",Just $ "0x" <> replicate 64 '1'),
+         ("FAUCET_PROXY_ORIGIN_TOKEN",Just $ replicate 64 'a')] $ do
+        result <- loadConfig
+        case result of
+          Right cfg -> cfgTestnetMarginFundingEnabled cfg `shouldBe` True
+          Left err -> expectationFailure err
+    it "rejects malformed activation" $
+      withEnvironmentVariables [("TESTNET_MARGIN_FUNDING_ENABLED",Just "sometimes")] $ do
+        result <- loadConfig
+        case result of
+          Left err -> err `shouldContain` "TESTNET_MARGIN_FUNDING_ENABLED must be a boolean"
+          Right _ -> expectationFailure "Malformed flag was accepted"
+    it "requires a dedicated signer when enabled" $
+      withEnvironmentVariables [("TESTNET_MARGIN_FUNDING_ENABLED",Just "true"),("FAUCET_PRIVATE_KEY",Nothing)] $ do
+        result <- loadConfig
+        case result of
+          Left err -> err `shouldContain` "requires the dedicated FAUCET_PRIVATE_KEY"
+          Right _ -> expectationFailure "Enabled without signer"
   describe "deployed release configuration" $ do
     it "rejects retained invalid perps credentials when the deployed release is selected" $
       withEnvironmentVariables

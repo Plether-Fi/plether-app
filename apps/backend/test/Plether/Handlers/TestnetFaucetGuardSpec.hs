@@ -14,12 +14,23 @@ import Plether.Handlers.TestnetFaucetGuard
   , FaucetQuotaScope (..)
   , authenticateFaucetRequest
   , checkFaucetRequest
+  , checkFaucetStatusRequest
   , newFaucetGuardStateWithClock
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "funding status read quota" $ do
+    it "bounds polling separately from the mint request budget" $ do
+      (state, clock) <- stateAt 0
+      client <- authenticatedClient "203.0.113.8"
+      replicateM_ 60 $ checkFaucetStatusRequest state client
+      rejected <- checkFaucetStatusRequest state client
+      fmap fgfReason (either Just (const Nothing) rejected) `shouldBe` Just FaucetClientQuotaExceeded
+      checkFaucetRequest state defaultConfig client True `shouldReturn` Right ()
+      writeIORef clock 60
+      checkFaucetStatusRequest state client `shouldReturn` Right ()
   describe "faucet origin authentication" $ do
     it "accepts a valid edge token and trusted client IP" $
       authenticate testConfig (Just testToken) (Just "203.0.113.8")

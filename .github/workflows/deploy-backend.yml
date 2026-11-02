@@ -1483,6 +1483,28 @@ jobs:
             jq -e -f deployment-policy/.github/scripts/validate-aa-public-alto.jq public-alto-task.json >/dev/null
           fi
 
+      - name: Configure Sepolia direct margin funding
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          MARGIN_FUNDING_ENABLED: ${{ vars.TESTNET_MARGIN_FUNDING_ENABLED_SEPOLIA || 'false' }}
+          API_CONTAINER: ${{ matrix.container_name }}
+        run: |
+          case "$MARGIN_FUNDING_ENABLED" in
+            true|false) ;;
+            *) echo "::error::TESTNET_MARGIN_FUNDING_ENABLED_SEPOLIA must be true or false"; exit 1 ;;
+          esac
+          jq --arg container "$API_CONTAINER" --arg enabled "$MARGIN_FUNDING_ENABLED" '
+            .containerDefinitions |= map(
+              if .name == $container then
+                .environment = (
+                  ((.environment // []) | map(select(.name != "TESTNET_MARGIN_FUNDING_ENABLED")))
+                  + [{"name":"TESTNET_MARGIN_FUNDING_ENABLED","value":$enabled}]
+                )
+              else . end
+            )
+          ' task-def.json > task-def.funding.json
+          mv task-def.funding.json task-def.json
+
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
         env:

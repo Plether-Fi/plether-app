@@ -1,5 +1,7 @@
 module Plether.Perps.CriticalPathSpec
-  ( criticalPathSpec
+  ( testConfig
+  , makeApiApplication
+  , criticalPathSpec
   ) where
 
 import Control.Exception (bracket, finally)
@@ -502,6 +504,7 @@ testConfig databaseUrl rpcUrl =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
