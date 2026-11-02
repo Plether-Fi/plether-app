@@ -16,16 +16,16 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Unique (hashUnique, newUnique)
-import Database.PostgreSQL.Simple (Only (..), close, connectPostgreSQL, execute_, query_)
+import Database.PostgreSQL.Simple (Only (..), close, connectPostgreSQL, execute_, query, query_)
 import Database.PostgreSQL.Simple.Types (Query (..))
 import Plether.Config (Config (..), FaucetGuardConfig (..))
 import Plether.Database (DbPool, newDbPool, destroyDbPool, withDb)
-import Plether.Database.Schema (ensureTestnetFaucetSchema)
+import Plether.Database.Schema (ensureTestnetFaucetSchema, beginTestnetFaucetClaim, markTestnetFaucetClaimSubmitted)
 import Plether.Database.TestnetFunding
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall)
 import Plether.Ethereum.Client (CallParams (..), ethCall, newClient, rpcCall)
-import Plether.Ethereum.Rpc (ethGetBalance, ethGetCode)
-import Plether.Ethereum.Transaction (deriveAddress)
+import Plether.Ethereum.Rpc (ethGetBalance, ethGetCode, ethGetTransactionCount, ethSendRawTransaction, ethGetTransactionReceipt, TxReceipt (..))
+import Plether.Ethereum.Transaction (deriveAddress, signTransaction, Tx1559 (..), SignedTransaction (..))
 import qualified Plether.Handlers.TestnetFaucet as Legacy
 import Plether.Handlers.TestnetMarginFunding
 import Plether.Perps.CriticalPathSpec (testConfig, makeApiApplication)
@@ -108,10 +108,51 @@ marginFundingForkSpec databaseUrl = do
                 }
           ethGetBalance client owner `shouldReturn` Right 0
           ethGetCode client beneficiary `shouldReturn` Right mempty
+          -- A historical, permanently unmined intent from another signer
+          -- must neither block this allocation nor be rewritten or broadcast.
+          let foreignKey = "0x" <> T.replicate 63 "0" <> "3"
+              foreignRecipient = "0x" <> T.replicate 40 "8"
+          Right foreignSigned <- signTransaction foreignKey $ Tx1559 421614 0 0 1 100_000
+            Manifest.settlementTokenAddress 0 $ Legacy.faucetMintCall foreignRecipient
+          withDb pool $ \conn -> do
+            beginTestnetFaucetClaim conn foreignRecipient 100_000_000_000 Manifest.settlementTokenAddress `shouldReturn` True
+            markTestnetFaucetClaimSubmitted conn foreignRecipient Manifest.settlementTokenAddress
+              (signedTransactionHash foreignSigned) ("0x" <> hex (signedRawTransaction foreignSigned)) `shouldReturn` True
+          -- A different transaction has already consumed this signer's old
+          -- nonce. The unresolved legacy grant stays untouched, without
+          -- reserving a nonce that the confirmed chain has already consumed.
+          Right consumedNonce <- ethGetTransactionCount client signer
+          Right cancellation <- signTransaction key $ Tx1559 421614 consumedNonce 0 10_000_000_000 21_000 signer 0 mempty
+          Right _ <- ethSendRawTransaction client $ signedRawTransaction cancellation
+          void $ rpcCall client "evm_mine" $ toJSON ([] :: [Value])
+          let consumedRecipient = "0x" <> T.replicate 40 "6"
+          Right consumedIntent <- signTransaction key $ Tx1559 421614 consumedNonce 0 1 100_000
+            Manifest.settlementTokenAddress 0 $ Legacy.faucetMintCall consumedRecipient
+          ethGetTransactionReceipt client (signedTransactionHash consumedIntent) `shouldReturn` Right Nothing
+          withDb pool $ \conn -> do
+            beginTestnetFaucetClaim conn consumedRecipient 100_000_000_000 Manifest.settlementTokenAddress `shouldReturn` True
+            markTestnetFaucetClaimSubmitted conn consumedRecipient Manifest.settlementTokenAddress
+              (signedTransactionHash consumedIntent) ("0x" <> hex (signedRawTransaction consumedIntent)) `shouldReturn` True
+          -- An unconsumed intent from this signer still has priority. Resume
+          -- its exact bytes outside the lock before any direct transaction.
+          Right activeNonce <- ethGetTransactionCount client signer
+          let activeRecipient = "0x" <> T.replicate 40 "5"
+          Right activeIntent <- signTransaction key $ Tx1559 421614 activeNonce 0 10_000_000_000 100_000
+            Manifest.settlementTokenAddress 0 $ Legacy.faucetMintCall activeRecipient
+          withDb pool $ \conn -> do
+            beginTestnetFaucetClaim conn activeRecipient 100_000_000_000 Manifest.settlementTokenAddress `shouldReturn` True
+            markTestnetFaucetClaimSubmitted conn activeRecipient Manifest.settlementTokenAddress
+              (signedTransactionHash activeIntent) ("0x" <> hex (signedRawTransaction activeIntent)) `shouldReturn` True
           requests <- replicateConcurrently 4 $ claimMarginFunding pool client config owner beneficiary
           identifiers <- mapM identifier requests
           identifiers `shouldBe` replicate 4 (head identifiers)
           let claimId = head identifiers
+          processMarginFundingOnce pool client config
+          premature <- withDb pool submittedFundingTransaction
+          maybe True (const False) premature `shouldBe` True
+          void $ rpcCall client "evm_mine" $ toJSON ([] :: [Value])
+          Right (Just legacyReceipt) <- ethGetTransactionReceipt client $ signedTransactionHash activeIntent
+          receiptSucceeded legacyReceipt `shouldBe` True
           void $ rpcCall client "evm_setAutomine" $ toJSON [False]
           forM_ ["mint","approval","deposit"] $ \phase -> do
             processMarginFundingOnce pool client config
@@ -121,7 +162,7 @@ marginFundingForkSpec databaseUrl = do
               legacy <- Legacy.claimTestnetFaucet pool client config $ "0x" <> T.replicate 40 "9"
               legacy `shouldSatisfy` isLeft
               hashes <- withDb pool $ \conn -> query_ conn
-                "SELECT tx_hash FROM testnet_faucet_claims WHERE delivery_mode='wallet'" :: IO [Only (Maybe Text)]
+                "SELECT tx_hash FROM testnet_faucet_claims WHERE delivery_mode='wallet' AND status='failed'" :: IO [Only (Maybe Text)]
               hashes `shouldBe` [Only Nothing]
             void $ rpcCall client "anvil_dropTransaction" $ toJSON [ftHash original]
             restarted <- newClient rpcUrl
@@ -146,6 +187,11 @@ marginFundingForkSpec databaseUrl = do
           counts <- withDb pool $ \conn -> query_ conn
             "SELECT COUNT(*) FROM testnet_margin_funding_transactions" :: IO [Only Int]
           counts `shouldBe` [Only 3]
+          historical <- withDb pool $ \conn -> query conn
+            "SELECT status,tx_hash FROM testnet_faucet_claims WHERE tx_hash IN (?,?)"
+            (signedTransactionHash foreignSigned,signedTransactionHash consumedIntent) :: IO [(Text,Text)]
+          historical `shouldMatchList`
+            [("submitted",signedTransactionHash foreignSigned),("submitted",signedTransactionHash consumedIntent)]
   where
     origin = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     apiConfig = (testConfig databaseUrl "http://127.0.0.1:1")

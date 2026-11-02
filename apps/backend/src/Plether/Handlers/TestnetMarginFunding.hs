@@ -1,6 +1,6 @@
 module Plether.Handlers.TestnetMarginFunding
   ( claimMarginFunding, marginFundingStatus, startMarginFundingProcessor
-  , processMarginFundingOnce, fundingCalldata, fundingReceiptMatches, validFundingId, verifySignedIntent
+  , processMarginFundingOnce, fundingCalldata, fundingReceiptMatches, validFundingId, verifySignedIntent, legacyTransactionMayUseSigner
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -18,7 +18,7 @@ import qualified Data.ByteString.Base16 as B16
 import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Plether.AA.Pimlico (resolveOwnedTradingAccountAtBlock)
 import Plether.Config (Config (..))
-import Plether.Database (DbPool, withDb)
+import Plether.Database (DbPool)
 import Plether.Database.Schema (TestnetFaucetClaimRow (..))
 import Plether.Database.TestnetFunding
 import Plether.Ethereum.Abi (encodeCall, encodeAddress, encodeUint256, keccak256)
@@ -118,44 +118,56 @@ startMarginFundingProcessor pool client cfg = forever $ do
 
 processMarginFundingOnce :: DbPool -> EthClient -> Config -> IO ()
 processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJust (cfgFaucetPrivateKey cfg)) $ do
-  -- Reconcile original signed wallet mints without changing their recipient.
-  legacy <- withDb pool legacySubmitted
-  case legacy of
-    Just claim -> void $ Legacy.resumeSubmittedClaim pool client cfg (tfcAddress claim) (tfcTokenAddress claim) claim
-    Nothing -> reportLock $ Legacy.withFaucetSignerLock pool $ \conn -> do
-      racingLegacy <- legacySubmitted conn
-      case racingLegacy of
-        Just _ -> pure ()
-        Nothing -> do
-          submitted <- submittedFundingTransaction conn
-          case submitted of
-            Just tx -> do
-              claim <- getMarginFunding conn $ ftClaim tx
-              case claim of
-                Just value | fcStatus value == "recovery" -> pure ()
-                Just value | claimMatches cfg value -> reconcile conn value tx
-                Just value -> failMarginFunding conn value "recovery" "DEPLOYMENT_CHANGED"
-                Nothing -> fail "Funding journal has no allocation"
-            Nothing -> do
-              claim <- nextMarginFunding conn
-              case claim of
-                Nothing -> pure ()
-                Just value | claimMatches cfg value -> prepare conn value
-                Just value -> failMarginFunding conn value "recovery" "DEPLOYMENT_CHANGED"
+  result <- Legacy.withFaucetSignerLock pool $ \conn -> do
+    -- Resume durable direct intent before considering another nonce. Historical
+    -- legacy rows must not starve its receipt lookup or exact rebroadcast.
+    submitted <- submittedFundingTransaction conn
+    case submitted of
+      Just tx -> do
+        claim <- getMarginFunding conn $ ftClaim tx
+        case claim of
+          Just value | fcStatus value == "recovery" -> pure ()
+          Just value | claimMatches cfg value -> reconcile conn value tx
+          Just value -> failMarginFunding conn value "recovery" "DEPLOYMENT_CHANGED"
+          Nothing -> fail "Funding journal has no allocation"
+        pure Nothing
+      Nothing -> do
+        claim <- nextMarginFunding conn
+        case claim of
+          Nothing -> pure Nothing
+          Just value | not (claimMatches cfg value) -> do
+            failMarginFunding conn value "recovery" "DEPLOYMENT_CHANGED"
+            pure Nothing
+          Just value -> do
+            payer <- maybe (pure $ Left "Missing faucet signer") deriveAddress $ cfgFaucetPrivateKey cfg
+            case payer of
+              Left _ -> failMarginFunding conn value "recovery" "SIGNER_CHANGED" >> pure Nothing
+              Right signer -> do
+                block <- ethBlockNumber client
+                confirmed <- case block of
+                  Left err -> pure $ Left err
+                  Right number -> ethGetTransactionCountAtBlock client signer number
+                case confirmed of
+                  Left _ -> failMarginFunding conn value "pending" "RPC_UNAVAILABLE" >> pure Nothing
+                  Right nonceFloor -> do
+                    legacy <- legacySubmitted conn (cfgPerpsChainId cfg) signer nonceFloor
+                    case legacy of
+                      Just historical -> pure $ Just historical
+                      Nothing -> prepare conn value nonceFloor >> pure Nothing
+  case result of
+    Left _ -> logWarn "margin_funding_database_unavailable" "Funding will resume from the durable journal." []
+    Right Nothing -> pure ()
+    -- The legacy resumer owns the same lock, so invoke it after releasing ours.
+    Right (Just claim) -> void $ Legacy.resumeSubmittedClaim pool client cfg (tfcAddress claim) (tfcTokenAddress claim) claim
   where
-    reportLock action = do
-      result <- action
-      case result of
-        Left _ -> logWarn "margin_funding_database_unavailable" "Funding will resume from the durable journal." []
-        Right () -> pure ()
-    prepare conn claim = case cfgFaucetPrivateKey cfg of
+    prepare conn claim nonceFloor = case cfgFaucetPrivateKey cfg of
       Nothing -> pure ()
       Just key -> do
         signer <- deriveAddress key
         if fmap T.toLower signer /= Right (fcSigner claim)
           then failMarginFunding conn claim "recovery" "SIGNER_CHANGED"
           else do
-            prepared <- prepareTransaction conn client cfg key claim
+            prepared <- prepareTransaction conn client cfg key claim nonceFloor
             case prepared of
               Left reason -> failMarginFunding conn claim "failed" reason
               Right (unsigned,signed) -> do
@@ -206,11 +218,30 @@ processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJ
                       [field "claim_id" $ fcId claim,field "stage" $ ftPhase tx,field "succeeded" $ receiptSucceeded value]
               _ -> failMarginFunding conn claim "pending" "RPC_UNAVAILABLE"
 
-legacySubmitted :: Connection -> IO (Maybe TestnetFaucetClaimRow)
-legacySubmitted conn = do
+-- Historical grants can have a different signer or chain. They retain their
+-- original recovery path. Proven consumed nonces also cannot reserve the next
+-- nonce; their claims are never reset or reissued. Unknown or
+-- corrupt intent stays conservative rather than being silently discarded.
+legacySubmitted :: Connection -> Integer -> Text -> Integer -> IO (Maybe TestnetFaucetClaimRow)
+legacySubmitted conn chain signer nonceFloor = do
   rows <- query_ conn
-    "SELECT address,amount,token_address,tx_hash,raw_tx,mint_block_number,status,error FROM testnet_faucet_claims WHERE status='submitted' ORDER BY updated_at,address LIMIT 1"
-  pure $ case rows of [] -> Nothing; value:_ -> Just value
+    "SELECT address,amount,token_address,tx_hash,raw_tx,mint_block_number,status,error FROM testnet_faucet_claims WHERE status='submitted' ORDER BY updated_at,address"
+  let findRelevant [] = pure Nothing
+      findRelevant (value:rest) = do
+        relevant <- legacyTransactionMayUseSigner chain signer nonceFloor value
+        if relevant then pure $ Just value else findRelevant rest
+  findRelevant rows
+
+legacyTransactionMayUseSigner :: Integer -> Text -> Integer -> TestnetFaucetClaimRow -> IO Bool
+legacyTransactionMayUseSigner chain signer nonceFloor claim = case (tfcRawTx claim,tfcTxHash claim) of
+  (Just raw,Just expectedHash) -> case hexToByteStringEither raw of
+    Right bytes | T.toLower (rawTransactionHash bytes) == T.toLower expectedHash -> do
+      decoded <- decodeSignedTransaction bytes
+      pure $ case decoded of
+        Right (unsigned,payer) -> txChainId unsigned == chain && T.toLower payer == T.toLower signer && txNonce unsigned >= nonceFloor
+        Left _ -> True
+    _ -> pure True
+  _ -> pure True
 
 fundingCalldata :: FundingClaim -> (Text,ByteString)
 fundingCalldata claim = case fcPhase claim of
@@ -219,8 +250,8 @@ fundingCalldata claim = case fcPhase claim of
   "deposit" -> (fcClearinghouse claim, encodeCall "depositFor(address,uint256)" [encodeAddress $ fcAddress claim,encodeUint256 $ fcAmount claim])
   _ -> error "Invalid persisted funding phase"
 
-prepareTransaction :: Connection -> EthClient -> Config -> Text -> FundingClaim -> IO (Either Text (Tx1559,SignedTransaction))
-prepareTransaction conn client cfg key claim = do
+prepareTransaction :: Connection -> EthClient -> Config -> Text -> FundingClaim -> Integer -> IO (Either Text (Tx1559,SignedTransaction))
+prepareTransaction conn client cfg key claim nonceFloor = do
   let (target,calldata) = fundingCalldata claim
   chain <- ethChainId client
   tokenCode <- ethGetCode client $ fcToken claim
@@ -236,7 +267,7 @@ prepareTransaction conn client cfg key claim = do
       , encodeHex (keccak256 tokenBytes) == Manifest.settlementTokenCodeHash
       , encodeHex (keccak256 clearingBytes) == Manifest.marginClearinghouseCodeHash
       , [Only floorNonce] <- floors
-      , nextNonce >= floorNonce -> do
+      , nextNonce >= max floorNonce nonceFloor -> do
           let tip = either (const gasPrice) id priority
               unsigned = Tx1559 chainId nextNonce (applyBpsBuffer tip $ cfgKeeperFeeBufferBps cfg)
                 (applyBpsBuffer (max gasPrice tip) $ cfgKeeperFeeBufferBps cfg)
