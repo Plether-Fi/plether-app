@@ -84,7 +84,7 @@ describe('published weekly results', () => {
 
   it('switches deployments and keeps the archive selected through week navigation', () => {
     const current = `0x${'1'.repeat(40)}`
-    const previous = `0x${'2'.repeat(40)}`
+    const previous = '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8'
     historyQuery.mockImplementation((week: string | null, release: string | null) => ({ data: {
       publication: release === previous && week === firstCursor ? first : latest,
       olderCursor: week === firstCursor ? null : firstCursor,
@@ -98,6 +98,7 @@ describe('published weekly results', () => {
     expect(screen.getByText(/Showing saved results from a previous/)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Past weekly results' })).toBeInTheDocument()
     expect(within(screen.getByRole('table')).queryByRole('link')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('table')).getAllByText(/mock USDC$/)).toHaveLength(2)
     fireEvent.click(screen.getByRole('link', { name: '← Older week' }))
     expect(historyQuery).toHaveBeenLastCalledWith(firstCursor, previous)
     fireEvent.click(screen.getByRole('link', { name: 'Newer week →' }))
@@ -106,6 +107,7 @@ describe('published weekly results', () => {
     expect(historyQuery).toHaveBeenLastCalledWith(null, previous)
     fireEvent.change(screen.getByRole('combobox', { name: 'Contract deployment' }), { target: { value: current } })
     expect(within(screen.getByRole('table')).getAllByRole('link')).toHaveLength(2)
+    expect(within(screen.getByRole('table')).getAllByText(/ USDG$/)).toHaveLength(2)
   })
 
   it('lets traders find a previous deployment when the current deployment has no publications', () => {

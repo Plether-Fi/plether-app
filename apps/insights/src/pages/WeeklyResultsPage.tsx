@@ -15,6 +15,8 @@ export function WeeklyResultsPage() {
   const publication = history?.publication
   const standings = publication?.standings.filter((row) => `${row.address} ${row.displayName ? `@${row.displayName}` : ''}`.toLowerCase().includes(search.trim().toLowerCase())) ?? []
   const archived = history?.releaseRouter !== undefined && history.releaseRouter !== history.currentReleaseRouter
+  // The retired v1.3.1 market settled in MockUSDC, before the USDG deployment.
+  const assetKind = history?.releaseRouter === '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8' ? 'mock' : undefined
   const pageLink = (cursor: string | null) => {
     const next = new URLSearchParams()
     if (cursor !== null) next.set('week', cursor)
@@ -57,7 +59,7 @@ export function WeeklyResultsPage() {
         </div>
         {query.isError ? <p role="status" className="text-sm text-brand-yellow">Could not refresh results. Showing the saved week. <button type="button" onClick={() => void query.refetch()} className="underline">Retry</button></p> : null}
         <p className="text-sm leading-6 text-content-secondary">Ranked by weekly profit as a percentage of cash-flow-adjusted equity. Badges show the tier awarded for this completed week.</p>
-        <Panel>{publication.standings.length ? <Standings standings={standings} linkToCurrentWallet={!archived} /> : <EmptyState title="No traders this week" message="This week was published with no trading accounts for this contract deployment. Select another deployment to check its results." />}</Panel>
+        <Panel>{publication.standings.length ? <Standings standings={standings} linkToCurrentWallet={!archived} assetKind={assetKind} /> : <EmptyState title="No traders this week" message="This week was published with no trading accounts for this contract deployment. Select another deployment to check its results." />}</Panel>
       </section>
       <Announcements publication={publication} />
     </> : <Panel><EmptyState title="No published results yet" message="The first completed week’s results will appear after Monday publication." /></Panel>}

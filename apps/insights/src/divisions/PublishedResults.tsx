@@ -14,7 +14,7 @@ export function Announcements({ publication }: { publication: DivisionPublicatio
   </Panel>
 }
 
-export function Standings({ standings, linkToCurrentWallet = true }: { standings: DivisionStanding[]; linkToCurrentWallet?: boolean }) {
+export function Standings({ standings, linkToCurrentWallet = true, assetKind }: { standings: DivisionStanding[]; linkToCurrentWallet?: boolean; assetKind?: 'real' | 'mock' }) {
   if (!standings.length) return <EmptyState title="No traders found" message="Try a different name or wallet address." />
   return <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
     <caption className="sr-only">Published weekly percentage P&amp;L and division badges</caption>
@@ -26,7 +26,7 @@ export function Standings({ standings, linkToCurrentWallet = true }: { standings
       <td className="px-4 py-5">{row.displayName ? <span className="break-all">@{row.displayName.replace(/^@/, '')}</span> : <span className="text-content-tertiary" aria-label="Discord not linked">—</span>}</td>
       <td className="px-4 py-5 font-mono">{formatReturn(row.weeklyPnlAssets, row.adjustedEquityAssets)}</td>
       <td className="px-4 py-5">{row.activeDays} / 2</td>
-      <td className="px-4 py-5"><Pnl value={row.weeklyPnlAssets} /></td>
+      <td className="px-4 py-5"><Pnl value={row.weeklyPnlAssets} assetKind={assetKind} /></td>
       <td className="px-4 py-5"><span className={row.movement === 'promoted' ? 'text-positive' : 'text-content-secondary'}>{row.movement === 'promoted' ? `↑ ${row.previousTier} → ${row.tier}` : row.movement === 'demoted' ? `↓ ${row.previousTier} → ${row.tier}` : row.qualifying ? 'Qualified · tier held' : 'Non-qualifying'}</span>{row.nonQualifyingWeeks === 1 ? <p className="mt-1 text-xs text-brand-yellow">1 of 2 non-qualifying weeks</p> : null}</td>
     </tr>)}</tbody>
   </table></div>
