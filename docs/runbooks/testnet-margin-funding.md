@@ -67,7 +67,11 @@ The proxy forwards its secret only on the exact supported paths.
   An error never falls back to another mint.
 
 Reservation atomically writes a shared eligibility marker and direct claim.
-A shared PostgreSQL advisory lock serializes legacy and direct signing. Signed
+A shared PostgreSQL advisory lock serializes legacy and direct signing. Legacy
+reservations block this queue only when their verified signed intent uses the
+current signer and chain, or when its scope cannot be determined. Historical
+intents proven to use another signer or chain keep their original recovery path
+without blocking the current signer. Signed
 chain, signer, nonce, target, calldata and raw bytes are committed before
 broadcast. Only one submitted direct intent per signer is allowed. Restart or
 RPC timeout resumes the identical intent. Receipt advancement requires the

@@ -1,12 +1,15 @@
 module Plether.Handlers.TestnetMarginFundingSpec (spec) where
 
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
+import Plether.Database.Schema (TestnetFaucetClaimRow (..))
+import Plether.Ethereum.Transaction
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.Database.TestnetFunding (FundingClaim (..))
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256, keccak256)
 import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..))
-import Plether.Handlers.TestnetMarginFunding (fundingCalldata, fundingReceiptMatches, validFundingId)
+import Plether.Handlers.TestnetMarginFunding (fundingCalldata, fundingReceiptMatches, validFundingId, legacyTransactionMayUseSigner)
 import Test.Hspec
 
 spec :: Spec
@@ -39,6 +42,21 @@ spec = describe "direct margin funding intent and receipt evidence" $ do
       , [deposit {rpcLogBlockNumber=101},payer,transfer]
       , [deposit {rpcLogTransactionIndex=1},payer,transfer]
       ]
+  it "blocks only legacy intents that may consume this signer and chain" $ do
+    let key = "0x" <> T.replicate 63 "0" <> "1"
+    Right signer <- deriveAddress key
+    Right otherSigner <- deriveAddress $ "0x" <> T.replicate 63 "0" <> "2"
+    Right signed <- signTransaction key $ Tx1559 421614 3 0 1 100_000 (fcToken claim) 0
+      $ encodeCall "mint(address,uint256)" [encodeAddress $ fcAddress claim,encodeUint256 $ fcAmount claim]
+    let raw = "0x" <> TE.decodeUtf8 (B16.encode $ signedRawTransaction signed)
+        legacy = TestnetFaucetClaimRow (fcAddress claim) (fcAmount claim) (fcToken claim)
+          (Just $ signedTransactionHash signed) (Just raw) Nothing "submitted" Nothing
+    legacyTransactionMayUseSigner 421614 signer legacy `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 otherSigner legacy `shouldReturn` False
+    legacyTransactionMayUseSigner 1 signer legacy `shouldReturn` False
+    legacyTransactionMayUseSigner 421614 signer legacy {tfcRawTx=Nothing} `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 signer legacy {tfcRawTx=Just "0x02bad"} `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 signer legacy {tfcTxHash=Just txHash} `shouldReturn` True
   it "rejects malformed references before a PostgreSQL UUID cast" $ do
     validFundingId "a6415ba2-5668-4ba5-a058-f627bd1b938d" `shouldBe` True
     map validFundingId ["", "not-a-uuid", "a6415ba2-5668-4ba5-a058-f627bd1b938g", "' OR 1=1 --"] `shouldBe` replicate 4 False

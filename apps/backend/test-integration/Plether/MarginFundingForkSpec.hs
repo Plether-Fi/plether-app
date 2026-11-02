@@ -20,12 +20,12 @@ import Database.PostgreSQL.Simple (Only (..), close, connectPostgreSQL, execute_
 import Database.PostgreSQL.Simple.Types (Query (..))
 import Plether.Config (Config (..), FaucetGuardConfig (..))
 import Plether.Database (DbPool, newDbPool, destroyDbPool, withDb)
-import Plether.Database.Schema (ensureTestnetFaucetSchema)
+import Plether.Database.Schema (ensureTestnetFaucetSchema, beginTestnetFaucetClaim, markTestnetFaucetClaimSubmitted)
 import Plether.Database.TestnetFunding
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall)
 import Plether.Ethereum.Client (CallParams (..), ethCall, newClient, rpcCall)
 import Plether.Ethereum.Rpc (ethGetBalance, ethGetCode)
-import Plether.Ethereum.Transaction (deriveAddress)
+import Plether.Ethereum.Transaction (deriveAddress, signTransaction, Tx1559 (..), SignedTransaction (..))
 import qualified Plether.Handlers.TestnetFaucet as Legacy
 import Plether.Handlers.TestnetMarginFunding
 import Plether.Perps.CriticalPathSpec (testConfig, makeApiApplication)
@@ -108,6 +108,16 @@ marginFundingForkSpec databaseUrl = do
                 }
           ethGetBalance client owner `shouldReturn` Right 0
           ethGetCode client beneficiary `shouldReturn` Right mempty
+          -- A historical, permanently unmined intent from another signer
+          -- must neither block this allocation nor be rewritten or broadcast.
+          let foreignKey = "0x" <> T.replicate 63 "0" <> "3"
+              foreignRecipient = "0x" <> T.replicate 40 "8"
+          Right foreignSigned <- signTransaction foreignKey $ Tx1559 421614 0 0 1 100_000
+            Manifest.settlementTokenAddress 0 $ Legacy.faucetMintCall foreignRecipient
+          withDb pool $ \conn -> do
+            beginTestnetFaucetClaim conn foreignRecipient 100_000_000_000 Manifest.settlementTokenAddress `shouldReturn` True
+            markTestnetFaucetClaimSubmitted conn foreignRecipient Manifest.settlementTokenAddress
+              (signedTransactionHash foreignSigned) ("0x" <> hex (signedRawTransaction foreignSigned)) `shouldReturn` True
           requests <- replicateConcurrently 4 $ claimMarginFunding pool client config owner beneficiary
           identifiers <- mapM identifier requests
           identifiers `shouldBe` replicate 4 (head identifiers)
@@ -121,7 +131,7 @@ marginFundingForkSpec databaseUrl = do
               legacy <- Legacy.claimTestnetFaucet pool client config $ "0x" <> T.replicate 40 "9"
               legacy `shouldSatisfy` isLeft
               hashes <- withDb pool $ \conn -> query_ conn
-                "SELECT tx_hash FROM testnet_faucet_claims WHERE delivery_mode='wallet'" :: IO [Only (Maybe Text)]
+                "SELECT tx_hash FROM testnet_faucet_claims WHERE delivery_mode='wallet' AND status='failed'" :: IO [Only (Maybe Text)]
               hashes `shouldBe` [Only Nothing]
             void $ rpcCall client "anvil_dropTransaction" $ toJSON [ftHash original]
             restarted <- newClient rpcUrl
@@ -146,6 +156,9 @@ marginFundingForkSpec databaseUrl = do
           counts <- withDb pool $ \conn -> query_ conn
             "SELECT COUNT(*) FROM testnet_margin_funding_transactions" :: IO [Only Int]
           counts `shouldBe` [Only 3]
+          historical <- withDb pool $ \conn -> query_ conn
+            "SELECT tx_hash FROM testnet_faucet_claims WHERE status='submitted'" :: IO [Only Text]
+          historical `shouldBe` [Only $ signedTransactionHash foreignSigned]
   where
     origin = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     apiConfig = (testConfig databaseUrl "http://127.0.0.1:1")

@@ -1,6 +1,6 @@
 module Plether.Handlers.TestnetMarginFunding
   ( claimMarginFunding, marginFundingStatus, startMarginFundingProcessor
-  , processMarginFundingOnce, fundingCalldata, fundingReceiptMatches, validFundingId, verifySignedIntent
+  , processMarginFundingOnce, fundingCalldata, fundingReceiptMatches, validFundingId, verifySignedIntent, legacyTransactionMayUseSigner
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -119,11 +119,11 @@ startMarginFundingProcessor pool client cfg = forever $ do
 processMarginFundingOnce :: DbPool -> EthClient -> Config -> IO ()
 processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJust (cfgFaucetPrivateKey cfg)) $ do
   -- Reconcile original signed wallet mints without changing their recipient.
-  legacy <- withDb pool legacySubmitted
+  legacy <- withDb pool $ \conn -> legacySubmitted conn cfg
   case legacy of
     Just claim -> void $ Legacy.resumeSubmittedClaim pool client cfg (tfcAddress claim) (tfcTokenAddress claim) claim
     Nothing -> reportLock $ Legacy.withFaucetSignerLock pool $ \conn -> do
-      racingLegacy <- legacySubmitted conn
+      racingLegacy <- legacySubmitted conn cfg
       case racingLegacy of
         Just _ -> pure ()
         Nothing -> do
@@ -206,11 +206,32 @@ processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJ
                       [field "claim_id" $ fcId claim,field "stage" $ ftPhase tx,field "succeeded" $ receiptSucceeded value]
               _ -> failMarginFunding conn claim "pending" "RPC_UNAVAILABLE"
 
-legacySubmitted :: Connection -> IO (Maybe TestnetFaucetClaimRow)
-legacySubmitted conn = do
+-- Historical grants can have a different signer or chain. They retain their
+-- original recovery path, but cannot reserve this signer's nonce. Unknown or
+-- corrupt intent stays conservative rather than being silently discarded.
+legacySubmitted :: Connection -> Config -> IO (Maybe TestnetFaucetClaimRow)
+legacySubmitted conn cfg = do
   rows <- query_ conn
-    "SELECT address,amount,token_address,tx_hash,raw_tx,mint_block_number,status,error FROM testnet_faucet_claims WHERE status='submitted' ORDER BY updated_at,address LIMIT 1"
-  pure $ case rows of [] -> Nothing; value:_ -> Just value
+    "SELECT address,amount,token_address,tx_hash,raw_tx,mint_block_number,status,error FROM testnet_faucet_claims WHERE status='submitted' ORDER BY updated_at,address"
+  signer <- maybe (pure $ Left "Missing faucet signer") deriveAddress $ cfgFaucetPrivateKey cfg
+  let findRelevant [] = pure Nothing
+      findRelevant (value:rest) = do
+        relevant <- case signer of
+          Left _ -> pure True
+          Right payer -> legacyTransactionMayUseSigner (cfgPerpsChainId cfg) payer value
+        if relevant then pure $ Just value else findRelevant rest
+  findRelevant rows
+
+legacyTransactionMayUseSigner :: Integer -> Text -> TestnetFaucetClaimRow -> IO Bool
+legacyTransactionMayUseSigner chain signer claim = case (tfcRawTx claim,tfcTxHash claim) of
+  (Just raw,Just expectedHash) -> case hexToByteStringEither raw of
+    Right bytes | T.toLower (rawTransactionHash bytes) == T.toLower expectedHash -> do
+      decoded <- decodeSignedTransaction bytes
+      pure $ case decoded of
+        Right (unsigned,payer) -> txChainId unsigned == chain && T.toLower payer == T.toLower signer
+        Left _ -> True
+    _ -> pure True
+  _ -> pure True
 
 fundingCalldata :: FundingClaim -> (Text,ByteString)
 fundingCalldata claim = case fcPhase claim of
