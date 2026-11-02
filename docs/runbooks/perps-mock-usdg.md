@@ -93,12 +93,18 @@ Current consumers use `settlementToken`, `*Assets` and `*AssetAtoms`; environmen
 and Terraform use `PERPS_SETTLEMENT_TOKEN` and `perps_settlement_token`. Historical
 USDC evidence retains its original bytes and is not a compatibility fallback.
 
-After AA rollout, funding mints 100,000 MockUSDG to the confirmed Plether Trading
-Account. The connected wallet pays testnet ETH and confirms the mint. The token
-runtime hash is checked before minting; exact approval plus `depositMargin`
-deposits from the Trading Account. A failed deposit reuses the minted balance.
-There is no EIP-3009, permit, bridge funding, or GDN reward income. Unrestricted
-mock minting does not establish competition faucet provenance.
+After AA rollout, the welcome flow calls the protected backend faucet to mint
+100,000 MockUSDG to the confirmed Plether Trading Account. The dedicated faucet
+signer pays mint gas; the owner wallet does not need testnet ETH for this flow.
+The backend verifies the configured release graph and runtime hashes at startup.
+The faucet persists its signed transaction before broadcasting and returns a
+durable submitted state. Retries recover the same allocation per account/token.
+After confirmation, exact approval plus sponsored `depositMargin` deposits from
+the Trading Account. A failed deposit reuses the minted balance; completed
+allocations cannot be minted again through this endpoint. The existing faucet
+signer, proxy credential, database schema and rate limits are reused.
+There is no EIP-3009, permit, bridge funding, or GDN reward income. A new
+competition still requires its own reviewed release identity and provenance rules.
 
 ## SDK and ABI provenance
 

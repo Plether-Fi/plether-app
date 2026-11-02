@@ -217,7 +217,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
       />
     )
     expect(screen.getByText('USDG deposited into your Margin Account. You are ready to trade.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Get 100,000 USDG' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'USDG deposited' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Start trading' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Deposit' })).not.toBeInTheDocument()
   })

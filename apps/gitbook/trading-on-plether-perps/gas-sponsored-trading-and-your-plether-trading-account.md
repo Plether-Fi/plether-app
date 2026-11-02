@@ -102,7 +102,7 @@ Creating the signature is an offchain action and does not itself consume network
 
 On the current Arbitrum Sepolia deployment, the sponsored deposit operation uses USDG held at the Trading Account address.
 
-Select **Get USDG**, then **Get 100,000 USDG** to mint MockUSDG directly to the derived Trading Account. The owner wallet pays Arbitrum Sepolia ETH for this mint transaction. After it confirms, the app requests a sponsored deposit into the Margin Account. You can request more test USDG again after completing the flow. The deposit modal also supports MockUSDG that has returned to the owner wallet after a withdrawal. It first transfers only the required shortfall to the verified Trading Account, then continues with the sponsored deposit.
+Select **Get USDG**, then **Get 100,000 USDG** to mint MockUSDG directly to the derived Trading Account. The backend pays gas to mint one 100,000 USDG allocation per Trading Account. After it confirms, the app requests a sponsored deposit into the Margin Account. Retrying a pending or failed deposit reuses the same allocation. The deposit modal also supports MockUSDG that has returned to the owner wallet after a withdrawal. It first transfers only the required shortfall to the verified Trading Account, then continues with the sponsored deposit.
 
 To deposit:
 
@@ -222,7 +222,7 @@ USDG in the Margin Account remains subject to Plether’s margin, reservation an
 
 The owner wallet and Trading Account do not need native gas for eligible sponsored Plether operations. Keeper-operated order execution and expiry cleanup also do not charge the owner wallet native gas.
 
-The owner wallet needs Arbitrum Sepolia ETH to mint test USDG or transfer MockUSDG to the Trading Account. Minting and owner-wallet transfers are regular transactions. Plether sponsors the subsequent eligible deposit operation.
+Plether pays gas for the backend mint and sponsors the subsequent eligible deposit operation. The welcome funding flow does not require Arbitrum Sepolia ETH in the owner wallet. A separate transfer of existing MockUSDG from the owner wallet to the Trading Account still requires Arbitrum Sepolia ETH for gas.
 
 #### Why is my sponsored order still pending?
 

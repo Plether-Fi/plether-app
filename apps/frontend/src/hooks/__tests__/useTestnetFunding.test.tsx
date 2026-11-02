@@ -2,7 +2,8 @@ import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PERPS_RELEASE_IS_DEPLOYED } from '../../contracts/perpsAddresses'
 
-const mocks = vi.hoisted(() => ({ mint: vi.fn(), code: vi.fn(), balance: vi.fn(), deposit: vi.fn() }))
+const mocks = vi.hoisted(() => ({ claim: vi.fn(), mint: vi.fn(), code: vi.fn(), balance: vi.fn(), deposit: vi.fn() }))
+vi.mock('../../api', () => ({ perpsApi: { claimTestnetFaucet: mocks.claim }, testnetFaucetErrorMessage: vi.fn() }))
 vi.mock('../../contracts/perpsAddresses', async importOriginal => ({
   ...await importOriginal<typeof import('../../contracts/perpsAddresses')>(),
   PERPS_RELEASE_IS_DEPLOYED: false,
