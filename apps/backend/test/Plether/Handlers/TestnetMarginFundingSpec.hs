@@ -51,12 +51,14 @@ spec = describe "direct margin funding intent and receipt evidence" $ do
     let raw = "0x" <> TE.decodeUtf8 (B16.encode $ signedRawTransaction signed)
         legacy = TestnetFaucetClaimRow (fcAddress claim) (fcAmount claim) (fcToken claim)
           (Just $ signedTransactionHash signed) (Just raw) Nothing "submitted" Nothing
-    legacyTransactionMayUseSigner 421614 signer legacy `shouldReturn` True
-    legacyTransactionMayUseSigner 421614 otherSigner legacy `shouldReturn` False
-    legacyTransactionMayUseSigner 1 signer legacy `shouldReturn` False
-    legacyTransactionMayUseSigner 421614 signer legacy {tfcRawTx=Nothing} `shouldReturn` True
-    legacyTransactionMayUseSigner 421614 signer legacy {tfcRawTx=Just "0x02bad"} `shouldReturn` True
-    legacyTransactionMayUseSigner 421614 signer legacy {tfcTxHash=Just txHash} `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 signer 0 legacy `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 otherSigner 0 legacy `shouldReturn` False
+    legacyTransactionMayUseSigner 1 signer 0 legacy `shouldReturn` False
+    legacyTransactionMayUseSigner 421614 signer 3 legacy `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 signer 4 legacy `shouldReturn` False
+    legacyTransactionMayUseSigner 421614 signer 0 legacy {tfcRawTx=Nothing} `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 signer 0 legacy {tfcRawTx=Just "0x02bad"} `shouldReturn` True
+    legacyTransactionMayUseSigner 421614 signer 0 legacy {tfcTxHash=Just txHash} `shouldReturn` True
   it "rejects malformed references before a PostgreSQL UUID cast" $ do
     validFundingId "a6415ba2-5668-4ba5-a058-f627bd1b938d" `shouldBe` True
     map validFundingId ["", "not-a-uuid", "a6415ba2-5668-4ba5-a058-f627bd1b938g", "' OR 1=1 --"] `shouldBe` replicate 4 False

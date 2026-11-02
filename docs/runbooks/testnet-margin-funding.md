@@ -69,7 +69,12 @@ The proxy forwards its secret only on the exact supported paths.
 Reservation atomically writes a shared eligibility marker and direct claim.
 A shared PostgreSQL advisory lock serializes legacy and direct signing. Legacy
 reservations block this queue only when their verified signed intent uses the
-current signer and chain, or when its scope cannot be determined. Historical
+current signer and chain with a nonce not yet consumed at a coherent confirmed
+block, or when its scope cannot be determined. Signing also requires the RPC
+pending nonce to meet that observed confirmed floor, preserving the nonce fence
+if the RPC view moves backward. A consumed nonce never resets or reissues its
+old allocation. Existing direct signed intents resume first, and the historical
+queue is scanned only when preparing a new transaction. Historical
 intents proven to use another signer or chain keep their original recovery path
 without blocking the current signer. Signed
 chain, signer, nonce, target, calldata and raw bytes are committed before
