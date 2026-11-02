@@ -24,7 +24,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection, query)
+import Database.PostgreSQL.Simple (Connection, Only (..), query)
 import Database.PostgreSQL.Simple.Transaction
   ( IsolationLevel (RepeatableRead)
   , ReadWriteMode (ReadOnly)
@@ -259,32 +259,54 @@ getDivisionsCurrentResponse pool cfg = do
 
 -- Cursor identities are week starts, so new publications cannot shift an
 -- existing history page. The window is scoped to one chain and release before
--- selecting a page, and includes empty published weeks.
-getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
-getDivisionsHistoryResponse pool cfg week = do
-  rows <- withDb pool $ \conn -> query conn
-    "WITH weeks AS (SELECT week_start, closing_block, publication, \
-    \LAG(week_start) OVER (ORDER BY week_start) AS older_week, \
-    \LEAD(week_start) OVER (ORDER BY week_start) AS newer_week \
-    \FROM divisions_publications WHERE chain_id=? AND release_router=?) \
-    \SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
-    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
-    \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
-    \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text, \
-    \p.older_week, p.newer_week FROM weeks p \
-    \WHERE (?::BIGINT IS NULL OR p.week_start=?) ORDER BY p.week_start DESC LIMIT 1"
-    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg, week, week)
-  pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
-    [] | Just _ <- week -> Left $ E.notFound "This Divisions week has not been published"
-    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
-      [ "publication" .= Null, "olderCursor" .= Null, "newerCursor" .= Null ]
-    (block, encoded, older, newer):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
-      Nothing -> Left $ E.internalError "Divisions publication is invalid"
-      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
-        [ "publication" .= publication
-        , "olderCursor" .= fmap show older
-        , "newerCursor" .= fmap show newer
+-- selecting a page, and includes empty published weeks. Archived releases are
+-- discoverable even after the configured contracts change; the current release
+-- remains the default and is listed before its first publication.
+getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> Maybe Text -> IO (Either ApiError (ApiResponse Value))
+getDivisionsHistoryResponse pool cfg week requestedRelease = do
+  let currentRelease = T.toLower $ cfgPerpsOrderRouter cfg
+      release = maybe currentRelease T.toLower requestedRelease
+  (deployments, rows) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
+    releases <- query conn
+      "SELECT release_router FROM (SELECT release_router, MAX(week_start) AS latest_week \
+      \FROM divisions_publications WHERE chain_id=? GROUP BY release_router \
+      \UNION ALL SELECT ?::TEXT, NULL::BIGINT) releases \
+      \GROUP BY release_router ORDER BY (release_router=?) DESC, MAX(latest_week) DESC NULLS LAST, release_router"
+      (cfgPerpsChainId cfg, currentRelease, currentRelease)
+    publications <- query conn
+      "WITH weeks AS (SELECT week_start, closing_block, publication, \
+      \LAG(week_start) OVER (ORDER BY week_start) AS older_week, \
+      \LEAD(week_start) OVER (ORDER BY week_start) AS newer_week \
+      \FROM divisions_publications WHERE chain_id=? AND release_router=?) \
+      \SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
+      \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object(\
+      \  'weeklyPnlAssets', COALESCE(e.value->'weeklyPnlAssets', e.value->'weeklyPnlUsdc'), \
+      \  'adjustedEquityAssets', COALESCE(e.value->'adjustedEquityAssets', e.value->'adjustedEquityUsdc'), \
+      \  'displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
+      \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
+      \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text, \
+      \p.older_week, p.newer_week FROM weeks p \
+      \WHERE (?::BIGINT IS NULL OR p.week_start=?) ORDER BY p.week_start DESC LIMIT 1"
+      (cfgPerpsChainId cfg, release, week, week)
+    pure ([router | Only router <- releases], publications)
+  let metadata =
+        [ "releaseRouter" .= release
+        , "currentReleaseRouter" .= currentRelease
+        , "deployments" .= (deployments :: [Text])
         ]
+  pure $ if release `notElem` deployments
+    then Left $ E.notFound "Unknown Divisions deployment"
+    else case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
+      [] | Just _ <- week -> Left $ E.notFound "This Divisions week has not been published"
+      [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+        (metadata <> [ "publication" .= Null, "olderCursor" .= Null, "newerCursor" .= Null ])
+      (block, encoded, older, newer):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+        Nothing -> Left $ E.internalError "Divisions publication is invalid"
+        Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+          (metadata <> [ "publication" .= publication
+          , "olderCursor" .= fmap show older
+          , "newerCursor" .= fmap show newer
+          ])
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsLiveResponse pool cfg = do

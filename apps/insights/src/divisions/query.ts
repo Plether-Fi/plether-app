@@ -21,22 +21,44 @@ export interface DivisionsHistory {
   publication: DivisionPublication | null
   olderCursor: string | null
   newerCursor: string | null
+  // Optional while rolling out the backend before this frontend.
+  releaseRouter?: string
+  currentReleaseRouter?: string
+  deployments?: string[]
 }
 
 function isWeekCursor(value: unknown): value is string {
   return typeof value === 'string' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
 }
 
-export async function getDivisionsHistory(week: string | null, signal?: AbortSignal): Promise<DivisionsHistory> {
+const isReleaseRouter = (value: unknown): value is string => typeof value === 'string' && /^0x[0-9a-f]{40}$/.test(value)
+
+export async function getDivisionsHistory(week: string | null, signal?: AbortSignal, releaseRouter: string | null = null): Promise<DivisionsHistory> {
   if (week !== null && !isWeekCursor(week)) throw new Error('Invalid results week')
-  const response = await fetch(`/api/insights/v1/divisions/history${week === null ? '' : `?week=${encodeURIComponent(week)}`}`, { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
-  if (response.status === 404) throw new Error('This week has not been published. Choose the latest results to browse available weeks.')
+  const release = releaseRouter?.toLowerCase() ?? null
+  if (release !== null && !isReleaseRouter(release)) throw new Error('Invalid contract deployment')
+  const params = new URLSearchParams()
+  if (week !== null) params.set('week', week)
+  if (release !== null) params.set('releaseRouter', release)
+  const response = await fetch(`/api/insights/v1/divisions/history${params.size ? `?${params.toString()}` : ''}`, { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
+  if (response.status === 404) throw new Error('This week has not been published for this deployment, or the deployment is unknown. Choose the latest results to browse available weeks.')
   if (!response.ok) throw new Error(`Weekly results are unavailable (${String(response.status)})`)
   const body: unknown = await response.json().catch(() => { throw new Error('Weekly results are invalid') })
   if (typeof body !== 'object' || body === null || !('data' in body) || typeof body.data !== 'object' || body.data === null) throw new Error('Weekly results are invalid')
   const data = body.data
   if (!('publication' in data) || !('olderCursor' in data) || !('newerCursor' in data)
     || !(data.olderCursor === null || isWeekCursor(data.olderCursor)) || !(data.newerCursor === null || isWeekCursor(data.newerCursor))) throw new Error('Weekly results are invalid')
+  const hasDeployment = 'releaseRouter' in data || 'currentReleaseRouter' in data || 'deployments' in data
+  let deployment: Pick<DivisionsHistory, 'releaseRouter' | 'currentReleaseRouter' | 'deployments'> = {}
+  if (hasDeployment) {
+    if (!('releaseRouter' in data) || !isReleaseRouter(data.releaseRouter)
+      || !('currentReleaseRouter' in data) || !isReleaseRouter(data.currentReleaseRouter)
+      || !('deployments' in data) || !Array.isArray(data.deployments) || !data.deployments.every(isReleaseRouter)
+      || new Set(data.deployments).size !== data.deployments.length
+      || !data.deployments.includes(data.releaseRouter) || !data.deployments.includes(data.currentReleaseRouter)
+      || data.releaseRouter !== (release ?? data.currentReleaseRouter)) throw new Error('Weekly results are invalid')
+    deployment = { releaseRouter: data.releaseRouter, currentReleaseRouter: data.currentReleaseRouter, deployments: data.deployments }
+  } else if (release !== null) throw new Error('Contract deployment history is unavailable. Please try again later.')
   if (data.publication === null) {
     if (week !== null || data.olderCursor !== null || data.newerCursor !== null) throw new Error('Weekly results are invalid')
   } else {
@@ -45,11 +67,12 @@ export async function getDivisionsHistory(week: string | null, signal?: AbortSig
     if ((week !== null && Number(week) !== selected) || (data.olderCursor !== null && Number(data.olderCursor) >= selected)
       || (data.newerCursor !== null && Number(data.newerCursor) <= selected)) throw new Error('Weekly results are invalid')
   }
-  return { publication: data.publication, olderCursor: data.olderCursor, newerCursor: data.newerCursor }
+  return { publication: data.publication, olderCursor: data.olderCursor, newerCursor: data.newerCursor, ...deployment }
 }
 
-export function useDivisionsHistory(week: string | null) {
-  return useQuery({ queryKey: ['insights', 'divisions', 'history', week], queryFn: ({ signal }) => getDivisionsHistory(week, signal), staleTime: 30_000, refetchInterval: 60_000 })
+export function useDivisionsHistory(week: string | null, releaseRouter: string | null = null) {
+  const release = releaseRouter?.toLowerCase() ?? null
+  return useQuery({ queryKey: ['insights', 'divisions', 'history', week, release], queryFn: ({ signal }) => getDivisionsHistory(week, signal, release), staleTime: 30_000, refetchInterval: 60_000 })
 }
 
 export interface TradedWallet {

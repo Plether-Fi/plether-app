@@ -483,11 +483,14 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
 
   get "/api/insights/v1/divisions/history" $ do
     mWeek <- queryParamMaybe "week"
-    case traverse parseNonNegativeInt mWeek of
-      Nothing -> handleError $ E.invalidAmount "week must be a non-negative integer timestamp"
-      Just week -> case mPool of
-        Just pool -> liftIO (getDivisionsHistoryResponse pool cfg week) >>= handleResult
-        Nothing -> insightsUnavailable
+    mRelease <- queryParamMaybe "releaseRouter"
+    if maybe False (not . isValidAddress) mRelease
+      then handleError $ E.invalidAmount "releaseRouter must be a contract address"
+      else case traverse parseNonNegativeInt mWeek of
+        Nothing -> handleError $ E.invalidAmount "week must be a non-negative integer timestamp"
+        Just week -> case mPool of
+          Just pool -> liftIO (getDivisionsHistoryResponse pool cfg week mRelease) >>= handleResult
+          Nothing -> insightsUnavailable
 
   get "/api/insights/v1/divisions/live" $
     case mPool of
