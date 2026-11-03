@@ -7,6 +7,7 @@ module Plether.Handlers.Insights
   , getDivisionsCurrentResponse
   , getDivisionsHistoryResponse
   , getDivisionsLiveResponse
+  , getDivisionsStatsResponse
   , competitionRowToJson
   , leaderboardRowToJson
   , prizeEligibleAfterIntegrityReview
@@ -24,7 +25,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), query)
+import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Database.PostgreSQL.Simple.Transaction
   ( IsolationLevel (RepeatableRead)
   , ReadWriteMode (ReadOnly)
@@ -276,6 +277,17 @@ getDivisionsHistoryResponse pool cfg week = do
         , "olderCursor" .= fmap show older
         , "newerCursor" .= fmap show newer
         ]
+
+-- Links are inserted only after Discord, wallet ownership and consent are
+-- verified. Count those completed registrations independently of trading activity.
+getDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsStatsResponse pool cfg = do
+  counts <- withDb pool $ \conn -> query_ conn
+    "SELECT COUNT(*) FROM insights_divisions_links"
+  pure $ case counts :: [Only Integer] of
+    [Only count] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $
+      object ["registeredWallets" .= count]
+    _ -> Left $ E.internalError "Divisions registration count is unavailable"
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsLiveResponse pool cfg = do

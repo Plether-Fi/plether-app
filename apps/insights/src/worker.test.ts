@@ -113,6 +113,7 @@ describe('Cloudflare Pages Worker', () => {
 
   it.each([
     ['/api/insights/v1/status', 30],
+    ['/api/insights/v1/divisions/stats', 15],
     ['/api/insights/v1/divisions/traders', 15],
     ['/api/insights/v1/divisions/live', 15],
     ['/api/insights/v1/divisions/current', 15],

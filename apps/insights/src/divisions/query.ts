@@ -17,6 +17,25 @@ export function useDivisions() {
   return useQuery({ queryKey: ['insights', 'divisions'], queryFn: ({ signal }) => getDivisions(signal), staleTime: 30_000, refetchInterval: 60_000 })
 }
 
+export interface DivisionsStats {
+  registeredWallets: number
+}
+
+export async function getDivisionsStats(signal?: AbortSignal): Promise<DivisionsStats> {
+  const response = await fetch('/api/insights/v1/divisions/stats', { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
+  if (!response.ok) throw new Error(`Discord registration count is unavailable (${String(response.status)})`)
+  const body: unknown = await response.json().catch(() => { throw new Error('Discord registration count is invalid') })
+  if (typeof body !== 'object' || body === null || !('data' in body)
+    || typeof body.data !== 'object' || body.data === null || !('registeredWallets' in body.data)
+    || typeof body.data.registeredWallets !== 'number' || !Number.isSafeInteger(body.data.registeredWallets)
+    || body.data.registeredWallets < 0) throw new Error('Discord registration count is invalid')
+  return { registeredWallets: body.data.registeredWallets }
+}
+
+export function useDivisionsStats() {
+  return useQuery({ queryKey: ['insights', 'divisions', 'stats'], queryFn: ({ signal }) => getDivisionsStats(signal), staleTime: 30_000, refetchInterval: 60_000 })
+}
+
 export interface DivisionsHistory {
   publication: DivisionPublication | null
   olderCursor: string | null
