@@ -68,6 +68,9 @@ import Plether.Database.Insights
   )
 import Plether.Database.Insights.Registration (ensureRegistrationSchema)
 import Plether.Insights.SnapshotObservability
+import Plether.Insights.DivisionsFunding
+import Plether.Ethereum.Client (newClient)
+import qualified Plether.Ethereum.Rpc as Rpc
 import Plether.Database.Schema
   ( ensurePerpsHistorySchema
   , ensureTestnetFaucetSchema
@@ -92,6 +95,113 @@ import Test.Hspec
 insightsDatabaseSpec :: Text -> Spec
 insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
+    it "recovers Divisions depositFor funding from its receipt once and still requires the indexed custody transfer" $
+      withInsightsDatabase databaseUrl $ \pool -> do
+        decoded <- eitherDecodeFileStrict' "test/fixtures/divisions-deposit-for.json"
+        receiptValue <- either fail pure decoded
+        calls <- newIORef (0 :: Int)
+        available <- newIORef True
+        let txHash = "0x7399810b540f24d036415fa7b33de86221f40c1734eeb0597d7af6d9a41b6634"
+            token = "0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d"
+            clearinghouse = "0xb5b851f627d6df3cf3f096e23e20a58884d7b89a"
+            account = "0xc44e804e2cf0abfc393dcd1617de0f0473f85ecd"
+            payer = "0x3f0ee80b559693842115a8b2ac8010bc19cc5757"
+            scope = FundingScope fixtureChain fixtureRouter token clearinghouse
+            app request respond = do
+              body <- strictRequestBody request
+              modifyIORef' calls (+1)
+              hasReceipt <- readIORef available
+              let requestId = case decode body of
+                    Just (Object value) -> maybe Null id $ KM.lookup "id" value
+                    _ -> Null
+              respond $ responseLBS status200 [("Content-Type","application/json")]
+                (encode $ object ["jsonrpc" .= ("2.0" :: Text),"id" .= requestId,"result" .= if hasReceipt then (receiptValue :: Value) else Null])
+        testWithApplication (pure app) $ \port -> do
+          client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
+          received <- Rpc.ethGetTransactionReceipt client txHash
+          receipt <- case received of
+            Right (Just value) -> pure value
+            _ -> fail "fixture receipt did not decode"
+          let block = Rpc.receiptBlockNumber receipt
+              blockHash = Rpc.receiptBlockHash receipt
+              txIndex = Rpc.receiptTransactionIndex receipt
+              amount = 100_000_000_000
+              expected = Just [(account,"Deposit",amount,False)]
+              readFlows conn = query conn fundingFlowsQuery
+                (token,clearinghouse,clearinghouse,fixtureChain,fixtureRouter,block-1,block) :: IO [FundingFlow]
+          withDb pool $ \conn -> do
+            ensureDivisionsFundingSchema conn
+            void $ execute conn "DELETE FROM divisions_deposit_payers WHERE chain_id=? AND release_router=?" (fixtureChain,fixtureRouter)
+            insertPerpsActivity conn fixtureChain fixtureRouter clearinghouse "divisions:deposit-for"
+              account "Deposit" Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing
+              txHash block blockHash txIndex 22 1793654065 (object ["asset" .= token])
+            insertPerpsAssetTransfer conn fixtureChain fixtureRouter token payer clearinghouse amount
+              txHash block blockHash txIndex 21 1793654065
+            -- Regression: the previous query required payer == beneficiary.
+            rows <- readFlows conn
+            map ffTransferCount rows `shouldBe` [0]
+          modifyIORef' available (const False)
+          loadDivisionsFunding client pool scope (block-1) block `shouldReturn` Nothing
+          readIORef calls `shouldReturn` 2
+          modifyIORef' available (const True)
+          loadDivisionsFunding client pool scope (block-1) block `shouldReturn` expected
+          readIORef calls `shouldReturn` 3
+          loadDivisionsFunding client pool scope (block-1) block `shouldReturn` expected
+          readIORef calls `shouldReturn` 3
+          withDb pool $ \conn -> do
+            rows <- readFlows conn
+            map ffTransferCount rows `shouldBe` [1]
+            map ffVerifiedPayer rows `shouldBe` [True]
+            counts <- query conn "SELECT COUNT(*) FROM divisions_deposit_payers WHERE chain_id=? AND release_router=?" (fixtureChain,fixtureRouter) :: IO [Only Int]
+            counts `shouldBe` [Only 1]
+            -- Each changed credit identity must invalidate the cached proof.
+            forM_ ["account", "token_address", "clearinghouse", "payer", "tx_hash", "block_hash", "release_router"] $ \column ->
+              withTransaction conn $ do
+                void $ execute_ conn "SAVEPOINT change_proof"
+                void $ execute_ conn $ fromString $ "UPDATE divisions_deposit_payers SET " <> column <> "='wrong'"
+                changed <- readFlows conn
+                map ffTransferCount changed `shouldBe` [0]
+                void $ execute_ conn "ROLLBACK TO SAVEPOINT change_proof"
+            forM_ ["chain_id", "block_number", "tx_index", "deposit_log_index", "amount_assets", "transfer_log_index"] $ \column ->
+              withTransaction conn $ do
+                void $ execute_ conn "SAVEPOINT change_proof"
+                void $ execute_ conn $ fromString $ "UPDATE divisions_deposit_payers SET " <> column <> "=" <> column <> "+1"
+                changed <- readFlows conn
+                map ffTransferCount changed `shouldBe` [0]
+                void $ execute_ conn "ROLLBACK TO SAVEPOINT change_proof"
+            void $ execute conn "DELETE FROM perps_asset_transfers WHERE chain_id=? AND release_router=? AND tx_hash=?" (fixtureChain,fixtureRouter,txHash)
+          loadDivisionsFunding client pool scope (block-1) block `shouldReturn` Nothing
+          -- Cached receipt evidence cannot substitute for missing indexed history.
+          readIORef calls `shouldReturn` 3
+    it "keeps ordinary Divisions deposits, withdrawals and verified assisted-close exclusions" $
+      withInsightsDatabase databaseUrl $ \pool -> do
+        withDb pool $ \conn -> do
+          ensureDivisionsFundingSchema conn
+          insertDeposit conn walletA 105 5 (Just fixtureClearinghouse) (Just fixtureAssets) 100 "divisions-self"
+          insertPerpsActivity conn fixtureChain fixtureRouter fixtureClearinghouse "divisions:withdraw"
+            walletA "Withdraw" Nothing Nothing Nothing Nothing Nothing (Just 20) Nothing
+            (hashText "divisions-withdraw-tx") 106 (hashText "divisions-withdraw-block") 0 5
+            (eventTimestamp 106) (object ["asset" .= fixtureAssets])
+          insertTransfer conn fixtureClearinghouse walletA 20 106 4 "divisions-withdraw"
+          -- Use the same canonical identity for the custody transfer and credit.
+          void $ execute conn "UPDATE perps_asset_transfers SET tx_hash=?,block_hash=? WHERE chain_id=? AND release_router=? AND block_number=106"
+            (hashText "divisions-withdraw-tx",hashText "divisions-withdraw-block",fixtureChain,fixtureRouter)
+          insertDeposit conn walletA 107 5 (Just fixtureClearinghouse) (Just fixtureAssets) 198000 "divisions-assisted"
+          let digest = "0x" <> T.replicate 64 "d"
+              grant = CloseAssistanceReservation fixtureRouter walletA ("0x" <> T.replicate 64 "b") ("0x" <> T.replicate 64 "c") fixtureLens 198000
+          void $ execute conn
+            "INSERT INTO aa_sponsorship_authorizations(request_key,digest,sender,owner,nonce,valid_after,valid_until,max_cost_wei,client_key,operation,state) VALUES(?,?,?,?,0,1,2,1,?,'{}','settled') ON CONFLICT DO NOTHING"
+            (digest,digest,walletA,walletA,digest)
+          insertCloseAssistanceReservation conn digest grant
+          confirmCloseAssistance conn digest (hashText "txdivisions-assisted") 107 (hashText "bldivisions-assisted") 5 1 `shouldReturn` True
+        client <- newClient "http://127.0.0.1:1"
+        let scope = FundingScope fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse
+        loadDivisionsFunding client pool scope 104 107 `shouldReturn`
+          Just [(walletA,"Deposit",100,False),(walletA,"Withdraw",20,False),(walletA,"Deposit",198000,True)]
+        withDb pool $ \conn -> do
+          let digest = "0x" <> T.replicate 64 "d" :: Text
+          void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
+          void $ execute conn "DELETE FROM aa_sponsorship_authorizations WHERE digest=?" (Only digest)
     benchmark <- runIO $ lookupEnv "INSIGHTS_INTEGRITY_BENCHMARK"
     when (benchmark == Just "1") $ it "benchmarks isolated integrity at twice the incident activity volume" $ runIntegrityBenchmark databaseUrl
     it "keeps registration unblocked during indexed snapshot writes and rejects a changed roster atomically" $
