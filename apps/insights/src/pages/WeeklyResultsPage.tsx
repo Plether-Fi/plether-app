@@ -1,49 +1,33 @@
 import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { Announcements, Standings } from '../divisions/PublishedResults'
 import { useDivisionsHistory } from '../divisions/query'
-import { formatUtc, shortAddress } from '../utils/format'
+import { formatUtc } from '../utils/format'
 
 export function WeeklyResultsPage() {
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const week = params.get('week')
-  const release = params.get('releaseRouter')
-  const query = useDivisionsHistory(week, release)
+  const query = useDivisionsHistory(week)
   const [search, setSearch] = useState('')
   const history = query.data
   const publication = history?.publication
   const standings = publication?.standings.filter((row) => `${row.address} ${row.displayName ? `@${row.displayName}` : ''}`.toLowerCase().includes(search.trim().toLowerCase())) ?? []
-  const archived = history?.releaseRouter !== undefined && history.releaseRouter !== history.currentReleaseRouter
-  // The retired v1.3.1 market settled in MockUSDC, before the USDG deployment.
-  const assetKind = history?.releaseRouter === '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8' ? 'mock' : undefined
-  const pageLink = (cursor: string | null) => {
-    const next = new URLSearchParams()
-    if (cursor !== null) next.set('week', cursor)
-    const router = history?.releaseRouter ?? release
-    if (router !== null) next.set('releaseRouter', router)
-    return `/results${next.size ? `?${next.toString()}` : ''}`
-  }
+  const assetKind = publication?.scoringRelease?.assetSymbol === 'USDC' ? 'mock' : undefined
+  const pageLink = (cursor: string | null) => cursor === null ? '/results' : `/results?week=${cursor}`
   const buttonClass = 'border border-brand-border/40 px-4 py-2 text-sm font-semibold hover:bg-brand-peach/10'
+
+  if (params.has('releaseRouter')) return <Navigate to={pageLink(week)} replace />
 
   return <div className="space-y-6">
     <Link to="/" className="text-sm text-brand-peach hover:underline">← Live leaderboard</Link>
     <div>
-      <h1 className="text-3xl font-semibold sm:text-4xl">{week === null && !archived ? 'Last week’s results' : 'Past weekly results'}</h1>
+      <h1 className="text-3xl font-semibold sm:text-4xl">{week === null ? 'Last week’s results' : 'Past weekly results'}</h1>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-content-secondary">Final weekly rankings and awarded badges. Browse earlier weeks to see their results, promotions, and Traders of the Week.</p>
     </div>
-    {history?.deployments && history.releaseRouter ? <Panel className="space-y-3 p-5">
-      <label htmlFor="results-deployment" className="block text-sm font-semibold">Contract deployment</label>
-      <select id="results-deployment" value={history.releaseRouter} onChange={(event) => { setSearch(''); setParams({ releaseRouter: event.target.value }) }} className="w-full border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm sm:max-w-lg">
-        {history.deployments.map((router) => <option key={router} value={router}>{router === history.currentReleaseRouter ? 'Current deployment' : 'Previous deployment'} · {shortAddress(router)}</option>)}
-      </select>
-      <p className="break-all font-mono text-xs text-content-tertiary">{history.releaseRouter}</p>
-      <p className="text-sm text-content-secondary">{archived ? 'Showing saved results from a previous contract deployment. Rankings and badges are specific to that deployment.' : 'Select a previous deployment to see results from before the contracts changed.'}</p>
-    </Panel> : null}
     {query.isLoading ? <Panel><LoadingState /></Panel> : query.isError && !history ? <>
       <ErrorState title="Weekly results are unavailable" message={query.error.message} onRetry={() => void query.refetch()} />
       {week !== null ? <Link to={pageLink(null)} className="text-sm text-brand-peach underline">Latest results</Link> : null}
-      {release !== null ? <Link to="/results" className="text-sm text-brand-peach underline">Current deployment results</Link> : null}
     </> : publication ? <>
       <nav aria-label="Results weeks" className="flex flex-wrap items-center justify-between gap-3">
         {history.olderCursor ? <Link to={pageLink(history.olderCursor)} className={buttonClass}>← Older week</Link> : <button type="button" disabled className={`${buttonClass} opacity-40`}>← Older week</button>}
@@ -58,8 +42,9 @@ export function WeeklyResultsPage() {
           <div className="w-full sm:max-w-xs"><label htmlFor="results-search" className="sr-only">Search results</label><input id="results-search" type="search" value={search} onChange={(event) => { setSearch(event.target.value) }} placeholder="Search wallet or Discord handle" className="w-full border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm placeholder:text-content-tertiary" /></div>
         </div>
         {query.isError ? <p role="status" className="text-sm text-brand-yellow">Could not refresh results. Showing the saved week. <button type="button" onClick={() => void query.refetch()} className="underline">Retry</button></p> : null}
+        {publication.scoringRelease ? <p className="text-xs text-content-tertiary">Contract version {publication.scoringRelease.version} · Fixed for this week</p> : null}
         <p className="text-sm leading-6 text-content-secondary">Ranked by weekly profit as a percentage of cash-flow-adjusted equity. Badges show the tier awarded for this completed week.</p>
-        <Panel>{publication.standings.length ? <Standings standings={standings} linkToCurrentWallet={!archived} assetKind={assetKind} /> : <EmptyState title="No traders this week" message="This week was published with no trading accounts for this contract deployment. Select another deployment to check its results." />}</Panel>
+        <Panel>{publication.standings.length ? <Standings standings={standings} assetKind={assetKind} /> : <EmptyState title="No traders this week" message="No trading accounts were scored for this week." />}</Panel>
       </section>
       <Announcements publication={publication} />
     </> : <Panel><EmptyState title="No published results yet" message="The first completed week’s results will appear after Monday publication." /></Panel>}

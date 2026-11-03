@@ -31,8 +31,15 @@ export interface DivisionStanding extends DivisionState {
   movement: 'promoted' | 'demoted' | 'unchanged'
 }
 
+export interface ScoringRelease {
+  router: string
+  version: string
+  assetSymbol: 'USDC' | 'USDG'
+}
+
 export interface DivisionPublication {
   version: 1
+  scoringRelease?: ScoringRelease
   source: { baselineBlock: WeeklyInput['baselineBlock']; closingBlock: WeeklyInput['closingBlock'] }
   week: { startsAt: string; closesAt: string; publishesAt: string }
   publishedAt: string

@@ -52,7 +52,7 @@ function TraderDetails({ address }: { address: string }) {
         <Panel><dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 lg:grid-cols-4 lg:divide-y-0">
           <Metric label="Final rank">{awarded.rank ?? '—'}</Metric>
           <Metric label="Weekly return">{formatReturn(awarded.weeklyPnlAssets, awarded.adjustedEquityAssets)}</Metric>
-          <Metric label="Net P&L"><Pnl value={awarded.weeklyPnlAssets} /></Metric>
+          <Metric label="Net P&L"><Pnl value={awarded.weeklyPnlAssets} assetKind={publication.scoringRelease?.assetSymbol === 'USDC' ? 'mock' : undefined} /></Metric>
           <Metric label="Active days">{awarded.activeDays}</Metric>
         </dl></Panel>
         <p className="text-sm text-content-secondary">{awarded.movement === 'promoted' ? `Promoted from ${awarded.previousTier} to ${awarded.tier}.` : awarded.movement === 'demoted' ? `Demoted from ${awarded.previousTier} to ${awarded.tier}.` : awarded.qualifying ? 'Qualifying week · tier held.' : 'Non-qualifying week.'}</p>

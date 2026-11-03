@@ -3,6 +3,7 @@
 module Plether.Insights.Divisions
   ( LiveScore (..), rankScores, publishDivisionWeek, firstWeekStart, weekSeconds
   , publicationTime, divisionTimestamp
+  , DivisionRelease (..), divisionReleaseForWeek, divisionWeekStart, publishedWallets
   ) where
 
 import Control.Monad (unless)
@@ -23,6 +24,23 @@ import Text.Read (readMaybe)
 firstWeekStart, weekSeconds :: Integer
 firstWeekStart = 1791752400 -- Sunday 2026-10-11 21:00 UTC
 weekSeconds = 7 * 86400
+
+data DivisionRelease = DivisionRelease
+  { drRouter :: Text, drVersion :: Text, drAssetSymbol :: Text
+  } deriving stock (Show, Eq)
+
+divisionWeekStart :: Integer -> Integer
+divisionWeekStart now = firstWeekStart + max 0 ((now-firstWeekStart) `div` weekSeconds) * weekSeconds
+
+-- Append future cutovers at a trading-week boundary. Persisted week bindings
+-- reject attempts to reinterpret a week after it has started.
+divisionReleaseForWeek :: Integer -> Maybe DivisionRelease
+divisionReleaseForWeek start
+  | start < firstWeekStart || (start-firstWeekStart) `mod` weekSeconds /= 0 = Nothing
+  | start < 1793566800 = Just $ DivisionRelease
+      "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8" "v1.3.1" "USDC"
+  | otherwise = Just $ DivisionRelease
+      "0x918663d6da8cb33b325a04c4a5e8c51d42f3b444" "v2.0.0" "USDG"
 
 publicationTime :: Integer -> Integer
 publicationTime start = start + weekSeconds + 3 * 3600
@@ -67,6 +85,8 @@ previousState = withObject "publication" $ \o -> do
   block <- maybe (fail "Invalid previous block") pure (readMaybe closing)
   rows <- o .: "standings" >>= traverse (withObject "standing" $ \r -> do
     address <- r .: "address"
+    unless (T.length address == 42 && T.take 2 address == "0x"
+      && T.all isHexDigit (T.drop 2 address) && T.toLower address == address) $ fail "Invalid previous wallet"
     tier <- r .: "tier"
     index <- maybe (fail "Invalid previous tier") pure $ lookup tier (zip tiers [0..])
     streak <- r .: "nonQualifyingWeeks"
@@ -74,6 +94,12 @@ previousState = withObject "publication" $ \o -> do
     pure (address, (index, streak)))
   unless (Map.size (Map.fromList rows) == length rows) $ fail "Duplicate previous wallet"
   pure (start, block, Map.fromList rows)
+
+-- The publisher snapshots every prior badge holder on the week's pinned
+-- release as well as its traded roster. Missing account reads remain failures;
+-- a contract upgrade must not reset tiers or silently invent inactivity.
+publishedWallets :: Value -> Either String [Text]
+publishedWallets = fmap (\(_,_,wallets) -> Map.keys wallets) . parseEither previousState
 
 publishDivisionWeek :: Integer -> Integer -> RpcBlock -> RpcBlock -> Maybe Value -> [LiveScore] -> Either String Value
 publishDivisionWeek start now baseline closing previous scores = do
