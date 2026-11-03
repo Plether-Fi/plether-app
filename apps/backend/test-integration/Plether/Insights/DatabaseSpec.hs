@@ -68,6 +68,7 @@ import Plether.Database.Insights
   )
 import Plether.Database.Insights.Registration (ensureRegistrationSchema)
 import Plether.Insights.SnapshotObservability
+import Plether.Insights.DivisionsLive (ensureDivisionsLiveSchema, pinDivisionsWeekReleases)
 import Plether.Insights.DivisionsFunding
 import Plether.Ethereum.Client (newClient)
 import qualified Plether.Ethereum.Rpc as Rpc
@@ -95,6 +96,22 @@ import Test.Hspec
 insightsDatabaseSpec :: Text -> Spec
 insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
+    it "pins Divisions weeks idempotently and rejects reassignment of an existing week" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        ensureDivisionsLiveSchema conn
+        pinDivisionsWeekReleases conn 1793566800
+        rows <- query_ conn "SELECT week_start,release_version,asset_symbol FROM divisions_weeks WHERE chain_id=421614 AND week_start IN (1792962000,1793566800) ORDER BY week_start"
+          :: IO [(Integer,Text,Text)]
+        rows `shouldBe` [(1792962000,"v1.3.1","USDC"),(1793566800,"v2.0.0","USDG")]
+        withTransaction conn $ do
+          void $ execute_ conn "SAVEPOINT divisions_assignment"
+          void $ execute_ conn "UPDATE divisions_weeks SET release_version='v0.0.0' WHERE chain_id=421614 AND week_start=1792962000"
+          rejected <- try (pinDivisionsWeekReleases conn 1793566800) :: IO (Either SomeException ())
+          case rejected of
+            Left _ -> pure ()
+            Right _ -> expectationFailure "an existing weekly assignment was silently changed"
+          void $ execute_ conn "ROLLBACK TO SAVEPOINT divisions_assignment"
+
     it "recovers Divisions depositFor funding from its receipt once and still requires the indexed custody transfer" $
       withInsightsDatabase databaseUrl $ \pool -> do
         decoded <- eitherDecodeFileStrict' "test/fixtures/divisions-deposit-for.json"

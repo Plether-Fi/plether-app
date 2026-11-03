@@ -46,10 +46,10 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
-  it('shows public handles and earned badges without deriving tiers from live returns', () => {
+  it('keeps earned badges across contract upgrades without deriving tiers from live returns', () => {
     const publication = publishWeek(input(0, [account(1)]), null)
-    query.mockReturnValue({ data: publication })
-    liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 2, standings: [
+    query.mockReturnValue({ data: { ...publication, scoringRelease: { router: `0x${'1'.repeat(40)}`, version: 'v1.3.1', assetSymbol: 'USDC' } } })
+    liveQuery.mockReturnValue({ data: { status: 'ready', scoringRelease: { router: `0x${'2'.repeat(40)}`, version: 'v2.0.0', assetSymbol: 'USDG' }, walletCount: 2, standings: [
       { address: account(2).address, discordUsername: null, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
       { address: account(1).address, discordUsername: 'mellboi', rank: 2, weeklyReturnBps: -100, activeDays: 0 },
     ] } })

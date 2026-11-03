@@ -10,7 +10,6 @@ const registration = readFileSync(new URL('../apps/backend/src/Plether/Handlers/
 const query = handlers.split('getDivisionsLiveResponse pool cfg = do')[1]
   .match(/"SELECT[\s\S]*?LIMIT 1"/)[0].slice(1, -1).replace(/\\\s*\n\s*\\/g, '')
   .replace('s.chain_id=?', 's.chain_id=421614')
-  .replace('s.release_router=?', "s.release_router='router'")
   .replace('s.week_start=?', 's.week_start=100')
 const createLinks = registration.match(/"CREATE TABLE IF NOT EXISTS insights_divisions_links .*"/)[0]
   .slice(1, -1).replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
@@ -28,6 +27,8 @@ for (const legacySchema of [false, true]) test(`completed registrations show han
     -- Simulate legacy records from the previous deployment. The old flag must
     -- not hide a completed registration or require a data backfill.
     ${legacySchema ? 'ALTER TABLE insights_divisions_links ADD COLUMN show_discord_handle BOOLEAN NOT NULL DEFAULT FALSE;' : ''}
+    CREATE TEMP TABLE divisions_weeks (chain_id bigint, week_start bigint, release_router text, release_version text, asset_symbol text);
+    INSERT INTO divisions_weeks VALUES (421614,100,'router','v2.0.0','USDG');
     CREATE TEMP TABLE divisions_live_snapshots (
       chain_id bigint, release_router text, week_start bigint, snapshot_block bigint,
       snapshot_hash text, snapshot_timestamp bigint, wallet_count int, standings jsonb, captured_at timestamptz);

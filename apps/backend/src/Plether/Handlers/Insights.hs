@@ -46,7 +46,8 @@ import Plether.Database.Insights
   , getInsightsDataStatus
   )
 import Plether.Database.Schema (PerpsIndexerStatusRow (..), getPerpsIndexerStatus)
-import Plether.Perps.HistoryIndexer (perpsIndexerNameForLifecycleBook)
+import Plether.Insights.Divisions (divisionWeekStart)
+import Plether.Insights.DivisionsLive (divisionsPublicationsQuery)
 import Plether.Insights.Competition
   ( CompetitionRegistrationState (..)
   , CompetitionRules (..)
@@ -200,9 +201,16 @@ getDivisionsTradersResponse
 getDivisionsTradersResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
-    cursor <- getPerpsIndexerStatus conn (cfgPerpsChainId cfg)
-      (perpsIndexerNameForLifecycleBook $ cfgPerpsOrderLifecycleBook cfg)
-      (cfgPerpsOrderRouter cfg)
+    bindings <- query conn
+      "SELECT release_router FROM divisions_weeks WHERE chain_id=? AND week_start=?"
+      (cfgPerpsChainId cfg,divisionWeekStart now) :: IO [Only Text]
+    cursor <- case bindings of
+      [Only router] -> do
+        current <- getPerpsIndexerStatus conn (cfgPerpsChainId cfg) "perps-history-costs-v2:finalized-abi3" router
+        case current of
+          Just value -> pure $ Just value
+          Nothing -> getPerpsIndexerStatus conn (cfgPerpsChainId cfg) "perps-history-costs-v1" router
+      _ -> pure Nothing
     rows <- case cursor of
       Just PerpsIndexerStatusRow { pisLastIndexedBlockHash = Just _, pisReleaseRouter = releaseRouter } ->
         query conn
@@ -243,83 +251,45 @@ getDivisionsTradersResponse pool cfg = do
 -- remains current throughout the following week and across worker restarts.
 getDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsCurrentResponse pool cfg = do
-  rows <- withDb pool $ \conn -> query conn
-    "SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
-    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
-    \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
-    \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text \
-    \FROM divisions_publications p WHERE p.chain_id=? AND p.release_router=? \
-    \ORDER BY p.week_start DESC LIMIT 1"
-    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg)
-  pure $ case rows :: [(Integer, Text)] of
+  rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
+    (cfgPerpsChainId cfg, Nothing :: Maybe Int, Nothing :: Maybe Int)
+  pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
     [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) Null
-    (block, encoded):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+    (block, encoded, _, _):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
       Nothing -> Left $ E.internalError "Divisions publication is invalid"
       Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) publication
 
--- Cursor identities are week starts, so new publications cannot shift an
--- existing history page. The window is scoped to one chain and release before
--- selecting a page, and includes empty published weeks. Archived releases are
--- discoverable even after the configured contracts change; the current release
--- remains the default and is listed before its first publication.
-getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> Maybe Text -> IO (Either ApiError (ApiResponse Value))
-getDivisionsHistoryResponse pool cfg week requestedRelease = do
-  let currentRelease = T.toLower $ cfgPerpsOrderRouter cfg
-      release = maybe currentRelease T.toLower requestedRelease
-  (deployments, rows) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
-    releases <- query conn
-      "SELECT release_router FROM (SELECT release_router, MAX(week_start) AS latest_week \
-      \FROM divisions_publications WHERE chain_id=? GROUP BY release_router \
-      \UNION ALL SELECT ?::TEXT, NULL::BIGINT) releases \
-      \GROUP BY release_router ORDER BY (release_router=?) DESC, MAX(latest_week) DESC NULLS LAST, release_router"
-      (cfgPerpsChainId cfg, currentRelease, currentRelease)
-    publications <- query conn
-      "WITH weeks AS (SELECT week_start, closing_block, publication, \
-      \LAG(week_start) OVER (ORDER BY week_start) AS older_week, \
-      \LEAD(week_start) OVER (ORDER BY week_start) AS newer_week \
-      \FROM divisions_publications WHERE chain_id=? AND release_router=?) \
-      \SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
-      \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object(\
-      \  'weeklyPnlAssets', COALESCE(e.value->'weeklyPnlAssets', e.value->'weeklyPnlUsdc'), \
-      \  'adjustedEquityAssets', COALESCE(e.value->'adjustedEquityAssets', e.value->'adjustedEquityUsdc'), \
-      \  'displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
-      \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
-      \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text, \
-      \p.older_week, p.newer_week FROM weeks p \
-      \WHERE (?::BIGINT IS NULL OR p.week_start=?) ORDER BY p.week_start DESC LIMIT 1"
-      (cfgPerpsChainId cfg, release, week, week)
-    pure ([router | Only router <- releases], publications)
-  let metadata =
-        [ "releaseRouter" .= release
-        , "currentReleaseRouter" .= currentRelease
-        , "deployments" .= (deployments :: [Text])
+-- A week selects its pinned contract release. Cursors span the canonical
+-- timeline across upgrades; callers cannot choose an alternative result.
+getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
+getDivisionsHistoryResponse pool cfg week = do
+  rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
+    (cfgPerpsChainId cfg, week, week)
+  pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
+    [] | Just _ <- week -> Left $ E.notFound "This Divisions week has not been published"
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+      [ "publication" .= Null, "olderCursor" .= Null, "newerCursor" .= Null ]
+    (block, encoded, older, newer):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+      Nothing -> Left $ E.internalError "Divisions publication is invalid"
+      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+        [ "publication" .= publication
+        , "olderCursor" .= fmap show older
+        , "newerCursor" .= fmap show newer
         ]
-  pure $ if release `notElem` deployments
-    then Left $ E.notFound "Unknown Divisions deployment"
-    else case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
-      [] | Just _ <- week -> Left $ E.notFound "This Divisions week has not been published"
-      [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
-        (metadata <> [ "publication" .= Null, "olderCursor" .= Null, "newerCursor" .= Null ])
-      (block, encoded, older, newer):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
-        Nothing -> Left $ E.internalError "Divisions publication is invalid"
-        Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
-          (metadata <> [ "publication" .= publication
-          , "olderCursor" .= fmap show older
-          , "newerCursor" .= fmap show newer
-          ])
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsLiveResponse pool cfg = do
   now <- floor <$> getPOSIXTime
-  let firstStart = 1791752400 :: Integer
-      weekStart = firstStart + max 0 ((now - firstStart) `div` (7 * 86400)) * (7 * 86400)
+  let weekStart = divisionWeekStart now
   rows <- withDb pool $ \conn -> query conn
     "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
     \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
     \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
     \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
-    \EXTRACT(EPOCH FROM s.captured_at)::BIGINT FROM divisions_live_snapshots s \
-    \WHERE s.chain_id=? AND s.release_router=? AND s.week_start=? \
+    \EXTRACT(EPOCH FROM s.captured_at)::BIGINT,w.release_router,w.release_version,w.asset_symbol \
+    \FROM divisions_live_snapshots s JOIN divisions_weeks w \
+    \ON w.chain_id=s.chain_id AND w.week_start=s.week_start AND w.release_router=s.release_router \
+    \WHERE s.chain_id=? AND s.week_start=? \
     \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
     \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
     \AND i.release_router=s.release_router AND i.indexer_name IN \
@@ -329,14 +299,14 @@ getDivisionsLiveResponse pool cfg = do
     \AND (i.last_indexed_block>s.snapshot_block OR \
     \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
     \LIMIT 1"
-    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg, weekStart)
-  pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer)]) of
+    (cfgPerpsChainId cfg, weekStart)
+  pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
     [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
       [ "status" .= ("pending" :: Text)
       , "weekStartsAt" .= isoTimestamp weekStart
       , "generatedAt" .= isoTimestamp now
       ]
-    (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt) : _ ->
+    (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt, release, version, asset) : _ ->
       case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
         Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
         Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
@@ -347,7 +317,8 @@ getDivisionsLiveResponse pool cfg = do
           , "snapshotBlockHash" .= blockHash
           , "capturedAt" .= isoTimestamp capturedAt
           , "walletCount" .= walletCount
-          , "releaseRouter" .= cfgPerpsOrderRouter cfg
+          , "releaseRouter" .= release
+          , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
           , "standings" .= standings
           , "provisional" .= True
           ]

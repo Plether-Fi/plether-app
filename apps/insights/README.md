@@ -23,17 +23,23 @@ cursors in the URL. `/api/insights/v1/divisions/history?week=<epoch-seconds>` re
 one saved publication plus `olderCursor` and `newerCursor`; omitting `week` selects
 the latest published week. Empty published weeks remain browsable.
 
-The results page includes a **Contract deployment** selector. History defaults
-to the current router; `releaseRouter=<address>` selects a previous deployment.
-The history response also includes `releaseRouter`, `currentReleaseRouter`, and
-`deployments` (routers with saved publications on this chain, plus the current
-router). Week navigation and latest-results links preserve the selected router.
-The API maps historical `weeklyPnlUsdc` / `adjustedEquityUsdc` fields to their
-current `*Assets` names when reading, without rewriting the saved publication.
-An unknown deployment or unpublished requested week returns 404 without falling
-back to another deployment. Saved rankings and badges remain specific to their
-deployment; historical wallet rows do not link to current-deployment metrics.
-Deploy the backend before the Insights frontend. No schema migration is needed.
+Each week has one persisted contract assignment in `divisions_weeks`, keyed by
+chain and week. October 11, 18 and 25 use Core v1.3.1 (mock USDC); November 1
+onward uses Core v2.0.0 (USDG). Append future cutovers only at week boundaries;
+startup rejects any change to an existing assignment. Results show the assigned
+version as read-only text. The API ignores legacy `releaseRouter` selectors;
+old frontend bookmarks redirect to the same week without the selector.
+
+History and current badges use only publications matching that week's assignment.
+Week navigation crosses contract upgrades, and earned tiers continue for the same
+wallet. Each week's balances, funding and trades come solely from its assigned
+release. Publication captures all prior badge holders as well as the new release's
+traded roster, so inactivity and promotion rules continue without inventing scores.
+Alternative-release publications remain untouched for audit and never count twice.
+The API normalizes historical `weeklyPnlUsdc` / `adjustedEquityUsdc` fields to
+`*Assets` when reading and includes `scoringRelease` metadata for the correct unit.
+Deploy the backend before the Insights frontend; startup creates and seeds the
+weekly assignment table before serving requests.
 
 This exposes existing publications; it does not rebuild missing weeks from a
 retired release. Before switching contracts, verify that its final completed

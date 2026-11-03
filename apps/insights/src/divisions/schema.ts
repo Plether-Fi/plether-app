@@ -1,4 +1,4 @@
-import type { DivisionPublication, WeeklyInput } from './types.ts'
+import type { DivisionPublication, ScoringRelease, WeeklyInput } from './types.ts'
 import { TIERS, tradingWeek } from './rules.ts'
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -8,6 +8,12 @@ function record(value: unknown): value is Record<string, unknown> {
 function boundary(value: unknown): boolean {
   return record(value) && typeof value.number === 'string' && /^\d+$/.test(value.number)
     && typeof value.hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value.hash)
+}
+
+export function isScoringRelease(value: unknown): value is ScoringRelease {
+  return record(value) && typeof value.router === 'string' && /^0x[0-9a-f]{40}$/.test(value.router)
+    && typeof value.version === 'string' && /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.version)
+    && (value.assetSymbol === 'USDC' || value.assetSymbol === 'USDG')
 }
 
 export function isWeeklyInput(value: unknown): value is WeeklyInput {
@@ -24,6 +30,7 @@ export function isWeeklyInput(value: unknown): value is WeeklyInput {
 export function isPublication(value: unknown): value is DivisionPublication {
   if (!record(value) || value.version !== 1 || !record(value.source) || !boundary(value.source.baselineBlock) || !boundary(value.source.closingBlock)
     || !record(value.week) || !Array.isArray(value.standings) || !record(value.announcement)) return false
+  if ('scoringRelease' in value && !isScoringRelease(value.scoringRelease)) return false
   const { startsAt, closesAt, publishesAt } = value.week
   if (typeof startsAt !== 'string' || typeof closesAt !== 'string' || typeof publishesAt !== 'string' || typeof value.publishedAt !== 'string') return false
   if (!Number.isFinite(Date.parse(startsAt))) return false
