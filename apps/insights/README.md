@@ -17,7 +17,11 @@ consumes complete account snapshots, includes inactive previously ranked wallets
 and emits tier state, standings, and weekly announcement data. It uses exact
 integer ratios to rank percentage returns, without floating-point rounding.
 
-The home page shows live rankings and current awarded badges. Completed results live
+The home page shows live rankings, current awarded badges, and the total number
+of wallets registered with Discord. `/api/insights/v1/divisions/stats` returns
+`registeredWallets`, counting completed Discord/wallet links across all releases,
+including non-traders. Pending OAuth or wallet-verification sessions do not count.
+The counter refreshes every minute and remains available before weekly rankings. Completed results live
 on `/results` (Last week’s results), with older/newer navigation using stable week-start
 cursors in the URL. `/api/insights/v1/divisions/history?week=<epoch-seconds>` returns
 one saved publication plus `olderCursor` and `newerCursor`; omitting `week` selects

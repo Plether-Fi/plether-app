@@ -112,6 +112,7 @@ import Plether.Handlers.Insights
   , getDivisionsCurrentResponse
   , getDivisionsHistoryResponse
   , getDivisionsLiveResponse
+  , getDivisionsStatsResponse
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
@@ -522,6 +523,11 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
       Just week -> case mPool of
         Just pool -> liftIO (getDivisionsHistoryResponse pool cfg week) >>= handleResult
         Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/stats" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsStatsResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
 
   get "/api/insights/v1/divisions/live" $
     case mPool of

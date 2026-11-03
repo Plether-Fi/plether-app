@@ -50,3 +50,24 @@ for (const legacySchema of [false, true]) test(`completed registrations show han
   assert.equal(snapshots[1][1].discordUsername, 'renamed')
   assert.deepEqual(snapshots[2], [])
 })
+
+
+test('Discord registration stats count completed unique wallet links, including non-traders, and exclude pending sessions', () => {
+  const count = handlers.split('getDivisionsStatsResponse pool cfg = do')[1].match(/"SELECT COUNT\(\*\) FROM insights_divisions_links"/)[0].slice(1, -1)
+  const sessions = registration.match(/"CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions .*"/)[0]
+    .slice(1, -1).replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
+  const sql = `BEGIN; ${createLinks}; ${sessions};
+    INSERT INTO insights_divisions_link_sessions (session_digest,expires_at,discord_id,discord_username)
+      VALUES (decode(repeat('ab',32),'hex'),NOW()+INTERVAL '1 hour','10000000000000004','pending-wallet-verification');
+    ${count};
+    INSERT INTO insights_divisions_links (discord_id,discord_username,owner_wallet,trading_account,rules_version,privacy_version)
+      VALUES ('10000000000000001','trader','${address(11)}','${address(1)}','v1','v1'),
+             ('10000000000000002','never-traded','${address(12)}','${address(2)}','v1','v1');
+    ${count};
+    INSERT INTO insights_divisions_links (discord_id,discord_username,owner_wallet,trading_account,rules_version,privacy_version)
+      VALUES ('10000000000000001','trader','${address(11)}','${address(1)}','v1','v1') ON CONFLICT DO NOTHING;
+    ${count}; ROLLBACK;`
+  const result = spawnSync(process.env.PSQL_BIN ?? 'psql', ['-X','-qAt','-v','ON_ERROR_STOP=1','-d',process.env.PGDATABASE ?? 'postgres'], { input: sql, encoding: 'utf8' })
+  assert.equal(result.status,0,result.stderr)
+  assert.deepEqual(result.stdout.trim().split('\n').map(Number),[0,2,2])
+})

@@ -7,11 +7,13 @@ import { WeeklyResultsPage } from './WeeklyResultsPage'
 import { account, input } from '../test/divisions'
 import { publishWeek } from '../divisions/engine'
 
+const statsQuery = vi.hoisted(() => vi.fn())
 const queries = vi.hoisted(() => ({ live: vi.fn(), publication: vi.fn(), history: vi.fn() }))
-vi.mock('../divisions/query', () => ({ useDivisions: queries.publication, useLiveDivisions: queries.live, useDivisionsHistory: queries.history }))
+vi.mock('../divisions/query', () => ({ useDivisionsStats: statsQuery, useDivisions: queries.publication, useLiveDivisions: queries.live, useDivisionsHistory: queries.history }))
 const address = account(1).address
 
 beforeEach(() => {
+  statsQuery.mockReturnValue({ data: { registeredWallets: 42 }, isError: false })
   queries.publication.mockReturnValue({ data: publishWeek(input(0, [account(1)]), null) })
   queries.history.mockReturnValue({ data: { publication: publishWeek(input(0, [account(1)]), null), olderCursor: null, newerCursor: null } })
   queries.live.mockReturnValue({ data: {
