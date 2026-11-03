@@ -25,12 +25,12 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
 import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcBlock (..), ethGetBlockByNumber)
 import Plether.Insights.Divisions
+import Plether.Insights.DivisionsFunding (FundingScope (..), ensureDivisionsFundingSchema, loadDivisionsFunding)
 import Plether.Insights.Competition (economicAccountValue)
 import Plether.Insights.SnapshotWorker
   ( accountSnapshotMulticallCalls, chunkInOrder, decodeSnapshotResults
   , findLastBlockBeforeTimestamp, inferPendingCarry, ledgerToEquity
   )
-import Text.Read (readMaybe)
 
 -- Exact integer cross products determine rank. Only the displayed return is
 -- rounded, so a display tie cannot alter the underlying ordering.
@@ -50,6 +50,7 @@ rankDivisions scores = map render (rankScores scores)
 
 ensureDivisionsLiveSchema :: Connection -> IO ()
 ensureDivisionsLiveSchema conn = do
+  ensureDivisionsFundingSchema conn
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS divisions_live_snapshots (\
     \chain_id BIGINT NOT NULL, release_router TEXT NOT NULL, week_start BIGINT NOT NULL,\
@@ -118,33 +119,10 @@ captureAtBlocks client pool cfg multicallSize cursor baseline current = do
     \ORDER BY LOWER(account)"
     (chain, router, upper)
   let addresses = [wallet | Only wallet <- wallets]
-  -- Every flow is checked against the indexed USDG transfer and the exact
-  -- clearinghouse. Assisted-close deposits are internal and excluded.
-  flowRows <- withDb pool $ \conn -> query conn
-    "SELECT LOWER(a.account), a.activity_type, a.amount_assets::text, \
-    \LOWER(COALESCE(a.contract_address,'')), LOWER(COALESCE(a.data->>'asset','')), \
-    \(SELECT COUNT(*) FROM perps_asset_transfers x WHERE x.chain_id=a.chain_id \
-    \AND x.release_router=a.release_router AND x.tx_hash=a.tx_hash \
-    \AND x.block_number=a.block_number AND x.block_hash=a.block_hash \
-    \AND LOWER(x.token_address)=LOWER(?) AND x.amount=a.amount_assets \
-    \AND LOWER(x.from_address)=CASE WHEN a.activity_type='Deposit' THEN LOWER(a.account) ELSE LOWER(?) END \
-    \AND LOWER(x.to_address)=CASE WHEN a.activity_type='Deposit' THEN LOWER(?) ELSE LOWER(a.account) END), \
-    \EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified \
-    \AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account \
-    \AND g.transaction_hash=a.tx_hash AND g.block_number=a.block_number \
-    \AND g.block_hash=a.block_hash AND g.deposit_log_index=a.log_index \
-    \AND g.amount_assets=a.amount_assets) \
-    \FROM perps_account_activity a WHERE a.chain_id=? AND a.release_router=? \
-    \AND a.block_number>? AND a.block_number<=? AND a.activity_type IN ('Deposit','Withdraw')"
-    (cfgPerpsSettlementToken cfg, cfgPerpsMarginClearinghouse cfg, cfgPerpsMarginClearinghouse cfg,
-     chain, router, rpcBlockNumber baseline, upper)
-  let parseFlow (wallet, kind, amountText, emitter, asset, matches, assisted) = do
-        amount <- readMaybe (T.unpack amountText)
-        if amount <= 0 || emitter /= T.toLower (cfgPerpsMarginClearinghouse cfg)
-            || asset /= T.toLower (cfgPerpsSettlementToken cfg) || matches /= (1 :: Int64)
-            || (assisted && kind /= ("Deposit" :: Text))
-          then Nothing else Just (wallet, kind, amount, assisted)
-  case traverse parseFlow (flowRows :: [(Text, Text, Text, Text, Text, Int64, Bool)]) of
+  funding <- loadDivisionsFunding client pool
+    (FundingScope chain router (cfgPerpsSettlementToken cfg) (cfgPerpsMarginClearinghouse cfg))
+    (rpcBlockNumber baseline) upper
+  case funding of
     Nothing -> putStrLn "Divisions skipped: funding integrity check failed" >> pure Nothing
     Just flows -> do
       days <- withDb pool $ \conn -> query conn

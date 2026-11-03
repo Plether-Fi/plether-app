@@ -59,8 +59,8 @@ ROLLBACK;
 
 The UI reads `/api/insights/v1/divisions/current` from the backend. The Insights
 worker captures finalized boundary values for every traded account, checks
-external funding against indexed USDC transfers, and appends each completed
-week to `divisions_publications`. It backfills from the first week in order,
+external funding against indexed settlement-token transfers, and appends each
+completed week to `divisions_publications`. It backfills from the first week in order,
 including empty weeks, one week per cycle. Publication starts Monday at 00:00
 UTC; failed captures leave the previous awards intact and retry next cycle.
 Awards persist across deployments and never expire with live snapshot freshness.
@@ -68,6 +68,17 @@ Every badge, including Iron, is awarded only in a completed week’s publication
 New traders show “Not yet awarded” until included in published results; returning
 traders keep their last awarded tier throughout the active week. Current-week
 returns remain provisional and never grant a badge.
+
+For `depositFor`, the worker verifies the canonical receipt's consecutive
+`Transfer`, `Deposit`, and `DepositFor` logs to identify the actual payer. It
+caches that proof in `divisions_deposit_payers`, scoped to the exact release,
+transaction, block hash, beneficiary, amount, and log positions, and still
+requires the matching indexed token transfer. The beneficiary's deposit counts
+once as external funding; it is not trading profit. Existing indexed deposits
+are repaired lazily, without replaying trade history. Worker/API startup creates
+the additive proof table. Deploy the worker to resume live captures; invalid or
+unavailable evidence continues to block publication.
+
 The API adds current registered Discord handles to published display names.
 The backend and TypeScript engines share multi-week regression fixtures.
 

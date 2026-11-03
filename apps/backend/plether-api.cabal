@@ -16,6 +16,7 @@ extra-source-files: schema.sql
                     config/migrations/insights-snapshot-deferred-fk-v1.sql
                     config/migrations/insights-integrity-indexes-v2.sql
                     test/fixtures/insights-funding-integrity-baseline.sql
+                    test/fixtures/divisions-deposit-for.json
                     test/fixtures/token-neutral-close-waiver.json
                     test/fixtures/token-neutral-close-rebate.json
                     test/fixtures/candle-admin-deployed-release.json
@@ -122,6 +123,7 @@ library
         Plether.Insights.SnapshotWorker
         Plether.Insights.Divisions
         Plether.Insights.DivisionsLive
+        Plether.Insights.DivisionsFunding
         Plether.Insights.SnapshotObservability
         Plether.Vaults.PerformanceIndexer
         Plether.Vaults.ActivityIndexer
@@ -473,6 +475,7 @@ test-suite plether-api-test
         Plether.Insights.Registration.TypesSpec
         Plether.Insights.Registration.WalletSpec
         Plether.Insights.DivisionsSpec
+        Plether.Insights.DivisionsFundingSpec
         Plether.Insights.SnapshotWorkerSpec
         Plether.Vaults.PerformanceIndexerSpec
         Plether.Vaults.ActivityIndexerSpec
