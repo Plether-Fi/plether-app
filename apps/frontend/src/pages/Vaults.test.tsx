@@ -1030,7 +1030,7 @@ describe('Vaults page', () => {
     mocks.vaultHistory = completeHistoryFixture()
     const { unmount } = renderVaults('/vaults/junior')
     const sharePrice = screen.getByRole('heading', { name: 'Seven-day share price' }).closest('figure')
-    const breakdown = screen.getByRole('heading', { name: 'Junior vault return breakdown' }).closest('figure')
+    const breakdown = screen.getByRole('heading', { name: 'Return breakdown' }).closest('figure')
     expect(sharePrice?.nextElementSibling).toBe(breakdown)
     expect(breakdown?.closest('section')).toHaveAttribute('id', 'performance')
     expect(document.querySelector('#activity')).not.toContainElement(breakdown)
@@ -1043,7 +1043,7 @@ describe('Vaults page', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('not a forecast')
     unmount()
     renderVaults('/vaults/senior')
-    expect(screen.queryByRole('heading', { name: 'Junior vault return breakdown' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Return breakdown' })).not.toBeInTheDocument()
   })
 
   it('shows Junior market exposure between Overview and Performance', () => {
