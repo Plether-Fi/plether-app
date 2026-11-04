@@ -64,29 +64,29 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
   const step = (right - left) / (bars?.length ?? 9)
   const barWidth = step * 0.64
 
-  return <figure aria-labelledby={headingId} className="overflow-hidden rounded-lg border border-white/10 bg-[#0b1422] text-[#e5edf7]">
-    <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
+  return <figure aria-labelledby={headingId} className="overflow-hidden border border-brand-border/30 bg-surface-panel text-content-primary">
+    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-brand-border/25 panel-padding">
       <div>
         <h3 id={headingId} className="text-lg font-semibold">Junior vault return breakdown</h3>
-        <p className="mt-1 text-sm text-[#9daebe]">How income, trading outcomes and deductions add up to your share-price return.</p>
-        <p className="mt-2 text-xs text-[#9daebe]">Percentage-point contributions · after maintenance dilution</p>
+        <p className="mt-1 text-sm text-content-secondary">How income, trading outcomes and deductions add up to your share-price return.</p>
+        <p className="mt-2 text-xs text-content-secondary">Percentage-point contributions · after maintenance dilution</p>
       </div>
-      {onRangeChange && <div className="flex gap-1 rounded border border-white/15 p-1" role="group" aria-label="Return reporting period">
+      {onRangeChange && <div className="flex shrink-0 gap-1 border border-brand-border/30 bg-app-bg p-1" role="group" aria-label="Return reporting period">
         {(['7d', '30d'] as const).map((option) => <button key={option} type="button" aria-pressed={range === option}
-          className={`rounded px-3 py-1.5 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${range === option ? 'bg-white/15 text-white' : 'text-[#9daebe] hover:bg-white/10'}`}
+          className={`px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-peach ${range === option ? 'bg-brand-peach text-app-bg' : 'text-content-secondary hover:bg-brand-peach/10 hover:text-content-primary'}`}
           onClick={() => { onRangeChange(option) }}>{option === '7d' ? '7 days' : '30 days'}</button>)}
       </div>}
     </div>
     {bars ? <>
-      <div className="overflow-x-auto px-3 pb-2 sm:px-5" tabIndex={0} role="region" aria-label="Return waterfall; scroll horizontally to see all components">
+      <div className="overflow-x-auto panel-padding" tabIndex={0} role="region" aria-label="Return waterfall; scroll horizontally to see all components">
         <svg viewBox={`0 0 ${String(width)} 350`} style={{ minWidth: width }} className="block w-full" role="group" aria-label="Junior share-price return waterfall">
           <title>Junior return contributions in percentage points</title>
-          <text x={left} y={17} fill="#9daebe" fontSize={11}>Return contribution (%)</text>
+          <text x={left} y={17} className="fill-content-secondary" fontSize={11}>Return contribution (%)</text>
           {Array.from({ length: 6 }, (_, index) => minimum + (maximum - minimum) * index / 5).map((value) => <g key={value}>
-            <line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke="#ffffff" strokeOpacity={0.07} />
-            <text x={left - 10} y={y(value) + 4} textAnchor="end" fill="#9daebe" fontSize={11}>{signed(value, 2)}%</text>
+            <line x1={left} x2={right} y1={y(value)} y2={y(value)} className="stroke-brand-border/15" />
+            <text x={left - 10} y={y(value) + 4} textAnchor="end" className="fill-content-secondary" fontSize={11}>{signed(value, 2)}%</text>
           </g>)}
-          <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#ffffff" strokeOpacity={0.22} />
+          <line x1={left} x2={right} y1={y(0)} y2={y(0)} className="stroke-brand-border/30" />
           {bars.map((bar, index) => {
             const x = left + index * step + (step - barWidth) / 2
             const barTop = y(Math.max(bar.start, bar.end))
@@ -107,43 +107,43 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
                 const target = event.key === 'ArrowRight' ? event.currentTarget.nextElementSibling : event.key === 'ArrowLeft' ? event.currentTarget.previousElementSibling : null
                 if (target instanceof SVGElement && target.getAttribute('role') === 'button') { event.preventDefault(); target.focus() }
               }}>
-              <rect x={x - 8} y={top - 10} width={barWidth + 16} height={290} fill={activeId === bar.id ? '#ffffff08' : 'transparent'} stroke={activeId === bar.id ? '#ffffff40' : 'none'} rx={4} />
-              {index < bars.length - 2 && <line x1={x + barWidth} x2={x + step} y1={y(bar.end)} y2={y(bar.end)} stroke="#ffffff" strokeOpacity={0.2} strokeDasharray="3 3" />}
+              <rect x={x - 8} y={top - 10} width={barWidth + 16} height={290} className={activeId === bar.id ? 'fill-brand-peach/5 stroke-brand-border/40' : 'fill-transparent stroke-none'} />
+              {index < bars.length - 2 && <line x1={x + barWidth} x2={x + step} y1={y(bar.end)} y2={y(bar.end)} className="stroke-brand-border/30" strokeDasharray="3 3" />}
               <rect data-bar={bar.id} data-start={bar.start} data-end={bar.end} x={x} y={barTop} width={barWidth} height={height}
                 fill={bar.id === 'unexplained' ? 'transparent' : bar.color} stroke={bar.color} strokeDasharray={bar.id === 'unexplained' ? '4 3' : undefined} />
-              <text x={x + barWidth / 2} y={barTop - 8} textAnchor="middle" fill="#e5edf7" fontSize={12} fontWeight={600}>{signed(bar.contributionPp)}%</text>
-              <text x={x + barWidth / 2} y={305} textAnchor="middle" fill="#b6c3d1" fontSize={12}>
+              <text x={x + barWidth / 2} y={barTop - 8} textAnchor="middle" className="fill-content-primary" fontSize={12} fontWeight={600}>{signed(bar.contributionPp)}%</text>
+              <text x={x + barWidth / 2} y={305} textAnchor="middle" className="fill-content-secondary" fontSize={12}>
                 {bar.lines.map((line, lineIndex) => <tspan key={line} x={x + barWidth / 2} dy={lineIndex === 0 ? 0 : 16}>{line}</tspan>)}
               </text>
             </g>
           })}
         </svg>
       </div>
-      <div className="mx-5 mb-5 min-h-24 rounded border border-white/10 bg-white/[0.025] px-4 py-3 sm:mx-6" id={tooltipId} role="status" aria-live="polite">
+      <div className="min-h-20 border-t border-brand-border/25 bg-app-bg panel-padding" id={tooltipId} role="status" aria-live="polite">
         {selected ? <>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-sm font-semibold" style={{ color: selected.color }}>{selected.label}</p>
-            <p className="font-mono text-sm">{signed(selected.contributionPp, 6)} pp <span className="mx-2 text-[#9daebe]">·</span> {usdg(selected.amountUsdg)}</p>
+            <p className="font-mono text-sm">{signed(selected.contributionPp, 6)} pp <span className="mx-2 text-content-secondary">·</span> {usdg(selected.amountUsdg)}</p>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-[#b6c3d1]">{selected.description}</p>
-        </> : <p className="text-xs leading-relaxed text-[#9daebe]">Hover, tap or focus a bar to see its contribution and USDG amount. On smaller screens, scroll horizontally to explore all components.</p>}
+          <p className="mt-2 text-xs leading-relaxed text-content-secondary">{selected.description}</p>
+        </> : <p className="text-xs leading-relaxed text-content-secondary">Hover, tap or focus a bar to see its contribution and USDG amount. On smaller screens, scroll horizontally to explore all components.</p>}
       </div>
-      {data.residualPp !== null && <p role="alert" className="mx-5 mb-5 text-sm text-[#f0bd70] sm:mx-6">
+      {data.residualPp !== null && <p role="alert" className="border-t border-brand-border/25 panel-padding text-sm text-brand-orange">
         Unexplained reconciliation difference: {signed(data.residualPp, 8)} pp. Shown separately; not assigned to trader PnL or open-position valuation. Inspect the outlined bar for the USDG difference.
       </p>}
-    </> : <div className="flex min-h-52 items-center justify-center px-6 py-8 text-center text-sm leading-relaxed text-[#9daebe]" role="status">
+    </> : <div className="panel-padding text-sm leading-relaxed text-content-secondary" role="status">
       {isLoading ? <Spinner /> : data?.reason ?? (isError ? 'Return history is temporarily unavailable.' : 'Complete, fresh diluted share-price history is not yet available for the selected period.')}
     </div>}
-    <dl className="grid gap-5 border-t border-white/10 p-5 sm:p-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))' }}>
-      <div><dt className="text-xs uppercase tracking-wider text-[#9daebe]">Period return</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data ? `${signed(data.returnPp)}%` : '—'}</dd></div>
-      <div><dt className="text-xs uppercase tracking-wider text-[#9daebe]">Selected reporting period</dt><dd className="mt-2 text-lg font-semibold">{data ? `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(data.elapsedSeconds / 86400)} days` : range === '30d' ? '30 days' : '7 days'}</dd>
-        {data && <dd className="mt-1 text-xs text-[#9daebe]">{date(data.startTimestamp)} – {date(data.endTimestamp)}</dd>}
+    <dl className="grid gap-5 border-t border-brand-border/25 panel-padding" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))' }}>
+      <div><dt className="text-xs uppercase tracking-wider text-content-secondary">Period return</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data ? `${signed(data.returnPp)}%` : '—'}</dd></div>
+      <div><dt className="text-xs uppercase tracking-wider text-content-secondary">Selected reporting period</dt><dd className="mt-2 text-lg font-semibold">{data ? `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(data.elapsedSeconds / 86400)} days` : range === '30d' ? '30 days' : '7 days'}</dd>
+        {data && <dd className="mt-1 text-xs text-content-secondary">{date(data.startTimestamp)} – {date(data.endTimestamp)}</dd>}
       </div>
-      <div><dt className="text-xs uppercase tracking-wider text-[#9daebe]"><Tooltip content="Compounds the observed diluted share-price return over a 365-day year using the actual elapsed seconds. Assumes the same return repeats with reinvestment; this is not a forecast.">
+      <div><dt className="text-xs uppercase tracking-wider text-content-secondary"><Tooltip content="Compounds the observed diluted share-price return over a 365-day year using the actual elapsed seconds. Assumes the same return repeats with reinvestment; this is not a forecast.">
         <button type="button" className="text-left uppercase tracking-wider underline decoration-dotted underline-offset-4">APY equivalent</button>
       </Tooltip></dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data?.apyPercent != null ? `${signed(data.apyPercent, 2)}%` : '—'}</dd></div>
     </dl>
-    <p className="px-5 pb-5 text-xs leading-relaxed text-[#9daebe] sm:px-6">Return follows a share held throughout the period. Deposits and withdrawals are not earnings. USDG amounts describe pool economics; contributions account for liquidity changes.</p>
-    {isError && data && <p className="px-5 pb-5 text-xs text-[#f0bd70] sm:px-6">Refresh failed. Showing the last received reporting period.</p>}
+    <p className="panel-padding-x pb-6 text-xs leading-relaxed text-content-secondary">Return follows a share held throughout the period. Deposits and withdrawals are not earnings. USDG amounts describe pool economics; contributions account for liquidity changes.</p>
+    {isError && data && <p className="panel-padding-x pb-6 text-xs text-brand-orange">Refresh failed. Showing the last received reporting period.</p>}
   </figure>
 }

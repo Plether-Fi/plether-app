@@ -1,14 +1,16 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { JuniorVaultReturnBreakdown } from '../components/JuniorVaultReturnBreakdown'
+import { VaultAssetChart } from '../components/VaultAssetChart'
 import { juniorReturnExample, juniorReturnExamplePeriod } from './fixtures/juniorReturnAttribution'
+import { createVaultAssetHistory } from './fixtures/vaultAssetHistory'
 
 const meta = {
   title: 'Vaults/Junior Return Breakdown',
   component: JuniorVaultReturnBreakdown,
   tags: ['autodocs'],
   parameters: { layout: 'fullscreen' },
-  decorators: [(Story) => <div className="min-h-screen bg-[#080f1b] p-4 sm:p-8"><div className="mx-auto max-w-6xl">
-    <p className="mb-4 text-sm text-slate-400">Illustrative data · not audited historical component values</p><Story />
+  decorators: [(Story) => <div className="min-h-screen bg-app-bg p-4 sm:p-8"><div className="mx-auto max-w-6xl">
+    <p className="mb-4 text-sm text-content-secondary">Illustrative data · not audited historical component values</p><Story />
   </div></div>],
   args: { period: juniorReturnExamplePeriod, attribution: juniorReturnExample },
 } satisfies Meta<typeof JuniorVaultReturnBreakdown>
@@ -16,7 +18,21 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const BaselineExample: Story = {}
+export const InVaultActivity: Story = {
+  render: (args) => <div className="space-y-6">
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">Vault activity</p>
+      <h2 className="mt-1 text-2xl font-semibold text-content-primary">Holders and recent activity</h2>
+    </div>
+    <VaultAssetChart tranche="junior" history={createVaultAssetHistory()} />
+    <JuniorVaultReturnBreakdown {...args} />
+  </div>,
+}
 export const MissingAttribution: Story = { args: { attribution: undefined } }
+export const MissingAttributionInVaultActivity: Story = {
+  ...InVaultActivity,
+  args: { attribution: undefined },
+}
 export const Loading: Story = { args: { period: undefined, attribution: undefined, isLoading: true } }
 export const Unavailable: Story = { args: { period: undefined, attribution: undefined, isError: true } }
 export const ReconciliationDifference: Story = {
