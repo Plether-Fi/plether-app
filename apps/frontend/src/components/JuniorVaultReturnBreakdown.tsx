@@ -121,14 +121,19 @@ export function JuniorVaultReturnBreakdown({ period, attribution, isLoading, isE
           </svg>
         </div>
       </div>
-      <div className="min-h-20 border-t border-brand-border/25 bg-app-bg panel-padding" id={tooltipId} role="status" aria-live="polite">
-        {selected ? <>
+      <div className="grid min-h-20 border-t border-brand-border/25 bg-app-bg panel-padding-x py-3" id={tooltipId} role="status" aria-live="polite">
+        {/* Overlap every state in one grid cell to reserve the tallest wrapped detail. */}
+        {bars.map((bar) => <div key={bar.id} aria-hidden={selected?.id !== bar.id}
+          className={`col-start-1 row-start-1 ${selected?.id === bar.id ? '' : 'invisible'}`}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-sm font-semibold" style={{ color: selected.color }}>{selected.label}</p>
-            <p className="font-mono text-sm">{signed(selected.contributionPp, 6)} pp <span className="mx-2 text-content-secondary">·</span> {usdg(selected.amountUsdg)}</p>
+            <p className="text-sm font-semibold" style={{ color: bar.color }}>{bar.label}</p>
+            <p className="font-mono text-sm">{signed(bar.contributionPp, 6)} pp <span className="mx-2 text-content-secondary">·</span> {usdg(bar.amountUsdg)}</p>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-content-secondary">{selected.description}</p>
-        </> : <p className="text-xs leading-relaxed text-content-secondary">Hover, tap or focus a bar to see its contribution and USDG amount. On smaller screens, scroll horizontally to explore all components.</p>}
+          <p className="mt-2 text-xs leading-relaxed text-content-secondary">{bar.description}</p>
+        </div>)}
+        <p aria-hidden={Boolean(selected)} className={`col-start-1 row-start-1 self-center text-xs leading-relaxed text-content-secondary ${selected ? 'invisible' : ''}`}>
+          Hover, tap or focus a bar to see its contribution and USDG amount. On smaller screens, scroll horizontally to explore all components.
+        </p>
       </div>
       {data.residualPp !== null && <p role="alert" className="border-t border-brand-border/25 panel-padding text-sm text-brand-orange">
         Unexplained reconciliation difference: {signed(data.residualPp, 8)} pp. Shown separately; not assigned to trader PnL or open-position valuation. Inspect the outlined bar for the USDG difference.
