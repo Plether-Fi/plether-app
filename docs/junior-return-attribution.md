@@ -3,6 +3,7 @@
 The junior vault Activity section contains a share-price return waterfall with
 7-day and 30-day reporting periods. It reads the existing, deployment-scoped
 `GET /api/perps/vaults/history?range=7d&interval=3600` response (or `range=30d`).
+Monetary amounts use the current deployment's six-decimal USDG settlement asset.
 
 ## Current data availability
 
@@ -30,21 +31,21 @@ Publish `junior.returnAttribution` only after a complete audited attribution run
   startDilutedSharePrice: string, // same WAD integer as first junior point
   endDilutedSharePrice: string,   // same WAD integer as last junior point
   components: {
-    netVpi: { contributionPp: number, amountUsdc: string },
-    liquidationFees: { contributionPp: number, amountUsdc: string },
-    realizedCarry: { contributionPp: number, amountUsdc: string },
-    oracleSpread: { contributionPp: number, amountUsdc: string },
-    settledTraderPnl: { contributionPp: number, amountUsdc: string },
-    openPositionValuation: { contributionPp: number, amountUsdc: string },
-    seniorCoupon: { contributionPp: number, amountUsdc: string },
-    maintenanceDilution: { contributionPp: number, amountUsdc: string }
+    netVpi: { contributionPp: number, amountUsdg: string },
+    liquidationFees: { contributionPp: number, amountUsdg: string },
+    realizedCarry: { contributionPp: number, amountUsdg: string },
+    oracleSpread: { contributionPp: number, amountUsdg: string },
+    settledTraderPnl: { contributionPp: number, amountUsdg: string },
+    openPositionValuation: { contributionPp: number, amountUsdg: string },
+    seniorCoupon: { contributionPp: number, amountUsdg: string },
+    maintenanceDilution: { contributionPp: number, amountUsdg: string }
   },
-  netReturnUsdc: string
+  netReturnUsdg: string
 }
 ```
 
 `contributionPp` is an additive percentage-point contribution over the entire
-selected period. `amountUsdc` and `netReturnUsdc` are signed six-decimal raw USDC
+selected period. `amountUsdg` and `netReturnUsdg` are signed six-decimal raw USDG
 integer strings. Do not publish rounded chart labels as source contributions.
 Missing fields are unavailable, never zero. Coupon and maintenance are deductions.
 
@@ -61,7 +62,7 @@ settled trader PnL excluding those separately counted costs, open-position
 valuation changes, senior coupon and issued/accrued maintenance dilution.
 Oracle spread must be removed from settlement-price PnL before classifying
 settled trader PnL. Open valuation must be measured independently, never derived
-as the residual needed to make the result reconcile. The USDC value of maintenance
+as the residual needed to make the result reconcile. The USDG value of maintenance
 dilution is an economic ownership transfer, not a cash expense.
 
 The event ledger needs canonical ordering, reorg handling, deployment isolation,
@@ -80,8 +81,8 @@ APY = (exp(log(ending price / starting price) * 31536000 / elapsedSeconds) - 1) 
 
 The final bar always starts at zero. A difference between the component sum and
 the observed return is displayed as an outlined **Unexplained difference** bar
-and warning, before the final total. A separate USDC discrepancy is reported in
-that bar too. Only floating-point noise below `1e-10` pp is suppressed; USDC
+and warning, before the final total. A separate USDG discrepancy is reported in
+that bar too. Only floating-point noise below `1e-10` pp is suppressed; USDG
 integer differences are exact. No discrepancy is assigned to either PnL category.
 Zero starting prices, invalid intervals and nonfinite data cannot define a
 return. A zero ending price is a valid -100% return; overflowing APY is unavailable.

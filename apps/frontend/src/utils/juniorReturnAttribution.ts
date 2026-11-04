@@ -8,7 +8,7 @@ export const JUNIOR_RETURN_COMPONENTS = [
   { id: 'settledTraderPnl', label: 'Settled trader PnL', lines: ['Settled trader', 'PnL'], color: '#ed7b9b', description: 'Settled PnL from the pool’s perspective: trader losses add to returns and trader profits reduce returns. Excludes separately attributed spread, fees and carry.' },
   { id: 'openPositionValuation', label: 'Open-position valuation', lines: ['Open-position', 'valuation'], color: '#7793a6', description: 'The effect of changes in outstanding positions’ valuation. This is an independently measured component, not a balancing adjustment.' },
   { id: 'seniorCoupon', label: 'Senior coupon', lines: ['Senior', 'coupon'], color: '#bfc9d7', description: 'Coupon allocated to the senior tranche, deducted from junior returns.' },
-  { id: 'maintenanceDilution', label: 'Maintenance dilution', lines: ['Maintenance', 'dilution'], color: '#ee9c6c', description: 'Reduction in existing LP ownership from issued and accrued maintenance-fee shares. The USDC amount is the economic value of dilution, not a cash expense.' },
+  { id: 'maintenanceDilution', label: 'Maintenance dilution', lines: ['Maintenance', 'dilution'], color: '#ee9c6c', description: 'Reduction in existing LP ownership from issued and accrued maintenance-fee shares. The USDG amount is the economic value of dilution, not a cash expense.' },
 ] as const satisfies readonly { id: JuniorReturnComponent; label: string; lines: readonly string[]; color: string; description: string }[]
 
 export interface JuniorReturnPeriod {
@@ -25,7 +25,7 @@ export interface ReturnBar {
   color: string
   description: string
   contributionPp: number
-  amountUsdc: string | null
+  amountUsdg: string | null
   start: number
   end: number
 }
@@ -36,7 +36,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 function validAttribution(value: unknown): value is JuniorReturnAttribution {
   if (!isRecord(value) || value.method !== 'diluted-share-price-v1'
-    || !signedInteger(value.netReturnUsdc) || !unsignedInteger(value.startDilutedSharePrice)
+    || !signedInteger(value.netReturnUsdg) || !unsignedInteger(value.startDilutedSharePrice)
     || !unsignedInteger(value.endDilutedSharePrice) || !Number.isSafeInteger(value.startTimestamp)
     || !Number.isSafeInteger(value.endTimestamp) || !isRecord(value.components)) return false
   const components = value.components
@@ -44,8 +44,8 @@ function validAttribution(value: unknown): value is JuniorReturnAttribution {
     && JUNIOR_RETURN_COMPONENTS.every(({ id }) => {
       const item = components[id]
       return isRecord(item) && typeof item.contributionPp === 'number' && Number.isFinite(item.contributionPp)
-        && signedInteger(item.amountUsdc)
-        && ((id !== 'seniorCoupon' && id !== 'maintenanceDilution') || (item.contributionPp <= 0 && BigInt(item.amountUsdc) <= 0n))
+        && signedInteger(item.amountUsdg)
+        && ((id !== 'seniorCoupon' && id !== 'maintenanceDilution') || (item.contributionPp <= 0 && BigInt(item.amountUsdg) <= 0n))
     })
 }
 // Far below displayed precision; only suppress arithmetic roundoff, not accounting differences.
@@ -96,17 +96,17 @@ export function buildJuniorReturnBreakdown(period?: JuniorReturnPeriod, attribut
   })
   if (!Number.isFinite(running)) return unavailable('Attribution is outside the supported numeric range.')
   const residualPp = returnPp - running
-  const residualUsdc = BigInt(attribution.netReturnUsdc) - JUNIOR_RETURN_COMPONENTS.reduce((sum, { id }) => sum + BigInt(attribution.components[id].amountUsdc), 0n)
-  const hasResidual = Math.abs(residualPp) > RECONCILIATION_TOLERANCE_PP || residualUsdc !== 0n
+  const residualUsdg = BigInt(attribution.netReturnUsdg) - JUNIOR_RETURN_COMPONENTS.reduce((sum, { id }) => sum + BigInt(attribution.components[id].amountUsdg), 0n)
+  const hasResidual = Math.abs(residualPp) > RECONCILIATION_TOLERANCE_PP || residualUsdg !== 0n
   if (hasResidual) bars.push({
     id: 'unexplained', label: 'Unexplained difference', lines: ['Unexplained', 'difference'], color: '#f0bd70',
     description: 'Unexplained difference between the supplied attribution and the observed diluted share-price return. It has not been included in trader PnL or open-position valuation.',
-    contributionPp: residualPp, amountUsdc: residualUsdc.toString(), start: running, end: returnPp,
+    contributionPp: residualPp, amountUsdg: residualUsdg.toString(), start: running, end: returnPp,
   })
   bars.push({
     id: 'total', label: 'Net junior return', lines: ['Net junior', 'return'], color: '#e5edf7',
-    description: 'Ending diluted share price divided by starting diluted share price, minus one. Deposits and withdrawals are excluded from earnings. The USDC amount is the pool’s economic gain, not the profit of an individual holder.',
-    contributionPp: returnPp, amountUsdc: attribution.netReturnUsdc, start: 0, end: returnPp,
+    description: 'Ending diluted share price divided by starting diluted share price, minus one. Deposits and withdrawals are excluded from earnings. The USDG amount is the pool’s economic gain, not the profit of an individual holder.',
+    contributionPp: returnPp, amountUsdg: attribution.netReturnUsdg, start: 0, end: returnPp,
   })
   return { ...summary, bars, residualPp: hasResidual ? residualPp : null, reason: null }
 }

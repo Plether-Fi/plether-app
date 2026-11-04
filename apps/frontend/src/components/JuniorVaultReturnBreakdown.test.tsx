@@ -17,12 +17,12 @@ describe('Junior vault return waterfall', () => {
     expect(screen.getByRole('region')).toHaveClass('overflow-x-auto')
   })
 
-  it('explains sources and shows percentage points and USDC on focus, tap and hover', () => {
+  it('explains sources and shows percentage points and USDG on focus, tap and hover', () => {
     render(<JuniorVaultReturnBreakdown period={period} attribution={attribution} />)
     const oracle = screen.getByRole('button', { name: /^Oracle spread:/ })
     fireEvent.focus(oracle)
     expect(screen.getByRole('status')).toHaveTextContent('+0.028000 pp')
-    expect(screen.getByRole('status')).toHaveTextContent('+370,000.00 USDC')
+    expect(screen.getByRole('status')).toHaveTextContent('+370,000.00 USDG')
     expect(screen.getByRole('status')).toHaveTextContent('frozen-market close spread')
     fireEvent.keyDown(oracle, { key: 'Escape' })
     expect(screen.getByRole('status')).toHaveTextContent('Hover, tap or focus')

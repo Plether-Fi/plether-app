@@ -21,15 +21,15 @@ export const Loading: Story = { args: { period: undefined, attribution: undefine
 export const Unavailable: Story = { args: { period: undefined, attribution: undefined, isError: true } }
 export const ReconciliationDifference: Story = {
   args: { attribution: { ...juniorReturnExample, components: {
-    ...juniorReturnExample.components, netVpi: { contributionPp: 0.25, amountUsdc: '3500000000000' },
+    ...juniorReturnExample.components, netVpi: { contributionPp: 0.25, amountUsdg: '3500000000000' },
   } } },
 }
 export const NegativeReturn: Story = {
   args: {
     period: { ...juniorReturnExamplePeriod, endDilutedSharePrice: '995227311518081856' },
     attribution: {
-      ...juniorReturnExample, endDilutedSharePrice: '995227311518081856', netReturnUsdc: '-6353333000000',
-      components: { ...juniorReturnExample.components, settledTraderPnl: { contributionPp: -0.913, amountUsdc: '-12173333000000' } },
+      ...juniorReturnExample, endDilutedSharePrice: '995227311518081856', netReturnUsdg: '-6353333000000',
+      components: { ...juniorReturnExample.components, settledTraderPnl: { contributionPp: -0.913, amountUsdg: '-12173333000000' } },
     },
   },
 }

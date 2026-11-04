@@ -301,7 +301,7 @@ export interface VaultHistoryPoint {
   blockNumber: string;
   /** Whether this hourly observation used a fresh protocol mark; false values carry the last fresh valuation. */
   markFresh: boolean;
-  /** convertToAssets price (1e18 USDC/share); includes junior maintenance dilution, excludes exit fees. */
+  /** convertToAssets price (1e18 USDG/share); includes junior maintenance dilution, excludes exit fees. */
   sharePrice: string;
   totalAssets: string;
   totalSupply: string;
@@ -331,11 +331,11 @@ export interface JuniorReturnAttribution {
   components: Record<JuniorReturnComponent, {
     /** Additive percentage points, already adjusted for changes in liquidity. */
     contributionPp: number;
-    /** Signed raw USDC (6 decimals), from the pool's perspective. */
-    amountUsdc: string;
+    /** Signed raw USDG (6 decimals), from the pool's perspective. */
+    amountUsdg: string;
   }>;
   /** Economic gain after coupon and dilution; excludes deposits and withdrawals. */
-  netReturnUsdc: string;
+  netReturnUsdg: string;
 }
 
 export interface VaultHistory {

@@ -18,13 +18,13 @@ describe('junior diluted share-price attribution', () => {
     expect(bars[7].end).toBeCloseTo(result.returnPp, 12)
   })
 
-  it('does not convert USDC totals into contribution percentages', () => {
+  it('does not convert USDG totals into contribution percentages', () => {
     const changed = structuredClone(attribution)
-    changed.components.netVpi.amountUsdc = '2000000'
+    changed.components.netVpi.amountUsdg = '2000000'
     const result = buildJuniorReturnBreakdown(period, changed)!
     expect(result.bars?.[0].contributionPp).toBe(0.292)
     expect(result.returnPp).toBe(buildJuniorReturnBreakdown(period, attribution)?.returnPp)
-    expect(result.bars?.find((bar) => bar.id === 'unexplained')?.amountUsdc).toBe('3809998000000')
+    expect(result.bars?.find((bar) => bar.id === 'unexplained')?.amountUsdg).toBe('3809998000000')
   })
 
   it('keeps deposits and withdrawals neutral when shares and assets change', () => {
@@ -63,13 +63,13 @@ describe('junior diluted share-price attribution', () => {
     expect(buildJuniorReturnBreakdown({ ...period, endDilutedSharePrice: '1005230000000000000' })?.apyPercent?.toFixed(2)).toBe('14.57')
   })
 
-  it.each(['missing', 'nan', 'wrong period', 'positive deduction', 'missing USDC'] as const)('rejects %s attribution', (kind) => {
+  it.each(['missing', 'nan', 'wrong period', 'positive deduction', 'missing USDG'] as const)('rejects %s attribution', (kind) => {
     const changed = structuredClone(attribution)
     if (kind === 'missing') Reflect.deleteProperty(changed.components, 'realizedCarry')
     if (kind === 'nan') changed.components.netVpi.contributionPp = NaN
     if (kind === 'wrong period') changed.startTimestamp++
     if (kind === 'positive deduction') changed.components.maintenanceDilution.contributionPp = 0.01
-    if (kind === 'missing USDC') changed.components.netVpi.amountUsdc = ''
+    if (kind === 'missing USDG') changed.components.netVpi.amountUsdg = ''
     expect(buildJuniorReturnBreakdown(period, changed)?.bars).toBeNull()
   })
 

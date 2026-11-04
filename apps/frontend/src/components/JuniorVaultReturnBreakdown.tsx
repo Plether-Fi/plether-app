@@ -9,9 +9,9 @@ import { Spinner } from './ui/Spinner'
 const signed = (value: number, digits = 3) => new Intl.NumberFormat('en-US', {
   minimumFractionDigits: digits, maximumFractionDigits: digits, signDisplay: 'exceptZero',
 }).format(value)
-const usdc = (raw: string | null) => raw === null ? 'Unavailable' : `${new Intl.NumberFormat('en-US', {
+const usdg = (raw: string | null) => raw === null ? 'Unavailable' : `${new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero',
-}).format(Number(raw) / 1e6)} USDC`
+}).format(Number(raw) / 1e6)} USDG`
 const date = (timestamp: number) => `${new Date(timestamp * 1000).toLocaleString('en-GB', {
   day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
 })} UTC`
@@ -92,7 +92,7 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
             const barTop = y(Math.max(bar.start, bar.end))
             const height = Math.max(1.5, Math.abs(y(bar.start) - y(bar.end)))
             return <g key={bar.id} tabIndex={0} role="button"
-              aria-label={`${bar.label}: ${signed(bar.contributionPp, 6)} percentage points; ${usdc(bar.amountUsdc)}. ${bar.description}`}
+              aria-label={`${bar.label}: ${signed(bar.contributionPp, 6)} percentage points; ${usdg(bar.amountUsdg)}. ${bar.description}`}
               aria-describedby={activeId === bar.id ? tooltipId : undefined}
               aria-pressed={activeId === bar.id}
               className="cursor-pointer outline-none"
@@ -123,13 +123,13 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
         {selected ? <>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-sm font-semibold" style={{ color: selected.color }}>{selected.label}</p>
-            <p className="font-mono text-sm">{signed(selected.contributionPp, 6)} pp <span className="mx-2 text-[#9daebe]">·</span> {usdc(selected.amountUsdc)}</p>
+            <p className="font-mono text-sm">{signed(selected.contributionPp, 6)} pp <span className="mx-2 text-[#9daebe]">·</span> {usdg(selected.amountUsdg)}</p>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-[#b6c3d1]">{selected.description}</p>
-        </> : <p className="text-xs leading-relaxed text-[#9daebe]">Hover, tap or focus a bar to see its contribution and USDC amount. On smaller screens, scroll horizontally to explore all components.</p>}
+        </> : <p className="text-xs leading-relaxed text-[#9daebe]">Hover, tap or focus a bar to see its contribution and USDG amount. On smaller screens, scroll horizontally to explore all components.</p>}
       </div>
       {data.residualPp !== null && <p role="alert" className="mx-5 mb-5 text-sm text-[#f0bd70] sm:mx-6">
-        Unexplained reconciliation difference: {signed(data.residualPp, 8)} pp. Shown separately; not assigned to trader PnL or open-position valuation. Inspect the outlined bar for the USDC difference.
+        Unexplained reconciliation difference: {signed(data.residualPp, 8)} pp. Shown separately; not assigned to trader PnL or open-position valuation. Inspect the outlined bar for the USDG difference.
       </p>}
     </> : <div className="flex min-h-52 items-center justify-center px-6 py-8 text-center text-sm leading-relaxed text-[#9daebe]" role="status">
       {isLoading ? <Spinner /> : data?.reason ?? (isError ? 'Return history is temporarily unavailable.' : 'Complete, fresh diluted share-price history is not yet available for the selected period.')}
@@ -143,7 +143,7 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
         <button type="button" className="text-left uppercase tracking-wider underline decoration-dotted underline-offset-4">APY equivalent</button>
       </Tooltip></dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data?.apyPercent != null ? `${signed(data.apyPercent, 2)}%` : '—'}</dd></div>
     </dl>
-    <p className="px-5 pb-5 text-xs leading-relaxed text-[#9daebe] sm:px-6">Return follows a share held throughout the period. Deposits and withdrawals are not earnings. USDC amounts describe pool economics; contributions account for liquidity changes.</p>
+    <p className="px-5 pb-5 text-xs leading-relaxed text-[#9daebe] sm:px-6">Return follows a share held throughout the period. Deposits and withdrawals are not earnings. USDG amounts describe pool economics; contributions account for liquidity changes.</p>
     {isError && data && <p className="px-5 pb-5 text-xs text-[#f0bd70] sm:px-6">Refresh failed. Showing the last received reporting period.</p>}
   </figure>
 }
