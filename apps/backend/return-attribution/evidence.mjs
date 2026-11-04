@@ -109,6 +109,65 @@ export function capitalEvent(log, release) {
   }
   return undefined
 }
+
+// The pinned pool reads terminal NAV before funding redemptions or minting
+// deposits. Read that value from the successful call trace, rather than assuming
+// a mark movement happened before/after every capital flow in the same block.
+export function decodeLpValuations(trace, receiptLogs, release) {
+  const pool = release.contracts.housePool.address
+  const engine = release.contracts.cfdEngine.address
+  const junior = release.contracts.juniorVault.address
+  const settle = selector('settleLpEpoch(uint256,uint256)')
+  const nav = selector('terminalNavSnapshot()')
+  const checkpoint = selector('checkpointCarryIndexes()')
+  const deposit = selector('finalizeDepositEpochFromPool(uint256,uint256)')
+  const redeem = selector('fundRedeemEpoch(uint256,uint256,uint256)')
+  const flows = []
+  function visit(node) {
+    if (!node || typeof node !== 'object') throw new AttributionError('Malformed LP call trace')
+    if (node.error || node.failed) return
+    if (node.type === 'CALL' && same(node.to, pool) && node.input?.slice(0, 10) === settle) {
+      words('0x' + node.input.slice(10), 2)
+      let terminal
+      function settlement(child) {
+        if (child.error || child.failed) return
+        const id = child.input?.slice(0, 10)
+        if (same(child.to, engine)) {
+          if (child.type === 'STATICCALL' && id === nav) {
+            const value = words(child.output, 8)
+            // Frozen/no-position callers may pass unused mark arguments. The
+            // independent Engine return is authoritative for both live/frozen LP settlement.
+            if (value[7] !== 0n || value[6] > 1n || (value[6] === 0n && value[2] !== 0n)) throw new AttributionError('Invalid LP terminal valuation')
+            const pnl = value[2] >= 2n ** 255n ? value[2] - 2n ** 256n : value[2]
+            if (terminal !== undefined && terminal !== pnl) throw new AttributionError('Terminal NAV changed inside LP settlement')
+            terminal = pnl
+          } else if (child.type === 'CALL' && id !== checkpoint) throw new AttributionError('Unexpected engine mutation inside LP settlement')
+        }
+        if (child.type === 'CALL' && same(child.from, pool) && same(child.to, junior) && [deposit, redeem].includes(id)) {
+          if (terminal === undefined) throw new AttributionError('Capital flow has no preceding terminal NAV evidence')
+          const args = words('0x' + child.input.slice(10), id === deposit ? 2 : 3)
+          if (args[1] > 0n) flows.push({ kind: id === deposit ? TOPICS.deposit : TOPICS.redeem,
+            epoch: args[0], shares: args[1], assets: id === deposit ? words(child.output, 1)[0] : args[2], terminalPnlBeforeFlow: terminal })
+        }
+        for (const nested of child.calls ?? []) settlement(nested)
+      }
+      for (const child of node.calls ?? []) settlement(child)
+      return
+    }
+    for (const child of node.calls ?? []) visit(child)
+  }
+  visit(trace)
+  const receipts = receiptLogs.filter(log => same(log.address, junior) && [TOPICS.deposit, TOPICS.redeem].includes(log.topics[0]))
+  if (flows.length !== receipts.length) throw new AttributionError('LP valuation trace does not match capital receipts')
+  return flows.map((flow, index) => {
+    const receipt = receipts[index]
+    const actual = capitalEvent(receipt, release)
+    const sign = flow.kind === TOPICS.deposit ? 1n : -1n
+    if (receipt.topics[0] !== flow.kind || BigInt(receipt.topics[1]) !== flow.epoch || BigInt(receipt.topics[2]) !== 0n
+      || actual.shareDelta !== sign * flow.shares || actual.assetDelta !== sign * flow.assets) throw new AttributionError('LP valuation capital identity mismatch')
+    return { logIndex: actual.logIndex, terminalPnlBeforeFlow: flow.terminalPnlBeforeFlow }
+  })
+}
 export function getter(name, args = []) {
   return encodeFunctionData({ abi: [{ type: 'function', name, stateMutability: 'view', inputs: args.length ? [{ name: 'shares', type: 'uint256' }] : [], outputs: [] }], functionName: name, args })
 }

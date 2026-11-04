@@ -2,7 +2,7 @@ import { AttributionError } from './accounting.mjs'
 import fs from 'node:fs'
 import { keccak256, toHex } from 'viem'
 import { buildAttribution, EntryLedger, json } from './accounting.mjs'
-import { capitalEvent, decodeActions, getter, SOURCE_COMMIT, TOPICS, words } from './evidence.mjs'
+import { capitalEvent, decodeActions, decodeLpValuations, getter, SOURCE_COMMIT, TOPICS, words } from './evidence.mjs'
 const scalar = value => words(value, 1)[0]
 const signed = value => value >= 2n ** 255n ? value - 2n ** 256n : value
 const same = (a, b) => a?.toLowerCase() === b?.toLowerCase()
@@ -174,7 +174,7 @@ export class ReturnAttributionWorker {
         number, hash: payload.blockHash, timestamp: BigInt(payload.timestamp),
       })
     }
-    const existing = await this.db.query('SELECT 1 FROM vault_return_reports WHERE chain_id=$1 AND house_pool_address=$2 AND start_block_hash=$3 AND end_block_hash=$4 AND start_share_price=$5 AND end_share_price=$6 AND schema_version=1 AND senior_vault_address=$7 AND junior_vault_address=$8 AND source_commit=$9', [this.release.network.chainId, this.address.housePool, first.block_hash, last.block_hash, first.junior_share_price_wad, last.junior_share_price_wad, this.address.seniorVault, this.address.juniorVault, SOURCE_COMMIT])
+    const existing = await this.db.query('SELECT 1 FROM vault_return_reports WHERE chain_id=$1 AND house_pool_address=$2 AND start_block_hash=$3 AND end_block_hash=$4 AND start_share_price=$5 AND end_share_price=$6 AND schema_version=2 AND senior_vault_address=$7 AND junior_vault_address=$8 AND source_commit=$9', [this.release.network.chainId, this.address.housePool, first.block_hash, last.block_hash, first.junior_share_price_wad, last.junior_share_price_wad, this.address.seniorVault, this.address.juniorVault, SOURCE_COMMIT])
     if (existing.rows.length) return { ready: true, cached: true }
     const logs = (await this.db.query('SELECT payload FROM vault_return_logs WHERE deployment_key=$1 AND block_number <= $2 ORDER BY block_number,log_index', [this.key, endNumber.toString()])).rows.map(row => row.payload)
     const ledger = new EntryLedger()
@@ -185,6 +185,7 @@ export class ReturnAttributionWorker {
       events.set(key, [...events.get(key) ?? [], event])
     }
     const transactions = new Map()
+    const capitalTransactions = new Map()
     for (const log of logs) {
       if (same(log.address, this.address.cfdEngine) && positionTopic(log.topics[0])) transactions.set(log.transactionHash, log)
       if (BigInt(log.blockNumber) > startNumber) {
@@ -193,7 +194,10 @@ export class ReturnAttributionWorker {
         const key = BigInt(log.blockNumber).toString()
         if (!events.has(key)) events.set(key, [])
         const capital = capitalEvent(log, this.release)
-        if (capital) addEvent(BigInt(log.blockNumber), capital)
+        if (capital) {
+          addEvent(BigInt(log.blockNumber), capital)
+          capitalTransactions.set(log.transactionHash, log)
+        }
         if (same(log.address, this.address.cfdEngine) && log.topics[0] === TOPICS.carry) addEvent(BigInt(log.blockNumber), { logIndex: Number(BigInt(log.logIndex)), sources: { realizedCarry: words(log.data, 4)[0] } })
       }
     }
@@ -202,6 +206,16 @@ export class ReturnAttributionWorker {
       for (const action of decodeActions(evidence.trace, evidence.logs, this.release)) {
         const sources = ledger.apply(action)
         addEvent(BigInt(entry.blockNumber), { logIndex: action.logIndex, sources })
+      }
+    }
+    for (const [tx, entry] of capitalTransactions) {
+      const evidence = await this.transactionEvidence(tx, entry.blockHash, BigInt(entry.blockNumber))
+      const annotations = decodeLpValuations(evidence.trace, evidence.logs, this.release)
+      const blockEvents = events.get(BigInt(entry.blockNumber).toString())
+      for (const annotation of annotations) {
+        const event = blockEvents.find(event => event.shareDelta !== undefined && event.logIndex === annotation.logIndex)
+        if (!event) throw new AttributionError('LP valuation has no indexed capital event')
+        event.terminalPnlBeforeFlow = annotation.terminalPnlBeforeFlow
       }
     }
     const checkpoints = new Set(rows.map(row => row.block_number.toString()))
@@ -222,12 +236,12 @@ export class ReturnAttributionWorker {
     report.sourceCommit = SOURCE_COMMIT
     report.sourceBlockCount = transitions.length + 1
     if ((await this.block(startNumber, true)).hash !== first.block_hash || (await this.block(endNumber, true)).hash !== last.block_hash) throw new AttributionError('Attribution reorged before publication')
-    await this.db.query(`INSERT INTO vault_return_reports(chain_id,house_pool_address,senior_vault_address,junior_vault_address,start_block_number,end_block_number,start_block_hash,end_block_hash,start_share_price,end_share_price,source_commit,attribution)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+    await this.db.query(`INSERT INTO vault_return_reports(chain_id,house_pool_address,senior_vault_address,junior_vault_address,start_block_number,end_block_number,start_block_hash,end_block_hash,start_share_price,end_share_price,source_commit,attribution,schema_version)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,2)
       ON CONFLICT(chain_id,house_pool_address,senior_vault_address,junior_vault_address,end_block_number) DO UPDATE SET
       start_block_number=EXCLUDED.start_block_number,start_block_hash=EXCLUDED.start_block_hash,end_block_hash=EXCLUDED.end_block_hash,
       start_share_price=EXCLUDED.start_share_price,end_share_price=EXCLUDED.end_share_price,source_commit=EXCLUDED.source_commit,
-      schema_version=1,attribution=EXCLUDED.attribution,updated_at=NOW()`,
+      schema_version=2,attribution=EXCLUDED.attribution,updated_at=NOW()`,
     [this.release.network.chainId, this.address.housePool, this.address.seniorVault, this.address.juniorVault, startNumber.toString(), endNumber.toString(), first.block_hash, last.block_hash, start.sharePrice.toString(), end.sharePrice.toString(), SOURCE_COMMIT, json(report)])
     return { ready: true, cached: false, sourceBlockCount: transitions.length + 1, notes: report.notes }
   }

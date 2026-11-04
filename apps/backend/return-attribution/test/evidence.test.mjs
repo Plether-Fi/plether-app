@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeFunctionData } from 'viem'
-import { settlementAbi, TOPICS, decodeActions, capitalEvent, topic } from '../evidence.mjs'
+import { settlementAbi, TOPICS, decodeActions, decodeLpValuations, capitalEvent, topic } from '../evidence.mjs'
 const address = number => '0x' + number.toString(16).padStart(40, '0')
 const word = n => BigInt(n).toString(16).padStart(64, '0')
 const data = values => '0x' + values.map(word).join('')
@@ -78,5 +78,30 @@ test('decodes public deployed Open, Close and Liquidation receipts without regen
     assert.equal(action.delta.price.toString(), item.expectedPrice)
     assert.equal(item.logs[0].transactionHash, item.transactionHash)
     assert.equal(item.logs[0].blockHash, item.blockHash)
+  }
+})
+
+const lpFixture = () => JSON.parse(fs.readFileSync(new URL('./fixtures/sepolia-lp-valuation.json', import.meta.url)))
+const deployedRelease = () => JSON.parse(fs.readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url)))
+function eachCall(node, visit) { visit(node); for (const child of node.calls ?? []) eachCall(child, visit) }
+test('the actual hourly LP settlement proves the entire previously unexplained valuation occurred before the deposit', () => {
+  const e = lpFixture()
+  const [boundary] = decodeLpValuations(e.trace, e.logs, deployedRelease())
+  assert.equal(boundary.logIndex, 2)
+  assert.equal(boundary.terminalPnlBeforeFlow - BigInt(e.previousTerminalPnl), BigInt(e.expectedValuationChangeUsdg))
+  const contributionPp = Number(BigInt(e.expectedValuationChangeUsdg) * 10n ** 21n * 100n)
+    / Number((BigInt(e.supplyBeforeFlow) + 1000n) * BigInt(e.periodStartDilutedSharePrice))
+  assert.ok(Math.abs(contributionPp - 0.0004483698100118797) < 1e-15)
+})
+test('LP timing evidence rejects mismatched receipts, missing NAV and nested engine mutations', () => {
+  const manifest = deployedRelease()
+  for (const mutate of [
+    e => { const receipt = e.logs.find(log => log.address === manifest.contracts.juniorVault.address && log.topics[0] === TOPICS.deposit); receipt.data = data([1n, 2n]) },
+    e => eachCall(e.trace, node => { if (node.to === manifest.contracts.cfdEngine.address && node.input === topic('terminalNavSnapshot()').slice(0, 10)) node.error = 'reverted' }),
+    e => eachCall(e.trace, node => { if (node.to === manifest.contracts.cfdEngine.address && node.input?.slice(0, 10) === topic('checkpointCarryIndexes()').slice(0, 10)) node.input = topic('updateMarkPrice(uint256,uint64)').slice(0, 10) + word(1n) + word(1n) }),
+    e => { e.trace.error = 'reverted' },
+  ]) {
+    const e = lpFixture(); mutate(e)
+    assert.throws(() => decodeLpValuations(e.trace, e.logs, manifest))
   }
 })

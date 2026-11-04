@@ -51,23 +51,39 @@ PostgreSQL stores canonical logs, validated evidence, the indexing checkpoint
 and the report. A session advisory lock elects one worker across API replicas.
 Reorg detection clears orphaned derived evidence before rebuilding the release
 prefix. The API attaches a report only when deployment, boundary block numbers,
-hashes, prices, timestamps and schema version exactly match the returned
+hashes, prices, timestamps and report schema version 2 exactly match the returned
 history. A report from the previous hour is never attached to a new window.
 
 ## Reconciliation limitations
 
-End-of-block state cannot establish the timing of a terminal-valuation change
-relative to LP settlements in the same block. Those changes remain in an
-explicit reconciliation difference, with an explanation in `notes`. Other
-unclassified economic changes and integer rounding also remain explicit. The
-producer does **not** backsolve either PnL category to force reconciliation.
+For LP epoch settlements, the worker reads the terminal NAV returned to the
+pool from the transaction's successful call trace, before capital is funded or
+shares are minted. It binds that valuation to each canonical capital receipt.
+Valuation changes are split at these observed boundaries and unitized using the
+share supply before/after each flow. Engine mutations within the LP settlement,
+missing terminal reads and mismatched receipts are rejected. Without complete
+valuation timing evidence, a mixed-block change remains in an explicit residual;
+it is never guessed from the final return or quietly absorbed into PnL.
+
+Other unclassified economic changes and integer rounding also remain explicit.
 These limitations are visible below the chart, not hidden in a tooltip.
 
-A read-only validation on November 4, 2026 replayed 106 settlement traces and
-674 valuation boundaries. The sampled seven-day share-price return was
-+0.2996892076%; supplied components summed to +0.2992408378 pp, leaving a
-separately displayed +0.0004483698 pp / 451.582565 USDG difference. These are
-historical validation results, not production constants or an independent audit.
+A read-only validation on November 4, 2026 replayed 106 trading settlement
+traces, LP settlement traces and 674 valuation boundaries. The sampled seven-day share-price return was
++0.2996892076%. The first producer left +0.0004483698 pp / 451.582565 USDG
+unassigned because it skipped every valuation change in a block with an LP flow.
+The investigation traced the entire difference to block 325853248 and
+[its LP settlement transaction](https://sepolia.arbiscan.io/tx/0xf50e4afe2c3d3d3588124b3ba532ba77b0d57e05aaca966684d45e187c804d92).
+That transaction refreshed the oracle mark before minting deposit shares; the
+pool's independently observed terminal NAV had already increased by exactly
+451.582565 USDG. The corrected producer allocates this to open-position
+valuation using the pre-deposit share supply.
+
+The same period now reconciles exactly to 18,395.305533 USDG, with only about
+1.4e-16 pp floating-point noise and no residual bar. The observed share-price
+return and cash-flow treatment are unchanged. Cache schema version 2 prevents
+previously calculated reports from being reused. These are historical validation
+results, not production constants or an independent accounting audit.
 
 ## API contract
 
@@ -138,9 +154,9 @@ node main.mjs --once
 
 Tests cover liquidity changes, ordered events, pending/issued dilution, coupon
 capitalization, partial closes, capped loss recovery, spread/carry collection,
-explicit residuals, deployment ABI decoding, restart/reorg behavior and invalid
-receipts. Compact public-chain fixtures cover actual V2 open, close and
-liquidation calldata. Haskell database tests reject mismatched cached reports;
+trace-proven valuation around one or multiple LP flows, explicit residuals,
+deployment ABI decoding, restart/reorg behavior and invalid receipts. Compact public-chain fixtures cover actual V2 open, close and
+liquidation calldata and the LP transaction that caused the former residual. Haskell database tests reject mismatched cached reports;
 frontend tests validate reconciliation, invalid notes and chart explanations.
 CI runs the worker suite against PostgreSQL.
 

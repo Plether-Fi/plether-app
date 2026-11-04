@@ -133,6 +133,8 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
     it "publishes attribution only for matching deployment, canonical hashes, prices and times" $
       withSchema databaseUrl $ \conn -> do
         ensureVaultPerformanceSchema conn
+        void $ execute_ conn "ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 1"
+        ensureVaultPerformanceSchema conn
         let start = vaultRow 0
             end = vaultRow 168
             report = object ["method" .= ("diluted-share-price-v1" :: Text), "startTimestamp" .= vpsBlockTimestamp start, "endTimestamp" .= vpsBlockTimestamp end]
@@ -142,6 +144,9 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
            vpsBlockNumber start, vpsBlockNumber end, vpsBlockHash start, vpsBlockHash end,
            vpsJuniorSharePriceWad start, vpsJuniorSharePriceWad end, "1209ca8a5b94a4fb6323c7c4585846ed93db3932" :: Text, report)
         getVaultReturnAttribution conn start end `shouldReturn` Just report
+        void $ execute_ conn "UPDATE vault_return_reports SET schema_version = 1"
+        getVaultReturnAttribution conn start end `shouldReturn` Nothing
+        void $ execute_ conn "UPDATE vault_return_reports SET schema_version = 2"
         forM_ [start {vpsChainId = 1}, start {vpsSeniorVaultAddress = address "9"},
                start {vpsJuniorVaultAddress = address "9"}, start {vpsHousePoolAddress = address "9"},
                start {vpsBlockHash = hash "f"}, start {vpsBlockNumber = 999999},

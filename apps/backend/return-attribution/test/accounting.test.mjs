@@ -124,3 +124,43 @@ test('stale intermediate pool fallbacks do not turn preview changes into trading
   near(sumPp(result), 0); assert.equal(result.netReturnUsdg, '0')
   assert.throws(() => report(start, [{ snapshot: { ...intermediate, supply: 1099999000n }, events: [] }, { snapshot: { ...end, supply: 1099999000n }, events: [] }]), /Maintenance dilution requires fresh/)
 })
+
+test('trace-proven valuation before a deposit uses the shares outstanding before minting', () => {
+  const end = snap(2, 2199999n, 1999999000n, { terminalPnl: 100000n })
+  const result = report(snap(1), [{ snapshot: end, events: [{
+    shareDelta: 1000000000n, assetDelta: 1100000n, terminalPnlBeforeFlow: 100000n,
+  }] }])
+  near(sumPp(result), 10)
+  assert.equal(result.components.openPositionValuation.amountUsdg, '100000')
+  assert.equal(result.netReturnUsdg, '100000')
+  assert.deepEqual(result.notes, [])
+})
+test('valuation after a deposit uses the larger supply and does not credit deposited capital', () => {
+  const end = snap(2, 2099999n, 1999999000n, { terminalPnl: 100000n })
+  const result = report(snap(1), [{ snapshot: end, events: [{
+    shareDelta: 1000000000n, assetDelta: 1000000n, terminalPnlBeforeFlow: 0n,
+  }] }])
+  near(sumPp(result), 5)
+  assert.equal(result.netReturnUsdg, '100000')
+  assert.deepEqual(result.notes, [])
+})
+test('a valuation rise before a deposit and reversal after it can earn a holder a return with zero net pool income', () => {
+  const end = snap(2, 2099999n, 1999999000n)
+  const result = report(snap(1), [{ snapshot: end, events: [{
+    shareDelta: 1000000000n, assetDelta: 1100000n, terminalPnlBeforeFlow: 100000n,
+  }] }])
+  near(sumPp(result), 5)
+  assert.equal(result.components.openPositionValuation.amountUsdg, '0')
+  assert.equal(result.netReturnUsdg, '0')
+  assert.deepEqual(result.notes, [])
+})
+test('multiple deposits in one block use their own observed valuation boundaries', () => {
+  const end = snap(2, 3599999n, 2999999000n, { terminalPnl: 300000n })
+  const result = report(snap(1), [{ snapshot: end, events: [
+    { shareDelta: 1000000000n, assetDelta: 1100000n, terminalPnlBeforeFlow: 100000n },
+    { shareDelta: 1000000000n, assetDelta: 1200000n, terminalPnlBeforeFlow: 300000n },
+  ] }])
+  near(sumPp(result), 20)
+  assert.equal(result.netReturnUsdg, '300000')
+  assert.deepEqual(result.notes, [])
+})

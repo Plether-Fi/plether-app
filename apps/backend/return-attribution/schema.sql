@@ -9,12 +9,13 @@ CREATE TABLE IF NOT EXISTS vault_return_reports (
   end_block_hash VARCHAR(66) NOT NULL,
   start_share_price NUMERIC(78,0) NOT NULL,
   end_share_price NUMERIC(78,0) NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1,
+  schema_version INTEGER NOT NULL DEFAULT 2,
   source_commit TEXT NOT NULL,
   attribution JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, end_block_number)
 );
+ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 2;
 CREATE TABLE IF NOT EXISTS vault_return_index_state (
   deployment_key TEXT PRIMARY KEY,
   through_block NUMERIC(78,0) NOT NULL,

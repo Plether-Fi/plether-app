@@ -117,8 +117,17 @@ export function buildAttribution(start, end, transitions) {
       netReturnUsdg += dilution
     }
     let supply = beforeFlowsSupply
+    const flows = events.filter(event => event.shareDelta !== undefined)
+    const hasValuationTiming = flows.length > 0 && flows.every(event => typeof event.terminalPnlBeforeFlow === 'bigint')
+    let terminalPnl = previous.terminalPnl
     for (const event of events) {
-      if (event.shareDelta !== undefined) supply += event.shareDelta
+      if (event.shareDelta !== undefined) {
+        if (hasValuationTiming) {
+          add('openPositionValuation', event.terminalPnlBeforeFlow - terminalPnl, supply)
+          terminalPnl = event.terminalPnlBeforeFlow
+        }
+        supply += event.shareDelta
+      }
       if (event.sources) for (const id of COMPONENTS) if (event.sources[id]) add(id, event.sources[id], supply)
     }
     if (supply !== current.supply) throw new AttributionError('Share supply does not reconcile')
@@ -130,8 +139,9 @@ export function buildAttribution(start, end, transitions) {
     if (coupon < 0n) throw new AttributionError('Coupon accrual did not reconcile')
     add('seniorCoupon', -coupon, beforeFlowsSupply)
     const valuation = current.terminalPnl - previous.terminalPnl
-    const hasFlows = events.some(event => event.shareDelta !== undefined)
-    if (hasFlows && valuation !== 0n) {
+    if (hasValuationTiming) {
+      add('openPositionValuation', current.terminalPnl - terminalPnl, supply)
+    } else if (flows.length > 0 && valuation !== 0n) {
       // End-of-block state alone cannot place a mark/curve move around multiple
       // liquidity changes in one block. Keep this in the explicit residual.
       notes.add('Open-position valuation in blocks with LP settlements is included in the unexplained reconciliation difference because its intra-block timing cannot be established from boundary states.')

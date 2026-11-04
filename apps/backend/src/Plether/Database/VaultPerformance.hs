@@ -134,12 +134,13 @@ ensureVaultPerformanceSchema conn = do
     \  end_block_hash VARCHAR(66) NOT NULL,\
     \  start_share_price NUMERIC(78,0) NOT NULL,\
     \  end_share_price NUMERIC(78,0) NOT NULL,\
-    \  schema_version INTEGER NOT NULL DEFAULT 1,\
+    \  schema_version INTEGER NOT NULL DEFAULT 2,\
     \  source_commit TEXT NOT NULL,\
     \  attribution JSONB NOT NULL,\
     \  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \  PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, end_block_number)\
     \);"
+  _ <- execute_ conn "ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 2"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS vault_performance_snapshots (\
     \chain_id NUMERIC(78,0) NOT NULL,\
@@ -273,7 +274,7 @@ getVaultReturnAttribution conn start end = do
     \AND house_pool_address = ? AND senior_vault_address = ? AND junior_vault_address = ? \
     \AND start_block_number = ? AND end_block_number = ? \
     \AND start_block_hash = ? AND end_block_hash = ? \
-    \AND start_share_price = ? AND end_share_price = ? AND schema_version = 1 \
+    \AND start_share_price = ? AND end_share_price = ? AND schema_version = 2 \
     \AND attribution->>'startTimestamp' = ? AND attribution->>'endTimestamp' = ?"
     ( vpsChainId start, normalizeAddress $ vpsHousePoolAddress start
     , normalizeAddress $ vpsSeniorVaultAddress start, normalizeAddress $ vpsJuniorVaultAddress start
