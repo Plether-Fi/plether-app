@@ -1,37 +1,85 @@
 # Junior vault return attribution
 
-The junior vault Performance section contains a return waterfall directly below
-“Seven-day share price,” followed by the existing performance metric cards.
-It shares the price chart's seven-day history response from the deployment-scoped
-`GET /api/perps/vaults/history?range=7d&interval=3600` endpoint. There is no separate
-reporting-period selector or duplicated return/APY summary in the waterfall.
-Monetary amounts use the current deployment's six-decimal USDG settlement asset.
+The Junior Vault's **Return breakdown** sits directly below “Seven-day share
+price.” It uses the same deployment-scoped
+`GET /api/perps/vaults/history?range=7d&interval=3600` response and existing
+performance metric cards. It has no independent period selector or duplicate
+return/APY footer. Amounts use six-decimal USDG.
 
-## Current data availability
+## Backend producer
 
-The current backend supplies hourly vault conversion prices, assets and supply.
-It **does not yet produce component return attribution**. Existing performance
-metrics continue to show diluted share-price return and APY; the waterfall shows
-an unavailable message instead of inventing component bars. The optional contract
-below is the integration point for a future audited accounting producer. Adding this frontend
-contract does not implement that producer or backfill historical attribution.
+`apps/backend/return-attribution` reconstructs attribution from the deployed V2
+contracts, pinned to core commit `1209ca8a5b94a4fb6323c7c4585846ed93db3932`.
+The API starts and supervises this read-only Node worker alongside the hourly
+vault-performance sampler. The backend Docker image includes its locked
+runtime dependencies, ABI and database migration. No signing key is needed or
+passed to the worker.
 
-`convertToAssets` includes accrued junior maintenance shares in effective supply;
-it excludes withdrawal fees. Both period boundaries must be fresh, covered by
-the response, and belong to the configured chain/pool/vault deployment. The UI
-also rejects missing, stale or discontinuous history within the period.
+The worker verifies the RPC chain, contract runtime hashes and asset/share
+decimals. It indexes canonical logs from deployment, replays position entries
+before the reporting window, and reads successful Engine → SettlementSidecar
+call traces. It binds each decoded settlement to its position receipt and the
+Router → Oracle quote, including the neutral oracle mark. Negative or missing
+historical evidence cannot be replaced with zeros.
 
-## Optional backend field
+Collected VPI less rebates, junior-owned liquidation fees, collected carry,
+confidence/frozen-market spread and confidence-neutral settled trader PnL are
+separate sources. Carry realized before a settlement is counted once; waived
+charges and uncollectible price losses are excluded. Terminal-book valuation
+changes are measured independently. Junior-funded senior coupon includes both
+checkpointed payment and the change in pending accrual. Maintenance dilution
+uses effective supply, including pending fee shares; minting already-accrued
+shares does not charge the holder twice.
 
-Publish `junior.returnAttribution` only after a complete audited attribution run:
+For each hourly boundary and protocol-event block (including its predecessor),
+the worker samples share supply, assets, conversion price, terminal NAV and
+coupon state at an exact block. Income is converted to share-price changes
+using the effective supply at its event, following capital-flow log order.
+ERC-4626 virtual assets/shares are included. Contributions are linked to the
+starting diluted share price and accumulated using integer fixed point.
+Deposits, funded redemptions and bootstrap assignments are capital flows,
+never earnings. There is no average-capital or ending-TVL denominator.
+
+Only a complete 169-point, fresh seven-day history can receive a report. Period
+boundaries must be fresh. Internal stale-mark pool previews cannot manufacture
+income: their changes telescope through the independently observed net asset
+change, while open valuation comes from the terminal book. A maintenance-fee
+change needing a stale valuation fails closed. Senior impairment, unsupported
+releases and incomplete entry/trace evidence also prevent publication.
+
+PostgreSQL stores canonical logs, validated evidence, the indexing checkpoint
+and the report. A session advisory lock elects one worker across API replicas.
+Reorg detection clears orphaned derived evidence before rebuilding the release
+prefix. The API attaches a report only when deployment, boundary block numbers,
+hashes, prices, timestamps and schema version exactly match the returned
+history. A report from the previous hour is never attached to a new window.
+
+## Reconciliation limitations
+
+End-of-block state cannot establish the timing of a terminal-valuation change
+relative to LP settlements in the same block. Those changes remain in an
+explicit reconciliation difference, with an explanation in `notes`. Other
+unclassified economic changes and integer rounding also remain explicit. The
+producer does **not** backsolve either PnL category to force reconciliation.
+These limitations are visible below the chart, not hidden in a tooltip.
+
+A read-only validation on November 4, 2026 replayed 106 settlement traces and
+674 valuation boundaries. The sampled seven-day share-price return was
++0.2996892076%; supplied components summed to +0.2992408378 pp, leaving a
+separately displayed +0.0004483698 pp / 451.582565 USDG difference. These are
+historical validation results, not production constants or an independent audit.
+
+## API contract
+
+`junior.returnAttribution` is null until a matching report is ready:
 
 ```typescript
 {
   method: 'diluted-share-price-v1',
   startTimestamp: number, // actual sampled block time, seconds UTC
   endTimestamp: number,
-  startDilutedSharePrice: string, // same WAD integer as first junior point
-  endDilutedSharePrice: string,   // same WAD integer as last junior point
+  startDilutedSharePrice: string, // WAD integer matching the first junior point
+  endDilutedSharePrice: string,   // WAD integer matching the last junior point
   components: {
     netVpi: { contributionPp: number, amountUsdg: string },
     liquidationFees: { contributionPp: number, amountUsdg: string },
@@ -42,64 +90,60 @@ Publish `junior.returnAttribution` only after a complete audited attribution run
     seniorCoupon: { contributionPp: number, amountUsdg: string },
     maintenanceDilution: { contributionPp: number, amountUsdg: string }
   },
-  netReturnUsdg: string
+  netReturnUsdg: string,
+  notes: string[],
+  sourceCommit: string,
+  sourceBlockCount: number
 }
 ```
 
-`contributionPp` is an additive percentage-point contribution over the entire
-selected period. `amountUsdg` and `netReturnUsdg` are signed six-decimal raw USDG
-integer strings. Do not publish rounded chart labels as source contributions.
-Missing fields are unavailable, never zero. Coupon and maintenance are deductions.
-
-The producer must account for the share supply and accrued maintenance shares
-at each economic event/valuation boundary. Unitize economic changes using the
-contemporaneous effective supply and link each component's unit-price change
-to the starting diluted share price. Correctly priced deposits and withdrawals
-change ownership and capital, not earnings. A whole-period income total divided
-by average capital, starting capital or ending TVL is not an acceptable substitute.
-
-The accounting source must separately measure net collected VPI, junior-owned
-liquidation fees, collected carry, realized confidence/frozen-market spread,
-settled trader PnL excluding those separately counted costs, open-position
-valuation changes, senior coupon and issued/accrued maintenance dilution.
-Oracle spread must be removed from settlement-price PnL before classifying
-settled trader PnL. Open valuation must be measured independently, never derived
-as the residual needed to make the result reconcile. The USDG value of maintenance
-dilution is an economic ownership transfer, not a cash expense.
-
-The event ledger needs canonical ordering, reorg handling, deployment isolation,
-coverage markers, and boundary prices matching the history response. Hourly
-asset/supply samples and current account balances cannot reconstruct this ledger
-when liquidity and trading activity change within an hour.
-
-## Reconciliation and annualization
-
-The browser independently computes:
+Contributions are additive percentage points; signed amount strings are raw
+six-decimal USDG. USDG totals describe pool economics, not a particular holder's
+profit. Missing sources are unavailable, never zero. The frontend validates the
+entire contract, checks its period against history and independently computes:
 
 ```
 returnPp = (ending diluted share price / starting diluted share price - 1) * 100
 APY = (exp(log(ending price / starting price) * 31536000 / elapsedSeconds) - 1) * 100
 ```
 
-The final bar always starts at zero. A difference between the component sum and
-the observed return is displayed as an outlined **Unexplained difference** bar
-and warning, before the final total. A separate USDG discrepancy is reported in
-that bar too. Only floating-point noise below `1e-10` pp is suppressed; USDG
-integer differences are exact. No discrepancy is assigned to either PnL category.
-Zero starting prices, invalid intervals and nonfinite data cannot define a
-return. A zero ending price is a valid -100% return; overflowing APY is unavailable.
+The total bar starts at zero. Any difference from component contributions or
+USDG totals gets an outlined **Unexplained difference** bar and warning. Only
+floating-point noise below `1e-10` pp is suppressed; USDG differences are exact.
+The existing APY tooltip explains repeated compounding and is not a forecast.
 
-The gallery's +0.523% and 14.56% are rounded validation examples. Exactly 0.523%
-over exactly fourteen days yields 14.57% APY at two decimals; a full-precision
-return of approximately 0.522731% rounds to +0.523% and annualizes to 14.56%.
-The Storybook fixture demonstrates those display values with illustrative
-components, **not an audited reconstruction of the historical baseline**.
+## Operations and validation
 
-## Verification
+Deploy the backend before the frontend. Existing startup migrations create the
+report table; the worker creates its evidence/checkpoint tables idempotently.
+Initial backfill requires an archive RPC supporting `debug_traceTransaction`
+with `callTracer`. It can take several minutes and consumes more RPC quota than
+steady-state indexing. Validated evidence is cached across restarts. The default
+is `PERPS_RPC_URL` / `PERPS_RPC_AUTH_TOKEN`; optional
+`VAULT_RETURN_ATTRIBUTION_RPC_URL` / `VAULT_RETURN_ATTRIBUTION_RPC_AUTH_TOKEN`
+allow a separate archive provider. Chain and runtime bindings are still verified.
+The database uses the existing `DATABASE_URL` and certificate configuration.
+RPC/database errors are logged without credentials or request bodies.
 
-`juniorReturnAttribution.test.ts` covers return/APY calculations, neutral liquidity
-flows, residual handling, invalid data and dilution deductions.
-`JuniorVaultReturnBreakdown.test.tsx` covers the waterfall, hover/focus/tap details,
-shared history, accessibility text and unavailable attribution. Storybook includes
-baseline-style, negative-return, missing-data, residual and mobile examples, plus
-the waterfall directly below the actual share-price chart and above its metrics.
+Standalone local validation from `apps/backend/return-attribution`:
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm test
+# Use a dedicated test database; integration cases create/drop their own schemas.
+ATTRIBUTION_TEST_DATABASE_URL=postgres://localhost/attribution_test npm test
+# Requires existing hourly performance snapshots in DATABASE_URL.
+node main.mjs --once
+```
+
+Tests cover liquidity changes, ordered events, pending/issued dilution, coupon
+capitalization, partial closes, capped loss recovery, spread/carry collection,
+explicit residuals, deployment ABI decoding, restart/reorg behavior and invalid
+receipts. Compact public-chain fixtures cover actual V2 open, close and
+liquidation calldata. Haskell database tests reject mismatched cached reports;
+frontend tests validate reconciliation, invalid notes and chart explanations.
+CI runs the worker suite against PostgreSQL.
+
+Storybook's baseline components remain illustrative. The rounded +0.523% /
+14.56% APY example uses full-precision fixture prices: exactly 0.523% over exactly
+14 days would round to 14.57% APY. Neither value is hardcoded in production.

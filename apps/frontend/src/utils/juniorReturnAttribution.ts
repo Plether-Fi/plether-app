@@ -38,7 +38,9 @@ function validAttribution(value: unknown): value is JuniorReturnAttribution {
   if (!isRecord(value) || value.method !== 'diluted-share-price-v1'
     || !signedInteger(value.netReturnUsdg) || !unsignedInteger(value.startDilutedSharePrice)
     || !unsignedInteger(value.endDilutedSharePrice) || !Number.isSafeInteger(value.startTimestamp)
-    || !Number.isSafeInteger(value.endTimestamp) || !isRecord(value.components)) return false
+    || !Number.isSafeInteger(value.endTimestamp) || !isRecord(value.components)
+    || (value.notes !== undefined && (!Array.isArray(value.notes) || value.notes.length > 16
+      || value.notes.some((note: unknown) => typeof note !== 'string' || note.length > 2000)))) return false
   const components = value.components
   return Object.keys(components).length === JUNIOR_RETURN_COMPONENTS.length
     && JUNIOR_RETURN_COMPONENTS.every(({ id }) => {
@@ -80,7 +82,7 @@ export function buildJuniorReturnBreakdown(period?: JuniorReturnPeriod, attribut
   const elapsedSeconds = period.endTimestamp - period.startTimestamp
   const annualized = endPrice === 0n ? -100 : Math.expm1(Math.log1p(periodReturn) * (365 * 86400 / elapsedSeconds)) * 100
   const summary = { ...period, returnPp, elapsedSeconds, apyPercent: Number.isFinite(annualized) ? annualized : null }
-  const unavailable = (reason: string) => ({ ...summary, bars: null, residualPp: null, reason })
+  const unavailable = (reason: string) => ({ ...summary, bars: null, residualPp: null, notes: [] as string[], reason })
   if (!attribution) return unavailable('Component attribution is not available for this period. Period return is calculated from diluted share prices; dollar income totals cannot determine the breakdown when liquidity changes.')
   if (!validAttribution(attribution)) return unavailable('Attribution is incomplete or invalid. No missing component has been treated as zero.')
   if (attribution.startTimestamp !== period.startTimestamp || attribution.endTimestamp !== period.endTimestamp
@@ -108,5 +110,5 @@ export function buildJuniorReturnBreakdown(period?: JuniorReturnPeriod, attribut
     description: 'Ending diluted share price divided by starting diluted share price, minus one. Deposits and withdrawals are excluded from earnings. The USDG amount is the pool’s economic gain, not the profit of an individual holder.',
     contributionPp: returnPp, amountUsdg: attribution.netReturnUsdg, start: 0, end: returnPp,
   })
-  return { ...summary, bars, residualPp: hasResidual ? residualPp : null, reason: null }
+  return { ...summary, bars, residualPp: hasResidual ? residualPp : null, notes: attribution.notes ?? [], reason: null }
 }

@@ -112,6 +112,9 @@ export function JuniorVaultReturnBreakdown({ period, attribution, isLoading, isE
       {data.residualPp !== null && <p role="alert" className="border-t border-brand-border/25 panel-padding text-sm text-brand-orange">
         Unexplained reconciliation difference: {signed(data.residualPp, 8)} pp. Shown separately; not assigned to trader PnL or open-position valuation. Inspect the outlined bar for the USDG difference.
       </p>}
+      {data.notes.length > 0 && <ul className="list-disc border-t border-brand-border/25 panel-padding text-xs leading-relaxed text-content-secondary">
+        {data.notes.map((note) => <li key={note} className="ml-4">{note}</li>)}
+      </ul>}
     </> : <div className="panel-padding text-sm leading-relaxed text-content-secondary" role="status">
       {isLoading ? <Spinner /> : data?.reason ?? (isError ? 'Return history is temporarily unavailable.' : 'Complete, fresh diluted share-price history is not yet available for the selected period.')}
     </div>}

@@ -336,6 +336,8 @@ export interface JuniorReturnAttribution {
   }>;
   /** Economic gain after coupon and dilution; excludes deposits and withdrawals. */
   netReturnUsdg: string;
+  /** Explicit accounting limitations explaining any reconciliation difference. */
+  notes?: string[];
 }
 
 export interface VaultHistory {

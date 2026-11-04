@@ -10,7 +10,7 @@ module Plether.Types.VaultPerformance
   , isCanonicalVaultPerformanceRequest
   ) where
 
-import Data.Aeson (ToJSON (..), object, (.=))
+import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -99,6 +99,7 @@ instance ToJSON VaultPerformancePoint where
 data VaultPerformanceTranche = VaultPerformanceTranche
   { vptApy7d :: Maybe Double
   , vptReturn7d :: Maybe Double
+  , vptReturnAttribution :: Maybe Value
   , vptPoints :: [VaultPerformancePoint]
   }
   deriving stock (Eq, Show, Generic)
@@ -108,6 +109,7 @@ instance ToJSON VaultPerformanceTranche where
     object
       [ "apy7d" .= vptApy7d
       , "return7d" .= vptReturn7d
+      , "returnAttribution" .= vptReturnAttribution
       , "points" .= vptPoints
       ]
 

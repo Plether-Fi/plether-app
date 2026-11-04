@@ -18,6 +18,13 @@ describe('junior diluted share-price attribution', () => {
     expect(bars[7].end).toBeCloseTo(result.returnPp, 12)
   })
 
+  it('rejects malformed accounting explanations', () => {
+    for (const notes of ['hidden', [null], ['x'.repeat(2001)], Array(17).fill('note')]) {
+      const result = buildJuniorReturnBreakdown(period, { ...attribution, notes })!
+      expect(result.bars).toBeNull()
+    }
+  })
+
   it('does not convert USDG totals into contribution percentages', () => {
     const changed = structuredClone(attribution)
     changed.components.netVpi.amountUsdg = '2000000'

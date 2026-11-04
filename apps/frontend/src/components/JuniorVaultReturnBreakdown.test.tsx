@@ -38,6 +38,12 @@ describe('Junior vault return waterfall', () => {
     expect(container.querySelector('[data-bar]')).toBeNull()
   })
 
+  it('shows backend explanations beside explicit reconciliation differences', () => {
+    const note = 'Intra-block valuation timing could not be established.'
+    render(<JuniorVaultReturnBreakdown period={period} attribution={{ ...attribution, notes: [note] }} />)
+    expect(screen.getByText(note)).toBeInTheDocument()
+  })
+
   it('shows a reconciliation warning and a separate residual bar', () => {
     const changed = structuredClone(attribution)
     changed.components.oracleSpread.contributionPp = 0

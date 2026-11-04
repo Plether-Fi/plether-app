@@ -19,6 +19,7 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..)
   , getVaultPerformanceSnapshots
+  , getVaultReturnAttribution
   )
 import Plether.Types
   ( ApiError
@@ -64,7 +65,12 @@ getVaultPerformanceHistory pool deployment@VaultPerformanceDeployment {..} reque
         maybe 0 vpsBlockNumber $
           lastMaybe $
             deploymentRowsAt now deployment rows
-  pure $ Right $ mkResponse responseBlock vpdChainId history
+  attribution <- case (requestedRange, vpcComplete $ vphCoverage history, deploymentRowsAt now deployment rows) of
+    ("7d", True, start : rest) | Just end <- lastMaybe rest ->
+      withDb pool $ \conn -> getVaultReturnAttribution conn start end
+    _ -> pure Nothing
+  let published = history {vphJunior = (vphJunior history) {vptReturnAttribution = attribution}}
+  pure $ Right $ mkResponse responseBlock vpdChainId published
 
 -- Asset history has its own thirty-day coverage; APY retains its seven-day meaning.
 buildVaultAssetHistoryAt
@@ -128,6 +134,7 @@ buildVaultPerformanceHistoryAt now deployment rows =
     VaultPerformanceTranche
       { vptApy7d = snd <$> metrics
       , vptReturn7d = fst <$> metrics
+      , vptReturnAttribution = Nothing
       , vptPoints = map toPoint selectedRows
       }
 
