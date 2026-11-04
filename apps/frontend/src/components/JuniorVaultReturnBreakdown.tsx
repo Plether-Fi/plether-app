@@ -1,9 +1,7 @@
 import { useId, useState } from 'react'
-import { usePerpsVaultHistory } from '../api'
-import type { JuniorReturnAttribution, VaultHistoryRange } from '../api/types'
+import type { JuniorReturnAttribution, VaultHistory } from '../api/types'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { buildJuniorReturnBreakdown, juniorReturnPeriod, type JuniorReturnPeriod } from '../utils/juniorReturnAttribution'
-import { Tooltip } from './ui/Tooltip'
 import { Spinner } from './ui/Spinner'
 
 const signed = (value: number, digits = 3) => new Intl.NumberFormat('en-US', {
@@ -12,35 +10,23 @@ const signed = (value: number, digits = 3) => new Intl.NumberFormat('en-US', {
 const usdg = (raw: string | null) => raw === null ? 'Unavailable' : `${new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero',
 }).format(Number(raw) / 1e6)} USDG`
-const date = (timestamp: number) => `${new Date(timestamp * 1000).toLocaleString('en-GB', {
-  day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
-})} UTC`
 
-/** Fetch each reporting period separately; deployment identities must never be spliced. */
-export function JuniorVaultReturnBreakdownSection() {
-  const [range, setRange] = useState<VaultHistoryRange>('7d')
-  const query = usePerpsVaultHistory(range)
-  const history = query.data?.data
-  const matches = history?.range === range && history.deployment.chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+/** Use the same seven-day response as the share-price chart and its metrics. */
+export function JuniorVaultReturnBreakdownSection({ history, isError }: { history?: VaultHistory; isError?: boolean }) {
+  const matches = history?.range === '7d' && history.deployment.chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
     && history.deployment.housePool.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.housePool.toLowerCase()
     && history.deployment.juniorVault.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.juniorVault.toLowerCase()
     && history.deployment.seniorVault.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.seniorVault.toLowerCase()
   return <JuniorVaultReturnBreakdown
-    key={range}
     period={matches ? juniorReturnPeriod(history) : undefined}
     attribution={matches ? history.junior.returnAttribution : undefined}
-    range={range}
-    onRangeChange={setRange}
-    isLoading={query.isLoading}
-    isError={query.isError}
+    isError={isError}
   />
 }
 
-export function JuniorVaultReturnBreakdown({ period, attribution, range, onRangeChange, isLoading, isError }: {
+export function JuniorVaultReturnBreakdown({ period, attribution, isLoading, isError }: {
   period?: JuniorReturnPeriod
   attribution?: JuniorReturnAttribution | null
-  range?: VaultHistoryRange
-  onRangeChange?: (range: VaultHistoryRange) => void
   isLoading?: boolean
   isError?: boolean
 }) {
@@ -71,11 +57,6 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
         <p className="mt-1 text-sm text-content-secondary">How income, trading outcomes and deductions add up to your share-price return.</p>
         <p className="mt-2 text-xs text-content-secondary">Percentage-point contributions · after maintenance dilution</p>
       </div>
-      {onRangeChange && <div className="flex shrink-0 gap-1 border border-brand-border/30 bg-app-bg p-1" role="group" aria-label="Return reporting period">
-        {(['7d', '30d'] as const).map((option) => <button key={option} type="button" aria-pressed={range === option}
-          className={`px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-peach ${range === option ? 'bg-brand-peach text-app-bg' : 'text-content-secondary hover:bg-brand-peach/10 hover:text-content-primary'}`}
-          onClick={() => { onRangeChange(option) }}>{option === '7d' ? '7 days' : '30 days'}</button>)}
-      </div>}
     </div>
     {bars ? <>
       <div className="overflow-x-auto panel-padding" tabIndex={0} role="region" aria-label="Return waterfall; scroll horizontally to see all components">
@@ -134,16 +115,6 @@ export function JuniorVaultReturnBreakdown({ period, attribution, range, onRange
     </> : <div className="panel-padding text-sm leading-relaxed text-content-secondary" role="status">
       {isLoading ? <Spinner /> : data?.reason ?? (isError ? 'Return history is temporarily unavailable.' : 'Complete, fresh diluted share-price history is not yet available for the selected period.')}
     </div>}
-    <dl className="grid gap-5 border-t border-brand-border/25 panel-padding" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))' }}>
-      <div><dt className="text-xs uppercase tracking-wider text-content-secondary">Period return</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data ? `${signed(data.returnPp)}%` : '—'}</dd></div>
-      <div><dt className="text-xs uppercase tracking-wider text-content-secondary">Selected reporting period</dt><dd className="mt-2 text-lg font-semibold">{data ? `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(data.elapsedSeconds / 86400)} days` : range === '30d' ? '30 days' : '7 days'}</dd>
-        {data && <dd className="mt-1 text-xs text-content-secondary">{date(data.startTimestamp)} – {date(data.endTimestamp)}</dd>}
-      </div>
-      <div><dt className="text-xs uppercase tracking-wider text-content-secondary"><Tooltip content="Compounds the observed diluted share-price return over a 365-day year using the actual elapsed seconds. Assumes the same return repeats with reinvestment; this is not a forecast.">
-        <button type="button" className="text-left uppercase tracking-wider underline decoration-dotted underline-offset-4">APY equivalent</button>
-      </Tooltip></dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{data?.apyPercent != null ? `${signed(data.apyPercent, 2)}%` : '—'}</dd></div>
-    </dl>
-    <p className="panel-padding-x pb-6 text-xs leading-relaxed text-content-secondary">Return follows a share held throughout the period. Deposits and withdrawals are not earnings. USDG amounts describe pool economics; contributions account for liquidity changes.</p>
     {isError && data && <p className="panel-padding-x pb-6 text-xs text-brand-orange">Refresh failed. Showing the last received reporting period.</p>}
   </figure>
 }

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { JuniorVaultReturnBreakdown } from './JuniorVaultReturnBreakdown'
 import { juniorReturnExample as attribution, juniorReturnExamplePeriod as period } from '../stories/fixtures/juniorReturnAttribution'
 
@@ -12,8 +12,9 @@ describe('Junior vault return waterfall', () => {
       'openPositionValuation', 'seniorCoupon', 'maintenanceDilution', 'total',
     ])
     expect(bars.at(-1)).toHaveAttribute('data-start', '0')
-    expect(screen.getByText('+14.56%')).toBeInTheDocument()
-    expect(screen.getByText('14 days')).toBeInTheDocument()
+    expect(screen.queryByText('Period return')).not.toBeInTheDocument()
+    expect(screen.queryByText('Selected reporting period')).not.toBeInTheDocument()
+    expect(screen.queryByText('APY equivalent')).not.toBeInTheDocument()
     expect(screen.getByRole('region')).toHaveClass('overflow-x-auto')
   })
 
@@ -30,9 +31,9 @@ describe('Junior vault return waterfall', () => {
     expect(screen.getByRole('status')).toHaveTextContent('not a cash expense')
   })
 
-  it('displays missing attribution honestly while retaining actual return', () => {
+  it('displays missing attribution without duplicating the shared performance metrics', () => {
     const { container } = render(<JuniorVaultReturnBreakdown period={period} />)
-    expect(screen.getByText('+0.523%')).toBeInTheDocument()
+    expect(screen.queryByText('+0.523%')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Component attribution is not available')
     expect(container.querySelector('[data-bar]')).toBeNull()
   })
@@ -45,13 +46,4 @@ describe('Junior vault return waterfall', () => {
     expect(container.querySelector('[data-bar="unexplained"]')).toBeInTheDocument()
   })
 
-  it('changes period and explains compound annualization', async () => {
-    const onRangeChange = vi.fn()
-    render(<JuniorVaultReturnBreakdown period={period} attribution={attribution} range="7d" onRangeChange={onRangeChange} />)
-    fireEvent.click(screen.getByRole('button', { name: '30 days' }))
-    expect(onRangeChange).toHaveBeenCalledWith('30d')
-    fireEvent.focus(screen.getByRole('button', { name: 'APY equivalent' }))
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('not a forecast')
-    expect(screen.getByRole('tooltip')).toHaveTextContent('actual elapsed seconds')
-  })
 })

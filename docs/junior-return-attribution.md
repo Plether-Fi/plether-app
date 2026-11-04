@@ -1,17 +1,19 @@
 # Junior vault return attribution
 
-The junior vault Activity section contains a share-price return waterfall with
-7-day and 30-day reporting periods. It reads the existing, deployment-scoped
-`GET /api/perps/vaults/history?range=7d&interval=3600` response (or `range=30d`).
+The junior vault Performance section contains a return waterfall directly below
+“Seven-day share price,” followed by the existing performance metric cards.
+It shares the price chart's seven-day history response from the deployment-scoped
+`GET /api/perps/vaults/history?range=7d&interval=3600` endpoint. There is no separate
+reporting-period selector or duplicated return/APY summary in the waterfall.
 Monetary amounts use the current deployment's six-decimal USDG settlement asset.
 
 ## Current data availability
 
 The current backend supplies hourly vault conversion prices, assets and supply.
-It **does not yet produce component return attribution**. The UI can show the
-observed diluted share-price return and APY, but deliberately shows an unavailable
-message instead of inventing component bars. The optional contract below is the
-integration point for a future audited accounting producer. Adding this frontend
+It **does not yet produce component return attribution**. Existing performance
+metrics continue to show diluted share-price return and APY; the waterfall shows
+an unavailable message instead of inventing component bars. The optional contract
+below is the integration point for a future audited accounting producer. Adding this frontend
 contract does not implement that producer or backfill historical attribution.
 
 `convertToAssets` includes accrued junior maintenance shares in effective supply;
@@ -98,5 +100,6 @@ components, **not an audited reconstruction of the historical baseline**.
 `juniorReturnAttribution.test.ts` covers return/APY calculations, neutral liquidity
 flows, residual handling, invalid data and dilution deductions.
 `JuniorVaultReturnBreakdown.test.tsx` covers the waterfall, hover/focus/tap details,
-period controls, accessibility text and unavailable attribution. Storybook includes
-baseline-style, negative-return, missing-data, residual and mobile examples.
+shared history, accessibility text and unavailable attribution. Storybook includes
+baseline-style, negative-return, missing-data, residual and mobile examples, plus
+the waterfall directly below the actual share-price chart and above its metrics.

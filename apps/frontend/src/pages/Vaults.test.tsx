@@ -1026,6 +1026,26 @@ describe('Vaults page', () => {
     expect(screen.queryByRole('heading', { name: 'The market exposure' })).not.toBeInTheDocument()
   })
 
+  it('places the junior waterfall directly after share price and keeps one set of performance metrics', async () => {
+    mocks.vaultHistory = completeHistoryFixture()
+    const { unmount } = renderVaults('/vaults/junior')
+    const sharePrice = screen.getByRole('heading', { name: 'Seven-day share price' }).closest('figure')
+    const breakdown = screen.getByRole('heading', { name: 'Junior vault return breakdown' }).closest('figure')
+    expect(sharePrice?.nextElementSibling).toBe(breakdown)
+    expect(breakdown?.closest('section')).toHaveAttribute('id', 'performance')
+    expect(document.querySelector('#activity')).not.toContainElement(breakdown)
+    expect(screen.getAllByText('7d return')).toHaveLength(1)
+    expect(screen.queryByText('Period return')).not.toBeInTheDocument()
+    expect(screen.queryByText('Selected reporting period')).not.toBeInTheDocument()
+    expect(screen.queryByText('APY equivalent')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Return follows a share held/)).not.toBeInTheDocument()
+    fireEvent.focus(within(screen.getByRole('region', { name: 'Performance' })).getByLabelText('7d realized APY details'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('not a forecast')
+    unmount()
+    renderVaults('/vaults/senior')
+    expect(screen.queryByRole('heading', { name: 'Junior vault return breakdown' })).not.toBeInTheDocument()
+  })
+
   it('shows Junior market exposure between Overview and Performance', () => {
     mocks.vaultHistory = completeHistoryFixture()
     mocks.readContractsData = liveReadFixture()

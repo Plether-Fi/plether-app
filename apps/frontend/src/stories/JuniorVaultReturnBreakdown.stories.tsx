@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { JuniorVaultReturnBreakdown } from '../components/JuniorVaultReturnBreakdown'
-import { VaultAssetChart } from '../components/VaultAssetChart'
+import { PerformanceTab, VAULT_TRANCHES } from '../pages/Vaults'
+import { buildJuniorReturnBreakdown } from '../utils/juniorReturnAttribution'
+import type { JuniorReturnAttribution } from '../api/types'
 import { juniorReturnExample, juniorReturnExamplePeriod } from './fixtures/juniorReturnAttribution'
 import { createVaultAssetHistory } from './fixtures/vaultAssetHistory'
 
@@ -17,20 +19,49 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
+function performanceExample(attribution?: JuniorReturnAttribution | null) {
+  const history = createVaultAssetHistory()
+  const period = {
+    ...juniorReturnExamplePeriod,
+    startTimestamp: history.junior.points[0].timestamp,
+    endTimestamp: history.junior.points[history.junior.points.length - 1].timestamp,
+  }
+  const startPrice = BigInt(period.startDilutedSharePrice)
+  const change = BigInt(period.endDilutedSharePrice) - startPrice
+  history.junior.points = history.junior.points.map((point, index) => ({
+    ...point,
+    sharePrice: (startPrice + change * BigInt(index) / 168n).toString(),
+  }))
+  const metrics = buildJuniorReturnBreakdown(period)
+  if (!metrics || metrics.apyPercent === null) throw new Error('Invalid performance fixture')
+  history.junior.return7d = metrics.returnPp / 100
+  history.junior.apy7d = metrics.apyPercent / 100
+  history.junior.returnAttribution = attribution ? { ...attribution, ...period } : undefined
+  return {
+    history,
+    performance: {
+      apy7d: history.junior.apy7d,
+      return7d: history.junior.return7d,
+      periodStart: period.startTimestamp,
+      periodEnd: period.endTimestamp,
+      points: history.junior.points.map((point) => ({ ...point, sharePrice: Number(point.sharePrice) / 1e18 })),
+    },
+  }
+}
+
 export const BaselineExample: Story = {}
-export const InVaultActivity: Story = {
+export const InVaultPerformance: Story = {
   render: (args) => <div className="space-y-6">
     <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">Vault activity</p>
-      <h2 className="mt-1 text-2xl font-semibold text-content-primary">Holders and recent activity</h2>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">Historical results</p>
+      <h2 className="mt-1 text-2xl font-semibold text-content-primary">Performance</h2>
     </div>
-    <VaultAssetChart tranche="junior" history={createVaultAssetHistory()} />
-    <JuniorVaultReturnBreakdown {...args} />
+    <PerformanceTab tranche={VAULT_TRANCHES.junior} {...performanceExample(args.attribution)} />
   </div>,
 }
 export const MissingAttribution: Story = { args: { attribution: undefined } }
-export const MissingAttributionInVaultActivity: Story = {
-  ...InVaultActivity,
+export const MissingAttributionInVaultPerformance: Story = {
+  ...InVaultPerformance,
   args: { attribution: undefined },
 }
 export const Loading: Story = { args: { period: undefined, attribution: undefined, isLoading: true } }

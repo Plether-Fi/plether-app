@@ -2059,7 +2059,6 @@ function VaultActivitySection({
           isLoading={assetHistoryLoading}
           isError={assetHistoryError}
         />
-        {tranche === 'junior' && <JuniorVaultReturnBreakdownSection />}
         {isStale ? (
           <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-content-secondary">
             Vault activity is temporarily stale. The last confirmed holder and request data remains visible while the backend catches up.
@@ -2423,11 +2422,13 @@ function DetailMetric({
   label,
   value,
   detail,
+  tooltip,
   tone = 'default',
 }: {
   label: string
   value: ReactNode
   detail?: ReactNode
+  tooltip?: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'negative'
 }) {
   const toneClass = tone === 'positive'
@@ -2440,7 +2441,10 @@ function DetailMetric({
 
   return (
     <div className="border border-brand-border/25 bg-app-bg p-4">
-      <p className="text-xs font-medium uppercase tracking-[0.12em] text-content-secondary">{label}</p>
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-content-secondary">{label}</p>
+        {tooltip && <InfoTooltip ariaLabel={`${label} details`} content={tooltip} />}
+      </div>
       <p className={`mt-2 text-xl font-semibold ${toneClass}`}>{value}</p>
       {detail ? <p className="mt-1 text-xs leading-5 text-content-secondary">{detail}</p> : null}
     </div>
@@ -3267,12 +3271,16 @@ function PerformanceChart({
   )
 }
 
-function PerformanceTab({
+export function PerformanceTab({
   tranche,
   performance,
+  history,
+  isHistoryError,
 }: {
   tranche: TrancheDefinition
   performance: CompleteVaultPerformance
+  history?: VaultHistory
+  isHistoryError?: boolean
 }) {
   const firstPoint = performance.points[0]
   const lastPoint = performance.points[performance.points.length - 1]
@@ -3283,12 +3291,14 @@ function PerformanceTab({
   return (
     <div className="space-y-6">
       <PerformanceChart tranche={tranche} performance={performance} />
+      {tranche.id === 'junior' && <JuniorVaultReturnBreakdownSection history={history} isError={isHistoryError} />}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <DetailMetric
           label="7d realized APY"
           value={formatSignedPercent(performance.apy7d)}
           detail="Annualized historical result"
+          tooltip="Compounds the observed diluted share-price return over a 365-day year using the actual elapsed seconds. Assumes the same return repeats with reinvestment; this is not a forecast."
           tone={performanceTone(performance.apy7d)}
         />
         <DetailMetric
@@ -5467,7 +5477,7 @@ export function VaultDetailView({
                   Performance
                 </h2>
               </div>
-              <PerformanceTab tranche={tranche} performance={performance} />
+              <PerformanceTab tranche={tranche} performance={performance} history={history} isHistoryError={assetHistoryError} />
             </section>
           ) : null}
 
