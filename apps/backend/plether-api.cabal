@@ -209,11 +209,14 @@ library
 
 executable plether-api
     import:           warnings
+    other-modules: VaultReturnWorker
     main-is:          Main.hs
     build-depends:
         aeson >= 2.1,
         base >= 4.17 && < 5,
         bytestring >= 0.11,
+        directory >= 1.3,
+        process >= 1.6,
         plether-api,
         scotty >= 0.22,
         text >= 2.0,
