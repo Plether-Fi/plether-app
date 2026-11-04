@@ -164,8 +164,9 @@ export class ProtectionWorker {
     if (freshPayload) {
       fee = await this.read(this.oracle, 'PletherOracle', 'getUpdateFee', [payload.update_data], block.number)
       try {
-        // Simulate the same neutral MarkRefresh policy against the exact admitted Pyth bytes.
-        snapshot = (await this.publicClient.simulateContract({ account: this.account, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice', args: [this.account.address, payload.update_data, 1], value: fee, blockNumber: block.number })).result
+        // Current Oracle updates are Router-only. Model the Router's nested call
+        // for this read-only price check; Book submissions still use our signer.
+        snapshot = (await this.publicClient.simulateContract({ account: this.router, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice', args: [this.account.address, payload.update_data, 1], value: fee, blockNumber: block.number })).result
       } catch { this.log('warn', 'protection_oracle_unavailable', {}) }
     }
     if (!freshPayload && !frozen) this.log('warn', 'protection_oracle_unavailable', { reason: 'no-admitted-fresh-payload' })
