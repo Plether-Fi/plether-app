@@ -5,11 +5,19 @@ import { ProtectionWorker } from '../worker.mjs'
 import abi from '../abi.mjs'
 
 const address = '0x1111111111111111111111111111111111111111'
+const routerAddress = '0x2222222222222222222222222222222222222222'
+const oracleAddress = '0x4444444444444444444444444444444444444444'
+const accountAddress = '0x5555555555555555555555555555555555555555'
 function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n, expired = false, source = 'backend_hermes_latest_v2', pendingCount = 0n, executionEnabled = true } = {}) {
   const calls = []
+  const simulations = []
   const logs = []
   const observations = []
-  const release = { network: { chainId: 421614 }, release: { deploymentBlock: 100 }, contracts: Object.fromEntries(['positionProtectionBook', 'orderRouter', 'orderLifecycleBook', 'pletherOracle'].map(name => [name, { address }])) }
+  const release = { network: { chainId: 421614 }, release: { deploymentBlock: 100 }, contracts: {
+    positionProtectionBook: { address }, orderRouter: { address: routerAddress },
+    orderLifecycleBook: { address: '0x3333333333333333333333333333333333333333' },
+    pletherOracle: { address: oracleAddress },
+  } }
   const db = { query: async (sql, args) => {
     if (sql.startsWith('INSERT INTO perps_protection_observations')) observations.push(JSON.parse(args[5]))
     return { rows: sql.includes('DISTINCT ON') ? [{ protection_id: '7' }] : sql.includes('perps_pyth_update_payloads') ? [{ source, min_publish_time: 999, max_publish_time: 999, update_data: ['0x1234'] }] : [] }
@@ -18,6 +26,9 @@ function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n,
     getBlock: async () => ({ number: 200n, timestamp: 1000n, hash: '0x' + 'ab'.repeat(32) }),
     simulateContract: async request => {
       encodeFunctionData(request)
+      simulations.push(request)
+      // The deployed Oracle rejects current updates from every caller except Router.
+      assert.equal(request.account, routerAddress, 'Oracle current updates are Router-only')
       return { result: { markPrice: 90n, publishTime: 999n } }
     },
     readContract: async request => {
@@ -27,22 +38,33 @@ function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n,
       const { functionName } = request
       const values = {
         isOracleFrozen: frozen, getUpdateFee: 13n,
-        getPositionProtection: { protectionId: 7n, parentOrderId: 0n, linkedOrderId: 5n, account: address, status, side: 0, size: 100n, takeProfitTriggerPrice: 90n, stopLossTriggerPrice: 110n, triggerBountyAssets: 0n, armedAt: 998n, armedBlock: 198n, triggerMarkPrice: 0n, triggerPublishTime: 0n, triggeredLeg: 0 },
-        terminalOutcome: { account: address, terminalBlock: 199n, reason, status: 3, receiptHash: '0x' + 'cd'.repeat(32) }, nextExecuteId: head, globalTailOrderId: tail,
+        getPositionProtection: { protectionId: 7n, parentOrderId: 0n, linkedOrderId: 5n, account: accountAddress, status, side: 0, size: 100n, takeProfitTriggerPrice: 90n, stopLossTriggerPrice: 110n, triggerBountyAssets: 0n, armedAt: 998n, armedBlock: 198n, triggerMarkPrice: 0n, triggerPublishTime: 0n, triggeredLeg: 0 },
+        terminalOutcome: { account: accountAddress, terminalBlock: 199n, reason, status: 3, receiptHash: '0x' + 'cd'.repeat(32) }, nextExecuteId: head, globalTailOrderId: tail,
         orderTiming: { submitBy: 940n, executionWindowSeconds: 60, commitTimestamp: 941n, executionDeadline: expired ? 999n : 1001n }, maxExecutionWindowSeconds: 60n, pendingOrderCounts: pendingCount,
       }
       if (!(functionName in values)) throw new Error(`Unexpected ${functionName}`)
       return decodeFunctionResult({ ...request, data: encodeFunctionResult({ ...request, result: values[functionName] }) })
     },
   }
-  const worker = new ProtectionWorker({ db, publicClient, account: { address }, release, executionEnabled, log: (...args) => logs.push(args) })
+  const worker = new ProtectionWorker({ db, publicClient, account: { address: accountAddress }, release, executionEnabled, log: (...args) => logs.push(args) })
   worker.submit = async (...args) => {
     encodeFunctionData({ abi: abi[args[3]], functionName: args[4], args: args[5] })
     calls.push(args)
     return true
   }
-  return { worker, calls, logs, observations, publicClient }
+  return { worker, calls, simulations, logs, observations, publicClient }
 }
+it('prechecks the Router-only oracle as Router and retains the dedicated transaction signer', async () => {
+  const { worker, calls, simulations } = fixture()
+  await worker.evaluate()
+  assert.equal(simulations[0].account, routerAddress)
+  assert.equal(simulations[0].address, oracleAddress)
+  assert.deepEqual(simulations[0].args, [accountAddress, ['0x1234'], 1])
+  assert.equal(simulations[0].value, 13n)
+  assert.equal(simulations[0].blockNumber, 200n)
+  assert.equal(worker.account.address, accountAddress)
+  assert.equal(calls[0]?.[0], 'trigger')
+})
 it('passes only the oracle ETH update fee to a triggered Book close, never the USDG reward', async () => {
   const { worker, calls } = fixture()
   await worker.evaluate()
@@ -65,7 +87,7 @@ it('retries a latched expiry using the permissionless zero-value path while the 
 it('prunes a sole expired head separately before considering another retry', async () => {
   const { worker, calls } = fixture({ status: 8, head: 8n, tail: 8n, expired: true })
   await worker.evaluate()
-  assert.deepEqual(calls, [['prune', 7n, address, 'OrderRouter', 'executeOrder', [8n, []]]])
+  assert.deepEqual(calls, [['prune', 7n, routerAddress, 'OrderRouter', 'executeOrder', [8n, []]]])
 })
 it('does not retry into a FIFO whose projected drain exceeds the expiry safety window', async () => {
   const { worker, calls, logs } = fixture({ status: 8, tail: 100n })
@@ -92,7 +114,7 @@ it('publishes each latched retry blocker, scoped to the exact close attempt', as
     assert.equal(observations.at(-1).reason, expected)
     assert.equal(observations.at(-1).protectionId, '7')
     assert.equal(observations.at(-1).linkedOrderId, '5')
-    assert.equal(observations.at(-1).account, address)
+    assert.equal(observations.at(-1).account, accountAddress)
     assert.equal(observations.at(-1).protectionStatus, 8)
   }
 })
