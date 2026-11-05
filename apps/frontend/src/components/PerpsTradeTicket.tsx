@@ -2617,6 +2617,12 @@ export function PerpsTradeTicket({
   const maxOrderQuantityInputAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
   const canUseMaxOrderQuantity = maxOrderSizeRaw > 0n &&
     (isReducingCurrentPosition || (!maxOpenQuote.isPending && !maxOpenQuote.isFetching && !maxOpenQuote.error))
+  const orderQuantityShortcuts = ([25, 50, 75, 100] as const).map((percentage) => ({
+    percentage,
+    sizeDelta: percentage === 100
+      ? maxOrderSizeRaw
+      : quantizePerpsPositionSize(maxOrderSizeRaw * BigInt(percentage) / 100n, 'down'),
+  }))
   const fallbackCurrentPositionSizeRaw = quantizePerpsPositionSize(
     dxyExposureToSizeDelta(parsePerpsAssets(currentPositionExposureInputAmount), oraclePriceRaw) ?? 0n,
     'down'
@@ -4194,6 +4200,15 @@ export function PerpsTradeTicket({
     trackPerpsButtonClicked('leverage_input_changed', commonAnalyticsProperties)
   }
 
+  function fillOrderQuantity(percentage: number, sizeDelta: bigint) {
+    if (!canUseMaxOrderQuantity || sizeDelta <= 0n) return
+    const isMaximum = percentage === 100
+    trackPerpsButtonClicked(isMaximum ? 'fill_max_quantity' : `fill_order_quantity_${percentage.toString()}`, commonAnalyticsProperties)
+    setIsFullCloseIntent(isMaximum && isReducingCurrentPosition)
+    setIsMaxOpenIntent(isMaximum && !isReducingCurrentPosition)
+    setOrderQuantity(formatPerpsPositionSize(sizeDelta, 0))
+  }
+
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="space-y-4 panel-padding-x py-3 sm:space-y-5 sm:py-4">
@@ -4278,14 +4293,7 @@ export function PerpsTradeTicket({
               type="button"
               className="group cursor-pointer text-right text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-content-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
               disabled={!canUseMaxOrderQuantity}
-              onClick={() => {
-                if (canUseMaxOrderQuantity) {
-                  trackPerpsButtonClicked('fill_max_quantity', commonAnalyticsProperties)
-                  setIsFullCloseIntent(isReducingCurrentPosition)
-                  setIsMaxOpenIntent(!isReducingCurrentPosition)
-                  setOrderQuantity(maxOrderQuantityInputAmount)
-                }
-              }}
+              onClick={() => { fillOrderQuantity(100, maxOrderSizeRaw) }}
             >
               <span>Max: </span>
               <span className="group-hover:underline group-focus-visible:underline">
@@ -4294,6 +4302,20 @@ export function PerpsTradeTicket({
                   : <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />}
               </span>
             </button>
+          </div>
+          <div role="group" aria-label="Order quantity shortcuts" className="mt-2 grid grid-cols-4 gap-1.5">
+            {orderQuantityShortcuts.map(({ percentage, sizeDelta }) => (
+              <button
+                key={percentage}
+                type="button"
+                title={`Use ${percentage.toString()}% of maximum order quantity`}
+                disabled={!canUseMaxOrderQuantity || sizeDelta <= 0n}
+                className="min-h-9 border border-brand-border/30 bg-app-bg px-2 py-1.5 text-xs font-semibold text-content-secondary transition-colors enabled:cursor-pointer enabled:hover:border-brand-orange/50 enabled:hover:bg-[#3B212D] enabled:hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => { fillOrderQuantity(percentage, sizeDelta) }}
+              >
+                {percentage}%
+              </button>
+            ))}
           </div>
           {!isReducingCurrentPosition && maxOpenQuoteMessage ? (
             <p role="status" className="mt-1 text-xs text-content-secondary">{maxOpenQuoteMessage}</p>

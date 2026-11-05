@@ -40,6 +40,47 @@ npm run perps:oracle-worker -- --once  # Update the perps mark from backend-cach
 npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backend cache
 ```
 
+## Maximum opening size
+
+The trading ticket calculates Max in one `eth_call`. viem executes the checked-in
+`contracts/max-open/PerpsMaxOpenQuoter.sol` helper deploylessly: its creation and
+read-only call exist only inside the RPC simulation. There is no persistent
+deployment, transaction, wallet signature, or gas payment. It reserves the current
+router bounty and optional protection rewards, asks the deployed canonical lens
+for its maximum, and applies selected leverage in 100 plDXY increments. Every
+internal read uses the same block. Invalid planner candidates, nonpositive equity,
+search exhaustion, and provider errors fail without an approximate fallback.
+
+Equivalent quotes share a ten-second frontend cache. A publication timestamp
+change alone does not clear or restart the quote; account, side, price, balance,
+protection rewards, leverage, and deployment addresses remain part of its key.
+Quotes still refresh every fifteen seconds and after trading invalidation. Max
+remains disabled during refresh, and a failed refresh hides the previous quote.
+Review recalculates with its verified block and funding budget, then retains the
+existing adverse-price assessments, funding checks, and final simulation.
+
+Order quantity shortcuts fill 25%, 50%, 75%, or 100% of the available maximum.
+Partial percentages round down to 100 plDXY increments and fill a fixed quantity;
+100% keeps Max behavior. Reductions use the size remaining after pending close
+orders, with exact full closes preserved.
+
+The generated ABI and bytecode use Solidity 0.8.35 with pinned settings. Foundry
+is needed to rebuild or verify this artifact, but normal frontend builds consume
+the checked-in artifact without requiring a compiler:
+
+```bash
+node ../../scripts/generate-perps-max-open-quoter.mjs
+npm run verify:max-open-quoter
+npm run test:max-open-quoter
+```
+
+An optional read-only comparison against the canonical contracts verifies full
+quote parity and reports RPC counts and timing:
+
+```bash
+npm run test:max-open-quote-live -- --help
+```
+
 ## TradingView Advanced Charts
 
 The plDXY Perpetual panel uses TradingView Advanced Charts exclusively. If its

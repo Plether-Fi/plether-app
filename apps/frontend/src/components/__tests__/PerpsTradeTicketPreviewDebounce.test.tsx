@@ -160,6 +160,113 @@ describe('Perps trade preview debounce', () => {
     vi.useRealTimers()
   })
 
+  describe('Order quantity shortcuts', () => {
+    const props = { enableLiveTrading: true, initialLeverage: 10, oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n }
+    const maximum = (tokens: bigint) => ({
+      quote: { maxSizeDelta: tokens * 10n ** 18n, preview: { valid: true } },
+      marginDelta: 1_000_000_000n, isPending: false, isFetching: false,
+    })
+    const shortcuts = () => within(screen.getByRole('group', { name: 'Order quantity shortcuts' }))
+
+    it('fills each percentage of the quoted maximum', () => {
+      wagmiMocks.maxQuote.mockReturnValue(maximum(405_200n))
+      render(<PerpsTradeTicket {...props} />)
+      for (const [percentage, amount] of [['25%', '101 300'], ['50%', '202 600'], ['75%', '303 900'], ['100%', '405 200']]) {
+        fireEvent.click(shortcuts().getByRole('button', { name: percentage }))
+        expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(amount)
+      }
+    })
+
+    it('rounds fractional lots down without exceeding the requested percentage', () => {
+      wagmiMocks.maxQuote.mockReturnValue(maximum(700n))
+      render(<PerpsTradeTicket {...props} />)
+      for (const [percentage, amount] of [['25%', '100'], ['50%', '300'], ['75%', '500'], ['100%', '700']]) {
+        fireEvent.click(shortcuts().getByRole('button', { name: percentage }))
+        expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(amount)
+      }
+    })
+
+    it.each([
+      ['loading', { isPending: true }],
+      ['refreshing', { isFetching: true }],
+      ['failed', { error: new Error('RPC unavailable') }],
+      ['zero capacity', { quote: { maxSizeDelta: 0n, preview: { valid: true } } }],
+      ['invalid', { quote: { maxSizeDelta: 700n * 10n ** 18n, preview: { valid: false } } }],
+    ])('disables all shortcuts while Max is %s', (_state, override) => {
+      wagmiMocks.maxQuote.mockReturnValue({ ...maximum(700n), ...override })
+      render(<PerpsTradeTicket {...props} />)
+      for (const button of shortcuts().getAllByRole('button')) {
+        expect(button).toBeDisabled()
+        fireEvent.click(button)
+      }
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('0')
+    })
+
+    it('disables fractions that cannot fund one lot while keeping the exact maximum usable', () => {
+      wagmiMocks.maxQuote.mockReturnValue(maximum(100n))
+      render(<PerpsTradeTicket {...props} />)
+      for (const percentage of ['25%', '50%', '75%']) {
+        expect(shortcuts().getByRole('button', { name: percentage })).toBeDisabled()
+      }
+      expect(shortcuts().getByRole('button', { name: '100%' })).toBeEnabled()
+      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
+    })
+
+    it('keeps 100% dynamic but switches a smaller percentage back to a fixed ordinary order', async () => {
+      wagmiMocks.maxQuote.mockImplementation(({ selectedMaxLeverageBps }: { selectedMaxLeverageBps: number }) => ({
+        ...maximum(0n),
+        quote: { maxSizeDelta: BigInt(selectedMaxLeverageBps) * 10n ** 17n, preview: { valid: true } },
+      }))
+      render(<PerpsTradeTicket {...props} />)
+      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('10 000')
+      fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '5' } })
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('5 000')
+      fireEvent.click(shortcuts().getByRole('button', { name: '50%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('2 500')
+      fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '10' } })
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('2 500')
+      await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+      fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+      expect(wagmiMocks.prepareOrder).toHaveBeenLastCalledWith(expect.objectContaining({
+        sizeDelta: 2_500n * 10n ** 18n, maxSize: undefined,
+      }))
+    })
+
+    it('uses only the unreserved closing size and clears full-close intent for a partial shortcut', () => {
+      const pendingClose = (tokens: bigint) => [{
+        orderId: 33n, side: 0, direction: 'long' as const, sizeDelta: tokens * 10n ** 18n,
+        marginDeltaAssets: 0n, acceptablePrice: 100_000_000n, isReduceOnly: true, status: 1,
+      }]
+      const closeProps = { initialReduceOnly: true, currentPosition: existingLongPosition,
+        oraclePriceRaw: 100_000_000n, oraclePublishTime: 1_700_000_000 }
+      const view = render(<PerpsTradeTicket {...closeProps} pendingOrders={pendingClose(300n)} />)
+      for (const [percentage, amount] of [['25%', '100'], ['50%', '300'], ['75%', '500'], ['100%', '700']]) {
+        fireEvent.click(shortcuts().getByRole('button', { name: percentage }))
+        expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(amount)
+      }
+      view.rerender(<PerpsTradeTicket {...closeProps} pendingOrders={pendingClose(400n)} />)
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('600')
+      fireEvent.click(shortcuts().getByRole('button', { name: '50%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('300')
+      view.rerender(<PerpsTradeTicket {...closeProps} pendingOrders={pendingClose(500n)} />)
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('300')
+    })
+
+    it('preserves an exact non-quantized full close for 100%', () => {
+      render(<PerpsTradeTicket initialReduceOnly currentPosition={{ ...existingLongPosition, size: 9_550n * 10n ** 18n }}
+        oraclePriceRaw={98_580_000n} oraclePublishTime={1_700_000_000} />)
+      fireEvent.click(shortcuts().getByRole('button', { name: '25%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('2 300')
+      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('9 550')
+      expect(screen.queryByText('Order quantity must be a multiple of 100 plDXY.')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+    })
+  })
+
   it('passes selected leverage to Max and updates a filled maximum when leverage changes', async () => {
     wagmiMocks.maxQuote.mockImplementation(({ selectedMaxLeverageBps }: { selectedMaxLeverageBps: number }) => ({
       quote: { maxSizeDelta: BigInt(selectedMaxLeverageBps) * 10n ** 17n, preview: { valid: true } },
