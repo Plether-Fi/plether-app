@@ -14,7 +14,7 @@ mock_provider "aws" {
   }
   mock_resource "aws_security_group" {
     override_during = plan
-    defaults        = { id = "sg-0123456789abcdef0" }
+    defaults        = { id = "sg-0123456789abcdef0", egress = [] }
   }
   mock_resource "aws_ecr_repository" {
     override_during = plan
@@ -81,6 +81,10 @@ run "isolated_sepolia_pilot" {
     error_message = "RPC must remain private and TLS must terminate on port 443."
   }
   assert {
+    condition     = length(aws_security_group.rpc_gateway[0].egress) == 0 && aws_vpc_security_group_egress_rule.rpc_gateway_https[0].to_port == 443 && aws_vpc_security_group_egress_rule.rpc_gateway_to_node[0].to_port == 8547
+    error_message = "Gateway HTTPS and node egress must both have standalone ownership so subsequent plans cannot remove the node rule."
+  }
+  assert {
     condition     = aws_ecs_service.rpc_gateway[0].desired_count == 2 && aws_ecs_task_definition.rpc_gateway[0].runtime_platform[0].cpu_architecture == "ARM64"
     error_message = "The router must run redundantly outside the Nitro host."
   }
@@ -93,7 +97,7 @@ run "isolated_sepolia_pilot" {
     error_message = "Provisioning a pilot must not cut over existing traffic or shorten polling."
   }
   assert {
-    condition     = aws_ebs_volume.rpc_staging[0].encrypted && aws_ebs_volume.rpc_staging[0].size == 4096 && length(local.rpc_user_data) < 16384
+    condition     = aws_ebs_volume.rpc_staging[0].encrypted && aws_ebs_volume.rpc_staging[0].size == 4096 && aws_ebs_volume.rpc_staging[0].throughput >= 500 && length(local.rpc_user_data) < 16384
     error_message = "Staging must be encrypted, large enough for assembly and user data must fit EC2's limit."
   }
   assert {

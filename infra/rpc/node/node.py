@@ -21,6 +21,8 @@ DATA = Path('/srv/nitro')
 STAGING = Path('/srv/nitro-staging')
 RUNTIME = Path('/run/plether-rpc')
 MARKER = '.plether-snapshot-complete'
+DATA_LABEL = 'plether-data'
+STAGING_LABEL = 'plether-stg'
 
 
 def command(*args, capture=False):
@@ -65,6 +67,8 @@ def choose_nvme(devices):
 
 
 def mount_disk(device, target, label):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,12}', label):
+        raise ValueError('XFS labels must contain at most 12 ASCII characters')
     if os.path.ismount(target):
         actual = command('findmnt', '-n', '-o', 'SOURCE', '--target', str(target), capture=True).strip()
         if os.path.realpath(actual) != os.path.realpath(device):
@@ -93,7 +97,7 @@ def mount_disk(device, target, label):
 
 def initialize(config):
     devices = json.loads(command('lsblk', '--bytes', '--json', '--nodeps', '-o', 'NAME,MODEL,SIZE,TYPE,SERIAL', capture=True))['blockdevices']
-    mount_disk(choose_nvme(devices), DATA, 'plether-nitro')
+    mount_disk(choose_nvme(devices), DATA, DATA_LABEL)
     volume = config['staging_volume_id'].replace('-', '')
     if not volume:
         raise ValueError('initial import requires a staging EBS volume')
@@ -101,7 +105,7 @@ def initialize(config):
         devices = json.loads(command('lsblk', '--bytes', '--json', '--nodeps', '-o', 'NAME,SERIAL,TYPE', capture=True))['blockdevices']
         matches = [d for d in devices if d.get('serial') == volume and d.get('type') == 'disk']
         if len(matches) == 1:
-            mount_disk('/dev/' + matches[0]['name'], STAGING, 'plether-stage')
+            mount_disk('/dev/' + matches[0]['name'], STAGING, STAGING_LABEL)
             return
         time.sleep(5)
     raise ValueError('staging volume attachment did not appear')

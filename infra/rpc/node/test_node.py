@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -72,6 +73,25 @@ class BootstrapPolicyTests(unittest.TestCase):
         with patch.object(node.os.path, 'ismount', return_value=False):
             with self.assertRaisesRegex(ValueError, 'data mount absent'):
                 node.prepare(self.config, self.parent, 'ap-southeast-1')
+
+    def test_initializer_supplies_valid_xfs_labels_for_both_identified_disks(self):
+        devices = [
+            {'name': 'nvme0n1', 'model': 'Amazon EC2 NVMe Instance Storage', 'size': 3750000000000, 'type': 'disk', 'serial': 'AWSfixture'},
+            {'name': 'nvme1n1', 'model': 'Amazon Elastic Block Store', 'size': 4398046511104, 'type': 'disk', 'serial': 'vol0123456789abcdef0'},
+        ]
+        with patch.object(node, 'command', return_value=json.dumps({'blockdevices': devices})), patch.object(node, 'mount_disk') as mount:
+            node.initialize({'staging_volume_id': 'vol-0123456789abcdef0'})
+        self.assertEqual(mount.call_count, 2)
+        self.assertEqual(mount.call_args_list[0].args[:2], ('/dev/nvme0n1', node.DATA))
+        self.assertEqual(mount.call_args_list[1].args[:2], ('/dev/nvme1n1', node.STAGING))
+        for call in mount.call_args_list:
+            self.assertLessEqual(len(call.args[2].encode('ascii')), 12)
+
+    def test_invalid_xfs_label_is_rejected_before_any_disk_command(self):
+        with patch.object(node, 'command') as command:
+            with self.assertRaisesRegex(ValueError, 'XFS labels'):
+                node.mount_disk('/dev/fixture', node.DATA, 'plether-nitro')
+        command.assert_not_called()
 
     def test_download_and_database_are_separate_mounts_and_checksums_are_mandatory(self):
         args = node.docker(self.config, 'ap-southeast-1', bootstrap=True)

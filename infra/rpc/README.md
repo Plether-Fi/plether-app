@@ -170,6 +170,12 @@ process after changing its parent credentials or runtime configuration.
 Treat restricted Nitro logs as potentially sensitive provider diagnostics;
 gateway logs contain only readiness flags, routing role and duration.
 
+The initial deployed identifiers and reviewed pins are recorded in
+`infra/terraform-rpc/sepolia.tfvars.json`; it contains only non-secret context
+and parameter names. Use it with the standalone backend, never the application
+entry point. After staging removal, its `staging_volume_gib` must be zero so a
+future plan does not recreate a temporary import volume.
+
 The gateway caps requests at 512 KiB, responses at 8 MiB, batches at 20 calls,
 and each task at 16 concurrent requests / two trace simulations. Log scans
 require an explicit block hash or numeric range of at most 2,001 blocks. Only
@@ -179,8 +185,33 @@ never automatically replayed after an ambiguous failure. Reverts are preserved.
 
 ## Provisioning and publishing
 
-1. Review a saved Terraform plan using the existing Sepolia base variables
-   plus the reviewed RPC overlay. Keep `gateway_image = ""` initially. The first
+Use `infra/terraform-rpc` for the live pilot. Its separate backend key is
+`plether/sepolia/rpc/terraform.tfstate` in the existing state bucket. The entry
+point reads the existing VPC, public subnets, application security group,
+cluster and GitHub OIDC provider as data sources; it does not manage them or
+require database, application signer or telemetry credentials. RPC definitions
+are symlinked from `infra/terraform` so the two entry points share their actual
+resource definitions, bootstrap and guard tests.
+
+Keep `provision_sepolia_rpc = false` in the application stack. Enable it only
+in the standalone RPC stack; never manage the same RPC resources in both states.
+The standalone context inputs are `existing_vpc_id`,
+`existing_public_subnet_ids` (two public AZs), `existing_ecs_cluster_name` and
+`existing_ecs_security_group_id`, plus `operations_alarm_sns_topic_arn` and the
+reviewed RPC overlay. The initial plan must contain only new RPC resources;
+reject application changes or existing network/cluster ownership.
+
+```bash
+AWS_PROFILE=plether terraform -chdir=infra/terraform-rpc init \
+  -backend-config=backend.sepolia.hcl -lockfile=readonly
+AWS_PROFILE=plether terraform -chdir=infra/terraform-rpc plan \
+  -var-file=/absolute/protected/path/rpc-only.tfvars.json \
+  -out=/absolute/protected/path/rpc.tfplan
+```
+
+1. Review a saved Terraform plan using only the standalone network/cluster
+   context and reviewed RPC overlay. Do not supply application tfvars. Keep
+   `gateway_image = ""` initially. The first
    apply creates the ECR repository and node, without starting gateway tasks.
    No application URL is switched by either apply.
 2. Configure GitHub environment `rpc-admin-sepolia` with reviewers and master-
@@ -228,8 +259,12 @@ staging volume. Nitro imports with checksums and `then-quit`, records completion
 then starts serving. An interrupted/unknown database requires operator
 inspection; the service never deletes it automatically.
 
-Staging adds approximately **$393/month, or $0.54/hour**, at the inspected
-Singapore gp3 storage price while it exists. This is separate from the steady-
+Staging uses 500 MiB/s throughput to avoid a 125 MiB/s bottleneck during parts
+concatenation and extraction. At the Singapore rates checked on 5 November,
+this adds $18/month in provisioned throughput to the approximately $393/month
+capacity charge: **$411/month, or $0.56/hour**, only while the disk exists.
+The throughput increase is about $0.025/hour and does not require stopping the
+host. This is separate from the steady-
 state node budget. After a successful import, unmount staging on the host,
 remove its UUID entry from `/etc/fstab`, then set `staging_volume_gib = 0` and
 review the plan to detach/delete the staging volume. This updates the runtime
@@ -238,6 +273,9 @@ charges until deleted. Inspect data-volume IDs carefully before cleanup.
 
 Never stop/start the **EC2 host** as an upgrade or restart procedure: local
 instance-store data is lost on stop/termination. Restart the Nitro process.
+Bootstrap user data is create-only and ignored for existing hosts; reviewed
+helper/service repairs are applied through SSM, preserving the existing disk
+guards. AMI/instance replacement is still blocked by `prevent_destroy`.
 On host loss, keep live traffic on the qualified backup and perform an explicit
 snapshot re-seed on a replacement. Do not treat image rollback as database
 rollback. This pilot includes no automatic host replacement or data deletion.
@@ -249,6 +287,45 @@ means SSM accepted the process restart; inspect readiness afterwards. It refuses
 to interrupt a service still importing its snapshot.
 
 ## Qualification and follow-up
+
+The bounded operator helper `infra/rpc/ops/finish_bootstrap.py` waits for a
+completed import and head catch-up, then runs `qualify.mjs` as a short-lived VPC
+task using the gateway execution role's existing secret injection. It verifies
+the direct primary chain, syncing status, fresh latest head, common canonical
+latest/safe/finalized hashes and safe-state reads against Alchemy. Trace
+capabilities are recorded separately and do not authorize an AA cutover.
+
+With explicit `--cleanup-staging`, the helper saves and checks a cleanup plan
+before unmounting anything. The only permitted mutations are deleting this
+deployment's named staging attachment/volume and clearing that volume ID in the
+RPC config parameter. It checks the volume serial and import marker on the
+host, unmounts staging, removes only its fstab entry, applies the checked plan
+and repeats qualification after a process restart. Any unexpected plan change
+or failed check stops completion with staging preserved whenever still mounted.
+The data disk and EC2 host are never deletion targets. Completion status and
+canary results are written as credential-free JSON in the operator directory.
+If the deployed config still matches its checked-in copy, staging cleanup sets
+that copy to zero; commit this small configuration update after completion.
+
+The helper is specific to this pilot's node/volume IDs; review them before
+using it for a different deployment. Run it from an authenticated operator
+session with the pinned SDK in `ops/requirements.txt`, a protected directory
+containing the prepared non-secret `rpc-only.tfvars.json` inputs, and
+Terraform 1.16.x. It has a bounded wait and does not recover an interrupted
+database by deleting it.
+
+```bash
+python infra/rpc/ops/finish_bootstrap.py \
+  --directory /absolute/protected/path \
+  --terraform /absolute/path/to/terraform \
+  --hours 24 --cleanup-staging
+```
+
+During the first launch, cloud-init recorded the original invalid XFS-label
+failure. The corrected helper and unit were installed through SSM on the same
+host, and the existing cloud-init result remains as an audit record. Use the
+current systemd state, import marker, gateway probes and completion report to
+assess the repaired service; do not restart cloud-init with the old user data.
 
 Offline CI covers gateway behavior, bootstrap policy and Terraform mock plans.
 These checks do not prove a multi-terabyte restore or Nitro RPC compatibility.
