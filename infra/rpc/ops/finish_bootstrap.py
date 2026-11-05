@@ -94,7 +94,8 @@ def main():
                 raise RuntimeError('Remote completion step failed; diagnostic content suppressed')
             time.sleep(3)
         raise TimeoutError('Remote completion step timed out')
-    progress_commands = json.loads((work / 'progress.json').read_text())['Parameters']['commands']
+    seed = json.loads((work / 'rpc-only.tfvars.json').read_text())
+    progress_commands = ["python3 - <<'REMOTE'\n" + Path(__file__).with_name('progress.py').read_text() + "\nREMOTE"]
     canary_source = Path(__file__).with_name('qualify.mjs').read_text()
     # Only the existing RPC origin is read, and it stays in process memory.
     reference_url = ssm.get_parameter(Name='/plether/sepolia/rpc-node/backup-url', WithDecryption=True)['Parameter']['Value']
@@ -108,9 +109,16 @@ def main():
         except Exception:
             return None
     def primary_canary():
-        task = json.loads((work / 'run-canary.json').read_text())
-        task['startedBy'] = 'rpc-primary-qualification'
-        task['overrides']['containerOverrides'][0]['command'] = ['node', '--input-type=module', '-e', canary_source]
+        service = ecs.describe_services(cluster='plether-sepolia', services=['plether-sepolia-rpc-gateway'])['services'][0]
+        definition = ecs.describe_task_definition(taskDefinition=service['taskDefinition'])['taskDefinition']
+        require(definition['executionRoleArn'] == 'arn:aws:iam::932542905614:role/plether-sepolia-rpc-gateway-execution' and not definition.get('taskRoleArn'), 'unexpected_canary_role')
+        require(len(definition['containerDefinitions']) == 1, 'unexpected_canary_containers')
+        container = definition['containerDefinitions'][0]
+        require(container['name'] == 'rpc-gateway' and container['image'] == seed['sepolia_rpc']['gateway_image'], 'unexpected_canary_image')
+        require({s['name'] for s in container.get('secrets', [])} <= {'RPC_GATEWAY_TOKEN', 'RPC_BACKUP_URL', 'RPC_BACKUP_TOKEN', 'RPC_REFERENCE_URL', 'RPC_REFERENCE_TOKEN'}, 'unexpected_canary_secrets')
+        task = {'cluster': 'plether-sepolia', 'taskDefinition': service['taskDefinition'], 'launchType': 'FARGATE', 'platformVersion': '1.4.0', 'startedBy': 'rpc-primary-qualification',
+            'networkConfiguration': {'awsvpcConfiguration': {'subnets': seed['existing_public_subnet_ids'], 'securityGroups': [seed['existing_ecs_security_group_id']], 'assignPublicIp': 'ENABLED'}},
+            'overrides': {'containerOverrides': [{'name': 'rpc-gateway', 'command': ['node', '--input-type=module', '-e', canary_source]}]}}
         response = ecs.run_task(**task)
         require(not response.get('failures') and len(response['tasks']) == 1, 'canary_launch_failed')
         arn = response['tasks'][0]['taskArn']

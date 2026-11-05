@@ -306,7 +306,7 @@ that copy to zero; commit this small configuration update after completion.
 The helper is specific to this pilot's node/volume IDs; review them before
 using it for a different deployment. Run it from an authenticated operator
 session with the pinned SDK in `ops/requirements.txt`, a protected directory
-containing the prepared RPC inputs and bounded canary/progress requests, and
+containing the prepared non-secret `rpc-only.tfvars.json` inputs, and
 Terraform 1.16.x. It has a bounded wait and does not recover an interrupted
 database by deleting it.
 
