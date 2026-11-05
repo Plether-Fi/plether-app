@@ -1,0 +1,216 @@
+{
+  "checked_at_utc": "2026-11-05T16:17:27.155055+00:00",
+  "scope": "Snapshot metadata/manifest/part availability and sampled existing-provider historical blob access; no provisioning or full snapshot restore.",
+  "snapshot": {
+    "url": "https://snapshot.arbitrum.foundation/sepolia-rollup/2026-10-20-dbd26a00/",
+    "metadata_sha256": "4b1235f621461190a7b073373f4a60a250885223166f46ba1d2460466becb73a",
+    "manifest_sha256": "1f098e0881c872ac09901a0abae5ae0c12c581088783edc82931c9adfac2497f",
+    "database_type": "pebble",
+    "state_scheme": "path",
+    "snapshot_kind": "full-path",
+    "chain_name": "sepolia-rollup",
+    "snapshot_date": "2026-10-20",
+    "nitro_build": "v3.12.2-rc.2-5f02f3f",
+    "runtime_release": "v3.12.2-5f02f3f",
+    "runtime_image": "offchainlabs/nitro-node@sha256:87548501c3ee41cff84e6764cc86f65eb7f0a14e2e50a0d3219d462e5793680d",
+    "snapshot_and_runtime_build_commit": "5f02f3f",
+    "total_bytes": 2007048622080,
+    "manifest_matches_metadata": true,
+    "parts": [
+      {
+        "filename": "full-path.tar.part0000",
+        "size_bytes": 536870912000,
+        "size_human": "500.00 GB",
+        "sha256": "3d280afea3bcb0185e36f771a4ffe7e94511f352735b17d81b66524fa765a549",
+        "xxhash": "972585cfc0c1ef57",
+        "head_status": 200,
+        "content_length_matches": true
+      },
+      {
+        "filename": "full-path.tar.part0001",
+        "size_bytes": 536870912000,
+        "size_human": "500.00 GB",
+        "sha256": "1e996e717157b22bfef3978cc0be829fb3e9af0fef66032ec903ffab313ea93c",
+        "xxhash": "ec15938e70d07edf",
+        "head_status": 200,
+        "content_length_matches": true
+      },
+      {
+        "filename": "full-path.tar.part0002",
+        "size_bytes": 536870912000,
+        "size_human": "500.00 GB",
+        "sha256": "529f977ce83bc468feb7a3231ab64fb0754086eaf010181e8dba84df0c04805e",
+        "xxhash": "6cc8adef53bdada4",
+        "head_status": 200,
+        "content_length_matches": true
+      },
+      {
+        "filename": "full-path.tar.part0003",
+        "size_bytes": 396435886080,
+        "size_human": "369.21 GB",
+        "sha256": "a24a93b39d150fffe20c5cac50552b9413bf62566d700199da156644d3447a10",
+        "xxhash": "96dd7bf0e228b2d9",
+        "head_status": 200,
+        "content_length_matches": true
+      }
+    ],
+    "capacity": {
+      "instance_store_bytes": 3750000000000,
+      "required_data_bytes_at_1_3x": 2609163208704,
+      "staging_bytes": 4398046511104,
+      "required_staging_bytes_at_2_1x": 4214802106368,
+      "fits_selected_disks": true
+    },
+    "metadata_client": {
+      "default_python_urllib_http_status": 403,
+      "explicit_bootstrap_user_agent": "plether-rpc-bootstrap/1",
+      "explicit_bootstrap_user_agent_http_status": 200
+    }
+  },
+  "newer_candidate_not_selected": {
+    "url": "https://snapshot.arbitrum.foundation/sepolia-rollup/2026-10-31-5cf7a67f/",
+    "metadata_sha256": "1b51771e3f4b1433e81a30c821be08744031b7f27775d573888b18fc80a48b13",
+    "nitro_build": "v3.12.3-rc.4-7116cfc",
+    "official_registry_matching_rc_tag_http_status": 404,
+    "official_registry_matching_stable_tag_http_status": 404,
+    "official_github_commit_lookup_http_status": 422,
+    "reason": "Retain the available snapshot whose build commit matches the existing official stable image; do not infer runtime compatibility from database scheme alone."
+  },
+  "provider": {
+    "checked_at_utc": "2026-11-05T16:17:27.155055+00:00",
+    "aws_account": "932542905614",
+    "provider": "existing Alchemy account",
+    "ethereum_chain_id": 11155111,
+    "arbitrum_chain_id": 421614,
+    "beacon_api": "/eth/v1/beacon/blobs/{slot}?versioned_hashes=...",
+    "samples": [
+      {
+        "date_utc": "2026-10-19",
+        "slot": 11389800,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 9,
+        "requested_versioned_hashes": [
+          "0x014bddf79ba7024ef63e924621df59a2e69cae35ef6372840c87414d2997252c",
+          "0x010ef0d830f3be5009d26e085505a75226038e0c94d8c23890292f51235fc07c"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 11948031,
+        "execution_block_hash": "0x1718019f47a0b3d8e20aaec40941fe4a2424dbc7f4280f3132ba4895efa51014",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-10-20",
+        "slot": 11397000,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 5,
+        "requested_versioned_hashes": [
+          "0x01e0218d12fc917318a5bdf67d5ab1581631473ad452e3b734e78e7b22fd7cb6",
+          "0x017decbeaee1884a680886f2864e4a68ab8da1e5c9cf4130d7a90d14bc2715cb"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 11955153,
+        "execution_block_hash": "0x5ec2de56d67d15306e75f3479eb30bbe9ee6a350705707cbd779b01c13a9e83a",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-10-21",
+        "slot": 11404200,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 11,
+        "requested_versioned_hashes": [
+          "0x010eb10aec4d15e1e6aabf3d8e0041ec10bc76acd17ca1fe842b821853f623d5",
+          "0x01a6df05f8da80700889e9f069d8ccce6a5b44e04e80e86e17fb7681fa78ad25"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 11962274,
+        "execution_block_hash": "0x64ba4bdf794d199a5de9bf819cfe1d397939125183820011701ff095d2cfd2c5",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-10-25",
+        "slot": 11433000,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 10,
+        "requested_versioned_hashes": [
+          "0x01e7821e6c22d37c88e804401b15e4df4297cb0fdec25657eec2c652cdae200e",
+          "0x01734bdd072bdb5e372a34e2dc1480a8f85e4200601553484dc6192fddf71615"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 11990726,
+        "execution_block_hash": "0xecd931e7b30ed4d01e39fb229f355e2148808eeef5f0a7033302384d4c3200ff",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-10-31",
+        "slot": 11476200,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 20,
+        "requested_versioned_hashes": [
+          "0x0162fe23165a524495462834e8f791be701019b805f1ef6bd3c97253ff271a35",
+          "0x019fde37c2c106a0acc607491519afad38b1c0a32454cf971fdf8869909cd185"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 12033695,
+        "execution_block_hash": "0x493a00b0074cfed19572e0e1da5d67096bf8f45c61e7216ee33f1ab75e0981d7",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-11-01",
+        "slot": 11483400,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 15,
+        "requested_versioned_hashes": [
+          "0x0107b4dbd8b122c130a341dedad2d274461f9b722d94c1e69525d5e4454728a9",
+          "0x01d6472768e5816bee90552a5b195cf1ce004fa65f747982414d8b38bfc39b5f"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 12040864,
+        "execution_block_hash": "0x632b2b6176ac92389cb06373887cb252dc91985d46b4bb2d29e1750619fa70da",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-11-04",
+        "slot": 11505000,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 12,
+        "requested_versioned_hashes": [
+          "0x01a6f43ef14dce379eb51e7607df69259d991b10f100dbdec200720b022f6bf0",
+          "0x0173ad659c33e56691197fe8bbe3157a5dcf55525bdeb3bb9628a1cf045a8018"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 12062278,
+        "execution_block_hash": "0x5ed4a5d1d04933eb1938689fa368fa0b898ccaaf072d4a9a13d47379560dab0f",
+        "status": "pass"
+      },
+      {
+        "date_utc": "2026-11-05",
+        "slot": 11512200,
+        "beacon_version": "gloas",
+        "blob_commitments_in_block": 9,
+        "requested_versioned_hashes": [
+          "0x01f3d7b9f5c620b3396329bb56928a7841a226c2a7e37e841f8f0c71670fb23a",
+          "0x011007c38804087289e61ce08e3f88bf78b6e22c5f22ab772b16f15864580b58"
+        ],
+        "returned_blobs": 2,
+        "blob_bytes_each": 131072,
+        "execution_block_number": 12069336,
+        "execution_block_hash": "0xbeb8c59710ecf0d63328b8a70ae239d507a12db1de1cba331e9738a7132f3e76",
+        "status": "pass"
+      }
+    ],
+    "qualification_scope": "Read-only historical execution and blob availability samples spanning the selected snapshot date and catch-up period. Full restore, checkpoint agreement, KZG validation, continuous batch coverage, quotas and ongoing availability are qualified on the running node."
+  },
+  "remaining_live_node_gates": [
+    "Download and verify every complete snapshot part; HEAD availability does not validate their contents.",
+    "Import and replay the entire catch-up range, including actual batch blobs and Nitro KZG validation.",
+    "Verify canonical checkpoint and required recent/safe state RPC agreement.",
+    "Qualify sustained provider quotas, ongoing blob coverage, outage recovery and projected polling load."
+  ]
+}
