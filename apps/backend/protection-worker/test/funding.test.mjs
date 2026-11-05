@@ -19,6 +19,36 @@ function client(overrides = {}) { return {
 } }
 function run(c, extra = {}) { return observeFunding({ client: c, db: emptyDb, release, monitors, now: () => 1000n, ...extra }) }
 
+// The first pending-block snapshot precedes inclusion, but the later pending
+// nonce already reflects it. The replacement header includes the transaction.
+function inclusionRace() {
+  const head = { number: 11n, hash: '0xbbb', timestamp: 1000n }
+  const calls = []
+  let selected = block, latestReads = 0
+  const c = client({
+    getBlock: async request => {
+      calls.push({ method: 'block', ...request })
+      if (request.blockTag === 'latest') {
+        selected = ++latestReads === 1 ? block : head
+        return selected
+      }
+      if (request.blockTag === 'pending') return { ...selected, parentHash: '0xprevious', transactions: [] }
+      return request.blockNumber === block.number ? block : head
+    },
+    getGasPrice: async () => { calls.push({ method: 'fee' }); return selected.number === block.number ? 2n : 3n },
+    getBalance: async request => {
+      calls.push({ method: 'balance', ...request })
+      return request.blockNumber === block.number ? 10000000n : 5000000n
+    },
+    getTransactionCount: async request => {
+      calls.push({ method: 'nonce', ...request })
+      if (request.address !== address) return 0
+      return request.blockTag === 'pending' || request.blockNumber !== block.number ? 6 : 5
+    },
+  })
+  return { client: c, calls, head }
+}
+
 describe('funding inventory and liabilities', () => {
   it('rejects secrets, unknown fields, duplicates, malformed numbers and unbounded inventories', () => {
     for (const value of [[],[spec,spec],Array(17).fill(spec),[{ ...spec, privateKey: 'secret' }],[{ ...spec, gasLimit: '-1' }],[{ ...spec, valueWei: 0 }],[{ ...spec, feeBufferBps: '100001' }],[{ ...spec, component: 'private' }]]) assert.throws(() => parseMonitors(JSON.stringify(value)))
@@ -100,6 +130,100 @@ describe('fixed-block funding observer', () => {
     assert.equal(result.results[0].diagnostic,'PENDING_LIABILITY_UNKNOWN')
     const hidden=await run(client({getTransactionCount:async r=>r.blockTag==='pending'?1:0,getBlock:async r=>r.blockTag==='pending'?{parentHash:'other',transactions:[]}:block}))
     assert.equal(hidden.results[0].reason,'FUNDING_UNVERIFIED')
+  })
+  it('resamples the entire inventory after inclusion, using fresh balances, fees and journals', async () => {
+    const f = inclusionRace()
+    let journalReads = 0
+    const db = { query: async sql => {
+      assert.match(sql, /^SELECT pending_nonce/)
+      return { rows: [{ nonce: '9', cost: String(++journalReads * 100) }] }
+    } }
+    const inventory = [
+      { ...monitors[0], component: 'oracle' },
+      { ...monitors[0], component: 'liquidation', address: `0x${'2'.repeat(40)}` },
+    ]
+    const result = await run(f.client, { db, monitors: inventory })
+    assert.deepEqual(result.block, f.head)
+    assert.equal(result.results[0].state, 'ready')
+    assert.equal(result.results[0].liability, 0n)
+    assert.equal(result.results[1].liability, 200n)
+    assert.equal(journalReads, 2)
+    assert.ok(result.results.every(r => r.balance === 5000000n && r.reserve === 120000n))
+    assert.equal(f.calls.filter(c => c.method === 'balance' && c.blockNumber === 11n).length, 2)
+    assert.equal(f.calls.filter(c => c.method === 'fee').length, 2)
+  })
+  it('does not hide a low or depleted balance after the raced transaction lands', async () => {
+    for (const balance of [0n, 100n]) {
+      const f = inclusionRace(), read = f.client.getBalance
+      f.client.getBalance = async request => {
+        const original = await read(request)
+        return request.blockNumber === 11n ? balance : original
+      }
+      const result = await run(f.client)
+      assert.equal(result.results[0].balance, balance)
+      assert.equal(result.results[0].reason, balance === 0n ? 'WORKER_INSUFFICIENT_FUNDS' : 'FUNDING_LOW')
+      assert.notEqual(result.results[0].state, 'ready')
+    }
+  })
+  it('keeps unknown evidence without resampling accounts when the head has not advanced', async () => {
+    const f = inclusionRace()
+    Object.assign(f.head, block)
+    const result = await run(f.client)
+    assert.equal(result.results[0].diagnostic, 'PENDING_LIABILITY_UNKNOWN')
+    assert.equal(result.results[0].liability, undefined)
+    assert.equal(f.calls.filter(c => c.method === 'balance').length, 1)
+  })
+  it('stops after one resample even when a nonce family remains unavailable', async () => {
+    const f = inclusionRace(), read = f.client.getTransactionCount
+    f.client.getTransactionCount = async request => request.blockTag === 'pending' ? 7 : read(request)
+    const result = await run(f.client)
+    assert.equal(result.block.number, 11n)
+    assert.equal(result.results[0].diagnostic, 'PENDING_LIABILITY_UNKNOWN')
+    assert.equal(result.results[0].liability, undefined)
+    assert.equal(f.calls.filter(c => c.method === 'block' && c.blockTag === 'latest').length, 2)
+    assert.equal(f.calls.filter(c => c.method === 'balance').length, 2)
+  })
+  it('rejects regressed, reorged, stale and future replacement headers', async () => {
+    for (const change of [
+      { number: 9n }, { number: 10n, hash: '0xother' }, { hash: undefined },
+      { number: null }, { number: undefined }, { number: 11 },
+      { timestamp: 984n }, { timestamp: 1003n },
+    ]) {
+      const f = inclusionRace()
+      Object.assign(f.head, change)
+      await assert.rejects(run(f.client))
+    }
+    const f = inclusionRace(), read = f.client.getBlock
+    f.client.getBlock = async request => {
+      const result = await read(request)
+      return request.blockNumber === 11n ? { ...result, hash: '0xreorged' } : result
+    }
+    await assert.rejects(run(f.client), /not canonical or fresh/)
+  })
+  it('does not fall back to the initial inventory when a resampled account read fails', async () => {
+    const f = inclusionRace(), read = f.client.getBalance
+    f.client.getBalance = async request => {
+      if (request.blockNumber === 11n) throw Error('private RPC detail')
+      return read(request)
+    }
+    const result = await run(f.client)
+    assert.equal(result.block.number, 11n)
+    assert.equal(result.results[0].diagnostic, 'DEPENDENCY_FAILED')
+    assert.equal(result.results[0].balance, undefined)
+    assert.ok(!JSON.stringify(result.results, (_, value) => typeof value === 'bigint' ? value.toString() : value).includes('private RPC detail'))
+  })
+  it('propagates replacement-tip failures and rechecks the chain on resampling', async () => {
+    const failedTip = inclusionRace(), read = failedTip.client.getBlock
+    let tips = 0
+    failedTip.client.getBlock = async request => {
+      if (request.blockTag === 'latest' && ++tips === 2) throw Error('tip unavailable')
+      return read(request)
+    }
+    await assert.rejects(run(failedTip.client), /tip unavailable/)
+    const wrongChain = inclusionRace()
+    let chains = 0
+    wrongChain.client.getChainId = async () => ++chains === 1 ? 421614 : 1
+    await assert.rejects(run(wrongChain.client), /chain mismatch/)
   })
   it('rejects same-height reorgs, regressions, stale/future heads and wrong chains', async () => {
     await assert.rejects(run(client(),{previous:{...block,hash:'different'}}))
