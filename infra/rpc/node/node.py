@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 DATA = Path('/srv/nitro')
 STAGING = Path('/srv/nitro-staging')
@@ -170,7 +170,9 @@ def prepare(config, parent, region):
         raise ValueError('interrupted or unknown database requires operator inspection before reimport')
     if not os.path.ismount(STAGING):
         raise ValueError('separate staging mount is required for snapshot import')
-    with urlopen(config['snapshot_url'] + 'metadata.json', timeout=30) as response:
+    request = Request(config['snapshot_url'] + 'metadata.json',
+                      headers={'User-Agent': 'plether-rpc-bootstrap/1'})
+    with urlopen(request, timeout=30) as response:
         if response.url != config['snapshot_url'] + 'metadata.json':
             raise ValueError('snapshot metadata redirect is not allowed')
         raw = response.read(1024 * 1024 + 1)

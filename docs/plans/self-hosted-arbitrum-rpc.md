@@ -214,6 +214,14 @@ Snapshot metadata checked on 28 October 2026:
 Sources: [Sepolia metadata](https://snapshot.arbitrum.foundation/sepolia-rollup/2026-10-20-dbd26a00/metadata.json),
 [Arbitrum One metadata](https://snapshot.arbitrum.foundation/arb1/2026-10-18-3d8d5959/metadata.json).
 These are snapshot-file sizes, not guarantees of live filesystem usage or growth.
+The Sepolia snapshot was rechecked on 5 November: metadata, manifest and all four
+part sizes are available and consistent. The example now pins its metadata hash.
+Eight existing-Alchemy execution/blob availability samples spanning 19 October
+through 5 November passed. See the [preflight record](evidence/sepolia-rpc-preflight-2026-11-05.json)
+and [operator notes](../../infra/rpc/README.md#snapshot-and-upstream-preflight-checked-5-november-2026).
+The newer 31 October PathDB snapshot names an unavailable runtime build, so it
+has not replaced the stable-commit-matched 20 October pin. A full restore and
+canonical-state qualification remain required before admitting traffic.
 Measure extraction, compaction and catch-up overhead. A 1.875 TB instance cannot
 hold these snapshots. Use separate temporary staging on the 3.75 TB node because
 download plus extraction can exceed its capacity. Forecast at least 90 days of

@@ -80,6 +80,46 @@ record the SHA256 of the metadata bytes and confirm the `path` scheme,
 `full-path` kind and `sepolia-rollup` chain. Nitro verifies each snapshot part
 during import. Qualification must also verify a canonical checkpoint.
 
+### Snapshot and upstream preflight checked 5 November 2026
+
+The example now pins the verified metadata SHA256 for
+`sepolia-rollup/2026-10-20-dbd26a00/`. This snapshot is available: its metadata
+and manifest return HTTP 200, all four parts have the advertised Content-Length,
+and the manifest's SHA256 entries match the metadata. The 2,007,048,622,080-byte
+archive fits the selected data disk and the bootstrap's staging/headroom checks.
+The snapshot's `v3.12.2-rc.2-5f02f3f` build shares commit `5f02f3f` with the
+pinned official stable `v3.12.2` image; no RC runtime is selected.
+
+The earlier claim that this snapshot was unavailable was incorrect. The
+unidentified Python download returned an error while curl, Go's user agent and
+an explicitly identified Python request returned HTTP 200. Bootstrap now uses
+`User-Agent: plether-rpc-bootstrap/1` and still checks the metadata digest and
+rejects redirects. Recheck availability before every launch.
+
+The official `latest-full-path.txt` pointer currently names
+`2026-10-31-5cf7a67f/`, built with `v3.12.3-rc.4-7116cfc`. That build's commit
+and matching image were unavailable from the official GitHub repository and
+Docker registry during this check, so the reviewed example retains the
+version-matched 20 October snapshot instead of adopting an unverified runtime.
+
+Existing Alchemy credentials returned the correct Ethereum/Arbitrum Sepolia
+chain IDs. Eight dated samples from 19 October through 5 November returned
+16 requested 131,072-byte blobs through Nitro's
+`/eth/v1/beacon/blobs/{slot}?versioned_hashes=...` API, plus their corresponding
+Ethereum execution blocks. For the sampled `gloas` beacon blocks, commitments
+are in `body.signed_execution_payload_bid.message.blob_kzg_commitments`; the
+older direct `body.blob_kzg_commitments` field is absent. Its absence does not
+mean the block has no blobs. The earlier empty samples were inconclusive
+because they inspected the old field.
+
+The [sanitized preflight evidence](../../docs/plans/evidence/sepolia-rpc-preflight-2026-11-05.json)
+records public block/slot identifiers, versioned hashes and snapshot pins; it
+contains no credentials. These are availability samples, not a full restore,
+continuous batch replay or KZG proof validation. Those checks, canonical/safe
+state agreement and load/quota qualification still run on the isolated node
+before traffic cutover. No new provider subscription is required by these
+preflight results, and no resources were provisioned during the checks.
+
 Create externally managed SSM **SecureStrings** without putting values in
 Terraform or command-line literals:
 
