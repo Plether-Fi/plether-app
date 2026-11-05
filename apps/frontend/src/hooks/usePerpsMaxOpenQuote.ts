@@ -23,7 +23,11 @@ export function usePerpsMaxOpenQuote({
   const canRead = enabled && account !== undefined && availableAssets !== undefined &&
     oraclePrice !== undefined && oraclePrice > 0n && publishTime !== undefined && publishTime > 0 &&
     protectionRewardsAssets !== undefined && Number.isSafeInteger(selectedMaxLeverageBps) && selectedMaxLeverageBps > 0
-  const result = useQuery({
+  // Price and balance updates may retain the last number for display only.
+  // Never carry it across a different account, direction, or user-selected risk settings.
+  const displayKey = JSON.stringify([PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_ARBITRUM_SEPOLIA,
+    account, side, protectionRewardsAssets?.toString(), selectedMaxLeverageBps])
+  const result = useQuery<Awaited<ReturnType<typeof quotePerpsMaxOpen>>>({
     // Time remains a readiness gate, not a new quote identity. Polling and
     // explicit trading invalidations refresh chain state without clearing a
     // result solely because the same price has a newer publication timestamp.
@@ -32,6 +36,10 @@ export function usePerpsMaxOpenQuote({
       account, side, availableAssets?.toString(), oraclePrice?.toString(),
       protectionRewardsAssets?.toString(), selectedMaxLeverageBps],
     enabled: canRead,
+    meta: { maxOpenDisplayKey: displayKey },
+    placeholderData: (previous, previousQuery) => canRead &&
+      previousQuery?.meta?.maxOpenDisplayKey === displayKey && previousQuery.state.status === 'success'
+      ? previous : undefined,
     staleTime: MAX_OPEN_STALE_TIME_MS,
     gcTime: 5 * 60_000,
     refetchInterval: MAX_OPEN_REFETCH_INTERVAL_MS,
@@ -46,12 +54,14 @@ export function usePerpsMaxOpenQuote({
       })
     },
   })
-  const data = canRead && !result.isError ? result.data : undefined
+  const displayData = canRead && !result.isError ? result.data : undefined
+  const data = result.isPlaceholderData ? undefined : displayData
   return {
     quote: data?.quote,
+    displayQuote: displayData?.quote,
     marginDelta: data?.marginDelta,
     error: canRead ? result.error : undefined,
-    isPending: canRead && result.isLoading,
+    isPending: canRead && (result.isLoading || result.isPlaceholderData),
     isFetching: canRead && result.isFetching,
   }
 }

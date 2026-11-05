@@ -187,6 +187,44 @@ describe('Perps trade preview debounce', () => {
       }
     })
 
+    it('retains the filled Max and shortcut appearance while a new price quote loads', async () => {
+      const previous = maximum(700n)
+      wagmiMocks.maxQuote.mockReturnValue(previous)
+      const view = render(<PerpsTradeTicket {...props} />)
+      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      wagmiMocks.maxQuote.mockReturnValue({ quote: undefined, marginDelta: undefined,
+        displayQuote: previous.quote, isPending: true, isFetching: true })
+      view.rerender(<PerpsTradeTicket {...props} oraclePriceRaw={100_001_000n} />)
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('700')
+      expect(screen.getByRole('button', { name: 'Max: 700 plDXY' })).toBeDisabled()
+      expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+      expect(screen.getByRole('group', { name: 'Order quantity shortcuts' })).toHaveAttribute('aria-busy', 'true')
+      for (const button of shortcuts().getAllByRole('button')) {
+        expect(button).toBeDisabled()
+        expect(button).not.toHaveClass('disabled:opacity-50')
+      }
+      fireEvent.click(shortcuts().getByRole('button', { name: '50%' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('700')
+      await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+      expect(wagmiMocks.prepareOrder).not.toHaveBeenCalled()
+      wagmiMocks.maxQuote.mockReturnValue(maximum(600n))
+      view.rerender(<PerpsTradeTicket {...props} oraclePriceRaw={100_001_000n} />)
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('600')
+      expect(shortcuts().getByRole('button', { name: '100%' })).toBeEnabled()
+    })
+
+    it('keeps shortcuts visually steady during a periodic refresh while disabling clicks', () => {
+      const previous = maximum(700n)
+      wagmiMocks.maxQuote.mockReturnValue(previous)
+      const view = render(<PerpsTradeTicket {...props} />)
+      wagmiMocks.maxQuote.mockReturnValue({ ...previous, isFetching: true })
+      view.rerender(<PerpsTradeTicket {...props} />)
+      const max = screen.getByRole('button', { name: 'Max: 700 plDXY' })
+      expect(max).toBeDisabled()
+      expect(max).not.toHaveClass('disabled:opacity-50')
+      expect(shortcuts().getByRole('button', { name: '100%' })).not.toHaveClass('disabled:opacity-50')
+    })
+
     it.each([
       ['loading', { isPending: true }],
       ['refreshing', { isFetching: true }],

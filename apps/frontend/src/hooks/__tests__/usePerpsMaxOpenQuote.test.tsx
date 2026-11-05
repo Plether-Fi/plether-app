@@ -69,10 +69,38 @@ it.each<Partial<Input>>([
   mocks.quotePerpsMaxOpen.mockReturnValueOnce(pending.promise)
   rerender({ ...input, ...override })
   expect(result.current.quote).toBeUndefined()
+  expect(result.current.displayQuote).toEqual(override.oraclePrice !== undefined || override.availableAssets !== undefined ? quote : undefined)
   expect(result.current.isPending).toBe(true)
   await act(async () => { pending.resolve(successful) })
   await waitFor(() => expect(result.current.quote).toEqual(quote))
   expect(mocks.quotePerpsMaxOpen).toHaveBeenCalledTimes(2)
+})
+
+it('keeps an old price quote for display only until the new maximum arrives', async () => {
+  const pending = deferred<typeof successful>()
+  const { result, rerender } = renderHook(props => usePerpsMaxOpenQuote(props), { initialProps: input, wrapper: Wrapper })
+  await waitFor(() => expect(result.current.quote).toEqual(quote))
+  mocks.quotePerpsMaxOpen.mockReturnValueOnce(pending.promise)
+  rerender({ ...input, oraclePrice: 100_001_000n })
+  expect(result.current.displayQuote).toEqual(quote)
+  expect(result.current.quote).toBeUndefined()
+  expect(result.current.marginDelta).toBeUndefined()
+  expect(result.current.isPending).toBe(true)
+  const updated = { ...successful, quote: { ...quote, maxSizeDelta: 8n * quantum } }
+  await act(async () => { pending.resolve(updated) })
+  await waitFor(() => expect(result.current.quote).toEqual(updated.quote))
+  expect(result.current.displayQuote).toEqual(updated.quote)
+})
+
+it('drops display-only data if a price refresh fails', async () => {
+  const { result, rerender } = renderHook(props => usePerpsMaxOpenQuote(props), { initialProps: input, wrapper: Wrapper })
+  await waitFor(() => expect(result.current.quote).toEqual(quote))
+  mocks.quotePerpsMaxOpen.mockRejectedValueOnce(new Error('Refresh failed'))
+  rerender({ ...input, oraclePrice: 100_001_000n })
+  await waitFor(() => expect(result.current.error).toBeTruthy())
+  expect(result.current.displayQuote).toBeUndefined()
+  expect(result.current.quote).toBeUndefined()
+  expect(result.current.marginDelta).toBeUndefined()
 })
 
 it('keeps a cached maximum when only the oracle publication time changes', async () => {

@@ -56,6 +56,10 @@ change alone does not clear or restart the quote; account, side, price, balance,
 protection rewards, leverage, and deployment addresses remain part of its key.
 Quotes still refresh every fifteen seconds and after trading invalidation. Max
 remains disabled during refresh, and a failed refresh hides the previous quote.
+Automatic price and balance refreshes retain the last number for display only,
+so Max, a filled maximum, and shortcut styling stay steady while fetching. This
+display value never supplies executable size or margin; changing account,
+direction, leverage, or protection settings clears it immediately.
 Review recalculates with its verified block and funding budget, then retains the
 existing adverse-price assessments, funding checks, and final simulation.
 
