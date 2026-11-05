@@ -1,0 +1,909 @@
+{
+  "sourceCommit": "1209ca8a5b94a4fb6323c7c4585846ed93db3932",
+  "source": "packages/perps/src/CfdEngineSettlementSidecar.sol",
+  "abi": [
+    {
+      "type": "function",
+      "name": "executeOpen",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "delta",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "valid",
+              "type": "bool"
+            },
+            {
+              "name": "revertCode",
+              "type": "uint8"
+            },
+            {
+              "name": "openState",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "addedMaxProfitAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "oldEntryNotional",
+                  "type": "uint256"
+                },
+                {
+                  "name": "newEntryPrice",
+                  "type": "uint256"
+                },
+                {
+                  "name": "newEntryCostAssetAtoms",
+                  "type": "uint256"
+                },
+                {
+                  "name": "newSize",
+                  "type": "uint256"
+                },
+                {
+                  "name": "newEntryNotional",
+                  "type": "uint256"
+                },
+                {
+                  "name": "postSkewAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "vpiAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "notionalAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "executionFeeAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "tradeCostAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "maintenanceMarginAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "initialMarginRequirementAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "liquidationReserveTargetAssets",
+                  "type": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "posSide",
+              "type": "uint8"
+            },
+            {
+              "name": "newPosSize",
+              "type": "uint256"
+            },
+            {
+              "name": "newPosEntryPrice",
+              "type": "uint256"
+            },
+            {
+              "name": "newPosEntryCostAssetAtoms",
+              "type": "uint256"
+            },
+            {
+              "name": "posVpiAccruedDelta",
+              "type": "int256"
+            },
+            {
+              "name": "posMaxProfitIncrease",
+              "type": "uint256"
+            },
+            {
+              "name": "positionMarginAfterOpen",
+              "type": "uint256"
+            },
+            {
+              "name": "liquidationReserveBeforeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "liquidationReserveAfterAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "sideOiIncrease",
+              "type": "uint256"
+            },
+            {
+              "name": "sideEntryNotionalDelta",
+              "type": "int256"
+            },
+            {
+              "name": "requiredEffectiveAssetsAfterAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "sideMaxProfitIncrease",
+              "type": "uint256"
+            },
+            {
+              "name": "tradeCostAssets",
+              "type": "int256"
+            },
+            {
+              "name": "marginDeltaAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "netMarginChange",
+              "type": "int256"
+            },
+            {
+              "name": "poolRebatePayoutAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "executionFeeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pendingCarryAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveBeforeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveAfterAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveFromPledgeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "sideTotalMarginBefore",
+              "type": "uint256"
+            },
+            {
+              "name": "sideTotalMarginAfterOpen",
+              "type": "uint256"
+            },
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "sizeDelta",
+              "type": "uint256"
+            },
+            {
+              "name": "price",
+              "type": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "currentPosition",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "size",
+              "type": "uint256"
+            },
+            {
+              "name": "margin",
+              "type": "uint256"
+            },
+            {
+              "name": "entryPrice",
+              "type": "uint256"
+            },
+            {
+              "name": "maxProfitAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "side",
+              "type": "uint8"
+            },
+            {
+              "name": "lastUpdateTime",
+              "type": "uint64"
+            },
+            {
+              "name": "lastCarryTimestamp",
+              "type": "uint64"
+            },
+            {
+              "name": "vpiAccrued",
+              "type": "int256"
+            }
+          ]
+        },
+        {
+          "name": "publishTime",
+          "type": "uint64"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "executeClose",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "delta",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "safeMarginReleaseAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeFromReleasedMarginAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "netReleasedMarginAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "valid",
+              "type": "bool"
+            },
+            {
+              "name": "revertCode",
+              "type": "uint8"
+            },
+            {
+              "name": "closeState",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "realizedPnlAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "marginToFreeAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "remainingMarginAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "remainingSize",
+                  "type": "uint256"
+                },
+                {
+                  "name": "closedEntryCostAssetAtoms",
+                  "type": "uint256"
+                },
+                {
+                  "name": "remainingEntryCostAssetAtoms",
+                  "type": "uint256"
+                },
+                {
+                  "name": "maxProfitReductionAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "proportionalAccrualAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "vpiDeltaAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "executionFeeAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "frozenSpreadAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "netSettlementAssets",
+                  "type": "int256"
+                }
+              ]
+            },
+            {
+              "name": "postLongOi",
+              "type": "uint256"
+            },
+            {
+              "name": "postShortOi",
+              "type": "uint256"
+            },
+            {
+              "name": "posMarginAfter",
+              "type": "uint256"
+            },
+            {
+              "name": "posSizeDelta",
+              "type": "uint256"
+            },
+            {
+              "name": "posEntryPriceAfter",
+              "type": "uint256"
+            },
+            {
+              "name": "posEntryCostAfterAssetAtoms",
+              "type": "uint256"
+            },
+            {
+              "name": "liquidationReserveReleaseAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "posMaxProfitReduction",
+              "type": "uint256"
+            },
+            {
+              "name": "posVpiAccruedReduction",
+              "type": "int256"
+            },
+            {
+              "name": "deletePosition",
+              "type": "bool"
+            },
+            {
+              "name": "side",
+              "type": "uint8"
+            },
+            {
+              "name": "sideOiDecrease",
+              "type": "uint256"
+            },
+            {
+              "name": "sideEntryNotionalReduction",
+              "type": "uint256"
+            },
+            {
+              "name": "sideMaxProfitReduction",
+              "type": "uint256"
+            },
+            {
+              "name": "unlockMarginAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "settlementType",
+              "type": "uint8"
+            },
+            {
+              "name": "lossAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "priceGainAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "priceLossAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pricePnlClaimConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pricePnlPledgeConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "priceLossWrittenOffAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeAssessedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeWithheldAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeToCollectAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionReserveConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionCommittedMarginConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeCollectedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeWaivedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionProtocolFeeCreditedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveBeforeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveAfterAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionRebateAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pricePayoutAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pricePayoutIsImmediate",
+              "type": "bool"
+            },
+            {
+              "name": "pricePayoutCreatesClaim",
+              "type": "bool"
+            },
+            {
+              "name": "actionRebatePaidAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionRebateWaivedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "freshTraderPayoutAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "freshPayoutIsImmediate",
+              "type": "bool"
+            },
+            {
+              "name": "freshPayoutCreatesClaim",
+              "type": "bool"
+            },
+            {
+              "name": "existingTraderClaimConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "existingTraderClaimRemainingAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "executionFeeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "protocolFeeTopUpAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pendingCarryAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "realizedCarryAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "totalMarginBefore",
+              "type": "uint256"
+            },
+            {
+              "name": "totalMarginAfterClose",
+              "type": "uint256"
+            },
+            {
+              "name": "solvency",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "effectiveAssetsAfterAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "maxLiabilityAfterAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "triggersDegradedMode",
+                  "type": "bool"
+                },
+                {
+                  "name": "postOpDegradedMode",
+                  "type": "bool"
+                }
+              ]
+            },
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "sizeDelta",
+              "type": "uint256"
+            },
+            {
+              "name": "price",
+              "type": "uint256"
+            },
+            {
+              "name": "realizedPnlAssets",
+              "type": "int256"
+            }
+          ]
+        },
+        {
+          "name": "currentPosition",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "size",
+              "type": "uint256"
+            },
+            {
+              "name": "margin",
+              "type": "uint256"
+            },
+            {
+              "name": "entryPrice",
+              "type": "uint256"
+            },
+            {
+              "name": "maxProfitAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "side",
+              "type": "uint8"
+            },
+            {
+              "name": "lastUpdateTime",
+              "type": "uint64"
+            },
+            {
+              "name": "lastCarryTimestamp",
+              "type": "uint64"
+            },
+            {
+              "name": "vpiAccrued",
+              "type": "int256"
+            }
+          ]
+        },
+        {
+          "name": "publishTime",
+          "type": "uint64"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "executeLiquidation",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "delta",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "liquidatable",
+              "type": "bool"
+            },
+            {
+              "name": "riskState",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "unrealizedPnlAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "equityAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "currentNotionalAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "maintenanceMarginAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "liquidatable",
+                  "type": "bool"
+                }
+              ]
+            },
+            {
+              "name": "liquidationState",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "equityAssets",
+                  "type": "int256"
+                },
+                {
+                  "name": "reachableCollateralAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "maintenanceMarginAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "liquidationChargeAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "keeperBountyAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "protocolLiquidationFeeAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "lpLiquidationFeeAssets",
+                  "type": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "side",
+              "type": "uint8"
+            },
+            {
+              "name": "posSize",
+              "type": "uint256"
+            },
+            {
+              "name": "posMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "posMaxProfit",
+              "type": "uint256"
+            },
+            {
+              "name": "posEntryPrice",
+              "type": "uint256"
+            },
+            {
+              "name": "posEntryCostAssetAtoms",
+              "type": "uint256"
+            },
+            {
+              "name": "sideOiDecrease",
+              "type": "uint256"
+            },
+            {
+              "name": "sideMaxProfitDecrease",
+              "type": "uint256"
+            },
+            {
+              "name": "sideEntryNotionalReduction",
+              "type": "uint256"
+            },
+            {
+              "name": "liquidationChargeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "keeperBountyAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "protocolLiquidationFeeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "lpLiquidationFeeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "liquidationReachableCollateralAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "priceGainAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "priceLossAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pricePnlClaimConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pricePnlPledgeConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "priceLossWrittenOffAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeAssessedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeWithheldAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeToCollectAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionReserveConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionCommittedMarginConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeCollectedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "actionChargeWaivedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveBeforeAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveAfterAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "vpiRebateReserveConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "residualAssets",
+              "type": "int256"
+            },
+            {
+              "name": "residualPlan",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "mutation",
+                  "type": "tuple",
+                  "components": [
+                    {
+                      "name": "settlementDebitAssets",
+                      "type": "uint256"
+                    },
+                    {
+                      "name": "positionMarginUnlockedAssets",
+                      "type": "uint256"
+                    },
+                    {
+                      "name": "otherLockedMarginUnlockedAssets",
+                      "type": "uint256"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "settlementSeizedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "settlementRetainedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "freshTraderPayoutAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "freshPayoutIsImmediate",
+              "type": "bool"
+            },
+            {
+              "name": "freshPayoutCreatesClaim",
+              "type": "bool"
+            },
+            {
+              "name": "existingTraderClaimConsumedAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "existingTraderClaimRemainingAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "pendingCarryAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "realizedCarryAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "solvency",
+              "type": "tuple",
+              "components": [
+                {
+                  "name": "effectiveAssetsAfterAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "maxLiabilityAfterAssets",
+                  "type": "uint256"
+                },
+                {
+                  "name": "triggersDegradedMode",
+                  "type": "bool"
+                },
+                {
+                  "name": "postOpDegradedMode",
+                  "type": "bool"
+                }
+              ]
+            },
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "price",
+              "type": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "publishTime",
+          "type": "uint64"
+        },
+        {
+          "name": "keeper",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "keeperBountyAssets",
+          "type": "uint256"
+        }
+      ]
+    }
+  ]
+}

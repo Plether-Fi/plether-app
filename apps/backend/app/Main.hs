@@ -39,6 +39,7 @@ import Plether.Vaults.PerformanceIndexer
   )
 import System.Exit (exitFailure)
 import System.Environment (lookupEnv)
+import VaultReturnWorker (startVaultReturnWorker)
 import Web.Scotty (middleware, scottyOpts)
 
 main :: IO ()
@@ -159,6 +160,7 @@ main = do
                   vaultIndexerClient
                   pool
                   vaultHistoryCfg
+            _ <- forkIO $ startVaultReturnWorker cfg
             when (cfgPythIngestionEnabled cfg) $ do
               let basketCfg = BasketIngestorConfig
                     { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg

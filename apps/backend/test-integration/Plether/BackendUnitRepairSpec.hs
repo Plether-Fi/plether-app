@@ -24,7 +24,7 @@ import qualified Plether.Database.TestnetFunding as Funding
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..), ensureVaultPerformanceSchema
-  , getVaultPerformanceSnapshots, upsertVaultPerformanceSnapshot )
+  , getVaultPerformanceSnapshots, upsertVaultPerformanceSnapshot, getVaultReturnAttribution )
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..), CompetitionRules (..), july2026Competition )
 import Test.Hspec
@@ -130,6 +130,31 @@ backendUnitRepairSpec databaseUrl = describe "backend unit audit PostgreSQL beha
           ]
 
   describe "vault performance persistence" $ do
+    it "publishes attribution only for matching deployment, canonical hashes, prices and times" $
+      withSchema databaseUrl $ \conn -> do
+        ensureVaultPerformanceSchema conn
+        void $ execute_ conn "ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 1"
+        ensureVaultPerformanceSchema conn
+        let start = vaultRow 0
+            end = vaultRow 168
+            report = object ["method" .= ("diluted-share-price-v1" :: Text), "startTimestamp" .= vpsBlockTimestamp start, "endTimestamp" .= vpsBlockTimestamp end]
+        void $ execute conn
+          "INSERT INTO vault_return_reports(chain_id,house_pool_address,senior_vault_address,junior_vault_address,start_block_number,end_block_number,start_block_hash,end_block_hash,start_share_price,end_share_price,source_commit,attribution) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
+          (vpsChainId start, vpsHousePoolAddress start, vpsSeniorVaultAddress start, vpsJuniorVaultAddress start,
+           vpsBlockNumber start, vpsBlockNumber end, vpsBlockHash start, vpsBlockHash end,
+           vpsJuniorSharePriceWad start, vpsJuniorSharePriceWad end, "1209ca8a5b94a4fb6323c7c4585846ed93db3932" :: Text, report)
+        getVaultReturnAttribution conn start end `shouldReturn` Just report
+        void $ execute_ conn "UPDATE vault_return_reports SET schema_version = 1"
+        getVaultReturnAttribution conn start end `shouldReturn` Nothing
+        void $ execute_ conn "UPDATE vault_return_reports SET schema_version = 2"
+        forM_ [start {vpsChainId = 1}, start {vpsSeniorVaultAddress = address "9"},
+               start {vpsJuniorVaultAddress = address "9"}, start {vpsHousePoolAddress = address "9"},
+               start {vpsBlockHash = hash "f"}, start {vpsBlockNumber = 999999},
+               start {vpsJuniorSharePriceWad = 1}, start {vpsBlockTimestamp = 1}] $ \changed ->
+          getVaultReturnAttribution conn changed end `shouldReturn` Nothing
+        forM_ [end {vpsBlockHash = hash "f"}, end {vpsJuniorSharePriceWad = 1}, end {vpsBlockTimestamp = 1}] $ \changed ->
+          getVaultReturnAttribution conn start changed `shouldReturn` Nothing
+
     it "isolates vault-only redeployments and returns the newest limited rows chronologically" $
       withSchema databaseUrl $ \conn -> do
         ensureVaultPerformanceSchema conn

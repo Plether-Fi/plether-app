@@ -57,6 +57,12 @@ COPY apps/backend/protection-worker/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/backend/protection-worker/ ./
 
+FROM node:22-bookworm-slim AS return-attribution
+WORKDIR /return-attribution
+COPY apps/backend/return-attribution/package*.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY apps/backend/return-attribution/ ./
+
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -78,6 +84,7 @@ COPY --from=builder --chmod=0644 /tmp/aws-rds-global-bundle.pem /etc/ssl/certs/a
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY --from=protection-worker /protection /app/protection
+COPY --from=return-attribution /return-attribution /app/return-attribution
 COPY config/perps/arbitrum-sepolia-v2.0.0.json /app/config/perps/arbitrum-sepolia-v2.0.0.json
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json

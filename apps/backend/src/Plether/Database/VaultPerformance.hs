@@ -1,15 +1,18 @@
 module Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..)
   , ensureVaultPerformanceSchema
+  , getVaultReturnAttribution
   , upsertVaultPerformanceSnapshot
   , getVaultPerformanceSnapshots
   ) where
 
+import Data.Aeson (Value)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple
-  ( Connection
+  ( Only (..)
+  , Connection
   , execute
   , execute_
   , query
@@ -119,6 +122,25 @@ instance ToRow VaultPerformanceSnapshotRow where
 
 ensureVaultPerformanceSchema :: Connection -> IO ()
 ensureVaultPerformanceSchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS vault_return_reports (\
+    \  chain_id NUMERIC(78,0) NOT NULL,\
+    \  house_pool_address VARCHAR(42) NOT NULL,\
+    \  senior_vault_address VARCHAR(42) NOT NULL,\
+    \  junior_vault_address VARCHAR(42) NOT NULL,\
+    \  start_block_number NUMERIC(78,0) NOT NULL,\
+    \  end_block_number NUMERIC(78,0) NOT NULL,\
+    \  start_block_hash VARCHAR(66) NOT NULL,\
+    \  end_block_hash VARCHAR(66) NOT NULL,\
+    \  start_share_price NUMERIC(78,0) NOT NULL,\
+    \  end_share_price NUMERIC(78,0) NOT NULL,\
+    \  schema_version INTEGER NOT NULL DEFAULT 2,\
+    \  source_commit TEXT NOT NULL,\
+    \  attribution JSONB NOT NULL,\
+    \  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+    \  PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, end_block_number)\
+    \);"
+  _ <- execute_ conn "ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 2"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS vault_performance_snapshots (\
     \chain_id NUMERIC(78,0) NOT NULL,\
@@ -242,3 +264,24 @@ getVaultPerformanceSnapshots conn chainId housePool seniorVault juniorVault limi
 
 normalizeAddress :: Text -> Text
 normalizeAddress = T.toLower . T.strip
+
+-- The cached report must match the response's exact canonical boundary blocks,
+-- prices and deployment. Backfill/reorg repairs cannot serve an older report.
+getVaultReturnAttribution :: Connection -> VaultPerformanceSnapshotRow -> VaultPerformanceSnapshotRow -> IO (Maybe Value)
+getVaultReturnAttribution conn start end = do
+  reports <- query conn
+    "SELECT attribution FROM vault_return_reports WHERE chain_id = ? \
+    \AND house_pool_address = ? AND senior_vault_address = ? AND junior_vault_address = ? \
+    \AND start_block_number = ? AND end_block_number = ? \
+    \AND start_block_hash = ? AND end_block_hash = ? \
+    \AND start_share_price = ? AND end_share_price = ? AND schema_version = 2 \
+    \AND attribution->>'startTimestamp' = ? AND attribution->>'endTimestamp' = ?"
+    ( vpsChainId start, normalizeAddress $ vpsHousePoolAddress start
+    , normalizeAddress $ vpsSeniorVaultAddress start, normalizeAddress $ vpsJuniorVaultAddress start
+    , vpsBlockNumber start, vpsBlockNumber end, vpsBlockHash start, vpsBlockHash end
+    , vpsJuniorSharePriceWad start, vpsJuniorSharePriceWad end
+    , show $ vpsBlockTimestamp start, show $ vpsBlockTimestamp end
+    ) :: IO [Only Value]
+  pure $ case reports of
+    [Only report] -> Just report
+    _ -> Nothing

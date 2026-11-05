@@ -1,0 +1,44 @@
+name: Sepolia RPC qualification (offline)
+on:
+  pull_request:
+    paths:
+      - 'infra/rpc/**'
+      - 'infra/terraform/**'
+      - '.github/workflows/rpc-*.yml'
+permissions:
+  contents: read
+jobs:
+  gateway-and-bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test infra/rpc/gateway/server.test.mjs
+      - run: python3 -m unittest discover -s infra/rpc/node -p 'test_*.py'
+      - run: docker build -f infra/rpc/gateway/Dockerfile -t plether-rpc-gateway-test .
+      - name: Test the unprivileged gateway image without external networking
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/infra/rpc/gateway/server.test.mjs,dst=/app/server.test.mjs,readonly" \
+            --entrypoint node plether-rpc-gateway-test --test /app/server.test.mjs
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AWS_PROFILE: plether
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.16.1'
+      - run: terraform fmt -check rpc.tf rpc_variables.tf rpc_admin.tf rpc_monitoring.tf tests/rpc.tftest.hcl
+      - run: terraform init -backend=false -lockfile=readonly -input=false
+      - run: terraform validate
+      - run: terraform test -filter=tests/rpc.tftest.hcl

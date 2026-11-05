@@ -7,6 +7,35 @@ on:
     branches: [master, main]
 
 jobs:
+  vault-return-attribution:
+    name: Vault return attribution tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: attribution_test
+          POSTGRES_PASSWORD: attribution_test
+          POSTGRES_DB: attribution_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U attribution_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/backend/return-attribution
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/backend/return-attribution/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+        env:
+          ATTRIBUTION_TEST_DATABASE_URL: postgres://attribution_test:attribution_test@127.0.0.1:5432/attribution_test
+
   protection-worker:
     name: Protection worker tests
     runs-on: ubuntu-latest

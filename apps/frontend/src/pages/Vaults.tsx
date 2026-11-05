@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { VaultAssetChart } from '../components/VaultAssetChart'
 import { PerpsDeploymentPending } from '../components/PerpsDeploymentPending'
+import { JuniorVaultReturnBreakdownSection } from '../components/JuniorVaultReturnBreakdown'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
@@ -2421,11 +2422,13 @@ function DetailMetric({
   label,
   value,
   detail,
+  tooltip,
   tone = 'default',
 }: {
   label: string
   value: ReactNode
   detail?: ReactNode
+  tooltip?: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'negative'
 }) {
   const toneClass = tone === 'positive'
@@ -2438,7 +2441,10 @@ function DetailMetric({
 
   return (
     <div className="border border-brand-border/25 bg-app-bg p-4">
-      <p className="text-xs font-medium uppercase tracking-[0.12em] text-content-secondary">{label}</p>
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-content-secondary">{label}</p>
+        {tooltip && <InfoTooltip ariaLabel={`${label} details`} content={tooltip} />}
+      </div>
       <p className={`mt-2 text-xl font-semibold ${toneClass}`}>{value}</p>
       {detail ? <p className="mt-1 text-xs leading-5 text-content-secondary">{detail}</p> : null}
     </div>
@@ -3265,12 +3271,16 @@ function PerformanceChart({
   )
 }
 
-function PerformanceTab({
+export function PerformanceTab({
   tranche,
   performance,
+  history,
+  isHistoryError,
 }: {
   tranche: TrancheDefinition
   performance: CompleteVaultPerformance
+  history?: VaultHistory
+  isHistoryError?: boolean
 }) {
   const firstPoint = performance.points[0]
   const lastPoint = performance.points[performance.points.length - 1]
@@ -3281,12 +3291,14 @@ function PerformanceTab({
   return (
     <div className="space-y-6">
       <PerformanceChart tranche={tranche} performance={performance} />
+      {tranche.id === 'junior' && <JuniorVaultReturnBreakdownSection history={history} isError={isHistoryError} />}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <DetailMetric
           label="7d realized APY"
           value={formatSignedPercent(performance.apy7d)}
           detail="Annualized historical result"
+          tooltip="Compounds the observed diluted share-price return over a 365-day year using the actual elapsed seconds. Assumes the same return repeats with reinvestment; this is not a forecast."
           tone={performanceTone(performance.apy7d)}
         />
         <DetailMetric
@@ -5378,152 +5390,153 @@ export function VaultDetailView({
       ) : null}
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="min-w-0 space-y-6">
-          <nav
-            aria-label={`${tranche.name} page sections`}
-            className="relative sticky z-10 border border-brand-border/30 bg-app-bg px-4 before:pointer-events-none before:absolute before:-left-px before:-right-px before:bottom-[calc(100%+1px)] before:h-4 before:bg-app-bg before:content-['']"
-            style={{ top: stickyElementTop }}
-          >
-            <div className="vault-section-nav flex items-stretch gap-6 overflow-x-auto">
-              <span className="hidden shrink-0 items-center border-r border-brand-border/25 pr-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-content-secondary sm:flex">
-                On this page
-              </span>
-              {sections.map((section, index) => (
-                <button
-                  key={section.id}
-                  type="button"
-                  aria-label={section.label}
-                  aria-current={activeSection === section.id ? 'location' : undefined}
-                  aria-controls={section.anchor}
-                  onClick={() => {
-                    scrollToSection(section.id)
-                  }}
-                  className={`group relative flex shrink-0 items-center gap-2 py-3 text-sm font-semibold transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:transition-transform ${
-                    activeSection === section.id
-                      ? 'text-content-primary after:scale-x-100 after:bg-brand-peach'
-                      : 'text-content-secondary after:scale-x-0 after:bg-brand-peach hover:text-brand-peach hover:after:scale-x-100'
-                  }`}
-                >
-                  <span className={`font-mono text-[10px] ${
-                    activeSection === section.id ? 'text-brand-peach' : 'text-content-secondary/70'
-                  }`}>
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <span>{section.label}</span>
-                </button>
-              ))}
-            </div>
-          </nav>
-
-          <section
-            id="overview"
-            data-vault-detail-section="overview"
-            aria-labelledby={`vault-section-heading-${tranche.id}-overview`}
-            className="space-y-4"
-            style={{ scrollMarginTop: sectionScrollOffset }}
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
-                Vault details
-              </p>
-              <h2
-                id={`vault-section-heading-${tranche.id}-overview`}
-                className="mt-1 text-2xl font-semibold text-content-primary"
+        <nav
+          aria-label={`${tranche.name} page sections`}
+          className="relative sticky z-10 min-w-0 border border-brand-border/30 bg-app-bg px-4 before:pointer-events-none before:absolute before:-left-px before:-right-px before:bottom-[calc(100%+1px)] before:h-4 before:bg-app-bg before:content-[''] lg:col-start-1"
+          style={{ top: stickyElementTop }}
+        >
+          <div className="vault-section-nav flex items-stretch gap-6 overflow-x-auto">
+            <span className="hidden shrink-0 items-center border-r border-brand-border/25 pr-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-content-secondary sm:flex">
+              On this page
+            </span>
+            {sections.map((section, index) => (
+              <button
+                key={section.id}
+                type="button"
+                aria-label={section.label}
+                aria-current={activeSection === section.id ? 'location' : undefined}
+                aria-controls={section.anchor}
+                onClick={() => {
+                  scrollToSection(section.id)
+                }}
+                className={`group relative flex shrink-0 items-center gap-2 py-3 text-sm font-semibold transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:transition-transform ${
+                  activeSection === section.id
+                    ? 'text-content-primary after:scale-x-100 after:bg-brand-peach'
+                    : 'text-content-secondary after:scale-x-0 after:bg-brand-peach hover:text-brand-peach hover:after:scale-x-100'
+                }`}
               >
-                Overview
-              </h2>
-            </div>
-            <OverviewTab
-              tranche={tranche}
-              liveData={liveData}
-              snapshot={snapshot}
-              isConnected={isConnected}
-              epochCountdownSeconds={epochCountdownSeconds}
-            />
-          </section>
+                <span className={`font-mono text-[10px] ${
+                  activeSection === section.id ? 'text-brand-peach' : 'text-content-secondary/70'
+                }`}>
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                <span>{section.label}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
 
-          {tranche.id === 'junior' && (
-            <JuniorMarketExposure pool={snapshot.pool} scrollMarginTop={sectionScrollOffset} />
-          )}
-
-          {performance ? (
-            <section
-              id="performance"
-              data-vault-detail-section="performance"
-              aria-labelledby={`vault-section-heading-${tranche.id}-performance`}
-              className="space-y-4"
-              style={{ scrollMarginTop: sectionScrollOffset }}
+        <section
+          id="overview"
+          data-vault-detail-section="overview"
+          aria-labelledby={`vault-section-heading-${tranche.id}-overview`}
+          className="min-w-0 space-y-4 lg:col-start-1"
+          style={{ scrollMarginTop: sectionScrollOffset }}
+        >
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
+              Vault details
+            </p>
+            <h2
+              id={`vault-section-heading-${tranche.id}-overview`}
+              className="mt-1 text-2xl font-semibold text-content-primary"
             >
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
-                  Historical results
-                </p>
-                <h2
-                  id={`vault-section-heading-${tranche.id}-performance`}
-                  className="mt-1 text-2xl font-semibold text-content-primary"
-                >
-                  Performance
-                </h2>
-              </div>
-              <PerformanceTab tranche={tranche} performance={performance} />
-            </section>
-          ) : null}
-
-          <section
-            id="your-position"
-            data-vault-detail-section="activity"
-            aria-labelledby={`vault-section-heading-${tranche.id}-activity`}
-            className="space-y-4"
-            style={{ scrollMarginTop: sectionScrollOffset }}
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
-                Wallet and pending activity
-              </p>
-              <h2
-                id={`vault-section-heading-${tranche.id}-activity`}
-                className="mt-1 text-2xl font-semibold text-content-primary"
-              >
-                Your position
-              </h2>
-            </div>
-            <ActivityTab
-              tranche={tranche}
-              liveData={liveData}
-              snapshot={snapshot}
-              isConnected={isConnected}
-              isWrongNetwork={isWrongNetwork}
-              depositRequests={vaultRequests.depositRequests}
-              redeemRequests={vaultRequests.redeemRequests}
-              requestsLoading={vaultRequests.isLoading}
-              requestDiscoveryError={vaultRequests.discoveryError}
-              requestDiscoveryStale={vaultRequests.discoveryStale}
-              onRefreshRequests={vaultRequests.refresh}
-              onSwitchNetwork={onSwitchNetwork}
-            />
-          </section>
-        </div>
-
-        <div className="lg:sticky" style={{ top: stickyElementTop }}>
-          <VaultActionPanel
-            key={tranche.id}
+              Overview
+            </h2>
+          </div>
+          <OverviewTab
             tranche={tranche}
             liveData={liveData}
             snapshot={snapshot}
-            performance={performance}
+            isConnected={isConnected}
+            epochCountdownSeconds={epochCountdownSeconds}
+          />
+        </section>
+
+        {tranche.id === 'junior' && (
+          <JuniorMarketExposure pool={snapshot.pool} scrollMarginTop={sectionScrollOffset} className="min-w-0 lg:col-start-1" />
+        )}
+
+        {performance ? (
+          <section
+            id="performance"
+            data-vault-detail-section="performance"
+            aria-labelledby={`vault-section-heading-${tranche.id}-performance`}
+            className="min-w-0 space-y-4 lg:col-span-2"
+            style={{ scrollMarginTop: sectionScrollOffset }}
+          >
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
+                Historical results
+              </p>
+              <h2
+                id={`vault-section-heading-${tranche.id}-performance`}
+                className="mt-1 text-2xl font-semibold text-content-primary"
+              >
+                Performance
+              </h2>
+            </div>
+            <PerformanceTab tranche={tranche} performance={performance} history={history} isHistoryError={assetHistoryError} />
+          </section>
+        ) : null}
+
+        <section
+          id="your-position"
+          data-vault-detail-section="activity"
+          aria-labelledby={`vault-section-heading-${tranche.id}-activity`}
+          className="min-w-0 space-y-4 lg:col-span-2"
+          style={{ scrollMarginTop: sectionScrollOffset }}
+        >
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
+              Wallet and pending activity
+            </p>
+            <h2
+              id={`vault-section-heading-${tranche.id}-activity`}
+              className="mt-1 text-2xl font-semibold text-content-primary"
+            >
+              Your position
+            </h2>
+          </div>
+          <ActivityTab
+            tranche={tranche}
+            liveData={liveData}
+            snapshot={snapshot}
             isConnected={isConnected}
             isWrongNetwork={isWrongNetwork}
-            onConnect={onConnect}
-            onSwitchNetwork={onSwitchNetwork}
-            isSwitchingNetwork={isSwitchingNetwork}
-            switchError={switchError}
             depositRequests={vaultRequests.depositRequests}
             redeemRequests={vaultRequests.redeemRequests}
+            requestsLoading={vaultRequests.isLoading}
+            requestDiscoveryError={vaultRequests.discoveryError}
+            requestDiscoveryStale={vaultRequests.discoveryStale}
             onRefreshRequests={vaultRequests.refresh}
-            onViewRequests={() => {
-              scrollToSection('position')
-            }}
+            onSwitchNetwork={onSwitchNetwork}
           />
+        </section>
+        <div className={`min-w-0 lg:col-start-2 lg:row-start-1 lg:self-stretch ${
+          tranche.id === 'junior' ? 'lg:row-span-3' : 'lg:row-span-2'
+        }`}>
+          <div className="lg:sticky" style={{ top: stickyElementTop }}>
+            <VaultActionPanel
+              key={tranche.id}
+              tranche={tranche}
+              liveData={liveData}
+              snapshot={snapshot}
+              performance={performance}
+              isConnected={isConnected}
+              isWrongNetwork={isWrongNetwork}
+              onConnect={onConnect}
+              onSwitchNetwork={onSwitchNetwork}
+              isSwitchingNetwork={isSwitchingNetwork}
+              switchError={switchError}
+              depositRequests={vaultRequests.depositRequests}
+              redeemRequests={vaultRequests.redeemRequests}
+              onRefreshRequests={vaultRequests.refresh}
+              onViewRequests={() => {
+                scrollToSection('position')
+              }}
+            />
+          </div>
         </div>
       </div>
 
