@@ -43,6 +43,13 @@ try {
       for (const file of readdirSync(source)) {
         if (file.endsWith('.tf') || file === '.terraform.lock.hcl') copyFileSync(join(source, file), join(module, file))
       }
+      // Terraform renders these adjacent RPC sources even when the pilot is
+      // disabled. Keep an explicit allowlist so no runtime secrets are copied.
+      const rpcNode = join(tree, 'infra/rpc/node')
+      mkdirSync(rpcNode, { recursive: true })
+      for (const file of ['node.py', 'user-data.sh.tftpl']) {
+        copyFileSync(join(root, 'infra/rpc/node', file), join(rpcNode, file))
+      }
       writeFileSync(join(module, 'tests/deployed-bindings.tftest.hcl'), suite)
     }
     console.log(`Verifying deployed bindings: ${scope}`)
