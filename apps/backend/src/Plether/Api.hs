@@ -1,14 +1,17 @@
 module Plether.Api
   ( app
+  , appWithReleaseState
+  , perpsReleaseMiddleware
   , handleBasketCurrentCandleAt
   ) where
 
 import Control.Exception (evaluate)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:?), (.=))
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
@@ -25,7 +28,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Types.Header (hCacheControl, hPragma)
 import Network.HTTP.Types.Status (status200, status400, status403, status404, status426, status429, status500, status503)
 import Network.HTTP.Client (Manager)
-import Network.Wai (Middleware, pathInfo, queryString, requestHeaders)
+import Network.Wai (Middleware, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
   , cors
@@ -42,6 +45,7 @@ import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import qualified Plether.Perps.Manifest as Manifest
 import Plether.Perps.Release
   ( perpsV2CalldataPolicy
   , perpsV2DeploymentBlock
@@ -104,8 +108,14 @@ import Plether.Handlers.Insights
   , getCompetitionWalletResponse
   , getCurrentCompetitionResponse
   , getInsightsDataStatusResponse
+  , getDivisionsTradersResponse
+  , getDivisionsCurrentResponse
+  , getDivisionsHistoryResponse
+  , getDivisionsLiveResponse
+  , getDivisionsStatsResponse
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
+import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Database (DbPool)
 import Plether.Database.VaultActivity (VaultActivityDeployment (..))
 import Plether.Handlers.VaultActivity
@@ -115,6 +125,7 @@ import Plether.Handlers.VaultActivity
 import Plether.Handlers.TestnetFaucet
   ( claimTestnetFaucet
   )
+import qualified Plether.Handlers.TestnetMarginFunding as MarginFunding
 import Plether.Handlers.TestnetFaucetGuard
   ( FaucetClientId (..)
   , FaucetGuardFailure (..)
@@ -122,6 +133,7 @@ import Plether.Handlers.TestnetFaucetGuard
   , FaucetGuardState
   , authenticateFaucetRequest
   , checkFaucetRequest
+  , checkFaucetStatusRequest
   , faucetGuardFailureReasonText
   , faucetQuotaScopeText
   )
@@ -159,7 +171,27 @@ import Web.Scotty
   , status
   )
 
+-- | Inactive pins must not reach handlers, RPC, database writes, or sponsorship.
+-- Spot protocol/user/quote/health endpoints remain available.
+perpsReleaseMiddleware :: Bool -> Middleware
+perpsReleaseMiddleware deployed application req respond
+  | not deployed && isPerpsPath (pathInfo req) =
+      respond $ responseLBS status503 [("Content-Type", "application/json"), ("Cache-Control", "no-store")]
+        "{\"error\":{\"code\":\"PERPS_RELEASE_NOT_DEPLOYED\",\"message\":\"Perps release is prepared; deployment is required\"}}"
+  | otherwise = application req respond
+ where
+  isPerpsPath ("api" : section : _) = section `elem` ["perps", "aa", "testnet", "insights", "divisions", "readiness"]
+  isPerpsPath _ = False
+
 data TestnetFaucetRequest = TestnetFaucetRequest (Maybe Text) Bool
+
+data MarginFundingRequest = MarginFundingRequest Text Text
+instance FromJSON MarginFundingRequest where
+  parseJSON = withObject "MarginFundingRequest" $ \v -> do
+    version <- v .: "version"
+    when (version /= (1 :: Int) || any (not . (\key -> key == "version" || key == "owner" || key == "address")) (KM.keys v)) $
+      fail "Unsupported direct margin funding request"
+    MarginFundingRequest <$> v .: "owner" <*> v .: "address"
 
 instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v -> do
@@ -171,8 +203,14 @@ instance FromJSON TestnetFaucetRequest where
         acceptsAsync = confirmationMode == Just (Aeson.String "async")
     pure $ TestnetFaucetRequest address acceptsAsync
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
+app = appWithReleaseState Manifest.releaseIsDeployed
+
+-- Deployment state is fixed by the production manifest. Historical scripted
+-- deployments can exercise the same routes with their own explicit state.
+appWithReleaseState :: Bool -> AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
+appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
+  middleware $ perpsReleaseMiddleware deployed
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"
@@ -202,16 +240,18 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
             req <- request
             bounded <- liftIO $ AaProxy.readBoundedRequestBody 512 req
             case either (const Nothing) (either (const Nothing) Just . Aeson.eitherDecode) bounded of
-              Just value | Just (attempt, stage) <- AaDiagnostics.parseBrowserStage value -> do
-                liftIO $ AaDiagnostics.recordBrowserStage pool (pseudonymousClientKey (naaProxyOriginToken native) ip) attempt stage
+              Just value | Just (attempt, stage, details) <- AaDiagnostics.parseBrowserStage value -> do
+                liftIO $ AaDiagnostics.recordBrowserStage pool (pseudonymousClientKey (naaProxyOriginToken native) ip) attempt stage details
                 -- Never disclose whether an attempt belongs to this client.
                 json $ Aeson.object ["accepted" .= True]
               _ -> status status400 >> json (Aeson.object ["error" .= ("Invalid diagnostic" :: Text)])
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
 
-  case mPool of
-    Just pool -> registerInsightsRegistrationRoutes pool perpsClient cfg manager
+  case if deployed then mPool else Nothing of
+    Just pool -> do
+      registerInsightsRegistrationRoutes pool perpsClient cfg manager
+      registerDivisionsRegistrationRoutes pool perpsClient cfg manager discordConfig
     Nothing -> pure ()
 
   get "/api/health" $ do
@@ -238,10 +278,12 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
     json $
       Aeson.object
         [ "manifestVersion" .= perpsV2ManifestVersion
+        , "testnetMarginFundingEnabled" .= cfgTestnetMarginFundingEnabled cfg
         , "chainId" .= cfgPerpsChainId cfg
         , "deploymentBlock" .= perpsV2DeploymentBlock
-        , "usdc" .= cfgPerpsUsdc cfg
+        , "settlementToken" .= cfgPerpsSettlementToken cfg
         , "orderRouter" .= cfgPerpsOrderRouter cfg
+        , "orderInterfaceVersion" .= (3 :: Int)
         , "orderLifecycleBook" .= cfgPerpsOrderLifecycleBook cfg
         , "cfdEngine" .= cfgPerpsCfdEngine cfg
         , "marginClearinghouse" .= cfgPerpsMarginClearinghouse cfg
@@ -255,6 +297,28 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
         , "bindingsVerified" .= releaseConfigured
         , "sponsorshipEnabled" .= sponsorshipEnabled
         ]
+
+  post "/api/testnet/margin-funding" $ do
+    setHeader "Cache-Control" "no-store"
+    accepted <- marginFundingGuard faucetGuardState cfg False
+    when accepted $ do
+      MarginFundingRequest owner address <- jsonData
+      if not (isValidAddress owner && isValidAddress address) ||
+          T.toLower owner == "0x0000000000000000000000000000000000000000" ||
+          T.toLower address == "0x0000000000000000000000000000000000000000"
+        then handleError $ E.invalidAddress "A nonzero owner and Trading Account are required."
+        else case mPool of
+          Just pool -> liftIO (MarginFunding.claimMarginFunding pool perpsClient cfg owner address) >>= handleResult
+          Nothing -> handleServiceUnavailable $ E.networkError "Test funding is unavailable."
+
+  get "/api/testnet/margin-funding/:id" $ do
+    setHeader "Cache-Control" "no-store"
+    accepted <- marginFundingGuard faucetGuardState cfg True
+    when accepted $ do
+      identifier <- pathParam "id"
+      case mPool of
+        Just pool -> liftIO (MarginFunding.marginFundingStatus pool cfg identifier) >>= handleResult
+        Nothing -> handleServiceUnavailable $ E.networkError "Test funding is unavailable."
 
   post "/api/testnet/faucet" $ do
     suppliedToken <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
@@ -442,6 +506,34 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
       Just pool -> liftIO (getInsightsDataStatusResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
+  get "/api/insights/v1/divisions/traders" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsTradersResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/current" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsCurrentResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/history" $ do
+    mWeek <- queryParamMaybe "week"
+    case traverse parseNonNegativeInt mWeek of
+      Nothing -> handleError $ E.invalidAmount "week must be a non-negative integer timestamp"
+      Just week -> case mPool of
+        Just pool -> liftIO (getDivisionsHistoryResponse pool cfg week) >>= handleResult
+        Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/stats" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsStatsResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/live" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsLiveResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
   case mPool of
     Just pool -> do
       get "/api/user/:address/history" $ do
@@ -576,7 +668,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
     if not $ isCanonicalVaultPerformanceRequest queryKeys mRange mInterval
       then
         handleError $
-          E.invalidAmount "vault history is restricted to range=7d and interval=3600"
+          E.invalidAmount "vault history is restricted to range=7d or range=30d and interval=3600"
       else case mPool of
         Just pool -> do
           let deployment =
@@ -586,7 +678,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
                   , vpdSeniorVault = cfgVaultHistorySeniorVaultAddress cfg
                   , vpdJuniorVault = cfgVaultHistoryJuniorVaultAddress cfg
                   }
-          result <- liftIO $ getVaultPerformanceHistory pool deployment
+          result <- liftIO $ getVaultPerformanceHistory pool deployment (maybe "7d" id mRange)
           handleResult result
         Nothing ->
           handleServiceUnavailable $
@@ -1013,6 +1105,19 @@ handleError err = do
       E.InternalError -> status500
       _ -> status400
   json err
+
+marginFundingGuard :: FaucetGuardState -> Config -> Bool -> ActionM Bool
+marginFundingGuard state cfg statusRead = do
+  token <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
+  ip <- fmap LT.toStrict <$> header "CF-Connecting-IP"
+  case authenticateFaucetRequest (cfgFaucetGuardConfig cfg) token ip of
+    Left failure -> handleFaucetGuardFailure failure >> pure False
+    Right (config,client) -> do
+      result <- liftIO $ if statusRead then checkFaucetStatusRequest state client
+        else checkFaucetRequest state config client True
+      case result of
+        Left failure -> handleFaucetGuardFailure failure >> pure False
+        Right () -> pure True
 
 handleFaucetGuardFailure :: FaucetGuardFailure -> ActionM ()
 handleFaucetGuardFailure failure = do

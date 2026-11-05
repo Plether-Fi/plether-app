@@ -1,3 +1,4 @@
+import { reportTransactionFailure } from '../analytics/transactionErrors'
 import { useState, useCallback, useRef } from 'react'
 import { usePublicClient } from 'wagmi'
 import { useTransactionModal } from './useTransactionModal'
@@ -64,8 +65,13 @@ export function useTransactionSequence() {
   const execute = useCallback(async (config: SequenceConfig) => {
     abortRef.current = { aborted: false }
     const { title, type, buildSteps, onSuccess, showModal = true } = config
-    const steps = buildSteps()
     const transactionId = crypto.randomUUID()
+    let preparationError: unknown
+    let steps: TransactionStep[]
+    try { steps = buildSteps() } catch (error) {
+      preparationError = error
+      steps = [{ label: 'Prepare transaction', action: async () => { throw error } }]
+    }
 
     const modalSteps = steps.flatMap(s => [s.label, 'Confirming onchain (~12s)'])
 
@@ -112,6 +118,7 @@ export function useTransactionSequence() {
         currentStepIndex: i,
       }))
 
+      let stage = preparationError ? 'preparation' : 'submission'
       try {
         const hash = await step.action()
 
@@ -121,6 +128,7 @@ export function useTransactionSequence() {
         }
 
         lastHash = hash
+        stage = 'confirmation'
 
         if (showModal) txStore.setStepInProgress(transactionId, modalStepBase + 1)
         setState(s => ({ ...s, phase: 'confirming_onchain', hash }))
@@ -147,10 +155,14 @@ export function useTransactionSequence() {
         if (isAborted()) return
 
         const error = parseTransactionError(err)
-        const message = getErrorMessage(error)
+        const failure = reportTransactionFailure(err, getErrorMessage(error), {
+          surface: showModal ? 'wallet' : 'vault', action: type ?? 'mint',
+          stage, attemptId: transactionId,
+        })
+        const message = `${failure.message}\n\nSupport reference: ${failure.supportReference}`
 
         setState(s => ({ ...s, status: 'error', phase: 'error', error: message }))
-        if (showModal) txStore.setStepError(transactionId, modalStepBase, message)
+        if (showModal) txStore.setStepError(transactionId, modalStepBase, failure.message, err)
         return
       }
     }

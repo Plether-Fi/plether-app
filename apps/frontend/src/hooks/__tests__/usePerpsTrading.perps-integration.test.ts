@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { createPublicClient, http, type Address } from 'viem'
+import { createPublicClient, http, isAddress, type Address } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { PERPS_PUBLIC_LENS_ABI } from '../../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
-import { preparePerpsOrderV2 } from '../../contracts/preparePerpsOrderV2'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE_IS_DEPLOYED } from '../../contracts/perpsAddresses'
+import { preparePerpsOrderV3 } from '../../contracts/preparePerpsOrderV3'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
-import { sizeDeltaToNotionalUsdc } from '../../utils/perps'
+import { sizeDeltaToNotionalAssets } from '../../utils/perps'
 import { resolvePerpsSizeDelta } from '../../utils/perpsOrder'
+import { integrationPrerequisitesAvailable } from '../../test/integrationPrerequisites'
 
-const rpcUrl = process.env.ARBITRUM_SEPOLIA_RPC_URL
-const account = (process.env.PERPS_INTEGRATION_ACCOUNT ??
-  '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B') as Address
-const manifest = parsePerpsAaManifest(rawManifest)
+const rpcUrl = process.env.ARB_SEPOLIA_RPC_URL ?? process.env.ARBITRUM_SEPOLIA_RPC_URL
+const account = process.env.PERPS_INTEGRATION_ACCOUNT as Address | undefined
+const manifest = PERPS_RELEASE_IS_DEPLOYED ? parsePerpsAaManifest(rawManifest) : undefined
+const configured = integrationPrerequisitesAvailable('PERPS_FORK_REQUIRED', 'Perps full-close integration', [
+  { available: Boolean(rpcUrl), requirement: 'ARB_SEPOLIA_RPC_URL or ARBITRUM_SEPOLIA_RPC_URL' },
+  { available: Boolean(manifest), requirement: 'the current deployed canonical release and matching manifest' },
+  { available: Boolean(account && isAddress(account)), requirement: 'an explicit valid PERPS_INTEGRATION_ACCOUNT' },
+])
 
 const client = rpcUrl
   ? createPublicClient({
@@ -29,12 +34,9 @@ function tupleValue(value: unknown, index: number, key: string): unknown {
   return undefined
 }
 
-describe('perps full-close integration', () => {
+describe.skipIf(!configured)('perps full-close integration', () => {
   it('uses exact position size and passes close preview/commit simulation', async (ctx) => {
-    if (!client) {
-      ctx.skip()
-      return
-    }
+    if (!client || !manifest || !account) throw new Error('Current deployment inputs are required')
 
     const [status, position] = await Promise.all([
       client.readContract({
@@ -56,21 +58,25 @@ describe('perps full-close integration', () => {
     const oraclePrice = tupleValue(status, 1, 'lastMarkPrice') as bigint | undefined ?? 0n
 
     if (!exists || size <= 0n || oraclePrice <= 0n) {
+      integrationPrerequisitesAvailable('PERPS_FORK_REQUIRED', 'Perps full-close integration', [{
+        available: false,
+        requirement: 'an existing positive-size position for PERPS_INTEGRATION_ACCOUNT and a positive oracle mark',
+      }])
       ctx.skip()
       return
     }
 
-    const positionNotional = sizeDeltaToNotionalUsdc(size, oraclePrice) ?? 0n
+    const positionNotional = sizeDeltaToNotionalAssets(size, oraclePrice) ?? 0n
     const resolvedSizeDelta = resolvePerpsSizeDelta({
       isReducingCurrentPosition: true,
       currentPositionSize: size,
-      notionalUsdc: positionNotional,
-      maxNotionalUsdc: positionNotional,
+      notionalAssets: positionNotional,
+      maxNotionalAssets: positionNotional,
       oraclePrice,
     })
     expect(resolvedSizeDelta).toBe(size)
 
-    const prepared = await preparePerpsOrderV2(client, manifest, {
+    const prepared = await preparePerpsOrderV3(client, manifest, {
       account,
       direction: side === 1 ? 'short' : 'long',
       side,

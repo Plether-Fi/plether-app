@@ -1,5 +1,10 @@
 # Plether AWS infrastructure
 
+The opt-in Arbitrum Sepolia node and private gateway are documented in the
+[RPC pilot runbook](../rpc/README.md). They default to disabled and do not
+change application RPC URLs. Follow repository `AGENTS.md` for the current
+`plether` CLI profile and deployment authentication instructions.
+
 The company AWS account is `932542905614`. Regional infrastructure and state
 live in Asia Pacific (Singapore), `ap-southeast-1`.
 
@@ -50,6 +55,20 @@ before applying:
 terraform plan -var-file=terraform.tfvars.sepolia -out=sepolia.tfplan
 terraform show sepolia.tfplan
 ```
+
+## Shared log-router images
+
+The log-router repository has no automatic image-expiration policy. Alto and
+other AA services deploy independently of the backend and may still reference
+an older immutable digest after many backend releases. ECR age/count rules do
+not protect images referenced by ECS; applying such a rule can prevent a live
+service from restarting. Cleanup must first check all live task definitions and
+retained rollback definitions, including manifest-list references. Until that
+check is automated, retain the images and accept the additional storage cost.
+
+Removing the old lifecycle policy preserves remaining images; it does not
+restore images that ECR already deleted. Affected services also need a reviewed
+deployment using an available image.
 
 ## Alchemy credential rollout
 

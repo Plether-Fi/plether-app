@@ -4,11 +4,20 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createPublicClient, http, keccak256, parseUnits } from 'viem'
 
-// Read-only reproduction: calls the deployed pure planner and evaluator with
-// explicitly synthetic account snapshots. Never submits a transaction.
+// Historical v1.2.3 incident reproduction, not a health check of the current
+// prepared deployment. Read-only planner/evaluator calls with synthetic account
+// snapshots; original USDC field names and bounty are part of that old ABI.
 const release = JSON.parse(fs.readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.json', import.meta.url)))
+const INCIDENT_BLOCK = 308891788n
+// The incident predates v1.3.1. Reject a moved/relabeled manifest before reading
+// a bundle or touching RPC; do not silently reproduce against another release.
+assert.equal(release.release.version, 'v1.2.3', 'Unsupported historical reproduction release')
+assert.equal(release.release.sourceCommit, 'ffe45937b7f38133133ad292c5435828bf99357d', 'Unsupported historical reproduction source')
+assert.equal(release.release.bundleSha256, '5705b875ea07f26b872724d3559a3a686fc0332695e657398a85d2fa65ab7256', 'Unsupported historical reproduction bundle')
+assert(Number.isSafeInteger(release.release.deploymentBlock) && release.release.deploymentBlock > 0, 'Historical release requires its deployment block')
+assert(BigInt(release.release.deploymentBlock) <= INCIDENT_BLOCK, 'Historical reproduction block predates the selected deployment')
 const bundle = process.argv[2]
-if (!bundle) throw new Error('Usage: node scripts/reproduce-close-review.mjs <pinned ABI bundle.tar.gz>')
+if (!bundle) throw new Error('Usage: node scripts/reproduce-close-review.mjs <v1.2.3 ABI bundle.tar.gz> (historical block 308891788)')
 if (createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('ABI bundle checksum mismatch')
 const abi = name => JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' }))
 const plannerAbi = abi('CfdEnginePlanner')
@@ -17,7 +26,7 @@ const engineAbi = abi('CfdEngine')
 const routerAbi = abi('ArbitrumSepoliaReleaseRouter')
 const client = createPublicClient({ transport: http('https://sepolia-rollup.arbitrum.io/rpc') })
 // Pin deployed parameters and code to the block used for the recorded reproduction.
-const block = await client.getBlock({ blockNumber: 308891788n })
+const block = await client.getBlock({ blockNumber: INCIDENT_BLOCK })
 for (const key of ['cfdEnginePlanner', 'cfdOrderPolicyEvaluator']) {
   if (keccak256(await client.getCode({ address: release.contracts[key].address, blockNumber: block.number })) !== release.contracts[key].runtimeCodeHash) throw new Error(`Deployed ${key} bytecode mismatch`)
 }

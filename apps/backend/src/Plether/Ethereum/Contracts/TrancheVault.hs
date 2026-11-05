@@ -16,6 +16,7 @@ import Plether.Ethereum.Multicall (Call (..), CallResult (..))
 
 data TrancheVaultSnapshot = TrancheVaultSnapshot
   { tvsTotalAssets :: Integer
+  , tvsLockedAssets :: Integer
   , tvsTotalSupply :: Integer
   , tvsSharePriceWad :: Integer
   }
@@ -23,13 +24,14 @@ data TrancheVaultSnapshot = TrancheVaultSnapshot
 
 -- A large notional avoids losing economically relevant precision to the
 -- ERC-4626 integer conversion. The deployed tranche tokens use 9 decimals and
--- their USDC asset uses 6 decimals.
+-- their USDG uses 6 decimals.
 vaultSharePriceProbe :: Integer
 vaultSharePriceProbe = 10 ^ (27 :: Integer)
 
 trancheVaultSnapshotCalls :: Text -> Text -> Text -> [Call]
 trancheVaultSnapshotCalls housePool seniorVault juniorVault =
   Call housePool True (encodeCall "getPoolLiquidityView()" [])
+    : Call housePool True (encodeCall "getPendingTrancheState()" [])
     : concatMap callsFor [seniorVault, juniorVault]
  where
   callsFor vault =
@@ -46,7 +48,7 @@ vaultDecimalsCalls asset seniorVault juniorVault =
   ]
 
 -- | The WAD normalization below is valid only for the reviewed deployment's
--- six-decimal USDC asset and nine-decimal tranche shares. Fail closed if a
+-- six-decimal USDG and nine-decimal tranche shares. Fail closed if a
 -- configured redeployment changes either invariant.
 decodeVaultDecimalsResults :: [CallResult] -> Either Text ()
 decodeVaultDecimalsResults results =
@@ -72,16 +74,30 @@ decodeTrancheVaultSnapshotResults
   -> Either Text (Bool, TrancheVaultSnapshot, TrancheVaultSnapshot)
 decodeTrancheVaultSnapshotResults results =
   case results of
-    [poolLiquidity, seniorAssets, seniorSupply, seniorConverted, juniorAssets, juniorSupply, juniorConverted] ->
-      (,,)
-        <$> decodePoolMarkFresh poolLiquidity
-        <*> decodeTranche "Senior" seniorAssets seniorSupply seniorConverted
-        <*> decodeTranche "Junior" juniorAssets juniorSupply juniorConverted
+    [poolLiquidity, pendingState, seniorAssets, seniorSupply, seniorConverted, juniorAssets, juniorSupply, juniorConverted] -> do
+      markFresh <- decodePoolMarkFresh poolLiquidity
+      (seniorCap, juniorCap) <- decodeWithdrawalCaps pendingState
+      senior <- decodeTranche "Senior" seniorAssets seniorSupply seniorConverted
+      junior <- decodeTranche "Junior" juniorAssets juniorSupply juniorConverted
+      pure
+        ( markFresh
+        , senior {tvsLockedAssets = max 0 $ tvsTotalAssets senior - seniorCap}
+        , junior {tvsLockedAssets = max 0 $ tvsTotalAssets junior - juniorCap}
+        )
     _ ->
       Left $
         "Vault snapshot Multicall returned "
           <> T.pack (show $ length results)
-          <> " results; expected 7"
+          <> " results; expected 8"
+
+-- Both caps are sampled in the same exact-block Multicall as vault assets.
+decodeWithdrawalCaps :: CallResult -> Either Text (Integer, Integer)
+decodeWithdrawalCaps CallResult {..}
+  | not resultSuccess = Left "HousePool getPendingTrancheState subcall failed"
+  | BS.length resultData /= 4 * abiWordLength = Left "HousePool getPendingTrancheState expected 128 bytes"
+  | otherwise = Right (wordAt 2, wordAt 3)
+ where
+  wordAt index = decodeUint256 $ BS.take abiWordLength $ BS.drop (index * abiWordLength) resultData
 
 -- getPoolLiquidityView() is twelve static ABI words. `markFresh` is word 9
 -- (zero-based), after the nine monetary fields. Validate the canonical bool
@@ -114,6 +130,7 @@ decodeTranche label assetsResult supplyResult convertedResult = do
   pure $
     TrancheVaultSnapshot
       { tvsTotalAssets = assets
+      , tvsLockedAssets = 0
       , tvsTotalSupply = supply
       , tvsSharePriceWad = sharePriceWadFromConvertedAssets converted
       }
@@ -131,15 +148,15 @@ decodeResult tranche method CallResult {..}
           <> " bytes; expected 32"
   | otherwise = Right $ decodeUint256 resultData
 
--- convertToAssets(1e27) returns raw six-decimal USDC for 1e27 raw nine-decimal
--- shares. Normalizing that ratio to 18-decimal USDC-per-share WAD simplifies
+-- convertToAssets(1e27) returns raw six-decimal USDG for 1e27 raw nine-decimal
+-- shares. Normalizing that ratio to 18-decimal USDG-per-share WAD simplifies
 -- to division by 1e6. Integer division deliberately rounds down, matching the
 -- vault conversion's conservative ERC-4626 rounding direction.
 sharePriceWadFromConvertedAssets :: Integer -> Integer
-sharePriceWadFromConvertedAssets convertedAssets = convertedAssets `div` usdcScale
+sharePriceWadFromConvertedAssets convertedAssets = convertedAssets `div` assetScale
 
-usdcScale :: Integer
-usdcScale = 10 ^ (6 :: Integer)
+assetScale :: Integer
+assetScale = 10 ^ (6 :: Integer)
 
 abiWordLength :: Int
 abiWordLength = 32

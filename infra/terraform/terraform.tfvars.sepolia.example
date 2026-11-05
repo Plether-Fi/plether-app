@@ -32,6 +32,15 @@ provision_insights_registration = true
 # INSIGHTS_REGISTRATION_ORIGIN_TOKEN GitHub Actions secret for Pages. The
 # competition contract release may be bound later.
 enable_insights_registration                    = false
+# Register the callback URL below in a Discord application before enabling.
+# This links Discord IDs and owner wallets for future Divisions roles; it does
+# not restrict leaderboard participation or assign roles.
+enable_divisions_registration = false
+discord_oauth_client_id        = ""
+# Provision /plether/sepolia/discord-oauth-client-secret as an SSM SecureString outside Terraform.
+discord_oauth_callback_url     = "https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback"
+insights_divisions_rules_version   = "divisions-2026-10"
+insights_divisions_privacy_version = "divisions-2026-10"
 insights_registration_public_origin             = "https://insights.plether.com"
 insights_registration_origin_token              = "REPLACE_WITH_A_RANDOM_32_BYTE_OR_LONGER_TOKEN"
 # Optional rotation overlap token. Keep empty outside an active rotation and
@@ -60,8 +69,8 @@ insights_registration_privacy_version             = "2026-09-13"
 # Registration-only activation: set the competition slug and leave the release
 # ID empty until the new contracts are deployed.
 # insights_active_competition_slug = "testnet-trading-2026-09"
-# One-time release binding: after replacing every pinned July value below with
-# the reviewed manifest (including perps_indexer_start_block), set this ID to
+# One-time release binding: populate every blank perps binding below from
+# the verified canonical manifest (including perps_indexer_start_block), then set this ID to
 # the exact competition slug.
 # insights_competition_release_id  = "testnet-trading-2026-09"
 alb_certificate_arn            = "arn:aws:acm:ap-southeast-1:932542905614:certificate/CERTIFICATE_ID"
@@ -128,18 +137,20 @@ chain_id                       = "11155111"
 cors_origins                   = "https://plether-testnet.pages.dev https://sepolia.plether.com https://app.sepolia.plether.com https://insights.plether.com"
 indexer_start_block            = "10188700"
 perps_chain_id                 = "421614"
-vault_history_house_pool_address   = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-vault_history_senior_vault_address = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-vault_history_junior_vault_address = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
-vault_history_deployment_block     = "307397196"
+# Prepared release: no deployment addresses or indexing boundary exist yet.
+# Populate these together from a reviewed candidate before enabling any perps service.
+vault_history_house_pool_address   = ""
+vault_history_senior_vault_address = ""
+vault_history_junior_vault_address = ""
+vault_history_deployment_block     = "0"
 vault_history_confirmations        = "12"
-perps_usdc                     = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
-perps_order_router             = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
-perps_order_lifecycle_book     = "0x753eb48305ffb88bb70869ade2c4efa941879221"
-perps_house_pool               = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-perps_senior_vault             = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-perps_junior_vault             = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
-perps_settlement_monitor_lens  = "0x52f9621446650ab663f2f1665f28817924c96826"
+perps_settlement_token                     = ""
+perps_order_router             = ""
+perps_order_lifecycle_book     = ""
+perps_house_pool               = ""
+perps_senior_vault             = ""
+perps_junior_vault             = ""
+perps_settlement_monitor_lens  = ""
 # Keep off through the first deployment. Configure an operations SNS topic and
 # a separately funded signer before observe; execute additionally requires a
 # reviewed non-zero transaction-cost cap.
@@ -149,13 +160,13 @@ lp_settlement_max_drain_transactions      = 4
 lp_settlement_pending_replacement_seconds = 60
 lp_settlement_max_replacements            = 3
 lp_settlement_max_tx_cost_wei              = "0"
-perps_plether_oracle           = "0x9f4d9ae736b94249b18a85a7e14092bfca0688eb"
-perps_cfd_engine               = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
-perps_cfd_engine_settlement_sidecar = "0x69dc8489dc12bcfd74b4f453f59ec7381822f5bb"
-perps_cfd_engine_lens          = "0x8fe702213241482d6e94327f9e70195ad183d1ad"
-perps_margin_clearinghouse     = "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
-perps_account_lens             = "0x29fd3b5faf8de6c84405d28e1aac371e46a104c6"
-perps_indexer_start_block      = "307397196"
+perps_plether_oracle           = ""
+perps_cfd_engine               = ""
+perps_cfd_engine_settlement_sidecar = ""
+perps_cfd_engine_lens          = ""
+perps_margin_clearinghouse     = ""
+perps_account_lens             = ""
+perps_indexer_start_block      = "0"
 perps_indexer_confirmations    = "1"
 perps_indexer_batch_size       = "5000"
 perps_indexer_poll_seconds     = "12"

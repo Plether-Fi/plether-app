@@ -1,82 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
-import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
+import { BaseError, ContractFunctionRevertedError, HttpRequestError, encodeErrorResult, parseAbi } from 'viem'
+import {
+  PERPS_MARGIN_CLEARINGHOUSE_ABI,
+  PERPS_ORDER_ROUTER_ABI,
+  PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+  PERPS_ORDER_POLICY_EVALUATOR_ABI,
+  PERPS_CFD_ENGINE_ABI,
+  PERPS_CFD_ENGINE_LENS_ABI,
+  PERPS_CFD_CLOSE_PREVIEW_ABI,
+  PERPS_PLETHER_ORACLE_ABI,
+  PERPS_POSITION_PROTECTION_BOOK_ABI,
+} from '../../contracts/abis'
+import { createOracleSyncError, ORACLE_SYNC_REVERT_DATA } from '../../test/fixtures/oracleSyncError'
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsErrorMessage,
+  getPerpsContractErrorCode,
   isPerpsOracleSyncError,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../perpsErrors'
 
-const PERPS_TEST_ERROR_ABI = parseAbi([
-  'error EnforcedPause()',
-
-  'error MarginClearinghouse__ZeroAmount()',
-  'error MarginClearinghouse__InsufficientBalance()',
-  'error MarginClearinghouse__InsufficientFreeEquity()',
-  'error MarginClearinghouse__InsufficientUsdcForSettlement()',
-
-  'error OrderRouter__ZeroSize()',
-  'error OrderRouter__InvalidSizeQuantum()',
-  'error OrderRouter__CommitValidation(uint8 code)',
-  'error OrderRouter__PredictableOpenInvalid(uint8 code)',
-  'error OrderRouter__CloseWithPositiveMargin()',
-  'error OrderRouter__NoQueuedPosition()',
-  'error OrderRouter__SideMismatch()',
-  'error OrderRouter__SizeExceedsQueued()',
-  'error OrderRouter__TooManyPendingOrders()',
-  'error OrderRouter__DegradedMode()',
-  'error OrderRouter__CloseOnlyWindow()',
-  'error OrderRouter__NotInSeedLifecycle()',
-  'error OrderRouter__VaultRiskBlocked()',
-  'error OrderRouter__EmptyPythUpdateData()',
-  'error OrderRouter__InsufficientPythFee()',
-  'error OrderRouter__OraclePriceTooStale()',
-  'error OrderRouter__OracleConfidenceTooWide()',
-  'error OrderRouter__OraclePublishTimesDiverged()',
-  'error OrderRouter__InvalidOraclePrice()',
-  'error OrderRouter__MarkPriceOutOfOrder()',
-  'error OrderRouter__MevDetected()',
-  'error OrderRouter__NoOrdersToExecute()',
-  'error OrderRouter__OrderNotQueueHead()',
-  'error OrderRouter__BatchBeforeQueueHead()',
-  'error OrderRouter__BatchOrderNotCommitted()',
-  'error OrderRouter__OrderNotPending()',
-  'error OrderRouter__InsufficientGas()',
-  'error OrderRouter__MarginQueueCorrupt()',
-  'error OrderRouter__AccountQueueCorrupt()',
-  'error OrderRouter__GlobalQueueCorrupt()',
-  'error OrderRouter__Unauthorized()',
-  'error OrderRouter__InsufficientFreeEquity()',
-
-  'error PletherOracle__MissingUpdateData()',
-  'error PletherOracle__InsufficientFee(uint256 provided,uint256 required)',
-  'error PletherOracle__PriceOutOfOrder(uint64 publishTime,uint64 lastMarkTime)',
-  'error PletherOracle__StalePrice(uint8 mode, bytes32 feedId, uint256 publishTime, uint256 maxStaleness, uint256 currentTimestamp)',
-  'error PletherOracle__InvalidPrice(bytes32 feedId, int64 price)',
-  'error PletherOracle__ConfidenceTooWide(bytes32 feedId, uint64 confidence, int64 price, uint256 maxConfidenceBps)',
-  'error PletherOracle__PublishTimeDivergence(uint8 mode,uint256 minPublishTime,uint256 maxPublishTime,uint256 maxDivergence)',
-  'error PletherOracle__ZeroBasketPrice()',
-
-  'error CfdEngine__TypedOrderFailure(uint8 failureCategory,uint8 failureCode,bool isClose)',
-  'error CfdEngine__MustCloseOpposingPosition()',
-  'error CfdEngine__DegradedMode()',
-  'error CfdEngine__PositionTooSmall()',
-  'error CfdEngine__SkewTooHigh()',
-  'error CfdEngine__MarginDrainedByFees()',
-  'error CfdEngine__InsufficientInitialMargin()',
-  'error CfdEngine__PoolSolvencyExceeded()',
-  'error CfdEngine__InsufficientPoolLiquidity()',
-  'error CfdEngine__CloseSizeExceedsPosition()',
-  'error CfdEngine__DustPosition()',
-  'error CfdEngine__PartialCloseUnderwaterCarry()',
-  'error CfdEngine__NoOpenPosition()',
-  'error CfdEngine__WithdrawBlockedByOpenPosition()',
-  'error CfdEngine__MarkPriceStale()',
-  'error CfdEngine__MarkPriceOutOfOrder()',
-  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableFreeSettlementUsdc,uint256 unpaidCarryUsdc)',
-])
+const PERPS_TEST_ERROR_ABI = [
+  ...PERPS_MARGIN_CLEARINGHOUSE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_ROUTER_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_LIFECYCLE_BOOK_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_POLICY_EVALUATOR_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_ENGINE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_ENGINE_LENS_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_CLOSE_PREVIEW_ABI.filter(item => item.type === 'error'),
+  ...PERPS_PLETHER_ORACLE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_POSITION_PROTECTION_BOOK_ABI.filter(item => item.type === 'error'),
+]
 
 const ZERO_FEED_ID = '0x0000000000000000000000000000000000000000000000000000000000000000'
 const FEED_ID = '0x1111111111111111111111111111111111111111111111111111111111111111'
@@ -91,13 +46,51 @@ function encodedErrorMessage(errorName: string, args: readonly unknown[], action
 }
 
 describe('getPerpsErrorMessage', () => {
+  it('explains a deadline refusal inside a viem HTTP response without exposing transaction data', () => {
+    const cause = new HttpRequestError({
+      url: '/api/perps/v1/aa/rpc', status: 400,
+      body: { signature: 'private-signature', callData: '0xdeadbeef' },
+      details: JSON.stringify({ code: -32001, data: { reason: 'DEADLINE_TOO_CLOSE', retryable: false }, message: 'Approval finished too late' }),
+    })
+    const error = new Error(new BaseError('An error occurred while executing user operation', { cause }).message, { cause })
+    const message = getPerpsErrorMessage(error, 'commit')
+    expect(message).toContain('Approval finished too close')
+    expect(message).toContain('This request was not sent.')
+    expect(message).toContain('If an earlier attempt is still pending, check Trading Account activity first.')
+    expect(message).not.toContain('when recovery is complete')
+    expect(message).not.toMatch(/private-signature|0xdeadbeef|viem@|HTTP/)
+  })
+
+  it('recognizes structured deadline metadata and JSON-RPC error envelopes', () => {
+    for (const error of [
+      { cause: { data: { reason: 'DEADLINE_TOO_CLOSE' } } },
+      { details: JSON.stringify({ error: { data: { reason: 'DEADLINE_TOO_CLOSE' } } }) },
+    ]) expect(getPerpsErrorMessage(error, 'commit')).toContain('Approval finished too close')
+  })
+
+  it.each(['HTTP request failed.', 'Network request failed', 'Unexpected provider failure'])(
+    'hides diagnostic payloads for %s without asserting a submission outcome', (summary) => {
+      const error = new Error(`${summary}\nRequest Arguments:\n signature: private-signature\n${'0'.repeat(1000)}`)
+      const message = getPerpsErrorMessage(error, 'commit')
+      expect(message).toContain('Trading Account activity')
+      expect(message).not.toMatch(/private-signature|Request Arguments|did not send|was not sent|No order/)
+      expect(message.length).toBeLessThan(250)
+    }
+  )
+
+  it('does not infer expiry from request data or malformed response details', () => {
+    const error = new HttpRequestError({ url: '/api/perps/v1/aa/rpc',
+      body: { data: { reason: 'DEADLINE_TOO_CLOSE' } }, details: '{invalid JSON' })
+    expect(getPerpsErrorMessage(error, 'commit')).not.toMatch(/did not send|was not sent/)
+  })
+
   it('decodes the reported TP/SL settlement shortfall through a standard Error cause', () => {
     const error = new Error('Execution reverted for an unknown reason.', {
       cause: { code: 3, message: 'execution reverted', data: '0x024ec6ee' },
     })
 
     expect(getPerpsErrorMessage(error, 'protection')).toBe(
-      'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
+      'Not enough free USDG to reserve TP/SL keeper rewards. Deposit USDG into your margin account and retry.'
     )
   })
 
@@ -139,7 +132,7 @@ describe('getPerpsErrorMessage', () => {
   })
 
   it('keeps bounty invariant failures distinct from ordinary funding failures', () => {
-    const data = encodeErrorResult({ abi: parseAbi(['error CfdOrderPolicyEvaluator__InsufficientBountyBacking(uint256 settlementUsdc,uint256 bountyUsdc)']), errorName: 'CfdOrderPolicyEvaluator__InsufficientBountyBacking', args: [0n, 200_000n] })
+    const data = encodeErrorResult({ abi: parseAbi(['error CfdOrderPolicyEvaluator__InsufficientBountyBacking(uint256 settlementAssets,uint256 bountyAssets)']), errorName: 'CfdOrderPolicyEvaluator__InsufficientBountyBacking', args: [0n, 200_000n] })
     expect(getPerpsErrorMessage({ cause: { data } }, 'review')).toContain('inconsistent execution-bounty accounting')
     expect(getPerpsErrorMessage({ cause: { data } }, 'review')).not.toContain('short by')
   })
@@ -152,19 +145,6 @@ describe('getPerpsErrorMessage', () => {
     const message = 'Commit reverted after wallet confirmation, but the receipt did not include decodable revert data. Failed tx: 0x123.'
 
     expect(getPerpsErrorMessage(new Error(message), 'commit')).toBe(message)
-  })
-
-  it('describes commit-block timing guard as retryable reveal-not-ready state', () => {
-    const data = encodeErrorResult({
-      abi: PERPS_TEST_ERROR_ABI,
-      errorName: 'OrderRouter__MevDetected',
-      args: [],
-    })
-
-    const message = getPerpsErrorMessage({ cause: { raw: data } }, 'execute')
-
-    expect(message).toBe('Reveal is not ready yet. Wait a few seconds and retry self-execute.')
-    expect(message).not.toContain('failed')
   })
 
   it('describes historical Pyth parse rejection separately from expired price data', () => {
@@ -201,7 +181,7 @@ describe('getPerpsErrorMessage', () => {
     ['MarginClearinghouse__ZeroAmount', [], 'greater than zero'],
     ['MarginClearinghouse__InsufficientBalance', [], 'balance is too low'],
     ['MarginClearinghouse__InsufficientFreeEquity', [], 'Not enough free margin'],
-    ['MarginClearinghouse__InsufficientUsdcForSettlement', [], 'does not have enough USDC settlement'],
+    ['MarginClearinghouse__InsufficientAssetsForSettlement', [], 'does not have enough USDG'],
 
     ['OrderRouter__ZeroSize', [], 'Order size must be greater than zero'],
     ['OrderRouter__InvalidSizeQuantum', [], '100 plDXY increments'],
@@ -217,12 +197,6 @@ describe('getPerpsErrorMessage', () => {
     ['OrderRouter__CloseOnlyWindow', [], 'market is close-only'],
     ['OrderRouter__NotInSeedLifecycle', [], 'LP pool is still in seed lifecycle'],
     ['OrderRouter__VaultRiskBlocked', [], 'LP vault is blocking'],
-    ['OrderRouter__EmptyPythUpdateData', [], 'Missing Pyth price update data', 'execute'],
-    ['OrderRouter__InsufficientPythFee', [], 'Pyth update fee changed', 'execute'],
-    ['OrderRouter__OraclePriceTooStale', [], 'Pyth price data expired', 'execute'],
-    ['OrderRouter__OracleConfidenceTooWide', [], 'Pyth confidence is too wide', 'execute'],
-    ['OrderRouter__OraclePublishTimesDiverged', [], 'component prices are not aligned', 'execute'],
-    ['OrderRouter__InvalidOraclePrice', [], 'invalid basket price', 'execute'],
     ['OrderRouter__MarkPriceOutOfOrder', [], 'older than the stored mark', 'execute'],
     ['OrderRouter__NoOrdersToExecute', [], 'no longer pending', 'execute'],
     ['OrderRouter__OrderNotQueueHead', [], 'blocked by an earlier pending order', 'execute'],
@@ -239,27 +213,18 @@ describe('getPerpsErrorMessage', () => {
     ['PletherOracle__InsufficientFee', [1n, 2n], 'Pyth update fee changed', 'execute'],
     ['PletherOracle__PriceOutOfOrder', [1n, 2n], 'older than the stored mark', 'execute'],
     ['PletherOracle__InvalidPrice', [FEED_ID, 0n], 'invalid basket price', 'execute'],
-    ['PletherOracle__ConfidenceTooWide', [FEED_ID, 1n, 1n, 2n], 'Pyth confidence is too wide', 'execute'],
     ['PletherOracle__PublishTimeDivergence', [0, 1n, 10n, 5n], 'component prices are not aligned', 'execute'],
     ['PletherOracle__ZeroBasketPrice', [], 'invalid basket price', 'execute'],
 
     ['CfdEngine__TypedOrderFailure', [0, 4, false], 'Market skew is too high', 'execute'],
-    ['CfdEngine__MustCloseOpposingPosition', [], 'opposing position'],
     ['CfdEngine__DegradedMode', [], 'market is degraded'],
     ['CfdEngine__PositionTooSmall', [], 'below the minimum size'],
-    ['CfdEngine__SkewTooHigh', [], 'Market skew is too high'],
-    ['CfdEngine__MarginDrainedByFees', [], 'drain the margin'],
-    ['CfdEngine__InsufficientInitialMargin', [], 'Initial margin is too low'],
-    ['CfdEngine__PoolSolvencyExceeded', [], 'LP pool does not have enough'],
     ['CfdEngine__InsufficientPoolLiquidity', [], 'LP pool does not have enough'],
     ['CfdEngine__CloseSizeExceedsPosition', [], 'larger than the current position'],
-    ['CfdEngine__DustPosition', [], 'remaining position would be too small'],
-    ['CfdEngine__PartialCloseUnderwaterCarry', [], 'partial close would leave the position underwater'],
     ['CfdEngine__NoOpenPosition', [], 'no open position'],
     ['CfdEngine__WithdrawBlockedByOpenPosition', [], 'Withdrawal is blocked'],
     ['CfdEngine__MarkPriceStale', [], 'mark price is stale'],
     ['CfdEngine__MarkPriceOutOfOrder', [], 'out-of-order mark price'],
-    ['CfdEngine__InsufficientCloseOrderBountyBacking', [200_000n, 199_999n, 3n], 'short by 0.000001 USDC'],
   ] satisfies Array<[string, readonly unknown[], string, Parameters<typeof getPerpsErrorMessage>[1]?]>)(
     'maps %s to explicit copy',
     (errorName, args, expected, action = 'commit') => {
@@ -326,6 +291,93 @@ it('decodes maximum quote search exhaustion without reporting zero capacity', ()
 })
 
 describe('oracle synchronization error classification', () => {
+  it.each([true, false])('decodes the historical viem error with legacy ABI=%s', legacyAbi => {
+    const error = createOracleSyncError(legacyAbi)
+    const reverted = error.cause as ContractFunctionRevertedError
+    if (legacyAbi) {
+      expect(reverted.cause).toMatchObject({ name: 'AbiErrorSignatureNotFoundError', signature: '0x8e3e110d' })
+      expect(reverted.raw).toBe(ORACLE_SYNC_REVERT_DATA)
+    } else {
+      expect(reverted.data).toMatchObject({ errorName: 'PletherOracle__PriceOutOfOrder', args: [1790007647n, 1790007649n] })
+    }
+    const wrapped = new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
+    expect(getPerpsErrorMessage(wrapped, 'review')).toContain('older than the stored mark')
+    expect(getPerpsContractErrorCode(wrapped)).toBe('PletherOracle__PriceOutOfOrder')
+    expect(isPerpsOracleSyncError(wrapped)).toBe(true)
+  })
+
+  it.each([
+    { cause: { data: '0x8e3e110d' }, raw: ORACLE_SYNC_REVERT_DATA },
+    { cause: { raw: '0xZZ' }, data: ORACLE_SYNC_REVERT_DATA },
+    { cause: { data: '0x12345678' }, raw: ORACLE_SYNC_REVERT_DATA },
+    { error: { data: { originalError: { data: ORACLE_SYNC_REVERT_DATA } } } },
+  ])('continues past incomplete candidates and follows RPC envelopes: %j', error => {
+    expect(getPerpsContractErrorCode(error)).toBe('PletherOracle__PriceOutOfOrder')
+    expect(isPerpsOracleSyncError(error)).toBe(true)
+  })
+
+  it('pairs decoded names with their own arguments', () => {
+    const error = { args: [8], cause: { data: { errorName: 'OrderRouter__PredictableOpenInvalid', args: [6] } } }
+    expect(getPerpsErrorMessage(error, 'review')).toContain('Initial margin is too low')
+    expect(getPerpsErrorMessage({ args: [8], cause: { errorName: 'OrderRouter__PredictableOpenInvalid' } }, 'review'))
+      .not.toContain('100 plDXY increments')
+  })
+
+  it('prefers underlying revert data over outer request calldata', () => {
+    const error = { data: ORACLE_SYNC_REVERT_DATA, cause: { data: encodeErrorResult({
+      abi: PERPS_TEST_ERROR_ABI, errorName: 'OrderRouter__TooManyPendingOrders',
+    }) } }
+    expect(getPerpsContractErrorCode(error)).toBe('OrderRouter__TooManyPendingOrders')
+    expect(isPerpsOracleSyncError(error)).toBe(false)
+  })
+
+  it.each([
+    { signature: '0x8e3e110d' },
+    { signature: '0x8e3e110d', data: '0x8e3e110d' },
+    { request: { data: ORACLE_SYNC_REVERT_DATA } },
+    { args: [ORACLE_SYNC_REVERT_DATA], address: ORACLE_SYNC_REVERT_DATA, hash: ORACLE_SYNC_REVERT_DATA },
+    { transaction: { data: ORACLE_SYNC_REVERT_DATA }, calldata: ORACLE_SYNC_REVERT_DATA },
+    { unrelated: { errorName: 'PletherOracle__PriceOutOfOrder' } },
+    new Error('Network request failed'),
+    new Error('Unknown error'),
+  ])('does not infer ordering failures from unrelated metadata: %j', error => {
+    expect(isPerpsOracleSyncError(error)).toBe(false)
+    expect(getPerpsContractErrorCode(error)).toBeUndefined()
+  })
+
+  it('handles cycles and throwing getters without hiding other valid fields', () => {
+    const error = Object.defineProperty({ raw: ORACLE_SYNC_REVERT_DATA }, 'cause', { get() { throw new Error('private') } })
+    const cycle: { cause?: unknown; error?: unknown } = { error }
+    cycle.cause = cycle
+    expect(isPerpsOracleSyncError(cycle)).toBe(true)
+    expect(getPerpsErrorMessage(error, 'review')).toContain('older than the stored mark')
+    const malformed = Object.defineProperty({}, 'cause', { get() { throw new Error('private') } })
+    expect(isPerpsOracleSyncError(malformed)).toBe(false)
+    expect(getPerpsErrorMessage(malformed, 'review')).toContain('No order was submitted')
+  })
+
+  it('bounds traversal to eight levels and 64 objects', () => {
+    let error: object = { raw: ORACLE_SYNC_REVERT_DATA }
+    for (let i = 0; i < 7; i++) error = { cause: error }
+    expect(isPerpsOracleSyncError(error)).toBe(true)
+    expect(isPerpsOracleSyncError({ cause: error })).toBe(false)
+    let visited = 0
+    const tree = (depth: number): object => Object.defineProperties({}, {
+      cause: { get() { visited++; return depth ? tree(depth - 1) : undefined } },
+      error: { get() { return depth ? tree(depth - 1) : undefined } },
+    })
+    expect(isPerpsOracleSyncError(tree(7))).toBe(false)
+    expect(visited).toBe(64)
+  })
+
+  it('uses safe review guidance for generic viem failures without assuming a cause', () => {
+    const error = { shortMessage: 'An unknown error occurred while executing the contract function "getLatestPrice".',
+      cause: new Error('execution reverted') }
+    expect(getPerpsErrorMessage(error, 'review')).toBe('Order review is unavailable. No order was submitted. Refresh and try again.')
+    expect(isPerpsOracleSyncError(error)).toBe(false)
+    expect(getPerpsErrorMessage(error, 'execute')).toBe(error.shortMessage)
+  })
+
   it('recognizes encoded errors through Error.cause and decoded metadata', () => {
     const data = encodeErrorResult({ abi: PERPS_TEST_ERROR_ABI, errorName: 'PletherOracle__PriceOutOfOrder', args: [1n, 2n] })
     expect(isPerpsOracleSyncError(new Error('Wrapped', { cause: { data } }))).toBe(true)

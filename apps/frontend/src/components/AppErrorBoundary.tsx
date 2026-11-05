@@ -32,9 +32,13 @@ export class AppErrorBoundary extends Component<Props, { failed: boolean; module
     this.reported = true
     try {
       captureReactException(error, info, 'caught', this.supportReference)
+    } catch { /* Structured recovery logs must survive an exception-export failure. */ }
+    try {
       captureFrontendLog('error', 'react application recovery screen shown', {
         component: 'react_root', operation: 'render', outcome: 'failure',
         error_category: 'caught_error', support_reference: this.supportReference,
+        reason_code: isModuleLoadError(error) ? 'module_load_failed'
+          : error instanceof Error && error.name === 'NotFoundError' ? 'dom_node_missing' : 'render_failed',
       })
     } catch { /* A telemetry failure must never break the recovery screen. */ }
   }

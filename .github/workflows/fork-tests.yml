@@ -1,0 +1,82 @@
+name: Required fork verification
+
+# These checks require real deployed contracts and an explicitly provisioned
+# account/position. They are separate from deterministic local-chain PR gates;
+# requesting a fork check without its prerequisites is a failure, never a pass.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Deployed market to verify
+        type: choice
+        required: true
+        options: [spot, perps]
+      perps_account:
+        description: Existing perps account with an open position (perps only)
+        type: string
+        required: false
+      perps_close_size:
+        description: Exact positive size for the supplied account (perps only)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  fork:
+    name: Required ${{ inputs.suite }} fork checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+      - name: Install pinned test dependencies
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.5.1
+      - name: Run required spot integration on a private Anvil fork
+        if: inputs.suite == 'spot'
+        env:
+          FORK_RPC_URL: ${{ secrets.ETHEREUM_SEPOLIA_FORK_RPC_URL }}
+          FRONTEND_INTEGRATION_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          test -n "$FORK_RPC_URL" || { echo 'ETHEREUM_SEPOLIA_FORK_RPC_URL must be provisioned'; exit 1; }
+          anvil --fork-url "$FORK_RPC_URL" --chain-id 31337 --port 8546 > "$RUNNER_TEMP/spot-anvil.log" 2>&1 &
+          anvil_pid=$!
+          trap 'kill "$anvil_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8546 >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$anvil_pid" 2>/dev/null; then exit 1; fi
+            if [ "$attempt" -eq 30 ]; then echo 'Local fork did not become ready'; exit 1; fi
+            sleep 1
+          done
+          npm run test:integration
+      - name: Run required deployed perps interface checks
+        if: inputs.suite == 'perps'
+        env:
+          ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_FORK_RPC_URL }}
+          PERPS_INTEGRATION_ACCOUNT: ${{ inputs.perps_account }}
+          PERPS_INTEGRATION_CLOSE_SIZE: ${{ inputs.perps_close_size }}
+          PERPS_FORK_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          test -n "$ARBITRUM_SEPOLIA_RPC_URL" || { echo 'ARBITRUM_SEPOLIA_FORK_RPC_URL must be provisioned'; exit 1; }
+          npm run test:perps-integration
+          npm run test:perps-fork

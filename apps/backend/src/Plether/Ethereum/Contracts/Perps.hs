@@ -28,20 +28,27 @@ module Plether.Ethereum.Contracts.Perps
   , decodeLiquidationBatchItem
   , decodeLiquidationBatchStoppedIndex
   , getPendingOrderView
-  , pendingPolicyValidUntil
+  , getPendingOrderViewAtBlock
+  , orderExecutionDeadline
+  , orderExecutionDeadlineAtBlock
   , lifecycleStatus
+  , lifecycleStatusAtBlock
   , orderTerminalOutcome
-  , decodeOrderTerminalOutcome
+  , orderTerminalOutcomeAtBlock
+  , decodeOrderExecutionDeadline
+  , decodeOrderTerminalSummary
   , getPositionSize
   , getPositionSizeAtBlock
   , decodePositionSize
-  , maxOrderAge
+  , maxExecutionWindowSeconds
   , orderSettlementWindow
+  , orderSettlementWindowAtBlock
   , orderExecutionStalenessLimit
   , adverseConfidenceMultiplierBps
   , isOracleFrozen
   , getOrderExecutionPolicy
   , getUpdateFee
+  , getOrderExecutionFee
   , getPythContract
   , decodePythContract
   , parsePythUpdateData
@@ -164,10 +171,10 @@ data OrderBatchResult = OrderBatchResult
 data OrderTerminalOutcome = OrderTerminalOutcome
   { otoLifecycleStatus :: Integer
   , otoTerminalReason :: Integer
-  , otoExecutionMode :: Integer
+  , otoExecutionMode :: Maybe Integer
   , otoTerminalBlock :: Integer
-  , otoExecutionPrice :: Integer
-  , otoFailedConstraint :: Integer
+  , otoExecutionPrice :: Maybe Integer
+  , otoFailedConstraint :: Maybe Integer
   , otoReceiptHash :: ByteString
   }
   deriving stock (Show, Eq)
@@ -200,7 +207,7 @@ data LiquidationBatchItem = LiquidationBatchItem
   { lbiIndex :: Integer
   , lbiAccount :: Text
   , lbiResult :: LiquidationBatchResult
-  , lbiKeeperBountyUsdc :: Integer
+  , lbiKeeperBountyAssets :: Integer
   , lbiErrorSelector :: ByteString
   }
   deriving stock (Show, Eq)
@@ -214,8 +221,8 @@ data PendingOrderView = PendingOrderView
   , povTargetPrice :: Integer
   , povCommitTime :: Integer
   , povCommitBlock :: Integer
-  , povCommittedMarginUsdc :: Integer
-  , povExecutionBountyUsdc :: Integer
+  , povCommittedMarginAssets :: Integer
+  , povExecutionBountyAssets :: Integer
   , povNextAccountOrderId :: Integer
   }
   deriving stock (Show, Eq)
@@ -242,12 +249,12 @@ orderFailedTopic = keccak256 $ TE.encodeUtf8 "OrderFailed(uint64,uint8)"
 intentRegisteredTopic :: ByteString
 intentRegisteredTopic =
   keccak256 $ TE.encodeUtf8
-    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 
 orderFinalizedTopic :: ByteString
 orderFinalizedTopic =
   keccak256 $ TE.encodeUtf8
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
 
 perpsOrderTopics :: [ByteString]
 perpsOrderTopics =
@@ -413,7 +420,7 @@ decodePerpsOrderEvent RpcLog {..} =
               }
     topic : orderTopic : accountTopic : clientOrderIdTopic : _
       | topic == intentRegisteredTopic
-          && BS.length rpcLogData == 20 * 32 ->
+          && BS.length rpcLogData == 25 * 32 ->
           Just $
             IntentRegistered
               { poeOrderId = decodeUint256 orderTopic
@@ -424,7 +431,7 @@ decodePerpsOrderEvent RpcLog {..} =
               , poeBlockNumber = rpcLogBlockNumber
               }
       | topic == orderFinalizedTopic
-          && BS.length rpcLogData == 46 * 32 ->
+          && BS.length rpcLogData == 71 * 32 ->
           Just $
             OrderFinalized
               { poeOrderId = decodeUint256 orderTopic
@@ -465,7 +472,7 @@ decodeLiquidationBatchItem RpcLog {rpcLogTopics = topic : indexTopic : accountTo
           { lbiIndex = decodeUint256 indexTopic
           , lbiAccount = decodeAddress accountTopic
           , lbiResult = result
-          , lbiKeeperBountyUsdc = wordAt 1 rpcLogData
+          , lbiKeeperBountyAssets = wordAt 1 rpcLogData
           , lbiErrorSelector = BS.take 4 $ wordBytesAt 2 rpcLogData
           }
 decodeLiquidationBatchItem _ = Nothing
@@ -494,13 +501,26 @@ getPendingOrderView client orderRouter orderId = do
   result <- ethCall client (CallParams orderRouter (getPendingOrderViewCall orderId))
   pure $ fmap decodePendingOrderView result
 
-pendingPolicyValidUntil :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
-pendingPolicyValidUntil client lifecycleBook orderId = do
+getPendingOrderViewAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError PendingOrderView)
+getPendingOrderViewAtBlock client orderRouter orderId blockNumber = do
+  result <- ethCallAtBlock client (CallParams orderRouter (getPendingOrderViewCall orderId)) blockNumber
+  pure $ fmap decodePendingOrderView result
+
+orderExecutionDeadline :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+orderExecutionDeadline client lifecycleBook orderId = do
   result <-
     ethCall
       client
-      (CallParams lifecycleBook $ encodeCall "pendingPolicy(uint64)" [encodeUint256 orderId])
-  pure $ result >>= decodePendingPolicyValidUntil
+      (CallParams lifecycleBook $ encodeCall "orderTiming(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodeOrderExecutionDeadline
+
+orderExecutionDeadlineAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError Integer)
+orderExecutionDeadlineAtBlock client lifecycleBook orderId blockNumber = do
+  result <-
+    ethCallAtBlock
+      client
+      (CallParams lifecycleBook $ encodeCall "orderTiming(uint64)" [encodeUint256 orderId]) blockNumber
+  pure $ result >>= decodeOrderExecutionDeadline
 
 lifecycleStatus :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
 lifecycleStatus client lifecycleBook orderId = do
@@ -510,13 +530,29 @@ lifecycleStatus client lifecycleBook orderId = do
       (CallParams lifecycleBook $ encodeCall "lifecycleStatus(uint64)" [encodeUint256 orderId])
   pure $ result >>= decodeLifecycleStatus
 
+lifecycleStatusAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError Integer)
+lifecycleStatusAtBlock client lifecycleBook orderId blockNumber = do
+  result <-
+    ethCallAtBlock
+      client
+      (CallParams lifecycleBook $ encodeCall "lifecycleStatus(uint64)" [encodeUint256 orderId]) blockNumber
+  pure $ result >>= decodeLifecycleStatus
+
 orderTerminalOutcome :: EthClient -> Text -> Integer -> IO (Either RpcError OrderTerminalOutcome)
 orderTerminalOutcome client lifecycleBook orderId = do
   result <-
     ethCall
       client
-      (CallParams lifecycleBook $ encodeCall "outcome(uint64)" [encodeUint256 orderId])
-  pure $ result >>= decodeOrderTerminalOutcome
+      (CallParams lifecycleBook $ encodeCall "terminalOutcome(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodeOrderTerminalSummary
+
+orderTerminalOutcomeAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError OrderTerminalOutcome)
+orderTerminalOutcomeAtBlock client lifecycleBook orderId blockNumber = do
+  result <-
+    ethCallAtBlock
+      client
+      (CallParams lifecycleBook $ encodeCall "terminalOutcome(uint64)" [encodeUint256 orderId]) blockNumber
+  pure $ result >>= decodeOrderTerminalSummary
 
 getPositionSize :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
 getPositionSize client cfdEngine account = do
@@ -534,14 +570,19 @@ decodePositionSize bytes
       Left $ RpcJsonError "positions(address) returned fewer than seven ABI words"
   | otherwise = Right $ wordAt 0 bytes
 
-maxOrderAge :: EthClient -> Text -> IO (Either RpcError Integer)
-maxOrderAge client orderRouter = do
-  result <- ethCall client (CallParams orderRouter (encodeCall "maxOrderAge()" []))
+maxExecutionWindowSeconds :: EthClient -> Text -> IO (Either RpcError Integer)
+maxExecutionWindowSeconds client orderRouter = do
+  result <- ethCall client (CallParams orderRouter (encodeCall "maxExecutionWindowSeconds()" []))
   pure $ fmap decodeUint256 result
 
 orderSettlementWindow :: EthClient -> Text -> IO (Either RpcError Integer)
 orderSettlementWindow client oracle = do
   result <- ethCall client (CallParams oracle (encodeCall "orderSettlementWindow()" []))
+  pure $ fmap decodeUint256 result
+
+orderSettlementWindowAtBlock :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+orderSettlementWindowAtBlock client oracle blockNumber = do
+  result <- ethCallAtBlock client (CallParams oracle (encodeCall "orderSettlementWindow()" [])) blockNumber
   pure $ fmap decodeUint256 result
 
 orderExecutionStalenessLimit :: EthClient -> Text -> IO (Either RpcError Integer)
@@ -563,6 +604,11 @@ getOrderExecutionPolicy :: EthClient -> Text -> Bool -> IO (Either RpcError Orde
 getOrderExecutionPolicy client oracle isClose = do
   result <- ethCall client (CallParams oracle (getOrderExecutionPolicyCall isClose))
   pure $ fmap decodeOrderExecutionPolicy result
+
+getOrderExecutionFee :: EthClient -> Text -> [ByteString] -> IO (Either RpcError Integer)
+getOrderExecutionFee client oracle updateData = do
+  result <- ethCall client (CallParams oracle $ encodeCall "getOrderExecutionFee(bytes[])" [encodeUint256 32, encodeBytesArray updateData])
+  pure $ result >>= \bytes -> if BS.length bytes == 32 then Right (wordAt 0 bytes) else Left $ RpcJsonError "Invalid historical order fee response"
 
 getUpdateFee :: EthClient -> Text -> [ByteString] -> IO (Either RpcError Integer)
 getUpdateFee client oracle updateData = do
@@ -877,9 +923,9 @@ decodeOrderExecutionResult bytes
       Left $ RpcJsonError "executeOrder returned an out-of-range order ID"
   | resultStatus > 3 =
       Left $ RpcJsonError "executeOrder returned an invalid lifecycle status"
-  | terminalReason > 9 =
+  | terminalReason > 10 =
       Left $ RpcJsonError "executeOrder returned an invalid terminal reason"
-  | pendingReason > 9 =
+  | pendingReason > 10 =
       Left $ RpcJsonError "executeOrder returned an invalid pending reason"
   | otherwise =
       Right
@@ -904,7 +950,7 @@ decodeOrderBatchResult bytes
       Left $ RpcJsonError "executeOrderBatch returned an out-of-range next order ID"
   | terminalCount > maxUint32 =
       Left $ RpcJsonError "executeOrderBatch returned an out-of-range terminal count"
-  | stopReason > 9 =
+  | stopReason > 10 =
       Left $ RpcJsonError "executeOrderBatch returned an invalid pending reason"
   | otherwise =
       Right
@@ -968,20 +1014,22 @@ decodePendingOrderView bytes =
     , povTargetPrice = wordAt 5 bytes
     , povCommitTime = wordAt 6 bytes
     , povCommitBlock = wordAt 7 bytes
-    , povCommittedMarginUsdc = wordAt 8 bytes
-    , povExecutionBountyUsdc = wordAt 9 bytes
+    , povCommittedMarginAssets = wordAt 8 bytes
+    , povExecutionBountyAssets = wordAt 9 bytes
     , povNextAccountOrderId = wordAt 10 bytes
     }
 
-decodePendingPolicyValidUntil :: ByteString -> Either RpcError Integer
-decodePendingPolicyValidUntil bytes
-  | BS.length bytes < 32 =
-      Left $ RpcJsonError "pendingPolicy(uint64) returned no ABI words"
-  | validUntil > maxUint64 =
-      Left $ RpcJsonError "pendingPolicy(uint64) returned an out-of-range validUntil"
-  | otherwise = Right validUntil
+decodeOrderExecutionDeadline :: ByteString -> Either RpcError Integer
+decodeOrderExecutionDeadline bytes
+  | BS.length bytes /= 4 * 32 =
+      Left $ RpcJsonError "orderTiming(uint64) returned an invalid tuple"
+  | any (> maxUint64) [wordAt 0 bytes, wordAt 2 bytes, deadline] || wordAt 1 bytes > 0xffffffff =
+      Left $ RpcJsonError "orderTiming(uint64) returned out-of-range timing"
+  | deadline /= 0 && (wordAt 1 bytes == 0 || deadline /= wordAt 2 bytes + wordAt 1 bytes) =
+      Left $ RpcJsonError "orderTiming(uint64) returned inconsistent timing"
+  | otherwise = Right deadline
   where
-    validUntil = wordAt 0 bytes
+    deadline = wordAt 3 bytes
 
 decodeLifecycleStatus :: ByteString -> Either RpcError Integer
 decodeLifecycleStatus bytes
@@ -993,41 +1041,19 @@ decodeLifecycleStatus bytes
   where
     status = wordAt 0 bytes
 
-decodeOrderTerminalOutcome :: ByteString -> Either RpcError OrderTerminalOutcome
-decodeOrderTerminalOutcome bytes
-  | BS.length bytes /= 23 * 32 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal outcome length"
-  | lifecycleStatus' < 2 || lifecycleStatus' > 3 =
-      Left $ RpcJsonError "outcome(uint64) did not return a terminal lifecycle status"
-  | terminalReason == 0 || terminalReason > 9 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal reason"
-  | executionMode > 3 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid execution mode"
-  | terminalBlock == 0 || terminalBlock > maxUint64 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal block"
-  | failedConstraint > 9 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid failed constraint"
-  | lifecycleStatus' == 2 && terminalReason /= 1 =
-      Left $ RpcJsonError "outcome(uint64) returned an executed status without an executed reason"
-  | lifecycleStatus' == 3 && terminalReason == 1 =
-      Left $ RpcJsonError "outcome(uint64) returned a failed status with an executed reason"
-  | otherwise =
-      Right
-        OrderTerminalOutcome
-          { otoLifecycleStatus = lifecycleStatus'
-          , otoTerminalReason = terminalReason
-          , otoExecutionMode = executionMode
-          , otoTerminalBlock = terminalBlock
-          , otoExecutionPrice = wordAt 15 bytes
-          , otoFailedConstraint = failedConstraint
-          , otoReceiptHash = wordBytesAt 22 bytes
-          }
+-- | V5 stores identity, status and receipt hash. Full execution economics are
+-- recovered by the canonical event indexer, not synthesized by this getter.
+decodeOrderTerminalSummary :: ByteString -> Either RpcError OrderTerminalOutcome
+decodeOrderTerminalSummary bytes
+  | BS.length bytes /= 5 * 32 = Left $ RpcJsonError "terminalOutcome(uint64) returned an invalid tuple"
+  | status < 2 || status > 3 || reason == 0 || reason > 10 = Left $ RpcJsonError "terminalOutcome(uint64) did not return a terminal status/reason"
+  | terminalBlock == 0 || terminalBlock > maxUint64 = Left $ RpcJsonError "terminalOutcome(uint64) returned an invalid block"
+  | (status == 2) /= (reason == 1) = Left $ RpcJsonError "terminalOutcome(uint64) returned an inconsistent status/reason"
+  | otherwise = Right $ OrderTerminalOutcome status reason Nothing terminalBlock Nothing Nothing (wordBytesAt 4 bytes)
   where
-    lifecycleStatus' = wordAt 5 bytes
-    terminalReason = wordAt 6 bytes
-    executionMode = wordAt 7 bytes
-    terminalBlock = wordAt 10 bytes
-    failedConstraint = wordAt 20 bytes
+    terminalBlock = wordAt 1 bytes
+    status = wordAt 2 bytes
+    reason = wordAt 3 bytes
 
 decodeOrderExecutionPolicy :: ByteString -> OrderExecutionPolicy
 decodeOrderExecutionPolicy bytes =

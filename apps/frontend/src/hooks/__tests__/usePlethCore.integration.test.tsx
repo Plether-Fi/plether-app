@@ -15,6 +15,7 @@ import {
 import { SEPOLIA_ADDRESSES, getAddresses } from '../../contracts/addresses'
 import { ERC20_ABI, PLETH_CORE_ABI } from '../../contracts/abis'
 import { usePreviewMint, usePreviewBurn } from '../usePlethCore'
+import { frontendIntegrationState, integrationPrerequisitesAvailable } from '../../test/integrationPrerequisites'
 
 const USER = TEST_ACCOUNTS[0]
 const USDC_DECIMALS = 6
@@ -22,8 +23,13 @@ const PAIR_DECIMALS = 18
 
 async function verifyContractsExist(): Promise<boolean> {
   try {
-    const code = await publicClient.getCode({ address: SEPOLIA_ADDRESSES.SYNTHETIC_SPLITTER })
-    return code !== undefined && code !== '0x'
+    const codes = await Promise.all([
+      SEPOLIA_ADDRESSES.SYNTHETIC_SPLITTER,
+      SEPOLIA_ADDRESSES.USDC,
+      SEPOLIA_ADDRESSES.DXY_BEAR,
+      SEPOLIA_ADDRESSES.DXY_BULL,
+    ].map(address => publicClient.getCode({ address })))
+    return codes.every(code => code !== undefined && code !== '0x')
   } catch {
     return false
   }
@@ -132,7 +138,11 @@ describe('usePlethCore Integration Tests', () => {
   let contractsExist = false
 
   beforeAll(async () => {
-    contractsExist = await verifyContractsExist()
+    contractsExist = frontendIntegrationState.anvilAvailable && await verifyContractsExist()
+    integrationPrerequisitesAvailable('FRONTEND_INTEGRATION_REQUIRED', 'usePlethCore integration', [{
+      available: contractsExist,
+      requirement: 'the configured Sepolia splitter, USDC, BEAR and BULL contracts on the local fork',
+    }])
     if (!contractsExist) {
       console.warn(
         '\n⚠️  Plether contracts not found on forked chain.\n' +

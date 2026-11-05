@@ -432,7 +432,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
         const txError = err instanceof Error && '_tag' in err
           ? err as TransactionError
           : parseTransactionError(err)
-        setStepError(txId, 0, getErrorMessage(txError))
+        setStepError(txId, 0, getErrorMessage(txError), txError)
         return txError
       },
     })
@@ -498,7 +498,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
         const txError = err instanceof Error && '_tag' in err
           ? err as TransactionError
           : parseTransactionError(err)
-        setStepError(txId, 0, getErrorMessage(txError))
+        setStepError(txId, 0, getErrorMessage(txError), txError)
         return txError
       },
     })

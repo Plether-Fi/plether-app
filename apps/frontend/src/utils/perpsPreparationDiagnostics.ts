@@ -4,13 +4,13 @@ export type PreparationStage = 'preflight' | 'deployment_verification' | 'contex
   | 'max_size_quote' | 'order_assessment' | 'review_validation' | 'funding_check'
   | 'commit_simulation' | 'preparation_timeout' | 'review_freshness'
 
-export type PreparationFunction = 'maxOrderAge' | 'currentExecutionConfigHash'
-  | 'openOrderExecutionBountyBps' | 'minOpenOrderExecutionBountyUsdc'
-  | 'maxOpenOrderExecutionBountyUsdc' | 'closeOrderExecutionBountyUsdc'
+export type PreparationFunction = 'maxExecutionWindowSeconds' | 'currentExecutionConfigHash'
+  | 'openOrderExecutionBountyBps' | 'minOpenOrderExecutionBountyAssets'
+  | 'maxOpenOrderExecutionBountyAssets'
   | 'lastMarkPrice' | 'CAP_PRICE' | 'totalAssets' | 'getLatestPrice'
   | 'activePositionProtectionId' | 'getPendingOrders' | 'maxPendingOrders'
-  | 'getFreeBuyingPowerUsdc' | 'positionProtectionTriggerBountyUsdc' | 'getPosition'
-  | 'assessOrder' | 'quoteMaxOpen' | 'previewOpen' | 'previewClose' | 'previewSponsoredClose' | 'executeBatch'
+  | 'getFreeBuyingPowerAssets' | 'positionProtectionTriggerBountyAssets' | 'getPosition'
+  | 'assessOrder' | 'quoteMaxOpen' | 'quoteWithMargin' | 'previewOpen' | 'previewClose' | 'previewSponsoredClose' | 'executeBatch'
   | 'commitOrder' | 'commitOpenOrderWithProtection'
 
 export interface PreparationDebugContext {

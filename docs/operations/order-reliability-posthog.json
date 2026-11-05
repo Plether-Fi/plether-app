@@ -1,0 +1,70 @@
+{
+  "projectId": 208816,
+  "dashboardId": 967523,
+  "dashboardUrl": "https://eu.posthog.com/project/208816/dashboard/967523",
+  "insights": [
+    {
+      "name": "Canonical order impact — latest 1h and 24h cohorts",
+      "description": "Latest fresh snapshot per window; no rows means telemetry unavailable. Cohorts end 2 minutes before observation. Accounts are Trading Accounts, not browser IDs. Pending orders remain explicit.",
+      "query": "SELECT toInt(attributes.window_seconds)/3600 AS window_hours, argMax(toInt(attributes.total_orders),timestamp) AS orders, argMax(toInt(attributes.expired_orders),timestamp) AS expired, argMax(toInt(attributes.active_accounts),timestamp) AS accounts, argMax(toInt(attributes.affected_accounts),timestamp) AS affected_accounts, argMax(toInt(attributes.repeat_affected_accounts),timestamp) AS repeat_accounts, argMax(toInt(attributes.pending_orders),timestamp) AS pending, round(100.0*expired/nullIf(orders,0),2) AS expired_percent, max(timestamp) AS observed_at FROM logs WHERE timestamp >= now() - INTERVAL 10 MINUTE AND service_name='plether-keeper' AND resource_attributes.`deployment.environment.name`='sepolia' AND body='keeper_order_reliability_snapshot' GROUP BY window_hours ORDER BY window_hours",
+      "shortId": "XT3iE4mf"
+    },
+    {
+      "name": "On-chain failure reasons — last 24h",
+      "description": "Log observations, not deduplicated orders. Unknown reasons before the projection deployment remain explicitly labeled. Use canonical snapshot counts for impact.",
+      "query": "SELECT coalesce(attributes.terminal_reason,'NOT_EXPORTED') AS reason, count() AS log_observations FROM logs WHERE timestamp >= now()-INTERVAL 24 HOUR AND service_name='plether-keeper' AND resource_attributes.`deployment.environment.name`='sepolia' AND body='keeper_order_finalized_failed' GROUP BY reason ORDER BY log_observations DESC",
+      "shortId": "FB9tyI2y"
+    },
+    {
+      "name": "Preparation and recovery problems — distinct attempts, 24h",
+      "description": "Distinct attempt UUIDs, not traders. Recovery retries are deduplicated within each reason; reasons may overlap. Browser telemetry can be blocked or absent.",
+      "query": "SELECT event, properties.reason_code AS reason, count(DISTINCT properties.attempt_id) AS attempts, count() AS observations FROM events WHERE timestamp >= now()-INTERVAL 24 HOUR AND properties.deployment_name='sepolia' AND properties.attempt_id IS NOT NULL AND properties.attempt_id != '' AND ((event='perps sponsored operation' AND properties.reason_code='DEADLINE_TOO_CLOSE') OR (event='perps preparation recovery' AND properties.reason_code IN ('RECOVERY_CLOCK_MISMATCH','PREPARATION_UNUSABLE','RECOVERY_TIMEOUT'))) GROUP BY event,reason ORDER BY attempts DESC",
+      "shortId": "69p2GqSN"
+    },
+    {
+      "name": "Alert metric — hourly expiry rate (minimum 20 orders)",
+      "description": "Initial alert threshold: greater than 5 percent; hourly checks. Zero when fewer than 20 orders; no rows when snapshot stale. Enable notifications after backend rollout. Based on all order types.",
+      "display": "BoldNumber",
+      "query": "SELECT if(toInt(attributes.total_orders)>=20,100.0*toInt(attributes.expired_orders)/nullIf(toInt(attributes.total_orders),0),0) AS expiry_percent FROM logs WHERE timestamp >= now() - INTERVAL 10 MINUTE AND service_name='plether-keeper' AND resource_attributes.`deployment.environment.name`='sepolia' AND body='keeper_order_reliability_snapshot' AND toInt(attributes.window_seconds)=3600 ORDER BY timestamp DESC LIMIT 1",
+      "shortId": "lzi8tBYj"
+    },
+    {
+      "name": "Alert metric — repeatedly affected accounts, 1h",
+      "description": "Initial alert threshold: greater than 2 accounts; hourly checks. Counts accounts with at least two expired orders in the matured hourly cohort. No rows when telemetry is stale.",
+      "display": "BoldNumber",
+      "query": "SELECT toInt(attributes.repeat_affected_accounts) AS repeat_accounts FROM logs WHERE timestamp >= now() - INTERVAL 10 MINUTE AND service_name='plether-keeper' AND resource_attributes.`deployment.environment.name`='sepolia' AND body='keeper_order_reliability_snapshot' AND toInt(attributes.window_seconds)=3600 ORDER BY timestamp DESC LIMIT 1",
+      "shortId": "uU0kqEEi"
+    },
+    {
+      "name": "Telemetry missing — snapshots in last 10 minutes",
+      "description": "Initial alert threshold: fewer than 1 snapshot. Check every 5 minutes after deployment. Zero means no recent aggregate telemetry, not zero failures.",
+      "display": "BoldNumber",
+      "query": "SELECT count() AS recent_snapshots FROM logs WHERE timestamp >= now() - INTERVAL 10 MINUTE AND service_name='plether-keeper' AND resource_attributes.`deployment.environment.name`='sepolia' AND body='keeper_order_reliability_snapshot'",
+      "shortId": "s6nKPGDW"
+    }
+  ],
+  "alerts": {
+    "status": "not_created_missing_connector_scopes",
+    "rules": [
+      {
+        "insight": "lzi8tBYj",
+        "operator": "greater_than",
+        "threshold": 5,
+        "checkInterval": "hourly",
+        "minimumOrders": 20
+      },
+      {
+        "insight": "uU0kqEEi",
+        "operator": "greater_than",
+        "threshold": 2,
+        "checkInterval": "hourly"
+      },
+      {
+        "insight": "s6nKPGDW",
+        "operator": "less_than",
+        "threshold": 1,
+        "checkInterval": "5 minutes (log alert), otherwise hourly (SQL insight)"
+      }
+    ]
+  }
+}

@@ -189,7 +189,7 @@ class TransactionManager {
       const error = parseTransactionError(err)
       const message = getErrorMessage(error)
 
-      txStore.setStepError(transactionId, 0, message)
+      txStore.setStepError(transactionId, 0, message, err)
       txStore.clearActiveOperation(operationKey)
     }
   }
@@ -300,29 +300,33 @@ class TransactionManager {
     shares: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = `unstake-${side}`
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = `unstake-${side}`
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses, address } = ctx
-    const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
+      const { addresses, address } = ctx
+      const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
 
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'unstake',
-      title: `Unstaking splDXY-${side}`,
-      prerequisites: [],
-      mainStep: {
-        label: `Unstake splDXY-${side}`,
-        execute: (config) => writeContract(config, {
-          address: stakingAddress,
-          abi: STAKED_TOKEN_ABI,
-          functionName: 'redeem',
-          args: [shares, address, address],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeUnstake(side, shares, options)),
-    })
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'unstake',
+        title: `Unstaking splDXY-${side}`,
+        prerequisites: [],
+        mainStep: {
+          label: `Unstake splDXY-${side}`,
+          execute: (config) => writeContract(config, {
+            address: stakingAddress,
+            abi: STAKED_TOKEN_ABI,
+            functionName: 'redeem',
+            args: [shares, address, address],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeUnstake(side, shares, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('unstake', 'Unstake', error)
+    }
   }
 
   async executeCloseLeverage(
@@ -331,30 +335,34 @@ class TransactionManager {
     slippageBps: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = `leverage-close-${side}`
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = `leverage-close-${side}`
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses } = ctx
-    const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
-    const deadline = getDeadline()
+      const { addresses } = ctx
+      const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+      const deadline = getDeadline()
 
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'leverage',
-      title: `Closing ${side} leverage position`,
-      prerequisites: [],
-      mainStep: {
-        label: `Close ${side} position`,
-        execute: (config) => writeContract(config, {
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'closeLeverage',
-          args: [collateralToWithdraw, slippageBps, deadline],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeCloseLeverage(side, collateralToWithdraw, slippageBps, options)),
-    })
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'leverage',
+        title: `Closing ${side} leverage position`,
+        prerequisites: [],
+        mainStep: {
+          label: `Close ${side} position`,
+          execute: (config) => writeContract(config, {
+            address: routerAddress,
+            abi: LEVERAGE_ROUTER_ABI,
+            functionName: 'closeLeverage',
+            args: [collateralToWithdraw, slippageBps, deadline],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeCloseLeverage(side, collateralToWithdraw, slippageBps, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('leverage', 'Close leverage', error)
+    }
   }
 
   async executeMint(
@@ -362,41 +370,45 @@ class TransactionManager {
     usdcRequired: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = 'mint'
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = 'mint'
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses, address } = ctx
-    let permit!: PermitResult
-    const permitNonce = await this.readPermitNonce(addresses.USDC, address)
-    const prerequisites: Prerequisite[] = []
+      const { addresses, address } = ctx
+      let permit!: PermitResult
+      const permitNonce = await this.readPermitNonce(addresses.USDC, address)
+      const prerequisites: Prerequisite[] = []
 
-    if (permitNonce === null) {
-      const hasAllowance = await this.checkAllowance(addresses.USDC, addresses.SYNTHETIC_SPLITTER, address, usdcRequired)
-      if (!hasAllowance) {
-        prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired))
+      if (permitNonce === null) {
+        const hasAllowance = await this.checkAllowance(addresses.USDC, addresses.SYNTHETIC_SPLITTER, address, usdcRequired)
+        if (!hasAllowance) {
+          prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired))
+        }
       }
-    }
 
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'mint',
-      title: 'Minting token pairs',
-      permitSign: permitNonce === null ? undefined : async () => {
-        permit = await this.signPermit(addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx, permitNonce)
-      },
-      prerequisites,
-      mainStep: {
-        label: 'Mint pairs',
-        execute: (config) => writeContract(config, {
-          address: addresses.SYNTHETIC_SPLITTER,
-          abi: PLETH_CORE_ABI,
-          functionName: permitNonce === null ? 'mint' : 'mintWithPermit',
-          args: permitNonce === null ? [pairAmount] : [pairAmount, permit.deadline, permit.v, permit.r, permit.s],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeMint(pairAmount, usdcRequired, options)),
-    })
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'mint',
+        title: 'Minting token pairs',
+        permitSign: permitNonce === null ? undefined : async () => {
+          permit = await this.signPermit(addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx, permitNonce)
+        },
+        prerequisites,
+        mainStep: {
+          label: 'Mint pairs',
+          execute: (config) => writeContract(config, {
+            address: addresses.SYNTHETIC_SPLITTER,
+            abi: PLETH_CORE_ABI,
+            functionName: permitNonce === null ? 'mint' : 'mintWithPermit',
+            args: permitNonce === null ? [pairAmount] : [pairAmount, permit.deadline, permit.v, permit.r, permit.s],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeMint(pairAmount, usdcRequired, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('mint', 'Mint', error)
+    }
   }
 
   async executeStake(
@@ -404,44 +416,48 @@ class TransactionManager {
     amount: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = `stake-${side}`
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = `stake-${side}`
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses, address } = ctx
-    const tokenAddress = side === 'BEAR' ? addresses.DXY_BEAR : addresses.DXY_BULL
-    const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
+      const { addresses, address } = ctx
+      const tokenAddress = side === 'BEAR' ? addresses.DXY_BEAR : addresses.DXY_BULL
+      const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
 
-    let permit!: PermitResult
-    const permitNonce = await this.readPermitNonce(tokenAddress, address)
-    const prerequisites: Prerequisite[] = []
+      let permit!: PermitResult
+      const permitNonce = await this.readPermitNonce(tokenAddress, address)
+      const prerequisites: Prerequisite[] = []
 
-    if (permitNonce === null) {
-      const hasAllowance = await this.checkAllowance(tokenAddress, stakingAddress, address, amount)
-      if (!hasAllowance) {
-        prerequisites.push(this.makeApprovalPrerequisite(`Approve plDXY-${side}`, tokenAddress, stakingAddress, amount))
+      if (permitNonce === null) {
+        const hasAllowance = await this.checkAllowance(tokenAddress, stakingAddress, address, amount)
+        if (!hasAllowance) {
+          prerequisites.push(this.makeApprovalPrerequisite(`Approve plDXY-${side}`, tokenAddress, stakingAddress, amount))
+        }
       }
-    }
 
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'stake',
-      title: `Staking plDXY-${side}`,
-      permitSign: permitNonce === null ? undefined : async () => {
-        permit = await this.signPermit(tokenAddress, stakingAddress, amount, ctx, permitNonce)
-      },
-      prerequisites,
-      mainStep: {
-        label: `Stake plDXY-${side}`,
-        execute: (config) => writeContract(config, {
-          address: stakingAddress,
-          abi: STAKED_TOKEN_ABI,
-          functionName: permitNonce === null ? 'deposit' : 'depositWithPermit',
-          args: permitNonce === null ? [amount, address] : [amount, address, permit.deadline, permit.v, permit.r, permit.s],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeStake(side, amount, options)),
-    })
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'stake',
+        title: `Staking plDXY-${side}`,
+        permitSign: permitNonce === null ? undefined : async () => {
+          permit = await this.signPermit(tokenAddress, stakingAddress, amount, ctx, permitNonce)
+        },
+        prerequisites,
+        mainStep: {
+          label: `Stake plDXY-${side}`,
+          execute: (config) => writeContract(config, {
+            address: stakingAddress,
+            abi: STAKED_TOKEN_ABI,
+            functionName: permitNonce === null ? 'deposit' : 'depositWithPermit',
+            args: permitNonce === null ? [amount, address] : [amount, address, permit.deadline, permit.v, permit.r, permit.s],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeStake(side, amount, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('stake', 'Stake', error)
+    }
   }
 
   async executeCurveSwap(
@@ -450,42 +466,46 @@ class TransactionManager {
     minAmountOut: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = `swap-${mode}-bear`
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = `swap-${mode}-bear`
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses, address } = ctx
-    const tokenAddress = mode === 'buy' ? addresses.USDC : addresses.DXY_BEAR
-    const tokenSymbol = mode === 'buy' ? 'USDC' : 'plDXY-BEAR'
+      const { addresses, address } = ctx
+      const tokenAddress = mode === 'buy' ? addresses.USDC : addresses.DXY_BEAR
+      const tokenSymbol = mode === 'buy' ? 'USDC' : 'plDXY-BEAR'
 
-    const hasAllowance = await this.checkAllowance(tokenAddress, addresses.CURVE_POOL, address, amount)
+      const hasAllowance = await this.checkAllowance(tokenAddress, addresses.CURVE_POOL, address, amount)
 
-    const prerequisites: Prerequisite[] = []
-    if (!hasAllowance) {
-      prerequisites.push(this.makeApprovalPrerequisite(`Approve ${tokenSymbol}`, tokenAddress, addresses.CURVE_POOL, amount))
+      const prerequisites: Prerequisite[] = []
+      if (!hasAllowance) {
+        prerequisites.push(this.makeApprovalPrerequisite(`Approve ${tokenSymbol}`, tokenAddress, addresses.CURVE_POOL, amount))
+      }
+
+      const USDC_INDEX = 0n
+      const BEAR_INDEX = 1n
+      const i = mode === 'buy' ? USDC_INDEX : BEAR_INDEX
+      const j = mode === 'buy' ? BEAR_INDEX : USDC_INDEX
+
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'swap',
+        title: mode === 'buy' ? 'Buying plDXY-BEAR' : 'Selling plDXY-BEAR',
+        prerequisites,
+        mainStep: {
+          label: mode === 'buy' ? 'Buy plDXY-BEAR' : 'Sell plDXY-BEAR',
+          execute: (config) => writeContract(config, {
+            address: addresses.CURVE_POOL,
+            abi: CURVE_POOL_ABI,
+            functionName: 'exchange',
+            args: [i, j, amount, minAmountOut, address],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeCurveSwap(mode, amount, minAmountOut, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('swap', 'Swap', error)
     }
-
-    const USDC_INDEX = 0n
-    const BEAR_INDEX = 1n
-    const i = mode === 'buy' ? USDC_INDEX : BEAR_INDEX
-    const j = mode === 'buy' ? BEAR_INDEX : USDC_INDEX
-
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'swap',
-      title: mode === 'buy' ? 'Buying plDXY-BEAR' : 'Selling plDXY-BEAR',
-      prerequisites,
-      mainStep: {
-        label: mode === 'buy' ? 'Buy plDXY-BEAR' : 'Sell plDXY-BEAR',
-        execute: (config) => writeContract(config, {
-          address: addresses.CURVE_POOL,
-          abi: CURVE_POOL_ABI,
-          functionName: 'exchange',
-          args: [i, j, amount, minAmountOut, address],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeCurveSwap(mode, amount, minAmountOut, options)),
-    })
   }
 
   async executeZapBuy(
@@ -494,36 +514,40 @@ class TransactionManager {
     slippageBps: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = 'swap-buy-bull'
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = 'swap-buy-bull'
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses, address } = ctx
-    const hasAllowance = await this.checkAllowance(addresses.USDC, addresses.ZAP_ROUTER, address, usdcAmount)
+      const { addresses, address } = ctx
+      const hasAllowance = await this.checkAllowance(addresses.USDC, addresses.ZAP_ROUTER, address, usdcAmount)
 
-    const prerequisites: Prerequisite[] = []
-    if (!hasAllowance) {
-      prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.ZAP_ROUTER, usdcAmount))
+      const prerequisites: Prerequisite[] = []
+      if (!hasAllowance) {
+        prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.ZAP_ROUTER, usdcAmount))
+      }
+
+      const deadline = getDeadline()
+
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'swap',
+        title: 'Buying plDXY-BULL',
+        prerequisites,
+        mainStep: {
+          label: 'Buy plDXY-BULL',
+          execute: (config) => writeContract(config, {
+            address: addresses.ZAP_ROUTER,
+            abi: ZAP_ROUTER_ABI,
+            functionName: 'zapMint',
+            args: [usdcAmount, minBullOut, slippageBps, deadline],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeZapBuy(usdcAmount, minBullOut, slippageBps, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('swap', 'Buy', error)
     }
-
-    const deadline = getDeadline()
-
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'swap',
-      title: 'Buying plDXY-BULL',
-      prerequisites,
-      mainStep: {
-        label: 'Buy plDXY-BULL',
-        execute: (config) => writeContract(config, {
-          address: addresses.ZAP_ROUTER,
-          abi: ZAP_ROUTER_ABI,
-          functionName: 'zapMint',
-          args: [usdcAmount, minBullOut, slippageBps, deadline],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeZapBuy(usdcAmount, minBullOut, slippageBps, options)),
-    })
   }
 
   async executeZapSell(
@@ -531,36 +555,40 @@ class TransactionManager {
     minUsdcOut: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = 'swap-sell-bull'
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = 'swap-sell-bull'
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { addresses, address } = ctx
-    const hasAllowance = await this.checkAllowance(addresses.DXY_BULL, addresses.ZAP_ROUTER, address, bullAmount)
+      const { addresses, address } = ctx
+      const hasAllowance = await this.checkAllowance(addresses.DXY_BULL, addresses.ZAP_ROUTER, address, bullAmount)
 
-    const prerequisites: Prerequisite[] = []
-    if (!hasAllowance) {
-      prerequisites.push(this.makeApprovalPrerequisite('Approve plDXY-BULL', addresses.DXY_BULL, addresses.ZAP_ROUTER, bullAmount))
+      const prerequisites: Prerequisite[] = []
+      if (!hasAllowance) {
+        prerequisites.push(this.makeApprovalPrerequisite('Approve plDXY-BULL', addresses.DXY_BULL, addresses.ZAP_ROUTER, bullAmount))
+      }
+
+      const deadline = getDeadline()
+
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'swap',
+        title: 'Selling plDXY-BULL',
+        prerequisites,
+        mainStep: {
+          label: 'Sell plDXY-BULL',
+          execute: (config) => writeContract(config, {
+            address: addresses.ZAP_ROUTER,
+            abi: ZAP_ROUTER_ABI,
+            functionName: 'zapBurn',
+            args: [bullAmount, minUsdcOut, deadline],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeZapSell(bullAmount, minUsdcOut, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('swap', 'Sell', error)
     }
-
-    const deadline = getDeadline()
-
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'swap',
-      title: 'Selling plDXY-BULL',
-      prerequisites,
-      mainStep: {
-        label: 'Sell plDXY-BULL',
-        execute: (config) => writeContract(config, {
-          address: addresses.ZAP_ROUTER,
-          abi: ZAP_ROUTER_ABI,
-          functionName: 'zapBurn',
-          args: [bullAmount, minUsdcOut, deadline],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeZapSell(bullAmount, minUsdcOut, options)),
-    })
   }
 
   private async adjustBurnAmount(
@@ -597,29 +625,33 @@ class TransactionManager {
     pairAmount: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = 'redeem'
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = 'redeem'
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { config, addresses } = ctx
-    const adjustedAmount = await this.adjustBurnAmount(addresses.SYNTHETIC_SPLITTER, pairAmount, config)
+      const { config, addresses } = ctx
+      const adjustedAmount = await this.adjustBurnAmount(addresses.SYNTHETIC_SPLITTER, pairAmount, config)
 
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'burn',
-      title: 'Redeeming token pairs',
-      prerequisites: [],
-      mainStep: {
-        label: 'Redeem pairs',
-        execute: (config) => writeContract(config, {
-          address: addresses.SYNTHETIC_SPLITTER,
-          abi: PLETH_CORE_ABI,
-          functionName: 'burn',
-          args: [adjustedAmount],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeRedeem(pairAmount, options)),
-    })
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'burn',
+        title: 'Redeeming token pairs',
+        prerequisites: [],
+        mainStep: {
+          label: 'Redeem pairs',
+          execute: (config) => writeContract(config, {
+            address: addresses.SYNTHETIC_SPLITTER,
+            abi: PLETH_CORE_ABI,
+            functionName: 'burn',
+            args: [adjustedAmount],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeRedeem(pairAmount, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('burn', 'Redeem', error)
+    }
   }
 
   async executeOpenLeverage(
@@ -630,78 +662,90 @@ class TransactionManager {
     minAmountOut: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
-    const operationKey = `leverage-open-${side}`
-    const ctx = await this.getOperationContext(operationKey)
-    if (!ctx) return
+    try {
+      const operationKey = `leverage-open-${side}`
+      const ctx = await this.getOperationContext(operationKey)
+      if (!ctx) return
 
-    const { config, addresses, address } = ctx
-    const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+      const { config, addresses, address } = ctx
+      const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
 
-    const morphoAddress = await readContract(config, {
-      address: routerAddress,
-      abi: LEVERAGE_ROUTER_ABI,
-      functionName: 'MORPHO',
-    })
-
-    const isAuthorized = await readContract(config, {
-      address: morphoAddress,
-      abi: MORPHO_ABI,
-      functionName: 'isAuthorized',
-      args: [address, routerAddress],
-    })
-
-    const prerequisites: Prerequisite[] = []
-    if (!isAuthorized) {
-      prerequisites.push({
-        label: 'Authorize Morpho',
-        execute: async (cfg, onConfirming) => {
-          const authHash = await writeContract(cfg, {
-            address: morphoAddress,
-            abi: MORPHO_ABI,
-            functionName: 'setAuthorization',
-            args: [routerAddress, true],
-          })
-          onConfirming()
-          await waitForTransactionReceipt(cfg, { hash: authHash })
-        },
+      const morphoAddress = await readContract(config, {
+        address: routerAddress,
+        abi: LEVERAGE_ROUTER_ABI,
+        functionName: 'MORPHO',
       })
-    }
 
-    let permit!: PermitResult
-    const permitNonce = await this.readPermitNonce(addresses.USDC, address)
-    if (permitNonce === null) {
-      const hasAllowance = await this.checkAllowance(addresses.USDC, routerAddress, address, principal)
-      if (!hasAllowance) {
-        prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, routerAddress, principal))
+      const isAuthorized = await readContract(config, {
+        address: morphoAddress,
+        abi: MORPHO_ABI,
+        functionName: 'isAuthorized',
+        args: [address, routerAddress],
+      })
+
+      const prerequisites: Prerequisite[] = []
+      if (!isAuthorized) {
+        prerequisites.push({
+          label: 'Authorize Morpho',
+          execute: async (cfg, onConfirming) => {
+            const authHash = await writeContract(cfg, {
+              address: morphoAddress,
+              abi: MORPHO_ABI,
+              functionName: 'setAuthorization',
+              args: [routerAddress, true],
+            })
+            onConfirming()
+            await waitForTransactionReceipt(cfg, { hash: authHash })
+          },
+        })
       }
-    }
-    const deadline = getDeadline()
 
-    await this.executeOperation(ctx, {
-      operationKey,
-      txType: 'leverage',
-      title: `Opening ${side} leverage position`,
-      permitSign: permitNonce === null ? undefined : async () => {
-        permit = await this.signPermit(addresses.USDC, routerAddress, principal, ctx, permitNonce)
-      },
-      prerequisites,
-      mainStep: {
-        label: `Open ${side} position`,
-        execute: (cfg) => writeContract(cfg, {
-          address: routerAddress,
-          abi: side === 'BEAR' ? BEAR_OPEN_LEVERAGE_ABI : LEVERAGE_ROUTER_ABI,
-          functionName: permitNonce === null ? 'openLeverage' : 'openLeverageWithPermit',
-          args: side === 'BEAR'
-            ? permitNonce === null
-              ? [principal, leverage, slippageBps, minAmountOut, deadline]
-              : [principal, leverage, slippageBps, minAmountOut, permit.deadline, permit.v, permit.r, permit.s]
-            : permitNonce === null
-              ? [principal, leverage, slippageBps, deadline]
-              : [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
-        }),
-      },
-      onRetry: options?.onRetry ?? (() => void this.executeOpenLeverage(side, principal, leverage, slippageBps, minAmountOut, options)),
-    })
+      let permit!: PermitResult
+      const permitNonce = await this.readPermitNonce(addresses.USDC, address)
+      if (permitNonce === null) {
+        const hasAllowance = await this.checkAllowance(addresses.USDC, routerAddress, address, principal)
+        if (!hasAllowance) {
+          prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, routerAddress, principal))
+        }
+      }
+      const deadline = getDeadline()
+
+      await this.executeOperation(ctx, {
+        operationKey,
+        txType: 'leverage',
+        title: `Opening ${side} leverage position`,
+        permitSign: permitNonce === null ? undefined : async () => {
+          permit = await this.signPermit(addresses.USDC, routerAddress, principal, ctx, permitNonce)
+        },
+        prerequisites,
+        mainStep: {
+          label: `Open ${side} position`,
+          execute: (cfg) => writeContract(cfg, {
+            address: routerAddress,
+            abi: side === 'BEAR' ? BEAR_OPEN_LEVERAGE_ABI : LEVERAGE_ROUTER_ABI,
+            functionName: permitNonce === null ? 'openLeverage' : 'openLeverageWithPermit',
+            args: side === 'BEAR'
+              ? permitNonce === null
+                ? [principal, leverage, slippageBps, minAmountOut, deadline]
+                : [principal, leverage, slippageBps, minAmountOut, permit.deadline, permit.v, permit.r, permit.s]
+              : permitNonce === null
+                ? [principal, leverage, slippageBps, deadline]
+                : [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
+          }),
+        },
+        onRetry: options?.onRetry ?? (() => void this.executeOpenLeverage(side, principal, leverage, slippageBps, minAmountOut, options)),
+      })
+    } catch (error) {
+      this.showPreflightFailure('leverage', 'Open leverage', error)
+    }
+  }
+
+  private showPreflightFailure(type: TransactionType, title: string, error: unknown): void {
+    const id = crypto.randomUUID()
+    const store = useTransactionStore.getState()
+    store.addTransaction({ id, type, title, status: 'pending', steps: [{ label: 'Prepare transaction', status: 'pending' }] })
+    store.setStepError(id, 0, getErrorMessage(parseTransactionError(error)), error)
+    useTransactionModal.getState().open({ transactionId: id })
   }
 
   getOperation(operationKey: string): PendingOperation | undefined {

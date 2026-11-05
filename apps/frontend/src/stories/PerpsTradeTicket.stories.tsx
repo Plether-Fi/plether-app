@@ -1,3 +1,5 @@
+import { relaxedProtectionCloseLimits } from '../contracts/positionProtection'
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, within } from 'storybook/test'
@@ -5,9 +7,10 @@ import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import {
   PERPS_EXECUTION_MODE,
   PERPS_EXECUTION_MODE_MASK,
-  type PreparedPerpsOrderV2,
-} from '../contracts/perpsOrderV2'
+  type PreparedPerpsOrderV3,
+} from '../contracts/perpsOrderV3'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
+import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import {
   PerpsIdentityContext,
   type PerpsAaDeploymentManifest,
@@ -18,7 +21,7 @@ type TicketProps = ComponentProps<typeof PerpsTradeTicket>
 type OpenPreviewFixture = NonNullable<TicketProps['openPreviewFixture']>
 type ClosePreviewFixture = NonNullable<TicketProps['closePreviewFixture']>
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const POSITION_SIZE = 8_200n * 10n ** 18n
 const ORACLE_PRICE = 98_300_000n
 const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
@@ -26,6 +29,7 @@ const STORY_TRADING_ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
 
 const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -37,16 +41,16 @@ const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
-  usdcSupportsEip3009: false,
-  usdcEip712Name: null,
-  usdcEip712Version: null,
-  marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-  cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-  orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
-  policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
-  positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+  settlementToken: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
+  settlementTokenSupportsEip3009: false,
+  settlementTokenEip712Name: null,
+  settlementTokenEip712Version: null,
+  marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
+  cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
+  orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
+  orderLifecycleBook: '0x519f57a34fb440c42bfd2d8328d2f80349af3872',
+  policyEvaluator: '0xf550cada6b7d477b23069c8b4f254d19088f28c8',
+  positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -105,23 +109,23 @@ const currentLongPosition = {
   direction: 'long' as const,
   size: POSITION_SIZE,
   entryPrice: 98_750_000n,
-  marginUsdc: 1_640n * USDC,
-  unrealizedPnlUsdc: 54_250_000n,
-  maintenanceMarginUsdc: 80_600_000n,
+  marginAssets: 1_640n * ASSETS,
+  unrealizedPnlAssets: 54_250_000n,
+  maintenanceMarginAssets: 80_600_000n,
   liquidatable: false,
-  estimatedNotionalUsdc: 8_060n * USDC,
-  entryNotionalUsdc: 8_095n * USDC,
-  dxyExposureUsdc: 8_200n * USDC,
+  estimatedNotionalAssets: 8_060n * ASSETS,
+  entryNotionalAssets: 8_095n * ASSETS,
+  dxyExposureAssets: 8_200n * ASSETS,
   displayDxyPrice: 101_700_000n,
   liquidationPrice: 112_000_000n,
-  pendingCarryUsdc: 4_200_000n,
-  vpiAccrued: 60n * USDC,
+  pendingCarryAssets: 4_200_000n,
+  vpiAccrued: 60n * ASSETS,
 }
 
 const executionProtectionsFixture = {
   account: STORY_TRADING_ACCOUNT,
   manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
+  orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
   orderLifecycleBook: '0x1111111111111111111111111111111111111111',
   request: {
     clientOrderId: `0x${'12'.repeat(32)}`,
@@ -131,44 +135,44 @@ const executionProtectionsFixture = {
     targetPrice: 98_250_000n,
     isClose: false,
     bounds: {
-      validUntil: 1_788_000_300n,
+      submitBy: 1_788_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: `0x${'34'.repeat(32)}`,
-      maxExecutionBountyUsdc: 250_000n,
-      maxExecutionNotionalUsdc: 1_966n * USDC,
-      maxGrossAccountDebitUsdc: 396_236_400n,
-      maxActionChargeUsdc: 1_400_000n,
-      maxExplicitFeesUsdc: 786_400n,
+      maxExecutionBountyAssets: 250_000n,
+      maxExecutionNotionalAssets: 1_966n * ASSETS,
+      maxGrossAccountDebitAssets: 396_236_400n,
+      maxActionChargeAssets: 1_400_000n,
+      maxExplicitFeesAssets: 786_400n,
       maxPostPositionSize: 2_000n * 10n ** 18n,
-      minPostSettlementBalanceUsdc: 9_857_013_600n,
-      minPostPositionEquityUsdc: 391_013_600n,
+      minPostSettlementBalanceAssets: 9_857_013_600n,
+      minPostPositionEquityAssets: 391_013_600n,
       maxPostLeverageBps: 50_000,
     },
   },
-  executionBountyUsdc: 250_000n,
+  executionBountyAssets: 250_000n,
   reviewedBlockNumber: 302_257_125n,
   reviewedBlockHash: `0x${'56'.repeat(32)}`,
   reviewedPrice: ORACLE_PRICE,
   protection: {
-    validUntil: 1_788_000_300n,
+    submitBy: 1_788_000_300n, executionWindowSeconds: 60,
     executionMode: PERPS_EXECUTION_MODE.LIVE,
-    executionBountyUsdc: 250_000n,
+    executionBountyAssets: 250_000n,
   },
-} satisfies PreparedPerpsOrderV2
+} satisfies PreparedPerpsOrderV3
 
 function openPreviewFixture({
   size,
-  notionalUsdc,
-  marginDeltaUsdc,
+  notionalAssets,
+  marginDeltaAssets,
   postSize,
-  postMarginUsdc,
+  postMarginAssets,
   postVpiAccrued = 1_400_000n,
 }: {
   size: bigint
-  notionalUsdc: bigint
-  marginDeltaUsdc: bigint
+  notionalAssets: bigint
+  marginDeltaAssets: bigint
   postSize: bigint
-  postMarginUsdc: bigint
+  postMarginAssets: bigint
   postVpiAccrued?: bigint
 }): OpenPreviewFixture {
   return {
@@ -177,21 +181,21 @@ function openPreviewFixture({
     failureCategory: 0,
     executionPrice: 98_280_000n,
     sizeDelta: size,
-    notionalUsdc,
-    marginDeltaUsdc,
-    vpiUsdc: 1_400_000n,
-    executionFeeUsdc: (notionalUsdc * 4n) / 10_000n,
-    tradeCostUsdc: 2_186_400n,
-    poolRebatePayoutUsdc: 0n,
-    pendingCarryUsdc: 0n,
-    initialMarginRequirementUsdc: marginDeltaUsdc,
-    maintenanceMarginUsdc: notionalUsdc / 100n,
+    notionalAssets,
+    marginDeltaAssets,
+    vpiAssets: 1_400_000n,
+    executionFeeAssets: (notionalAssets * 4n) / 10_000n,
+    tradeCostAssets: 2_186_400n,
+    poolRebatePayoutAssets: 0n,
+    pendingCarryAssets: 0n,
+    initialMarginRequirementAssets: marginDeltaAssets,
+    maintenanceMarginAssets: notionalAssets / 100n,
     postSize,
-    postMarginUsdc,
+    postMarginAssets,
     postEntryPrice: 98_280_000n,
     postVpiAccrued,
-    postUnrealizedPnlUsdc: 0n,
-    postEquityUsdc: postMarginUsdc - 1_400_000n,
+    postUnrealizedPnlAssets: 0n,
+    postEquityAssets: postMarginAssets - 1_400_000n,
     postHealthBps: 9_400n,
     postLiquidatable: false,
     hasLiquidationPrice: true,
@@ -203,27 +207,27 @@ function closePreviewFixture({
   sizeDelta,
   remainingSize,
   remainingMargin,
-  vpiDeltaUsdc = -2_750_000n,
+  vpiDeltaAssets = -2_750_000n,
 }: {
   sizeDelta: bigint
   remainingSize: bigint
   remainingMargin: bigint
-  vpiDeltaUsdc?: bigint
+  vpiDeltaAssets?: bigint
 }): ClosePreviewFixture {
   return {
     valid: true,
     invalidReason: 0,
     executionPrice: 98_320_000n,
     sizeDelta,
-    realizedPnlUsdc: 32_500_000n,
-    vpiDeltaUsdc,
-    vpiUsdc: 0n,
-    executionFeeUsdc: 1_966_400n,
+    realizedPnlAssets: 32_500_000n,
+    vpiDeltaAssets,
+    vpiAssets: 0n,
+    executionFeeAssets: 1_966_400n,
     remainingSize,
     remainingMargin,
-    frozenSpreadUsdc: 0n,
-    frozenSpreadPaidUsdc: 0n,
-    frozenSpreadWaivedUsdc: 0n,
+    frozenSpreadAssets: 0n,
+    frozenSpreadPaidAssets: 0n,
+    frozenSpreadWaivedAssets: 0n,
   }
 }
 
@@ -234,34 +238,34 @@ const documentationMarketArgs = {
   adverseConfidenceMultiplierBps: '2000',
   oracleFreshness: 'fresh' as const,
   oracleFreshnessTooltip: 'validated oracle basket updated 18s ago',
-  availableToTradeRaw: 18_420n * USDC,
+  availableToTradeRaw: 18_420n * ASSETS,
   availableToTradeAmount: '18 420',
-  settlementBalanceUsdcRaw: 10_254_250_000n,
-  withdrawableUsdcRaw: 8_420n * USDC,
-  walletUsdcRaw: 25_000n * USDC,
-  longOpenCapacityUsdc: 250_000n * USDC,
-  shortOpenCapacityUsdc: 250_000n * USDC,
+  settlementBalanceAssetsRaw: 10_254_250_000n,
+  withdrawableAssetsRaw: 8_420n * ASSETS,
+  walletAssetsRaw: 25_000n * ASSETS,
+  longOpenCapacityAssets: 250_000n * ASSETS,
+  shortOpenCapacityAssets: 250_000n * ASSETS,
   executionFeeBps: 4n,
 }
 
 const executedFrozenCloseReceipt = {
-  executionNotionalUsdc: (8_062_240_000n).toString(),
-  executionBountyUsdc: '0',
-  realizedPnlUsdc: (390n * USDC).toString(),
-  vpiUsdc: (12n * USDC).toString(),
-  carryUsdc: (6n * USDC).toString(),
-  executionFeeUsdc: (4n * USDC).toString(),
-  frozenSpreadUsdc: (24n * USDC).toString(),
-  actionChargeAssessedUsdc: (42n * USDC).toString(),
-  actionChargeCollectedUsdc: (36n * USDC).toString(),
-  grossAccountDebitUsdc: (40n * USDC).toString(),
-  preSettlementBalanceUsdc: (2_450n * USDC).toString(),
-  postSettlementBalanceUsdc: (2_450n * USDC).toString(),
-  preTraderClaimBalanceUsdc: '0',
-  postTraderClaimBalanceUsdc: (350n * USDC).toString(),
+  executionNotionalAssets: (8_062_240_000n).toString(),
+  executionBountyAssets: '0',
+  realizedPnlAssets: (390n * ASSETS).toString(),
+  vpiAssets: (12n * ASSETS).toString(),
+  carryAssets: (6n * ASSETS).toString(),
+  executionFeeAssets: (4n * ASSETS).toString(),
+  frozenSpreadAssets: (24n * ASSETS).toString(),
+  actionChargeAssessedAssets: (42n * ASSETS).toString(),
+  actionChargeCollectedAssets: (36n * ASSETS).toString(),
+  grossAccountDebitAssets: (40n * ASSETS).toString(),
+  preSettlementBalanceAssets: (2_450n * ASSETS).toString(),
+  postSettlementBalanceAssets: (2_450n * ASSETS).toString(),
+  preTraderClaimBalanceAssets: '0',
+  postTraderClaimBalanceAssets: (350n * ASSETS).toString(),
   postPositionSize: '0',
-  postPositionMarginUsdc: '0',
-  postPositionEquityUsdc: '0',
+  postPositionMarginAssets: '0',
+  postPositionEquityAssets: '0',
   postLeverageBps: '0',
 }
 
@@ -314,7 +318,7 @@ export const LongUnavailableDueToMarketSkew: Story = {
     validationErrorFixture: getOpenCapacityUnavailableMessage({
       direction: 'long',
       isOpeningFromZero: true,
-      minimumDxyExposureUsdc: 1_058_970_000n,
+      minimumDxyExposureAssets: 1_058_970_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -331,12 +335,40 @@ export const PreviewModal: Story = {
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
-      notionalUsdc: 1_966n * USDC,
-      marginDeltaUsdc: 393_200_000n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 393_200_000n,
       postSize: 2_000n * 10n ** 18n,
-      postMarginUsdc: 393_200_000n,
+      postMarginAssets: 393_200_000n,
     }),
   },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const QuickstartOrder: Story = {
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'preview',
+    initialDirection: 'long',
+    initialOrderQuantity: '2 000',
+    initialLeverage: 2,
+    currentPositionAmount: '0',
+    availableToTradeRaw: 100_000n * ASSETS,
+    availableToTradeAmount: '100 000',
+    settlementBalanceAssetsRaw: 100_000n * ASSETS,
+    withdrawableAssetsRaw: 100_000n * ASSETS,
+    openPreviewFixture: openPreviewFixture({
+      size: 2_000n * 10n ** 18n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 983n * ASSETS,
+      postSize: 2_000n * 10n ** 18n,
+      postMarginAssets: 983n * ASSETS,
+    }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const QuickstartPreview: Story = {
+  args: { ...QuickstartOrder.args, initialReviewOpen: true },
   render: (args) => <TicketFrame {...args} />,
 }
 
@@ -348,14 +380,14 @@ export const PreparingWalletRequest: Story = {
     initialReviewOpen: true,
     initialDirection: 'long',
     initialOrderQuantity: '2 000',
-    initialCommittedVpiUsdc: 1_400_000n,
+    initialCommittedVpiAssets: 1_400_000n,
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
-      notionalUsdc: 1_966n * USDC,
-      marginDeltaUsdc: 393_200_000n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 393_200_000n,
       postSize: 2_000n * 10n ** 18n,
-      postMarginUsdc: 393_200_000n,
+      postMarginAssets: 393_200_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -369,15 +401,15 @@ export const IncreaseLongPreparingWalletRequest: Story = {
     initialReviewOpen: true,
     initialDirection: 'long',
     initialOrderQuantity: '5 000',
-    initialCommittedVpiUsdc: 1_400_000n,
+    initialCommittedVpiAssets: 1_400_000n,
     initialCommittedPositionVpiAccrued: 61_400_000n,
     currentPosition: currentLongPosition,
     openPreviewFixture: openPreviewFixture({
       size: 5_000n * 10n ** 18n,
-      notionalUsdc: 4_915n * USDC,
-      marginDeltaUsdc: 983n * USDC,
+      notionalAssets: 4_915n * ASSETS,
+      marginDeltaAssets: 983n * ASSETS,
       postSize: 13_200n * 10n ** 18n,
-      postMarginUsdc: 2_623n * USDC,
+      postMarginAssets: 2_623n * ASSETS,
       postVpiAccrued: 61_400_000n,
     }),
   },
@@ -393,14 +425,14 @@ export const CloseLongPreparingWalletRequest: Story = {
     initialDirection: 'short',
     initialOrderQuantity: '8 200',
     initialReduceOnly: true,
-    initialCommittedVpiUsdc: -12_300_000n,
-    initialCommittedPositionVpiAccrued: 60n * USDC,
+    initialCommittedVpiAssets: -12_300_000n,
+    initialCommittedPositionVpiAccrued: 60n * ASSETS,
     currentPosition: currentLongPosition,
     closePreviewFixture: closePreviewFixture({
       sizeDelta: POSITION_SIZE,
       remainingSize: 0n,
       remainingMargin: 0n,
-      vpiDeltaUsdc: -12_300_000n,
+      vpiDeltaAssets: -12_300_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -416,10 +448,10 @@ export const OpenLongPreview: Story = {
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
-      notionalUsdc: 1_966n * USDC,
-      marginDeltaUsdc: 393_200_000n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 393_200_000n,
       postSize: 2_000n * 10n ** 18n,
-      postMarginUsdc: 393_200_000n,
+      postMarginAssets: 393_200_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -438,20 +470,20 @@ export const AddTakeProfitStopLoss: Story = {
   name: 'New order · Optional TP/SL',
   parameters: { controls: { disable: true } },
   render: () => <TicketFrame {...documentationMarketArgs} currentPositionAmount="0" initialOrderQuantity="2 000"
-    protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
+    protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' }))
-    await userEvent.type(canvas.getByLabelText('Take profit (USDC)'), '1.1')
-    await userEvent.type(canvas.getByLabelText('Stop loss (USDC)'), '0.98')
-    await expect(canvas.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+    await userEvent.type(canvas.getByLabelText(`Take profit (${PERPS_SETTLEMENT_TOKEN_LABEL})`), '1.1')
+    await userEvent.type(canvas.getByLabelText(`Stop loss (${PERPS_SETTLEMENT_TOKEN_LABEL})`), '0.98')
+    await expect(canvas.getByLabelText(`Take profit (${PERPS_SETTLEMENT_TOKEN_LABEL})`)).toHaveValue('1.1')
   },
 }
 
 export const DisabledAttachedProtection: Story = {
   name: 'Existing position · TP/SL disabled',
   render: () => <TicketFrame {...documentationMarketArgs} currentPosition={currentLongPosition}
-    protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
+    protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeDisabled()
@@ -461,7 +493,7 @@ export const DisabledAttachedProtection: Story = {
 export const ReduceOnlyHidesProtection: Story = {
   name: 'Reduce only · TP/SL hidden',
   render: () => <TicketFrame {...documentationMarketArgs} currentPosition={currentLongPosition} initialReduceOnly
-    protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
+    protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
@@ -475,9 +507,9 @@ export const ProtectedOpenReview: Story = {
   parameters: { controls: { disable: true } },
   render: () => <TicketFrame {...OpenLongPreview.args} protectionCapPrice={200_000_000n}
     executionProtectionsFixture={{ ...executionProtectionsFixture, positionProtection: {
-      book: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
-      params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 102_000_000n },
-      triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n,
+      book: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
+      params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 102_000_000n, closeLimits: relaxedProtectionCloseLimits() },
+      triggerBountyAssets: 200_000n, executionBountyAssets: 0n,
     } }} />,
 }
 
@@ -491,10 +523,10 @@ export const IncreaseLongPreview: Story = {
     currentPosition: currentLongPosition,
     openPreviewFixture: openPreviewFixture({
       size: 4_900n * 10n ** 18n,
-      notionalUsdc: 4_816_700_000n,
-      marginDeltaUsdc: 963_340_000n,
+      notionalAssets: 4_816_700_000n,
+      marginDeltaAssets: 963_340_000n,
       postSize: 13_100n * 10n ** 18n,
-      postMarginUsdc: 2_603_340_000n,
+      postMarginAssets: 2_603_340_000n,
       postVpiAccrued: 61_400_000n,
     }),
   },
@@ -513,7 +545,7 @@ export const ReduceLongPreview: Story = {
     closePreviewFixture: closePreviewFixture({
       sizeDelta: 5_000n * 10n ** 18n,
       remainingSize: 3_200n * 10n ** 18n,
-      remainingMargin: 640n * USDC,
+      remainingMargin: 640n * ASSETS,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -527,12 +559,12 @@ export const ReduceLongWithProvisionalVpiCredit: Story = {
     initialReviewOpen: true,
     initialDirection: 'short',
     initialOrderQuantity: '4 100',
-    currentPosition: { ...currentLongPosition, vpiAccrued: -40n * USDC },
+    currentPosition: { ...currentLongPosition, vpiAccrued: -40n * ASSETS },
     closePreviewFixture: closePreviewFixture({
       sizeDelta: 4_100n * 10n ** 18n,
       remainingSize: 4_100n * 10n ** 18n,
-      remainingMargin: 820n * USDC,
-      vpiDeltaUsdc: 6n * USDC,
+      remainingMargin: 820n * ASSETS,
+      vpiDeltaAssets: 6n * ASSETS,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -551,7 +583,7 @@ export const CloseLongPreview: Story = {
       sizeDelta: POSITION_SIZE,
       remainingSize: 0n,
       remainingMargin: 0n,
-      vpiDeltaUsdc: 4_250_000n,
+      vpiDeltaAssets: 4_250_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -601,14 +633,14 @@ export const CommitPending: Story = {
     initialReviewOpen: true,
     initialDirection: 'long',
     initialOrderQuantity: '2 000',
-    initialCommittedVpiUsdc: 1_400_000n,
+    initialCommittedVpiAssets: 1_400_000n,
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
-      notionalUsdc: 1_966n * USDC,
-      marginDeltaUsdc: 393_200_000n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 393_200_000n,
       postSize: 2_000n * 10n ** 18n,
-      postMarginUsdc: 393_200_000n,
+      postMarginAssets: 393_200_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -651,6 +683,74 @@ export const SelfExecuteFailed: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+const slippageFailedOrder: NonNullable<TicketProps['initialFailedOrder']> = {
+  orderId: 10725n,
+  time: '21 Sep, 09:16',
+  market: 'plDXY Perp',
+  side: 'Long',
+  type: 'Open',
+  price: '1.0206',
+  size: '--',
+  status: 'Failed',
+  account: STORY_ADDRESS,
+  clientOrderId: `0x${'12'.repeat(32)}`,
+  terminalReason: 'Slippage',
+  executionPriceRaw: 97_936_552n,
+  commitTxHash: '0xa25928530a9f2ec9dfd419cf5392c511571ecc256d4a991f1661bdf6d4897aee',
+  revealTxHash: '0x9cff4682bc1c9c478977e799c3e360a4e173f1b3371b4bcbb9d598f4f0010a45',
+  receiptEconomics: { executionBountyAssets: '200000', executionFeeAssets: '0' },
+}
+
+export const SlippageFailed: Story = {
+  name: 'Order Failed · Price Limit',
+  args: {
+    initialLifecycleState: 'selfExecuteFailed',
+    initialReviewOpen: true,
+    initialDirection: 'long',
+    initialOrderId: slippageFailedOrder.orderId,
+    initialCommitTxHash: slippageFailedOrder.commitTxHash,
+    initialFailedOrder: slippageFailedOrder,
+    // Illustrative exact limit: both prices would round to 1.0206 in the old UI.
+    initialCommittedTargetPrice: 1.02063,
+  },
+  render: (args) => <TicketFrame {...args} />,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body)
+    await expect(page.getByText('Order failed')).toBeVisible()
+    await expect(page.getByText(/execution price of 1\.02063448 was above your maximum acceptable price of 1\.02063000 by 0\.00000448/)).toBeVisible()
+    await expect(page.getByText('1.02063000')).toBeVisible()
+    await expect(page.getByText('1.02063448')).toBeVisible()
+    await expect(page.getByText(`0.2 ${PERPS_SETTLEMENT_TOKEN_LABEL}`)).toBeVisible()
+    await expect(page.getByText(/cannot be retried or finalized manually/)).toBeVisible()
+  },
+}
+
+export const CloseSlippageFailed: Story = {
+  name: 'Order Failed · Close Price Limit',
+  args: {
+    ...SlippageFailed.args,
+    initialDirection: 'short',
+    initialCommittedDirection: 'long',
+    initialReduceOnly: true,
+    initialCommittedTargetPrice: 1.02064,
+    initialFailedOrder: { ...slippageFailedOrder, type: 'Close' },
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const ExpiredOrder: Story = {
+  name: 'Order Failed · Expired',
+  args: {
+    ...SlippageFailed.args,
+    initialFailedOrder: {
+      ...slippageFailedOrder,
+      terminalReason: 'Expired',
+      executionPriceRaw: undefined,
+    },
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
 export const Executed: Story = {
   name: 'Close Long · Reconciled Frozen Close',
   args: {
@@ -661,7 +761,7 @@ export const Executed: Story = {
     initialOrderQuantity: '8 200',
     initialReduceOnly: true,
     initialCommittedIsFullClose: true,
-    initialCommittedPositionVpiAccrued: 60n * USDC,
+    initialCommittedPositionVpiAccrued: 60n * ASSETS,
     initialOrderId: 62n,
     initialCommittedSizeDelta: POSITION_SIZE,
     initialFinalExecutionPrice: 98_320_000n,
@@ -669,8 +769,8 @@ export const Executed: Story = {
     initialFinalExecutionOracleFrozen: true,
     initialFinalExecutionEconomicsVersion: 2,
     initialFinalReceiptEconomics: executedFrozenCloseReceipt,
-    initialFinalVpiUsdc: 12n * USDC,
-    initialCommittedPrePositionMarginUsdc: currentLongPosition.marginUsdc,
+    initialFinalVpiAssets: 12n * ASSETS,
+    initialCommittedPrePositionMarginAssets: currentLongPosition.marginAssets,
     currentPositionAmount: '0',
     oracleFrozen: true,
     marketPhase: 'close-only',
@@ -682,13 +782,13 @@ export const ExecutedWithVpiCharge: Story = {
   name: 'Close Long · Finalized VPI Charge',
   args: {
     ...Executed.args,
-    initialFinalVpiUsdc: 4_250_000n,
+    initialFinalVpiAssets: 4_250_000n,
     initialFinalReceiptEconomics: {
       ...executedFrozenCloseReceipt,
-      vpiUsdc: '4250000',
-      actionChargeAssessedUsdc: '34250000',
-      actionChargeCollectedUsdc: '28250000',
-      postTraderClaimBalanceUsdc: '357750000',
+      vpiAssets: '4250000',
+      actionChargeAssessedAssets: '34250000',
+      actionChargeCollectedAssets: '28250000',
+      postTraderClaimBalanceAssets: '357750000',
     },
   },
   render: (args) => <TicketFrame {...args} />,
@@ -702,13 +802,31 @@ export const Failed: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+export const ApprovalDeadlineFailed: Story = {
+  name: 'Commit Failed · Approval Deadline',
+  args: {
+    ...Failed.args,
+    initialFlowError: getPerpsErrorMessage({
+      details: JSON.stringify({ code: -32001, data: { reason: 'DEADLINE_TOO_CLOSE', retryable: false } }),
+    }, 'commit') + '\n\nSupport reference: 7b2d5d87-5ddf-4eca-8c03-cd68c4af7281',
+  },
+  render: (args) => <TicketFrame {...args} />,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body)
+    await expect(page.getByText('Commit transaction failed')).toBeVisible()
+    await expect(page.getByText(/Approval finished too close/)).toBeVisible()
+    await expect(page.getByText('7b2d5d87-5ddf-4eca-8c03-cd68c4af7281')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Review again' })).toBeVisible()
+  },
+}
+
 export const DepositMargin: Story = {
   args: {
     initialMarginAction: 'deposit',
     initialMarginActionAmount: '10 000',
-    walletUsdcRaw: 100_000_000_000n,
-    settlementBalanceUsdcRaw: 5_000_000_000n,
-    withdrawableUsdcRaw: 5_000_000_000n,
+    walletAssetsRaw: 100_000_000_000n,
+    settlementBalanceAssetsRaw: 5_000_000_000n,
+    withdrawableAssetsRaw: 5_000_000_000n,
   },
   render: (args) => <TicketFrame {...args} />,
 }
@@ -719,10 +837,10 @@ export const OwnerWalletTransferDeposit: Story = {
     initialMarginActionAmount: '100 000',
     availableToTradeRaw: 880_000n,
     availableToTradeAmount: '0.88',
-    ownerWalletUsdcRaw: 100_049n * USDC,
-    tradingAccountUsdcRaw: 0n,
-    settlementBalanceUsdcRaw: 880_000n,
-    withdrawableUsdcRaw: 880_000n,
+    ownerWalletAssetsRaw: 100_049n * ASSETS,
+    tradingAccountAssetsRaw: 0n,
+    settlementBalanceAssetsRaw: 880_000n,
+    withdrawableAssetsRaw: 880_000n,
   },
   render: (args) => (
     <PerpsIdentityContext.Provider value={SPONSORED_STORY_IDENTITY}>
@@ -735,9 +853,9 @@ export const WithdrawMargin: Story = {
   args: {
     initialMarginAction: 'withdraw',
     initialMarginActionAmount: '1 500',
-    walletUsdcRaw: 25_000_000_000n,
-    settlementBalanceUsdcRaw: 8_750_000_000n,
-    withdrawableUsdcRaw: 3_200_000_000n,
+    walletAssetsRaw: 25_000_000_000n,
+    settlementBalanceAssetsRaw: 8_750_000_000n,
+    withdrawableAssetsRaw: 3_200_000_000n,
   },
   render: (args) => <TicketFrame {...args} />,
 }
@@ -746,9 +864,9 @@ export const WithdrawExceedsAvailable: Story = {
   args: {
     initialMarginAction: 'withdraw',
     initialMarginActionAmount: '4 000',
-    walletUsdcRaw: 25_000_000_000n,
-    settlementBalanceUsdcRaw: 8_750_000_000n,
-    withdrawableUsdcRaw: 3_200_000_000n,
+    walletAssetsRaw: 25_000_000_000n,
+    settlementBalanceAssetsRaw: 8_750_000_000n,
+    withdrawableAssetsRaw: 3_200_000_000n,
   },
   render: (args) => <TicketFrame {...args} />,
 }
@@ -772,8 +890,8 @@ export const MarginAccountSummary: Story = {
   args: {
     initialDirection: 'long',
     initialOrderQuantity: '2 000',
-    settlementBalanceUsdcRaw: 1_248_250_000n,
-    withdrawableUsdcRaw: 648_250_000n,
+    settlementBalanceAssetsRaw: 1_248_250_000n,
+    withdrawableAssetsRaw: 648_250_000n,
     availableToTradeRaw: 848_250_000n,
     availableToTradeAmount: '848.25',
     currentPosition: {
@@ -782,16 +900,16 @@ export const MarginAccountSummary: Story = {
       direction: 'long',
       size: 2_000n * 10n ** 18n,
       entryPrice: 98_300_000n,
-      marginUsdc: 400_000_000n,
-      unrealizedPnlUsdc: 48_250_000n,
-      maintenanceMarginUsdc: 20_000_000n,
+      marginAssets: 400_000_000n,
+      unrealizedPnlAssets: 48_250_000n,
+      maintenanceMarginAssets: 20_000_000n,
       liquidatable: false,
-      estimatedNotionalUsdc: 1_999_920_000n,
-      entryNotionalUsdc: 2_000_000_000n,
-      dxyExposureUsdc: 2_069_380_000n,
+      estimatedNotionalAssets: 1_999_920_000n,
+      entryNotionalAssets: 2_000_000_000n,
+      dxyExposureAssets: 2_069_380_000n,
       displayDxyPrice: 101_700_000n,
       liquidationPrice: 110_000_000n,
-      pendingCarryUsdc: 1_250_000n,
+      pendingCarryAssets: 1_250_000n,
     },
   },
   render: (args) => <TicketFrame {...args} />,

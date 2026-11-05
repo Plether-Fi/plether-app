@@ -1,3 +1,7 @@
+import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
+import { reportedTransactionError } from '../analytics/transactionErrors'
+import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from '../perps-aa/readiness'
+import { SponsorRequestError } from '../perps-aa/errors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
@@ -6,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { isAddressEqual, parseEventLogs, type Address, type Hex } from 'viem'
 import { usePublicClient, useSignTypedData, useWriteContract, useWalletClient } from 'wagmi'
 import {
+  decodeVerifiedOrderFinalized,
   buildAddMarginAction,
   buildAuthorizedDepositAction,
   buildReceiveWithAuthorizationTypedData,
@@ -15,7 +20,6 @@ import {
   buildCreateProtectionAction,
   buildReplaceProtectionAction,
   buildCancelProtectionAction,
-  buildProtectedOpenAction,
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
 } from '@plether-fi/perps-aa-client'
@@ -27,24 +31,24 @@ import {
   PERPS_PUBLIC_LENS_ABI,
   PERPS_POSITION_PROTECTION_BOOK_ABI,
 } from '../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK, PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_RELEASE_IS_DEPLOYED } from '../contracts/perpsAddresses'
 import {
-  preparePerpsOrderV2,
+  preparePerpsOrderV3,
   PerpsOrderFundingShortfallError,
   PerpsOrderReviewError,
-} from '../contracts/preparePerpsOrderV2'
+} from '../contracts/preparePerpsOrderV3'
 import {
   PERPS_CLIENT_INTENT_RESOLUTION,
   PERPS_LIFECYCLE_STATUS,
-  persistPerpsOrderRequestV2,
-  type PreparedPerpsOrderV2,
+  persistPerpsOrderRequestV3,
+  type PreparedPerpsOrderV3,
   type PerpsExecutionMode,
   type PerpsFailedConstraint,
   type PerpsLifecycleStatus,
   type PerpsLifecycleOutcomeSnapshot,
-  type PerpsOrderRequestV2,
+  type PerpsOrderRequestV3,
   type PerpsTerminalReason,
-} from '../contracts/perpsOrderV2'
+} from '../contracts/perpsOrderV3'
 import {
   executeSponsoredPerpsAction,
   clearDepositAuthorization,
@@ -57,24 +61,26 @@ import {
   usePerpsAaRuntime,
   usePerpsIdentity,
   useSponsoredOperationStore,
+  restoreSponsoredOperationLane,
+  DEFAULT_SPONSORED_OPERATION_LANE,
 } from '../perps-aa'
 import {
   directionToPerpsSide,
-  formatPerpsUsdc,
-  notionalUsdcToQuantizedSizeDelta,
+  formatPerpsAssets,
+  notionalAssetsToQuantizedSizeDelta,
   quantizePerpsPositionSize,
   type PerpsDirection,
 } from '../utils/perps'
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
-import { buildPlaceOrderV2Action } from '../perps-aa/orderActionV2'
-import { persistProtectionIntent, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
-import { verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV2Bindings'
+import { buildPlaceOrderV3Action } from '../perps-aa/orderActionV3'
+import { persistProtectionIntent, relaxedProtectionCloseLimits, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
+import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV3Bindings'
 
 interface PrepareOrderInput {
   direction: PerpsDirection
-  notionalUsdc: bigint
+  notionalAssets: bigint
   sizeDelta?: bigint
-  marginUsdc: bigint
+  marginAssets: bigint
   oraclePrice: bigint
   slippagePercent: number
   isClose: boolean
@@ -86,7 +92,7 @@ interface PrepareOrderInput {
 
 interface CommitOrderInput extends PrepareOrderInput {
   orderDraft?: SavedOrderDraft
-  preparedOrder: PreparedPerpsOrderV2
+  preparedOrder: PreparedPerpsOrderV3
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: CommitOrderResult) => void
 }
@@ -116,10 +122,10 @@ const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
   'balanceOf',
   'getAccountLedgerSnapshot',
   'getActivePositionProtection',
-  'getFreeBuyingPowerUsdc',
+  'getFreeBuyingPowerAssets',
   'getPendingOrderView',
   'getPendingOrders',
-  'pendingPolicy',
+  'orderTiming',
   'getPoolLiquidityView',
   'getPosition',
   'getProtocolStatus',
@@ -172,7 +178,34 @@ interface CleanupExpiredOrderResult {
 }
 
 type PerpsPublicClient = NonNullable<ReturnType<typeof usePublicClient>>
-type CommitOrderArgs = readonly [PerpsOrderRequestV2]
+type CommitOrderArgs = readonly [PerpsOrderRequestV3]
+
+// Once confirmation starts, this request is immutable across retries. Preparation
+// objects are replaced only by an explicit new review (with a new client order ID).
+const confirmationRequests = new WeakMap<PreparedPerpsOrderV3, Promise<PerpsOrderRequestV3>>()
+
+function finalizeOrderDeadline(client: PerpsPublicClient, prepared: PreparedPerpsOrderV3): Promise<PerpsOrderRequestV3> {
+  const existing = confirmationRequests.get(prepared)
+  if (existing) return existing
+  const pending = (async () => {
+    const block = await client.getBlock({ blockTag: 'latest' })
+    const maxExecutionWindow = await client.readContract({
+      address: prepared.orderRouter,
+      abi: PERPS_ORDER_ROUTER_ABI,
+      functionName: 'maxExecutionWindowSeconds',
+      blockNumber: block.number,
+    })
+    const submitBy = block.timestamp + 120n
+    const executionWindowSeconds = Number(maxExecutionWindow < 60n ? maxExecutionWindow : 60n)
+    if (maxExecutionWindow <= 0n || submitBy > (1n << 64n) - 1n) throw new Error('Invalid order deadline')
+    return { ...prepared.request, bounds: { ...prepared.request.bounds, submitBy, executionWindowSeconds } }
+  })()
+  confirmationRequests.set(prepared, pending)
+  // A failed read creates no request and is safe to retry. Once created, even a
+  // simulation/signing failure must not silently change this immutable intent.
+  void pending.catch(() => { confirmationRequests.delete(prepared) })
+  return pending
+}
 
 const TX_HASH_PATTERN = /0x[a-fA-F0-9]{64}/
 
@@ -403,12 +436,12 @@ async function describeCommitFailure({
         args: [address],
       }),
     ])
-    const equityUsdc = readBigInt(accountView, 'equityUsdc', 0)
-    const withdrawableUsdc = readBigInt(accountView, 'withdrawableUsdc', 1)
-    const pendingMarginUsdc = readBigInt(accountView, 'pendingOrderMarginUsdc', 2)
-    const pendingBountyUsdc = readBigInt(accountView, 'pendingExecutionBountyUsdc', 3)
+    const equityAssets = readBigInt(accountView, 'equityAssets', 0)
+    const withdrawableAssets = readBigInt(accountView, 'withdrawableAssets', 1)
+    const pendingMarginAssets = readBigInt(accountView, 'pendingOrderMarginAssets', 2)
+    const pendingBountyAssets = readBigInt(accountView, 'pendingExecutionBountyAssets', 3)
     context.push(
-      `Current account state: ${readArrayLength(pendingOrders).toString()}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsUsdc(equityUsdc)} USDC, free/withdrawable ${formatPerpsUsdc(withdrawableUsdc)} USDC, pending margin ${formatPerpsUsdc(pendingMarginUsdc)} USDC, pending bounty ${formatPerpsUsdc(pendingBountyUsdc)} USDC.`
+      `Current account state: ${readArrayLength(pendingOrders).toString()}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsAssets(equityAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}, free/withdrawable ${formatPerpsAssets(withdrawableAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}, pending margin ${formatPerpsAssets(pendingMarginAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}, pending bounty ${formatPerpsAssets(pendingBountyAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     )
   } catch {
     context.push('Could not refresh account diagnostics after the failed commit.')
@@ -416,12 +449,11 @@ async function describeCommitFailure({
 
   try {
     if (!isClose) {
-      const latestBlock = await client.getBlock({ blockTag: 'latest' })
       const openRevertCode = await client.readContract({
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
         abi: PERPS_CFD_ENGINE_LENS_ABI,
         functionName: 'previewOpenRevertCode',
-        args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
+        args: [address, side, sizeDelta, marginDelta, oraclePrice],
       })
       if (openRevertCode !== 0) {
         context.push(`Latest open preview now fails: ${getPerpsOpenRevertMessage(openRevertCode)}`)
@@ -483,6 +515,9 @@ export function usePerpsTrading() {
   }, [queryClient])
 
   const requireSponsoredExecution = useCallback(() => {
+    if (!PERPS_RELEASE_IS_DEPLOYED) {
+      throw new SponsoredPreflightError({ reason: 'MANIFEST_UNAVAILABLE', message: 'The perps release is prepared and has not been deployed.' })
+    }
     if (!identity.isAaManifestConfigured) {
       throw new SponsoredPreflightError({
         reason: 'MANIFEST_NOT_CONFIGURED',
@@ -507,7 +542,7 @@ export function usePerpsTrading() {
     }
     if (
       identity.manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
-      !isAddressEqual(identity.manifest.usdc, PERPS_ARBITRUM_SEPOLIA.usdc) ||
+      !isAddressEqual(identity.manifest.settlementToken, PERPS_ARBITRUM_SEPOLIA.settlementToken) ||
       !isAddressEqual(
         identity.manifest.marginClearinghouse,
         PERPS_ARBITRUM_SEPOLIA.marginClearinghouse
@@ -544,10 +579,10 @@ export function usePerpsTrading() {
     }
   }, [aaRuntime, identity])
 
-  const approveUsdcForMargin = useCallback(async (amount: bigint) => {
+  const approveSettlementTokenForMargin = useCallback(async (amount: bigint) => {
     void amount
     throw new Error(
-      'Direct USDC approvals are disabled. Sponsored deposits execute atomically through the Trading Account.'
+      `Direct ${PERPS_SETTLEMENT_TOKEN_LABEL} approvals are disabled. Sponsored deposits execute atomically through the Trading Account.`
     )
   }, [])
 
@@ -558,11 +593,14 @@ export function usePerpsTrading() {
       }
 
       const sponsored = requireSponsoredExecution()
+      await refreshReadiness()
+      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const client = requireClient(publicClient)
       const hash = await writeContractAsync({
         account: sponsored.ownerAddress,
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: sponsored.manifest.usdc,
+        address: sponsored.manifest.settlementToken,
         abi: ERC20_ABI,
         functionName: 'transfer',
         args: [sponsored.accountAddress, amount],
@@ -575,7 +613,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
-      throw new Error(getPerpsErrorMessage(error, 'fund'))
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'fund'), { surface: 'perps', action: 'fund' })
     }
   }, [
     invalidatePerpsReads,
@@ -605,22 +643,25 @@ export function usePerpsTrading() {
       }
 
       const sponsored = requireSponsoredExecution()
+      await refreshReadiness()
+      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const useOwnerAuthorization = source === 'owner' || (
         source === undefined &&
-        sponsored.manifest.usdcSupportsEip3009
+        sponsored.manifest.settlementTokenSupportsEip3009
       )
       let action: PerpsActionPlan
       let authorizationNonce: Hex | undefined
       if (useOwnerAuthorization) {
         if (
-          !sponsored.manifest.usdcSupportsEip3009 ||
-          !sponsored.manifest.usdcEip712Name ||
-          !sponsored.manifest.usdcEip712Version
+          !sponsored.manifest.settlementTokenSupportsEip3009 ||
+          !sponsored.manifest.settlementTokenEip712Name ||
+          !sponsored.manifest.settlementTokenEip712Version
         ) {
           throw new SponsoredPreflightError({
             reason: 'OWNER_AUTHORIZATION_UNAVAILABLE',
             message:
-              'Owner-funded onboarding is disabled until this USDC deployment and its exact EIP-712 domain are verified.',
+              'Transfer USDG to your Trading Account, then deposit it into your Margin Account.',
           })
         }
         try {
@@ -628,15 +669,15 @@ export function usePerpsTrading() {
             chainId: sponsored.manifest.chainId,
             ownerAddress: sponsored.ownerAddress,
             accountAddress: sponsored.accountAddress,
-            token: sponsored.manifest.usdc,
+            token: sponsored.manifest.settlementToken,
             amount,
           })
           authorizationNonce = authorization.nonce
           const typedData = buildReceiveWithAuthorizationTypedData({
-            name: sponsored.manifest.usdcEip712Name,
-            version: sponsored.manifest.usdcEip712Version,
+            name: sponsored.manifest.settlementTokenEip712Name,
+            version: sponsored.manifest.settlementTokenEip712Version,
             chainId: sponsored.manifest.chainId,
-            verifyingContract: sponsored.manifest.usdc,
+            verifyingContract: sponsored.manifest.settlementToken,
           }, authorization)
           const authorizationSignature = await signTypedDataAsync({
             ...typedData,
@@ -644,7 +685,7 @@ export function usePerpsTrading() {
           })
           action = buildAuthorizedDepositAction({
             account: sponsored.accountAddress,
-            usdc: sponsored.manifest.usdc,
+            settlementToken: sponsored.manifest.settlementToken,
             clearinghouse: sponsored.manifest.marginClearinghouse,
             authorization,
             authorizationSignature,
@@ -662,7 +703,7 @@ export function usePerpsTrading() {
         try {
           action = buildSmartAccountBalanceDepositAction({
             account: sponsored.accountAddress,
-            usdc: sponsored.manifest.usdc,
+            settlementToken: sponsored.manifest.settlementToken,
             clearinghouse: sponsored.manifest.marginClearinghouse,
             amount,
           })
@@ -681,7 +722,7 @@ export function usePerpsTrading() {
         action,
         runtime: sponsored.runtime,
         authorizationTokenToClearOnConfirmation: useOwnerAuthorization
-          ? sponsored.manifest.usdc
+          ? sponsored.manifest.settlementToken
           : undefined,
         authorizationNonceToClearOnConfirmation: authorizationNonce,
       })
@@ -699,8 +740,8 @@ export function usePerpsTrading() {
         }, error)
       }
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'deposit'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'deposit' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'deposit'), { surface: 'perps', action: 'deposit' })
     }
   }, [
     aaRuntime,
@@ -724,7 +765,7 @@ export function usePerpsTrading() {
       const action = buildWithdrawToOwnerAction({
         account: sponsored.accountAddress,
         owner: sponsored.ownerAddress,
-        usdc: sponsored.manifest.usdc,
+        settlementToken: sponsored.manifest.settlementToken,
         clearinghouse: sponsored.manifest.marginClearinghouse,
         amount,
         })
@@ -739,8 +780,8 @@ export function usePerpsTrading() {
       return hash
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'withdraw'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'withdraw' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'withdraw'), { surface: 'perps', action: 'withdraw' })
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
@@ -770,16 +811,16 @@ export function usePerpsTrading() {
       return hash
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'addPositionMargin'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'addPositionMargin' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'addPositionMargin'), { surface: 'perps', action: 'addPositionMargin' })
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
   const prepareOrder = useCallback(async ({
     direction,
-    notionalUsdc,
+    notionalAssets,
     sizeDelta: sizeDeltaOverride,
-    marginUsdc,
+    marginAssets,
     oraclePrice,
     slippagePercent,
     isClose,
@@ -787,19 +828,19 @@ export function usePerpsTrading() {
     positionProtection,
     maxSize,
     signal,
-  }: PrepareOrderInput): Promise<PreparedPerpsOrderV2> => {
+  }: PrepareOrderInput): Promise<PreparedPerpsOrderV3> => {
     try {
       if (!address) {
         throw new Error(
           'Confirm the Plether Trading Account before reviewing an order'
         )
       }
-      if (notionalUsdc <= 0n) {
+      if (notionalAssets <= 0n) {
         throw new Error('Order size must be greater than zero')
       }
       if (oraclePrice <= 0n) throw new Error('plDXY Perp price is not available')
-      const requestedSizeDelta = sizeDeltaOverride ?? notionalUsdcToQuantizedSizeDelta(
-        notionalUsdc,
+      const requestedSizeDelta = sizeDeltaOverride ?? notionalAssetsToQuantizedSizeDelta(
+        notionalAssets,
         oraclePrice
       )
       if (requestedSizeDelta <= 0n) throw new Error('Order size is too small')
@@ -822,14 +863,14 @@ export function usePerpsTrading() {
         throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
-      const closeAssistance = isClose && sponsored.manifest.chainId === 421614 ? await loadCloseAssistanceConfig(sponsored.ownerAddress, signal) : undefined
-      return await preparePerpsOrderV2(client, sponsored.manifest, {
+      const closeAssistance = undefined
+      return await preparePerpsOrderV3(client, sponsored.manifest, {
         closeAssistance,
         account: sponsored.accountAddress,
         direction,
         side: directionToPerpsSide(direction),
         sizeDelta,
-        marginDelta: isClose ? 0n : marginUsdc,
+        marginDelta: isClose ? 0n : marginAssets,
         slippagePercent,
         isClose,
         selectedMaxLeverageBps,
@@ -840,16 +881,16 @@ export function usePerpsTrading() {
     } catch (error) {
       if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'review' })
       throw new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
     }
   }, [address, publicClient, requireSponsoredExecution])
 
   const commitOrder = useCallback(async ({
     direction,
-    notionalUsdc,
+    notionalAssets,
     sizeDelta: sizeDeltaOverride,
-    marginUsdc,
+    marginAssets,
     oraclePrice,
     isClose,
     preparedOrder,
@@ -868,9 +909,9 @@ export function usePerpsTrading() {
       debugPerpsCommit('start', {
         address,
         direction,
-        notionalUsdc,
+        notionalAssets,
         sizeDeltaOverride,
-        marginUsdc,
+        marginAssets,
         oraclePrice,
         isClose,
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -878,7 +919,7 @@ export function usePerpsTrading() {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before committing an order')
       }
-      if (notionalUsdc <= 0n) {
+      if (notionalAssets <= 0n) {
         throw new Error('Order size must be greater than zero')
       }
       const side = directionToPerpsSide(direction)
@@ -889,7 +930,7 @@ export function usePerpsTrading() {
       if (quantizePerpsPositionSize(sizeDelta, 'down') !== sizeDelta) {
         throw new Error('Order size must use 100 plDXY increments')
       }
-      const request = preparedOrder.request
+      let request = await (confirmationRequests.get(preparedOrder) ?? preparedOrder.request)
       const protection = preparedOrder.positionProtection
       if (protection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
       const marginDelta = request.marginDelta
@@ -903,20 +944,6 @@ export function usePerpsTrading() {
           'The trade changed after final review. Review fresh execution protections before signing.'
         )
       }
-      const args = [request] as const
-      diagnosticArgs = args
-      diagnosticSide = side
-      diagnosticSizeDelta = sizeDelta
-      diagnosticMarginDelta = marginDelta
-      debugPerpsCommit('args-ready', {
-        side,
-        sizeDelta,
-        marginDelta,
-        targetPrice: request.targetPrice,
-        clientOrderId: request.clientOrderId,
-        validUntil: request.bounds.validUntil,
-        isClose,
-      })
       const client = requireClient(publicClient)
       diagnosticClient = client
       debugPerpsCommit('client-ready')
@@ -972,10 +999,34 @@ export function usePerpsTrading() {
         throw new Error('Order integrity error: unknown client-intent resolution')
       }
 
+      // Consult durable activity before assigning a new deadline. Recorded
+      // attempts go through recovery; this path never rewrites a signed request.
+      restoreSponsoredOperationLane({ chainId: sponsored.manifest.chainId, accountAddress: address, lane: DEFAULT_SPONSORED_OPERATION_LANE })
+      const recorded = useSponsoredOperationStore.getState().operations.some(operation =>
+        operation.chainId === sponsored.manifest.chainId && isAddressEqual(operation.accountAddress, address) &&
+        operation.orderRequestV3?.clientOrderId === request.clientOrderId)
+      if (recorded) throw new Error('This order already has a recorded attempt. Check its activity before reviewing a new order.')
+      request = await finalizeOrderDeadline(client, preparedOrder)
+      const args = [request] as const
+      diagnosticArgs = args
+      diagnosticSide = side
+      diagnosticSizeDelta = sizeDelta
+      diagnosticMarginDelta = marginDelta
+      debugPerpsCommit('args-ready', {
+        side,
+        sizeDelta,
+        marginDelta,
+        targetPrice: request.targetPrice,
+        clientOrderId: request.clientOrderId,
+        submitBy: request.bounds.submitBy,
+        executionWindowSeconds: request.bounds.executionWindowSeconds,
+        isClose,
+      })
+
       const assisted = preparedOrder.sponsoredClose
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
-        : protection ? buildProtectedOpenAction({ account: address, book: protection.book, request, params: protection.params })
-        : buildPlaceOrderV2Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
+        : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
+        : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
       let executionManifest = sponsored.manifest
       let executionRuntime = sponsored.runtime
       if (assisted) {
@@ -1012,8 +1063,8 @@ export function usePerpsTrading() {
         action,
         runtime: executionRuntime,
         orderDraft,
-        orderRequestV2: { ...persistPerpsOrderRequestV2(address, request),
-          closeAssistance: assisted ? { amountUsdc: assisted.amountUsdc.toString(), lens: assisted.config.lens,
+        orderRequestV3: { ...persistPerpsOrderRequestV3(address, request),
+          closeAssistance: assisted ? { amountAssets: assisted.amountAssets.toString(), lens: assisted.config.lens,
             lensCodeHash: assisted.config.lensCodeHash, paymasterAddress: assisted.config.paymasterAddress } : undefined },
         protectionIntent: protection ? persistProtectionIntent(protection.book, protection.params) : undefined,
         onStatus,
@@ -1033,7 +1084,7 @@ export function usePerpsTrading() {
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) {
-        throw new Error(sponsorReasonMessage(sponsorError))
+        throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'commit' })
       }
       const message = getPerpsErrorMessage(error, 'commit')
       debugPerpsCommit('failed', {
@@ -1050,8 +1101,8 @@ export function usePerpsTrading() {
         diagnosticMarginDelta !== undefined
       ) {
         const failureHash = diagnosticHash ?? findTransactionHash(error)
-        throw new Error(
-          await describeCommitFailure({
+        throw reportedTransactionError(
+          error, await describeCommitFailure({
             client: diagnosticClient,
             address,
             hash: failureHash,
@@ -1065,11 +1116,11 @@ export function usePerpsTrading() {
             marginDelta: diagnosticMarginDelta,
             oraclePrice,
           }),
-          { cause: error }
+          { surface: 'perps', action: 'commit' }
         )
       }
 
-      throw new Error(message, { cause: error })
+      throw reportedTransactionError(error, message, { surface: 'perps', action: 'commit' })
     }
   }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution, walletClient])
 
@@ -1085,18 +1136,38 @@ export function usePerpsTrading() {
   ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
     const client = requireClient(publicClient)
     const sponsored = requireSponsoredExecution()
-    const outcome = await client.readContract({
+    const safe = await client.getBlock({ blockTag: 'safe' })
+    const terminal = await client.readContract({
       address: sponsored.manifest.orderLifecycleBook,
       abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
-      functionName: 'outcome',
+      functionName: 'terminalOutcome',
       args: [orderId],
-      // The ticket publishes terminal lifecycle reads immediately. Reading at
-      // the latest head can briefly expose a keeper execution from a block
-      // that the canonical indexer has not confirmed yet, making the UI jump
-      // to Finalized and then back to Waiting if that head is replaced. Keep
-      // this fast path monotonic by reading the RPC's safe head instead.
-      blockTag: 'safe',
+      blockNumber: safe.number,
     })
+    if (terminal.status !== PERPS_LIFECYCLE_STATUS.EXECUTED && terminal.status !== PERPS_LIFECYCLE_STATUS.FAILED) return undefined
+    // The V5 book stores the authenticated terminal summary; full economics
+    // come from its canonical receipt event, never from an invented RPC tuple.
+    const events = await client.getContractEvents({
+      address: sponsored.manifest.orderLifecycleBook,
+      abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+      eventName: 'OrderFinalized',
+      args: { orderId },
+      // Recent receipt recovery is bounded; older evidence comes from indexed history.
+      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 10_000n
+        ? safe.number - 10_000n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
+      toBlock: safe.number,
+      strict: true,
+    })
+    const event = events.find(log => log.args.receiptHash === terminal.receiptHash && log.args.account.toLowerCase() === terminal.account.toLowerCase())
+    if (!event) return undefined
+    const verified = decodeVerifiedOrderFinalized({
+      chainId: BigInt(sponsored.manifest.chainId), book: sponsored.manifest.orderLifecycleBook,
+      router: sponsored.manifest.orderRouter, summary: terminal,
+      log: { address: event.address, data: event.data, topics: event.topics },
+    })
+    const outcome = { ...verified.receipt, terminalBlock: verified.terminalBlock,
+      terminalTime: verified.terminalTime, receiptHash: verified.receiptHash,
+      failedConstraint: verified.receipt.failure.constraint }
     const status = outcome.status
     if (
       status !== PERPS_LIFECYCLE_STATUS.EXECUTED &&
@@ -1151,8 +1222,8 @@ export function usePerpsTrading() {
       return hash
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'settleClaim'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'settleClaim' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'settleClaim'), { surface: 'perps', action: 'settleClaim' })
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
@@ -1170,7 +1241,7 @@ export function usePerpsTrading() {
       chainId: identity.manifest.chainId,
       ownerAddress: identity.ownerAddress,
       accountAddress: identity.accountAddress,
-      token: identity.manifest.usdc,
+      token: identity.manifest.settlementToken,
     })
   }, [identity.accountAddress, identity.manifest, identity.ownerAddress])
 
@@ -1184,14 +1255,14 @@ export function usePerpsTrading() {
       const sponsored = requireSponsoredExecution()
       const client = requireClient(publicClient)
       if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
-      await verifyPerpsV2DeploymentBindings(client, sponsored.manifest)
+      await verifyPerpsV3DeploymentBindings(client, sponsored.manifest)
       await verifyProtectionDeployment(client, sponsored.manifest)
       const book = sponsored.manifest.positionProtectionBook
       const account = sponsored.accountAddress
       if (input.action !== 'create' && input.protectionId === undefined) throw new Error('Select a protection first')
       if (input.action !== 'cancel' && input.params === undefined) throw new Error('Enter TP/SL triggers first')
       const protectionId = input.protectionId ?? 0n
-      const params = input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n }
+      const params = input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }
       const action = input.action === 'cancel'
         ? buildCancelProtectionAction({ account, book, protectionId })
         : input.action === 'replace'
@@ -1218,15 +1289,16 @@ export function usePerpsTrading() {
       return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      throw new Error(sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { cause: error })
+      throw reportedTransactionError(error, sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { surface: 'perps', action: 'protection' })
     }
   }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
 
   return {
     managePositionProtection,
-    approveUsdcForMargin,
+    approveSettlementTokenForMargin,
     fundTradingAccount,
     depositMargin,
+    refreshAccount: invalidatePerpsReads,
     abandonDepositAuthorization,
     withdrawMargin,
     addPositionMargin,

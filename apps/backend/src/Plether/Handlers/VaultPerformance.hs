@@ -1,6 +1,7 @@
 module Plether.Handlers.VaultPerformance
   ( getVaultPerformanceHistory
   , buildVaultPerformanceHistoryAt
+  , buildVaultAssetHistoryAt
   , carryForwardStaleSnapshots
   , computeVaultPerformance
   , hasCompleteVaultPerformanceCoverageAt
@@ -18,6 +19,7 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..)
   , getVaultPerformanceSnapshots
+  , getVaultReturnAttribution
   )
 import Plether.Types
   ( ApiError
@@ -46,8 +48,9 @@ vaultPerformancePublicationGraceSeconds = 120
 getVaultPerformanceHistory
   :: DbPool
   -> VaultPerformanceDeployment
+  -> Text
   -> IO (Either ApiError (ApiResponse VaultPerformanceHistory))
-getVaultPerformanceHistory pool deployment@VaultPerformanceDeployment {..} = do
+getVaultPerformanceHistory pool deployment@VaultPerformanceDeployment {..} requestedRange = do
   rows <- withDb pool $ \conn ->
     getVaultPerformanceSnapshots
       conn
@@ -55,14 +58,48 @@ getVaultPerformanceHistory pool deployment@VaultPerformanceDeployment {..} = do
       vpdHousePool
       vpdSeniorVault
       vpdJuniorVault
-      (vaultPerformancePointCount * 2)
+      (if requestedRange == "30d" then 721 * 2 else vaultPerformancePointCount * 2)
   now <- floor <$> getPOSIXTime
-  let history = buildVaultPerformanceHistoryAt now deployment rows
+  let history = (if requestedRange == "30d" then buildVaultAssetHistoryAt else buildVaultPerformanceHistoryAt) now deployment rows
       responseBlock =
         maybe 0 vpsBlockNumber $
           lastMaybe $
             deploymentRowsAt now deployment rows
-  pure $ Right $ mkResponse responseBlock vpdChainId history
+  attribution <- case (requestedRange, vpcComplete $ vphCoverage history, deploymentRowsAt now deployment rows) of
+    ("7d", True, start : rest) | Just end <- lastMaybe rest ->
+      withDb pool $ \conn -> getVaultReturnAttribution conn start end
+    _ -> pure Nothing
+  let published = history {vphJunior = (vphJunior history) {vptReturnAttribution = attribution}}
+  pure $ Right $ mkResponse responseBlock vpdChainId published
+
+-- Asset history has its own thirty-day coverage; APY retains its seven-day meaning.
+buildVaultAssetHistoryAt
+  :: Integer
+  -> VaultPerformanceDeployment
+  -> [VaultPerformanceSnapshotRow]
+  -> VaultPerformanceHistory
+buildVaultAssetHistoryAt now deployment rows =
+  performance
+    { vphRange = "30d"
+    , vphCoverage = VaultPerformanceCoverage
+        (vpsBlockTimestamp <$> firstMaybe selected)
+        (vpsBlockTimestamp <$> lastMaybe selected)
+        complete
+    , vphSenior = (vphSenior performance) {vptPoints = map seniorPoint selected}
+    , vphJunior = (vphJunior performance) {vptPoints = map juniorPoint selected}
+    }
+ where
+  performance = buildVaultPerformanceHistoryAt now deployment rows
+  end = latestEligibleVaultPerformanceEpoch now
+  selected = filter ((>= end - 30 * 24 * 3600) . vpsEpochTimestamp)
+    $ carryForwardStaleSnapshots $ sortOn vpsEpochTimestamp
+    $ filter (\row -> matchesDeployment deployment row && vpsEpochTimestamp row <= end) rows
+  complete = length selected == 721
+    && maybe False ((== end) . vpsEpochTimestamp) (lastMaybe selected)
+    && all (\(a, b) -> vpsEpochTimestamp b - vpsEpochTimestamp a == 3600
+      && vpsBlockTimestamp b > vpsBlockTimestamp a) (zip selected $ drop 1 selected)
+    && all (\row -> vpsMarkFresh row == Just True
+      && isJust (vpsSeniorLockedAssets row) && isJust (vpsJuniorLockedAssets row)) selected
 
 buildVaultPerformanceHistoryAt
   :: Integer
@@ -97,6 +134,7 @@ buildVaultPerformanceHistoryAt now deployment rows =
     VaultPerformanceTranche
       { vptApy7d = snd <$> metrics
       , vptReturn7d = fst <$> metrics
+      , vptReturnAttribution = Nothing
       , vptPoints = map toPoint selectedRows
       }
 
@@ -251,6 +289,7 @@ seniorPoint VaultPerformanceSnapshotRow {..} =
     , vppMarkFresh = vpsMarkFresh == Just True
     , vppSharePrice = vpsSeniorSharePriceWad
     , vppTotalAssets = vpsSeniorTotalAssets
+    , vppLockedAssets = if vpsMarkFresh == Just True then vpsSeniorLockedAssets else Nothing
     , vppTotalSupply = vpsSeniorTotalSupply
     }
 
@@ -262,6 +301,7 @@ juniorPoint VaultPerformanceSnapshotRow {..} =
     , vppMarkFresh = vpsMarkFresh == Just True
     , vppSharePrice = vpsJuniorSharePriceWad
     , vppTotalAssets = vpsJuniorTotalAssets
+    , vppLockedAssets = if vpsMarkFresh == Just True then vpsJuniorLockedAssets else Nothing
     , vppTotalSupply = vpsJuniorTotalSupply
     }
 

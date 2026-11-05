@@ -2,6 +2,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { Result } from 'better-result'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { perpsApi } from '../../api/client'
+import { PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK } from '../../contracts/perpsAddresses'
 import { useVaultRequests } from '../useVaultRequests'
 
 const CONTROLLER = '0x1111111111111111111111111111111111111111' as const
@@ -100,6 +101,7 @@ function requestIdResponse(
   tranche: 'senior' | 'junior' = 'junior',
   nextCursor: string | null = null,
   stale = false,
+  confirmedThroughBlock = PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK + 100,
 ) {
   return Result.ok({
     data: {
@@ -107,12 +109,12 @@ function requestIdResponse(
       account: CONTROLLER,
       requestIds,
       nextCursor,
-      confirmedThroughBlock: 307_500_000,
+      confirmedThroughBlock,
       stale,
     },
     meta: {
       cached: false,
-      blockNumber: 307_500_000,
+      blockNumber: confirmedThroughBlock,
       chainId: 421_614,
     },
   })
@@ -310,5 +312,15 @@ describe('useVaultRequests', () => {
       250,
       expect.any(AbortSignal),
     )
+  })
+
+  it('rejects discovery coverage from before the selected deployment', async () => {
+    vi.mocked(perpsApi.getPerpsVaultRequestIds)
+      .mockResolvedValue(requestIdResponse(['300'], 'junior', null, false, PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK - 1))
+    const { result } = renderHook(() => useVaultRequests({
+      controller: CONTROLLER, isSenior: false, currentEpoch: 500n,
+    }))
+    await waitFor(() => expect(result.current.discoveryError).toBe(true))
+    expect(result.current.redeemRequests).toEqual([])
   })
 })

@@ -1,6 +1,7 @@
 module Main (main) where
 
-import Control.Concurrent (forkIO)
+import qualified Plether.Perps.Manifest as Manifest
+
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -34,12 +35,8 @@ import Plether.Perps.HistoryIndexer
   )
 import Plether.Vaults.ActivityIndexer
   ( VaultActivityIndexerConfig (..)
-  , startVaultActivityIndexer
-  , verifyVaultActivityBindings
   )
-import Plether.Vaults.DepositAttributionIndexer
-  ( startVaultDepositAttributionIndexer
-  )
+import Plether.Perps.Workers (runPerpsIndexerWithVaults)
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
@@ -67,6 +64,7 @@ defaultPollSeconds = 12
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   cliArgs <- getArgs
   case IndexerOptions.parsePerpsIndexerInvocation cliArgs of
     Left err -> do
@@ -106,7 +104,7 @@ runConfiguredIndexer
 runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
   let configuredAddresses =
         defaultPerpsAddresses
-          { paUsdc = cfgPerpsUsdc cfg
+          { paSettlementToken = cfgPerpsSettlementToken cfg
           , paOrderRouter = cfgPerpsOrderRouter cfg
           , paOrderLifecycleBook = cfgPerpsOrderLifecycleBook cfg
           , paCfdEngine = cfgPerpsCfdEngine cfg
@@ -129,7 +127,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
       releaseManifest =
         (cfgInsightsCompetitionReleaseManifest cfg)
           { crmChainId = cfgPerpsChainId cfg
-          , crmUsdc = paUsdc addresses
+          , crmSettlementToken = paSettlementToken addresses
           , crmOrderRouter = paOrderRouter addresses
           , crmMarginClearinghouse = paMarginClearinghouse addresses
           , crmAccountLens = cfgPerpsAccountLens cfg
@@ -226,7 +224,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
               vaultIndexerCfg =
                 VaultActivityIndexerConfig
                   { vaicDeployment = vaultDeployment
-                  , vaicAssetAddress = cfgPerpsUsdc cfg
+                  , vaicAssetAddress = cfgPerpsSettlementToken cfg
                   , vaicPublicLensAddress = perpsV2PublicLens
                   , vaicConfirmations = cfgVaultHistoryConfirmations cfg
                   -- The vault loop has an independent cadence and range budget;
@@ -234,14 +232,8 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
                   , vaicBatchSize = 5_000
                   , vaicPollIntervalMicros = 12_000_000
                   }
-          -- Binding failures are startup failures, rather than silent failures in
-          -- the independently supervised vault-indexer thread.
-          verifyVaultActivityBindings vaultClient vaultIndexerCfg
-          _ <- forkIO $ startVaultActivityIndexer vaultClient pool vaultIndexerCfg
-          _ <- forkIO $ startVaultDepositAttributionIndexer vaultClient pool vaultIndexerCfg
-          pure ()
-        IndexerOptions.PerpsIndexerReplay _ -> pure ()
-      runPerpsIndexer manager pool indexerCfg
+          runPerpsIndexerWithVaults manager pool indexerCfg vaultClient vaultIndexerCfg
+        IndexerOptions.PerpsIndexerReplay _ -> runPerpsIndexer manager pool indexerCfg
 
 whenReleaseBound
   :: Config
@@ -305,7 +297,7 @@ loadEnvArgs = do
     , "PERPS_INDEXER_CONFIRMATIONS"
     , "PERPS_INDEXER_BATCH_SIZE"
     , "PERPS_INDEXER_POLL_SECONDS"
-    , "PERPS_USDC"
+    , "PERPS_SETTLEMENT_TOKEN"
     , "PERPS_ORDER_ROUTER"
     , "PERPS_ORDER_LIFECYCLE_BOOK"
     , "PERPS_CFD_ENGINE"

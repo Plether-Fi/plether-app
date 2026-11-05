@@ -56,12 +56,12 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   const [statusCheckRevision, setStatusCheckRevision] = useState(0)
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
-    if (!operation.orderRequestV2 || operation.userOperationHash) return
+    if (!operation.orderRequestV3 || operation.userOperationHash) return
     const refresh = () => { setNow(Date.now()) }
     const timer = setInterval(refresh, 1_000)
     window.addEventListener('focus', refresh)
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh) }
-  }, [operation.orderRequestV2, operation.userOperationHash])
+  }, [operation.orderRequestV3, operation.userOperationHash])
   const needsFreshReview = operationNeedsFreshOrderReview(operation, now)
   const request = operation.nativePreparation
   const recoveryManifest = request?.manifest ?? fallbackManifest

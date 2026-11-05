@@ -41,7 +41,7 @@ export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = [
 export const TRADINGVIEW_FAVORITE_RESOLUTIONS: TradingViewResolution[] = ['5', '60', '1D']
 export const PERPS_CANDLE_MAX_HISTORY_PAGES = 24
 
-const MICRO_USDC_PER_USDC = 1_000_000n
+const ASSET_ATOMS_PER_ASSET = 1_000_000n
 const INITIAL_CURRENT_CANDLE_WAIT_MS = 250
 
 const SYMBOL_INFO: TradingViewSymbolInfo = {
@@ -448,16 +448,16 @@ export function perpsBasketCandlesToTradingViewBars(
     const chartCandle = perpsBasketCandleToChartCandle(candle, displayPriceCap)
     if (!chartCandle) continue
 
-    const volumeUsdc = parseOptionalMicroUsdc(candle.volumeUsdc)
+    const volumeAssets = parseOptionalMicroAssets(candle.volumeAssets)
     const bar: TradingViewBar = {
       time: chartCandle.timestamp * 1000,
       open: chartCandle.open,
       high: chartCandle.high,
       low: chartCandle.low,
       close: chartCandle.close,
-      ...(volumeUsdc === undefined
+      ...(volumeAssets === undefined
         ? {}
-        : { volume: microUsdcToHumanUsdc(volumeUsdc) }),
+        : { volume: microAssetsToHumanAssets(volumeAssets) }),
     }
     barsByTime.set(bar.time, bar)
   }
@@ -473,19 +473,19 @@ export function perpsBasketCandlesToDirectionalVolumeBars(
 
   for (const candle of candles) {
     if (candle.timestamp % intervalSeconds !== 0) continue
-    const longFlow = parseOptionalMicroUsdc(candle.longFlowVolumeUsdc)
-    const shortFlow = parseOptionalMicroUsdc(candle.shortFlowVolumeUsdc)
+    const longFlow = parseOptionalMicroAssets(candle.longFlowVolumeAssets)
+    const shortFlow = parseOptionalMicroAssets(candle.shortFlowVolumeAssets)
     if (longFlow === undefined || shortFlow === undefined) continue
 
-    const longFlowUsdc = microUsdcToHumanUsdc(longFlow)
-    const shortFlowUsdc = microUsdcToHumanUsdc(shortFlow)
+    const longFlowAssets = microAssetsToHumanAssets(longFlow)
+    const shortFlowAssets = microAssetsToHumanAssets(shortFlow)
     const bar: TradingViewBar = {
       time: candle.timestamp * 1000,
-      open: longFlowUsdc,
-      high: longFlowUsdc,
-      low: longFlowUsdc,
-      close: longFlowUsdc,
-      volume: shortFlowUsdc,
+      open: longFlowAssets,
+      high: longFlowAssets,
+      low: longFlowAssets,
+      close: longFlowAssets,
+      volume: shortFlowAssets,
     }
     barsByTime.set(bar.time, bar)
   }
@@ -493,7 +493,7 @@ export function perpsBasketCandlesToDirectionalVolumeBars(
   return [...barsByTime.values()].sort((left, right) => left.time - right.time)
 }
 
-function parseOptionalMicroUsdc(value: string | null | undefined): bigint | undefined {
+function parseOptionalMicroAssets(value: string | null | undefined): bigint | undefined {
   const normalized = value?.trim()
   if (!normalized || !/^\d+$/.test(normalized)) return undefined
 
@@ -504,9 +504,9 @@ function parseOptionalMicroUsdc(value: string | null | undefined): bigint | unde
   }
 }
 
-function microUsdcToHumanUsdc(value: bigint): number {
-  const whole = Number(value / MICRO_USDC_PER_USDC)
-  const fraction = Number(value % MICRO_USDC_PER_USDC) / Number(MICRO_USDC_PER_USDC)
+function microAssetsToHumanAssets(value: bigint): number {
+  const whole = Number(value / ASSET_ATOMS_PER_ASSET)
+  const fraction = Number(value % ASSET_ATOMS_PER_ASSET) / Number(ASSET_ATOMS_PER_ASSET)
   const volume = whole + fraction
   return Number.isFinite(volume) ? volume : 0
 }
@@ -554,15 +554,18 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
   private readonly requestControllers = new Set<AbortController>()
+  private readonly visibilityWaiters = new Set<() => void>()
+  private readonly visibilityPauseReason = new DOMException('Chart loading paused', 'AbortError')
   private readonly handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
       for (const subscription of this.subscriptions.values()) {
         this.stopSubscriptionTimer(subscription)
       }
-      for (const controller of this.requestControllers) controller.abort()
+      for (const controller of this.requestControllers) controller.abort(this.visibilityPauseReason)
       return
     }
 
+    this.releaseVisibilityWaiters()
     for (const [listenerGuid, subscription] of this.subscriptions) {
       this.startSubscriptionTimer(listenerGuid, subscription)
       void this.pollSubscription(listenerGuid)
@@ -639,15 +642,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     onResult: (bars: TradingViewBar[], metadata: { noData: boolean }) => void,
     onError: (message: string) => void
   ): void {
-    if (!this.isDocumentVisible()) {
-      setTimeout(() => {
-        if (!this.destroyed) onError('Chart data loading is paused while this tab is hidden')
-      }, 0)
-      return
-    }
-
     const seriesKind = seriesKindForSymbol(symbolInfo)
-    void this.runRequest((signal) => this.loadCandleBars(resolution, periodParams, seriesKind, signal))
+    void this.runHistoryRequest((signal) => this.loadCandleBars(resolution, periodParams, seriesKind, signal))
       .then((bars) => {
         setTimeout(() => {
           if (!this.destroyed) {
@@ -717,6 +713,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     for (const controller of this.requestControllers) controller.abort()
     this.requestControllers.clear()
+    this.releaseVisibilityWaiters()
   }
 
   private async loadCandleBars(
@@ -785,9 +782,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
           throw new Error('The Perps candle history request budget was exhausted')
         }
         pageRequestCount += 1
-        return revalidate
+        const request = revalidate
           ? getCandlePage(intervalSeconds, cursor, signal, true)
           : getCandlePage(intervalSeconds, cursor, signal)
+        // A cancelled transport may still settle. Do not let an abandoned
+        // history attempt update shared generation/coverage state after resume.
+        return awaitWithAbort(request, signal)
       }
       let page = await loadPage(forceRevalidate)
       this.validateCandlePage(page, intervalSeconds, cursor)
@@ -912,9 +912,9 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     let primedCurrentBar: TradingViewBar | undefined
     if (currentCandleRequest) {
-      const currentResponse = await settleWithin(
-        currentCandleRequest,
-        INITIAL_CURRENT_CANDLE_WAIT_MS
+      const currentResponse = await awaitWithAbort(
+        settleWithin(currentCandleRequest, INITIAL_CURRENT_CANDLE_WAIT_MS),
+        signal
       )
       if (currentResponse && requestGeneration !== undefined && requestIdentity !== undefined) {
         try {
@@ -1370,6 +1370,35 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
   private isDocumentVisible(): boolean {
     return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  }
+
+  private releaseVisibilityWaiters(): void {
+    for (const resume of this.visibilityWaiters) resume()
+    this.visibilityWaiters.clear()
+  }
+
+  private async runHistoryRequest<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    // TradingView treats getBars errors as terminal, including on the hidden
+    // study symbol. Keep its callback pending during a visibility pause and
+    // restart the cancelled traversal with a fresh signal on foregrounding.
+    while (!this.destroyed) {
+      if (!this.isDocumentVisible()) {
+        await new Promise<void>((resolve) => this.visibilityWaiters.add(resolve))
+        continue
+      }
+      let requestSignal: AbortSignal | undefined
+      try {
+        return await this.runRequest((signal) => {
+          requestSignal = signal
+          return operation(signal)
+        })
+      } catch (error: unknown) {
+        // Only our visibility cancellation is resumable. Real API failures,
+        // timeouts and unrelated aborts must still reach TradingView's onError.
+        if (!requestSignal?.aborted || requestSignal.reason !== this.visibilityPauseReason) throw error
+      }
+    }
+    throw new DOMException('Chart datafeed destroyed', 'AbortError')
   }
 
   private startSubscriptionTimer(

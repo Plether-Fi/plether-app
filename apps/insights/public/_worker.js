@@ -1,8 +1,8 @@
 const API_PREFIX = '/api/insights/v1';
 const REGISTRATION_PATH_PATTERN =
-  /^\/api\/insights\/v1\/competitions\/[^/]+\/registrations(?:\/|$)/;
+  /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations|divisions\/registrations)(?:\/|$)/;
 const REGISTRATION_CALLBACK_PATH_PATTERN =
-  /^\/api\/insights\/v1\/competitions\/[^/]+\/registrations\/x\/callback$/;
+  /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations\/x|divisions\/registrations\/discord)\/callback$/;
 const REGISTRATION_ORIGIN_HEADER = 'X-Plether-Registration-Origin';
 
 const SECURITY_HEADERS = {
@@ -30,6 +30,10 @@ function resolvePublicApiCacheTtl(method, pathname) {
 
   if (apiPath === '/status') {
     return API_CACHE_TTLS.status;
+  }
+
+  if (apiPath === '/divisions/stats' || apiPath === '/divisions/traders' || apiPath === '/divisions/live' || apiPath === '/divisions/current' || apiPath === '/divisions/history') {
+    return API_CACHE_TTLS.leaderboard;
   }
 
   if (/^\/competitions\/[^/]+\/leaderboard$/.test(apiPath)) {
@@ -136,7 +140,7 @@ function applyResponseHeaders(response, pathname) {
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (pathname === '/favicon.svg') {
     headers.set('Cache-Control', 'public, max-age=86400');
-  } else if (pathname === `${API_PREFIX}/competitions/current`) {
+  } else if (pathname === '/divisions/current.json' || pathname === `${API_PREFIX}/competitions/current`) {
     headers.set('Cache-Control', 'no-store');
   } else if (isRegistrationPath(pathname)) {
     // Registration responses may contain session state or rotate an HttpOnly
@@ -178,6 +182,19 @@ function registrationOriginError(pathname) {
 
 function registrationRedirectAllowed(response, pathname, publicOrigin) {
   if (response.status < 300 || response.status >= 400) return true;
+
+  if (pathname === `${API_PREFIX}/divisions/registrations/discord/callback`) {
+    const location = response.headers.get('Location');
+    if (response.status !== 303 || !location) return false;
+    try {
+      const target = new URL(location);
+      return target.origin === publicOrigin && target.username === '' &&
+        target.password === '' && target.pathname === '/register' &&
+        target.search === '' && target.hash === '';
+    } catch {
+      return false;
+    }
+  }
 
   const callbackMatch = pathname.match(
     /^\/api\/insights\/v1\/competitions\/([^/]+)\/registrations\/x\/callback$/,
@@ -346,6 +363,12 @@ export default {
     }
 
     let response = await env.ASSETS.fetch(request);
+    // Pages serves index.html with 200 for missing assets. A missing weekly
+    // publication must be a 404 so the UI can show its awaiting state.
+    if (url.pathname === '/divisions/current.json' && response.ok &&
+      response.headers.get('Content-Type')?.toLowerCase().includes('text/html')) {
+      response = new Response(null, { status: 404 });
+    }
     if (response.status === 404 && !url.pathname.includes('.')) {
       response = await env.ASSETS.fetch(new URL('/', request.url));
     }

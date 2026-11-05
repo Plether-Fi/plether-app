@@ -7,6 +7,7 @@ module Plether.Perps.HistoryIndexer
   , applyPerpsAddressEnvironment
   , perpsContractAddressesFor
   , validatePerpsIndexerReleaseConfig
+  , validatePerpsIndexerReleaseConfigWithPins
   , perpsIndexerName
   , perpsV2IndexerName
   , perpsIndexerNameForLifecycleBook
@@ -16,7 +17,7 @@ module Plether.Perps.HistoryIndexer
   , parsePerpsLog
   , enrichSettlementReceipts
   , decodeSettlementReceipt
-  , parseUsdcTransfer
+  , parseAssetTransfer
   , transferTopic
   , RpcLog (..)
   , BlockInfo (..)
@@ -91,7 +92,7 @@ import Plether.Database.Candles
 import Plether.Database.Schema
   ( PerpsExecutionEvidenceRow (..)
   , assertPerpsReplayActivityExact
-  , assertPerpsReplayUsdcTransferExact
+  , assertPerpsReplayAssetTransferExact
   , assertPerpsReplayEventExact
   , assertPerpsReplayExpiredCleanupExact
   , assertPerpsReplayExpiredCleanupIfReadyExact
@@ -105,7 +106,7 @@ import Plether.Database.Schema
   , insertPerpsExpiredCleanupActivityIfReady
   , insertPerpsActivity
   , insertPerpsEvent
-  , insertPerpsUsdcTransfer
+  , insertPerpsAssetTransfer
   , lockPerpsIndexerTransaction
   , lockPerpsReplayOrders
   , markPerpsExecutionEvidenceAttempt
@@ -126,11 +127,16 @@ import Plether.Ethereum.Client
   , rpcHttpExceptionText
   )
 import Plether.Ethereum.Contracts.Perps (parseUniquePythUpdateData)
+import qualified Plether.Ethereum.Contracts.Perps as PerpsAbi
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (LogField, field, logError, logErrorEvery, logInfo, logInfoEvery, logWarn, logWarnEvery)
 import Plether.Perps.IndexerOptions (ReplayOptions (..), validateReplayOptions)
 import qualified Plether.Perps.IndexerFormat as IndexerFormat
-import Plether.Perps.Release (validatePerpsV2ReleaseConfig)
+import Plether.Perps.Release
+  ( PerpsReleaseConfigPins
+  , canonicalPerpsReleaseConfigPins
+  , validatePerpsV2ReleaseConfigWithPins
+  )
 import Plether.Perps.ExecutionOracle
   ( ExecutionOracleSnapshot (..)
   , decodeExecutionUpdateData
@@ -147,7 +153,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 
 data PerpsAddresses = PerpsAddresses
-  { paUsdc :: Text
+  { paSettlementToken :: Text
   , paOrderRouter :: Text
   , paOrderLifecycleBook :: Maybe Text
   , paCfdEngine :: Text
@@ -161,7 +167,7 @@ data PerpsAddresses = PerpsAddresses
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
   PerpsAddresses
-    { paUsdc = Manifest.mockUsdcAddress
+    { paSettlementToken = Manifest.settlementTokenAddress
     , paOrderRouter = Manifest.orderRouterAddress
     , paOrderLifecycleBook = Just Manifest.orderLifecycleBookAddress
     , paCfdEngine = Manifest.cfdEngineAddress
@@ -191,7 +197,7 @@ applyPerpsAddressEnvironment
   -> PerpsAddresses
 applyPerpsAddressEnvironment addressDefaults env =
   addressDefaults
-    { paUsdc = addressOverride "PERPS_USDC" $ paUsdc addressDefaults
+    { paSettlementToken = addressOverride "PERPS_SETTLEMENT_TOKEN" $ paSettlementToken addressDefaults
     , paOrderRouter = addressOverride "PERPS_ORDER_ROUTER" $ paOrderRouter addressDefaults
     , paOrderLifecycleBook =
         case lookup "PERPS_ORDER_LIFECYCLE_BOOK" env of
@@ -221,9 +227,16 @@ validatePerpsIndexerReleaseConfig
   -> Text
   -> Integer
   -> Either Text ()
-validatePerpsIndexerReleaseConfig chainId addresses housePool startBlock
+validatePerpsIndexerReleaseConfig =
+  validatePerpsIndexerReleaseConfigWithPins canonicalPerpsReleaseConfigPins
+
+validatePerpsIndexerReleaseConfigWithPins
+  :: PerpsReleaseConfigPins
+  -> Integer -> PerpsAddresses -> Text -> Integer
+  -> Either Text ()
+validatePerpsIndexerReleaseConfigWithPins pins chainId addresses housePool startBlock
   | chainId == 421614 =
-      validatePerpsV2ReleaseConfig
+      validatePerpsV2ReleaseConfigWithPins pins
         chainId
         (paOrderRouter addresses)
         (paOrderLifecycleBook addresses)
@@ -334,12 +347,12 @@ data ParsedPerpsLog
   | ParsedOrderFailed Integer Int Text Value
   | ParsedPositionActivity Text Text Int (Maybe Integer) (Maybe Integer) (Maybe Integer) (Maybe Integer) Value
   | ParsedMarginActivity Text Text Integer Value
-  | ParsedUsdcTransfer Text Text Integer Value
+  | ParsedAssetTransfer Text Text Integer Value
   deriving stock (Show, Eq)
 
 data TradeCosts = TradeCosts
-  { tcExecutionFeeUsdc :: Integer
-  , tcVpiUsdc :: Integer
+  { tcExecutionFeeAssets :: Integer
+  , tcVpiAssets :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -363,12 +376,10 @@ orderFailedTopic = keccak256Text "OrderFailed(uint64,uint8)"
 intentRegisteredTopic :: ByteString
 intentRegisteredTopic =
   keccak256Text
-    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 
 orderFinalizedTopic :: ByteString
-orderFinalizedTopic =
-  keccak256Text
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+orderFinalizedTopic = PerpsAbi.orderFinalizedTopic
 
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"
@@ -830,8 +841,8 @@ validateReplayLogAbi logEntry =
   case rlTopics logEntry of
     topic : indexedTopics
       | topic == orderCommittedTopic -> requireShape 3 32 indexedTopics
-      | topic == intentRegisteredTopic -> requireShape 4 (20 * 32) indexedTopics
-      | topic == orderFinalizedTopic -> requireShape 4 (46 * 32) indexedTopics
+      | topic == intentRegisteredTopic -> requireShape 4 (25 * 32) indexedTopics
+      | topic == orderFinalizedTopic -> requireShape 4 (71 * 32) indexedTopics
       | topic == orderExecutedTopic -> requireShape 2 32 indexedTopics
       | topic == orderFailedTopic -> requireShape 2 32 indexedTopics
       | topic == positionOpenedTopic -> requireShape 2 128 indexedTopics
@@ -1242,8 +1253,8 @@ decodeSettlementReceipt addresses txHash blockNumber blockHash = \case
           interval = [entry | entry <- ordered, rlLogIndex entry > previousBoundary, rlLogIndex entry < rlLogIndex e]
           feeEvidence = if kind == "ActionChargeSettled" then internalFeeCredit addresses account interval else Nothing
       pure (e, kind, account, oid, object $
-        [ "assessedUsdc" .= show assessed, "recoveredUsdc" .= show recovered, "waivedUsdc" .= show waived ]
-        <> maybe [] (\fee -> ["protocolFeeCollectedUsdc" .= show fee]) feeEvidence)
+        [ "assessedAssets" .= show assessed, "recoveredAssets" .= show recovered, "waivedAssets" .= show waived ]
+        <> maybe [] (\fee -> ["protocolFeeCollectedAssets" .= show fee]) feeEvidence)
     unless (Set.size (Set.fromList [(oid, kind) | (_, kind, _, oid, _) <- settlements]) == length settlements) $
       Left "Duplicate settlement event in execution interval"
     pure ([(oid, receiptHash) | (_, oid, _, receiptHash, _) <- finals], settlements)
@@ -1255,8 +1266,8 @@ decodeSettlementReceipt addresses txHash blockNumber blockHash = \case
     , (keccak256Text "FrozenCloseSpreadSettled(address,uint256,uint256,uint256)", "FrozenCloseSpreadSettled")
     ]
 
--- In pinned v1.2.3, AssetSeized without a matching token transfer is an
--- internal protocol-fee credit. Other seized amounts physically transfer USDC.
+-- For the verified current release, AssetSeized without a matching token transfer is an
+-- internal protocol-fee credit. Other seized amounts physically transfer USDG.
 -- Do not apply this attribution to another release, a liquidation, or an
 -- ambiguous interval. This is collection evidence, not the trader's assessed fee.
 internalFeeCredit :: PerpsAddresses -> Text -> [RpcLog] -> Maybe Integer
@@ -1274,10 +1285,10 @@ internalFeeCredit addresses account entries
     , take 1 (rlTopics entry) == [keccak256Text "AssetSeized(address,address,uint256,address)"]
     , length (rlTopics entry) == 3, BS.length (rlData entry) == 64
     , indexedAddress (rlTopics entry) 1 == Just account
-    , indexedAddress (rlTopics entry) 2 == Just (paUsdc addresses)
+    , indexedAddress (rlTopics entry) 2 == Just (paSettlementToken addresses)
     ]
   credits = [amount | (seizure, amount, recipient) <- seizures, amount > 0,
-    not $ any (\entry -> rlAddress entry == paUsdc addresses && rlLogIndex entry < rlLogIndex seizure
+    not $ any (\entry -> rlAddress entry == paSettlementToken addresses && rlLogIndex entry < rlLogIndex seizure
       && take 1 (rlTopics entry) == [transferTopic] && length (rlTopics entry) == 3 && BS.length (rlData entry) == 32
       && indexedAddress (rlTopics entry) 1 == Just (paMarginClearinghouse addresses)
       && indexedAddress (rlTopics entry) 2 == Just recipient && wordAt (rlData entry) 0 == amount) entries]
@@ -1345,8 +1356,8 @@ enrichPendingExecutionEvidence manager pool cfg reqIdRef = do
                   (peerTerminalTxHash candidate)
                   (peerTerminalBlockNumber candidate)
                   (peerTerminalBlockHash candidate)
-                  teeVpiUsdc
-                  teeFrozenCloseSpreadUsdc
+                  teeVpiAssets
+                  teeFrozenCloseSpreadAssets
                   executionEconomicsDerivationVersion
             when needsOracle $
               withDb pool $ \conn ->
@@ -1550,12 +1561,12 @@ processParsedLog
   -> ParsedPerpsLog
   -> IO (Maybe Integer)
 processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
-  | ParsedUsdcTransfer fromAddress toAddress amount _ <- parsed = do
-      insertPerpsUsdcTransfer
+  | ParsedAssetTransfer fromAddress toAddress amount _ <- parsed = do
+      insertPerpsAssetTransfer
         conn
         (picChainId cfg)
         (paOrderRouter $ picAddresses cfg)
-        (paUsdc $ picAddresses cfg)
+        (paSettlementToken $ picAddresses cfg)
         fromAddress
         toAddress
         amount
@@ -1648,9 +1659,9 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
             (biTimestamp blockInfo)
           when (reason == 0) $
             insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
-        ParsedPositionActivity kind account' side' price sizeDelta amountUsdc pnl payload ->
+        ParsedPositionActivity kind account' side' price sizeDelta amountAssets pnl payload ->
           insertPerpsActivity conn (picChainId cfg) releaseRouter (rlAddress logEntry) (activityKey logEntry kind Nothing) account'
-            kind Nothing Nothing (Just side') price sizeDelta amountUsdc pnl (rlTxHash logEntry)
+            kind Nothing Nothing (Just side') price sizeDelta amountAssets pnl (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) (addTradeCosts tradeCosts payload)
         ParsedMarginActivity kind account' amount payload ->
@@ -1670,13 +1681,13 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
 assertPreparedReplayLogExact :: Connection -> PerpsIndexerConfig -> PreparedReplayLog -> IO ()
 assertPreparedReplayLogExact conn cfg prepared =
   case prlParsed prepared of
-    ParsedUsdcTransfer fromAddress toAddress amount _ ->
+    ParsedAssetTransfer fromAddress toAddress amount _ ->
       let logEntry = prlLog prepared
-       in assertPerpsReplayUsdcTransferExact
+       in assertPerpsReplayAssetTransferExact
             conn
             (picChainId cfg)
             (paOrderRouter $ picAddresses cfg)
-            (paUsdc $ picAddresses cfg)
+            (paSettlementToken $ picAddresses cfg)
             fromAddress
             toAddress
             amount
@@ -1762,7 +1773,7 @@ assertPreparedPerpsLogExact conn cfg prepared = do
         timestamp
       when (reason == 0) $
         assertPerpsReplayExpiredCleanupExact conn chainId releaseRouter orderId
-    ParsedPositionActivity kind account side price sizeDelta amountUsdc pnl payload ->
+    ParsedPositionActivity kind account side price sizeDelta amountAssets pnl payload ->
       assertPerpsReplayActivityExact
         conn
         chainId
@@ -1776,7 +1787,7 @@ assertPreparedPerpsLogExact conn cfg prepared = do
         (Just side)
         price
         sizeDelta
-        amountUsdc
+        amountAssets
         pnl
         txHash
         blockNumber
@@ -1808,7 +1819,7 @@ assertPreparedPerpsLogExact conn cfg prepared = do
         logIndex
         timestamp
         payload
-    ParsedUsdcTransfer {} -> pure ()
+    ParsedAssetTransfer {} -> pure ()
 
 -- Keep this predicate aligned with the canonical volume query. Only position
 -- lifecycle events that contain both notional inputs contribute to OHLCV.
@@ -1820,9 +1831,9 @@ isMarketVolumeActivity = \case
 
 parseConfiguredLog :: PerpsIndexerConfig -> RpcLog -> Maybe ParsedPerpsLog
 parseConfiguredLog cfg logEntry
-  | normalizeHex (rlAddress logEntry) == normalizeHex (paUsdc $ picAddresses cfg) =
+  | normalizeHex (rlAddress logEntry) == normalizeHex (paSettlementToken $ picAddresses cfg) =
       case rlTopics logEntry of
-        topic : _ | topic == transferTopic -> parseUsdcTransfer logEntry
+        topic : _ | topic == transferTopic -> parseAssetTransfer logEntry
         _ -> Nothing
   | otherwise = parsePerpsLog logEntry
 
@@ -1843,8 +1854,8 @@ parsePerpsLog logEntry =
       | topic == withdrawTopic -> parseDepositWithdraw "Withdraw" logEntry
     _ -> Nothing
 
-parseUsdcTransfer :: RpcLog -> Maybe ParsedPerpsLog
-parseUsdcTransfer logEntry =
+parseAssetTransfer :: RpcLog -> Maybe ParsedPerpsLog
+parseAssetTransfer logEntry =
   case rlTopics logEntry of
     [topic, _, _]
       | topic == transferTopic
@@ -1853,7 +1864,7 @@ parseUsdcTransfer logEntry =
           fromAddress <- indexedAddress (rlTopics logEntry) 1
           toAddress <- indexedAddress (rlTopics logEntry) 2
           let amount = wordAt (rlData logEntry) 0
-          pure $ ParsedUsdcTransfer fromAddress toAddress amount $
+          pure $ ParsedAssetTransfer fromAddress toAddress amount $
             object
               [ "from" .= fromAddress
               , "to" .= toAddress
@@ -1871,7 +1882,7 @@ parseOrderCommitted logEntry = do
 
 parseIntentRegistered :: RpcLog -> Maybe ParsedPerpsLog
 parseIntentRegistered logEntry = do
-  unless (BS.length (rlData logEntry) == 20 * 32) Nothing
+  unless (BS.length (rlData logEntry) == 25 * 32) Nothing
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
@@ -1881,17 +1892,21 @@ parseIntentRegistered logEntry = do
         , "account" .= account
         , "clientOrderId" .= clientOrderId
         , "intentHash" .= hexWordAt (rlData logEntry) 0
-        , "executionBountyUsdc" .= show (wordAt (rlData logEntry) 1)
+        , "executionBountyAssets" .= show (wordAt (rlData logEntry) 1)
         , "side" .= side
-        , "validUntil" .= show (wordAt (rlData logEntry) 8)
-        , "allowedExecutionModes" .= wordAt (rlData logEntry) 9
-        , "expectedConfigHash" .= hexWordAt (rlData logEntry) 10
+        , "isClose" .= (wordAt (rlData logEntry) 7 == 1)
+        , "submitBy" .= show (wordAt (rlData logEntry) 8)
+        , "executionWindowSeconds" .= wordAt (rlData logEntry) 9
+        , "commitTimestamp" .= show (wordAt (rlData logEntry) 23)
+        , "executionDeadline" .= show (wordAt (rlData logEntry) 24)
+        , "allowedExecutionModes" .= wordAt (rlData logEntry) 10
+        , "expectedConfigHash" .= hexWordAt (rlData logEntry) 11
         ]
   pure $ ParsedIntentRegistered oid account clientOrderId side payload
 
 parseOrderFinalized :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderFinalized logEntry = do
-  unless (BS.length (rlData logEntry) == 46 * 32) Nothing
+  unless (BS.length (rlData logEntry) == 71 * 32) Nothing
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
@@ -1913,23 +1928,23 @@ parseOrderFinalized logEntry = do
           then Nothing
           else Just $ failedConstraintName failedConstraintCode
       economics = object
-        [ "executionNotionalUsdc" .= show (wordAt bytes 29)
-        , "executionBountyUsdc" .= show (wordAt bytes 19)
-        , "realizedPnlUsdc" .= show (intWordAt bytes 30)
-        , "vpiUsdc" .= show (intWordAt bytes 31)
-        , "carryUsdc" .= show (intWordAt bytes 32)
-        , "executionFeeUsdc" .= show (wordAt bytes 33)
-        , "frozenSpreadUsdc" .= show (wordAt bytes 34)
-        , "actionChargeAssessedUsdc" .= show (wordAt bytes 35)
-        , "actionChargeCollectedUsdc" .= show (wordAt bytes 36)
-        , "grossAccountDebitUsdc" .= show (wordAt bytes 37)
-        , "preSettlementBalanceUsdc" .= show (wordAt bytes 38)
-        , "postSettlementBalanceUsdc" .= show (wordAt bytes 39)
-        , "preTraderClaimBalanceUsdc" .= show (wordAt bytes 40)
-        , "postTraderClaimBalanceUsdc" .= show (wordAt bytes 41)
+        [ "executionNotionalAssets" .= show (wordAt bytes 29)
+        , "executionBountyAssets" .= show (wordAt bytes 19)
+        , "realizedPnlAssets" .= show (intWordAt bytes 30)
+        , "vpiAssets" .= show (intWordAt bytes 31)
+        , "carryAssets" .= show (intWordAt bytes 32)
+        , "executionFeeAssets" .= show (wordAt bytes 33)
+        , "frozenSpreadAssets" .= show (wordAt bytes 34)
+        , "actionChargeAssessedAssets" .= show (wordAt bytes 35)
+        , "actionChargeCollectedAssets" .= show (wordAt bytes 36)
+        , "grossAccountDebitAssets" .= show (wordAt bytes 37)
+        , "preSettlementBalanceAssets" .= show (wordAt bytes 38)
+        , "postSettlementBalanceAssets" .= show (wordAt bytes 39)
+        , "preTraderClaimBalanceAssets" .= show (wordAt bytes 40)
+        , "postTraderClaimBalanceAssets" .= show (wordAt bytes 41)
         , "postPositionSize" .= show (wordAt bytes 42)
-        , "postPositionMarginUsdc" .= show (wordAt bytes 43)
-        , "postPositionEquityUsdc" .= show (intWordAt bytes 44)
+        , "postPositionMarginAssets" .= show (wordAt bytes 43)
+        , "postPositionEquityAssets" .= show (intWordAt bytes 44)
         , "postLeverageBps" .= show (wordAt bytes 45)
         ]
       payload = object
@@ -1937,6 +1952,10 @@ parseOrderFinalized logEntry = do
         , "account" .= account
         , "clientOrderId" .= clientOrderId
         , "receiptHash" .= receiptHash
+        , "submitBy" .= show (wordAt bytes 67)
+        , "executionWindowSeconds" .= wordAt bytes 68
+        , "commitTimestamp" .= show (wordAt bytes 69)
+        , "executionDeadline" .= show (wordAt bytes 70)
         , "terminalBlock" .= show (wordAt bytes 1)
         , "terminalTime" .= show (wordAt bytes 2)
         , "status" .= lifecycleStatus
@@ -1944,7 +1963,7 @@ parseOrderFinalized logEntry = do
         , "executionMode" .= mode
         , "failedConstraint" .= failedConstraint
         , "executionPrice" .= show executionPrice
-        , "executionBountyUsdc" .= show (wordAt bytes 19)
+        , "executionBountyAssets" .= show (wordAt bytes 19)
         , "economics" .= economics
         ]
   pure $
@@ -2075,13 +2094,12 @@ replayPreviewCallData = \case
   ParsedPositionActivity "Open" account side (Just price) (Just sizeDelta) (Just marginDelta) _ _ ->
     Just $
       encodeCall
-        "previewOpen(address,uint8,uint256,uint256,uint256,uint64)"
+        "previewOpen(address,uint8,uint256,uint256,uint256)"
         [ encodeAddress account
         , encodeUint256 $ toInteger side
         , encodeUint256 sizeDelta
         , encodeUint256 marginDelta
         , encodeUint256 price
-        , encodeUint256 0
         ]
   ParsedPositionActivity "Close" account _ (Just price) (Just sizeDelta) _ _ _ ->
     Just $
@@ -2107,12 +2125,12 @@ decodeCloseTradeCosts bytes
 
 decodeReplayTradeCosts :: Text -> ByteString -> Either Text TradeCosts
 decodeReplayTradeCosts "Open" bytes
-  | BS.length bytes /= 10 * 32 =
-      Left "Replay open preview result must contain exactly 10 ABI words"
+  | BS.length bytes /= 24 * 32 =
+      Left "Replay open preview result must contain exactly 24 ABI words"
   | otherwise = decodeOpenTradeCosts bytes
 decodeReplayTradeCosts "Close" bytes
-  | BS.length bytes /= 8 * 32 =
-      Left "Replay close preview result must contain exactly 8 ABI words"
+  | BS.length bytes /= 26 * 32 =
+      Left "Replay close preview result must contain exactly 26 ABI words"
   | otherwise = decodeCloseTradeCosts bytes
 decodeReplayTradeCosts _ _ =
   Left "Unsupported position activity for replay trade-cost preview"
@@ -2124,10 +2142,10 @@ addTradeCosts (Just TradeCosts {..}) payloadValue = addToPayload payloadValue
     addToPayload = \case
       Object payload ->
         Object $
-          KM.insert (Key.fromText "vpiUsdc") (String $ T.pack $ show tcVpiUsdc) $
+          KM.insert (Key.fromText "vpiAssets") (String $ T.pack $ show tcVpiAssets) $
             KM.insert
-              (Key.fromText "executionFeeUsdc")
-              (String $ T.pack $ show tcExecutionFeeUsdc)
+              (Key.fromText "executionFeeAssets")
+              (String $ T.pack $ show tcExecutionFeeAssets)
               payload
       payload -> payload
 
@@ -2143,7 +2161,7 @@ parsePositionLiquidated logEntry = do
         , "side" .= side
         , "sizeDelta" .= show sizeDelta
         , "price" .= show price
-        , "keeperBountyUsdc" .= show keeperBounty
+        , "keeperBountyAssets" .= show keeperBounty
         ]
   pure $ ParsedPositionActivity "Liquidated" account side (Just price) (Just sizeDelta) (Just keeperBounty) Nothing payload
 
@@ -2152,7 +2170,7 @@ parseMarginAdded logEntry = do
   account <- indexedAddress (rlTopics logEntry) 1
   let amount = wordAt (rlData logEntry) 0
   pure $ ParsedMarginActivity "Add margin" account amount $
-    object ["account" .= account, "amountUsdc" .= show amount]
+    object ["account" .= account, "amountAssets" .= show amount]
 
 parseDepositWithdraw :: Text -> RpcLog -> Maybe ParsedPerpsLog
 parseDepositWithdraw kind logEntry = do
@@ -2165,7 +2183,7 @@ parseDepositWithdraw kind logEntry = do
       [ "account" .= account
       , "asset" .= asset
       , "contractAddress" .= contractAddress
-      , "amountUsdc" .= show amount
+      , "amountAssets" .= show amount
       ]
 
 parsedEventName :: ParsedPerpsLog -> Text
@@ -2183,7 +2201,7 @@ parsedEventName = \case
   ParsedMarginActivity kind _ _ _
     | kind == "Add margin" -> "MarginAdded"
     | otherwise -> kind
-  ParsedUsdcTransfer {} -> "Transfer"
+  ParsedAssetTransfer {} -> "Transfer"
 
 parsedAccount :: ParsedPerpsLog -> Maybe Text
 parsedAccount = \case
@@ -2192,7 +2210,7 @@ parsedAccount = \case
   ParsedOrderFinalized _ account _ _ _ _ _ _ _ _ _ -> Just account
   ParsedPositionActivity _ account _ _ _ _ _ _ -> Just account
   ParsedMarginActivity _ account _ _ -> Just account
-  ParsedUsdcTransfer _ toAddress _ _ -> Just toAddress
+  ParsedAssetTransfer _ toAddress _ _ -> Just toAddress
   _ -> Nothing
 
 parsedOrderId :: ParsedPerpsLog -> Maybe Integer
@@ -2220,7 +2238,7 @@ parsedPayload = \case
   ParsedOrderFailed _ _ _ payload -> payload
   ParsedPositionActivity _ _ _ _ _ _ _ payload -> payload
   ParsedMarginActivity _ _ _ payload -> payload
-  ParsedUsdcTransfer _ _ _ payload -> payload
+  ParsedAssetTransfer _ _ _ payload -> payload
 
 terminalStatus :: Text -> Text
 terminalStatus "Expired" = "Expired / Cleaned up"
@@ -2248,6 +2266,7 @@ terminalReasonName = \case
   7 -> "Planner rejected"
   8 -> "Constraint violation"
   9 -> "Account liquidated"
+  10 -> "Expired reservation mismatch"
   n -> "Unknown(" <> T.pack (show n) <> ")"
 
 executionModeName :: Int -> Text
@@ -2265,7 +2284,7 @@ failedConstraintName = \case
   4 -> "Action charge"
   5 -> "Explicit fees"
   6 -> "Post-position size"
-  7 -> "Post-settlement balance"
+  7 -> "USDG balance after settlement"
   8 -> "Post-position equity"
   9 -> "Post leverage"
   n -> "Unknown(" <> T.pack (show n) <> ")"
@@ -2281,7 +2300,7 @@ activityKey logEntry kind orderId =
 
 perpsAddresses :: PerpsIndexerConfig -> [Text]
 perpsAddresses cfg =
-  paUsdc (picAddresses cfg) : perpsContractAddresses cfg
+  paSettlementToken (picAddresses cfg) : perpsContractAddresses cfg
 
 perpsContractAddresses :: PerpsIndexerConfig -> [Text]
 perpsContractAddresses = perpsContractAddressesFor . picAddresses
@@ -2512,7 +2531,7 @@ renderRpcError = T.pack . show
 getLogs :: Manager -> [RpcEndpoint] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
 getLogs manager rpcUrls reqIdRef cfg fromBlock toBlock = do
   perpsResult <- getLogsFor manager rpcUrls reqIdRef (perpsContractAddresses cfg) perpsEventTopics fromBlock toBlock
-  transferResult <- getLogsFor manager rpcUrls reqIdRef [paUsdc $ picAddresses cfg] [transferTopic] fromBlock toBlock
+  transferResult <- getLogsFor manager rpcUrls reqIdRef [paSettlementToken $ picAddresses cfg] [transferTopic] fromBlock toBlock
   pure $ (<>) <$> perpsResult <*> transferResult
 
 getLogsFor :: Manager -> [RpcEndpoint] -> IORef Integer -> [Text] -> [ByteString] -> Integer -> Integer -> IO (Either Text [RpcLog])

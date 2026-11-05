@@ -1,6 +1,6 @@
-# Perps Analytics Event Taxonomy
+# Transaction and Perps Analytics Event Taxonomy
 
-PostHog is used for anonymous Perps product analytics only. Do not send wallet
+PostHog is used for anonymous product analytics and transaction diagnostics. Do not send wallet
 addresses, transaction hashes, order IDs, signatures, permits, RPC payloads,
 exact input amounts, exact balances, email addresses, or user identifiers.
 
@@ -78,3 +78,38 @@ Close-preview failures use `contract_function=previewClose` and an allowlisted
 `assessment_point` (`current`, `midpoint`, `limit`). `getPreparationDebugContext`
 retains chain, lens, account, block/hash, sample price and the original RPC error
 in local error metadata only. Never serialize this debug object to analytics.
+
+## Transaction failures and support references
+
+`transaction failed` is the common event for wallet, vault, and Perps failures,
+including preparation, approvals, submission, confirmation, and sponsored
+operation recovery. Call `reportTransactionFailure` at a transaction boundary;
+use `reportedTransactionError` when the UI receives an Error. Keep the original
+cause when wrapping errors so the reference survives across layers.
+
+Properties: `surface`, `action_kind`, `stage`, `support_reference`, `reason_code`,
+`error_code`, and `build_commit`. Sponsored attempts also include `attempt_id`.
+The displayed support reference is a random UUID (or `tx-` UUID); it is never a
+wallet address, order ID, transaction hash, or session identifier. Transaction
+hashes and explorer links remain available in the UI when known. User-facing
+copy explains known failures and gives recovery guidance for unknown outcomes.
+A matching structured PostHog log uses the same reference. Wallet declines are
+recorded at warning level; other failures at error level.
+
+In the connected Plether project, open Activity, select `transaction failed`,
+and filter `support_reference` by the value supplied by the user. Break down
+failures by `reason_code`, `action_kind`, `stage`, and `build_commit`. For failure
+counts, count distinct support references: a recovered operation can acquire a
+more precise reason later, and browser reloads can repeat recovery reporting.
+Repeated callbacks with the same reference and reason are deduplicated within
+the current page session (bounded to the most recent 1,000 pairs).
+
+Existing Perps lifecycle events remain available. Order preparation events
+also carry `support_reference`, preserving their more detailed preparation
+stage and contract classifications. Cancelled/obsolete preparations do not
+emit transaction failures.
+
+New fields and the common event apply after this frontend is deployed; they
+cannot enrich historical events. Delivery uses the existing PostHog queue and
+configuration, so offline clients, disabled analytics, and blocked ingestion
+can prevent receipt. Do not use client analytics as an authoritative ledger.

@@ -6,6 +6,7 @@ module Plether.Ethereum.Rpc
   , ethGetLogsForAddresses
   , ethGetBlockByNumber
   , ethLatestBlock
+  , ethSafeBlock
   , ethBlockTimestamp
   , ethLatestBlockTimestamp
   , ethGetTransactionCount
@@ -129,6 +130,9 @@ ethGetBlockByNumber client blockNum
 
 ethLatestBlock :: EthClient -> IO (Either RpcError RpcBlock)
 ethLatestBlock client = getBlock client "latest" Nothing
+
+ethSafeBlock :: EthClient -> IO (Either RpcError RpcBlock)
+ethSafeBlock client = getBlock client "safe" Nothing
 
 ethGetTransactionCount :: EthClient -> Text -> IO (Either RpcError Integer)
 ethGetTransactionCount client address = do

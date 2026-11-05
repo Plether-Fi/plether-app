@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "divisions:publish": "node scripts/publish-divisions.mjs"
   },
   "dependencies": {
     "@fontsource/uncut-sans": "^5.2.5",

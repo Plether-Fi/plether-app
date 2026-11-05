@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS vault_performance_snapshots (
     block_hash VARCHAR(66) NOT NULL,
     block_timestamp BIGINT NOT NULL,
     mark_fresh BOOLEAN NOT NULL,
+    senior_locked_assets NUMERIC(78,0),
+    junior_locked_assets NUMERIC(78,0),
     senior_total_assets NUMERIC(78,0) NOT NULL,
     senior_total_supply NUMERIC(78,0) NOT NULL,
     senior_share_price_wad NUMERIC(78,0) NOT NULL,
@@ -119,7 +121,7 @@ CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);
 
--- Sepolia testnet mock USDC faucet claims
+-- Sepolia testnet MockUSDG faucet claims
 CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
     address VARCHAR(42) NOT NULL,
     amount BIGINT NOT NULL,
@@ -136,7 +138,7 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
 CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status ON testnet_faucet_claims(status);
 
 -- Release-scoped, reorg-replayed history used to prove competition funding.
-CREATE TABLE IF NOT EXISTS perps_usdc_transfers (
+CREATE TABLE IF NOT EXISTS perps_asset_transfers (
     chain_id BIGINT NOT NULL,
     release_router TEXT NOT NULL,
     token_address TEXT NOT NULL,
@@ -151,18 +153,18 @@ CREATE TABLE IF NOT EXISTS perps_usdc_transfers (
     timestamp BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (chain_id, release_router, tx_hash, log_index),
-    CONSTRAINT perps_usdc_transfers_canonical_values
+    CONSTRAINT perps_asset_transfers_canonical_values
         CHECK (chain_id > 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0 AND timestamp >= 0),
-    CONSTRAINT perps_usdc_transfers_canonical_addresses
+    CONSTRAINT perps_asset_transfers_canonical_addresses
         CHECK (release_router ~ '^0x[0-9a-f]{40}$' AND token_address ~ '^0x[0-9a-f]{40}$'
             AND from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'),
-    CONSTRAINT perps_usdc_transfers_canonical_hashes
+    CONSTRAINT perps_asset_transfers_canonical_hashes
         CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
 );
-CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_inbound
-    ON perps_usdc_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index);
-CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_outbound
-    ON perps_usdc_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index);
+CREATE INDEX IF NOT EXISTS idx_perps_asset_transfers_inbound
+    ON perps_asset_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index);
+CREATE INDEX IF NOT EXISTS idx_perps_asset_transfers_outbound
+    ON perps_asset_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index);
 
 CREATE TABLE IF NOT EXISTS perps_indexer_state (
     indexer_name TEXT NOT NULL,
@@ -250,6 +252,20 @@ CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
     created_at TIMESTAMP DEFAULT NOW(),
     UNIQUE (min_publish_time, max_publish_time)
 );
+ALTER TABLE perps_pyth_update_payloads
+    ADD COLUMN IF NOT EXISTS basket_price BIGINT,
+    ADD COLUMN IF NOT EXISTS component_prices JSONB;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'perps_pyth_update_payloads'::regclass
+          AND conname = 'pyth_payload_basket_pair'
+    ) THEN
+        ALTER TABLE perps_pyth_update_payloads
+            ADD CONSTRAINT pyth_payload_basket_pair
+            CHECK ((basket_price IS NULL) = (component_prices IS NULL));
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window
     ON perps_pyth_update_payloads(min_publish_time, max_publish_time);
 
@@ -1411,7 +1427,7 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     name TEXT NOT NULL,
     chain_id BIGINT NOT NULL,
     release_router TEXT NOT NULL,
-    usdc_address TEXT NOT NULL,
+    settlement_token_address TEXT NOT NULL,
     margin_clearinghouse_address TEXT NOT NULL,
     account_lens_address TEXT NOT NULL,
     release_manifest TEXT NOT NULL,
@@ -1433,17 +1449,17 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     start_snapshot_block_hash TEXT,
     score_cutoff_block BIGINT,
     score_cutoff_block_hash TEXT,
-    starting_balance_usdc NUMERIC(78,0) NOT NULL,
+    starting_balance_assets NUMERIC(78,0) NOT NULL,
     minimum_profit_bps BIGINT NOT NULL,
     minimum_active_days INTEGER NOT NULL,
     fx_session_boundary_utc_minutes INTEGER NOT NULL DEFAULT 1320,
     scoring_version TEXT NOT NULL,
     rules_version TEXT NOT NULL,
-    first_prize_usdc NUMERIC(78,0) NOT NULL,
-    second_prize_usdc NUMERIC(78,0) NOT NULL,
-    third_prize_usdc NUMERIC(78,0) NOT NULL,
-    fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
-    fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
+    first_prize_assets NUMERIC(78,0) NOT NULL,
+    second_prize_assets NUMERIC(78,0) NOT NULL,
+    third_prize_assets NUMERIC(78,0) NOT NULL,
+    fourth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0,
+    fifth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0,
     finalized BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1467,9 +1483,9 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
 );
 
 ALTER TABLE insights_competitions
-    ADD COLUMN IF NOT EXISTS fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS fourth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0;
 ALTER TABLE insights_competitions
-    ADD COLUMN IF NOT EXISTS fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS fifth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS insights_competition_participants (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
@@ -1518,9 +1534,9 @@ CREATE TABLE IF NOT EXISTS insights_account_snapshots (
     block_hash TEXT NOT NULL,
     timestamp BIGINT NOT NULL,
     has_open_position BOOLEAN NOT NULL,
-    signed_net_equity_usdc NUMERIC(78,0) NOT NULL,
-    terminal_reachable_usdc NUMERIC(78,0) NOT NULL,
-    trader_claims_usdc NUMERIC(78,0) NOT NULL,
+    signed_net_equity_assets NUMERIC(78,0) NOT NULL,
+    terminal_reachable_assets NUMERIC(78,0) NOT NULL,
+    trader_claims_assets NUMERIC(78,0) NOT NULL,
     raw_data JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1557,7 +1573,7 @@ CREATE TABLE IF NOT EXISTS insights_manual_adjustments (
     id BIGSERIAL PRIMARY KEY,
     competition_slug TEXT NOT NULL,
     wallet VARCHAR(42) NOT NULL,
-    amount_usdc NUMERIC(78,0) NOT NULL,
+    amount_assets NUMERIC(78,0) NOT NULL,
     reason TEXT NOT NULL,
     created_by TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1603,27 +1619,27 @@ CREATE TABLE IF NOT EXISTS insights_finalized_standings (
     eligibility_status TEXT NOT NULL,
     eligibility_reason TEXT,
     funding_integrity_clear BOOLEAN NOT NULL,
-    final_pnl_usdc NUMERIC(78,0),
+    final_pnl_assets NUMERIC(78,0),
     roi_bps BIGINT,
-    starting_value_usdc NUMERIC(78,0),
-    current_value_usdc NUMERIC(78,0),
-    deposits_usdc NUMERIC(78,0) NOT NULL,
-    withdrawals_usdc NUMERIC(78,0) NOT NULL,
-    adjustment_usdc NUMERIC(78,0) NOT NULL,
+    starting_value_assets NUMERIC(78,0),
+    current_value_assets NUMERIC(78,0),
+    deposits_assets NUMERIC(78,0) NOT NULL,
+    withdrawals_assets NUMERIC(78,0) NOT NULL,
+    adjustment_assets NUMERIC(78,0) NOT NULL,
     active_days INTEGER NOT NULL,
-    volume_usdc NUMERIC(78,0) NOT NULL,
+    volume_assets NUMERIC(78,0) NOT NULL,
     executed_trades BIGINT NOT NULL,
     liquidations BIGINT NOT NULL,
-    realized_pnl_usdc NUMERIC(78,0) NOT NULL,
+    realized_pnl_assets NUMERIC(78,0) NOT NULL,
     block_number BIGINT,
     timestamp BIGINT,
     has_open_position BOOLEAN,
     snapshot_kind TEXT,
     position_side TEXT,
     position_size_delta TEXT,
-    position_margin_usdc TEXT,
+    position_margin_assets TEXT,
     position_entry_price TEXT,
-    position_unrealized_pnl_usdc TEXT,
+    position_unrealized_pnl_assets TEXT,
     position_liquidatable BOOLEAN,
     materialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (competition_slug, wallet)
@@ -2431,6 +2447,38 @@ CREATE INDEX IF NOT EXISTS idx_insights_registration_sessions_wallet_expires
     ON insights_registration_sessions(wallet_expires_at)
     WHERE wallet_expires_at IS NOT NULL;
 
+-- Discord identity and owner wallet linking for Plether Divisions. This is
+-- separate from the completed September competition registration roster.
+CREATE TABLE IF NOT EXISTS insights_divisions_links (
+    discord_id TEXT PRIMARY KEY CHECK (discord_id ~ '^[0-9]{17,22}$'),
+    discord_username TEXT NOT NULL,
+    owner_wallet TEXT NOT NULL UNIQUE CHECK (owner_wallet ~ '^0x[0-9a-f]{40}$'),
+    trading_account TEXT NOT NULL UNIQUE CHECK (trading_account ~ '^0x[0-9a-f]{40}$'),
+    rules_version TEXT NOT NULL,
+    privacy_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions (
+    session_digest BYTEA PRIMARY KEY CHECK (octet_length(session_digest) = 32),
+    expires_at TIMESTAMPTZ NOT NULL,
+    oauth_state_digest BYTEA CHECK (oauth_state_digest IS NULL OR octet_length(oauth_state_digest) = 32),
+    oauth_expires_at TIMESTAMPTZ,
+    discord_id TEXT,
+    discord_username TEXT,
+    owner_wallet TEXT,
+    trading_account TEXT,
+    challenge_message TEXT,
+    challenge_owner TEXT,
+    challenge_expires_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (num_nonnulls(oauth_state_digest, oauth_expires_at) IN (0, 2)),
+    CHECK (num_nonnulls(challenge_message, challenge_owner, challenge_expires_at) IN (0, 3))
+);
+CREATE INDEX IF NOT EXISTS idx_insights_divisions_link_sessions_expiry
+    ON insights_divisions_link_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS insights_registration_rate_limits (
     scope_digest BYTEA NOT NULL,
     window_epoch_minute BIGINT NOT NULL,
@@ -2937,7 +2985,7 @@ CREATE TABLE IF NOT EXISTS aa_close_assistance (
     chain_id BIGINT NOT NULL DEFAULT 421614 CHECK (chain_id = 421614),
     router VARCHAR(42) NOT NULL, account VARCHAR(42) NOT NULL, client_order_id VARCHAR(66) NOT NULL,
     request_hash VARCHAR(66) NOT NULL, lens VARCHAR(42) NOT NULL,
-    amount_usdc BIGINT NOT NULL CHECK (amount_usdc BETWEEN 1 AND 200000),
+    amount_assets BIGINT NOT NULL CHECK (amount_assets BETWEEN 1 AND 200000),
     verified BOOLEAN NOT NULL DEFAULT FALSE,
     transaction_hash VARCHAR(66), block_number BIGINT, block_hash VARCHAR(66), deposit_log_index BIGINT, order_id BIGINT,
     CHECK (NOT verified OR (transaction_hash IS NOT NULL AND block_number IS NOT NULL
@@ -2966,6 +3014,130 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_nonce_recoveries (
     CHECK (original_tx_hash <> replacement_tx_hash)
 );
 
+-- Preparation and observability prerequisites, in migration dependency order.
+-- Keep the standalone bootstrap equivalent to the additive operator migrations.
+
+-- aa-preparation-v1.sql
+-- Additive, operator-approved migration. No startup DDL or runtime grants.
+-- Keep rows through rollback: reusing an ID must never silently issue new work.
+CREATE TABLE IF NOT EXISTS aa_preparations (
+  client_key TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  preparation_id TEXT NOT NULL,
+  intent_hash TEXT NOT NULL,
+  operation JSONB,
+  authorization_digest TEXT REFERENCES aa_sponsorship_authorizations(digest),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()+interval '5 minutes',
+  lease_token TEXT,
+  lease_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (client_key,sender,preparation_id),
+  CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+  CHECK (preparation_id ~ '^0x[0-9a-f]{64}$'),
+  CHECK (intent_hash ~ '^0x[0-9a-f]{64}$'),
+  CHECK (operation IS NULL OR jsonb_typeof(operation)='object'),
+  CHECK ((lease_token IS NULL) = (lease_until IS NULL))
+);
+
+-- aa-preparation-recovery-v1.sql
+-- Apply before deploying the fenced gateway. Retirement is separately gated
+-- until ALL serving instances use this registry. Never drop retirement records.
+ALTER TABLE aa_preparations ADD COLUMN IF NOT EXISTS recovery_paymaster TEXT CHECK (recovery_paymaster ~ '^0x[0-9a-f]{40}$');
+CREATE TABLE IF NOT EXISTS aa_preparation_registry (
+  chain_id BIGINT NOT NULL CHECK (chain_id = 421614),
+  paymaster TEXT NOT NULL CHECK (paymaster ~ '^0x[0-9a-f]{40}$'),
+  sender TEXT NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+  preparation_id TEXT NOT NULL CHECK (preparation_id ~ '^0x[0-9a-f]{64}$'),
+  generation BIGINT NOT NULL DEFAULT 0,
+  retired BOOLEAN NOT NULL DEFAULT FALSE,
+  lease_token TEXT,
+  lease_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (chain_id,paymaster,sender,preparation_id)
+);
+CREATE TABLE IF NOT EXISTS aa_preparation_authorizations (
+  chain_id BIGINT NOT NULL, paymaster TEXT NOT NULL, sender TEXT NOT NULL,
+  preparation_id TEXT NOT NULL, digest TEXT NOT NULL REFERENCES aa_sponsorship_authorizations(digest),
+  PRIMARY KEY (chain_id,paymaster,sender,preparation_id,digest),
+  FOREIGN KEY (chain_id,paymaster,sender,preparation_id)
+    REFERENCES aa_preparation_registry(chain_id,paymaster,sender,preparation_id)
+);
+CREATE TABLE IF NOT EXISTS aa_preparation_recovery_challenges (
+  id TEXT PRIMARY KEY, chain_id BIGINT NOT NULL, paymaster TEXT NOT NULL,
+  sender TEXT NOT NULL, preparation_id TEXT NOT NULL, owner TEXT NOT NULL,
+  message TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, consumed BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE TABLE IF NOT EXISTS aa_preparation_recovery_sessions (
+  token_hash TEXT PRIMARY KEY, chain_id BIGINT NOT NULL, paymaster TEXT NOT NULL,
+  sender TEXT NOT NULL, preparation_id TEXT NOT NULL, owner TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS aa_preparation_recovery_challenge_expiry ON aa_preparation_recovery_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS aa_preparation_recovery_session_expiry ON aa_preparation_recovery_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS aa_preparation_by_sender_id ON aa_preparations(sender,preparation_id);
+UPDATE aa_preparations p SET recovery_paymaster=lower(a.operation->>'paymaster')
+FROM aa_sponsorship_authorizations a WHERE a.digest=p.authorization_digest
+AND a.operation->>'paymaster' ~ '^0x[0-9a-fA-F]{40}$' AND p.recovery_paymaster IS NULL;
+-- A historical paymaster is derived only from durable authorization evidence.
+-- Unbound records remain intact and are classified conservatively at recovery.
+INSERT INTO aa_preparation_registry(chain_id,paymaster,sender,preparation_id)
+SELECT DISTINCT 421614,lower(a.operation->>'paymaster'),p.sender,p.preparation_id
+FROM aa_preparations p JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest
+WHERE a.operation->>'paymaster' ~ '^0x[0-9a-fA-F]{40}$'
+ON CONFLICT DO NOTHING;
+INSERT INTO aa_preparation_authorizations(chain_id,paymaster,sender,preparation_id,digest)
+SELECT 421614,lower(a.operation->>'paymaster'),p.sender,p.preparation_id,a.digest
+FROM aa_preparations p JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest
+WHERE a.operation->>'paymaster' ~ '^0x[0-9a-fA-F]{40}$'
+ON CONFLICT DO NOTHING;
+
+-- aa-observability-v1.sql
+-- Additive, operator-applied migration. No authorization tables or invariants change.
+ALTER TABLE aa_preparations
+  ADD COLUMN IF NOT EXISTS diagnostic_attempt_id UUID,
+  ADD COLUMN IF NOT EXISTS diagnostic_chain_id BIGINT,
+  ADD COLUMN IF NOT EXISTS diagnostic_deployment TEXT;
+CREATE TABLE IF NOT EXISTS aa_worker_readiness (
+  chain_id BIGINT NOT NULL,
+  deployment TEXT NOT NULL,
+  component TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('ready','blocked','unknown')),
+  reason TEXT NOT NULL,
+  required_cost_wei NUMERIC(78,0),
+  signer_address TEXT,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(chain_id, deployment, component)
+);
+CREATE TABLE IF NOT EXISTS aa_attempt_diagnostics (
+  attempt_id UUID PRIMARY KEY,
+  client_key TEXT NOT NULL,
+  chain_id BIGINT NOT NULL,
+  deployment TEXT NOT NULL,
+  preparation_id TEXT,
+  operation_hash TEXT,
+  sender TEXT,
+  order_id BIGINT,
+  stage TEXT NOT NULL,
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  terminal_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS aa_attempt_diagnostics_operation ON aa_attempt_diagnostics(operation_hash);
+CREATE INDEX IF NOT EXISTS aa_attempt_diagnostics_terminal ON aa_attempt_diagnostics(terminal_at) WHERE terminal_at IS NOT NULL;
+-- Operator grants SELECT/INSERT/UPDATE to API/worker roles; the maintenance role
+-- alone deletes mappings after terminal_at + 7 days. Unresolved rows never expire.
+
+-- aa-observability-v2.sql
+-- Apply after aa-observability-v1.sql, before the new API image. Additive only.
+ALTER TABLE aa_attempt_diagnostics
+  ADD COLUMN IF NOT EXISTS correlation_checked_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS correlation_resolved_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS execution_observed_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS aa_diagnostics_pending_correlation
+  ON aa_attempt_diagnostics(chain_id,deployment,correlation_checked_at,created_at)
+  WHERE correlation_resolved_at IS NULL AND order_id IS NULL AND terminal_at IS NULL;
+
 -- Advisory only. Apply before the backend rollout. Missing table drops telemetry,
 -- never blocks sponsorship/submission. Do not use browser reports as chain proof.
 CREATE INDEX IF NOT EXISTS aa_preparations_diagnostic_attempt
@@ -2982,6 +3154,12 @@ CREATE TABLE IF NOT EXISTS aa_attempt_events (
 -- Grant SELECT/INSERT to the API role; maintenance alone deletes terminal attempt
 -- events after the same seven-day retention as aa_attempt_diagnostics.
 
+-- Advisory metadata only. Apply before the backend, then release the frontend.
+-- Old timeline rows remain valid and are not retrospectively classified.
+ALTER TABLE aa_attempt_events
+  ADD COLUMN IF NOT EXISTS failure_step TEXT CHECK (length(failure_step) BETWEEN 1 AND 64),
+  ADD COLUMN IF NOT EXISTS reason_code TEXT CHECK (length(reason_code) BETWEEN 1 AND 64);
+
 -- Insights integrity refresh epoch metadata (concurrent indexes are an explicit migration).
 -- Additive metadata; safe to apply before either API or worker is upgraded.
 ALTER TABLE insights_competitions
@@ -2995,14 +3173,14 @@ ALTER TABLE insights_competitions
 CREATE OR REPLACE FUNCTION insights_integrity_metadata_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF ROW(NEW.chain_id, NEW.release_router, NEW.release_manifest, NEW.account_lens_address,
-         NEW.usdc_address, NEW.margin_clearinghouse_address, NEW.start_block, NEW.start_block_hash,
+         NEW.settlement_token_address, NEW.margin_clearinghouse_address, NEW.start_block, NEW.start_block_hash,
          NEW.start_snapshot_block_hash, NEW.score_cutoff_block, NEW.score_cutoff_block_hash,
-         NEW.start_timestamp, NEW.score_cutoff_timestamp, NEW.starting_balance_usdc, NEW.registration_close_timestamp)
+         NEW.start_timestamp, NEW.score_cutoff_timestamp, NEW.starting_balance_assets, NEW.registration_close_timestamp)
      IS DISTINCT FROM
      ROW(OLD.chain_id, OLD.release_router, OLD.release_manifest, OLD.account_lens_address,
-         OLD.usdc_address, OLD.margin_clearinghouse_address, OLD.start_block, OLD.start_block_hash,
+         OLD.settlement_token_address, OLD.margin_clearinghouse_address, OLD.start_block, OLD.start_block_hash,
          OLD.start_snapshot_block_hash, OLD.score_cutoff_block, OLD.score_cutoff_block_hash,
-         OLD.start_timestamp, OLD.score_cutoff_timestamp, OLD.starting_balance_usdc, OLD.registration_close_timestamp) THEN
+         OLD.start_timestamp, OLD.score_cutoff_timestamp, OLD.starting_balance_assets, OLD.registration_close_timestamp) THEN
     NEW.integrity_input_epoch := OLD.integrity_input_epoch + 1;
   END IF;
   RETURN NEW;
@@ -3059,13 +3237,6 @@ BEGIN
       (SELECT 1 FROM removed_history h WHERE h.chain_id=c.chain_id AND h.release_router=c.release_router);
   RETURN NULL;
 END $$;
-DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_account_activity;
-CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_account_activity
-REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
-DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_usdc_transfers;
-CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_usdc_transfers
-REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
-
 CREATE OR REPLACE FUNCTION insights_integrity_cursor_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.last_indexed_block < OLD.last_indexed_block
@@ -3076,11 +3247,141 @@ BEGIN
   END IF;
   RETURN NULL;
 END $$;
-CREATE OR REPLACE TRIGGER insights_integrity_cursor_epoch AFTER UPDATE ON perps_indexer_state
-FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
+-- History source tables are initialized by ensurePerpsHistorySchema. Install
+-- this group only when every source exists; the absent cursor trigger makes
+-- ensureInsightsSchema apply the complete epoch migration after initialization.
+DO $insights_history$
+BEGIN
+  IF to_regclass(format('%I.perps_account_activity', current_schema())) IS NOT NULL
+     AND to_regclass(format('%I.perps_asset_transfers', current_schema())) IS NOT NULL
+     AND to_regclass(format('%I.perps_indexer_state', current_schema())) IS NOT NULL THEN
+    DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_account_activity;
+    CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_account_activity
+    REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
+    DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_asset_transfers;
+    CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_asset_transfers
+    REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
+    CREATE OR REPLACE TRIGGER insights_integrity_cursor_epoch AFTER UPDATE ON perps_indexer_state
+    FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
+  END IF;
+END
+$insights_history$;
 
 -- Backward compatible: existing writers still check immediately. Only the new
 -- atomic publisher explicitly defers this FK until its short publication phase.
 ALTER TABLE insights_account_snapshots
   ALTER CONSTRAINT insights_account_snapshots_competition_slug_fkey
   DEFERRABLE INITIALLY IMMEDIATE;
+
+-- Immutable weekly Divisions badge awards, scoped to the perps release.
+CREATE TABLE IF NOT EXISTS divisions_publications (
+  chain_id BIGINT NOT NULL,
+  release_router TEXT NOT NULL,
+  week_start BIGINT NOT NULL,
+  closing_block BIGINT NOT NULL,
+  publication JSONB NOT NULL,
+  PRIMARY KEY (chain_id, release_router, week_start)
+);
+
+-- Direct margin funding journal (shares the existing faucet allocation).
+-- Additive. Existing wallet claims keep their allocation and mint provenance.
+ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS delivery_mode VARCHAR(16) NOT NULL DEFAULT 'wallet';
+CREATE TABLE IF NOT EXISTS testnet_margin_funding (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_address VARCHAR(42) NOT NULL,
+    address VARCHAR(42) NOT NULL,
+    token_address VARCHAR(42) NOT NULL,
+    chain_id BIGINT NOT NULL CHECK (chain_id = 421614),
+    clearinghouse VARCHAR(42) NOT NULL,
+    signer VARCHAR(42) NOT NULL,
+    release_id TEXT NOT NULL,
+    amount BIGINT NOT NULL CHECK (amount = 100000000000),
+    phase VARCHAR(16) NOT NULL DEFAULT 'mint' CHECK (phase IN ('mint','approval','deposit')),
+    status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','funded','failed','recovery')),
+    reason TEXT,
+    deposit_tx_hash VARCHAR(66),
+    deposit_block_number BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Shared eligibility is written atomically by reservation. Avoid a foreign
+    -- key here: older supported binaries recreate the legacy primary key at
+    -- startup and must remain usable for rollback with this additive schema.
+    UNIQUE (address, token_address)
+);
+CREATE TABLE IF NOT EXISTS testnet_margin_funding_transactions (
+    id BIGSERIAL PRIMARY KEY,
+    claim_id UUID NOT NULL REFERENCES testnet_margin_funding(id),
+    phase VARCHAR(16) NOT NULL CHECK (phase IN ('mint','approval','deposit')),
+    attempt INTEGER NOT NULL CHECK (attempt > 0),
+    signer VARCHAR(42) NOT NULL,
+    nonce BIGINT NOT NULL CHECK (nonce >= 0),
+    target VARCHAR(42) NOT NULL,
+    calldata TEXT NOT NULL,
+    tx_hash VARCHAR(66) NOT NULL UNIQUE,
+    raw_tx TEXT NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','confirmed','reverted','replaced')),
+    block_number BIGINT,
+    block_hash VARCHAR(66),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (claim_id, phase, attempt),
+    UNIQUE (signer, nonce)
+);
+-- A durable reservation survives process death before the RPC sees the nonce.
+CREATE UNIQUE INDEX IF NOT EXISTS testnet_margin_funding_one_submitted_signer
+ON testnet_margin_funding_transactions(signer) WHERE status = 'submitted';
+CREATE INDEX IF NOT EXISTS testnet_margin_funding_pending
+ON testnet_margin_funding(created_at, id) WHERE status = 'pending';
+
+-- Operator proof log. Original signed intent remains in the immutable journal.
+CREATE TABLE IF NOT EXISTS testnet_margin_funding_nonce_recoveries (
+    original_tx_hash VARCHAR(66) PRIMARY KEY REFERENCES testnet_margin_funding_transactions(tx_hash),
+    claim_id UUID NOT NULL REFERENCES testnet_margin_funding(id),
+    phase VARCHAR(16) NOT NULL,
+    signer VARCHAR(42) NOT NULL,
+    nonce BIGINT NOT NULL,
+    replacement_tx_hash VARCHAR(66) NOT NULL,
+    replacement_block_number BIGINT NOT NULL,
+    replacement_block_hash VARCHAR(66) NOT NULL,
+    recovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Canonical event evidence and diluted junior-share return attribution.
+CREATE TABLE IF NOT EXISTS vault_return_reports (
+  chain_id NUMERIC(78,0) NOT NULL,
+  house_pool_address VARCHAR(42) NOT NULL,
+  senior_vault_address VARCHAR(42) NOT NULL,
+  junior_vault_address VARCHAR(42) NOT NULL,
+  start_block_number NUMERIC(78,0) NOT NULL,
+  end_block_number NUMERIC(78,0) NOT NULL,
+  start_block_hash VARCHAR(66) NOT NULL,
+  end_block_hash VARCHAR(66) NOT NULL,
+  start_share_price NUMERIC(78,0) NOT NULL,
+  end_share_price NUMERIC(78,0) NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 2,
+  source_commit TEXT NOT NULL,
+  attribution JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, end_block_number)
+);
+ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 2;
+CREATE TABLE IF NOT EXISTS vault_return_index_state (
+  deployment_key TEXT PRIMARY KEY,
+  through_block NUMERIC(78,0) NOT NULL,
+  through_hash VARCHAR(66) NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vault_return_logs (
+  deployment_key TEXT NOT NULL,
+  block_number NUMERIC(78,0) NOT NULL,
+  block_hash VARCHAR(66) NOT NULL,
+  transaction_hash VARCHAR(66) NOT NULL,
+  log_index INTEGER NOT NULL,
+  payload JSONB NOT NULL,
+  PRIMARY KEY (deployment_key, block_number, log_index)
+);
+CREATE TABLE IF NOT EXISTS vault_return_evidence (
+  deployment_key TEXT NOT NULL,
+  evidence_key TEXT NOT NULL,
+  block_hash VARCHAR(66) NOT NULL,
+  payload JSONB NOT NULL,
+  PRIMARY KEY (deployment_key, evidence_key, block_hash)
+);

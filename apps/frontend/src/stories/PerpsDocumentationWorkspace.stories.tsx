@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { accountPositionFixture, accountStoryIdentity } from './perpsAccountFixtures'
 import { PerpsIdentityContext } from '../perps-aa'
 import type { Meta, StoryObj } from '@storybook/react-vite'
@@ -12,7 +13,7 @@ import {
 } from '../components/PerpsTradingAccountPanel'
 
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const position = accountPositionFixture()
 
 const accountPanel = (
@@ -20,7 +21,7 @@ const accountPanel = (
     ownerWalletAddress="0x9B2F4e0E78E36D97f91c80D5B1aED422d3C2e741"
     tradingAccountAddress="0x62A9c44fAbC68B6dE62059E827cE972bD09E6c18"
     accountModel="smart-account"
-    marginAccountUsdc="1 248.25"
+    marginAccountAssets="1 248.25"
   />
 )
 
@@ -46,12 +47,12 @@ function MarketHeader({ freshness = 'fresh' }: { freshness?: 'fresh' | 'market-c
           directionalLimit: {
             usagePercent: 87,
             side: 'long',
-            totalExposure: <TokenAmount amount="8.36M" />,
-            netExposure: <TokenAmount amount="3.07M" />,
-            limit: <TokenAmount amount="3.53M" />,
+            totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="8.36M" />,
+            netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.07M" />,
+            limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.53M" />,
           },
         },
-        { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
+        { label: 'Free pool liquidity', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6.3M" /> },
       ]}
     />
   )
@@ -90,8 +91,8 @@ export const MarketAndAccountReadiness: Story = {
             <PerpsAccountPanel
               isConnected
               position={position}
-              equityUsdc={448_250_000n}
-              freeBuyingPowerUsdc={848_250_000n}
+              equityAssets={448_250_000n}
+              freeBuyingPowerAssets={848_250_000n}
             />
           </div>
           <PerpsTradeTicket
@@ -103,10 +104,10 @@ export const MarketAndAccountReadiness: Story = {
             oracleFreshnessTooltip="updated 18s ago"
             availableToTradeRaw={848_250_000n}
             availableToTradeAmount="848.25"
-            settlementBalanceUsdcRaw={1_248_250_000n}
-            positionEquityUsdcRaw={position.positionEquityUsdc}
-            withdrawableUsdcRaw={847_000_000n}
-            walletUsdcRaw={5_000_000_000n}
+            settlementBalanceAssetsRaw={1_248_250_000n}
+            positionEquityAssetsRaw={position.positionEquityAssets}
+            withdrawableAssetsRaw={847_000_000n}
+            walletAssetsRaw={5_000_000_000n}
             currentPosition={position}
             maintenanceMarginBps={100n}
             initialMarginBps={200n}
@@ -139,11 +140,11 @@ export const CloseOnlyReduceOnly: Story = {
             oraclePriceDisplay="1.0000"
             oracleFreshness="market-closed"
             oracleFreshnessTooltip="using the validated stored basket"
-            availableToTradeRaw={1_500n * USDC}
+            availableToTradeRaw={1_500n * ASSETS}
             availableToTradeAmount="1 500"
-            settlementBalanceUsdcRaw={1_255n * USDC}
-            withdrawableUsdcRaw={1_000n * USDC}
-            walletUsdcRaw={2_000n * USDC}
+            settlementBalanceAssetsRaw={1_255n * ASSETS}
+            withdrawableAssetsRaw={1_000n * ASSETS}
+            walletAssetsRaw={2_000n * ASSETS}
             currentPosition={position}
             maintenanceMarginBps={100n}
             initialMarginBps={200n}
@@ -162,9 +163,9 @@ export const DisabledReviewMessages: Story = {
     <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="mx-auto grid max-w-7xl gap-5 md:grid-cols-3">
         {[
-          ['Insufficient margin', 'Deposit 152.40 USDC more before committing this order.'],
-          ['Minimum order size', 'Minimum order size is 103.18 USDC.'],
-          ['Skew capacity reached', 'Max Long exposure is 953.33 USDC before hitting the market skew cap.'],
+          ['Insufficient margin', `Deposit 152.40 ${PERPS_SETTLEMENT_TOKEN_LABEL} more before committing this order.`],
+          ['Minimum order size', `Minimum order size is 103.18 ${PERPS_SETTLEMENT_TOKEN_LABEL}.`],
+          ['Skew capacity reached', `Max Long exposure is 953.33 ${PERPS_SETTLEMENT_TOKEN_LABEL} before hitting the market skew cap.`],
         ].map(([title, message]) => (
           <section key={title} className="border border-brand-border/30 bg-surface-panel p-5">
             <h2 className="text-lg font-semibold text-content-primary">{title}</h2>
@@ -190,18 +191,18 @@ export const ExecutedPartialReduction: Story = {
           position={{
             ...position,
             size: 1_500n * 10n ** 18n,
-            marginUsdc: 300n * USDC,
-            estimatedNotionalUsdc: 1_530n * USDC,
-            dxyExposureUsdc: 1_550n * USDC,
-            unrealizedPnlUsdc: 36_200_000n,
+            marginAssets: 300n * ASSETS,
+            estimatedNotionalAssets: 1_530n * ASSETS,
+            dxyExposureAssets: 1_550n * ASSETS,
+            unrealizedPnlAssets: 36_200_000n,
           }}
-          equityUsdc={1_336_200_000n}
-          freeBuyingPowerUsdc={1_036_200_000n}
+          equityAssets={1_336_200_000n}
+          freeBuyingPowerAssets={1_036_200_000n}
         />
         <OperationStateCard
           title="Partial reduction executed"
           stage="Settlement result"
-          message="500 USDC of exposure closed. 100 USDC of position margin was released and 75.40 USDC of realized result was credited to the Margin Account."
+          message={`500 ${PERPS_SETTLEMENT_TOKEN_LABEL} of exposure closed. 100 ${PERPS_SETTLEMENT_TOKEN_LABEL} of position margin was released and 75.40 ${PERPS_SETTLEMENT_TOKEN_LABEL} of realized result was credited to the Margin Account.`}
           tone="success"
           identifierLabel="Finalization transaction"
           identifier="0x75c4000000000000000000000000000000000000000000000000000000001032"
@@ -227,8 +228,8 @@ export const DegradedMarketAndAccount: Story = {
           <PerpsAccountPanel
             isConnected
             position={position}
-            equityUsdc={448_250_000n}
-            freeBuyingPowerUsdc={848_250_000n}
+            equityAssets={448_250_000n}
+            freeBuyingPowerAssets={848_250_000n}
           />
         </div>
       </div>
@@ -249,7 +250,7 @@ export const PendingFinalizationAndCleanup: Story = {
             message="Automatic keeper processing did not arrive during the grace period. The same order can now be finalized manually under the original FIFO, oracle and acceptable-price rules."
             tone="pending"
             identifierLabel="Order ID"
-            identifier="72 · Acceptable price 1.0240 · Reward 0.20 USDC · Ready now"
+            identifier={`72 · Acceptable price 1.0240 · Reward 0.20 ${PERPS_SETTLEMENT_TOKEN_LABEL} · Ready now`}
             action={<Button className="w-full">Finalize Trade</Button>}
           />
           <PerpsAccountPanel
@@ -261,11 +262,11 @@ export const PendingFinalizationAndCleanup: Story = {
                 side: 0,
                 direction: 'long',
                 sizeDelta: 500n * 10n ** 18n,
-                marginDeltaUsdc: 100n * USDC,
+                marginDeltaAssets: 100n * ASSETS,
                 acceptablePrice: 102_400_000n,
                 isReduceOnly: false,
                 status: 1,
-                estimatedNotionalUsdc: 520n * USDC,
+                estimatedNotionalAssets: 520n * ASSETS,
                 expiryTime: BigInt(nowSeconds + 2_958),
               },
               {
@@ -273,11 +274,11 @@ export const PendingFinalizationAndCleanup: Story = {
                 side: 0,
                 direction: 'long',
                 sizeDelta: 250n * 10n ** 18n,
-                marginDeltaUsdc: 0n,
+                marginDeltaAssets: 0n,
                 acceptablePrice: 99_100_000n,
                 isReduceOnly: true,
                 status: 1,
-                estimatedNotionalUsdc: 255n * USDC,
+                estimatedNotionalAssets: 255n * ASSETS,
                 expiryTime: BigInt(nowSeconds - 100),
               },
             ]}

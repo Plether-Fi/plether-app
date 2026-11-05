@@ -8,13 +8,25 @@ live in `insights-testnet-competition.md`.
 |---|---|
 | Registration opens | When the enabled API deployment first starts successfully |
 | Trading starts | `2026-09-13T21:00:00Z` |
-| Registration closes | `2026-09-20T21:00:00Z` |
+| Registration closes | `2026-09-22T00:00:00Z` |
 | New-risk and scoring cutoff | `2026-09-25T21:00:00Z` |
 | Results | `2026-09-28T12:00:00Z` |
 | Payout deadline | `2026-10-03T00:00:00Z` |
 
 Registration and trading intervals are half-open. A registration completion or
 trade at the exact closing timestamp is rejected.
+
+The September 21 registration extension moves the original
+`2026-09-20T21:00:00Z` cutoff to midnight UTC at the end of September 21.
+Deploy the updated backend to apply the extension: startup updates the existing
+September row atomically, provided that only this exact cutoff differs and the
+competition is not finalized. It preserves the opening time, existing
+registrations, release binding, and scoring history. Repeated startups are
+idempotent. The Insights UI reads the updated deadline and status from the API;
+no frontend deployment is needed. Verify that `/api/insights/v1/competitions/current`
+reports `registration.closesAt: "2026-09-22T00:00:00Z"` and `status: "open"`
+before that instant. Older backend binaries retain the original expected cutoff
+and will reject the extended row on restart; rollbacks must retain this extension.
 
 ## Launch invariant
 
@@ -42,11 +54,11 @@ insights_competition_release_id  = ""
 ```
 
 The September leaderboard targets **plether-core v1.2.3**, pinned in
-`config/perps/arbitrum-sepolia-v2.json`, starting at block **307397196**.
+`config/perps/arbitrum-sepolia-v3.json`, starting at block **318398363**.
 Use both checked-in Terraform overlays, after the environment's base variables:
 
 ```text
--var-file=sepolia-core-v1.2.3.tfvars.json
+-var-file=sepolia-core-v1.3.1.tfvars.json
 -var-file=sepolia-insights-v1.2.3.tfvars.json
 ```
 
@@ -83,7 +95,7 @@ must bind before competition start. No existing bound release can be replaced.
 
 Before activating, verify archive RPC access to the original baseline and
 retain the registration roster; do not reset the competition or move its start
-time. The indexer retains history from deployment block 307397196 so funding
+time. The indexer retains history from deployment block 318398363 so funding
 provenance and the pre-start account state remain available. Leaderboard scoring
 starts at the competition's configured timestamp, not the deployment block.
 The configured backend RPC was verified on September 14, 2026: block
@@ -463,9 +475,9 @@ After every late registration, monitor `GET /api/insights/v1/status` until:
 Pause investigation/finalization if the counts diverge, the worker or indexer
 stops advancing, or the baseline batch is not rebuilt across the entire roster.
 
-### September 20 roster lock
+### September 22 roster lock
 
-At `2026-09-20T21:00:00Z`, verify the public registration metadata changes to
+At `2026-09-22T00:00:00Z`, verify the public registration metadata changes to
 `closed`. A session creation or completion submitted at that exact timestamp or
 later must return the stable closed-registration error, even for a session that
 started earlier.
@@ -625,7 +637,8 @@ the half-open scoring cutoff.
    hashes in the restricted payout record.
 
 Competition identity, schedule, FX-session boundary, scoring version, and prize
-values are immutable after seeding. The release manifest has one explicit
+values are immutable after seeding, apart from the exact September 21
+registration extension documented above. The release manifest has one explicit
 pending-to-bound transition before the start/baseline, then is immutable. A
 mismatch stops startup; create a new versioned competition slug instead of
 rewriting historical results.

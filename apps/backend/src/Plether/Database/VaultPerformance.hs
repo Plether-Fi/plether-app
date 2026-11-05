@@ -1,15 +1,18 @@
 module Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..)
   , ensureVaultPerformanceSchema
+  , getVaultReturnAttribution
   , upsertVaultPerformanceSnapshot
   , getVaultPerformanceSnapshots
   ) where
 
+import Data.Aeson (Value)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple
-  ( Connection
+  ( Only (..)
+  , Connection
   , execute
   , execute_
   , query
@@ -41,6 +44,8 @@ data VaultPerformanceSnapshotRow = VaultPerformanceSnapshotRow
   , vpsBlockTimestamp :: Integer
   , vpsMarkFresh :: Maybe Bool
   , vpsSeniorTotalAssets :: Integer
+  , vpsSeniorLockedAssets :: Maybe Integer
+  , vpsJuniorLockedAssets :: Maybe Integer
   , vpsSeniorTotalSupply :: Integer
   , vpsSeniorSharePriceWad :: Integer
   , vpsJuniorTotalAssets :: Integer
@@ -62,6 +67,8 @@ instance FromRow VaultPerformanceSnapshotRow where
       <*> field
       <*> field
       <*> numericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
       <*> numericIntegerField
       <*> numericIntegerField
       <*> numericIntegerField
@@ -83,6 +90,14 @@ numericIntegerField =
           column
           "Vault performance NUMERIC value was not an integer"
 
+nullableNumericIntegerField :: RowParser (Maybe Integer)
+nullableNumericIntegerField = fieldWith $ \column raw ->
+  case raw of
+    Nothing -> pure Nothing
+    Just bytes -> case readMaybe (BS8.unpack bytes) of
+      Just integer -> pure $ Just integer
+      Nothing -> returnError ConversionFailed column "Vault locked assets was not an integer"
+
 instance ToRow VaultPerformanceSnapshotRow where
   toRow VaultPerformanceSnapshotRow {..} =
     toRow
@@ -96,6 +111,8 @@ instance ToRow VaultPerformanceSnapshotRow where
       , vpsBlockTimestamp
       , vpsMarkFresh
       , vpsSeniorTotalAssets
+      , vpsSeniorLockedAssets
+      , vpsJuniorLockedAssets
       , vpsSeniorTotalSupply
       , vpsSeniorSharePriceWad
       , vpsJuniorTotalAssets
@@ -105,6 +122,25 @@ instance ToRow VaultPerformanceSnapshotRow where
 
 ensureVaultPerformanceSchema :: Connection -> IO ()
 ensureVaultPerformanceSchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS vault_return_reports (\
+    \  chain_id NUMERIC(78,0) NOT NULL,\
+    \  house_pool_address VARCHAR(42) NOT NULL,\
+    \  senior_vault_address VARCHAR(42) NOT NULL,\
+    \  junior_vault_address VARCHAR(42) NOT NULL,\
+    \  start_block_number NUMERIC(78,0) NOT NULL,\
+    \  end_block_number NUMERIC(78,0) NOT NULL,\
+    \  start_block_hash VARCHAR(66) NOT NULL,\
+    \  end_block_hash VARCHAR(66) NOT NULL,\
+    \  start_share_price NUMERIC(78,0) NOT NULL,\
+    \  end_share_price NUMERIC(78,0) NOT NULL,\
+    \  schema_version INTEGER NOT NULL DEFAULT 2,\
+    \  source_commit TEXT NOT NULL,\
+    \  attribution JSONB NOT NULL,\
+    \  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+    \  PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, end_block_number)\
+    \);"
+  _ <- execute_ conn "ALTER TABLE vault_return_reports ALTER COLUMN schema_version SET DEFAULT 2"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS vault_performance_snapshots (\
     \chain_id NUMERIC(78,0) NOT NULL,\
@@ -116,6 +152,8 @@ ensureVaultPerformanceSchema conn = do
     \block_hash VARCHAR(66) NOT NULL,\
     \block_timestamp BIGINT NOT NULL,\
     \mark_fresh BOOLEAN NOT NULL,\
+    \senior_locked_assets NUMERIC(78,0),\
+    \junior_locked_assets NUMERIC(78,0),\
     \senior_total_assets NUMERIC(78,0) NOT NULL,\
     \senior_total_supply NUMERIC(78,0) NOT NULL,\
     \senior_share_price_wad NUMERIC(78,0) NOT NULL,\
@@ -149,6 +187,11 @@ ensureVaultPerformanceSchema conn = do
   _ <- execute_ conn
     "ALTER TABLE vault_performance_snapshots \
     \ADD COLUMN IF NOT EXISTS mark_fresh BOOLEAN"
+  -- NULL distinguishes legacy observations until exact-block backfill repairs them.
+  _ <- execute_ conn
+    "ALTER TABLE vault_performance_snapshots ADD COLUMN IF NOT EXISTS senior_locked_assets NUMERIC(78,0)"
+  _ <- execute_ conn
+    "ALTER TABLE vault_performance_snapshots ADD COLUMN IF NOT EXISTS junior_locked_assets NUMERIC(78,0)"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_vault_performance_deployment_epoch \
     \ON vault_performance_snapshots \
@@ -163,9 +206,9 @@ upsertVaultPerformanceSnapshot conn row = do
     "INSERT INTO vault_performance_snapshots (\
     \chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
     \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
-    \senior_total_assets, senior_total_supply, senior_share_price_wad,\
+    \senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad,\
     \junior_total_assets, junior_total_supply, junior_share_price_wad\
-    \) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (\
     \chain_id, house_pool_address, senior_vault_address, junior_vault_address, epoch_timestamp\
     \) DO UPDATE SET \
@@ -174,6 +217,8 @@ upsertVaultPerformanceSnapshot conn row = do
     \block_timestamp = EXCLUDED.block_timestamp,\
     \mark_fresh = EXCLUDED.mark_fresh,\
     \senior_total_assets = EXCLUDED.senior_total_assets,\
+    \senior_locked_assets = EXCLUDED.senior_locked_assets,\
+    \junior_locked_assets = EXCLUDED.junior_locked_assets,\
     \senior_total_supply = EXCLUDED.senior_total_supply,\
     \senior_share_price_wad = EXCLUDED.senior_share_price_wad,\
     \junior_total_assets = EXCLUDED.junior_total_assets,\
@@ -198,12 +243,12 @@ getVaultPerformanceSnapshots conn chainId housePool seniorVault juniorVault limi
   query conn
     "SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
     \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
-    \senior_total_assets, senior_total_supply, senior_share_price_wad,\
+    \senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad,\
     \junior_total_assets, junior_total_supply, junior_share_price_wad \
     \FROM (\
     \  SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
     \  epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
-    \  senior_total_assets, senior_total_supply, senior_share_price_wad,\
+    \  senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad,\
     \  junior_total_assets, junior_total_supply, junior_share_price_wad \
     \  FROM vault_performance_snapshots \
     \  WHERE chain_id = ? AND house_pool_address = ? \
@@ -219,3 +264,24 @@ getVaultPerformanceSnapshots conn chainId housePool seniorVault juniorVault limi
 
 normalizeAddress :: Text -> Text
 normalizeAddress = T.toLower . T.strip
+
+-- The cached report must match the response's exact canonical boundary blocks,
+-- prices and deployment. Backfill/reorg repairs cannot serve an older report.
+getVaultReturnAttribution :: Connection -> VaultPerformanceSnapshotRow -> VaultPerformanceSnapshotRow -> IO (Maybe Value)
+getVaultReturnAttribution conn start end = do
+  reports <- query conn
+    "SELECT attribution FROM vault_return_reports WHERE chain_id = ? \
+    \AND house_pool_address = ? AND senior_vault_address = ? AND junior_vault_address = ? \
+    \AND start_block_number = ? AND end_block_number = ? \
+    \AND start_block_hash = ? AND end_block_hash = ? \
+    \AND start_share_price = ? AND end_share_price = ? AND schema_version = 2 \
+    \AND attribution->>'startTimestamp' = ? AND attribution->>'endTimestamp' = ?"
+    ( vpsChainId start, normalizeAddress $ vpsHousePoolAddress start
+    , normalizeAddress $ vpsSeniorVaultAddress start, normalizeAddress $ vpsJuniorVaultAddress start
+    , vpsBlockNumber start, vpsBlockNumber end, vpsBlockHash start, vpsBlockHash end
+    , vpsJuniorSharePriceWad start, vpsJuniorSharePriceWad end
+    , show $ vpsBlockTimestamp start, show $ vpsBlockTimestamp end
+    ) :: IO [Only Value]
+  pure $ case reports of
+    [Only report] -> Just report
+    _ -> Nothing

@@ -8,6 +8,7 @@ describe('recovery and submission metadata', () => {
   it('preserves safe submission reasons but never arbitrary provider data', () => {
     expect(submissionFailureReason({ cause: { data: { reason: 'SECURITY_ATTESTATION_UNAVAILABLE' } } })).toBe('SECURITY_ATTESTATION_UNAVAILABLE')
     expect(submissionFailureReason({ data: { reason: 'https://private/key?secret=123' } })).toBe('SUBMISSION_OUTCOME_UNKNOWN')
+    expect(submissionFailureReason({ data: { reason: 'DEADLINE_TOO_CLOSE' } })).toBe('DEADLINE_TOO_CLOSE')
     expect(submissionFailureReason(new Error('signed payload'))).toBe('SUBMISSION_OUTCOME_UNKNOWN')
   })
 })

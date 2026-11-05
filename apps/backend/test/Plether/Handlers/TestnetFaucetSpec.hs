@@ -47,7 +47,7 @@ spec = do
       testnetFaucetEnabled (testConfig 1 421614) `shouldBe` True
 
   describe "testnetFaucetAmount" $
-    it "is 100,000 USDC with 6 decimals" $
+    it "is 100,000 USDG with 6 decimals" $
       testnetFaucetAmount `shouldBe` 100_000_000_000
 
   describe "faucet response status JSON" $
@@ -96,6 +96,12 @@ spec = do
       classifyTestnetFaucetClaim (Just $ claimRow "submitted" Nothing (Just "0x02abcd"))
         `shouldBe` FaucetInvalidState
 
+    it "keeps direct allocations out of legacy mint retries" $ do
+      classifyTestnetFaucetClaim (Just $ claimRow "margin_reserved" Nothing Nothing)
+        `shouldBe` FaucetDirectMargin
+      classifyTestnetFaucetClaim (Just $ claimRow "margin_funded" Nothing Nothing)
+        `shouldBe` FaucetDirectMargin
+
     it "returns completed claims without another submission" $
       classifyTestnetFaucetClaim (Just $ claimRow "success" (Just txHash) Nothing)
         `shouldBe` FaucetAlreadyClaimed
@@ -139,20 +145,20 @@ spec = do
       receiptMatchesPersistedTransaction txHash (matchingReceipt {receiptTxHash = ""})
         `shouldBe` False
 
-  describe "faucet claim persistence SQL" $ do
-    it "uses a recoverable preparing lease before any transaction can be broadcast" $ do
+  describe "faucet SQL source support (transitions are tested in BackendUnitRepairSpec)" $ do
+    it "contains preparing-lease and reclaim predicates" $ do
       queryContains beginTestnetFaucetClaimSql "'preparing'"
       queryContains beginTestnetFaucetClaimSql "status = 'failed'"
       queryContains beginTestnetFaucetClaimSql "INTERVAL '5 minutes'"
       queryContains beginTestnetFaucetClaimSql "raw_tx = NULL"
 
-    it "atomically persists the signed transaction before marking it submitted" $ do
+    it "contains the signed transaction and submitted-state assignments" $ do
       queryContains markTestnetFaucetClaimSubmittedSql "tx_hash = ?"
       queryContains markTestnetFaucetClaimSubmittedSql "raw_tx = ?"
       queryContains markTestnetFaucetClaimSubmittedSql "status = 'submitted'"
       queryContains markTestnetFaucetClaimSubmittedSql "status = 'preparing'"
 
-    it "finalizes only the exact durable submitted transaction" $ do
+    it "contains exact-transaction and durable-state predicates for finalization" $ do
       queryContains markTestnetFaucetClaimSuccessSql "tx_hash = ?"
       queryContains markTestnetFaucetClaimSuccessSql "mint_block_number = ?"
       queryContains markTestnetFaucetClaimSuccessSql "status IN ('submitted', 'success')"
@@ -213,7 +219,7 @@ testConfig chainId perpsChainId =
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = perpsChainId
-    , cfgPerpsUsdc = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
+    , cfgPerpsSettlementToken = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = "0x0000000000000000000000000000000000000000"
@@ -221,9 +227,9 @@ testConfig chainId perpsChainId =
     , cfgPerpsCfdEngineSettlementSidecar = "0x0000000000000000000000000000000000000000"
     , cfgPerpsMarginClearinghouse = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
-    , cfgPerpsAccountLens = "0x29fd3b5faf8de6c84405d28e1aac371e46a104c6"
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
+    , cfgPerpsAccountLens = "0xf520133a4f757a68a523c704512af24b1f5b7762"
+    , cfgPerpsHousePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgPerpsSettlementMonitorLens = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
     , cfgPerpsIndexerStartBlock = 0
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
@@ -237,6 +243,7 @@ testConfig chainId perpsChainId =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
@@ -246,8 +253,8 @@ testConfig chainId perpsChainId =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgLpSettlementJuniorVault = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -260,7 +267,7 @@ faucetReleaseManifest chainId =
   CompetitionReleaseManifest
     { crmReleaseId = "testnet-faucet-test"
     , crmChainId = chainId
-    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmSettlementToken = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
     , crmOrderRouter = zeroAddress
     , crmMarginClearinghouse = zeroAddress
     , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"

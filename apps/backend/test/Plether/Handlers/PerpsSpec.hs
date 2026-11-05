@@ -228,7 +228,7 @@ spec = do
               ]
       bhLatestPrice history `shouldBe` Just 102_000_000
       bhIntervalSeconds history `shouldBe` 60
-      map bhpVolumeUsdc (bhPoints history) `shouldBe` [1_000_000, 3_000_000]
+      map bhpVolumeAssets (bhPoints history) `shouldBe` [1_000_000, 3_000_000]
       map bhpComponents (bhPoints history) `shouldBe` [Nothing, Nothing]
 
     it "accepts one bounded sparse range and preserves inception clipping" $ do
@@ -982,11 +982,11 @@ spec = do
   describe "basketHistoryPointsWithVolume" $ do
     it "matches activity volume by the requested interval bucket" $ do
       let points = basketHistoryPointsWithVolume 60 basketRows volumeRows
-      map bhpVolumeUsdc points `shouldBe` [123_456, 789]
+      map bhpVolumeAssets points `shouldBe` [123_456, 789]
 
     it "zero-fills candles without activity in their interval bucket" $ do
       let points = basketHistoryPointsWithVolume 60 basketRows (take 1 volumeRows)
-      map bhpVolumeUsdc points `shouldBe` [123_456, 0]
+      map bhpVolumeAssets points `shouldBe` [123_456, 0]
 
   describe "decodePythUpdateForAdmission" $ do
     it "prepares strict six-feed latest payload admission inputs" $ do
@@ -1162,7 +1162,7 @@ rollupConfig =
     , cfgPerpsRpcUrl = ""
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = ""
+    , cfgPerpsSettlementToken = ""
     , cfgPerpsOrderRouter = "0xrouter"
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
@@ -1171,8 +1171,8 @@ rollupConfig =
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
+    , cfgPerpsHousePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgPerpsSettlementMonitorLens = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
     , cfgPerpsIndexerStartBlock = 0
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
@@ -1186,6 +1186,7 @@ rollupConfig =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
@@ -1195,8 +1196,8 @@ rollupConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgLpSettlementJuniorVault = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -1209,7 +1210,7 @@ rollupReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "perps-rollup-test"
     , crmChainId = 421614
-    , crmUsdc = ""
+    , crmSettlementToken = ""
     , crmOrderRouter = "0xrouter"
     , crmMarginClearinghouse = ""
     , crmAccountLens = ""
@@ -1248,11 +1249,11 @@ volumeRows :: [PerpsMarketVolumeBucketRow]
 volumeRows =
   [ PerpsMarketVolumeBucketRow
       { pmvbrBucket = 2
-      , pmvbrVolumeUsdc = 123_456
+      , pmvbrVolumeAssets = 123_456
       }
   , PerpsMarketVolumeBucketRow
       { pmvbrBucket = 3
-      , pmvbrVolumeUsdc = 789
+      , pmvbrVolumeAssets = 789
       }
   ]
 

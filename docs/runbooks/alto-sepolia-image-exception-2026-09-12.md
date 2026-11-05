@@ -4,6 +4,23 @@ The owner explicitly approved accepting CVE-2024-5535 for the exact existing
 Alto image on Sepolia so activation can continue. This is acceptance of a known
 risk, not remediation or a claim that the runtime is unaffected.
 
+## October 7 recovery renewal
+
+The owner approved immediate Sepolia recovery after being offered a renewal
+through October 14 or qualification of a patched image. The renewal is limited
+to the same finding, package, image and environment below. The existing ECR
+scan still reports exactly one critical finding, CVE-2024-5535; deployment must
+obtain a fresh completed scan and enforce the unchanged exact-match checks.
+
+Recovery replaces the missing log-router image with an available immutable
+digest using the protected Alto deployment workflow with
+`action=deploy` and `recover_unavailable=true`. Recovery is restricted to a
+single completed deployment at desired count one with no running or pending
+tasks; the stop-before-start deployment policy remains required. It does not change
+the Alto image, runtime validation policy, signing keys or sponsorship limits.
+The shared log-router retention fix prevents count-based cleanup from deleting
+images referenced by independently deployed ECS services.
+
 ## Exact boundary
 
 - Environment: `sepolia`, AWS account `932542905614`, region `ap-southeast-1`.
@@ -11,7 +28,9 @@ risk, not remediation or a claim that the runtime is unaffected.
 - Upstream digest: `sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d`.
 - Verified ECR mirror digest: `sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a`.
 - Finding: `CVE-2024-5535`, package `openssl`, version `3.1.4-r5`.
-- Valid from September 12, 2026; expires **September 19, 2026 at 00:00 UTC**.
+- Renewal valid from October 7, 2026; expires **October 14, 2026 at 00:00 UTC**.
+- The original September 12–19 acceptance expired. This renewal does not cover
+  the intervening period.
 
 The workflow must obtain a completed scan for the selected account, repository
 and image. Its detailed critical findings must agree with the summary count.

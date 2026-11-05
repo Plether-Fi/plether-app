@@ -3,7 +3,7 @@ import { getScopedApiBaseUrl } from '../api/client'
 import {
   PERPS_DECIMALS,
   PERPS_POSITION_SIZE_QUANTUM,
-  PERPS_POSITION_SIZE_TO_USDC_SCALE,
+  PERPS_POSITION_SIZE_TO_ASSETS_SCALE,
   PERPS_SIDE,
   type PerpsSide,
 } from '../contracts/perpsConstants'
@@ -25,11 +25,11 @@ export function cleanNumericInput(value: string): string {
   return value.replaceAll(' ', '').replaceAll(',', '.')
 }
 
-export function parsePerpsUsdc(value: string): bigint {
+export function parsePerpsAssets(value: string): bigint {
   try {
     const cleaned = cleanNumericInput(value)
     if (!cleaned || cleaned === '.') return 0n
-    return parseUnits(cleaned, PERPS_DECIMALS.USDC)
+    return parseUnits(cleaned, PERPS_DECIMALS.ASSETS)
   } catch {
     return 0n
   }
@@ -54,9 +54,9 @@ export function formatPerpsNumber(value: number, maxDecimals = 2, minDecimals = 
   }).replaceAll(',', ' ')
 }
 
-export function formatPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): string {
+export function formatPerpsAssets(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
-  return formatPerpsNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)), maxDecimals)
+  return formatPerpsNumber(Number(formatUnits(amount, PERPS_DECIMALS.ASSETS)), maxDecimals)
 }
 
 export function formatPerpsPositionSize(amount: bigint | undefined, maxDecimals = 2): string {
@@ -67,39 +67,39 @@ export function formatPerpsPositionSize(amount: bigint | undefined, maxDecimals 
   )
 }
 
-const PERPS_SUMMARY_WHOLE_USDC_THRESHOLD = 100_000n * 10n ** BigInt(PERPS_DECIMALS.USDC)
+const PERPS_SUMMARY_WHOLE_ASSETS_THRESHOLD = 100_000n * 10n ** BigInt(PERPS_DECIMALS.ASSETS)
 
 /**
- * Keep cents for normal-sized summary values, but drop fractional USDC once
+ * Keep cents for normal-sized summary values, but drop fractional USDG once
  * they stop being useful and make the value materially harder to scan.
  */
-export function formatPerpsSummaryUsdc(amount: bigint | undefined): string {
+export function formatPerpsSummaryAssets(amount: bigint | undefined): string {
   if (amount === undefined) return '--'
   const absoluteAmount = amount < 0n ? -amount : amount
-  return formatPerpsUsdc(amount, absoluteAmount >= PERPS_SUMMARY_WHOLE_USDC_THRESHOLD ? 0 : 2)
+  return formatPerpsAssets(amount, absoluteAmount >= PERPS_SUMMARY_WHOLE_ASSETS_THRESHOLD ? 0 : 2)
 }
 
-export function formatPerpsUsdcFloor(amount: bigint | undefined, maxDecimals = 2): string {
+export function formatPerpsAssetsFloor(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
 
-  const decimals = Math.max(0, Math.min(maxDecimals, PERPS_DECIMALS.USDC))
-  const scale = 10n ** BigInt(PERPS_DECIMALS.USDC - decimals)
+  const decimals = Math.max(0, Math.min(maxDecimals, PERPS_DECIMALS.ASSETS))
+  const scale = 10n ** BigInt(PERPS_DECIMALS.ASSETS - decimals)
   const flooredAmount = (amount / scale) * scale
-  return formatPerpsNumber(Number(formatUnits(flooredAmount, PERPS_DECIMALS.USDC)), decimals)
+  return formatPerpsNumber(Number(formatUnits(flooredAmount, PERPS_DECIMALS.ASSETS)), decimals)
 }
 
-export function formatSignedPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): string {
+export function formatSignedPerpsAssets(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
   const sign = amount < 0n ? '-' : amount > 0n ? '+' : ''
   const absolute = amount < 0n ? -amount : amount
-  return `${sign}${formatPerpsUsdc(absolute, maxDecimals)}`
+  return `${sign}${formatPerpsAssets(absolute, maxDecimals)}`
 }
 
-export function formatSignedPerpsSummaryUsdc(amount: bigint | undefined): string {
+export function formatSignedPerpsSummaryAssets(amount: bigint | undefined): string {
   if (amount === undefined) return '--'
   const sign = amount < 0n ? '-' : amount > 0n ? '+' : ''
   const absolute = amount < 0n ? -amount : amount
-  return `${sign}${formatPerpsSummaryUsdc(absolute)}`
+  return `${sign}${formatPerpsSummaryAssets(absolute)}`
 }
 
 export function formatPerpsPrice(price: bigint | undefined, decimals = 4): string {
@@ -160,9 +160,9 @@ export function perpsSideLabel(side: number | bigint | undefined): string {
   return perpsSideToDirection(side) === 'long' ? 'Long' : 'Short'
 }
 
-export function notionalUsdcToSizeDelta(notionalUsdc: bigint, oraclePrice: bigint): bigint {
+export function notionalAssetsToSizeDelta(notionalAssets: bigint, oraclePrice: bigint): bigint {
   if (oraclePrice === 0n) return 0n
-  return ((notionalUsdc * PERPS_POSITION_SIZE_TO_USDC_SCALE) + oraclePrice - 1n) / oraclePrice
+  return ((notionalAssets * PERPS_POSITION_SIZE_TO_ASSETS_SCALE) + oraclePrice - 1n) / oraclePrice
 }
 
 export type PerpsPositionSizeRounding = 'down' | 'up'
@@ -179,53 +179,53 @@ export function quantizePerpsPositionSize(
   return (sizeDelta / PERPS_POSITION_SIZE_QUANTUM) * PERPS_POSITION_SIZE_QUANTUM
 }
 
-export function notionalUsdcToQuantizedSizeDelta(
-  notionalUsdc: bigint,
+export function notionalAssetsToQuantizedSizeDelta(
+  notionalAssets: bigint,
   oraclePrice: bigint,
   rounding: PerpsPositionSizeRounding = 'down'
 ): bigint {
   return quantizePerpsPositionSize(
-    notionalUsdcToSizeDelta(notionalUsdc, oraclePrice),
+    notionalAssetsToSizeDelta(notionalAssets, oraclePrice),
     rounding
   )
 }
 
-export function sizeDeltaToNotionalUsdc(sizeDelta: bigint | undefined, oraclePrice: bigint | undefined): bigint | undefined {
+export function sizeDeltaToNotionalAssets(sizeDelta: bigint | undefined, oraclePrice: bigint | undefined): bigint | undefined {
   if (sizeDelta === undefined || oraclePrice === undefined) return undefined
-  return (sizeDelta * oraclePrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
+  return (sizeDelta * oraclePrice) / PERPS_POSITION_SIZE_TO_ASSETS_SCALE
 }
 
 export function dxyExposureFromContractNotional(
-  contractNotionalUsdc: bigint,
+  contractNotionalAssets: bigint,
   rawOraclePrice: bigint | undefined
 ): bigint | undefined {
-  if (contractNotionalUsdc <= 0n) return 0n
+  if (contractNotionalAssets <= 0n) return 0n
   const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
   if (rawOraclePrice === undefined || rawOraclePrice <= 0n || displayDxyPrice === undefined || displayDxyPrice <= 0n) {
     return undefined
   }
 
-  const sizeDelta = notionalUsdcToSizeDelta(contractNotionalUsdc, rawOraclePrice)
-  return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
+  const sizeDelta = notionalAssetsToSizeDelta(contractNotionalAssets, rawOraclePrice)
+  return sizeDeltaToNotionalAssets(sizeDelta, displayDxyPrice)
 }
 
 export function quantizedDxyExposureFromContractNotional(
-  contractNotionalUsdc: bigint,
+  contractNotionalAssets: bigint,
   rawOraclePrice: bigint | undefined,
   rounding: PerpsPositionSizeRounding
 ): bigint | undefined {
-  if (contractNotionalUsdc <= 0n) return 0n
+  if (contractNotionalAssets <= 0n) return 0n
   const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
   if (rawOraclePrice === undefined || rawOraclePrice <= 0n || displayDxyPrice === undefined || displayDxyPrice <= 0n) {
     return undefined
   }
 
-  const sizeDelta = notionalUsdcToQuantizedSizeDelta(
-    contractNotionalUsdc,
+  const sizeDelta = notionalAssetsToQuantizedSizeDelta(
+    contractNotionalAssets,
     rawOraclePrice,
     rounding
   )
-  return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
+  return sizeDeltaToNotionalAssets(sizeDelta, displayDxyPrice)
 }
 
 function applyBps(price: bigint, bps: number, mode: 'up' | 'down'): bigint {

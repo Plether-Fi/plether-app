@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Verify historical v1.2.3 receipts through the current token-neutral API.
+// Recorded transaction hashes and economic values retain their original meaning.
 import assert from 'node:assert/strict'
 
 const origin = process.env.INSIGHTS_API_ORIGIN ?? 'https://insights.plether.com'
@@ -17,15 +19,15 @@ for (const expected of [
   assert.ok(e, `Missing execution receipt ${expected.tx}`)
   assert.equal(e.protocolVersion, 'v1.2.3')
   assert.equal(e.status, 'complete', `Settlement evidence pending for ${expected.tx}`)
-  assert.equal(e.receipt.executionFeeUsdc, expected.fee)
-  assert.equal(e.receipt.vpiUsdc, expected.vpi)
+  assert.equal(e.receipt.executionFeeAssets, expected.fee)
+  assert.equal(e.receipt.vpiAssets, expected.vpi)
   const r = e.receipt
-  assert.equal(BigInt(r.postSettlementBalanceUsdc) - BigInt(r.preSettlementBalanceUsdc)
-    + BigInt(r.postTraderClaimBalanceUsdc) - BigInt(r.preTraderClaimBalanceUsdc), expected.actual)
+  assert.equal(BigInt(r.postSettlementBalanceAssets) - BigInt(r.preSettlementBalanceAssets)
+    + BigInt(r.postTraderClaimBalanceAssets) - BigInt(r.preTraderClaimBalanceAssets), expected.actual)
   const settlement = e.settlements.find(item => item.kind === expected.kind)
   assert.ok(settlement)
-  assert.equal(settlement.waivedUsdc, expected.waived)
-  assert.equal(settlement.recoveredUsdc, expected.recovered)
-  if (expected.collectedFee) assert.equal(settlement.protocolFeeCollectedUsdc, expected.collectedFee)
+  assert.equal(settlement.waivedAssets, expected.waived)
+  assert.equal(settlement.recoveredAssets, expected.recovered)
+  if (expected.collectedFee) assert.equal(settlement.protocolFeeCollectedAssets, expected.collectedFee)
   console.log(`Verified ${expected.tx}: assessed fee, settlement evidence, and actual account change`)
 }

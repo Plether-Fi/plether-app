@@ -2,8 +2,10 @@ module Plether.Vaults.ActivityIndexerIntegrationSpec
   ( vaultActivityIndexerIntegrationSpec
   ) where
 
-import Control.Concurrent (MVar, forkFinally, forkIO, killThread, newEmptyMVar, putMVar, takeMVar, threadDelay)
+import Control.Concurrent (MVar, forkFinally, killThread, newEmptyMVar, putMVar, takeMVar, threadDelay)
 import Control.Exception (SomeException, bracket, displayException, finally, try)
+import Control.Concurrent.Async (withAsync, wait)
+import Network.HTTP.Client (newManager, defaultManagerSettings)
 import Control.Monad (forM_)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
@@ -24,6 +26,12 @@ import Network.HTTP.Types (methodPost, status200)
 import Network.Wai (Application, pathInfo, requestMethod, responseLBS, strictRequestBody)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
+import Plether.Database.Schema (ensurePerpsHistorySchema, getPerpsIndexerLastBlock)
+import Plether.Config (PerpsCandleWriteMode (PerpsCandleWritesOff))
+import Plether.Perps.HistoryIndexer
+  ( PerpsAddresses (..), PerpsIndexerConfig (..), PerpsIndexerMode (PerpsIndexerOnce)
+  , defaultPerpsAddresses )
+import Plether.Perps.Workers (runPerpsIndexerWithVaultsObserved)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , VaultActivityIndexerStateRow (..)
@@ -50,7 +58,6 @@ import Plether.Vaults.ActivityIndexer
   , VaultActivityIndexerConfig (..)
   , depositRequestTopic
   , runVaultActivityIndexerCycle
-  , startVaultActivityIndexer
   , transferTopic
   , verifyVaultActivityBindings
   )
@@ -69,6 +76,7 @@ data FixtureState = FixtureState
   , fsMalformedAtThirteen :: Bool
   , fsLogRanges :: [(Text, Integer, Integer)]
   , fsUnexpected :: [Text]
+  , fsPerpsPause :: Maybe (MVar (), MVar ())
   , fsRequestPause :: Maybe (MVar (), MVar ())
   , fsRequestBlocks :: [Text]
   }
@@ -230,16 +238,52 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
           runVaultDepositAttributionCycle client pool indexerConfig >>= \value -> assertAttributionCompleted value 12 1
           assertPinnedAttribution pool 12 (fixedHash 'b' 12) 225
 
-    it "continues independently while a sibling Perps loop is blocked" $
-      withFixture $ \fixtureUrl _ ->
+    it "continues independently while the production Perps history loop is blocked fetching logs" $
+      withFixture $ \fixtureUrl stateRef ->
         withVaultIndexerDatabase databaseUrl $ \pool -> do
           client <- newClient fixtureUrl
-          blocked <- newEmptyMVar
-          siblingThread <- forkIO $ takeMVar blocked
-          vaultThread <- forkIO $ startVaultActivityIndexer client pool indexerConfig
-          let stop = killThread vaultThread >> killThread siblingThread
-          completed <- (`finally` stop) $ timeout 5_000_000 $ waitForBackfill pool
-          completed `shouldBe` Just True
+          manager <- newManager defaultManagerSettings
+          entered <- newEmptyMVar
+          release <- newEmptyMVar
+          atomicModifyIORef' stateRef $ \state -> (state {fsPerpsPause = Just (entered, release)}, ())
+          let perpsConfig = PerpsIndexerConfig
+                { picRpcUrls = [fixtureUrl], picRpcAuthToken = Nothing
+                , picChainId = vadChainId deployment
+                , picAddresses = defaultPerpsAddresses
+                    { paOrderRouter = perpsRouter, paSettlementToken = asset }
+                , picStartBlock = 10, picConfirmations = 12, picBatchSize = 5_000
+                , picPollIntervalMicros = 1_000_000
+                , picIndexerName = "vault-independence-repair"
+                , picMode = PerpsIndexerOnce, picCandleWriteMode = PerpsCandleWritesOff
+                , picCandleLatenessSeconds = 120, picDeploymentEnvironment = Nothing }
+              vaultConfig = indexerConfig {vaicPollIntervalMicros = 1_000_000}
+              clearPerps = withDb pool $ \conn -> do
+                _ <- execute conn
+                  "DELETE FROM perps_indexer_state WHERE chain_id=? AND release_router=?"
+                  (vadChainId deployment,perpsRouter)
+                pure ()
+          withDb pool ensurePerpsHistorySchema
+          clearPerps
+          spawned <- newIORef []
+          let observeStarted threads = atomicModifyIORef' spawned $ \_ -> (threads, ())
+              cleanup = readIORef spawned >>= mapM_ killThread >> clearPerps
+          (withAsync (runPerpsIndexerWithVaultsObserved observeStarted manager pool perpsConfig client vaultConfig) $ \workers -> do
+            -- This signal comes from the real Perps eth_getLogs request, after
+            -- the shared production orchestration has started both vault loops.
+            timeout 5_000_000 (takeMVar entered) `shouldReturnValue` Just ()
+            before <- withDb pool $ \conn ->
+              getPerpsIndexerLastBlock conn (vadChainId deployment) "vault-independence-repair" perpsRouter
+            fst before `shouldBe` 0
+            timeout 5_000_000 (waitForBackfill pool) `shouldReturnValue` Just True
+            timeout 5_000_000 (waitForAttributionBackfill pool) `shouldReturnValue` Just True
+            assertPinnedAttribution pool 12 (fixedHash 'a' 12) 125
+            putMVar release ()
+            timeout 5_000_000 (wait workers) `shouldReturnValue` Just ()
+            after <- withDb pool $ \conn ->
+              getPerpsIndexerLastBlock conn (vadChainId deployment) "vault-independence-repair" perpsRouter
+            fst after `shouldBe` 12
+            (fsUnexpected <$> readIORef stateRef) `shouldReturnValue` []
+            ) `finally` cleanup
 
 -- Pause exactly one Public Lens request, with bounded waits and cleanup even
 -- when the concurrent mutation or an assertion fails.
@@ -318,6 +362,13 @@ waitForBackfill pool = do
     Just current | vaisBackfillComplete current -> pure True
     _ -> threadDelay 50_000 >> waitForBackfill pool
 
+waitForAttributionBackfill :: DbPool -> IO Bool
+waitForAttributionBackfill pool = do
+  state <- withDb pool $ \conn -> getVaultDepositAttributionState conn deployment
+  case state of
+    Just current | vdasBackfillComplete current -> pure True
+    _ -> threadDelay 50_000 >> waitForAttributionBackfill pool
+
 assertCompleted :: VaultActivityCycleResult -> Integer -> Int -> IO ()
 assertCompleted (VaultActivityCycleCompleted VaultActivityCycleStats {..}) expectedBlock expectedEvents = do
   vacrIndexedThrough `shouldBe` expectedBlock
@@ -367,6 +418,7 @@ withFixture action = do
       , fsMalformedAtThirteen = False
       , fsLogRanges = []
       , fsUnexpected = []
+      , fsPerpsPause = Nothing
       , fsRequestPause = Nothing
       , fsRequestBlocks = []
       }
@@ -398,6 +450,7 @@ dispatchRpc stateRef requestId methodName params = do
   state <- readIORef stateRef
   case methodName of
     "eth_chainId" -> pure $ rpcSuccess requestId $ String "0x66eee"
+    "eth_blockNumber" -> pure $ rpcSuccess requestId $ String $ quantity $ fsHead state
     "eth_getCode" -> pure $ rpcSuccess requestId $ String "0x01"
     "eth_call" ->
       case callTargetAndData params >>= bindingResult state of
@@ -424,6 +477,12 @@ dispatchRpc stateRef requestId methodName params = do
             Just number -> pure $ rpcSuccess requestId $ blockValue state number
             Nothing -> unexpected "invalid block tag"
         _ -> unexpected "invalid block params"
+    "eth_getLogs" | isPerpsLogRequest params -> do
+      gate <- atomicModifyIORef' stateRef $ \current -> (current {fsPerpsPause = Nothing}, fsPerpsPause current)
+      case gate of
+        Just (entered, resume) -> putMVar entered () >> takeMVar resume
+        Nothing -> pure ()
+      pure $ rpcSuccess requestId $ Aeson.toJSON ([] :: [Value])
     "eth_getLogs" ->
       case logRange params of
         Just (vault, fromBlock, toBlock) -> do
@@ -482,6 +541,13 @@ callTargetAndData value =
       String calldata <- KeyMap.lookup "data" callObject
       pure (T.toLower target, T.toLower calldata)
     _ -> Nothing
+
+isPerpsLogRequest :: Value -> Bool
+isPerpsLogRequest value = case arrayItems value of
+  Object filterObject : _ -> case KeyMap.lookup "address" filterObject of
+    Just (Array _) -> True
+    _ -> False
+  _ -> False
 
 logRange :: Value -> Maybe (Text, Integer, Integer)
 logRange value =
@@ -613,7 +679,8 @@ indexerConfig =
 deployment :: VaultActivityDeployment
 deployment = VaultActivityDeployment 421_614 housePool seniorVault juniorVault 10
 
-housePool, seniorVault, juniorVault, asset, publicLens, holderA, zeroAddress :: Text
+housePool, seniorVault, juniorVault, asset, publicLens, holderA, zeroAddress, perpsRouter :: Text
+perpsRouter = "0x0000000000000000000000000000000000001600"
 housePool = "0x0000000000000000000000000000000000001100"
 seniorVault = "0x0000000000000000000000000000000000001200"
 juniorVault = "0x0000000000000000000000000000000000001300"

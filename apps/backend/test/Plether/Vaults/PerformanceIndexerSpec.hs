@@ -22,11 +22,11 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "vaultEpochBoundaries" $ do
-    it "returns exactly 169 consecutive UTC hours for a mature deployment" $ do
-      let boundaries = vaultEpochBoundaries 0 (200 * 3_600 + 42)
+    it "returns exactly 721 consecutive UTC hours for a mature deployment" $ do
+      let boundaries = vaultEpochBoundaries 0 (800 * 3_600 + 42)
       length boundaries `shouldBe` vaultHistoryPointCount
-      zipWith (-) (tail boundaries) boundaries `shouldBe` replicate 168 3_600
-      last boundaries `shouldBe` 200 * 3_600
+      zipWith (-) (tail boundaries) boundaries `shouldBe` replicate 720 3_600
+      last boundaries `shouldBe` 800 * 3_600
 
     it "does not request a boundary before a mid-hour deployment" $
       vaultEpochBoundaries 3_601 10_800 `shouldBe` [7_200, 10_800]
@@ -66,6 +66,9 @@ spec = do
       snapshotNeedsRepair sampleRow ((block 5) {rpcBlockHash = "0xother"}) `shouldBe` True
       snapshotNeedsRepair sampleRow ((block 5) {rpcBlockTimestamp = 49}) `shouldBe` True
       snapshotNeedsRepair sampleRow ((block 5) {rpcBlockTimestamp = 61}) `shouldBe` True
+
+    it "resamples checkpoints without withdrawal limits" $
+      snapshotNeedsRepair (sampleRow {vpsSeniorLockedAssets = Nothing}) (block 5) `shouldBe` True
 
     it "resamples legacy checkpoints without observed freshness" $
       snapshotNeedsRepair (sampleRow {vpsMarkFresh = Nothing}) (block 5) `shouldBe` True
@@ -137,6 +140,8 @@ sampleRow =
     , vpsBlockTimestamp = 50
     , vpsMarkFresh = Just True
     , vpsSeniorTotalAssets = 100
+    , vpsSeniorLockedAssets = Just 150_000_000
+    , vpsJuniorLockedAssets = Just 50_000_000
     , vpsSeniorTotalSupply = 100
     , vpsSeniorSharePriceWad = 10 ^ (18 :: Integer)
     , vpsJuniorTotalAssets = 100

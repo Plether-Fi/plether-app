@@ -1,5 +1,7 @@
 module Plether.Perps.CriticalPathSpec
-  ( criticalPathSpec
+  ( testConfig
+  , makeApiApplication
+  , criticalPathSpec
   ) where
 
 import Control.Exception (bracket, finally)
@@ -24,7 +26,7 @@ import Network.HTTP.Client
   , defaultManagerSettings
   , newManager
   )
-import Network.HTTP.Types.Status (status200)
+import Network.HTTP.Types.Status (status200, status503)
 import Network.Wai (Application)
 import Network.Wai.Test
   ( SResponse (..)
@@ -35,7 +37,7 @@ import Network.Wai.Test
   )
 import Plether.AA.Gateway (newNativeGatewayState)
 import Plether.AA.Pimlico (newPimlicoProxyState)
-import Plether.Api (app)
+import Plether.Api (appWithReleaseState)
 import Plether.Cache (newAppCache)
 import Plether.Config
   ( Config (..)
@@ -77,12 +79,21 @@ criticalPathSpec databaseUrl =
       withScriptedChain $ \chain ->
         withCriticalPathDatabase databaseUrl $ \pool -> do
           manager <- newManager defaultManagerSettings
+          let config = testConfig databaseUrl $ fixtureRpcUrl chain
+          preparedApplication <-
+            makeApiApplication False manager pool config (fixtureRpcUrl chain)
+          preparedResponse <- runSession
+            (request $ setPath defaultRequest $ Text.encodeUtf8 waitPath)
+            preparedApplication
+          simpleStatus preparedResponse `shouldBe` status503
+          Aeson.eitherDecode (simpleBody preparedResponse) `shouldBe` Right
+            (Aeson.object ["error" Aeson..= Aeson.object
+              ["code" Aeson..= ("PERPS_RELEASE_NOT_DEPLOYED" :: Text),
+               "message" Aeson..= ("Perps release is prepared; deployment is required" :: Text)]])
+          -- This chain fixture is a deployed historical V2 release. Prepared
+          -- deployments remain guarded independently by the control above.
           apiApplication <-
-            makeApiApplication
-              manager
-              pool
-              (testConfig databaseUrl $ fixtureRpcUrl chain)
-              (fixtureRpcUrl chain)
+            makeApiApplication True manager pool config (fixtureRpcUrl chain)
           (runScenario manager pool apiApplication chain)
             `finally` assertNoUnexpectedRequests chain
 
@@ -117,8 +128,8 @@ runScenario manager pool apiApplication chain = do
       receiptHashA
       evidenceA
     assertReceiptEconomics order evidenceA
-    assertField order "activityVpiUsdc" $
-      String $ decimal $ efActivityVpiUsdc evidenceA
+    assertField order "activityVpiAssets" $
+      String $ decimal $ efActivityVpiAssets evidenceA
   indexedOrders <- getApiJson apiApplication ordersPath
   assertPath indexedOrders ["data", "indexedThroughBlock"] $
     String $ decimal terminalBlockNumber
@@ -146,8 +157,8 @@ runScenario manager pool apiApplication chain = do
     , "terminalBlockNumber"
     , "terminalBlockHash"
     , "executionPrice"
-    , "vpiUsdc"
-    , "frozenCloseSpreadUsdc"
+    , "vpiAssets"
+    , "frozenCloseSpreadAssets"
     , "executionEconomicsVersion"
     , "executionOraclePrice"
     , "executionOracleFrozen"
@@ -155,7 +166,7 @@ runScenario manager pool apiApplication chain = do
     , "oracleMaxPublishTime"
     , "oracleDerivationVersion"
     , "activityType"
-    , "activityVpiUsdc"
+    , "activityVpiAssets"
     ]
   committedWait <- getApiJson apiApplication waitPath
   assertPath committedWait ["data", "timedOut"] $ Bool True
@@ -198,12 +209,13 @@ runIndexer manager pool chain =
   runPerpsIndexer manager pool $ testIndexerConfig chain
 
 makeApiApplication
-  :: Manager
+  :: Bool
+  -> Manager
   -> DbPool
   -> Config
   -> Text
   -> IO Application
-makeApiApplication manager pool config rpcUrl = do
+makeApiApplication deployed manager pool config rpcUrl = do
   cache <- newAppCache
   proxyState <- newPimlicoProxyState
   faucetGuardState <- newFaucetGuardState
@@ -221,7 +233,7 @@ makeApiApplication manager pool config rpcUrl = do
       (RpcClientOptions rpcUrl Nothing "integration-api-perps")
   nativeGatewayState <- newNativeGatewayState manager config perpsClient
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState
+    appWithReleaseState deployed cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState Nothing
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =
@@ -372,10 +384,10 @@ assertCanonicalTerminal order commitTxHash txHash blockHash receiptHash evidence
 
 assertReceiptEconomics :: Value -> EvidenceFixture -> Expectation
 assertReceiptEconomics order evidence = do
-  assertPath order ["receiptEconomics", "vpiUsdc"] $
-    String $ decimal $ efVpiUsdc evidence
-  assertPath order ["receiptEconomics", "frozenSpreadUsdc"] $
-    String $ decimal $ efFrozenCloseSpreadUsdc evidence
+  assertPath order ["receiptEconomics", "vpiAssets"] $
+    String $ decimal $ efVpiAssets evidence
+  assertPath order ["receiptEconomics", "frozenSpreadAssets"] $
+    String $ decimal $ efFrozenCloseSpreadAssets evidence
   assertField order "executionEconomicsVersion" $
     Aeson.toJSON (2 :: Int)
 
@@ -468,7 +480,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsRpcUrl = rpcUrl
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = testChainId
-    , cfgPerpsUsdc = testClearinghouse
+    , cfgPerpsSettlementToken = testClearinghouse
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsOrderLifecycleBook = Just testLifecycleBook
     , cfgPerpsCfdEngine = testEngine
@@ -477,12 +489,12 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsMarginClearinghouse = testClearinghouse
     , cfgPerpsPletherOracle = testOracle
     , cfgPerpsAccountLens = testLens
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
+    , cfgPerpsHousePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgPerpsSettlementMonitorLens = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
     , cfgPerpsIndexerStartBlock = commitBlockNumber
-    , cfgVaultHistoryHousePoolAddress = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgVaultHistorySeniorVaultAddress = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgVaultHistoryJuniorVaultAddress = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgVaultHistoryHousePoolAddress = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgVaultHistorySeniorVaultAddress = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgVaultHistoryJuniorVaultAddress = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
@@ -492,6 +504,7 @@ testConfig databaseUrl rpcUrl =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
@@ -501,8 +514,8 @@ testConfig databaseUrl rpcUrl =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgLpSettlementJuniorVault = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -515,7 +528,7 @@ testCompetitionReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = crSlug july2026Competition
     , crmChainId = testChainId
-    , crmUsdc = testClearinghouse
+    , crmSettlementToken = testClearinghouse
     , crmOrderRouter = testRouter
     , crmMarginClearinghouse = testClearinghouse
     , crmAccountLens = testLens

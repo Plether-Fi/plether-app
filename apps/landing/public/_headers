@@ -1,0 +1,6 @@
+# Apply noindex before JavaScript runs, including trailing-slash URLs.
+/company
+  X-Robots-Tag: noindex
+
+/company/*
+  X-Robots-Tag: noindex

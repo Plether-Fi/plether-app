@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-aa'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
-import deployedManifest from '../../../public/perps-aa-manifest.json'
+import deployedManifest from '../../contracts/__tests__/fixtures/perps-canonical-aa.json'
 
 vi.mock('../../hooks/usePerpsHistory', () => ({ usePerpsHistory: () => ({ orderHistory: [], refetch: vi.fn() }) }))
 
@@ -209,7 +209,7 @@ describe('SponsoredOperationHistoryButton', () => {
     expect(screen.queryByText('Sponsored by Plether · 0 ETH network gas'))
       .not.toBeInTheDocument()
     expect(screen.getByText(
-      'Plether gas sponsorship is temporarily unavailable. Your action was not sent. Retry the same Trading Account action or contact support.'
+      'Gas sponsorship is temporarily unavailable. Check account activity before trying again. Retry the same Trading Account action or contact support.'
     )).toBeInTheDocument()
     expect(screen.queryByText(/could not verify whether this transaction/i))
       .not.toBeInTheDocument()

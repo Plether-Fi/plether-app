@@ -2,6 +2,7 @@ import { reportAttemptStage } from '../attemptDiagnostics'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   concatHex,
+  TimeoutError,
   numberToHex,
   type Address,
   type Hex,
@@ -47,6 +48,7 @@ const authorizationMocks = vi.hoisted(() => ({
 const analyticsMocks = vi.hoisted(() => ({
   trackPerpsSponsoredOperation: vi.fn(),
 }))
+const readinessMocks = vi.hoisted(() => ({ blocker: vi.fn() }))
 
 vi.mock('../authorizationStore', () => ({
   clearDepositAuthorization: authorizationMocks.clearDepositAuthorization,
@@ -56,7 +58,7 @@ vi.mock('../authorizationStore', () => ({
 
 vi.mock('../readiness', () => ({
   refreshReadiness: vi.fn(async () => {}), currentReadiness: () => undefined,
-  readinessBlocker: () => undefined, readinessMessage: () => '',
+  readinessBlocker: readinessMocks.blocker, readinessMessage: () => 'Gas sponsorship is temporarily paused.',
 }))
 
 vi.mock('../../analytics/perps', async (importOriginal) => {
@@ -89,8 +91,8 @@ const AUTHORIZATION_NONCE = `0x${'ab'.repeat(32)}` as Hex
 const SPONSORSHIP_VALID_UNTIL = BigInt(Math.floor(Date.now() / 1000) + 3600)
 const ORDER_CLIENT_ID = `0x${'cd'.repeat(32)}` as Hex
 
-const orderRequestV2 = {
-  version: 2 as const,
+const orderRequestV3 = {
+  version: 3 as const,
   account: ACCOUNT,
   clientOrderId: ORDER_CLIENT_ID,
   side: 0,
@@ -98,24 +100,25 @@ const orderRequestV2 = {
   marginDelta: '1001500000',
   targetPrice: '100100000',
   isClose: false,
-  validUntil: '2000000060',
+  submitBy: '2000000060',
+  executionWindowSeconds: 60,
   allowedExecutionModes: 1,
   expectedConfigHash: `0x${'12'.repeat(32)}` as Hex,
-  maxExecutionBountyUsdc: '200000',
-  maxExecutionNotionalUsdc: '5005000000',
-  maxGrossAccountDebitUsdc: '2500000',
-  maxActionChargeUsdc: '2200000',
-  maxExplicitFeesUsdc: '300000',
+  maxExecutionBountyAssets: '200000',
+  maxExecutionNotionalAssets: '5005000000',
+  maxGrossAccountDebitAssets: '2500000',
+  maxActionChargeAssets: '2200000',
+  maxExplicitFeesAssets: '300000',
   maxPostPositionSize: '5000000000000000000000',
-  minPostSettlementBalanceUsdc: '999000000',
-  minPostPositionEquityUsdc: '1001000000',
+  minPostSettlementBalanceAssets: '999000000',
+  minPostPositionEquityAssets: '1001000000',
   maxPostLeverageBps: 50_000,
 }
 
-function paymasterData(): Hex {
+function paymasterData(expiry = SPONSORSHIP_VALID_UNTIL): Hex {
   return concatHex([
     '0x01',
-    numberToHex(SPONSORSHIP_VALID_UNTIL, { size: 6 }),
+    numberToHex(expiry, { size: 6 }),
     numberToHex(0n, { size: 6 }),
     `0x${'11'.repeat(65)}`,
   ])
@@ -126,6 +129,7 @@ function manifest(
 ): PerpsAaDeploymentManifestV1 {
   return {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: ENTRY_POINT,
     entryPointVersion: '0.8',
@@ -134,10 +138,10 @@ function manifest(
     smartAccountVersion: 'permissionless-simple-v0.8',
     smartAccountIndex: '0',
     smartAccountFactory: FACTORY,
-    usdc: TARGET,
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
+    settlementToken: TARGET,
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
     marginClearinghouse: TARGET,
     cfdEngine: TARGET,
     orderRouter: TARGET,
@@ -163,6 +167,7 @@ function v2Manifest(): PerpsAaDeploymentManifestV2 {
       'version' | 'pimlicoRpcUrl'
     >,
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     bundlerRpcUrl: '/api/perps/v1/aa/rpc',
     paymasterRpcUrl: '/api/perps/v1/aa/rpc',
     paymasterAddress: PLETHER_PAYMASTER,
@@ -310,6 +315,29 @@ const action = {
 }
 
 describe('executeSponsoredPerpsAction', () => {
+  it('identifies changed review state without opening the wallet or altering recovery classification', async () => {
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()) })
+    managed.readReviewedActionState = vi.fn().mockResolvedValueOnce('original').mockResolvedValueOnce('changed')
+    await expect(executeSponsoredPerpsAction({
+      manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed,
+    })).rejects.toThrow('The reviewed position or protection state changed')
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', {
+      failureStep: 'review_revalidation', reasonCode: 'REVIEW_CHANGED',
+    })
+  })
+
+  it('records an unknown wallet interruption without inventing a user refusal', async () => {
+    const managed = runtime({ signUserOperation: vi.fn(async () => { throw new Error('private wallet detail') }) })
+    await expect(executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action, runtime: managed }))
+      .rejects.toThrow('private wallet detail')
+    expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', {
+      failureStep: 'wallet_approval', reasonCode: 'UNKNOWN',
+    })
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
   it('refuses sponsorship and signing when the reviewed order has fewer than twenty seconds left', async () => {
     const now = Date.now()
     const prepareUserOperation = vi.fn(async () => operation())
@@ -317,7 +345,7 @@ describe('executeSponsoredPerpsAction', () => {
     const sendUserOperation = vi.fn(async () => USER_OPERATION_HASH)
     await expect(executeSponsoredPerpsAction({
       manifest: manifest(), ownerAddress: OWNER, action,
-      orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(now / 1000) + 19) },
+      orderRequestV3: { ...orderRequestV3, submitBy: String(Math.floor(now / 1000) + 19) },
       runtime: runtime({ prepareUserOperation, signUserOperation, sendUserOperation }),
     })).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
     expect(prepareUserOperation).not.toHaveBeenCalled()
@@ -332,14 +360,14 @@ describe('executeSponsoredPerpsAction', () => {
     try {
       await expect(executeSponsoredPerpsAction({
         manifest: manifest(), ownerAddress: OWNER, action,
-        orderRequestV2: { ...orderRequestV2, validUntil: String(now / 1000 + 60) },
-        runtime: runtime({ sendUserOperation, signUserOperation: vi.fn(async () => {
+        orderRequestV3: { ...orderRequestV3, submitBy: String(now / 1000 + 60) },
+        runtime: runtime({ sendUserOperation, prepareUserOperation: vi.fn(async () => ({ ...operation(), paymasterData: paymasterData(BigInt(now / 1000 + 60)) })), signUserOperation: vi.fn(async (prepared) => {
           clock.mockReturnValue(now + 51_000)
-          return operation()
+          return prepared
         }) }),
       })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'signed-not-submitted' })
       expect(sendUserOperation).not.toHaveBeenCalled()
-      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed')
+      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed', { failureStep: 'submission_deadline', reasonCode: 'DEADLINE_TOO_CLOSE' })
       const record = useSponsoredOperationStore.getState().operations[0]
       expect(record).toMatchObject({ status: 'signed-not-submitted', userOperationHash: USER_OPERATION_HASH })
       expect(record.signedUserOperation).toBeDefined()
@@ -349,7 +377,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(restored.status).toBe('signed-not-submitted')
       const recoveryRuntime = runtime({ sendUserOperation })
       const snapshot = { blockNumber: 123n, accountNonce: operation().nonce,
-        blockTimestamp: SPONSORSHIP_VALID_UNTIL,
+        blockTimestamp: BigInt(now / 1000 + 60),
         userOperationEvidence: { kind: 'not-located' as const } }
       recoveryRuntime.getRecoverySnapshot = vi.fn(async () => snapshot)
       expect(await resolveProtocolOperation({ operation: restored, runtime: recoveryRuntime, userOperationHash: USER_OPERATION_HASH })).toBeUndefined()
@@ -363,6 +391,7 @@ describe('executeSponsoredPerpsAction', () => {
     } finally { clock.mockRestore() }
   })
   beforeEach(() => {
+    readinessMocks.blocker.mockReset()
     authorizationMocks.clearDepositAuthorization.mockReset()
     authorizationMocks.clearLegacyDepositAuthorization.mockReset()
     analyticsMocks.trackPerpsSponsoredOperation.mockReset()
@@ -391,9 +420,24 @@ describe('executeSponsoredPerpsAction', () => {
     serverTime: String(Math.floor(Date.now() / 1000)), safeBlockTimestamp: null, phase: 'prepared' as const, reason: 'RESUMABLE',
     recoverable: true, freshReviewAllowed: true, userOperationHash: USER_OPERATION_HASH, transactionHash: null }
 
+  it('rejects a known pause before preparing, signing, submitting or journaling a new operation', async () => {
+    readinessMocks.blocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
+    const prepare = vi.fn(async () => pletherOperation())
+    const sign = vi.fn(async () => SIGNATURE)
+    const send = vi.fn(async () => USER_OPERATION_HASH)
+    await expect(executeSponsoredPerpsAction({
+      manifest: v2Manifest(), ownerAddress: OWNER, action,
+      runtime: runtime({ prepareUserOperation: prepare, signUserOperation: sign, sendUserOperation: send }),
+    })).rejects.toMatchObject({ reason: 'PAYMASTER_PAUSED' })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(0)
+  })
+
   it.each(['deposit', 'withdraw', 'withdraw-to-owner', 'place-order', 'place-protected-order', 'cancel-order',
     'create-protection', 'replace-protection', 'cancel-protection', 'add-margin', 'settle-claim'] as const)(
-    'resumes a rejected native %s with the original preparation after reload', async kind => {
+    'resumes a rejected native %s with the original preparation after reload even when new issuance is paused', async kind => {
       const prepare = vi.fn(async () => pletherOperation())
       const sign = vi.fn(async (value: ManagedUserOperation) => value)
       sign.mockRejectedValueOnce({ code: 4001 })
@@ -403,6 +447,7 @@ describe('executeSponsoredPerpsAction', () => {
         action: { ...action, kind }, runtime: managed, authorizationTokenToClearOnConfirmation: TARGET,
         authorizationNonceToClearOnConfirmation: AUTHORIZATION_NONCE }
       await expect(executeSponsoredPerpsAction(input)).rejects.toThrow('Signature declined. Your transaction was not sent.')
+      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', { failureStep: 'wallet_approval', reasonCode: 'WALLET_DECLINED' })
       const declined = useSponsoredOperationStore.getState().operations[0]
       expect(declined.status).toBe('signature-declined')
       expect(declined.preparedOperation?.operation).not.toHaveProperty('signature')
@@ -412,6 +457,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
       await useSponsoredOperationStore.persist.rehydrate()
       const saved = useSponsoredOperationStore.getState().operations[0]
+      readinessMocks.blocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
       await resumeSponsoredPerpsAction(saved, managed)
       expect(prepare.mock.calls).toHaveLength(2)
       expect(prepare).toHaveBeenNthCalledWith(1, expect.objectContaining({ preparationId: declined.id }))
@@ -474,7 +520,7 @@ describe('executeSponsoredPerpsAction', () => {
     const prepare = vi.fn().mockRejectedValue(new SponsorRequestError({ reason: 'INVALID_ORDER_DEADLINE', retryable: false, message: 'Deadline rejected' }))
     const managed = runtime({ prepareUserOperation: prepare })
     await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER,
-      action, runtime: managed, orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(Date.now() / 1000) + 600) } })).rejects.toThrow('Deadline rejected')
+      action, runtime: managed, orderRequestV3: { ...orderRequestV3, submitBy: String(Math.floor(Date.now() / 1000) + 600) } })).rejects.toThrow('Deadline rejected')
     const saved = useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)!
     await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
     expect(prepare).toHaveBeenCalledOnce()
@@ -671,7 +717,7 @@ describe('executeSponsoredPerpsAction', () => {
         useSponsoredOperationStore.getState().operations[0]!
       expect(pendingOperation).toMatchObject({
         status: 'awaiting-signature',
-        orderRequestV2,
+        orderRequestV3,
       })
       const exactJournal = JSON.parse(
         globalThis.localStorage.getItem(
@@ -683,7 +729,7 @@ describe('executeSponsoredPerpsAction', () => {
         operation: {
           id: pendingOperation.id,
           status: 'awaiting-signature',
-          orderRequestV2,
+          orderRequestV3,
         },
       })
       expect(pendingOperation.userOperationHash).toBeUndefined()
@@ -695,7 +741,7 @@ describe('executeSponsoredPerpsAction', () => {
       ownerAddress: OWNER,
       action: { ...action, kind: 'place-order' },
       runtime: runtime({ signUserOperation }),
-      orderRequestV2,
+      orderRequestV3,
     })).resolves.toMatchObject({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -712,7 +758,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(JSON.parse(globalThis.localStorage.getItem(`${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`)!)).toMatchObject({
         operation: { id: pendingOperation.id, protectionIntent, status: 'awaiting-signature' },
       })
-      expect(pendingOperation.orderRequestV2).toBeUndefined()
+      expect(pendingOperation.orderRequestV3).toBeUndefined()
       return value
     })
     await executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action: { ...action, kind: 'replace-protection' }, runtime: runtime({ signUserOperation }), protectionIntent })
@@ -1605,14 +1651,18 @@ describe('executeSponsoredPerpsAction', () => {
     await expect(executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action,
       runtime: runtime({ sendUserOperation }),
     })).rejects.toMatchObject({ terminalStatus: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE', retryable: false })
+    expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', { failureStep: 'submission', reasonCode: 'SECURITY_ATTESTATION_UNAVAILABLE' })
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({ status: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE' })
     expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeDefined()
     expect(sendUserOperation).toHaveBeenCalledOnce()
   })
 
-  it('keeps an ambiguous Pimlico submission non-retryable', async () => {
+  it.each([
+    new Error('connection closed before response'),
+    new TimeoutError({ url: 'https://example.test/aa/rpc' }),
+  ])('keeps an ambiguous submission non-retryable after %s', async cause => {
     const sendUserOperation = vi.fn(async () => {
-      throw new Error('connection closed before response')
+      throw cause
     })
 
     await expect(executeSponsoredPerpsAction({
@@ -1632,6 +1682,8 @@ describe('executeSponsoredPerpsAction', () => {
       userOperationHash: USER_OPERATION_HASH,
       retryable: false,
     })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeDefined()
+    expect(useSponsoredOperationStore.getState().operations[0]?.signedUserOperation).toBeDefined()
   })
 
   it('does not sign or submit sponsorship without a recoverable deadline', async () => {
@@ -1729,3 +1781,5 @@ describe('executeSponsoredPerpsAction', () => {
     expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

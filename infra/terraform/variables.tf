@@ -201,6 +201,12 @@ variable "liquidation_keeper_private_key" {
   sensitive = true
 }
 
+variable "testnet_margin_funding_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable new Sepolia direct margin allocations. Existing journaled transactions continue recovery while disabled."
+}
+
 variable "faucet_private_key" {
   type      = string
   default   = ""
@@ -309,6 +315,40 @@ variable "enable_insights_registration" {
   type        = bool
   default     = false
   description = "Permit the one-way persisted activation of first-party Insights registration after its secrets, competition, and public edge proxy are ready. Setting false does not pause or close an already activated database window."
+}
+
+variable "enable_divisions_registration" {
+  type        = bool
+  default     = false
+  description = "Enable Discord identity and owner-wallet linking for Plether Divisions. Rankings remain open to unlinked wallets."
+}
+
+variable "discord_oauth_client_id" {
+  type        = string
+  default     = ""
+  description = "Discord application client ID used for Divisions identity linking."
+  validation {
+    condition     = var.discord_oauth_client_id == "" || can(regex("^[0-9]{17,22}$", var.discord_oauth_client_id))
+    error_message = "discord_oauth_client_id must be a numeric Discord application ID."
+  }
+}
+
+variable "discord_oauth_callback_url" {
+  type        = string
+  default     = "https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback"
+  description = "Exact Discord OAuth redirect URI registered for Divisions."
+}
+
+variable "insights_divisions_rules_version" {
+  type        = string
+  default     = "divisions-2026-10"
+  description = "Version of the Divisions rules accepted during account linking."
+}
+
+variable "insights_divisions_privacy_version" {
+  type        = string
+  default     = "divisions-2026-10"
+  description = "Version of the Divisions linking privacy notice."
 }
 
 variable "insights_registration_public_origin" {
@@ -1157,40 +1197,40 @@ variable "perps_chain_id" {
 
 variable "vault_history_house_pool_address" {
   type        = string
-  default     = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+  default     = ""
   description = "HousePool deployment whose Senior and Junior vault performance and canonical events are indexed."
 
   validation {
-    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_house_pool_address)) && lower(var.vault_history_house_pool_address) != "0x0000000000000000000000000000000000000000"
-    error_message = "vault_history_house_pool_address must be a nonzero Ethereum address."
+    condition     = var.vault_history_house_pool_address == "" || (can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_house_pool_address)) && lower(var.vault_history_house_pool_address) != "0x0000000000000000000000000000000000000000")
+    error_message = "vault_history_house_pool_address must be empty or a nonzero Ethereum address."
   }
 }
 
 variable "vault_history_senior_vault_address" {
   type        = string
-  default     = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+  default     = ""
   description = "Senior TrancheVault deployment whose performance, holders, and requests are indexed."
 
   validation {
-    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_senior_vault_address)) && lower(var.vault_history_senior_vault_address) != "0x0000000000000000000000000000000000000000"
-    error_message = "vault_history_senior_vault_address must be a nonzero Ethereum address."
+    condition     = var.vault_history_senior_vault_address == "" || (can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_senior_vault_address)) && lower(var.vault_history_senior_vault_address) != "0x0000000000000000000000000000000000000000")
+    error_message = "vault_history_senior_vault_address must be empty or a nonzero Ethereum address."
   }
 }
 
 variable "vault_history_junior_vault_address" {
   type        = string
-  default     = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+  default     = ""
   description = "Junior TrancheVault deployment whose performance, holders, and requests are indexed."
 
   validation {
-    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_junior_vault_address)) && lower(var.vault_history_junior_vault_address) != "0x0000000000000000000000000000000000000000"
-    error_message = "vault_history_junior_vault_address must be a nonzero Ethereum address."
+    condition     = var.vault_history_junior_vault_address == "" || (can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_junior_vault_address)) && lower(var.vault_history_junior_vault_address) != "0x0000000000000000000000000000000000000000")
+    error_message = "vault_history_junior_vault_address must be empty or a nonzero Ethereum address."
   }
 }
 
 variable "vault_history_deployment_block" {
   type        = string
-  default     = "307397196"
+  default     = "0"
   description = "First Arbitrum block eligible for the configured vault deployment's performance and event history."
 
   validation {
@@ -1210,75 +1250,83 @@ variable "vault_history_confirmations" {
   }
 }
 
-variable "perps_usdc" {
+variable "perps_settlement_token" {
   type    = string
-  default = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
+  default = ""
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
+  default = ""
 }
 
 variable "perps_house_pool" {
   type        = string
-  default     = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+  default     = ""
   description = "HousePool bound to the configured settlement monitor."
 
   validation {
     condition = (
-      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
-      && lower(var.perps_house_pool) != "0x0000000000000000000000000000000000000000"
+      var.perps_house_pool == "" || (
+        can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
+        && lower(var.perps_house_pool) != "0x0000000000000000000000000000000000000000"
+      )
     )
-    error_message = "perps_house_pool must be a non-zero canonical Ethereum address."
+    error_message = "perps_house_pool must be empty or a non-zero canonical Ethereum address."
   }
 }
 
 variable "perps_senior_vault" {
   type        = string
-  default     = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+  default     = ""
   description = "Senior TrancheVault bound to the configured HousePool settlement release."
 
   validation {
     condition = (
-      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_senior_vault))
-      && lower(var.perps_senior_vault) != "0x0000000000000000000000000000000000000000"
+      var.perps_senior_vault == "" || (
+        can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_senior_vault))
+        && lower(var.perps_senior_vault) != "0x0000000000000000000000000000000000000000"
+      )
     )
-    error_message = "perps_senior_vault must be a non-zero canonical Ethereum address."
+    error_message = "perps_senior_vault must be empty or a non-zero canonical Ethereum address."
   }
 }
 
 variable "perps_junior_vault" {
   type        = string
-  default     = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+  default     = ""
   description = "Junior TrancheVault bound to the configured HousePool settlement release."
 
   validation {
     condition = (
-      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_junior_vault))
-      && lower(var.perps_junior_vault) != "0x0000000000000000000000000000000000000000"
+      var.perps_junior_vault == "" || (
+        can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_junior_vault))
+        && lower(var.perps_junior_vault) != "0x0000000000000000000000000000000000000000"
+      )
     )
-    error_message = "perps_junior_vault must be a non-zero canonical Ethereum address."
+    error_message = "perps_junior_vault must be empty or a non-zero canonical Ethereum address."
   }
 }
 
 variable "perps_settlement_monitor_lens" {
   type        = string
-  default     = "0x52f9621446650ab663f2f1665f28817924c96826"
+  default     = ""
   description = "Settlement Monitor facade used by the keeper. Never configure the sidecar address here."
 
   validation {
     condition = (
-      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
-      && lower(var.perps_settlement_monitor_lens) != "0x0000000000000000000000000000000000000000"
-      && lower(var.perps_settlement_monitor_lens) != "0xb13d18d1b30e2c6fce1138f93123136113d0af5b"
+      var.perps_settlement_monitor_lens == "" || (
+        can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
+        && lower(var.perps_settlement_monitor_lens) != "0x0000000000000000000000000000000000000000"
+        && lower(var.perps_settlement_monitor_lens) != "0x022af8e4461c313e194b020b2af5a8cc583421ee"
+      )
     )
     error_message = "perps_settlement_monitor_lens must be the facade, never the pinned monitor sidecar."
   }
 }
 
 variable "perps_order_lifecycle_book" {
-  description = "V2 immutable order lifecycle book from the pinned bounded-order deployment"
+  description = "Immutable order lifecycle book from the verified canonical deployment"
   type        = string
   default     = ""
 
@@ -1296,37 +1344,37 @@ variable "perps_order_lifecycle_book" {
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0x9f4d9ae736b94249b18a85a7e14092bfca0688eb"
+  default = ""
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
+  default = ""
 }
 
 variable "perps_cfd_engine_settlement_sidecar" {
   type    = string
-  default = "0x69dc8489dc12bcfd74b4f453f59ec7381822f5bb"
+  default = ""
 }
 
 variable "perps_cfd_engine_lens" {
   type    = string
-  default = "0x8fe702213241482d6e94327f9e70195ad183d1ad"
+  default = ""
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
+  default = ""
 }
 
 variable "perps_account_lens" {
   type    = string
-  default = "0x29fd3b5faf8de6c84405d28e1aac371e46a104c6"
+  default = ""
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "307397196"
+  default = "0"
 }
 
 variable "perps_indexer_confirmations" {

@@ -1,9 +1,11 @@
 import { StrictMode, type ReactNode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import { ORACLE_RECOVERY_UNAVAILABLE, orderPreparationKey, usePerpsOrderPreparation } from '../usePerpsOrderPreparation'
 import { preparationFailure } from '../../utils/perpsPreparationDiagnostics'
+import { createOracleSyncError } from '../../test/fixtures/oracleSyncError'
+import { getPerpsErrorMessage } from '../../utils/perpsErrors'
 
 const analytics = vi.hoisted(() => vi.fn())
 vi.mock('../../analytics/client', () => ({ captureAnalyticsEvent: analytics }))
@@ -17,7 +19,7 @@ function deferred<T>() {
 async function advance(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
 type Input = { quantity: bigint }
 type Mode = 'background' | 'review' | 'inactive'
-function setup(mode: Mode = 'background', prepare = vi.fn<(input: Input) => Promise<PreparedPerpsOrderV2>>().mockImplementation(async () => prepared())) {
+function setup(mode: Mode = 'background', prepare = vi.fn<(input: Input) => Promise<PreparedPerpsOrderV3>>().mockImplementation(async () => prepared())) {
   const initialProps = { mode, key: 'one', identityKey: 'account-one' }
   const view = renderHook((props: typeof initialProps) => usePerpsOrderPreparation({
     ...props, prepare, candidate: { key: props.key, input: { quantity: 100n } },
@@ -35,25 +37,27 @@ describe('order preparation lifecycle', () => {
     const view = setup('review', vi.fn().mockRejectedValue(error))
     await advance(0)
     expect(view.result.current.error).toBe(error)
+    expect(view.result.current.supportReference).toMatch(/^tx-[\da-f-]{36}$/)
+    expect(analytics).toHaveBeenCalledWith('transaction failed', expect.objectContaining({ support_reference: view.result.current.supportReference }))
     expect(analytics).toHaveBeenCalledWith('perps order preparation finished', {
       surface: 'perps', duration_ms: 0, reason_code: 'cold', error_category: 'preparation_failed',
-      error_code: 'undecoded_revert', stage: 'commit_simulation', contract_function: 'commitOrder',
+      error_code: 'undecoded_revert', stage: 'commit_simulation', contract_function: 'commitOrder', support_reference: view.result.current.supportReference,
     })
   })
 
   it('distinguishes timeouts from late rejected work and records only one failure', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     setup('review', vi.fn().mockReturnValue(pending.promise))
     await advance(30_000)
     await act(async () => { pending.reject(new Error('execution reverted')) })
     expect(analytics.mock.calls.filter(([name]) => name === 'perps order preparation finished')).toEqual([
       ['perps order preparation finished', { surface: 'perps', duration_ms: 30_000, reason_code: 'cold',
-        error_category: 'preparation_failed', error_code: 'timeout', stage: 'preparation_timeout' }],
+        error_category: 'preparation_failed', error_code: 'timeout', stage: 'preparation_timeout', support_reference: expect.stringMatching(/^tx-[\da-f-]{36}$/) }],
     ])
   })
 
   it('does not attach failure codes to obsolete requests or successful retries', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(prepared()))
     view.update({ mode: 'review', key: 'two' })
     await advance(0)
@@ -81,7 +85,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('starts cold review without debounce and joins a matching pending background request', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValue(pending.promise))
     await advance(500)
     await advance(2000)
@@ -111,7 +115,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('queues only the latest background candidate and ignores old completions', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const prepare = vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared())
     const view = setup('background', prepare)
     await advance(500)
@@ -128,7 +132,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('does not wait for obsolete background work when review opens', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(500)
     view.update({ mode: 'review', key: 'two' })
@@ -153,26 +157,33 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(3)
   })
 
-  it('refreshes at ten seconds remaining and retains the last displayed terms', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
-    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(20)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(20)))
+  it('keeps a review ready beyond its provisional deadline until an explicit retry', async () => {
+    const pending = deferred<PreparedPerpsOrderV3>()
+    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(55)))
     await advance(0)
     const original = view.result.current.result
-    await advance(10_000)
-    expect(view.result.current.ready).toBe(false)
-    expect(view.result.current.refreshing).toBe(true)
+    await advance(600_000)
+    expect(view.result.current.ready).toBe(true)
+    expect(view.result.current.refreshing).toBe(false)
     expect(view.result.current.result).toBe(original)
-    await act(async () => { pending.resolve(prepared(20, 30_000_000n)) })
+    expect(view.result.current.error).toBeUndefined()
+    expect(view.prepare).toHaveBeenCalledTimes(1)
+    act(() => { view.result.current.retry() })
+    expect(view.result.current.refreshing).toBe(true)
+    await act(async () => { pending.resolve(prepared(55, 30_000_000n)) })
     expect(view.result.current.previous).toBe(original)
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
-    await advance(10_000)
-    expect(view.prepare).toHaveBeenCalledTimes(3)
+    await advance(600_000)
+    expect(view.prepare).toHaveBeenCalledTimes(2)
+    expect(view.result.current.ready).toBe(true)
   })
 
-  it('stops on refresh failure or an already expiring response', async () => {
-    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(20)).mockRejectedValue(new Error('offline')))
+  it('stops on explicit refresh failure but accepts a provisional deadline in the past', async () => {
+    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockRejectedValue(new Error('offline')))
     await advance(10_000)
+    act(() => { view.result.current.retry() })
+    await advance(0)
     expect(view.result.current.status).toBe('error')
     expect(view.result.current.ready).toBe(false)
     await advance(60_000)
@@ -180,12 +191,13 @@ describe('order preparation lifecycle', () => {
     view.unmount()
     const expired = setup('review', vi.fn().mockResolvedValue(prepared(10)))
     await advance(60_000)
-    expect(expired.result.current.status).toBe('error')
+    expect(expired.result.current.status).toBe('ready')
+    expect(expired.result.current.ready).toBe(true)
     expect(expired.prepare).toHaveBeenCalledTimes(1)
   })
 
   it('times out from the original request start and ignores a late result', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValue(pending.promise))
     await advance(500)
     await advance(2000)
@@ -198,7 +210,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('invalidates results on identity changes, cancellation, and commit start', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(0)
     view.update({ mode: 'review', identityKey: 'account-two' })
@@ -212,7 +224,7 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(2)
   })
 
-  it('pauses while hidden and rechecks freshness when returning', async () => {
+  it('pauses while hidden and keeps the same ready review when returning', async () => {
     let visibility: DocumentVisibilityState = 'hidden'
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
     const view = setup()
@@ -227,8 +239,9 @@ describe('order preparation lifecycle', () => {
     expect(view.result.current.ready).toBe(false)
     act(() => { visibility = 'visible'; document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
-    expect(view.prepare).toHaveBeenCalledTimes(2)
+    expect(view.prepare).toHaveBeenCalledTimes(1)
     expect(view.result.current.ready).toBe(true)
+    expect(view.result.current.error).toBeUndefined()
   })
 
   it('recovers after StrictMode effect cleanup and ignores work after unmount', async () => {
@@ -244,7 +257,7 @@ describe('order preparation lifecycle', () => {
     expect(prepare).toHaveBeenCalledTimes(count)
   })
 
-  it('rechecks changed account context without changing the frozen order', async () => {
+  it('keeps the prepared quote stable when polled context changes until explicit retry', async () => {
     const prepare = vi.fn().mockImplementation(async () => prepared())
     const input = { quantity: 100n }
     const view = renderHook(({ contextKey }) => usePerpsOrderPreparation({ mode: 'review', identityKey: 'account',
@@ -252,14 +265,20 @@ describe('order preparation lifecycle', () => {
     await advance(0)
     const before = view.result.current.result
     view.rerender({ contextKey: 'balance-two' })
-    expect(view.result.current.ready).toBe(false)
+    await advance(0)
+    expect(view.result.current.ready).toBe(true)
+    expect(view.result.current.matches).toBe(true)
+    expect(view.result.current.result).toBe(before)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    act(() => { view.result.current.retry() })
     await advance(0)
     expect(view.result.current.previous).toBe(before)
+    expect(view.result.current.contextKey).toBe('balance-two')
     expect(prepare).toHaveBeenCalledTimes(2)
     expect(prepare).toHaveBeenLastCalledWith(input, expect.any(AbortSignal))
   })
 
-  it('refreshes changed context on returning from a briefly hidden tab even inside the reuse window', async () => {
+  it('preserves a valid quote on returning from a hidden tab despite polled context changes', async () => {
     let visibility: DocumentVisibilityState = 'visible'
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
     const prepare = vi.fn().mockImplementation(async () => prepared())
@@ -272,7 +291,7 @@ describe('order preparation lifecycle', () => {
     expect(prepare).toHaveBeenCalledTimes(1)
     act(() => { visibility = 'visible'; document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
-    expect(prepare).toHaveBeenCalledTimes(2)
+    expect(prepare).toHaveBeenCalledTimes(1)
     expect(view.result.current.ready).toBe(true)
   })
 
@@ -283,14 +302,17 @@ describe('order preparation lifecycle', () => {
   })
 })
 
-const syncError = () => new Error('User-facing wrapper', { cause: { errorName: 'PletherOracle__PriceOutOfOrder', args: [10n, 20n] } })
+const syncError = (legacyAbi = false) => {
+  const cause = createOracleSyncError(legacyAbi)
+  return new Error(getPerpsErrorMessage(cause, 'review'), { cause })
+}
 
 describe('oracle recovery during review', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); analytics.mockClear() })
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-  it('retries the full preparation and preserves the reviewed input', async () => {
-    const prepare = vi.fn().mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared())
+  it.each([true, false])('retries the full preparation and preserves the reviewed input (legacy ABI=%s)', async legacyAbi => {
+    const prepare = vi.fn().mockRejectedValueOnce(syncError(legacyAbi)).mockImplementation(async () => prepared())
     const view = setup('review', prepare)
     await advance(0)
     expect(view.result.current.recoveringOracle).toBe(true)
@@ -304,8 +326,8 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.recoveringOracle).toBe(false)
     expect(analytics).toHaveBeenCalledWith('perps oracle recovery', expect.objectContaining({ reason_code: 'succeeded', duration_ms: 2000 }))
   })
-  it('exhausts the original budget and manual retry starts another budget', async () => {
-    const view = setup('review', vi.fn().mockRejectedValue(syncError()))
+  it.each([true, false])('exhausts the original budget and manual retry starts another budget (legacy ABI=%s)', async legacyAbi => {
+    const view = setup('review', vi.fn().mockRejectedValue(syncError(legacyAbi)))
     await advance(30_000)
     expect(view.prepare).toHaveBeenCalledTimes(15)
     expect(view.result.current.error).toMatchObject({ message: ORACLE_RECOVERY_UNAVAILABLE })
@@ -344,7 +366,7 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.status).toBe('error')
   })
   it('keeps background errors quiet but recovers a request joined by review', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(500)
     view.update({ mode: 'review' })
@@ -374,7 +396,7 @@ describe('oracle recovery during review', () => {
     expect(view.prepare).toHaveBeenCalledTimes(2)
   })
   it('ignores a late retry result after inputs change', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockRejectedValueOnce(syncError()).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(2000)
     view.update({ key: 'new-input' })
@@ -385,10 +407,12 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.ready).toBe(true)
   })
   it('retains prior terms during recovery and surfaces updated terms after success', async () => {
-    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(20)).mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared(60, 30_000_000n)))
+    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared(60, 30_000_000n)))
     await advance(0)
     const previous = view.result.current.result
     await advance(10_000)
+    act(() => { view.result.current.retry() })
+    await advance(0)
     expect(view.result.current.result).toBe(previous)
     expect(view.result.current.ready).toBe(false)
     await advance(2000)
@@ -396,7 +420,7 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
   })
-  it('rebuilds changed account context before resuming hidden recovery', async () => {
+  it('resumes initial recovery without restarting it when hidden context changes', async () => {
     const prepare = vi.fn().mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared())
     const view = renderHook(({ contextKey }) => usePerpsOrderPreparation({
       candidate: { key: 'draft', input: { quantity: 100n } }, identityKey: 'account',
@@ -411,7 +435,7 @@ describe('oracle recovery during review', () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     act(() => { document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
-    expect(view.result.current.contextKey).toBe('after')
+    expect(view.result.current.contextKey).toBe('before')
     expect(view.result.current.ready).toBe(true)
     expect(prepare).toHaveBeenCalledTimes(2)
   })
@@ -449,3 +473,5 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.error).toMatchObject({ message: 'insufficient margin' })
   })
 })
+
+vi.mock('../../perps-aa/deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

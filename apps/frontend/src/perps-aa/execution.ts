@@ -1,3 +1,5 @@
+import { AttemptFailureError, classifyAttemptFailure, type FailureStep } from './attemptFailure'
+import { refreshDeadlineClock } from './deadlineClock'
 import type { SavedOrderDraft } from './orderDraft'
 import { reportAttemptStage } from './attemptDiagnostics'
 import { isExplicitSignatureRejection, isPreparationVersionSupported, persistPreparedOperation, persistReviewedAction, restorePreparedOperation, restoreReviewedAction } from './preparedOperation'
@@ -53,7 +55,7 @@ import type {
   ManagedUserOperationReceipt,
   PerpsAaSmartAccountRuntime,
 } from './runtimeContext'
-import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
+import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 import { operationNeedsFreshOrderReview, orderDeadlineNeedsReview, requireDeadlineHeadroom } from './deadline'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from './readiness'
@@ -66,7 +68,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   authorizationTokenToClearOnConfirmation?: Address
   authorizationNonceToClearOnConfirmation?: Hex
   orderDraft?: SavedOrderDraft
-  orderRequestV2?: PersistedPerpsOrderRequestV2
+  orderRequestV3?: PersistedPerpsOrderRequestV3
   protectionIntent?: PersistedProtectionIntent
   resumeOperationId?: string
   lane?: string
@@ -139,7 +141,7 @@ async function waitForUserOperationOutcome(input: {
   timeoutMs?: number
   pollIntervalMs?: number
 }): Promise<UserOperationWaitOutcome> {
-  const startedAt = Date.now()
+  const startedAt = performance.now()
   const timeoutMs = input.timeoutMs ?? 120_000
   let persistedInclusion:
     SponsoredOperationInclusionObservation | undefined
@@ -230,7 +232,7 @@ async function waitForUserOperationOutcome(input: {
     }
   }
 
-  while (Date.now() - startedAt < timeoutMs) {
+  while (performance.now() - startedAt < timeoutMs) {
     input.signal.throwIfAborted()
     try {
       const outcome = await reconcileUserOperation({
@@ -285,7 +287,7 @@ async function waitForUserOperationOutcome(input: {
       // transiently. Keep reconciling the already-persisted local hash.
     }
 
-    await wait(input.pollIntervalMs ?? (Date.now() - startedAt < 60_000 ? 2_000 : 5_000), input.signal)
+    await wait(input.pollIntervalMs ?? (performance.now() - startedAt < 60_000 ? 2_000 : 5_000), input.signal)
   }
 
   throw new BundlerRequestError({
@@ -311,6 +313,7 @@ export async function executeSponsoredPerpsAction(
   }
   let releaseBrowserLane: ReleaseSponsoredOperationBrowserLock | undefined
   let tracker: ReturnType<typeof beginSponsoredOperationTracking> | undefined
+  let failureStep: FailureStep = 'preflight'
 
   try {
     if (!input.manifest.sponsorshipEnabled) {
@@ -352,6 +355,16 @@ export async function executeSponsoredPerpsAction(
         message: 'The Plether action is bound to a different Trading Account',
         retryable: false,
       })
+    }
+
+    // Check before journaling a new preparation or requesting sponsorship.
+    // Recovery of an existing operation keeps its own authorization checks.
+    if (isPerpsAaManifestV2(input.manifest) && !input.resumeOperationId) {
+      failureStep = 'readiness_check'
+      await refreshReadiness()
+      const action = input.orderRequestV3 ? input.orderRequestV3.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
+      const blocker = readinessBlocker(currentReadiness(), action)
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
     }
 
     releaseBrowserLane = await acquireSponsoredOperationBrowserLane({
@@ -396,7 +409,7 @@ export async function executeSponsoredPerpsAction(
       action: input.action.kind,
       authorizationToken: input.authorizationTokenToClearOnConfirmation,
       authorizationNonce: input.authorizationNonceToClearOnConfirmation,
-      orderRequestV2: input.orderRequestV2,
+      orderRequestV3: input.orderRequestV3,
       orderDraft: input.orderDraft,
       protectionIntent: input.protectionIntent,
       lane,
@@ -412,22 +425,29 @@ export async function executeSponsoredPerpsAction(
 
     activeTracker.signal.throwIfAborted()
     const nativePreparationEnabled = isPerpsAaManifestV2(input.manifest) && input.manifest.preparationRpcVersion === 1
-    const reviewedStateInput = { action: input.action.kind, clientOrderId: input.orderRequestV2?.clientOrderId }
+    const reviewedStateInput = { action: input.action.kind, clientOrderId: input.orderRequestV3?.clientOrderId }
+    failureStep = 'review_read'
     const reviewedState = nativePreparationEnabled && !resumed ? await input.runtime.readReviewedActionState?.(reviewedStateInput) : undefined
     const preparationRequest = resumed?.nativePreparation ?? (isPerpsAaManifestV2(input.manifest) && input.manifest.preparationRpcVersion === 1
       ? { version: 1 as const, preparationId: activeTracker.id, manifest: input.manifest, action: persistReviewedAction(input.action), ...(reviewedState ? { reviewedState } : {}) }
       : undefined)
+    failureStep = 'preparation_journal'
     if (preparationRequest && !resumed && !useSponsoredOperationStore.getState().recordPreparation(activeTracker.id, preparationRequest)) {
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The preparation request could not be saved' })
     }
-    if (orderDeadlineNeedsReview(input.orderRequestV2?.validUntil) || (resumed && operationNeedsFreshOrderReview(resumed))) {
+    failureStep = 'review_clock'
+    await refreshDeadlineClock(activeTracker.signal)
+    failureStep = 'review_deadline'
+    if (orderDeadlineNeedsReview(input.orderRequestV3?.submitBy) || (resumed && operationNeedsFreshOrderReview(resumed))) {
       throw new SponsorRequestError({ reason: 'INVALID_ORDER_DEADLINE', retryable: false,
         message: 'This order has expired or is too close to expiry. Review the order again.' })
     }
+    failureStep = 'recovery_check'
     if (resumed?.preparedOperation) {
       const state = await input.runtime.smartAccount.getPreparationStatus?.({ preparationId: resumed.id })
-      if (!state?.recoverable) throw new Error('This preparation cannot currently be resumed. Check its recovery status.')
+      if (!state?.recoverable) throw new AttemptFailureError('This preparation cannot currently be resumed. Check its recovery status.', 'PREPARATION_UNUSABLE')
     }
+    failureStep = 'sponsorship'
     status('requesting-sponsorship')
     // Readiness is deliberately advisory and concurrent, never an authorization cache.
     if (isPerpsAaManifestV2(input.manifest)) void refreshReadiness()
@@ -442,8 +462,9 @@ export async function executeSponsoredPerpsAction(
     } catch (error) {
       throw asSponsorRequestError(error)
     }
+    failureStep = 'prepared_payload_check'
     if (resumed?.preparedOperation && JSON.stringify(persistPreparedOperation(operation, input.runtime.smartAccount.getUserOperationHash(operation), BigInt(resumed.preparedOperation.validUntil))) !== JSON.stringify(resumed.preparedOperation)) {
-      throw new Error("The recovered payload changed; a fresh review is required")
+      throw new AttemptFailureError("The recovered payload changed; a fresh review is required", 'PREPARED_PAYLOAD_CHANGED')
     }
     const sponsorshipValidUntil = manifestSponsorshipValidUntil(
       input.manifest,
@@ -464,11 +485,12 @@ export async function executeSponsoredPerpsAction(
         })
       : undefined
 
+    failureStep = 'pre_sign_journal'
     if (
-      input.orderRequestV2 &&
+      input.orderRequestV3 &&
       !hasDurableSponsoredOperationOrderIntent(
         activeTracker.id,
-        input.orderRequestV2
+        input.orderRequestV3
       )
     ) {
       throw new SponsoredPreflightError({
@@ -486,32 +508,44 @@ export async function executeSponsoredPerpsAction(
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The exact preparation could not be saved before signing' })
     }
     activeTracker.signal.throwIfAborted()
-    if (isPerpsAaManifestV2(input.manifest)) {
-      const action = input.orderRequestV2 ? input.orderRequestV2.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
+    failureStep = 'readiness_check'
+    if (isPerpsAaManifestV2(input.manifest) && (!resumed || currentReadiness()?.enforcementEnabled)) {
+      const action = input.orderRequestV3 ? input.orderRequestV3.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
       const blocker = readinessBlocker(currentReadiness(), action)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
     }
+    failureStep = 'review_revalidation'
     if (preparationRequest && input.runtime.readReviewedActionState) {
       const currentState = await input.runtime.readReviewedActionState(reviewedStateInput)
-      if (preparationRequest.reviewedState !== currentState) throw new Error('The reviewed position or protection state changed. Review a new transaction.')
+      if (preparationRequest.reviewedState !== currentState) throw new AttemptFailureError('The reviewed position or protection state changed. Review a new transaction.', 'REVIEW_CHANGED')
     }
-    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'signing')
+    failureStep = 'signing_clock'
+    await refreshDeadlineClock(activeTracker.signal)
+    failureStep = 'signing_deadline'
+    if (input.orderRequestV3 && sponsorshipValidUntil > BigInt(input.orderRequestV3.submitBy)) {
+      throw new Error('Sponsorship exceeds the signed submission deadline')
+    }
+    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV3?.submitBy, 'signing')
+    failureStep = 'pre_sign_journal'
     if (preparationRequest) useSponsoredOperationStore.getState().recordWalletPreparationOutcome(activeTracker.id, 'unknown')
     status('awaiting-signature')
     if (preparationRequest && !hasDurableNativePreparation(activeTracker.id, preparationRequest,
       persistPreparedOperation(operation, input.runtime.smartAccount.getUserOperationHash(operation), sponsorshipValidUntil))) {
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The prepared recovery record changed before signing' })
     }
+    failureStep = 'wallet_approval'
     reportAttemptStage(activeTracker.id, 'wallet_requested')
     const signedOperation = await input.runtime.smartAccount.signUserOperation(operation).catch((error: unknown) => {
       reportAttemptStage(activeTracker.id, isExplicitSignatureRejection(error) ? 'wallet_declined' : 'wallet_interrupted')
       throw error
     })
     reportAttemptStage(activeTracker.id, 'wallet_approved')
+    failureStep = 'signed_payload_check'
     if (preparationRequest && input.runtime.smartAccount.getUserOperationHash(signedOperation) !== input.runtime.smartAccount.getUserOperationHash(operation)) {
-      throw new Error('The wallet changed the prepared transaction')
+      throw new AttemptFailureError('The wallet changed the prepared transaction', 'PREPARED_PAYLOAD_CHANGED')
     }
     activeTracker.signal.throwIfAborted()
+    failureStep = 'signed_journal'
     status('journaling')
 
     // Wallet approval can remain open long enough for another tab's legacy
@@ -544,7 +578,11 @@ export async function executeSponsoredPerpsAction(
     }
 
     reportAttemptStage(activeTracker.id, 'signed_operation_saved')
-    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
+    failureStep = 'submission_clock'
+    await refreshDeadlineClock(activeTracker.signal)
+    failureStep = 'submission_deadline'
+    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV3?.submitBy, 'submission')
+    failureStep = 'submission_journal'
     status('submitting')
     // No user callback runs after this point. Reconcile any storage event that
     // landed during the status update, then exact-check the singleton head,
@@ -568,7 +606,9 @@ export async function executeSponsoredPerpsAction(
       })
     }
     let returnedUserOperationHash: Hex
-    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
+    failureStep = 'submission_deadline'
+    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV3?.submitBy, 'submission')
+    failureStep = 'submission'
     reportAttemptStage(activeTracker.id, 'submission_requested')
     try {
       returnedUserOperationHash =
@@ -591,6 +631,7 @@ export async function executeSponsoredPerpsAction(
     }
 
     reportAttemptStage(activeTracker.id, 'submission_acknowledged')
+    failureStep = 'confirmation'
     status('confirming')
     const outcome = await waitForUserOperationOutcome({
       runtime: input.runtime,
@@ -679,7 +720,7 @@ export async function executeSponsoredPerpsAction(
   } catch (error) {
     if (tracker) {
       reportAttemptStage(tracker.id, error instanceof BundlerRequestError && error.reason === 'DEADLINE_TOO_CLOSE'
-        ? 'deadline_elapsed' : 'execution_interrupted')
+        ? 'deadline_elapsed' : 'execution_interrupted', classifyAttemptFailure(failureStep, error))
       try { tracker.fail(error) } catch { /* Preserve the original error when recovery storage is unavailable. */ }
       if (useSponsoredOperationStore.getState().operations.find(item => item.id === tracker?.id)?.status === 'signature-declined') {
         reportAttemptStage(tracker.id, 'wallet_declined')
@@ -705,7 +746,7 @@ export async function resumeSponsoredPerpsAction(operation: SponsoredOperation, 
     manifest: request.manifest, ownerAddress: operation.ownerAddress,
     action: restoreReviewedAction(request.action), runtime: nativeRuntime,
     resumeOperationId: operation.id, lane: operation.lane,
-    orderRequestV2: operation.orderRequestV2, protectionIntent: operation.protectionIntent,
+    orderRequestV3: operation.orderRequestV3, protectionIntent: operation.protectionIntent,
     authorizationTokenToClearOnConfirmation: operation.authorizationToken,
     authorizationNonceToClearOnConfirmation: operation.authorizationNonce,
   })

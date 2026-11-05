@@ -307,38 +307,35 @@ spec = do
       decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [invalidEmaConfidence])
         `shouldSatisfy` isDecodeError
 
-  describe "bounded V2 lifecycle ABI" $ do
-    it "pins the deployed OrderFinalized topic" $ do
+  describe "bounded V3 lifecycle ABI" $ do
+    it "reads the resolved deadline, independent of submitBy" $ do
+      decodeOrderExecutionDeadline (mconcat $ map encodeUint256 [1120,60,1100,1160]) `shouldBe` Right 1160
+      decodeOrderExecutionDeadline (mconcat $ map encodeUint256 [1120,60,1100,1120]) `shouldSatisfy` isDecodeError
+      decodeOrderExecutionDeadline (encodeUint256 1120) `shouldSatisfy` isDecodeError
+      decodeOrderExecutionDeadline (BS.replicate (4 * 32) 0) `shouldBe` Right 0
+
+    it "pins the source V3 OrderFinalized topic" $ do
       hexText orderFinalizedTopic
-        `shouldBe` "449a7e19a9375343901f9775e5874784dc4e77750b1ee0f11e231f87cbe2f1af"
+        `shouldBe` "bc222cbec31354fa718658f6ac96c4f666d34aaf42c0ba8b824d285081930b9f"
 
-    it "decodes the canonical terminal outcome getter" $ do
+    it "decodes the V5 summary without inventing execution economics" $ do
       let receiptHash = BS.replicate 32 0xaa
-          outcomeWord :: Int -> BS.ByteString
-          outcomeWord index
-            | index == 5 = encodeUint256 3
-            | index == 6 = encodeUint256 2
-            | index == 7 = encodeUint256 1
-            | index == 10 = encodeUint256 303858802
-            | index == 15 = encodeUint256 101250000
-            | index == 20 = encodeUint256 4
-            | index == 22 = receiptHash
-            | otherwise = encodeUint256 0
-      decodeOrderTerminalOutcome (mconcat $ map outcomeWord [0 .. 22])
-        `shouldBe` Right
-          OrderTerminalOutcome
-            { otoLifecycleStatus = 3
-            , otoTerminalReason = 2
-            , otoExecutionMode = 1
-            , otoTerminalBlock = 303858802
-            , otoExecutionPrice = 101250000
-            , otoFailedConstraint = 4
-            , otoReceiptHash = receiptHash
-            }
+          bytes = mconcat [encodeUint256 1, encodeUint256 11897980, encodeUint256 2, encodeUint256 1, receiptHash]
+      decodeOrderTerminalSummary bytes `shouldBe` Right (OrderTerminalOutcome 2 1 Nothing 11897980 Nothing Nothing receiptHash)
+      decodeOrderTerminalSummary (BS.replicate (27 * 32) 0) `shouldSatisfy` isDecodeError
 
-    it "rejects a non-terminal outcome" $ do
-      decodeOrderTerminalOutcome (BS.replicate (23 * 32) 0)
-        `shouldSatisfy` isDecodeError
+    it "accepts the current oracle-failure pending and batch-stop reason" $ do
+      let hash = BS.replicate 32 0
+      decodeOrderExecutionResult (mconcat [encodeUint256 1, encodeUint256 1, encodeUint256 0, encodeUint256 10, hash])
+        `shouldBe` Right (OrderExecutionResult 1 1 0 10 hash)
+      decodeOrderBatchResult (mconcat $ map encodeUint256 [1, 0, 10])
+        `shouldBe` Right (OrderBatchResult 1 0 10)
+    it "accepts the current reservation-mismatch terminal reason" $ do
+      let receiptHash = BS.replicate 32 0xaa
+      decodeOrderTerminalSummary (mconcat [encodeUint256 1, encodeUint256 10, encodeUint256 3, encodeUint256 10, receiptHash])
+        `shouldBe` Right (OrderTerminalOutcome 3 10 Nothing 10 Nothing Nothing receiptHash)
+    it "rejects a non-terminal summary" $
+      decodeOrderTerminalSummary (BS.replicate (5 * 32) 0) `shouldSatisfy` isDecodeError
 
   describe "decodePerpsOrderEvent" $ do
     it "decodes OrderCommitted" $ do
@@ -409,7 +406,7 @@ spec = do
             , poeBlockNumber = 125
             }
 
-    it "decodes V2 intent identity" $ do
+    it "decodes V3 intent identity" $ do
       let account = "0x1111111111111111111111111111111111111111"
           clientOrderId = BS.replicate 32 0x11
           eventData =
@@ -417,7 +414,7 @@ spec = do
               <> encodeUint256 7
               <> clientOrderId
               <> encodeUint256 1
-              <> BS.replicate (16 * 32) 0
+              <> BS.replicate (21 * 32) 0
           logEntry =
             RpcLog
               { rpcLogTxHash = "0xintent"
@@ -442,7 +439,7 @@ spec = do
             , poeBlockNumber = 126
             }
 
-    it "decodes canonical V2 OrderFinalized receipt fields" $ do
+    it "decodes canonical V3 OrderFinalized receipt fields" $ do
       let account = "0x1111111111111111111111111111111111111111"
           clientOrderId = BS.replicate 32 0x11
           receiptHash = BS.replicate 32 0xaa
@@ -466,7 +463,7 @@ spec = do
                   , encodeAddress account
                   , clientOrderId
                   ]
-              , rpcLogData = mconcat $ map eventWord [0 .. 45]
+              , rpcLogData = mconcat $ map eventWord [0 .. 70]
               }
       decodePerpsOrderEvent logEntry
         `shouldBe` Just
@@ -531,7 +528,7 @@ spec = do
             { lbiIndex = 3
             , lbiAccount = account
             , lbiResult = LiquidationBatchFailed
-            , lbiKeeperBountyUsdc = 77
+            , lbiKeeperBountyAssets = 77
             , lbiErrorSelector = selector
             }
 

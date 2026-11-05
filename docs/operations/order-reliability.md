@@ -1,0 +1,145 @@
+# Order reliability monitoring
+
+[Sepolia dashboard](https://eu.posthog.com/project/208816/dashboard/967523)
+(project 208816). Saved query definitions and insight IDs are in
+`order-reliability-posthog.json`. The dashboard exists; new canonical snapshot
+metrics require the backend and FireLens image deployed together. Alerts have
+not been created: the connected PostHog integration lacks `alert:write` and
+`logs:write` scopes. No notification destination was configured.
+
+## Counting contract
+
+The active order keeper emits `keeper_order_reliability_snapshot` once a minute,
+with separate 3,600- and 86,400-second windows. Each commitment cohort is
+`[observed_time - 120 - window_seconds, observed_time - 120)` so normal
+submission and execution get two minutes to settle. Outcomes are the keeper's
+current indexed canonical outcomes, not client-side banners or signature events.
+
+- Count each `(router, order_id)` once and scope to the configured router.
+- Count case-normalized Trading Accounts, not browser sessions or people.
+- Expiration is `status=failed` and canonical terminal reason 2.
+- Repeatedly affected means at least two expired orders for the same account
+  within that window. Other failures and pending orders remain separate.
+- All order types are included. This does not identify the root cause of every
+  expiration or imply every expired order was a close.
+- Use the latest snapshot for each window. Never sum snapshots or add unique
+  account counts across time windows. Replay of log records cannot inflate the
+  latest snapshot's canonical counts.
+- Snapshots older than ten minutes are unavailable, not healthy zeros. An
+  explicit all-zero snapshot means a successfully queried empty cohort.
+- Snapshot freshness proves reporting freshness, not chain-indexer freshness.
+  Existing keeper/readiness monitoring remains necessary for ingestion stalls.
+
+Only aggregates are exported. Wallets, order IDs, transaction hashes, amounts,
+raw exception text and calldata remain excluded. Failed lifecycle logs now
+export `terminal_reason` from a strict numeric enum mapping; legacy records
+remain `NOT_EXPORTED` in the dashboard. Log observation counts are explicitly
+labeled and must not be used as canonical order counts.
+
+The observer owns a short-lived read-only connection, with a 1.5s SQL timeout,
+0.5s lock timeout and 3s overall deadline. It never uses the keeper execution
+connection or application pool, and failures emit an unavailable diagnostic
+without interrupting execution. A `(order_router, commit_time)` index bounds the
+cohort scan. It only runs in non-dry-run loop mode while the keeper owns its
+advisory lock. It is cancelled when that keeper session ends.
+
+## Activation
+
+1. Merge and deploy the backend normally with the repository's `gh` workflow.
+   This rebuilds the backend and log-router images; no frontend release needed.
+2. Verify both windows arrive in PostHog. Compare a snapshot's exact cohort end
+   and window to a read-only SQL aggregate before treating it as live monitoring.
+3. Reconnect PostHog with `alert:read` / `alert:write` for SQL-insight alerts, or
+   `logs:write` for log alerts. Confirm the desired notification recipient.
+4. Create these initial rules and verify their saved destinations. The rules are
+   starting thresholds, not established SLOs; tune after observing traffic.
+
+| Rule | Initial condition | Insight |
+| --- | --- | --- |
+| Elevated expirations | Hourly expiry percentage >5%, minimum 20 committed orders; hourly check | `lzi8tBYj` |
+| Repeated failures | More than 2 accounts with repeated expirations in the hourly cohort; hourly check | `uU0kqEEi` |
+| Missing telemetry | No snapshot for 10 minutes; check every 5 minutes with a log alert, or hourly with the saved SQL insight | `s6nKPGDW` |
+
+Scope every alert to Sepolia and `plether-keeper`. For the missing-telemetry log
+alert, filter `event=keeper_order_reliability_snapshot`, require fewer than one
+match in ten minutes, and enable only after rollout. SQL insight rules produce
+no rows for stale impact telemetry, which is why the missing-data rule is
+separate. The expiry-rate metric returns zero below its minimum traffic floor;
+the canonical impact table still shows the actual counts.
+
+Browser deadline and recovery panels deduplicate by random attempt UUID within
+each reason. Reasons can overlap, blocked analytics can undercount, and these
+panels must never be presented as unique trader counts.
+
+## Interrupted browser attempts
+
+New browser reports attach an allowlisted `failureStep` and `reasonCode` to
+`execution_interrupted` and `deadline_elapsed`. For example, `wallet_approval`
+with `WALLET_DECLINED` means the wallet provider explicitly returned code 4001;
+an arbitrary wallet error stays `UNKNOWN`. Messages, stacks, URLs, calldata,
+signatures and wallet addresses are never inspected or exported for this purpose.
+
+The API stores `failure_step` and `reason_code` in `aa_attempt_events`, scoped to
+the same first-party client as the preparation. It emits `aa_browser_attempt_failure`
+only for a newly persisted report. CloudWatch and PostHog Logs receive the safe
+fields plus the support reference and `failure_source=browser`. This is advisory
+browser evidence; it never changes the canonical diagnostic, authorization,
+submission state or recovery decision. A timeout during submission does not prove
+that the operation was never sent.
+
+Each attempt/source/stage retains its first observation. Retries and duplicate
+reports do not overwrite it. Old reports remain valid with null detail fields;
+missing historical reasons cannot be reconstructed or backfilled by this change.
+Reports without a persisted preparation matching the first-party client cannot
+be linked and are dropped, as with the existing stage-only timeline.
+Logs are best effort after persistence, so consult the database if export is lost.
+
+Before deploying the backend, apply the idempotent
+`config/migrations/aa-attempt-failure-v1.sql` (also included in `schema.sql`). Then
+deploy the backend and log router before the frontend. Older backends reject the
+new diagnostic shape, which drops telemetry but does not affect trading. Rollback
+may leave the additive columns in place. Verify a controlled wallet rejection and
+deadline refusal produce the expected step/reason in both the timeline and Logs.
+
+Support lookup (read-only; supply an exact attempt UUID):
+
+```sql
+SELECT observed_at, source, stage, failure_step, reason_code
+FROM aa_attempt_events
+WHERE attempt_id = :'attempt_id'::uuid
+ORDER BY observed_at;
+```
+
+## Frontend API and recovery diagnostics
+
+The `plether-web` log `frontend api request failed` includes a fixed `endpoint`
+identifier for each typed API-client method. It exports no path, query string,
+request body, response body, account, order or claim identifier. Existing
+`operation` values and success-log volume are unchanged.
+
+Use `response_format` (`json`, `html`, `text`, `other`, or `none`) alongside
+`http_status` to distinguish a non-JSON HTTP failure from a transport failure.
+`none` means no response was received. Status and format remain available if
+body decoding fails or times out, so a logged failure with HTTP 200 can mean
+the response body was unusable. `cf_ray` is exported only when the response
+header matches the bounded Cloudflare Ray-ID format; missing or inaccessible
+headers remain absent. A Ray ID enables edge correlation but does not itself
+establish which layer caused the failure.
+
+The `react application recovery screen shown` log includes a support reference
+and a bounded `reason_code`: `module_load_failed`, `dom_node_missing`, or
+`render_failed`. This log is attempted independently of exception export.
+`dom_node_missing` classifies a `NotFoundError`; it does not prove that a
+translator or browser extension caused it. Missing historical exception
+details cannot be reconstructed from these new fields. These changes require
+a frontend deployment; they do not enable ALB access logs or change edge rules.
+
+## Validation
+
+Run `lua posthog-projection.test.lua` in `apps/backend/otel-log-router` and
+`node --test apps/backend/otel-log-router/routing.test.mjs` from the repo root.
+The PostgreSQL integration cases (`Order reliability PostgreSQL`) cover case
+normalization, repeated failures, router isolation, exact cohort boundaries,
+pending-to-executed transitions, repeated observations and empty windows.
+They use only a session-local temporary table. Existing database diagnostic
+tests verify read-only connection settings, timeouts and cancellation.

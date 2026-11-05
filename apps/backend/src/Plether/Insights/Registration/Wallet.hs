@@ -1,6 +1,7 @@
 module Plether.Insights.Registration.Wallet
   ( walletChallengeLifetimeSeconds
   , renderWalletChallenge
+  , renderDivisionsWalletChallenge
   , recoverPersonalSignAddress
   ) where
 
@@ -66,6 +67,24 @@ renderWalletChallenge canonicalOrigin competitionSlug chainId ownerAddress nonce
           <> renderTimestamp issuedAt
           <> "\nExpiration Time: "
           <> renderTimestamp expiresAt
+  where
+    normalizedOwner = T.toLower $ T.strip ownerAddress
+    domain = maybe canonicalOrigin id $ T.stripPrefix "https://" canonicalOrigin
+
+renderDivisionsWalletChallenge
+  :: Text -> Integer -> Text -> Text -> Integer -> Integer -> Either Text Text
+renderDivisionsWalletChallenge canonicalOrigin chainId ownerAddress nonce issuedAt expiresAt
+  | not (isCanonicalAddress normalizedOwner) || normalizedOwner == zeroAddress = Left "Wallet address is invalid"
+  | T.length nonce < 8 || not (T.all isAsciiAlphaNumeric nonce) = Left "Wallet challenge nonce is invalid"
+  | expiresAt <= issuedAt = Left "Wallet challenge expiry is invalid"
+  | otherwise = Right $
+      domain <> " wants you to sign in with your Ethereum account:\n"
+        <> normalizedOwner
+        <> "\n\nLink this owner wallet to Discord for Plether Divisions. This request will not trigger a blockchain transaction.\n\nURI: "
+        <> canonicalOrigin <> "/register\nVersion: 1\nChain ID: "
+        <> T.pack (show chainId) <> "\nNonce: " <> nonce
+        <> "\nIssued At: " <> renderTimestamp issuedAt
+        <> "\nExpiration Time: " <> renderTimestamp expiresAt
   where
     normalizedOwner = T.toLower $ T.strip ownerAddress
     domain = maybe canonicalOrigin id $ T.stripPrefix "https://" canonicalOrigin

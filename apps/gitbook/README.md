@@ -2,17 +2,19 @@
 
 > **Trade and hedge dollar index perpetuals. Onchain.**
 >
-> Margined and settled in USDC[^usdc]. Bounded payouts. Solvency-checked entry. Delayed oracle[^oracle] execution.
+> Margined and settled in USDG[^usdg]. Bounded payouts. Solvency-checked entry. Delayed oracle[^oracle] execution.
+
+The USDG testnet release is being prepared. Funding and trading open after deployment. Testnet examples use MockUSDG, which has no real-world value.
 
 Holding dollars feels neutral. It isn’t.
 
-Much of onchain finance is already denominated in dollars. If you hold USDC but earn, spend, or report in another currency, changes in the dollar affect your purchasing power. That exposure is a position, whether you chose it or not.
+Much of onchain finance is already denominated in dollars. If you hold USDG but earn, spend, or report in another currency, changes in the dollar affect your purchasing power. That exposure is a position, whether you chose it or not.
 
 Plether makes that position explicit.
 
-Plether Perps[^perps] DEX[^dex] is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. It is built for **USDC-first, gas-sponsored trading**: eligible perps actions use wallet authorization and a sponsored operation instead of requiring the trader to hold the network’s native gas token. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for the account model, eligible actions and availability limits.
+Plether Perps[^perps] DEX[^dex] is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. It is built for **USDG-first, gas-sponsored trading**: eligible perps actions use wallet authorization and a sponsored operation instead of requiring the trader to hold the network’s native gas token. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for the account model, eligible actions and availability limits.
 
-Traders use USDC margin to take either side:
+Traders use USDG margin to take either side:
 
 | Position      | Your view                  | Profits when                        |
 | ------------- | -------------------------- | ----------------------------------- |
@@ -25,11 +27,11 @@ The market is basket-derived. It is not a wrapped futures contract or a tokenize
 
 ### How a trade works
 
-1. Deposit USDC into your Margin Account.
+1. Deposit USDG into your Margin Account.
 2. Authorize the Trading Account action; Plether submits the eligible sponsored operation that commits the binding order.
 3. A keeper[^keeper] executes the order against the eligible Pyth observation under the active market-state policy. Live execution uses the first eligible post-commit observation.
 4. The liquidity pool takes the other side of the position.
-5. Profit, loss, fees, and remaining margin are accounted for in USDC.
+5. Profit, loss, fees, and remaining margin are accounted for in USDG.
 
 Orders enter a global first-in, first-out queue and cannot be cancelled after commitment.
 
@@ -49,7 +51,7 @@ Bounded liability does not remove risk. Traders can still be liquidated, and liq
 
 ### Where liquidity comes from
 
-Liquidity providers deposit USDC into the liquidity pool through two tranches[^tranche]:
+Liquidity providers deposit USDG into the liquidity pool through two tranches[^tranche]:
 
 * The **Senior tranche** targets a coupon funded from available Junior value and has last-loss priority. The target is not guaranteed, and Senior capital can still be impaired after Junior capital is exhausted.
 * The **Junior tranche** absorbs losses first and receives the residual upside after Senior obligations have been accounted for.
@@ -74,7 +76,7 @@ Before using Plether, understand that:
 * Leveraged positions can be liquidated.
 * Profitable settlements can temporarily become trader claims.
 * LP deposits can lose value or become temporarily unavailable for withdrawal.
-* Smart-contract, oracle, USDC, keeper, liquidity, and governance risks remain.
+* Smart-contract, oracle, USDG, keeper, liquidity, and governance risks remain.
 
 ### Onchain macro starts here
 
@@ -82,12 +84,12 @@ Onchain finance already runs on dollars. Plether makes the dollar itself a marke
 
 Building an automated strategy? [AI trading agents](welcome/ai-trading-agents.md) explains how oracle execution, bounded liability and verifiable financial limits support systematic dollar trading and hedging.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^dex]: Decentralized exchange, an onchain venue for trading without a traditional centralized intermediary.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^fx]: Foreign exchange, the market for trading one currency against another.

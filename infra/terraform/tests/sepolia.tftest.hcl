@@ -9,6 +9,16 @@ mock_provider "aws" {
     override_during = plan
     defaults        = { arn = "arn:aws:iam::932542905614:role/synthetic-test-role" }
   }
+  override_resource {
+    override_during = plan
+    target          = aws_iam_role.api_execution
+    values          = { arn = "arn:aws:iam::932542905614:role/synthetic-api-execution" }
+  }
+  override_resource {
+    override_during = plan
+    target          = aws_iam_role.aa_reconciler_execution[0]
+    values          = { arn = "arn:aws:iam::932542905614:role/synthetic-aa-reconciler-execution" }
+  }
   mock_resource "aws_kms_key" {
     override_during = plan
     defaults        = { arn = "arn:aws:kms:ap-southeast-1:932542905614:key/22222222-2222-2222-2222-222222222222" }
@@ -46,8 +56,9 @@ variables {
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
 }
-run "insights_v123_without_native_aa" {
-  command = plan
+run "reject_insights_without_release_bindings" {
+  command         = plan
+  expect_failures = [terraform_data.deployment_target_guard, aws_ecs_task_definition.api]
   variables {
     insights_active_competition_slug = "testnet-trading-2026-09"
     insights_competition_release_id  = "testnet-trading-2026-09"
@@ -59,23 +70,12 @@ run "insights_v123_without_native_aa" {
     error_message = "The API, indexer, and snapshot worker must share the September release binding without requiring native AA."
   }
 }
-run "reject_insights_other_release_lens" {
+run "reject_historical_lifecycle_without_release_bindings" {
   command = plan
   variables {
-    insights_active_competition_slug = "testnet-trading-2026-09"
-    insights_competition_release_id  = "testnet-trading-2026-09"
-    perps_account_lens               = "0x1111111111111111111111111111111111111111"
+    perps_order_lifecycle_book = "0x519f57a34fb440c42bfd2d8328d2f80349af3872"
   }
-  expect_failures = [terraform_data.deployment_target_guard]
-}
-run "reject_insights_incomplete_history" {
-  command = plan
-  variables {
-    insights_active_competition_slug = "testnet-trading-2026-09"
-    insights_competition_release_id  = "testnet-trading-2026-09"
-    perps_indexer_start_block        = "307397197"
-  }
-  expect_failures = [terraform_data.deployment_target_guard]
+  expect_failures = [terraform_data.deployment_target_guard, terraform_data.perps_candle_rollout_guard, terraform_data.lp_settlement_keeper_guard]
 }
 run "preserve_singapore_identity" {
   command = plan
@@ -112,20 +112,30 @@ run "deployment_metadata_permissions" {
     error_message = "The metadata list grant must be read-only and region-bound."
   }
   assert {
-    condition = alltrue([
-      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement :
-      s.Action == "kms:DescribeKey" && toset(s.Resource) == toset([data.aws_kms_key.aa_ssm_managed[0].arn])
+    condition = one([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : s
       if s.Sid == "InspectAaRpcEncryptionKeys"
-    ])
+      ]) == {
+      Sid      = "InspectAaRpcEncryptionKeys"
+      Effect   = "Allow"
+      Action   = "kms:DescribeKey"
+      Resource = ["arn:aws:kms:ap-southeast-1:932542905614:key/11111111-1111-1111-1111-111111111111"]
+    }
     error_message = "Default-key inspection must not grant decrypt/sign or wildcard key access."
   }
   assert {
-    condition = alltrue([
-      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement :
-      toset(s.Action) == toset(["iam:GetRolePolicy", "iam:ListRolePolicies"]) &&
-      toset(s.Resource) == toset([aws_iam_role.api_execution.arn, aws_iam_role.aa_reconciler_execution[0].arn])
+    condition = one([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : s
       if s.Sid == "InspectAaRpcConsumerPolicies"
-    ])
+      ]) == {
+      Sid    = "InspectAaRpcConsumerPolicies"
+      Effect = "Allow"
+      Action = ["iam:GetRolePolicy", "iam:ListRolePolicies"]
+      Resource = [
+        "arn:aws:iam::932542905614:role/synthetic-api-execution",
+        "arn:aws:iam::932542905614:role/synthetic-aa-reconciler-execution",
+      ]
+    }
     error_message = "Consumer-policy inspection must be limited to the API/reconciler roles."
   }
 }
@@ -162,19 +172,24 @@ run "deployment_customer_key_metadata_permissions" {
     aa_reconciler_secondary_rpc_url_kms_key_arn        = "arn:aws:kms:ap-southeast-1:932542905614:key/33333333-3333-3333-3333-333333333333"
   }
   assert {
-    condition = alltrue([
-      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement :
-      s.Action == "kms:DescribeKey" && toset(s.Resource) == toset([
-        data.aws_kms_key.aa_ssm_managed[0].arn,
-        var.aa_reconciler_secondary_rpc_url_kms_key_arn,
-      ])
+    condition = one([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : s
       if s.Sid == "InspectAaRpcEncryptionKeys"
-    ])
+      ]) == {
+      Sid    = "InspectAaRpcEncryptionKeys"
+      Effect = "Allow"
+      Action = "kms:DescribeKey"
+      Resource = [
+        "arn:aws:kms:ap-southeast-1:932542905614:key/11111111-1111-1111-1111-111111111111",
+        "arn:aws:kms:ap-southeast-1:932542905614:key/33333333-3333-3333-3333-333333333333",
+      ]
+    }
     error_message = "Customer-key metadata inspection must name only the configured key and SSM default key."
   }
 }
-run "public_sepolia" {
-  command = plan
+run "reject_public_sepolia_without_release_bindings" {
+  command         = plan
+  expect_failures = [terraform_data.deployment_target_guard]
   variables {
     configure_native_aa_backend      = true
     alto_sepolia_safe_mode_exception = true
@@ -220,52 +235,12 @@ run "reject_public_without_funding" {
     aa_native_global_rollout_enabled = true
     aa_native_canary_owners          = ""
   }
-  expect_failures = [terraform_data.self_hosted_aa_guard]
-}
-run "reject_mismatched_core" {
-  command = plan
-  variables {
-    configure_native_aa_backend = true
-    alto_desired_count          = 1
-    aa_reconciler_desired_count = 1
-    perps_senior_vault          = "0x1111111111111111111111111111111111111111"
-  }
-  expect_failures = [terraform_data.deployment_target_guard]
+  expect_failures = [terraform_data.self_hosted_aa_guard, terraform_data.deployment_target_guard]
 }
 run "reject_public_unconfigured" {
   command = plan
   variables { aa_native_global_rollout_enabled = true }
   expect_failures = [terraform_data.self_hosted_aa_guard]
-}
-run "reject_mismatched_history_senior" {
-  command = plan
-  variables {
-    configure_native_aa_backend        = true
-    alto_desired_count                 = 1
-    aa_reconciler_desired_count        = 1
-    vault_history_senior_vault_address = "0x1111111111111111111111111111111111111111"
-  }
-  expect_failures = [terraform_data.deployment_target_guard]
-}
-run "reject_mismatched_history_junior" {
-  command = plan
-  variables {
-    configure_native_aa_backend        = true
-    alto_desired_count                 = 1
-    aa_reconciler_desired_count        = 1
-    vault_history_junior_vault_address = "0x1111111111111111111111111111111111111111"
-  }
-  expect_failures = [terraform_data.deployment_target_guard]
-}
-run "reject_mismatched_history_anchor" {
-  command = plan
-  variables {
-    configure_native_aa_backend    = true
-    alto_desired_count             = 1
-    aa_reconciler_desired_count    = 1
-    vault_history_deployment_block = "307397197"
-  }
-  expect_failures = [terraform_data.deployment_target_guard]
 }
 run "reject_public_mainnet_chain" {
   command = plan

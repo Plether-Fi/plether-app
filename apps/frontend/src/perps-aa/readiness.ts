@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { reportReadiness } from '../analytics/readiness'
+import { responseClock } from './responseClock'
 
 export type ReadinessStatus = 'ready' | 'blocked' | 'unknown'
 export type ReadinessAction = 'deposit' | 'open' | 'close' | 'protection'
@@ -15,6 +16,10 @@ export interface ReadinessSnapshot {
 }
 const actions = ['deposit', 'open', 'close', 'protection'] as const
 const statuses = ['ready', 'blocked', 'unknown']
+const responseClocks = new WeakMap<ReadinessSnapshot, { now(): number }>()
+function readinessNow(snapshot: ReadinessSnapshot | undefined) {
+  return (snapshot && responseClocks.get(snapshot)?.now()) ?? Date.now()
+}
 export function parseReadiness(value: unknown, now = Date.now()): ReadinessSnapshot {
   if (!value || typeof value !== 'object') throw new Error('Invalid readiness')
   const v = value as Record<string, unknown>
@@ -52,21 +57,27 @@ export function parseReadiness(value: unknown, now = Date.now()): ReadinessSnaps
   }
   return { version: 1, observedAt: v.observedAt, expiresAt: v.expiresAt, enforcementEnabled: v.enforcementEnabled, actions: parsed, workers }
 }
-export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = Date.now()): ReadinessCheck[] {
+export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = readinessNow(snapshot)): ReadinessCheck[] {
   return !snapshot || snapshot.expiresAt <= now || snapshot.observedAt > now + 5_000
     ? [{ component: 'readiness', status: 'unknown', reason: 'READINESS_UNAVAILABLE' }]
     : snapshot.actions[action]
 }
-export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = Date.now()): ReadinessCheck | undefined {
-  return snapshot?.enforcementEnabled ? readinessChecks(snapshot, action, now).find(c => c.status === 'blocked') : undefined
+export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = readinessNow(snapshot)): ReadinessCheck | undefined {
+  // A confirmed sponsorship pause is authoritative even while broader worker
+  // readiness remains observation-only. Unknown/stale observations never block.
+  return readinessChecks(snapshot, action, now).find(c => c.status === 'blocked' && (
+    snapshot?.enforcementEnabled === true ||
+    ((c.component === 'sponsorship' || c.component === 'paymaster') &&
+      (c.reason === 'PAYMASTER_PAUSED' || c.reason === 'SPONSORSHIP_DISABLED'))
+  ))
 }
-export function readinessWorkers(snapshot: ReadinessSnapshot | undefined, now = Date.now()): ReadinessCheck[] {
+export function readinessWorkers(snapshot: ReadinessSnapshot | undefined, now = readinessNow(snapshot)): ReadinessCheck[] {
   return !snapshot || snapshot.expiresAt <= now || snapshot.observedAt > now+5_000 ? [] : snapshot.workers ?? []
 }
 
 let snapshot: ReadinessSnapshot | undefined
 let inflight: Promise<void> | undefined
-let lastStarted = 0
+let lastStarted = -Infinity
 let revision = 0
 const listeners = new Set<() => void>()
 let timer: ReturnType<typeof setInterval> | undefined
@@ -74,13 +85,16 @@ function publish() { revision++; listeners.forEach(fn => { fn() }) }
 export function currentReadiness() { return snapshot }
 export function refreshReadiness(force = false): Promise<void> {
   if (inflight) return inflight
-  if (!force && Date.now() - lastStarted < 10_000) return Promise.resolve()
-  lastStarted = Date.now()
+  if (!force && performance.now() - lastStarted < 10_000) return Promise.resolve()
+  lastStarted = performance.now()
   inflight = (async () => {
     try {
       const response = await fetch('/api/perps/v1/readiness', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(4_000) })
       if (!response.ok) throw new Error('Readiness unavailable')
-      snapshot = parseReadiness(await response.json())
+      const value: unknown = await response.json()
+      const clock = responseClock(response, lastStarted)
+      snapshot = parseReadiness(value, clock.now())
+      responseClocks.set(snapshot, clock)
       reportReadiness([...actions.flatMap(action => readinessChecks(snapshot, action)), ...(snapshot.workers ?? [])])
     } catch {
       // A stale response must not remain a hard blocker. Authorization is independent.
@@ -113,7 +127,7 @@ const messages: Record<string, string> = {
   AUTHORIZATION_EXPIRED: 'The unused gas sponsorship expired and was safely reconciled. Recover and discard the saved attempt before preparing a new action.',
   PREPARATION_UNUSABLE: 'The saved preparation can no longer be signed. Check recovery to discard it when available.',
   SPONSORSHIP_DISABLED: 'Gas sponsorship is temporarily disabled.',
-  PAYMASTER_PAUSED: 'Gas sponsorship is paused.',
+  PAYMASTER_PAUSED: 'Gas sponsorship is temporarily paused. New sponsored transactions are unavailable until service resumes.',
   RECONCILIATION_STALE: 'Sponsorship accounting is catching up.',
   BUNDLER_UNAVAILABLE: 'Transaction submission could not be verified.',
   KEEPER_INSUFFICIENT_FUNDS: 'The trade execution worker needs funding.',

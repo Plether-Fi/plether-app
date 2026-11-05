@@ -56,11 +56,20 @@ describe('application recovery boundary', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeVisible())
     expect(screen.getByRole('heading')).toHaveTextContent('could not load')
     expect(screen.getByText(/Check your connection/)).toBeVisible()
+    expect(captureFrontendLog).toHaveBeenCalledWith('error', expect.any(String), expect.objectContaining({ reason_code: 'module_load_failed' }))
+  })
+
+  it('identifies a missing DOM node without including exception messages in recovery logs', () => {
+    function BrokenDom(): never { throw new DOMException('private DOM details', 'NotFoundError') }
+    render(<AppErrorBoundary><BrokenDom /></AppErrorBoundary>)
+    expect(captureFrontendLog).toHaveBeenCalledWith('error', expect.any(String), expect.objectContaining({ reason_code: 'dom_node_missing' }))
+    expect(JSON.stringify(vi.mocked(captureFrontendLog).mock.calls)).not.toContain('private DOM details')
   })
 
   it('still renders the recovery screen if telemetry throws', () => {
     vi.mocked(captureReactException).mockImplementationOnce(() => { throw new Error('telemetry failed') })
     render(<AppErrorBoundary><BrokenProvider /></AppErrorBoundary>)
     expect(screen.getByRole('button', { name: 'Reload page' })).toBeVisible()
+    expect(captureFrontendLog).toHaveBeenCalledWith('error', expect.any(String), expect.objectContaining({ reason_code: 'render_failed' }))
   })
 })

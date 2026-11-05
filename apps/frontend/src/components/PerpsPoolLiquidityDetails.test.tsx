@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { PerpsPoolLiquidityDetails } from './PerpsPoolLiquidityDetails'
 
 const HEALTHY_PROPS = {
-  poolAssetsUsdc: 10_000_000n * 1_000_000n,
-  freeUsdc: 6_300_000n * 1_000_000n,
-  juniorPrincipal: '3.2M USDC',
-  seniorPrincipal: '6.8M USDC',
+  poolAssets: 10_000_000n * 1_000_000n,
+  freeAssets: 6_300_000n * 1_000_000n,
+  juniorPrincipal: '3.2M USDG',
+  seniorPrincipal: '6.8M USDG',
   juniorSharePercent: 32,
   seniorSharePercent: 68,
   seniorStatus: 'at-high-water-mark' as const,
@@ -16,9 +16,9 @@ describe('PerpsPoolLiquidityDetails', () => {
   it('distinguishes pool assets and free liquidity from tranche accounting capital', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} />)
 
-    expect(screen.getByText('Total pool assets')).toBeVisible()
+    expect(screen.getByText('Total pool USDG')).toBeVisible()
     expect(screen.getByText('10 000 000')).toBeVisible()
-    expect(screen.getByText('Reserved pool assets')).toBeVisible()
+    expect(screen.getByText('Reserved pool USDG')).toBeVisible()
     expect(screen.getByText('3 700 000')).toBeVisible()
     expect(screen.getByText('37.0%')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'What this means for trading' })).toBeVisible()
@@ -35,7 +35,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     expect(screen.queryByText('(68%)')).not.toBeInTheDocument()
     expect(screen.getByText('Senior is at its protected balance')).toBeVisible()
     expect(screen.getByText(/Junior protects Senior from the first/)).toHaveTextContent(
-      'Junior protects Senior from the first 3.2M USDC of pool losses'
+      'Junior protects Senior from the first 3.2M USDG of pool losses'
     )
     expect(screen.getByText(/Withdrawals depend on the liquidity available/)).toHaveTextContent(
       'Withdrawals depend on the liquidity available at each hourly processing time.'
@@ -44,9 +44,9 @@ describe('PerpsPoolLiquidityDetails', () => {
 
   it('explains a nearly reserved pool without advertising executable capacity', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS}
-      poolAssetsUsdc={590_100_000n * 1_000_000n}
-      freeUsdc={1_100n * 1_000_000n}
-      juniorPrincipal="585.1M USDC" seniorPrincipal="5M USDC"
+      poolAssets={590_100_000n * 1_000_000n}
+      freeAssets={1_100n * 1_000_000n}
+      juniorPrincipal="585.1M USDG" seniorPrincipal="5M USDG"
       juniorSharePercent={99.2} seniorSharePercent={0.8}
     />)
 
@@ -66,10 +66,10 @@ describe('PerpsPoolLiquidityDetails', () => {
     { assets: 1_000_000n, free: 2_000_000n, share: undefined },
     { assets: undefined, free: 0n, share: undefined },
     { assets: 1_000_000n, free: undefined, share: undefined },
-  ])('handles reserved share for $assets assets and $free free USDC', ({ assets, free, share }) => {
-    render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssetsUsdc={assets} freeUsdc={free} />)
+  ])('handles reserved share for $assets assets and $free free USDG', ({ assets, free, share }) => {
+    render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssets={assets} freeAssets={free} />)
     if (share) expect(screen.getByText(share)).toBeVisible()
-    else expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
+    else expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
     const amounts = screen.getAllByRole('definition').slice(0, 4)
     if (assets === undefined || free === undefined || free > assets) {
       expect(amounts.some((amount) => amount.textContent === '--')).toBe(true)
@@ -80,27 +80,27 @@ describe('PerpsPoolLiquidityDetails', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} isLoading />)
     expect(screen.getAllByText('...')).toHaveLength(2)
     expect(screen.queryByText('3 700 000')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
   })
 
   it('keeps a tiny positive reserve distinct from zero', () => {
-    render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssetsUsdc={1_000_000n} freeUsdc={999_999n} />)
+    render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssets={1_000_000n} freeAssets={999_999n} />)
     expect(screen.getByText('<0.01')).toBeVisible()
     expect(screen.getByText('<0.1%')).toBeVisible()
   })
 
   it('shows an empty pool without a percentage', () => {
-    render(<PerpsPoolLiquidityDetails poolAssetsUsdc={0n} freeUsdc={0n} isEmpty />)
+    render(<PerpsPoolLiquidityDetails poolAssets={0n} freeAssets={0n} isEmpty />)
     expect(screen.getAllByText('0')).toHaveLength(2)
     expect(screen.getByText('No vault capital yet')).toBeVisible()
-    expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
   })
 
   it('shows factual exhausted and impaired states', () => {
     const { rerender } = render(
       <PerpsPoolLiquidityDetails
         {...HEALTHY_PROPS}
-        juniorPrincipal="0 USDC"
+        juniorPrincipal="0 USDG"
         juniorSharePercent={0}
         seniorSharePercent={100}
         isJuniorExhausted
@@ -113,18 +113,18 @@ describe('PerpsPoolLiquidityDetails', () => {
     rerender(
       <PerpsPoolLiquidityDetails
         {...HEALTHY_PROPS}
-        juniorPrincipal="0 USDC"
-        seniorPrincipal="5.9M USDC"
+        juniorPrincipal="0 USDG"
+        seniorPrincipal="5.9M USDG"
         juniorSharePercent={0}
         seniorSharePercent={100}
         seniorStatus="impaired"
-        seniorImpairment="900K USDC"
+        seniorImpairment="900K USDG"
         isJuniorExhausted
       />
     )
 
     expect(screen.getByText(/Senior is below its protected balance by/)).toHaveTextContent(
-      'Senior is below its protected balance by 900K USDC'
+      'Senior is below its protected balance by 900K USDG'
     )
     expect(screen.queryByText("Further pool losses would reduce Senior's value")).not.toBeInTheDocument()
   })

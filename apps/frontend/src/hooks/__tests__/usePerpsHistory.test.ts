@@ -58,9 +58,9 @@ describe('waitForPerpsOrderTerminal', () => {
           executionMode: 'Live',
           receiptHash: `0x${'34'.repeat(32)}`,
           receiptEconomics: {
-            executionBountyUsdc: '200000',
-            vpiUsdc: '182822887',
-            frozenSpreadUsdc: '0',
+            executionBountyAssets: '200000',
+            vpiAssets: '182822887',
+            frozenSpreadAssets: '0',
           },
           executionPrice: '98391251',
           executionOraclePrice: '98391482',
@@ -70,7 +70,7 @@ describe('waitForPerpsOrderTerminal', () => {
           executionEconomicsVersion: 2,
           activityType: 'Close',
           activityPrice: '98391251',
-          activityVpiUsdc: '-182822887',
+          activityVpiAssets: '-182822887',
         },
       },
     }), {
@@ -100,13 +100,13 @@ describe('waitForPerpsOrderTerminal', () => {
         oracleMinPublishTimeRaw: 1_785_437_834n,
         oracleMaxPublishTimeRaw: 1_785_437_834n,
         oracleDerivationVersion: 1,
-        vpiUsdcRaw: 182_822_887n,
+        vpiAssetsRaw: 182_822_887n,
         receiptEconomics: expect.objectContaining({
-          executionBountyUsdc: '200000',
+          executionBountyAssets: '200000',
         }),
         executionEconomicsVersion: 2,
         activityPriceRaw: 98_391_251n,
-        activityVpiUsdcRaw: -182_822_887n,
+        activityVpiAssetsRaw: -182_822_887n,
       }),
     })
     expect(fetchMock).toHaveBeenCalledOnce()

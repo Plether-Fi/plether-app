@@ -15,7 +15,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
 ENV PATH="/opt/.ghcup/bin:${PATH}"
 
 ARG AWS_RDS_CA_BUNDLE_URL=https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
-ARG AWS_RDS_CA_BUNDLE_SHA256=e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3
+ARG AWS_RDS_CA_BUNDLE_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
 RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --retry 3 \
       --output /tmp/aws-rds-global-bundle.pem "$AWS_RDS_CA_BUNDLE_URL" && \
     echo "$AWS_RDS_CA_BUNDLE_SHA256  /tmp/aws-rds-global-bundle.pem" | sha256sum --check --strict
@@ -29,7 +29,7 @@ COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/schema.sql schema.sql
 COPY apps/backend/config/migrations/ config/migrations/
-COPY config/perps/arbitrum-sepolia-v2.json config/perps/arbitrum-sepolia-v2.json
+COPY config/perps/arbitrum-sepolia-v2.0.0.json config/perps/arbitrum-sepolia-v2.0.0.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
@@ -57,6 +57,12 @@ COPY apps/backend/protection-worker/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/backend/protection-worker/ ./
 
+FROM node:22-bookworm-slim AS return-attribution
+WORKDIR /return-attribution
+COPY apps/backend/return-attribution/package*.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY apps/backend/return-attribution/ ./
+
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -78,15 +84,19 @@ COPY --from=builder --chmod=0644 /tmp/aws-rds-global-bundle.pem /etc/ssl/certs/a
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY --from=protection-worker /protection /app/protection
-COPY config/perps/arbitrum-sepolia-v2.json /app/config/perps/arbitrum-sepolia-v2.json
+COPY --from=return-attribution /return-attribution /app/return-attribution
+COPY config/perps/arbitrum-sepolia-v2.0.0.json /app/config/perps/arbitrum-sepolia-v2.0.0.json
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 COPY apps/backend/schema.sql /app/schema.sql
-COPY apps/backend/config/migrations/insights-integrity-epoch-v1.sql /app/config/migrations/insights-integrity-epoch-v1.sql
+COPY apps/backend/config/migrations/aa-attempt-failure-v1.sql /app/config/migrations/aa-attempt-failure-v1.sql
+COPY apps/backend/config/migrations/insights-integrity-epoch-v2.sql /app/config/migrations/insights-integrity-epoch-v2.sql
 COPY apps/backend/config/migrations/insights-snapshot-deferred-fk-v1.sql /app/config/migrations/insights-snapshot-deferred-fk-v1.sql
-COPY apps/backend/config/migrations/insights-integrity-indexes-v1.sql /app/config/migrations/insights-integrity-indexes-v1.sql
+COPY apps/backend/config/migrations/insights-integrity-indexes-v2.sql /app/config/migrations/insights-integrity-indexes-v2.sql
 COPY apps/backend/scripts/recover-faucet-nonce.mjs /app/scripts/recover-faucet-nonce.mjs
+COPY apps/backend/scripts/recover-margin-funding-nonce.mjs /app/scripts/recover-margin-funding-nonce.mjs
+COPY apps/backend/config/migrations/testnet-margin-funding-v1.sql /app/config/migrations/testnet-margin-funding-v1.sql
 COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql
 
 WORKDIR /app

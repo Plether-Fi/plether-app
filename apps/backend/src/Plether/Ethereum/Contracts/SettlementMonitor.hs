@@ -120,9 +120,9 @@ reviewedSettlementCodeHashes =
     }
 
 supportedConfigSchemaVersion :: Integer
-supportedConfigSchemaVersion = 4
+supportedConfigSchemaVersion = 6
 
--- The deployed v1.2.2 facade writes CONFIG_SCHEMA_VERSION into observation
+-- The deployed v2.0.0 facade (core 1209ca8) writes CONFIG_SCHEMA_VERSION into observation
 -- word zero. Keep the observation gate named separately so a future facade
 -- can version the two surfaces independently without weakening validation.
 supportedObservationSchemaVersion :: Integer
@@ -307,24 +307,26 @@ decodeSettlementStatus bytes
       Left $ RpcJsonError "getSettlementStatus(uint256) did not return exactly 109 ABI words"
   | otherwise = decodeStatusAt 0 bytes
 
+-- Schema 6 adds accounting.liquidityPreviewAvailable at word 142. The
+-- following oracle/health/digest fields therefore move one word after schema 4.
 decodeSettlementObservation :: ByteString -> Either RpcError SettlementObservation
 decodeSettlementObservation bytes
   | BS.length bytes /= observationWordCount * 32 =
-      Left $ RpcJsonError "getSettlementObservation(uint256) did not return exactly 194 ABI words"
+      Left $ RpcJsonError "getSettlementObservation(uint256) did not return exactly 195 ABI words"
   | otherwise = do
       status <- decodeStatusAt 1 bytes
       observationComplete <-
         decodeCanonicalBool
           "getSettlementObservation(uint256).observationComplete"
-          (wordBytesAt 193 bytes)
+          (wordBytesAt 194 bytes)
       pure
         SettlementObservation
           { soSchemaVersion = wordAt 0 bytes
           , soStatus = status
-          , soHealthState = wordAt 159 bytes
-          , soCriticalFaultMask = wordAt 160 bytes
-          , soHealthDependencyFailureMask = wordAt 161 bytes
-          , soObservationDigest = bytes32Hex $ wordBytesAt 191 bytes
+          , soHealthState = wordAt 160 bytes
+          , soCriticalFaultMask = wordAt 161 bytes
+          , soHealthDependencyFailureMask = wordAt 162 bytes
+          , soObservationDigest = bytes32Hex $ wordBytesAt 192 bytes
           , soObservationComplete = observationComplete
           }
 
@@ -503,4 +505,4 @@ settlementStatusWordCount :: Int
 settlementStatusWordCount = 109
 
 observationWordCount :: Int
-observationWordCount = 194
+observationWordCount = 195

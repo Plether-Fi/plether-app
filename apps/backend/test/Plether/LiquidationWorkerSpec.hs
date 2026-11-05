@@ -17,6 +17,7 @@ import Plether.Config
 import Plether.Database.Schema
   ( BasketSnapshotRow (..)
   , PythUpdatePayloadRow (..)
+  , PairedPythUpdatePayloadRow (..)
   )
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..))
@@ -55,6 +56,7 @@ import Plether.LiquidationWorker
   , checkLiveSignerBalance
   , decodeCachedPythPayload
   , decodeCachedLiquidationComponents
+  , decodePairedLiquidationComponents
   , decodeLiquidationRiskGlobals
   , decodePythStoredPriceResults
   , freshLiquidationRiskInputsFromCache
@@ -176,14 +178,16 @@ spec = do
         `shouldBe` map getAccountLedgerSnapshotCall accounts
 
     it "decodes successful snapshots without changing account order" $ do
-      let results =
-            [ Multicall.CallResult True $ encodedAccountSnapshot openHealthySnapshot
-            , Multicall.CallResult True $ encodedAccountSnapshot openRiskySnapshot
-            ]
+      let healthy = openHealthySnapshot {alsSize = 200_000_000_000_000_000_000,
+            alsMargin = 11_000_000, alsUnrealizedPnlAssets = -17}
+          risky = openRiskySnapshot {alsMargin = 777_000, alsUnrealizedPnlAssets = 23}
+          results = [Multicall.CallResult True $ encodedAccountSnapshot healthy,
+            Multicall.CallResult True $ encodedAccountSnapshot risky]
+      decodeLiquidationSnapshotResults 2 results `shouldBe` Right [Right healthy, Right risky]
       case decodeLiquidationSnapshotResults 2 results of
-        Right [Right first, Right second] ->
-          map alsSize [first, second] `shouldBe` [alsSize openHealthySnapshot, alsSize openRiskySnapshot]
-        other -> expectationFailure $ "expected two ordered snapshots, got " <> show other
+        Right snapshots -> selectLiquidationSimulationCandidates Nothing (zip [account,otherAccount] snapshots)
+          `shouldBe` [otherAccount]
+        other -> expectationFailure $ "expected two ordered complete snapshots: " <> show other
 
     it "isolates failed and malformed subcalls instead of treating them as safe" $ do
       let results =
@@ -218,8 +222,8 @@ spec = do
     it "uses the submitted fresh price instead of a stale stored-risk flag" $ do
       let freshPriceRisk =
             openHealthySnapshot
-              { alsAccountEquityUsdc = 2_000_000
-              , alsNetEquityUsdc = 2_000_000
+              { alsAccountEquityAssets = 2_000_000
+              , alsNetEquityAssets = 2_000_000
               , alsLiquidatable = False
               }
           storedRisk = openHealthySnapshot {alsLiquidatable = True}
@@ -235,14 +239,14 @@ spec = do
     it "includes the exact maintenance boundary but excludes a position safely above it" $ do
       let atBoundary =
             openHealthySnapshot
-              { alsAccountEquityUsdc = 1_000_000
-              , alsNetEquityUsdc = 1_000_000
+              { alsAccountEquityAssets = 1_000_000
+              , alsNetEquityAssets = 1_000_000
               , alsLiquidatable = False
               }
           aboveBoundary =
             atBoundary
-              { alsAccountEquityUsdc = 1_000_010
-              , alsNetEquityUsdc = 1_000_010
+              { alsAccountEquityAssets = 1_000_010
+              , alsNetEquityAssets = 1_000_010
               }
       selectLiquidationSimulationCandidates
         (Just neutralRiskInputs)
@@ -318,6 +322,39 @@ spec = do
         200_000_000
         500
         15_000
+        `shouldSatisfy` isLeft
+
+  describe "paired liquidation cache" $ do
+    it "validates the basket embedded in the selected payload" $
+      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just basketSnapshot) of
+        Right components -> map lbcPublishTime components `shouldBe` [102, 101]
+        Left err -> expectationFailure $ "expected valid signed components: " <> show err
+
+    it "fails closed on a legacy row without invoking future-block retries" $ do
+      let result = decodePairedLiquidationComponents $ PairedPythUpdatePayloadRow payload Nothing
+      case result of
+        Left err@LiquidationRiskInputCachePairUnavailable {..} -> do
+          lrcpReason `shouldBe` "cache_pair_missing"
+          lrcpPayloadBounds `shouldBe` (101, 102)
+          lrcpComponentBounds `shouldBe` Nothing
+          liquidationFuturePublishRetryDelaySeconds 5 err `shouldBe` Nothing
+        other -> expectationFailure $ "expected a missing-pair failure: " <> show other
+
+    it "rejects corrupt paired components and reports their timestamp bounds" $ do
+      let corrupt = basketSnapshot {bsrComponents = toJSON mismatchedPublishTimeComponents}
+      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just corrupt) of
+        Left LiquidationRiskInputCachePairUnavailable {..} -> do
+          lrcpReason `shouldBe` "cache_pair_invalid"
+          lrcpPayloadBounds `shouldBe` (101, 102)
+          lrcpComponentBounds `shouldSatisfy` (/= Nothing)
+        other -> expectationFailure $ "expected a corrupt-pair failure: " <> show other
+
+    it "still rejects an inconsistent basket price or malformed component JSON" $ do
+      decodePairedLiquidationComponents
+        (PairedPythUpdatePayloadRow payload $ Just basketSnapshot {bsrBasketPrice = 1})
+        `shouldSatisfy` isLeft
+      decodePairedLiquidationComponents
+        (PairedPythUpdatePayloadRow payload $ Just basketSnapshot {bsrComponents = toJSON ("invalid" :: Text)})
         `shouldSatisfy` isLeft
 
   describe "Pyth stored-price merge" $ do
@@ -493,7 +530,7 @@ spec = do
       retryCount `shouldBe` 0
       result `shouldBe` Left unrelatedError
 
-    it "refreshes the executable payload after retry and snapshot work" $ do
+    it "rejects an expired cached payload and loads fresh data at the supplied current time" $ do
       clock <- newIORef 100
       payloadFetchTimes <- newIORef []
       let advanceClock :: Int -> IO ()
@@ -552,7 +589,7 @@ spec = do
       readIORef payloadFetchTimes `shouldReturn` [112]
       executionPayload `shouldBe` Right [BS.pack [0xaa]]
 
-    it "refreshes and requotes every batch after receipt time advances" $ do
+    it "invokes the supplied preparation callback for every batch" $ do
       clock <- newIORef (100 :: Integer)
       availablePayloads <-
         newIORef
@@ -671,7 +708,7 @@ spec = do
         (\batch -> modifyIORef' calls (<> [batch]) >> pure (Just ()))
         (\_ _ -> pure BatchStopped)
       readIORef calls `shouldReturn` [[1]]
-    it "visits all 8000 accounts and executes 250 risks distributed across pages" $ do
+    it "iterates every supplied page and batch without dropping callback work" $ do
       seen <- newIORef ([] :: [Int])
       liquidated <- newIORef ([] :: [Int])
       completed <- runLiquidationSweep 1000 [1..8000] $ \page -> do
@@ -686,7 +723,7 @@ spec = do
       completed `shouldBe` True
       readIORef seen `shouldReturn` [1..8000]
       readIORef liquidated `shouldReturn` [32,64..8000]
-    it "waits for the extra confirmation then continues without an idle sweep" $ do
+    it "polls until the required confirmation head is observed" $ do
       heads <- newIORef ([100,100,101] :: [Integer])
       sleeps <- newIORef (0 :: Int)
       let readHead = do
@@ -697,7 +734,7 @@ spec = do
       result <- waitForLiquidationConfirmation 3 101 readHead (modifyIORef' sleeps (+1))
       result `shouldBe` Right 101
       readIORef sleeps `shouldReturn` 2
-    it "bounds confirmation waits and retains unresolved work for recovery" $ do
+    it "returns a bounded confirmation timeout" $ do
       result <- waitForLiquidationConfirmation 2 101 (pure $ Right 100) (pure ())
       result `shouldSatisfy` isLeft
 
@@ -1097,7 +1134,7 @@ testConfig =
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"
+    , cfgPerpsSettlementToken = "0x1111111111111111111111111111111111111111"
     , cfgPerpsOrderRouter = "0x2222222222222222222222222222222222222222"
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = configuredCfdEngine
@@ -1106,9 +1143,9 @@ testConfig =
     , cfgPerpsMarginClearinghouse = "0x3333333333333333333333333333333333333333"
     , cfgPerpsPletherOracle = "0x4444444444444444444444444444444444444444"
     , cfgPerpsAccountLens = configuredAccountLens
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
-    , cfgPerpsIndexerStartBlock = 307397196
+    , cfgPerpsHousePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgPerpsSettlementMonitorLens = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
+    , cfgPerpsIndexerStartBlock = 318398363
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
     , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
@@ -1121,6 +1158,7 @@ testConfig =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
@@ -1130,8 +1168,8 @@ testConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgLpSettlementJuniorVault = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -1144,7 +1182,7 @@ liquidationReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "liquidation-worker-test"
     , crmChainId = 421614
-    , crmUsdc = "0x1111111111111111111111111111111111111111"
+    , crmSettlementToken = "0x1111111111111111111111111111111111111111"
     , crmOrderRouter = "0x2222222222222222222222222222222222222222"
     , crmMarginClearinghouse = "0x3333333333333333333333333333333333333333"
     , crmAccountLens = configuredAccountLens
@@ -1300,16 +1338,16 @@ openHealthySnapshot =
     , alsSize = 100_000_000_000_000_000_000
     , alsMargin = 10_000_000
     , alsEntryPrice = 100_000_000
-    , alsAccountEquityUsdc = 10_000_000
-    , alsNetEquityUsdc = 10_000_000
+    , alsAccountEquityAssets = 10_000_000
+    , alsNetEquityAssets = 10_000_000
     , alsLiquidatable = False
     }
 
 openRiskySnapshot :: AccountLedgerSnapshot
 openRiskySnapshot =
   openHealthySnapshot
-    { alsAccountEquityUsdc = 500_000
-    , alsNetEquityUsdc = 500_000
+    { alsAccountEquityAssets = 500_000
+    , alsNetEquityAssets = 500_000
     , alsLiquidatable = True
     }
 
@@ -1378,58 +1416,58 @@ liquidationRiskResults =
 emptyAccountSnapshot :: AccountLedgerSnapshot
 emptyAccountSnapshot =
   AccountLedgerSnapshot
-    { alsSettlementBalanceUsdc = 0
-    , alsFreeSettlementUsdc = 0
-    , alsActivePositionMarginUsdc = 0
-    , alsOtherLockedMarginUsdc = 0
-    , alsPositionMarginBucketUsdc = 0
-    , alsCommittedOrderMarginBucketUsdc = 0
-    , alsReservedSettlementBucketUsdc = 0
-    , alsExecutionBountyReserveUsdc = 0
-    , alsCommittedMarginUsdc = 0
-    , alsTraderClaimBalanceUsdc = 0
+    { alsSettlementBalanceAssets = 0
+    , alsFreeSettlementAssets = 0
+    , alsActivePositionMarginAssets = 0
+    , alsOtherLockedMarginAssets = 0
+    , alsPositionMarginBucketAssets = 0
+    , alsCommittedOrderMarginBucketAssets = 0
+    , alsReservedSettlementBucketAssets = 0
+    , alsExecutionBountyReserveAssets = 0
+    , alsCommittedMarginAssets = 0
+    , alsTraderClaimBalanceAssets = 0
     , alsPendingOrderCount = 0
-    , alsCloseReachableUsdc = 0
-    , alsLiquidationReachableSettlementUsdc = 0
-    , alsTerminalPriceCollectibleCapUsdc = 0
-    , alsAccountEquityUsdc = 0
-    , alsFreeBuyingPowerUsdc = 0
+    , alsCloseReachableAssets = 0
+    , alsLiquidationReachableSettlementAssets = 0
+    , alsTerminalPriceCollectibleCapAssets = 0
+    , alsAccountEquityAssets = 0
+    , alsFreeBuyingPowerAssets = 0
     , alsHasPosition = False
     , alsSide = 0
     , alsSize = 0
     , alsMargin = 0
     , alsEntryPrice = 0
-    , alsUnrealizedPnlUsdc = 0
-    , alsNetEquityUsdc = 0
+    , alsUnrealizedPnlAssets = 0
+    , alsNetEquityAssets = 0
     , alsLiquidatable = False
     }
 
 encodedAccountSnapshot :: AccountLedgerSnapshot -> BS.ByteString
 encodedAccountSnapshot AccountLedgerSnapshot {..} =
   mconcat
-    [ encodeUint256 alsSettlementBalanceUsdc
-    , encodeUint256 alsFreeSettlementUsdc
-    , encodeUint256 alsActivePositionMarginUsdc
-    , encodeUint256 alsOtherLockedMarginUsdc
-    , encodeUint256 alsPositionMarginBucketUsdc
-    , encodeUint256 alsCommittedOrderMarginBucketUsdc
-    , encodeUint256 alsReservedSettlementBucketUsdc
-    , encodeUint256 alsExecutionBountyReserveUsdc
-    , encodeUint256 alsCommittedMarginUsdc
-    , encodeUint256 alsTraderClaimBalanceUsdc
+    [ encodeUint256 alsSettlementBalanceAssets
+    , encodeUint256 alsFreeSettlementAssets
+    , encodeUint256 alsActivePositionMarginAssets
+    , encodeUint256 alsOtherLockedMarginAssets
+    , encodeUint256 alsPositionMarginBucketAssets
+    , encodeUint256 alsCommittedOrderMarginBucketAssets
+    , encodeUint256 alsReservedSettlementBucketAssets
+    , encodeUint256 alsExecutionBountyReserveAssets
+    , encodeUint256 alsCommittedMarginAssets
+    , encodeUint256 alsTraderClaimBalanceAssets
     , encodeUint256 alsPendingOrderCount
-    , encodeUint256 alsCloseReachableUsdc
-    , encodeUint256 alsLiquidationReachableSettlementUsdc
-    , encodeUint256 alsTerminalPriceCollectibleCapUsdc
-    , encodeUint256 alsAccountEquityUsdc
-    , encodeUint256 alsFreeBuyingPowerUsdc
+    , encodeUint256 alsCloseReachableAssets
+    , encodeUint256 alsLiquidationReachableSettlementAssets
+    , encodeUint256 alsTerminalPriceCollectibleCapAssets
+    , encodeUint256 alsAccountEquityAssets
+    , encodeUint256 alsFreeBuyingPowerAssets
     , encodeUint256 $ if alsHasPosition then 1 else 0
     , encodeUint256 alsSide
     , encodeUint256 alsSize
     , encodeUint256 alsMargin
     , encodeUint256 alsEntryPrice
-    , signedWord alsUnrealizedPnlUsdc
-    , signedWord alsNetEquityUsdc
+    , signedWord alsUnrealizedPnlAssets
+    , signedWord alsNetEquityAssets
     , encodeUint256 $ if alsLiquidatable then 1 else 0
     ]
 

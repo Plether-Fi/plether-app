@@ -21,7 +21,8 @@ function SplitBar({ share, label, firstClass = 'bg-brand-peach', secondClass = '
   )
 }
 
-export function JuniorMarketExposure({ pool, scrollMarginTop }: {
+export function JuniorMarketExposure({ pool, scrollMarginTop, className = '' }: {
+  className?: string
   scrollMarginTop?: number
   pool: JuniorExposureInputs & { markFresh?: boolean; oracleFrozen?: boolean }
 }) {
@@ -41,7 +42,7 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
   const cardClass = 'border border-brand-border/30 bg-surface-panel panel-padding'
 
   return (
-    <section id="market-exposure" data-vault-detail-section="market-exposure" style={{ scrollMarginTop }} aria-labelledby="junior-market-exposure" className="space-y-4">
+    <section id="market-exposure" data-vault-detail-section="market-exposure" style={{ scrollMarginTop }} aria-labelledby="junior-market-exposure" className={`space-y-4 ${className}`}>
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
           Current pool snapshot

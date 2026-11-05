@@ -13,6 +13,10 @@ module Plether.AA.Pimlico
   , recordSubmittedOperation
   , decodeSmartAccountCalls
   , validateActionSequence
+  , orderSubmissionDeadline
+  , capSponsorshipDeadline
+  , validateSubmissionHeadroom
+  , capSponsorshipExpiry
   , validateNativeActionSequence
   , CloseAssistanceIntent (..)
   , injectSponsorshipPolicy
@@ -804,9 +808,43 @@ data CloseAssistanceIntent = CloseAssistanceIntent
   , caiGuardData :: ByteString
   , caiClientOrderId :: ByteString
   , caiRequest :: ByteString
-  , caiAmountUsdc :: Integer
+  , caiAmountAssets :: Integer
   , caiValidUntil :: Integer
   } deriving stock (Eq, Show)
+
+-- Defense in depth immediately before relaying an already validated operation.
+-- The account signature binds the deadline: never extend or rebuild it here.
+validateSubmissionHeadroom :: Integer -> Integer -> ByteString -> Either ProxyFailure ()
+validateSubmissionHeadroom now sponsorshipExpiry callData = do
+  effective <- capSponsorshipExpiry sponsorshipExpiry callData
+  unless (effective - now >= 30) $ Left $
+    ProxyFailure status400 (-32001) "Approval finished too late; this request was not forwarded. Check recovery for any earlier submission." "DEADLINE_TOO_CLOSE" False
+
+capSponsorshipDeadline :: Integer -> ByteString -> Either ProxyFailure Integer
+capSponsorshipDeadline = capSponsorshipExpiry
+
+-- Bind new sponsorships to the same immutable order deadline used at submission.
+-- Non-order actions retain the configured lifetime; batches use the earliest
+-- order deadline. This does not rewrite an already-issued authorization.
+capSponsorshipExpiry :: Integer -> ByteString -> Either ProxyFailure Integer
+capSponsorshipExpiry sponsorshipExpiry callData = do
+  deadline <- orderSubmissionDeadline callData
+  pure $ maybe sponsorshipExpiry (min sponsorshipExpiry) deadline
+
+orderSubmissionDeadline :: ByteString -> Either ProxyFailure (Maybe Integer)
+orderSubmissionDeadline callData = do
+  calls <- decodeSmartAccountCalls callData
+  deadlines <- traverse orderDeadline calls
+  pure $ case [deadline | Just deadline <- deadlines] of
+    [] -> Nothing
+    values -> Just $ minimum values
+
+ where
+  orderDeadline call
+    | BS.take 4 bytes == selectorCommitOrder = Just . bytesToInteger . (!! 6) <$> fixedWords selectorCommitOrder 19 bytes
+    | BS.take 4 bytes == selectorProtectedOpen = Just . bytesToInteger . (!! 6) <$> fixedWords selectorProtectedOpen 25 bytes
+    | otherwise = pure Nothing
+   where bytes = smartCallData call
 
 validateNativeActionSequence
   :: Maybe Text -> Config -> Text -> Text -> [SmartCall]
@@ -815,18 +853,18 @@ validateNativeActionSequence mLens cfg sender owner calls = case calls of
   [guard, mint, approval, deposit, close] -> do
     lens <- maybe (Left $ policyDenied "Close assistance is disabled") (Right . T.toLower) mLens
     unless (all ((== 0) . smartCallValue) calls && smartCallTarget guard == lens
-      && smartCallTarget mint == T.toLower (cfgPerpsUsdc cfg)
+      && smartCallTarget mint == T.toLower (cfgPerpsSettlementToken cfg)
       && smartCallTarget close == T.toLower (cfgPerpsOrderRouter cfg)) $
         Left $ policyDenied "Close assistance targets are not approved"
     validateActionSequence cfg sender owner [approval, deposit]
     validateActionSequence cfg sender owner [close]
-    _ <- fixedWords (decodeSelector "ce3d6bc7") 20 (smartCallData guard)
+    _ <- fixedWords (decodeSelector "6bc3d3ca") 21 (smartCallData guard)
     (recipient, minted) <- decodeAddressUintCall (decodeSelector "40c10f19") (smartCallData mint)
     deposited <- decodeUintCall selectorDepositMargin (smartCallData deposit)
     let payload = BS.drop 4 $ smartCallData guard
-        requestBytes = BS.take (18 * 32) $ BS.drop 32 payload
+        requestBytes = BS.take (19 * 32) $ BS.drop 32 payload
     engine <- wordAddress payload 0
-    expected <- wordInteger payload (19 * 32)
+    expected <- wordInteger payload (20 * 32)
     isClose <- wordInteger requestBytes (5 * 32)
     deadline <- wordInteger requestBytes (6 * 32)
     unless (engine == T.toLower (cfgPerpsCfdEngine cfg) && recipient == T.toLower sender
@@ -847,7 +885,7 @@ validateActionSequence cfg sender owner calls = do
   unless
     ( all
         isJust
-        [ approvedConfigAddress $ cfgPerpsUsdc cfg
+        [ approvedConfigAddress $ cfgPerpsSettlementToken cfg
         , approvedConfigAddress $ cfgPerpsMarginClearinghouse cfg
         , approvedConfigAddress $ cfgPerpsOrderRouter cfg
         , approvedConfigAddress $ cfgPerpsCfdEngine cfg
@@ -859,18 +897,18 @@ validateActionSequence cfg sender owner calls = do
     Left $ policyDenied "Sponsored calls must send zero native value"
   case calls of
     [first, second]
-      | smartCallTarget first == usdc
+      | smartCallTarget first == settlementToken
           && smartCallTarget second == clearinghouse ->
           validateDeposit first second
       | smartCallTarget first == clearinghouse
-          && smartCallTarget second == usdc ->
+          && smartCallTarget second == settlementToken ->
           validateWithdrawal first second
       | otherwise ->
           Left $ policyDenied "The two-call sequence is not an approved Plether action"
     [single] -> validateSingle single
     _ -> Left $ policyDenied "The call sequence is not an approved Plether action"
   where
-    usdc = normalizedConfigAddress $ cfgPerpsUsdc cfg
+    settlementToken = normalizedConfigAddress $ cfgPerpsSettlementToken cfg
     clearinghouse = normalizedConfigAddress $ cfgPerpsMarginClearinghouse cfg
     router = normalizedConfigAddress $ cfgPerpsOrderRouter cfg
     engine = normalizedConfigAddress $ cfgPerpsCfdEngine cfg
@@ -878,7 +916,7 @@ validateActionSequence cfg sender owner calls = do
 
     validateDeposit approval deposit = do
       unless
-        (smartCallTarget approval == usdc && smartCallTarget deposit == clearinghouse)
+        (smartCallTarget approval == settlementToken && smartCallTarget deposit == clearinghouse)
         $ Left $ policyDenied "Deposit targets are not approved"
       (spender, approvedAmount) <-
         decodeAddressUintCall selectorApprove (smartCallData approval)
@@ -890,7 +928,7 @@ validateActionSequence cfg sender owner calls = do
 
     validateWithdrawal withdrawal transfer = do
       unless
-        (smartCallTarget withdrawal == clearinghouse && smartCallTarget transfer == usdc)
+        (smartCallTarget withdrawal == clearinghouse && smartCallTarget transfer == settlementToken)
         $ Left $ policyDenied "Withdrawal targets are not approved"
       withdrawnAmount <-
         decodeUintCall selectorWithdrawMargin (smartCallData withdrawal)
@@ -914,7 +952,7 @@ validateActionSequence cfg sender owner calls = do
           Left $ policyDenied "Single-call action target is not approved"
 
     validateOrder dataBytes = do
-      words' <- fixedWords selectorCommitOrder 18 dataBytes
+      words' <- fixedWords selectorCommitOrder 19 dataBytes
       case words' of
         [ clientOrderIdWord
           , sideWord
@@ -922,7 +960,8 @@ validateActionSequence cfg sender owner calls = do
           , marginDeltaWord
           , targetPriceWord
           , closeWordBytes
-          , validUntilWord
+          , submitByWord
+          , executionWindowSecondsWord
           , allowedExecutionModesWord
           , expectedConfigHashWord
           , _maxExecutionBountyWord
@@ -940,7 +979,8 @@ validateActionSequence cfg sender owner calls = do
               marginDelta = bytesToInteger marginDeltaWord
               targetPrice = bytesToInteger targetPriceWord
               closeWord = bytesToInteger closeWordBytes
-              validUntil = bytesToInteger validUntilWord
+              submitBy = bytesToInteger submitByWord
+              executionWindowSeconds = bytesToInteger executionWindowSecondsWord
               allowedExecutionModes = bytesToInteger allowedExecutionModesWord
               maxPostLeverageBps = bytesToInteger maxPostLeverageWord
           unless
@@ -950,8 +990,9 @@ validateActionSequence cfg sender owner calls = do
                 && sizeDelta > 0
                 && targetPrice > 0
                 && (closeWord == 0 || closeWord == 1)
-                && validUntil > 0
-                && validUntil <= maxUint64
+                && submitBy > 0
+                && executionWindowSeconds > 0 && executionWindowSeconds <= 3600
+                && submitBy <= maxUint64
                 && allowedExecutionModes `elem` [1, 2, 4]
                 && not (BS.all (== 0) expectedConfigHashWord)
                 && maxPostLeverageBps > 0
@@ -971,26 +1012,26 @@ validateActionSequence cfg sender owner calls = do
           unless (maybe False aaProtectionCommitsEnabled $ cfgAaConfig cfg) $
             Left $ policyDenied "New protection sponsorship is disabled"
           case BS.take 4 dataBytes of
-            selector | selector == decodeSelector "26129c8e" -> do
-              words' <- fixedWords selector 2 dataBytes
+            selector | selector == decodeSelector "bc2651ff" -> do
+              words' <- fixedWords selector 6 dataBytes
               validateTriggers words'
-            selector | selector == decodeSelector "9368efce" -> do
-              words' <- fixedWords selector 3 dataBytes
+            selector | selector == decodeSelector "168e3f33" -> do
+              words' <- fixedWords selector 7 dataBytes
               case words' of
-                [idWord, tp, sl] -> do
+                [idWord, tp, sl, maxNotional, maxDebit, maxActionCharge, maxFees] -> do
                   unless (bytesToInteger idWord > 0 && bytesToInteger idWord <= maxUint64) $
                     Left $ policyDenied "Protection ID is invalid"
-                  validateTriggers [tp, sl]
+                  validateTriggers [tp, sl, maxNotional, maxDebit, maxActionCharge, maxFees]
                 _ -> Left $ policyDenied "Protection calldata shape is invalid"
-            selector | selector == decodeSelector "8df7504a" -> do
-              words' <- fixedWords selector 20 dataBytes
-              validateOrder $ selectorCommitOrder <> BS.concat (take 18 words')
+            selector | selector == selectorProtectedOpen -> do
+              words' <- fixedWords selector 25 dataBytes
+              validateOrder $ selectorCommitOrder <> BS.concat (take 19 words')
               unless (bytesToInteger (words' !! 5) == 0) $
                 Left $ policyDenied "Protected orders must open a position"
-              validateTriggers $ drop 18 words'
+              validateTriggers $ drop 19 words'
             _ -> Left $ policyDenied "Protection selector is not approved"
 
-    validateTriggers [tp, sl] =
+    validateTriggers [tp, sl, _, _, _, _] =
       unless (bytesToInteger tp > 0 || bytesToInteger sl > 0) $
         Left $ policyDenied "At least one protection trigger is required"
     validateTriggers _ = Left $ policyDenied "Protection calldata shape is invalid"
@@ -1873,7 +1914,7 @@ selectorWithdrawMargin :: ByteString
 selectorWithdrawMargin = decodeSelector "0cea7534"
 
 selectorCommitOrder :: ByteString
-selectorCommitOrder = decodeSelector "d4da06d2"
+selectorCommitOrder = decodeSelector "e4275866"
 
 reservedClientOrderPrefix :: ByteString
 reservedClientOrderPrefix = decodeSelector "504c455448455221"
@@ -1941,3 +1982,6 @@ liftRecordSubmittedOperation
   -> ActionM ()
 liftRecordSubmittedOperation state now trustedIp response =
   liftIO $ recordSubmittedOperation state now trustedIp response
+
+selectorProtectedOpen :: ByteString
+selectorProtectedOpen = decodeSelector "56f750f0"

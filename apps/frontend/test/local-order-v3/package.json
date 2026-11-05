@@ -1,0 +1,6 @@
+{
+  "name": "plether-local-order-v3-test",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@account-abstraction/contracts": "0.8.0" }
+}

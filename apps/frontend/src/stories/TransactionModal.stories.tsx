@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
 import { useEffect } from 'react'
 import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -145,7 +146,36 @@ function AnimatedDemo() {
   return <TransactionModal />
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const animatedSteps = ['Approve USDC', 'Confirming approval', 'Buy plDXY-BEAR', 'Awaiting confirmation'] as const
+
+async function expectStep(dialog: HTMLElement, index: number, status: 'pending' | 'in_progress' | 'completed' | 'error') {
+  await waitFor(() => {
+    const row = within(dialog).getByText(`${String(index + 1)}. ${animatedSteps[index]}`).parentElement!
+    const contents = within(row)
+    if (status === 'in_progress') expect(row.querySelector('.animate-spin')).toBeVisible()
+    else expect(row.querySelector('.animate-spin')).not.toBeInTheDocument()
+    if (status === 'completed') expect(contents.getByText('check')).toBeVisible()
+    else expect(contents.queryByText('check')).not.toBeInTheDocument()
+    if (status === 'error') expect(contents.getByText('close')).toBeVisible()
+    else expect(contents.queryByText('close')).not.toBeInTheDocument()
+  })
+}
+
+async function openAnimatedTransaction(ownerDocument: Document, onRetry?: () => void) {
+  const transactionId = crypto.randomUUID()
+  useTransactionStore.getState().addTransaction({
+    id: transactionId, type: 'swap', status: 'pending', title: 'Buying plDXY-BEAR', chainId: 1,
+    steps: animatedSteps.map(label => ({ label, status: 'pending' })),
+  })
+  useTransactionModal.getState().open({ transactionId, onRetry })
+  const dialog = await within(ownerDocument.body).findByRole('dialog', { name: 'Buying plDXY-BEAR' })
+  await expect(dialog).toBeVisible()
+  await expectStep(dialog, 0, 'pending')
+  await expectStep(dialog, 3, 'pending')
+  expect(within(dialog).queryByRole('link', { name: /Show transaction/ })).not.toBeInTheDocument()
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+  return { transactionId, dialog }
+}
 
 const interactiveDecorators = [
   (Story: React.ComponentType) => (
@@ -160,50 +190,36 @@ const interactiveDecorators = [
 export const AnimatedSuccess: Story = {
   decorators: interactiveDecorators,
   render: () => <AnimatedDemo />,
-  play: async ({ step }) => {
+  play: async ({ canvasElement, step }) => {
+    const page = within(canvasElement.ownerDocument.body)
     const txStore = useTransactionStore.getState()
-    const modal = useTransactionModal.getState()
-    const transactionId = crypto.randomUUID()
+    const transactionHash = `0x${'ab'.repeat(32)}`
+    let animation!: Awaited<ReturnType<typeof openAnimatedTransaction>>
 
-    await step('Open modal', async () => {
-      txStore.addTransaction({
-        id: transactionId,
-        type: 'swap',
-        status: 'pending',
-        title: 'Buying plDXY-BEAR',
-        steps: [
-          { label: 'Approve USDC', status: 'pending' },
-          { label: 'Confirming approval', status: 'pending' },
-          { label: 'Buy plDXY-BEAR', status: 'pending' },
-          { label: 'Awaiting confirmation', status: 'pending' },
-        ],
+    await step('Open the pending transaction dialog', async () => {
+      animation = await openAnimatedTransaction(canvasElement.ownerDocument)
+    })
+    const { transactionId, dialog } = animation
+
+    for (const [index, label] of animatedSteps.entries()) {
+      await step(label, async () => {
+        txStore.setStepInProgress(transactionId, index)
+        await expectStep(dialog, index, 'in_progress')
+        if (index > 0) await expectStep(dialog, index - 1, 'completed')
+        expect(useTransactionStore.getState().transactions.find(tx => tx.id === transactionId)?.status).toBe('confirming')
       })
-      modal.open({ transactionId })
-      await sleep(500)
-    })
+    }
 
-    await step('Approve USDC', async () => {
-      txStore.setStepInProgress(transactionId, 0)
-      await sleep(1000)
-    })
-
-    await step('Confirming approval', async () => {
-      txStore.setStepInProgress(transactionId, 1)
-      await sleep(1500)
-    })
-
-    await step('Buy plDXY-BEAR', async () => {
-      txStore.setStepInProgress(transactionId, 2)
-      await sleep(1000)
-    })
-
-    await step('Awaiting confirmation', async () => {
-      txStore.setStepInProgress(transactionId, 3)
-      await sleep(1500)
-    })
-
-    await step('Transaction success', async () => {
-      txStore.setStepSuccess(transactionId, '0xabc123def456789abc123def456789abc123def456789abc123def456789abcd')
+    await step('Show completed steps and the confirmed transaction link', async () => {
+      txStore.setStepSuccess(transactionId, transactionHash)
+      for (let index = 0; index < animatedSteps.length; index += 1) await expectStep(dialog, index, 'completed')
+      expect(useTransactionStore.getState().transactions.find(tx => tx.id === transactionId)?.status).toBe('success')
+      const link = within(dialog).getByRole('link', { name: /Show transaction/ })
+      await expect(link).toBeVisible()
+      expect(link).toHaveAttribute('href', `https://etherscan.io/tx/${transactionHash}`)
+      expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Close transaction' }))
+      await waitFor(() => expect(page.queryByRole('dialog')).not.toBeInTheDocument())
     })
   },
 }
@@ -211,40 +227,40 @@ export const AnimatedSuccess: Story = {
 export const AnimatedError: Story = {
   decorators: interactiveDecorators,
   render: () => <AnimatedDemo />,
-  play: async ({ step }) => {
+  play: async ({ canvasElement, step }) => {
+    const page = within(canvasElement.ownerDocument.body)
     const txStore = useTransactionStore.getState()
-    const modal = useTransactionModal.getState()
-    const transactionId = crypto.randomUUID()
+    const onRetry = fn()
+    let animation!: Awaited<ReturnType<typeof openAnimatedTransaction>>
 
-    await step('Open modal', async () => {
-      txStore.addTransaction({
-        id: transactionId,
-        type: 'swap',
-        status: 'pending',
-        title: 'Buying plDXY-BEAR',
-        steps: [
-          { label: 'Approve USDC', status: 'pending' },
-          { label: 'Confirming approval', status: 'pending' },
-          { label: 'Buy plDXY-BEAR', status: 'pending' },
-          { label: 'Awaiting confirmation', status: 'pending' },
-        ],
-      })
-      modal.open({ transactionId })
-      await sleep(500)
+    await step('Open the transaction dialog', async () => {
+      animation = await openAnimatedTransaction(canvasElement.ownerDocument, onRetry)
+      expect(within(animation.dialog).queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
     })
+    const { transactionId, dialog } = animation
 
     await step('Approve USDC', async () => {
       txStore.setStepInProgress(transactionId, 0)
-      await sleep(1000)
+      await expectStep(dialog, 0, 'in_progress')
     })
 
     await step('Confirming approval', async () => {
       txStore.setStepInProgress(transactionId, 1)
-      await sleep(1500)
+      await expectStep(dialog, 0, 'completed')
+      await expectStep(dialog, 1, 'in_progress')
     })
 
-    await step('Transaction rejected', async () => {
+    await step('Show the rejected step and retry the failed transaction', async () => {
       txStore.setStepError(transactionId, 1, 'User rejected the transaction')
+      await expectStep(dialog, 0, 'completed')
+      await expectStep(dialog, 1, 'error')
+      await expectStep(dialog, 2, 'pending')
+      await expect(within(dialog).getByRole('alert')).toHaveTextContent(/declined.*wallet/i)
+      expect(useTransactionStore.getState().transactions.find(tx => tx.id === transactionId)?.status).toBe('failed')
+      expect(within(dialog).queryByRole('link', { name: /Show transaction/ })).not.toBeInTheDocument()
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+      await expect(onRetry).toHaveBeenCalledOnce()
+      await waitFor(() => expect(page.queryByRole('dialog')).not.toBeInTheDocument())
     })
   },
 }

@@ -620,6 +620,8 @@ function OperationHistoryItem({
         </div>
       ) : null}
 
+      {isAttentionOperation(operation) && <p className="text-xs text-content-secondary">Support reference: <code className="select-all [overflow-wrap:anywhere]">{operation.id}</code></p>}
+
       {hasTechnicalDetails ? (
         <details className="border-t border-brand-border/20 pt-3">
           <summary className="cursor-pointer text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary">

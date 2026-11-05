@@ -1,109 +1,37 @@
-import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
-import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
+import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { decodeErrorResult } from 'viem'
+import { PERPS_MAX_OPEN_QUOTER_ABI } from '../contracts/generated/perpsMaxOpenQuoter'
+import {
+  PERPS_MARGIN_CLEARINGHOUSE_ABI,
+  PERPS_ORDER_ROUTER_ABI,
+  PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+  PERPS_ORDER_POLICY_EVALUATOR_ABI,
+  PERPS_CFD_ENGINE_ABI,
+  PERPS_CFD_ENGINE_LENS_ABI,
+  PERPS_CFD_CLOSE_PREVIEW_ABI,
+  PERPS_PLETHER_ORACLE_ABI,
+  PERPS_POSITION_PROTECTION_BOOK_ABI,
+} from '../contracts/abis'
 
 type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'review' | 'commit' | 'execute' | 'protection'
 
 export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
 
-const PERPS_ERROR_ABI = parseAbi([
-  'error EnforcedPause()',
-
-  'error MarginClearinghouse__NotOperator()',
-  'error MarginClearinghouse__NotAccountOwner()',
-  'error MarginClearinghouse__ZeroAmount()',
-  'error MarginClearinghouse__InsufficientBalance()',
-  'error MarginClearinghouse__InsufficientFreeEquity()',
-  'error MarginClearinghouse__InsufficientUsdcForSettlement()',
-  'error MarginClearinghouse__InsufficientAssetToSeize()',
-  'error MarginClearinghouse__InvalidMarginBucket()',
-  'error MarginClearinghouse__ReservationAlreadyExists()',
-  'error MarginClearinghouse__ReservationNotActive()',
-  'error MarginClearinghouse__IncompleteReservationCoverage()',
-  'error MarginClearinghouse__ReservationLedgerActive()',
-  'error MarginClearinghouse__InsufficientBucketMargin()',
-
-  'error OrderRouter__ZeroSize()',
-  'error OrderRouter__InvalidSizeQuantum()',
-  'error OrderRouter__CommitValidation(uint8 code)',
-  'error OrderRouter__InvalidPletherOracle()',
-  'error OrderRouter__EmptyPythUpdateData()',
-  'error OrderRouter__InsufficientPythFee()',
-  'error OrderRouter__InvalidEngineLens()',
-  'error OrderRouter__InvalidOraclePrice()',
-  'error OrderRouter__MarkPriceOutOfOrder()',
-  'error OrderRouter__OraclePriceTooStale()',
-  'error OrderRouter__OracleConfidenceTooWide()',
-  'error OrderRouter__MevDetected()',
-  'error OrderRouter__OraclePublishTimesDiverged()',
-  'error OrderRouter__NoOrdersToExecute()',
-  'error OrderRouter__OrderNotQueueHead()',
-  'error OrderRouter__BatchBeforeQueueHead()',
-  'error OrderRouter__BatchOrderNotCommitted()',
-  'error OrderRouter__OrderNotPending()',
-  'error OrderRouter__MarginQueueCorrupt()',
-  'error OrderRouter__AccountQueueCorrupt()',
-  'error OrderRouter__GlobalQueueCorrupt()',
-  'error OrderRouter__NotInSeedLifecycle()',
-  'error OrderRouter__VaultRiskBlocked()',
-  'error OrderRouter__CloseWithPositiveMargin()',
-  'error OrderRouter__NoQueuedPosition()',
-  'error OrderRouter__SideMismatch()',
-  'error OrderRouter__SizeExceedsQueued()',
-  'error OrderRouter__InsufficientFreeEquity()',
-  'error OrderRouter__TooManyPendingOrders()',
-  'error OrderRouter__Unauthorized()',
-  'error OrderRouter__DegradedMode()',
-  'error OrderRouter__CloseOnlyWindow()',
-  'error OrderRouter__InsufficientGas()',
-  'error OrderRouter__PredictableOpenInvalid(uint8 code)',
-  'error OrderRouter__ZeroClientOrderId()',
-  'error OrderRouter__ZeroTargetPrice()',
-  'error OrderRouter__InvalidValidUntil()',
-  'error OrderRouter__InvalidExecutionModeMask()',
-  'error OrderRouter__ExecutionConfigMismatch(bytes32 expectedConfigHash,bytes32 currentConfigHash)',
-  'error OrderRouter__ZeroPostLeverageBound()',
-  'error OrderRouter__ExecutionBountyAboveGrossDebit(uint256 executionBountyUsdc,uint256 maximumGrossDebitUsdc)',
-  'error OrderRouter__ProtectionActive()',
-
-  'error OrderLifecycleBook__ZeroClientOrderId()',
-  'error OrderLifecycleBook__ClientIdConflict(address account,bytes32 clientOrderId,bytes32 existingIntentHash,bytes32 suppliedIntentHash)',
-  'error OrderLifecycleBook__ClientIdDomainMismatch(bytes32 clientOrderId,bool protocolIntent)',
-  'error OrderLifecycleBook__ExecutionBountyAboveBound(uint256 actualBountyUsdc,uint256 maximumBountyUsdc)',
-
-  'error CfdOrderPolicyEvaluator__ExecutionModeDisallowed(uint8 mode,uint8 allowedExecutionModes)',
-  'error CfdOrderPolicyEvaluator__ConstraintViolation(uint8 constraint,uint256 actual,uint256 limit)',
-
-  'error PletherOracle__MissingUpdateData()',
-  'error PletherOracle__InsufficientFee(uint256 provided,uint256 required)',
-  'error PletherOracle__PriceOutOfOrder(uint64 publishTime,uint64 lastMarkTime)',
-  'error PletherOracle__StalePrice(uint8 mode, bytes32 feedId, uint256 publishTime, uint256 maxStaleness, uint256 currentTimestamp)',
-  'error PletherOracle__InvalidPrice(bytes32 feedId, int64 price)',
-  'error PletherOracle__ConfidenceTooWide(bytes32 feedId, uint64 confidence, int64 price, uint256 maxConfidenceBps)',
-  'error PletherOracle__PublishTimeDivergence(uint8 mode,uint256 minPublishTime,uint256 maxPublishTime,uint256 maxDivergence)',
-  'error PletherOracle__ZeroBasketPrice()',
-
-  'error CfdEngineLens__QuoteSearchLimitExceeded()',
-  'error CfdEngine__TypedOrderFailure(uint8 failureCategory,uint8 failureCode,bool isClose)',
-  'error CfdEngine__NotAccountOwner()',
-  'error CfdEngine__MustCloseOpposingPosition()',
-  'error CfdEngine__DegradedMode()',
-  'error CfdEngine__PositionTooSmall()',
-  'error CfdEngine__SkewTooHigh()',
-  'error CfdEngine__MarginDrainedByFees()',
-  'error CfdEngine__InsufficientInitialMargin()',
-  'error CfdEngine__PoolSolvencyExceeded()',
-  'error CfdEngine__InsufficientPoolLiquidity()',
-  'error CfdEngine__CloseSizeExceedsPosition()',
-  'error CfdEngine__DustPosition()',
-  'error CfdEngine__PartialCloseUnderwaterCarry()',
-  'error CfdEngine__NoOpenPosition()',
-  'error CfdEngine__WithdrawBlockedByOpenPosition()',
-  'error CfdEngine__MarkPriceStale()',
-  'error CfdEngine__MarkPriceOutOfOrder()',
-  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableFreeSettlementUsdc,uint256 unpaidCarryUsdc)',
-])
-
-const ALL_PERPS_ERROR_ABI = [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI, ...PERPS_CFD_CLOSE_PREVIEW_ABI]
+// Decode exactly the current compiled selectors, including errors bubbled by
+// the Oracle, protection Book and supplemental close preview.
+const ALL_PERPS_ERROR_ABI = [
+  ...PERPS_MARGIN_CLEARINGHOUSE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_ROUTER_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_LIFECYCLE_BOOK_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_POLICY_EVALUATOR_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_ENGINE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_ENGINE_LENS_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_CLOSE_PREVIEW_ABI.filter(item => item.type === 'error'),
+  ...PERPS_PLETHER_ORACLE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_POSITION_PROTECTION_BOOK_ABI.filter(item => item.type === 'error'),
+  ...PERPS_MAX_OPEN_QUOTER_ABI.filter(item => item.type === 'error'),
+]
 
 const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. Adjust the exposure and try again.'
 
@@ -160,88 +88,77 @@ const V2_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   4: 'action charge',
   5: 'explicit fees',
   6: 'post-position size',
-  7: 'post-settlement balance',
+  7: 'USDG balance after settlement',
   8: 'post-position equity',
   9: 'post-position leverage',
 }
 
-function getNestedString(error: unknown, keys: string[], depth = 0): string | undefined {
-  if (!error || typeof error !== 'object' || depth > 6) return undefined
-  const record = error as Record<string, unknown>
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'string' && value) return value
+function errorProperty(record: object, key: string): unknown {
+  try {
+    return (record as Record<string, unknown>)[key]
+  } catch {
+    return undefined
   }
-  const causedString = getNestedString(record.cause, keys, depth + 1)
-  if (causedString) return causedString
-  for (const value of Object.values(record)) {
-    const nested = getNestedString(value, keys, depth + 1)
-    if (nested) return nested
-  }
-  return undefined
 }
 
-function getNestedArgs(error: unknown, depth = 0): readonly unknown[] | undefined {
-  if (!error || typeof error !== 'object' || depth > 6) return undefined
-  const record = error as Record<string, unknown>
-  const args = record.args
-  if (Array.isArray(args)) return args as readonly unknown[]
-  const causedArgs = getNestedArgs(record.cause, depth + 1)
-  if (causedArgs) return causedArgs
-  for (const value of Object.values(record)) {
-    const nested = getNestedArgs(value, depth + 1)
-    if (nested) return nested
+/** Follow error envelopes only, never request arguments or arbitrary hex metadata. */
+function* errorRecords(error: unknown, causesFirst = true): Generator<object> {
+  const seen = new Set<object>()
+  function* visit(value: unknown, depth: number): Generator<object> {
+    if (!value || typeof value !== 'object' || depth >= 8 || seen.has(value) || seen.size >= 64) return
+    seen.add(value)
+    if (!causesFirst) yield value
+    for (const key of ['cause', 'error', 'originalError', 'data', 'raw']) {
+      yield* visit(errorProperty(value, key), depth + 1)
+    }
+    if (causesFirst) yield value
   }
-  return undefined
+  yield* visit(error, 0)
 }
 
-function extractRevertData(error: unknown, depth = 0): string | undefined {
-  if (!error || depth > 6) return undefined
-  if (typeof error === 'string') return error.startsWith('0x') ? error : undefined
-  if (typeof error !== 'object') return undefined
-
-  const record = error as Record<string, unknown>
-  // Standard Error.cause is non-enumerable. Prefer the underlying RPC error
-  // over transaction calldata attached to an outer wrapper.
-  const causedData = extractRevertData(record.cause, depth + 1)
-  if (causedData) return causedData
-  for (const key of ['data', 'raw']) {
-    const value = record[key]
-    if (typeof value === 'string' && value.startsWith('0x')) return value
-    if (value && typeof value === 'object') {
-      const nested = extractRevertData(value, depth + 1)
-      if (nested) return nested
+function getNestedString(error: unknown, keys: string[]): string | undefined {
+  for (const record of errorRecords(error, false)) {
+    for (const key of keys) {
+      const value = errorProperty(record, key)
+      if (typeof value === 'string' && value) return value
     }
   }
-
-  for (const value of Object.values(record)) {
-    const nested = extractRevertData(value, depth + 1)
-    if (nested) return nested
-  }
-  return undefined
 }
 
-function decodePerpsError(error: unknown): { name?: string; args?: readonly unknown[] } {
-  const data = extractRevertData(error)
-  if (data) {
-    try {
-      const decoded = decodeErrorResult({ abi: ALL_PERPS_ERROR_ABI, data: data as `0x${string}` })
-      return { name: decoded.errorName, args: decoded.args }
-    } catch {
-      // Fall back to viem's decoded metadata below.
-    }
-  }
+interface DecodedPerpsError { name?: string; args?: readonly unknown[] }
 
-  return {
-    name: getNestedString(error, ['errorName']),
-    args: getNestedArgs(error),
+function decodeRevertData(value: unknown): DecodedPerpsError | undefined {
+  if (typeof value !== 'string' || !/^0x(?:[a-fA-F0-9]{2}){4,}$/.test(value)) return undefined
+  try {
+    const decoded = decodeErrorResult({ abi: ALL_PERPS_ERROR_ABI, data: value as `0x${string}` })
+    return { name: decoded.errorName, args: decoded.args }
+  } catch {
+    // An incomplete signature or unknown payload must not hide a later valid revert.
+    return undefined
   }
+}
+
+function decodePerpsError(error: unknown): DecodedPerpsError {
+  const direct = decodeRevertData(error)
+  if (direct) return direct
+  // Prefer underlying RPC revert bytes over outer wrapper data. A viem decoding
+  // error's signature is not revert data; its parent's raw field still is.
+  for (const record of errorRecords(error)) {
+    for (const key of ['raw', 'data']) {
+      const decoded = decodeRevertData(errorProperty(record, key))
+      if (decoded) return decoded
+    }
+    // viem may already have decoded the error. Keep each name paired with its args.
+    const name = errorProperty(record, 'errorName')
+    if (typeof name !== 'string' || (!KNOWN_PERPS_ERROR_NAMES.has(name) && name !== 'Panic' && name !== 'Error')) continue
+    const args = errorProperty(record, 'args')
+    return { name, args: Array.isArray(args) ? args : undefined }
+  }
+  return {}
 }
 
 const KNOWN_PERPS_ERROR_NAMES = new Set<string>(
-  ALL_PERPS_ERROR_ABI
-    .filter(item => item.type === 'error')
-    .map(item => item.name)
+  ALL_PERPS_ERROR_ABI.map(item => item.name)
 )
 
 /** Only ABI-defined names may leave the app; never return error arguments or data. */
@@ -257,21 +174,8 @@ export function getPerpsContractErrorCode(error: unknown): string | undefined {
 
 /** Only decoded ordering failures are eligible for read-only review recovery. */
 export function isPerpsOracleSyncError(error: unknown): boolean {
-  // Walk each cause explicitly so an outer decoded error cannot hide a
-  // nested ordering failure. Keep traversal bounded and cycle-safe.
-  const seen = new Set<unknown>()
-  try {
-    for (let current = error, depth = 0; current && depth < 8 && !seen.has(current); depth++) {
-      seen.add(current)
-      const { name } = decodePerpsError(current)
-      if (name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder') return true
-      if (typeof current !== 'object') break
-      current = (current as { cause?: unknown }).cause
-    }
-  } catch {
-    // Malformed provider errors must never break the recovery controller.
-  }
-  return false
+  const { name } = decodePerpsError(error)
+  return name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder'
 }
 
 function argNumber(args: readonly unknown[] | undefined, index = 0): number | undefined {
@@ -351,13 +255,13 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'MarginClearinghouse__InsufficientBalance':
       return 'Your margin account balance is too low for this withdrawal.'
     case 'MarginClearinghouse__InsufficientFreeEquity':
-      if (action === 'protection') return 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
+      if (action === 'protection') return `Not enough free ${PERPS_SETTLEMENT_TOKEN_LABEL} to reserve TP/SL keeper rewards. Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account and retry.`
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'OrderRouter__InsufficientFreeEquity':
       if (action === 'protection') return 'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
-    case 'MarginClearinghouse__InsufficientUsdcForSettlement':
-      return 'The margin account does not have enough USDC settlement balance.'
+    case 'MarginClearinghouse__InsufficientAssetsForSettlement':
+      return `The margin account does not have enough ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     case 'OrderRouter__ZeroSize':
       return 'Order size must be greater than zero.'
     case 'OrderRouter__InvalidSizeQuantum':
@@ -372,6 +276,14 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     }
     case 'CfdEngineLens__QuoteSearchLimitExceeded':
       return 'The maximum size quote exceeded its search limit. Retry or enter a quantity manually.'
+    case 'PerpsMaxOpenQuoter__InvalidPreview':
+      return getPerpsOpenRevertMessage(argNumber(args))
+    case 'PerpsMaxOpenQuoter__NoPositiveEquity':
+      return 'Maximum size preview has no positive position equity'
+    case 'PerpsMaxOpenQuoter__SearchLimitExceeded':
+      return 'Maximum size leverage search did not converge'
+    case 'PerpsMaxOpenQuoter__InvalidMaxLeverage':
+      return 'Selected maximum leverage is invalid'
     case 'CfdEngine__TypedOrderFailure': {
       const code = argNumber(args, 1)
       const isClose = args?.[2] === true
@@ -380,27 +292,14 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     }
     case 'CfdEngine__NotAccountOwner':
       return 'This wallet can only add margin to its own position.'
-    case 'CfdEngine__MustCloseOpposingPosition':
-      return OPEN_REVERT_MESSAGES[1]
     case 'CfdEngine__DegradedMode':
       return OPEN_REVERT_MESSAGES[2]
     case 'CfdEngine__PositionTooSmall':
       return OPEN_REVERT_MESSAGES[3]
-    case 'CfdEngine__SkewTooHigh':
-      return OPEN_REVERT_MESSAGES[4]
-    case 'CfdEngine__MarginDrainedByFees':
-      return OPEN_REVERT_MESSAGES[5]
-    case 'CfdEngine__InsufficientInitialMargin':
-      return OPEN_REVERT_MESSAGES[6]
-    case 'CfdEngine__PoolSolvencyExceeded':
     case 'CfdEngine__InsufficientPoolLiquidity':
       return OPEN_REVERT_MESSAGES[7]
     case 'CfdEngine__CloseSizeExceedsPosition':
       return CLOSE_REVERT_MESSAGES[1]
-    case 'CfdEngine__DustPosition':
-      return CLOSE_REVERT_MESSAGES[2]
-    case 'CfdEngine__PartialCloseUnderwaterCarry':
-      return CLOSE_REVERT_MESSAGES[4]
     case 'CfdEngine__NoOpenPosition':
     case 'OrderRouter__NoOpenPosition':
       return 'There is no open position for this account.'
@@ -410,13 +309,6 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The engine mark price is stale. Refresh the oracle mark before committing.'
     case 'CfdEngine__MarkPriceOutOfOrder':
       return 'The engine rejected an out-of-order mark price. Refresh and retry.'
-    case 'CfdEngine__InsufficientCloseOrderBountyBacking':
-      if (args?.length === 3 && args.every(value => typeof value === 'bigint' && value >= 0n)) {
-        const [required, available, unpaid] = args as readonly bigint[]
-        const shortfall = required > available ? required - available : 0n
-        return `The close needs ${formatUnits(required, 6)} USDC reserved for execution, but only ${formatUnits(available, 6)} USDC is free after carry. Free settlement is short by ${formatUnits(shortfall, 6)} USDC.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} USDC.` : ''} Refresh the review after funding changes.`
-      }
-      return 'Free settlement after carry cannot fund the close execution reserve. Refresh the account and review again.'
     case 'CfdOrderPolicyEvaluator__InsufficientBountyBacking':
       return 'The protocol returned inconsistent execution-bounty accounting. Refresh the review; contact support if this persists.'
     case 'CfdEngine__PartialCloseUnhealthy':
@@ -446,7 +338,8 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Order integrity error: this client order ID is already bound to different deadline, bounds, or trade fields.'
     case 'OrderRouter__ZeroTargetPrice':
       return 'A bounded V2 order requires a nonzero target price.'
-    case 'OrderRouter__InvalidValidUntil':
+    case 'OrderRouter__InvalidExecutionWindow':
+    case 'OrderRouter__InvalidSubmitBy':
       return 'The reviewed order deadline expired or is outside the current maximum order age. Review a fresh order.'
     case 'OrderRouter__InvalidExecutionModeMask':
       return 'The reviewed execution regime is invalid. Review the order again.'
@@ -467,8 +360,6 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Your position changed. Refresh and review your TP/SL again.'
     case 'OrderRouter__ConditionalTriggerFrozen':
       return 'TP/SL changes are unavailable while the market oracle is frozen. Wait for the market to reopen.'
-    case 'OrderRouter__ProtectionDisabled':
-      return 'New TP/SL protections are currently disabled.'
     case 'OrderRouter__InvalidProtectionPrices':
     case 'OrderRouter__ProtectionTriggerAlreadyMet':
       return 'The trigger price is no longer valid against the current market. Review fresh TP/SL prices.'
@@ -492,31 +383,20 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The LP pool is still in seed lifecycle. Trading is not open yet.'
     case 'OrderRouter__VaultRiskBlocked':
       return 'The LP vault is blocking additional risk right now.'
-    case 'OrderRouter__EmptyPythUpdateData':
     case 'PletherOracle__MissingUpdateData':
       return 'Missing Pyth price update data. Retry execution.'
-    case 'OrderRouter__InsufficientPythFee':
     case 'PletherOracle__InsufficientFee':
       return 'The Pyth update fee changed. Retry execution to quote a fresh fee.'
-    case 'OrderRouter__OraclePriceTooStale':
-      return 'Pyth price data expired before the transaction landed. Retry self-execute and confirm promptly.'
     case 'PletherOracle__StalePrice':
       return formatStalePriceMessage(args)
-    case 'OrderRouter__OracleConfidenceTooWide':
-    case 'PletherOracle__ConfidenceTooWide':
-      return 'Pyth confidence is too wide right now. Retry when the oracle update is cleaner.'
-    case 'OrderRouter__OraclePublishTimesDiverged':
     case 'PletherOracle__PublishTimeDivergence':
       return 'Pyth component prices are not aligned closely enough. Retry in a few seconds.'
-    case 'OrderRouter__InvalidOraclePrice':
     case 'PletherOracle__InvalidPrice':
     case 'PletherOracle__ZeroBasketPrice':
       return 'The oracle returned an invalid basket price.'
     case 'OrderRouter__MarkPriceOutOfOrder':
     case 'PletherOracle__PriceOutOfOrder':
       return 'The oracle update is older than the stored mark. Refresh the mark or retry with newer Pyth data.'
-    case 'OrderRouter__MevDetected':
-      return 'Reveal is not ready yet. Wait a few seconds and retry self-execute.'
     case 'OrderRouter__NoOrdersToExecute':
       return 'This order is no longer pending. It likely expired or was already processed; your reserved margin has been released.'
     case 'OrderRouter__OrderNotQueueHead':
@@ -543,11 +423,11 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
 function fallbackMessage(action: PerpsAction): string {
   switch (action) {
     case 'approve':
-      return 'USDC approval failed. Check the wallet message and retry.'
+      return `${PERPS_SETTLEMENT_TOKEN_LABEL} approval failed. Check the wallet message and retry.`
     case 'fund':
-      return 'Transfer to the Trading Account failed. Check the Owner Wallet USDC balance and Arbitrum Sepolia ETH for gas.'
+      return `Transfer to the Trading Account failed. Check the Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL} balance and Arbitrum Sepolia ETH for gas.`
     case 'deposit':
-      return 'Deposit failed. Check USDC balance, allowance, and wallet gas.'
+      return `Deposit failed. Check ${PERPS_SETTLEMENT_TOKEN_LABEL} balance, allowance, and wallet gas.`
     case 'withdraw':
       return 'Withdraw failed. Check free margin and pending orders.'
     case 'addPositionMargin':
@@ -613,6 +493,11 @@ export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): s
 }
 
 export function getPerpsErrorMessage(error: unknown, action: PerpsAction): string {
+  for (const record of transactionErrorRecords(error)) {
+    const reason = errorField(record, 'reason') ?? errorField(record, 'diagnosticCode')
+    if (typeof reason === 'string' && Object.hasOwn(TRANSACTION_FAILURE_MESSAGES, reason)
+      && reason !== 'UNKNOWN' && reason !== 'SUBMISSION_OUTCOME_UNKNOWN') return TRANSACTION_FAILURE_MESSAGES[reason]
+  }
   const decoded = decodePerpsError(error)
   if (decoded.name === 'Panic') {
     const reason = argNumber(decoded.args) === 17 ? 'an internal arithmetic error' : 'an internal error'
@@ -625,8 +510,11 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
 
   const rawMessage = getNestedString(error, ['shortMessage', 'message']) ?? (typeof error === 'string' ? error : '')
   const lower = rawMessage.toLowerCase()
+  if (action === 'review' && /^an unknown error occurred while executing the contract function "[^"]+"\.?$/.test(lower)) {
+    return fallbackMessage(action)
+  }
   if (lower.includes('commit reverted after wallet confirmation')) {
-    return rawMessage
+    return readableTransactionMessage(rawMessage)
   }
   const rawDecodedMessage = messageForRawError(lower)
   if (rawDecodedMessage) return rawDecodedMessage
@@ -646,12 +534,10 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     lower.includes('backend did not return pyth update data') ||
     lower.includes('hermes rate limit reached')
   ) {
-    return rawMessage
+    return readableTransactionMessage(rawMessage)
   }
-  if (lower.includes('network') || lower.includes('fetch')) {
-    return rawMessage
-      ? `Network request failed: ${rawMessage}`
-      : 'Network request failed. Check RPC/Hermes connectivity and retry.'
+  if (/network (request|error)|failed to fetch|fetch failed/i.test(rawMessage)) {
+    return 'The connection failed. Check Trading Account activity to see whether the transaction was received before trying again.'
   }
   if (lower.includes('transaction receipt') && lower.includes('could not be found')) {
     return 'Transaction was submitted, but confirmation timed out. Check the explorer before retrying.'
@@ -663,5 +549,9 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     return fallbackMessage(action)
   }
 
-  return rawMessage && rawMessage !== 'Transaction failed' ? rawMessage : fallbackMessage(action)
+  if (/http request failed|rpc request failed|request arguments:|request body:|raw call arguments:|\b0x[\da-f]{40,}|\bviem@/i.test(rawMessage) || rawMessage.length > 600) {
+    return 'We could not confirm this transaction. Check Trading Account activity for its status before trying again.'
+  }
+
+  return rawMessage && rawMessage !== 'Transaction failed' ? readableTransactionMessage(rawMessage) : fallbackMessage(action)
 }

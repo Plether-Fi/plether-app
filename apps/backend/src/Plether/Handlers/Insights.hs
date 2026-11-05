@@ -3,6 +3,11 @@ module Plether.Handlers.Insights
   , getCompetitionLeaderboardResponse
   , getCompetitionWalletResponse
   , getInsightsDataStatusResponse
+  , getDivisionsTradersResponse
+  , getDivisionsCurrentResponse
+  , getDivisionsHistoryResponse
+  , getDivisionsLiveResponse
+  , getDivisionsStatsResponse
   , competitionRowToJson
   , leaderboardRowToJson
   , prizeEligibleAfterIntegrityReview
@@ -11,13 +16,16 @@ module Plether.Handlers.Insights
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Maybe (catMaybes)
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Database.PostgreSQL.Simple.Transaction
   ( IsolationLevel (RepeatableRead)
   , ReadWriteMode (ReadOnly)
@@ -38,6 +46,9 @@ import Plether.Database.Insights
   , getCurrentCompetition
   , getInsightsDataStatus
   )
+import Plether.Database.Schema (PerpsIndexerStatusRow (..), getPerpsIndexerStatus)
+import Plether.Insights.Divisions (divisionWeekStart)
+import Plether.Insights.DivisionsLive (divisionsPublicationsQuery)
 import Plether.Insights.Competition
   ( CompetitionRegistrationState (..)
   , CompetitionRules (..)
@@ -45,7 +56,7 @@ import Plether.Insights.Competition
   , PrizeAllocation (..)
   , competitionRulesForSlug
   , competitionRegistrationState
-  , minimumProfitUsdc
+  , minimumProfitAssets
   , participantEligibilityFromText
   , prizeAllocation
   )
@@ -182,6 +193,148 @@ getInsightsDataStatusResponse pool cfg = do
                 , "provisional" .= not (icrFinalized competition)
                 ]
 
+-- The Divisions roster contains executed trades on the configured current
+-- release only. Discord links and September registration are not consulted.
+getDivisionsTradersResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getDivisionsTradersResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
+    bindings <- query conn
+      "SELECT release_router FROM divisions_weeks WHERE chain_id=? AND week_start=?"
+      (cfgPerpsChainId cfg,divisionWeekStart now) :: IO [Only Text]
+    cursor <- case bindings of
+      [Only router] -> do
+        current <- getPerpsIndexerStatus conn (cfgPerpsChainId cfg) "perps-history-costs-v2:finalized-abi3" router
+        case current of
+          Just value -> pure $ Just value
+          Nothing -> getPerpsIndexerStatus conn (cfgPerpsChainId cfg) "perps-history-costs-v1" router
+      _ -> pure Nothing
+    rows <- case cursor of
+      Just PerpsIndexerStatusRow { pisLastIndexedBlockHash = Just _, pisReleaseRouter = releaseRouter } ->
+        query conn
+          "SELECT LOWER(a.account), COUNT(*)::BIGINT, MAX(a.timestamp)::BIGINT \
+          \FROM perps_account_activity a \
+          \WHERE a.chain_id = ? AND a.release_router = ? \
+          \AND a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 \
+          \AND EXISTS (SELECT 1 FROM perps_indexer_state i \
+          \  WHERE i.chain_id = a.chain_id AND i.release_router = a.release_router \
+          \  AND i.indexer_name IN (('perps-history-costs-v1:' || a.release_router), \
+          \    ('perps-history-costs-v2:finalized-abi3:' || a.release_router)) \
+          \  AND i.last_indexed_block_hash IS NOT NULL \
+          \  AND a.block_number >= COALESCE(i.configured_start_block, 0) \
+          \  AND a.block_number <= i.last_indexed_block) \
+          \GROUP BY LOWER(a.account) ORDER BY MAX(a.timestamp) DESC, LOWER(a.account) ASC"
+          (cfgPerpsChainId cfg, releaseRouter)
+      _ -> pure []
+    pure (cursor, rows :: [(Text, Int64, Int64)])
+  pure $ case mCursor of
+    Just PerpsIndexerStatusRow { pisReleaseRouter = releaseRouter, pisLastIndexedBlock = safeBlock, pisLastIndexedBlockHash = Just safeHash } -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
+      object
+        [ "traders" .=
+            [ object
+                [ "address" .= address
+                , "executedTrades" .= count
+                , "lastTradeAt" .= isoTimestamp (fromIntegral lastTrade)
+                ]
+            | (address, count, lastTrade) <- traders
+            ]
+        , "releaseRouter" .= releaseRouter
+        , "indexedThroughBlock" .= show safeBlock
+        , "indexedThroughBlockHash" .= safeHash
+        , "generatedAt" .= isoTimestamp now
+        ]
+    _ -> Left $ E.internalError "Divisions trade indexer has no finalized cursor"
+
+-- Finalized badges have no live-snapshot freshness limit: an awarded tier
+-- remains current throughout the following week and across worker restarts.
+getDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsCurrentResponse pool cfg = do
+  rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
+    (cfgPerpsChainId cfg, Nothing :: Maybe Int, Nothing :: Maybe Int)
+  pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) Null
+    (block, encoded, _, _):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+      Nothing -> Left $ E.internalError "Divisions publication is invalid"
+      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) publication
+
+-- A week selects its pinned contract release. Cursors span the canonical
+-- timeline across upgrades; callers cannot choose an alternative result.
+getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
+getDivisionsHistoryResponse pool cfg week = do
+  rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
+    (cfgPerpsChainId cfg, week, week)
+  pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
+    [] | Just _ <- week -> Left $ E.notFound "This Divisions week has not been published"
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+      [ "publication" .= Null, "olderCursor" .= Null, "newerCursor" .= Null ]
+    (block, encoded, older, newer):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+      Nothing -> Left $ E.internalError "Divisions publication is invalid"
+      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+        [ "publication" .= publication
+        , "olderCursor" .= fmap show older
+        , "newerCursor" .= fmap show newer
+        ]
+
+-- Links are inserted only after Discord, wallet ownership and consent are
+-- verified. Count those completed registrations independently of trading activity.
+getDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsStatsResponse pool cfg = do
+  counts <- withDb pool $ \conn -> query_ conn
+    "SELECT COUNT(*) FROM insights_divisions_links"
+  pure $ case counts :: [Only Integer] of
+    [Only count] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $
+      object ["registeredWallets" .= count]
+    _ -> Left $ E.internalError "Divisions registration count is unavailable"
+
+getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsLiveResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  let weekStart = divisionWeekStart now
+  rows <- withDb pool $ \conn -> query conn
+    "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
+    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
+    \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
+    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
+    \EXTRACT(EPOCH FROM s.captured_at)::BIGINT,w.release_router,w.release_version,w.asset_symbol \
+    \FROM divisions_live_snapshots s JOIN divisions_weeks w \
+    \ON w.chain_id=s.chain_id AND w.week_start=s.week_start AND w.release_router=s.release_router \
+    \WHERE s.chain_id=? AND s.week_start=? \
+    \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
+    \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
+    \AND i.release_router=s.release_router AND i.indexer_name IN \
+    \('perps-history-costs-v1:' || s.release_router, \
+    \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
+    \AND i.last_indexed_block_hash IS NOT NULL \
+    \AND (i.last_indexed_block>s.snapshot_block OR \
+    \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
+    \LIMIT 1"
+    (cfgPerpsChainId cfg, weekStart)
+  pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+      [ "status" .= ("pending" :: Text)
+      , "weekStartsAt" .= isoTimestamp weekStart
+      , "generatedAt" .= isoTimestamp now
+      ]
+    (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt, release, version, asset) : _ ->
+      case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
+        Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
+        Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+          [ "status" .= ("ready" :: Text)
+          , "weekStartsAt" .= isoTimestamp weekStart
+          , "snapshotAt" .= isoTimestamp timestamp
+          , "snapshotBlock" .= show block
+          , "snapshotBlockHash" .= blockHash
+          , "capturedAt" .= isoTimestamp capturedAt
+          , "walletCount" .= walletCount
+          , "releaseRouter" .= release
+          , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
+          , "standings" .= standings
+          , "provisional" .= True
+          ]
+
 withInsightsReadSnapshot :: Connection -> IO value -> IO value
 withInsightsReadSnapshot =
   withTransactionMode $
@@ -190,10 +343,10 @@ withInsightsReadSnapshot =
       , readWriteMode = ReadOnly
       }
 
-competitionMinimumProfitUsdc :: CompetitionRow -> Integer
-competitionMinimumProfitUsdc competition =
+competitionMinimumProfitAssets :: CompetitionRow -> Integer
+competitionMinimumProfitAssets competition =
   case competitionRulesForSlug $ icrSlug competition of
-    Just rules -> minimumProfitUsdc rules
+    Just rules -> minimumProfitAssets rules
     Nothing -> error $
       "Insights competition rules are not defined in code for slug "
         <> T.unpack (icrSlug competition)
@@ -215,14 +368,14 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , Just $ "paymentDeadlineAt" .= isoTimestamp icrPaymentDeadlineTimestamp
       , ("startBlock" .=) . show <$> icrStartBlock
       , ("scoreCutoffBlock" .=) . show <$> icrScoreCutoffBlock
-      , Just $ "startingBalanceUsdc" .= show icrStartingBalanceUsdc
-      , Just $ "minimumProfitUsdc" .= show minimumProfit
+      , Just $ "startingBalanceAssets" .= show icrStartingBalanceAssets
+      , Just $ "minimumProfitAssets" .= show minimumProfit
       , Just $ "minimumProfitBps" .= minimumProfitBps
       , Just $ "minimumActiveDays" .= icrMinimumActiveDays
       , Just $ "fxSessionBoundaryUtc" .= formatBoundary icrFxSessionBoundaryUtcMinutes
       , Just $
           "prizes"
-            .= [ object ["place" .= place, "amountUsdc" .= show amount]
+            .= [ object ["place" .= place, "amountAssets" .= show amount]
                | (place, amount) <- zip [(1 :: Int) ..] $ competitionPrizeAmounts competition
                ]
       , Just $ "scoringVersion" .= icrScoringVersion
@@ -236,10 +389,10 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , ("registration" .=) <$> registrationMetadata
       ]
   where
-    minimumProfit = competitionMinimumProfitUsdc competition
+    minimumProfit = competitionMinimumProfitAssets competition
     minimumProfitBps
-      | icrStartingBalanceUsdc <= 0 = 0
-      | otherwise = minimumProfit * 10_000 `div` icrStartingBalanceUsdc
+      | icrStartingBalanceAssets <= 0 = 0
+      | otherwise = minimumProfit * 10_000 `div` icrStartingBalanceAssets
     competitionPhase
       | icrFinalized = "final" :: Text
       | now < icrStartTimestamp = "upcoming"
@@ -283,23 +436,23 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       [ ("rank" .=) <$> ilrRank
       , ("prizePlace" .=) . paPlace <$> allocation
       , ("prizePlaces" .=) . paPlaces <$> allocation
-      , ("prizeAmountUsdc" .=) . show . paAmountUsdc <$> allocation
+      , ("prizeAmountAssets" .=) . show . paAmountAssets <$> allocation
       , Just $ "wallet" .= ilrWallet
       , ("alias" .=) <$> ilrAlias
       , Just $ "eligibilityStatus" .= ilrEligibilityStatus
       , ("eligibilityReason" .=) <$> ilrEligibilityReason
-      , ("finalPnlUsdc" .=) . show <$> ilrFinalPnlUsdc
+      , ("finalPnlAssets" .=) . show <$> ilrFinalPnlAssets
       , ("roiBps" .=) <$> ilrRoiBps
-      , ("startingAccountValueUsdc" .=) . show <$> ilrStartingAccountValueUsdc
-      , ("currentAccountValueUsdc" .=) . show <$> ilrCurrentAccountValueUsdc
-      , Just $ "depositsUsdc" .= show ilrDepositsUsdc
-      , Just $ "withdrawalsUsdc" .= show ilrWithdrawalsUsdc
-      , Just $ "manualAdjustmentsUsdc" .= show ilrManualAdjustmentsUsdc
+      , ("startingAccountValueAssets" .=) . show <$> ilrStartingAccountValueAssets
+      , ("currentAccountValueAssets" .=) . show <$> ilrCurrentAccountValueAssets
+      , Just $ "depositsAssets" .= show ilrDepositsAssets
+      , Just $ "withdrawalsAssets" .= show ilrWithdrawalsAssets
+      , Just $ "manualAdjustmentsAssets" .= show ilrManualAdjustmentsAssets
       , Just $ "activeDays" .= ilrActiveDays
-      , Just $ "volumeUsdc" .= show ilrVolumeUsdc
+      , Just $ "volumeAssets" .= show ilrVolumeAssets
       , Just $ "executedTrades" .= ilrExecutedTrades
       , Just $ "liquidations" .= ilrLiquidations
-      , Just $ "realizedPnlUsdc" .= show ilrRealizedPnlUsdc
+      , Just $ "realizedPnlAssets" .= show ilrRealizedPnlAssets
       , ("snapshotBlock" .=) . show <$> ilrLatestSnapshotBlock
       , ("snapshotAt" .=) . isoTimestamp <$> ilrLatestSnapshotTimestamp
       , ("hasOpenPosition" .=) <$> ilrHasOpenPosition
@@ -312,11 +465,11 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       , Just $ "scoreAvailable" .= scoreAvailable
       ]
   where
-    minimumProfit = competitionMinimumProfitUsdc competition
-    meetsProfit = maybe False (>= minimumProfit) ilrFinalPnlUsdc
+    minimumProfit = competitionMinimumProfitAssets competition
+    meetsProfit = maybe False (>= minimumProfit) ilrFinalPnlAssets
     meetsDays = ilrActiveDays >= icrMinimumActiveDays competition
     mechanicallyQualified = meetsProfit && meetsDays
-    scoreAvailable = maybe False (const True) ilrFinalPnlUsdc
+    scoreAvailable = maybe False (const True) ilrFinalPnlAssets
     reviewedEligible =
       participantEligibilityFromText ilrEligibilityStatus == Just EligibilityEligible
     prizeEligible =
@@ -334,11 +487,11 @@ competitionPrizeAmounts :: CompetitionRow -> [Integer]
 competitionPrizeAmounts CompetitionRow {..} =
   filter
     (> 0)
-    [ icrFirstPrizeUsdc
-    , icrSecondPrizeUsdc
-    , icrThirdPrizeUsdc
-    , icrFourthPrizeUsdc
-    , icrFifthPrizeUsdc
+    [ icrFirstPrizeAssets
+    , icrSecondPrizeAssets
+    , icrThirdPrizeAssets
+    , icrFourthPrizeAssets
+    , icrFifthPrizeAssets
     ]
 
 prizeEligibleAfterIntegrityReview :: Bool -> Bool -> Bool -> Bool
@@ -361,9 +514,9 @@ walletPositionToJson LeaderboardRow {..}
           , ("side" .=) <$> positionSide ilrPositionSide
           , ("sideCode" .=) <$> ilrPositionSide
           , ("sizeDelta" .=) <$> ilrPositionSizeDelta
-          , ("marginUsdc" .=) <$> ilrPositionMarginUsdc
+          , ("marginAssets" .=) <$> ilrPositionMarginAssets
           , ("entryPrice" .=) <$> ilrPositionEntryPrice
-          , ("unrealizedPnlUsdc" .=) <$> ilrPositionUnrealizedPnlUsdc
+          , ("unrealizedPnlAssets" .=) <$> ilrPositionUnrealizedPnlAssets
           , ("liquidatable" .=) <$> ilrPositionLiquidatable
           ]
   where
@@ -380,10 +533,10 @@ activityRowToJson InsightsActivityRow {..} =
       , ("side" .=) <$> iarSide
       , ("price" .=) . show <$> iarPrice
       , ("sizeDelta" .=) . show <$> iarSizeDelta
-      , ("amountUsdc" .=) . show <$> iarAmountUsdc
-      , ("pnlUsdc" .=) . show <$> iarPnlUsdc
-      , ("executionFeeUsdc" .=) . show <$> iarExecutionFeeUsdc
-      , ("vpiUsdc" .=) . show <$> iarVpiUsdc
+      , ("amountAssets" .=) . show <$> iarAmountAssets
+      , ("pnlAssets" .=) . show <$> iarPnlAssets
+      , ("executionFeeAssets" .=) . show <$> iarExecutionFeeAssets
+      , ("vpiAssets" .=) . show <$> iarVpiAssets
       , Just $ "txHash" .= iarTxHash
       , Just $ "blockNumber" .= show iarBlockNumber
       , Just $ "timestamp" .= iarTimestamp

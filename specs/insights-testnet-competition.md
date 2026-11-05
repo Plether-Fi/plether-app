@@ -22,7 +22,7 @@ so one trader cannot enter through several accounts.
 All boundaries are fixed UTC and use half-open intervals.
 
 - Start, inclusive: `2026-09-13T21:00:00Z`
-- Registration cutoff, exclusive: `2026-09-20T21:00:00Z`
+- Registration cutoff, exclusive: `2026-09-22T00:00:00Z`
 - New-risk and scoring cutoff, exclusive: `2026-09-25T21:00:00Z`
 - There is no close-only period; opening and increasing positions remain allowed until cutoff.
 - Results publication: `2026-09-28T12:00:00Z`

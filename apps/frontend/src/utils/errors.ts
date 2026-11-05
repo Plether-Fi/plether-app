@@ -1,3 +1,4 @@
+import { readableTransactionMessage } from './transactionFailure'
 import { TaggedError, matchErrorPartial } from 'better-result'
 
 const ERROR_SELECTORS: Record<string, string> = {
@@ -85,9 +86,9 @@ const ERROR_SELECTORS: Record<string, string> = {
   '0x053347a4': 'Vault shares are still in the one-hour deposit cooldown',
   '0x15fb1002': 'Vault deposits are currently unavailable',
   '0x1ac3a5cc': 'Cannot deposit for an existing holder from a different wallet',
-  '0x470a09ff': 'Withdrawal is below the one USDC minimum unless it is a complete residual exit',
+  '0x470a09ff': 'Withdraw at least 1 USDG, or withdraw your full remaining balance',
   '0x5616d460': 'This tranche is terminally wiped and cannot accept deposits',
-  '0xd88a5404': 'Deposit is below the one USDC minimum',
+  '0xd88a5404': 'Deposit at least 1 USDG',
   '0xf563b79c': 'Vault trading lifecycle is not active',
   '0xf5afaf53': 'Senior impairment currently blocks tranche deposits',
 
@@ -191,7 +192,7 @@ export class ContractRevertError extends TaggedError('ContractRevertError')<{
 }>() {
   constructor(args: { reason?: string; rawData?: string }) {
     const reason = args.reason ?? 'Unknown reason'
-    super({ reason, message: reason, rawData: args.rawData })
+    super({ reason, message: readableTransactionMessage(reason), rawData: args.rawData })
   }
 }
 
@@ -230,21 +231,6 @@ export type TransactionError =
   | TimeoutError
   | UnknownTransactionError
 
-function extractHttpDetails(error: unknown): string | null {
-  if (!error || typeof error !== 'object') return null
-  const err = error as { url?: string; status?: number; cause?: unknown }
-  if (err.url) {
-    const host = safeParseHost(err.url)
-    return `${host} responded ${String(err.status ?? '?')}`
-  }
-  if (err.cause) return extractHttpDetails(err.cause)
-  return null
-}
-
-function safeParseHost(url: string): string {
-  try { return new URL(url).host } catch { return url }
-}
-
 function extractMessage(error: unknown): string {
   if (!error) return 'Transaction failed'
 
@@ -260,13 +246,7 @@ function extractMessage(error: unknown): string {
   else if (errorObj.message) msg = errorObj.message
   else if (typeof error === 'string') msg = error
 
-  const httpDetail = extractHttpDetails(error)
-  if (httpDetail) msg += ` (${httpDetail})`
-
-  if (msg.length > 200) {
-    return msg.slice(0, 200) + '...'
-  }
-  return msg
+  return readableTransactionMessage(msg)
 }
 
 const USER_REJECTION_PATTERNS = [
@@ -369,7 +349,7 @@ export function parseTransactionError(error: unknown): TransactionError {
     // Unknown selector - show full error data
     const selector = errorData.slice(0, 10)
     return new ContractRevertError({
-      reason: `Unknown error ${selector}`,
+      reason: `The contract rejected this transaction with an unrecognized error (${selector}). Refresh account state before trying again.`,
       rawData: errorData
     })
   }

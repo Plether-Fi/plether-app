@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Exception
   ( SomeAsyncException
   , SomeException
@@ -39,6 +41,7 @@ data KeeperArgs = KeeperArgs
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   rawArgs <- getArgs
   args <- either fatal pure $ parseKeeperArgs rawArgs
   eConfig <- loadConfig

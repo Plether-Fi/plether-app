@@ -1,0 +1,313 @@
+import { describe, expect, it } from 'vitest'
+import { toEventSelector, toFunctionSelector, type Hex } from 'viem'
+import {
+  PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+  PERPS_ORDER_ROUTER_ABI,
+} from '../abis'
+import { PERPS_SIDE } from '../perpsConstants'
+import {
+  deriveAdditionalPerpsMarginForLeverage,
+  derivePerpsExecutionBounds,
+  executionModeOracleFrozen,
+  executionModeMask,
+  generatePerpsClientOrderId,
+  isPublicPerpsClientOrderId,
+  PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX,
+  PERPS_EXECUTION_MODE,
+  PERPS_EXECUTION_MODE_MASK,
+  persistPerpsOrderRequestV3,
+  relaxedWebPerpsExecutionBounds,
+  reviewedExecutionBountyMaximum,
+  restorePerpsOrderRequestV3,
+  type PerpsExecutionAssessment,
+  type PerpsOrderRequestV3,
+} from '../perpsOrderV3'
+
+const ACCOUNT = '0x1111111111111111111111111111111111111111'
+const CONFIG_HASH = `0x${'22'.repeat(32)}` as Hex
+
+function assessment(
+  overrides: Partial<PerpsExecutionAssessment> = {}
+): PerpsExecutionAssessment {
+  return {
+    mode: PERPS_EXECUTION_MODE.LIVE,
+    executionNotionalAssets: 100n,
+    grossAccountDebitAssets: 20n,
+    actionChargeAssessedAssets: 5n,
+    actionChargeCollectedAssets: 5n,
+    explicitFeesAssets: 4n,
+    preSettlementBalanceAssets: 1_000n,
+    postSettlementBalanceAssets: 980n,
+    realizedPnlAssets: 0n,
+    vpiAssets: 0n,
+    carryAssets: 0n,
+    executionFeeAssets: 4n,
+    frozenSpreadAssets: 0n,
+    preTraderClaimAssets: 0n,
+    postTraderClaimAssets: 0n,
+    postPositionSize: 500n,
+    postPositionMarginAssets: 100n,
+    postPositionEquityAssets: 95n,
+    postLeverageBps: 52_632n,
+    ...overrides,
+  }
+}
+
+describe('bounded V3 order identity', () => {
+  it('rejects zero and the reserved protocol prefix before returning randomness', () => {
+    let attempt = 0
+    const clientOrderId = generatePerpsClientOrderId((bytes) => {
+      bytes.fill(0)
+      if (attempt === 1) {
+        const prefix = PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX.slice(2)
+        for (let index = 0; index < 8; index += 1) {
+          bytes[index] = Number.parseInt(prefix.slice(index * 2, index * 2 + 2), 16)
+        }
+      } else if (attempt === 2) {
+        bytes.fill(0x11)
+      }
+      attempt += 1
+      return bytes
+    })
+
+    expect(clientOrderId).toBe(`0x${'11'.repeat(32)}`)
+    expect(attempt).toBe(3)
+    expect(isPublicPerpsClientOrderId(`0x${'0'.repeat(64)}`)).toBe(false)
+    expect(isPublicPerpsClientOrderId(
+      `${PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX}${'00'.repeat(24)}`
+    )).toBe(false)
+  })
+
+  it('round-trips every immutable request field without changing bounds', () => {
+    const request: PerpsOrderRequestV3 = {
+      clientOrderId: `0x${'11'.repeat(32)}`,
+      side: PERPS_SIDE.SHORT,
+      sizeDelta: 100n,
+      marginDelta: 10n,
+      targetPrice: 1234n,
+      isClose: false,
+      bounds: derivePerpsExecutionBounds({
+        submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+        expectedConfigHash: CONFIG_HASH,
+        executionBountyAssets: 3n,
+        selectedMaxLeverageBps: 60_000,
+        assessments: [assessment()],
+      }),
+    }
+
+    expect(restorePerpsOrderRequestV3(
+      persistPerpsOrderRequestV3(ACCOUNT, request)
+    )).toEqual(request)
+  })
+})
+
+describe('bounded V2 execution protections', () => {
+  it.each([[119_061n, 119_064n, 120_252n], [118_746n, 118_750n, 119_934n]])(
+    'covers recorded bounty drift from %s without unbounded permission', (quote, actual, cap) => {
+      expect(reviewedExecutionBountyMaximum(quote)).toBe(cap)
+      expect(actual).toBeLessThanOrEqual(cap)
+      expect(cap + 1n).toBeGreaterThan(reviewedExecutionBountyMaximum(quote))
+    })
+
+  it('rounds upward, applies the ten-micro minimum and rejects invalid/overflowing quotes', () => {
+    expect(reviewedExecutionBountyMaximum(0n)).toBe(0n)
+    expect(reviewedExecutionBountyMaximum(999n)).toBe(1009n)
+    expect(reviewedExecutionBountyMaximum(1001n)).toBe(1012n)
+    expect(() => reviewedExecutionBountyMaximum(-1n)).toThrow()
+    expect(() => reviewedExecutionBountyMaximum((1n << 256n) - 1n)).toThrow()
+  })
+
+  it('does not increase the maximum again when restoring a reviewed request', () => {
+    const request: PerpsOrderRequestV3 = {
+      clientOrderId: `0x${'11'.repeat(32)}`, side: PERPS_SIDE.SHORT,
+      sizeDelta: 100n, marginDelta: 10n, targetPrice: 1234n, isClose: false,
+      bounds: relaxedWebPerpsExecutionBounds({ submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+        expectedConfigHash: CONFIG_HASH, executionBountyAssets: 119_061n,
+        executionMode: PERPS_EXECUTION_MODE.LIVE }),
+    }
+    const restored = restorePerpsOrderRequestV3(persistPerpsOrderRequestV3(ACCOUNT, request))
+    expect(restored).toEqual(request)
+    expect(restored.bounds.maxExecutionBountyAssets).toBe(120_252n)
+  })
+  it('keeps web accounting bounds wide while pinning lifecycle protections', () => {
+    const bounds = relaxedWebPerpsExecutionBounds({
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+      expectedConfigHash: CONFIG_HASH,
+      executionBountyAssets: 200_000n,
+      executionMode: PERPS_EXECUTION_MODE.LIVE,
+    })
+    const uint256Max = (1n << 256n) - 1n
+
+    expect(bounds).toEqual({
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+      allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
+      expectedConfigHash: CONFIG_HASH,
+      maxExecutionBountyAssets: 202_000n,
+      maxExecutionNotionalAssets: uint256Max,
+      maxGrossAccountDebitAssets: uint256Max,
+      maxActionChargeAssets: uint256Max,
+      maxExplicitFeesAssets: uint256Max,
+      maxPostPositionSize: uint256Max,
+      minPostSettlementBalanceAssets: 0n,
+      minPostPositionEquityAssets: 0n,
+      maxPostLeverageBps: 0xffff_ffff,
+    })
+  })
+
+  it('derives the exact extra margin needed to preserve selected leverage', () => {
+    const positionSize = 50n * 10n ** 20n
+    const prices = [100_000_000n, 100_100_000n]
+    const additionalMargin = deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: 50_000,
+      marginDelta: 1_000_000_000n,
+      prices,
+      capPrice: 200_000_000n,
+      assessments: [
+        assessment({
+          postPositionSize: positionSize,
+          postPositionEquityAssets: 999_500_000n,
+          postLeverageBps: 50_026n,
+        }),
+        assessment({
+          postPositionSize: positionSize,
+          postPositionEquityAssets: 999_500_000n,
+          postLeverageBps: 50_076n,
+        }),
+      ],
+    })
+
+    expect(additionalMargin).toBe(1_500_000n)
+  })
+
+  it('adds no leverage margin when every reviewed price already fits', () => {
+    expect(deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: 50_000,
+      marginDelta: 1_000_000_000n,
+      prices: [100_000_000n],
+      capPrice: 200_000_000n,
+      assessments: [assessment({
+        postPositionSize: 50n * 10n ** 20n,
+        postPositionEquityAssets: 1_000_000_000n,
+        postLeverageBps: 50_000n,
+      })],
+    })).toBe(0n)
+  })
+
+  it('also replaces margin absorbed by positive execution costs', () => {
+    expect(deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: 50_000,
+      marginDelta: 10_000_000n,
+      prices: [100_000_000n],
+      capPrice: 200_000_000n,
+      assessments: [assessment({
+        actionChargeCollectedAssets: 15_500_000n,
+        carryAssets: 500_000n,
+        postPositionSize: 50n * 10n ** 20n,
+        postPositionEquityAssets: 999_500_000n,
+        postLeverageBps: 50_026n,
+      })],
+    })).toBe(5_500_000n)
+  })
+
+  it('pins one regime and derives component-wise exact extrema', () => {
+    const bounds = derivePerpsExecutionBounds({
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+      expectedConfigHash: CONFIG_HASH,
+      executionBountyAssets: 30n,
+      selectedMaxLeverageBps: 70_000,
+      assessments: [
+        assessment(),
+        assessment({
+          executionNotionalAssets: 120n,
+          grossAccountDebitAssets: 25n,
+          explicitFeesAssets: 6n,
+          postSettlementBalanceAssets: 970n,
+          postPositionEquityAssets: 90n,
+          postLeverageBps: 60_000n,
+        }),
+      ],
+    })
+
+    expect(bounds).toMatchObject({
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+      allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
+      expectedConfigHash: CONFIG_HASH,
+      maxExecutionBountyAssets: 30n,
+      maxExecutionNotionalAssets: 120n,
+      maxGrossAccountDebitAssets: 30n,
+      maxExplicitFeesAssets: 6n,
+      minPostSettlementBalanceAssets: 970n,
+      minPostPositionEquityAssets: 90n,
+      maxPostLeverageBps: 60_000,
+    })
+    expect(executionModeMask(PERPS_EXECUTION_MODE.FROZEN)).toBe(
+      PERPS_EXECUTION_MODE_MASK.FROZEN
+    )
+  })
+
+  it.each([
+    ['Live', false],
+    ['FAD', false],
+    ['Frozen', true],
+    ['Unknown', undefined],
+  ] as const)('derives oracle-frozen state from %s execution mode', (mode, expected) => {
+    expect(executionModeOracleFrozen(mode)).toBe(expected)
+  })
+
+  it('fails review on regime drift or leverage above the selected maximum', () => {
+    expect(() => derivePerpsExecutionBounds({
+      submitBy: 1n, executionWindowSeconds: 60,
+      expectedConfigHash: CONFIG_HASH,
+      executionBountyAssets: 1n,
+      selectedMaxLeverageBps: 60_000,
+      assessments: [
+        assessment(),
+        assessment({ mode: PERPS_EXECUTION_MODE.FAD }),
+      ],
+    })).toThrow(/regime changed/)
+
+    expect(() => derivePerpsExecutionBounds({
+      submitBy: 1n, executionWindowSeconds: 60,
+      expectedConfigHash: CONFIG_HASH,
+      executionBountyAssets: 1n,
+      selectedMaxLeverageBps: 50_000,
+      assessments: [assessment()],
+    })).toThrow(/maximum leverage/)
+  })
+})
+
+describe('V3 ABI snapshots', () => {
+  it('pins the nested commit selector and perps LONG/SHORT wire values', () => {
+    expect(toFunctionSelector(
+      'commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))'
+    )).toBe('0xe4275866')
+    expect(PERPS_SIDE).toEqual({ LONG: 0, SHORT: 1 })
+
+    const commit = PERPS_ORDER_ROUTER_ABI.find((item) =>
+      item.type === 'function' && item.name === 'commitOrder'
+    )
+    expect(commit && toFunctionSelector(commit)).toBe('0xe4275866')
+    expect(commit?.inputs[0]).toMatchObject({
+      name: 'request',
+      type: 'tuple',
+    })
+  })
+
+  it('pins lifecycle event topics and fixed enum values', () => {
+    expect(toEventSelector(
+      'IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))'
+    )).toBe('0x9e0a84bebf3b3afbb106e34a9dc57e51209c08755eedc36619f40efae55c7318')
+
+    const registered = PERPS_ORDER_LIFECYCLE_BOOK_ABI.find(item => item.type === 'event' && item.name === 'IntentRegistered')
+    expect(registered && toEventSelector(registered)).toBe('0x9e0a84bebf3b3afbb106e34a9dc57e51209c08755eedc36619f40efae55c7318')
+    expect(PERPS_ORDER_LIFECYCLE_BOOK_ABI.some((item) =>
+      item.type === 'event' && item.name === 'OrderFinalized'
+    )).toBe(true)
+    expect(PERPS_EXECUTION_MODE).toEqual({
+      NONE: 0,
+      LIVE: 1,
+      FAD: 2,
+      FROZEN: 3,
+    })
+  })
+})

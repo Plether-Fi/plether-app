@@ -1,19 +1,20 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { type ReactNode, useState } from 'react'
 import { Button, Modal, TokenAmount } from './ui'
 
 export type TraderClaimStatus = 'waiting' | 'available' | 'settled'
 
 interface PerpsClaimPanelProps {
-  claimUsdc: string
+  claimAssets: string
   status: TraderClaimStatus
   tradingAccountAddress: string
-  marginAccountUsdc?: string
-  aggregateClaimsUsdc?: string
-  housePoolAssetsUsdc?: string
+  marginAccountAssets?: string
+  aggregateClaimsAssets?: string
+  housePoolAssets?: string
   coverageRatio?: string
   settlementDestination?: string
   initialConfirmationOpen?: boolean
-  settledCreditUsdc?: string
+  settledCreditAssets?: string
 }
 
 function truncateAddress(value: string): string {
@@ -31,16 +32,16 @@ function ClaimRow({ label, value }: { label: string; value: ReactNode }) {
 }
 
 export function PerpsClaimPanel({
-  claimUsdc,
+  claimAssets,
   status,
   tradingAccountAddress,
-  marginAccountUsdc,
-  aggregateClaimsUsdc,
-  housePoolAssetsUsdc,
+  marginAccountAssets,
+  aggregateClaimsAssets,
+  housePoolAssets,
   coverageRatio,
   settlementDestination = 'Margin Account',
   initialConfirmationOpen = false,
-  settledCreditUsdc,
+  settledCreditAssets,
 }: PerpsClaimPanelProps) {
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(initialConfirmationOpen)
   const isAvailable = status === 'available'
@@ -61,8 +62,8 @@ export function PerpsClaimPanel({
 
         <dl className="panel-padding-x">
           <ClaimRow label="Claim owner" value={<span title={tradingAccountAddress}>{truncateAddress(tradingAccountAddress)}</span>} />
-          <ClaimRow label="Account claim" value={<TokenAmount amount={claimUsdc} />} />
-          {aggregateClaimsUsdc && housePoolAssetsUsdc ? (
+          <ClaimRow label="Account claim" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={claimAssets} />} />
+          {aggregateClaimsAssets && housePoolAssets ? (
             <ClaimRow
               label="Aggregate claim coverage"
               value={(
@@ -72,7 +73,7 @@ export function PerpsClaimPanel({
                     {coverageRatio ? ` · ${coverageRatio}` : ''}
                   </span>
                   <span className="text-xs font-normal text-content-secondary">
-                    <TokenAmount amount={housePoolAssetsUsdc} /> assets / <TokenAmount amount={aggregateClaimsUsdc} /> claims
+                    <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={housePoolAssets} /> assets / <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={aggregateClaimsAssets} /> claims
                   </span>
                 </span>
               )}
@@ -93,13 +94,13 @@ export function PerpsClaimPanel({
             )}
           />
           <ClaimRow label="Settlement destination" value={settlementDestination} />
-          {marginAccountUsdc ? (
-            <ClaimRow label="Current Margin Account" value={<TokenAmount amount={marginAccountUsdc} />} />
+          {marginAccountAssets ? (
+            <ClaimRow label="Current Margin Account" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginAccountAssets} />} />
           ) : null}
-          {settledCreditUsdc ? (
+          {settledCreditAssets ? (
             <ClaimRow
               label="Latest settlement credit"
-              value={<span className="text-positive">+<TokenAmount amount={settledCreditUsdc} /></span>}
+              value={<span className="text-positive">+<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={settledCreditAssets} /></span>}
             />
           ) : null}
         </dl>
@@ -142,7 +143,7 @@ export function PerpsClaimPanel({
             Your connected owner wallet authorizes settlement for the claim-owning Trading Account. Settlement converts the claim into position margin while open, or account funds while flat.
           </p>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
-            <ClaimRow label="Complete claim" value={<TokenAmount amount={claimUsdc} />} />
+            <ClaimRow label="Complete claim" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={claimAssets} />} />
             <ClaimRow label="Destination" value={settlementDestination} />
             <ClaimRow label="Network gas" value={<span className="text-positive">Sponsored</span>} />
           </dl>

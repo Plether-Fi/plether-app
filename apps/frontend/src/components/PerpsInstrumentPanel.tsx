@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import {
   useEffect,
   useId,
@@ -67,18 +68,18 @@ export interface PerpsInstrumentPanelProps {
 const DEFAULT_STATS: PerpsInstrumentStat[] = [
   { label: 'plDXY Perp price', value: '1.0091', freshness: 'fresh' },
   { label: '24h change', value: '-0.16%', tone: 'negative' },
-  { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
+  { label: '24h volume', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="2.4M" /> },
   {
     label: 'Directional limit used',
     directionalLimit: {
       usagePercent: 87,
       side: 'long',
-      totalExposure: <TokenAmount amount="8.36M" />,
-      netExposure: <TokenAmount amount="3.07M" />,
-      limit: <TokenAmount amount="3.53M" />,
+      totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="8.36M" />,
+      netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.07M" />,
+      limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.53M" />,
     },
   },
-  { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
+  { label: 'Free pool liquidity', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6.3M" /> },
   { label: 'Cost of carry', value: '5.24%' },
 ]
 

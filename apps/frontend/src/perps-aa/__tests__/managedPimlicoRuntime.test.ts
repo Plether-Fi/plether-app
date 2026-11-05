@@ -51,6 +51,7 @@ import { asSponsorRequestError, sponsorReasonMessage } from '../errors'
 
 const manifest: PerpsAaDeploymentManifestV1 = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: ENTRY_POINT,
   entryPointVersion: '0.8' as const,
@@ -59,20 +60,20 @@ const manifest: PerpsAaDeploymentManifestV1 = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8' as Address,
-  usdcSupportsEip3009: false,
-  usdcEip712Name: null,
-  usdcEip712Version: null,
+  settlementToken: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f' as Address,
+  settlementTokenSupportsEip3009: false,
+  settlementTokenEip712Name: null,
+  settlementTokenEip712Version: null,
   marginClearinghouse:
-    '0xfa6e677ec1062757c1194d411a5e61e1e9644499' as Address,
+    '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7' as Address,
   cfdEngine:
-    '0xafece93321be41aa73474457e2f47cf7b2fb738f' as Address,
+    '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb' as Address,
   orderRouter:
-    '0x6215d36fcbd610ca1525252eebcbfd8b223a6072' as Address,
+    '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8' as Address,
   orderLifecycleBook:
-    '0x753eb48305ffb88bb70869ade2c4efa941879221' as Address,
+    '0x519f57a34fb440c42bfd2d8328d2f80349af3872' as Address,
   policyEvaluator:
-    '0x43c93d3028fcd4c1f578a50639750b8fbfdee799' as Address,
+    '0xf550cada6b7d477b23069c8b4f254d19088f28c8' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -92,6 +93,7 @@ const v2Manifest: PerpsAaDeploymentManifestV2 = {
     'version' | 'pimlicoRpcUrl'
   >,
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   bundlerRpcUrl: '/api/perps/v1/aa/rpc',
   paymasterRpcUrl: '/api/perps/v1/aa/rpc',
   paymasterAddress:
@@ -161,6 +163,47 @@ describe('createManagedPimlicoRuntime', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([manifest, v2Manifest])('resolves and signs with an embedded wallet without rediscovering accounts ($version)', async (deployment) => {
+    const actual = await vi.importActual<typeof import('permissionless-v03/accounts/simple')>('permissionless-v03/accounts/simple')
+    mocks.toSimpleSmartAccount.mockImplementation(actual.SimpleSmartAccount.toSimpleSmartAccount)
+    const request = vi.fn().mockRejectedValue(new Error('Requested RPC call is not allowed'))
+    const signature = `0x${'ab'.repeat(65)}` as Hex
+    const walletClient = {
+      chain: { id: 421614 },
+      account: { address: OWNER, type: 'json-rpc' },
+      request,
+      signMessage: vi.fn().mockResolvedValue(signature),
+      signTypedData: vi.fn().mockResolvedValue(signature),
+    }
+    const publicClient = {
+      chain: { id: 421614 },
+      call: vi.fn().mockResolvedValue({ data: encodeAbiParameters([{ type: 'address' }], [ACCOUNT]) }),
+    }
+
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: deployment,
+      ownerAddress: OWNER,
+      walletClient: walletClient as never,
+      publicClient: publicClient as never,
+    })
+
+    expect(runtime.smartAccount.accountAddress).toBe(ACCOUNT)
+    expect(publicClient.call).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
+    expect(walletClient.signTypedData).not.toHaveBeenCalled()
+    const signed = await runtime.smartAccount.signUserOperation(operation)
+    expect(signed.signature).toBe(signature)
+    expect(walletClient.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
+      account: walletClient.account,
+      domain: expect.objectContaining({ chainId: 421614, verifyingContract: ENTRY_POINT }),
+    }))
+    expect(request).not.toHaveBeenCalled()
+
+    const rejection = new Error('User declined signing')
+    walletClient.signTypedData.mockRejectedValueOnce(rejection)
+    await expect(runtime.smartAccount.signUserOperation(operation)).rejects.toBe(rejection)
+  })
+
   it('blocks native re-preparation until a throttled safe-code check passes, never signing or submitting', async () => {
     let now = 0
     vi.spyOn(performance, 'now').mockImplementation(() => now)
@@ -209,7 +252,7 @@ describe('createManagedPimlicoRuntime', () => {
     expect(mocks.toSimpleSmartAccount).toHaveBeenCalledWith(
       expect.objectContaining({
         client: publicClient,
-        owner: walletClient,
+        owner: expect.objectContaining({ address: OWNER, type: 'local' }),
         entryPoint: {
           address: ENTRY_POINT,
           version: '0.8',
@@ -301,6 +344,12 @@ describe('createManagedPimlicoRuntime', () => {
       ...operation,
       entryPointAddress: ENTRY_POINT,
     })
+    // Even without recovery headers, sends must not reuse the read client's
+    // implicit 10-second timeout or its automatic retry policy.
+    const submissionConfig = mocks.createBundlerClient.mock.lastCall?.[0]
+    expect(submissionConfig.account).toBeUndefined()
+    expect(submissionConfig.transport({ retryCount: 3 }).config)
+      .toMatchObject({ timeout: 30_000, retryCount: 0 })
     await expect(runtime.smartAccount.getUserOperationStatus(HASH))
       .resolves.toEqual({ status: 'queued', transactionHash: null })
 
@@ -898,3 +947,5 @@ describe('createManagedPimlicoRuntime', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

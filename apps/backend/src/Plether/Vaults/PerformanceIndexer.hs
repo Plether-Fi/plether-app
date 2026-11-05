@@ -80,7 +80,7 @@ vaultHistoryEpochSeconds :: Integer
 vaultHistoryEpochSeconds = 3_600
 
 vaultHistoryPointCount :: Int
-vaultHistoryPointCount = 169
+vaultHistoryPointCount = 721
 
 vaultHistoryPollSeconds :: Int
 vaultHistoryPollSeconds = 30
@@ -88,7 +88,7 @@ vaultHistoryPollSeconds = 30
 vaultPerformanceLeaderLockId :: Integer
 vaultPerformanceLeaderLockId = 8_612_047_531
 
--- | Hourly UTC boundaries with a complete seven-day interval (169 points),
+-- | Hourly UTC boundaries with a complete thirty-day interval (721 points),
 -- clipped so no request predates the configured deployment block timestamp.
 vaultEpochBoundaries :: Integer -> Integer -> [Integer]
 vaultEpochBoundaries deploymentTimestamp safeTimestamp
@@ -165,6 +165,8 @@ snapshotNeedsRepair row block =
     || vpsBlockTimestamp row /= rpcBlockTimestamp block
     || rpcBlockTimestamp block > vpsEpochTimestamp row
     || isNothing (vpsMarkFresh row)
+    || isNothing (vpsSeniorLockedAssets row)
+    || isNothing (vpsJuniorLockedAssets row)
 
 -- | Decide whether an existing checkpoint is already the canonical value.
 -- Missing rows, failed canonical block reads, and changed block identities all
@@ -390,6 +392,8 @@ sampleVaultPerformanceAtBlock client cfg epochTimestamp block = do
       , vpsBlockTimestamp = rpcBlockTimestamp canonicalBlock
       , vpsMarkFresh = Just markFresh
       , vpsSeniorTotalAssets = tvsTotalAssets senior
+      , vpsSeniorLockedAssets = Just $ tvsLockedAssets senior
+      , vpsJuniorLockedAssets = Just $ tvsLockedAssets junior
       , vpsSeniorTotalSupply = tvsTotalSupply senior
       , vpsSeniorSharePriceWad = tvsSharePriceWad senior
       , vpsJuniorTotalAssets = tvsTotalAssets junior

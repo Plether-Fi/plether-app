@@ -23,6 +23,7 @@ on:
           - verify
           - repair
           - recover-closed-price-gap
+          - recover-live-price-gap
           - replay
           - finalizer-probe
       scope:
@@ -228,7 +229,7 @@ jobs:
                 exit 1
               fi
               ;;
-            estimate|migrate|set-history-target|status|recover-closed-price-gap|replay|finalizer-probe)
+            estimate|migrate|set-history-target|status|recover-closed-price-gap|recover-live-price-gap|replay|finalizer-probe)
               if [ "$SCOPE" != "none" ]; then
                 echo "::error title=Unexpected scope::Use none for $ACTION."
                 exit 1
@@ -307,10 +308,10 @@ jobs:
             exit 1
           fi
 
-          if [ "$ACTION" = "recover-closed-price-gap" ]; then
+          if [ "$ACTION" = "recover-closed-price-gap" ] || [ "$ACTION" = "recover-live-price-gap" ]; then
             if [ "$TARGET_ENV" != "sepolia" ] || \
-               [ "$CONFIRMATION" != "RUN RECOVER-CLOSED-PRICE-GAP ON SEPOLIA" ]; then
-              echo "::error title=Price-gap recovery is Sepolia-only::The recovery requires the exact confirmation phrase RUN RECOVER-CLOSED-PRICE-GAP ON SEPOLIA."
+               [ "$CONFIRMATION" != "RUN ${ACTION^^} ON SEPOLIA" ]; then
+              echo "::error title=Price-gap recovery is Sepolia-only::The recovery requires its exact RUN confirmation phrase on SEPOLIA."
               exit 1
             fi
             if [ -z "$FROM_TIMESTAMP" ] || [ -z "$TO_TIMESTAMP" ]; then
@@ -459,7 +460,7 @@ jobs:
 
       - name: Require stable dual-write workers
         id: writers
-        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'recover-closed-price-gap' || inputs.action == 'replay' || inputs.action == 'finalizer-probe'
+        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'recover-closed-price-gap' || inputs.action == 'recover-live-price-gap' || inputs.action == 'replay' || inputs.action == 'finalizer-probe'
         env:
           ACTION: ${{ inputs.action }}
           AWS_PAGER: ''
@@ -707,6 +708,7 @@ jobs:
         id: target
         if: inputs.action != 'replay'
         env:
+          GH_TOKEN: ${{ github.token }}
           ACTION: ${{ inputs.action }}
           BOUNDARY: ${{ inputs.boundary }}
           REGISTRATION_OWNER: candle-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1134,6 +1136,19 @@ jobs:
             --arg container "$ECS_CONTAINER" \
             '[.containerDefinitions[] | select(.name == $container) | .image][0]' \
             "$task_definition_file")
+          if [ "$ACTION" = "recover-live-price-gap" ]; then
+            deployed_commit="${source_image##*:}"
+            if ! [[ "$deployed_commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Live recovery requires a deployed commit-tagged backend image."
+              exit 1
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/contents/apps/backend/app/BasketWorker.hs?ref=$deployed_commit" \
+              --jq '.content' | base64 --decode > "$RUNNER_TEMP/deployed-basket-worker.hs"
+            if ! grep -Fxq 'runLivePriceGapRecovery manager client pool cfg args =' "$RUNNER_TEMP/deployed-basket-worker.hs"; then
+              echo "::error::Deploy the backend with live price-gap recovery support first."
+              exit 1
+            fi
+          fi
           image_repository=$(jq -nr \
             --arg image "$source_image" \
             '$image
@@ -2094,10 +2109,10 @@ jobs:
                     {name: "EXPECTED_DATABASE_HOST", value: $expected_database_host}
                   ]
                 }]}
-              elif $action == "recover-closed-price-gap" then
+              elif $action == "recover-closed-price-gap" or $action == "recover-live-price-gap" then
                 {containerOverrides: [{
                   name: $container,
-                  command: ["plether-basket-worker", "--recover-closed-price-gap",
+                  command: ["plether-basket-worker", ("--" + $action),
                             "--expected-coverage-end", $from,
                             "--recover-before", $to,
                             "--requested-by", $history_requested_by,
@@ -2795,8 +2810,8 @@ jobs:
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
           BOUNDARY: ${{ inputs.boundary }}
           HISTORY_START_TIMESTAMP: ${{ inputs.history_start_timestamp }}
-          PROTECTED_REQUESTED_BY: ${{ (inputs.action == 'set-history-target' || inputs.action == 'recover-closed-price-gap') && github.actor || '' }}
-          PROTECTED_REQUEST_REFERENCE: ${{ (inputs.action == 'set-history-target' || inputs.action == 'recover-closed-price-gap') && format('github:{0}:run:{1}', github.repository, github.run_id) || '' }}
+          PROTECTED_REQUESTED_BY: ${{ (inputs.action == 'set-history-target' || inputs.action == 'recover-closed-price-gap' || inputs.action == 'recover-live-price-gap') && github.actor || '' }}
+          PROTECTED_REQUEST_REFERENCE: ${{ (inputs.action == 'set-history-target' || inputs.action == 'recover-closed-price-gap' || inputs.action == 'recover-live-price-gap') && format('github:{0}:run:{1}', github.repository, github.run_id) || '' }}
           SOURCE_TASK_DEFINITION: ${{ steps.resolved.outputs.source_task_definition }}
           TEMPORARY_TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
           TASK_ARN: ${{ steps.task.outputs.task_arn }}
@@ -2885,6 +2900,8 @@ jobs:
             deadline=$((10#$TASK_STARTED_AT + 2700))
           elif [ "$ACTION" = "finalizer-probe" ]; then
             deadline=$((10#$TASK_STARTED_AT + 2400))
+          elif [ "$ACTION" = "recover-live-price-gap" ]; then
+            deadline=$((10#$TASK_STARTED_AT + 900))
           else
             deadline=$((10#$TASK_STARTED_AT + 19800))
           fi

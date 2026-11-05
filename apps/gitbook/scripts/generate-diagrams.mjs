@@ -152,7 +152,7 @@ async function save(file, content) {
 async function main() {
   const ids = new Set(diagrams.map(d => d.id))
   if (ids.size !== 30 || diagrams.length !== 30) throw new Error('Expected 30 unique diagrams')
-  const release = JSON.parse(await fs.readFile(path.resolve(root, '../../config/perps/arbitrum-sepolia-v2.json'), 'utf8')).release
+  const release = JSON.parse(await fs.readFile(path.resolve(root, '../../config/perps/arbitrum-sepolia-v3.json'), 'utf8')).release
   const reviewedCommit = 'd704122c779d4d681d0fa2be517707b7f7df3902'
   if (release.sourceCommit !== reviewedCommit) throw new Error('Contract release changed: review diagram content and DIAGRAM_REVIEW.md')
   await fs.mkdir(out, { recursive: true })

@@ -5,8 +5,10 @@ import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
 import { createSmartAccountClient } from 'permissionless-v03'
 import { recoveryHttp } from './recoveryTransport'
+import { submissionHttp } from './submissionTransport'
 import { SimpleSmartAccount } from 'permissionless-v03/accounts/simple'
 import { createPimlicoClient } from 'permissionless-v03/clients/pimlico'
+import { toAccount } from 'viem/accounts'
 import {
   getAddress,
   hexToBigInt,
@@ -342,9 +344,23 @@ export async function createManagedAaRuntime({
     Account
   >
   const accountIndex = BigInt(manifest.smartAccountIndex)
+  // permissionless 0.3.7 treats WalletClient.request as an EIP-1193 provider
+  // and rediscovers accounts. Reown email/social wallets reject that login RPC.
+  // Bind the already-validated owner explicitly; signing stays in their wallet.
+  const ownerSigner = toAccount({
+    address: owner.account.address,
+    signMessage: ({ message }) => owner.signMessage({ account: owner.account, message }),
+    signTypedData: (typedData) => owner.signTypedData({
+      ...typedData,
+      account: owner.account,
+    } as Parameters<typeof owner.signTypedData>[0]),
+    signTransaction: async () => {
+      throw new Error('The Trading Account owner signer cannot sign raw transactions')
+    },
+  })
   const smartAccount = await SimpleSmartAccount.toSimpleSmartAccount({
     client: publicClient,
-    owner,
+    owner: ownerSigner,
     entryPoint: {
       address: manifest.entryPoint,
       version: manifest.entryPointVersion,
@@ -438,9 +454,12 @@ export async function createManagedAaRuntime({
     sendUserOperation = (operation) => {
       const hash = getUserOperationHash({ chainId: manifest.chainId, entryPointAddress: manifest.entryPoint, entryPointVersion: manifest.entryPointVersion, userOperation: operation })
       const headers = preparationRecovery?.operationHeaders(hash) ?? {}
-      const submissionClient = Object.keys(headers).length > 0
-        ? createBundlerClient({ chain: arbitrumSepolia, transport: recoveryHttp(bundlerRpcUrl, { fetchOptions: { headers } }) })
-        : bundlerClient
+      // Keep submission policy separate from polling, including when no
+      // preparation-recovery headers are available (legacy/reloaded records).
+      const submissionClient = createBundlerClient({
+        chain: arbitrumSepolia,
+        transport: submissionHttp(bundlerRpcUrl, headers),
+      })
       return submissionClient.sendUserOperation({ ...operation, entryPointAddress: manifest.entryPoint })
     }
     getUserOperationStatus = async (userOperationHash) =>

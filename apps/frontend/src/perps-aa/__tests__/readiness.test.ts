@@ -1,11 +1,41 @@
-import { describe, expect, it } from 'vitest'
-import { parseReadiness, readinessBlocker, readinessChecks, readinessWorkers, readinessMessage, type ReadinessSnapshot } from '../readiness'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { currentReadiness, refreshReadiness, parseReadiness, readinessBlocker, readinessChecks, readinessWorkers, readinessMessage, type ReadinessSnapshot } from '../readiness'
 import { requireDeadlineHeadroom } from '../deadline'
 import { sanitizeAnalyticsProperties, sanitizeFrontendLogAttributes } from '../../analytics/client'
 
 const sample = (): ReadinessSnapshot => ({ version: 1, observedAt: 100_000, expiresAt: 115_000, enforcementEnabled: true,
   actions: { deposit: [{ component: 'sponsorship', status: 'ready', reason: 'READY' }], open: [{ component: 'keeper', status: 'blocked', reason: 'KEEPER_INSUFFICIENT_FUNDS' }], close: [{ component: 'keeper', status: 'unknown', reason: 'WORKER_HEARTBEAT_STALE' }], protection: [{ component: 'oracle', status: 'unknown', reason: 'ORACLE_UNAVAILABLE' }] } })
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 describe('trading readiness', () => {
+  it.each([-86_400_000, -6_000, 6_000, 86_400_000])('uses response time for a device offset of %i ms and still expires', async offset => {
+    let elapsed = 20_000
+    vi.spyOn(performance, 'now').mockImplementation(() => elapsed)
+    vi.spyOn(Date, 'now').mockReturnValue(100_000 + offset)
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(sample()), { headers: { Date: new Date(100_000).toUTCString() } }))
+    vi.stubGlobal('fetch', fetcher)
+    await refreshReadiness(true)
+    const snapshot = currentReadiness()
+    expect(snapshot).toEqual(sample())
+    expect(readinessChecks(snapshot, 'deposit')[0].status).toBe('ready')
+    expect(readinessBlocker(snapshot, 'open')?.reason).toBe('KEEPER_INSUFFICIENT_FUNDS')
+    elapsed += 14_000
+    vi.mocked(Date.now).mockReturnValue(0)
+    expect(readinessChecks(snapshot, 'deposit')[0].status).toBe('unknown')
+    expect(readinessBlocker(snapshot, 'open')).toBeUndefined()
+    await refreshReadiness()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+  it('does not turn a stale response into a fresh blocker', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(sample()), { headers: { Date: new Date(120_000).toUTCString() } })))
+    await refreshReadiness(true)
+    expect(readinessBlocker(currentReadiness(), 'open')).toBeUndefined()
+    expect(readinessChecks(currentReadiness(), 'deposit')[0].status).toBe('unknown')
+  })
+  it('fails to unknown when response time is missing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(sample()))))
+    await refreshReadiness(true)
+    expect(currentReadiness()).toBeUndefined()
+  })
   it('explains verified historical gas failure without blaming funding or current readiness', () => {
     expect(readinessMessage('USER_OPERATION_OUT_OF_GAS')).toContain('ran out of execution gas')
     expect(readinessMessage('USER_OPERATION_OUT_OF_GAS')).toContain('separately completed transfer')
@@ -23,6 +53,17 @@ describe('trading readiness', () => {
   it('does not let an open blocker disable deposits or invent exit permission', () => {
     expect(readinessChecks(sample(), 'deposit', 110_000)[0].status).toBe('ready')
     expect(readinessChecks(sample(), 'close', 110_000)[0].status).toBe('unknown')
+  })
+  it.each(['sponsorship', 'paymaster'])('blocks a fresh %s pause even when readiness enforcement is off', component => {
+    const paused = sample()
+    paused.enforcementEnabled = false
+    paused.actions.deposit = [{ component, status: 'blocked', reason: 'PAYMASTER_PAUSED' }]
+    expect(readinessBlocker(paused, 'deposit', 110_000)?.reason).toBe('PAYMASTER_PAUSED')
+    expect(readinessBlocker(paused, 'deposit', 115_000)).toBeUndefined()
+    paused.actions.deposit[0].status = 'unknown'
+    expect(readinessBlocker(paused, 'deposit', 110_000)).toBeUndefined()
+    paused.actions.deposit = [{ component, status: 'ready', reason: 'READY' }]
+    expect(readinessBlocker(paused, 'deposit', 110_000)).toBeUndefined()
   })
   it('rejects malformed, future-dated and overlong snapshots', () => {
     expect(parseReadiness(sample(), 110_000)).toEqual(sample())
@@ -48,11 +89,11 @@ describe('deadline safety', () => {
     expect(() => requireDeadlineHeadroom(110n, '200', 'submission', 100_001)).toThrow()
     expect(() => requireDeadlineHeadroom(200n, '110', 'submission', 100_001)).toThrow()
   })
-  it('requires 20 seconds before signing and ten before submission', () => {
-    expect(() => requireDeadlineHeadroom(150n, '120', 'signing', 100_000)).not.toThrow()
-    expect(() => requireDeadlineHeadroom(150n, '119', 'signing', 100_000)).toThrow()
-    expect(() => requireDeadlineHeadroom(110n, '150', 'submission', 100_000)).not.toThrow()
-    expect(() => requireDeadlineHeadroom(109n, '150', 'submission', 100_000)).toThrow()
+  it('requires 45 seconds before signing and 30 before submission', () => {
+    expect(() => requireDeadlineHeadroom(150n, '145', 'signing', 100_000)).not.toThrow()
+    expect(() => requireDeadlineHeadroom(150n, '144', 'signing', 100_000)).toThrow()
+    expect(() => requireDeadlineHeadroom(130n, '150', 'submission', 100_000)).not.toThrow()
+    expect(() => requireDeadlineHeadroom(129n, '150', 'submission', 100_000)).toThrow()
   })
   it('retains recovery for signed operations rather than declaring safe expiry', () => {
     try { requireDeadlineHeadroom(109n, undefined, 'submission', 100_000) } catch (error) {
@@ -70,3 +111,5 @@ describe('opaque diagnostic references', () => {
     expect(sanitizeAnalyticsProperties({ attempt_id: '0xdead' })).toEqual({})
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

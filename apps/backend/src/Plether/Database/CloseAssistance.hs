@@ -19,7 +19,7 @@ data CloseAssistanceReservation = CloseAssistanceReservation
   , carClientOrderId :: Text
   , carRequestHash :: Text
   , carLens :: Text
-  , carAmountUsdc :: Integer
+  , carAmountAssets :: Integer
   } deriving stock (Eq, Show)
 
 ensureCloseAssistanceSchema :: Connection -> IO ()
@@ -30,7 +30,7 @@ ensureCloseAssistanceSchema conn = do
     \chain_id BIGINT NOT NULL DEFAULT 421614 CHECK(chain_id=421614),\
     \router VARCHAR(42) NOT NULL, account VARCHAR(42) NOT NULL, client_order_id VARCHAR(66) NOT NULL,\
     \request_hash VARCHAR(66) NOT NULL, lens VARCHAR(42) NOT NULL,\
-    \amount_usdc BIGINT NOT NULL CHECK(amount_usdc BETWEEN 1 AND 200000),\
+    \amount_assets BIGINT NOT NULL CHECK(amount_assets BETWEEN 1 AND 200000),\
     \verified BOOLEAN NOT NULL DEFAULT FALSE, transaction_hash VARCHAR(66), block_number BIGINT,\
     \block_hash VARCHAR(66), deposit_log_index BIGINT, order_id BIGINT,\
     \CHECK(NOT verified OR (transaction_hash IS NOT NULL AND block_number IS NOT NULL\
@@ -59,15 +59,15 @@ closeAssistanceReservationAllowed conn r = do
 
 insertCloseAssistanceReservation :: Connection -> Text -> CloseAssistanceReservation -> IO ()
 insertCloseAssistanceReservation conn digest r = void $ execute conn
-  "INSERT INTO aa_close_assistance(digest,router,account,client_order_id,request_hash,lens,amount_usdc)\
+  "INSERT INTO aa_close_assistance(digest,router,account,client_order_id,request_hash,lens,amount_assets)\
   \ VALUES(?,?,?,?,?,?,?)"
   (T.toLower digest, T.toLower $ carRouter r, T.toLower $ carAccount r,
-   T.toLower $ carClientOrderId r, T.toLower $ carRequestHash r, T.toLower $ carLens r, carAmountUsdc r)
+   T.toLower $ carClientOrderId r, T.toLower $ carRequestHash r, T.toLower $ carLens r, carAmountAssets r)
 
 getCloseAssistanceReservation :: Connection -> Text -> IO (Maybe CloseAssistanceReservation)
 getCloseAssistanceReservation conn digest = do
   rows <- query conn
-    "SELECT router,account,client_order_id,request_hash,lens,amount_usdc FROM aa_close_assistance WHERE digest=?"
+    "SELECT router,account,client_order_id,request_hash,lens,amount_assets FROM aa_close_assistance WHERE digest=?"
     (Only $ T.toLower digest) :: IO [(Text,Text,Text,Text,Text,Integer)]
   pure $ case rows of
     [(router,account,clientId,requestHash,lens,amount)] -> Just $ CloseAssistanceReservation router account clientId requestHash lens amount

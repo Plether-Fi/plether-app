@@ -170,7 +170,7 @@ describe('useMint', () => {
     expect(mockUpdateTransaction).toHaveBeenCalledWith('test-uuid-123', {
       status: 'failed',
       errorMessage: expect.any(String),
-    })
+    }, expect.objectContaining({ _tag: 'UserRejectedError' }))
   })
 
   it('reflects isPending state from useWriteContract', () => {
@@ -353,7 +353,7 @@ describe('useBurn', () => {
     expect(mockUpdateTransaction).toHaveBeenCalledWith('test-uuid-123', {
       status: 'failed',
       errorMessage: expect.any(String),
-    })
+    }, expect.objectContaining({ _tag: 'UserRejectedError' }))
   })
 })
 

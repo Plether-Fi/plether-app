@@ -14,10 +14,14 @@ KMS, budget authority, explicit Sepolia rollout policy and safe confirmation rem
   Alto EntryPoint availability, keeper heartbeat/funding evidence and the release
   lens's trading-active signal. Inactive open execution never automatically
   blocks closes: exit-policy availability is reported as unknown.
-- One shared visible-UI readiness poll, Trading status in account activity
-  (removed from trade preview at the operator's request), and an explicit refresh action. Preparation starts the
-  read concurrently. Only a fresh blocked result with enforcement enabled stops
-  signing; unknown, expired, failed and slow observations do not.
+- One shared visible-UI readiness poll, Trading status in account activity,
+  and an explicit refresh action. Fresh confirmed sponsorship/paymaster pauses
+  also appear beside the trade controls and in the margin dialog, disabling
+  new actions even while broader readiness enforcement is observation-only.
+  New sponsored preparation, deposit authorization, and owner-wallet funding
+  check readiness before proceeding. Other dependency blockers still require
+  enforcement enabled; unknown, expired and failed observations do not block.
+  Saved-operation recovery retains its existing authorization checks.
 - Idle keeper funding no longer requires a recent transaction quote. Every ten
   seconds the background observer reads a canonical, fixed-block balance/nonce,
   pending nonce, current gas fees and the oracle update fee for the cached payload
@@ -68,8 +72,9 @@ KMS, budget authority, explicit Sepolia rollout policy and safe confirmation rem
 Follow [Singapore Sepolia AA release](singapore-sepolia-aa-release.md) for migration
 ordering, Core bindings, liability recovery, KMS transition and approval gates.
 
-Readiness enforcement remains observation-only until verified. The only enforcement
-switch is enable_aa_readiness_enforcement. Rollback disables it and new issuance;
+Broader readiness enforcement remains observation-only until verified, controlled
+by enable_aa_readiness_enforcement. Confirmed sponsorship pauses are always shown
+and block new actions in the frontend. Rollback disables broader enforcement and new issuance;
 preserve exact-payload submission/recovery and all additive records.
 
 ## Unfinished release qualification

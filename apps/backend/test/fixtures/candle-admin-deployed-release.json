@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 4,
+  "orderInterfaceVersion": 3,
+  "network": {
+    "name": "arbitrum-sepolia",
+    "chainId": 421614
+  },
+  "release": {
+    "date": null,
+    "sourceCommit": "synthetic-local-test-profile",
+    "forgeVersion": "1.5.1-stable",
+    "phase": "deployed",
+    "deploymentBlock": 10000,
+    "deployer": null,
+    "owner": null,
+    "guardian": null,
+    "deploymentTimeProtocolTreasury": null,
+    "pyth": "0x0B73614636C855Bf23F342F307FB981A3e47f42B",
+    "version": "candle-admin-integration-fixture"
+  },
+  "contracts": {
+    "settlementToken": {
+      "artifact": "script/DeployPerpsArbitrumSepolia.s.sol:MockUSDG",
+      "address": "0x0000000000000000000000000000000000000001",
+      "runtimeCodeHash": "0x993ea1cdc9987a8b043e76612530bb3c107a2586f1e0ce4ab9c93263d6aab53a"
+    },
+    "marginClearinghouse": {
+      "address": "0x0000000000000000000000000000000000000002",
+      "runtimeCodeHash": "0x0ddee5a99bb5d1e0a1452bbac0eae2a5450daf507195792823c3576d9c5d7b5c"
+    },
+    "cfdEngine": {
+      "address": "0x0000000000000000000000000000000000000003",
+      "runtimeCodeHash": "0x7e976cb2e4c7b728ffbadc72e418f23c3ef9c22e57c8878f3b3a8f58cc1a9ffe"
+    },
+    "terminalNavBookV2": {
+      "address": "0x0000000000000000000000000000000000000004",
+      "runtimeCodeHash": "0xc59334cdad74307a55eb6469d4ada86d0975690b2383609b57a17174ac9fb1bd"
+    },
+    "cfdEnginePlanner": {
+      "address": "0x0000000000000000000000000000000000000005",
+      "runtimeCodeHash": "0x9df08c4971e865b5bd3235b9de18aef116a77168cfe3adabbe387d24514c865f"
+    },
+    "cfdEngineSettlementSidecar": {
+      "address": "0x0000000000000000000000000000000000000006",
+      "runtimeCodeHash": "0x6703c37edfe0d33ec0edcf572436bd0c34b7f59a6b14a8f36c8083503b5c33ad"
+    },
+    "cfdEngineAdmin": {
+      "address": "0x0000000000000000000000000000000000000007",
+      "runtimeCodeHash": "0xdaee717f2068343d8f9efb52454c1296e772cf410ae6ee7c53086ab410eddaa6"
+    },
+    "housePoolRedemptionMathSidecar": {
+      "address": "0x0000000000000000000000000000000000000008",
+      "runtimeCodeHash": "0x8342c0c4cc5d715da3dedacf4e48ee85df95b5773208a1a7a0dddbb953a2eaf9"
+    },
+    "housePool": {
+      "artifact": "script/DeployPerpsArbitrumSepolia.s.sol:ArbitrumSepoliaReleaseHousePool",
+      "address": "0x0000000000000000000000000000000000000009",
+      "runtimeCodeHash": "0x0f51856ff652927c6c60e4fcf029b15676082221a7c6e69167682b665e8448f4"
+    },
+    "cfdEngineProtocolLens": {
+      "address": "0x000000000000000000000000000000000000000a",
+      "runtimeCodeHash": "0x905809ef83d9cdb281e3b97a69e40897ce8f9d502d25dd267ed5b418988a172a"
+    },
+    "seniorVault": {
+      "address": "0x000000000000000000000000000000000000000b",
+      "runtimeCodeHash": "0xce02f4e4cd8b68e7fcc3404e6390d00c39da275d7cb57006d144508e89d073da"
+    },
+    "juniorVault": {
+      "address": "0x000000000000000000000000000000000000000c",
+      "runtimeCodeHash": "0xcb80cb0bc55bf4fe201dc6cdb34742782c7840185a3835c1a242d8b2c5dbabfb"
+    },
+    "cfdEngineAccountLens": {
+      "address": "0x000000000000000000000000000000000000000d",
+      "runtimeCodeHash": "0x98daeaf0eeddae96479828a361e01f30b9276b653306185e884320b7f4691afb"
+    },
+    "cfdEngineLens": {
+      "address": "0x000000000000000000000000000000000000000e",
+      "runtimeCodeHash": "0xa44ae45497fa1bfce953c3a4b30ca4930e1406f28ca5e62036be7a730e1a871f"
+    },
+    "cfdEngineOpenQuoter": {
+      "address": "0x000000000000000000000000000000000000000f",
+      "runtimeCodeHash": "0xa29177d9b47045739516d2289693958bcd4a67db43a99e4deac0d9245ae055eb"
+    },
+    "cfdOrderPolicyEvaluator": {
+      "address": "0x0000000000000000000000000000000000000010",
+      "runtimeCodeHash": "0xf90e42c410aca7fef9bfba0d5c68c1813a7e2573b4f1a8ba62e980690083601b"
+    },
+    "cfdClosePreview": {
+      "address": "0x0000000000000000000000000000000000000011",
+      "runtimeCodeHash": "0xf6b9bfe21e421bb70bdb8077bc0d879e892651191ee0143589e886a5137fffeb"
+    },
+    "orderRouterExecutionSidecar": {
+      "address": "0x0000000000000000000000000000000000000012",
+      "runtimeCodeHash": "0x7ea34333e516c1c2bb9f76369866d2595d54af87448efc25dd64b1a71d297b05"
+    },
+    "orderRecoverySidecar": {
+      "address": "0x0000000000000000000000000000000000000013",
+      "runtimeCodeHash": "0xa6898a6d51bbea1a909393311d96e544f09e7e1cbe3e175411fe8fdb2fb022fa"
+    },
+    "pletherOracle": {
+      "artifact": "script/DeployPerpsArbitrumSepolia.s.sol:ArbitrumSepoliaReleaseOracle",
+      "address": "0x0000000000000000000000000000000000000014",
+      "runtimeCodeHash": "0x5e2eaa58c74631b52088c91c43047827b48a0b088e1bfd78783021e5a2fd59a5"
+    },
+    "orderRouterLiquidationBatchSidecar": {
+      "address": "0x0000000000000000000000000000000000000015",
+      "runtimeCodeHash": "0x47a4665ced3de01892c1cb9aed51ffa3ed8e922610b30403354f4fc05b73cafc"
+    },
+    "orderLifecycleBook": {
+      "address": "0x0000000000000000000000000000000000000016",
+      "runtimeCodeHash": "0x96010f1a7d9fef111f869c977de0c0728ba54ea740300f70d6bc7a5bba1b372c",
+      "executionConfigHash": null
+    },
+    "orderRouter": {
+      "artifact": "script/DeployPerpsArbitrumSepolia.s.sol:ArbitrumSepoliaReleaseRouter",
+      "address": "0x0000000000000000000000000000000000000017",
+      "runtimeCodeHash": "0xbf48ebf5fe65d34d4b89e235c70144843bd795687b4b582f67f3cc24084ef7b3"
+    },
+    "orderRouterAdmin": {
+      "address": "0x0000000000000000000000000000000000000018",
+      "runtimeCodeHash": "0x5fe3f41e967d79e6984870894f21d72c5395db36c0f5382e4503edf84de87d5c"
+    },
+    "positionProtectionBook": {
+      "address": "0x0000000000000000000000000000000000000019",
+      "runtimeCodeHash": "0x8df9b79e92ca5f4d46c8e7208ac0546643fda5fe831cca3df43712cf671ab4f7"
+    },
+    "perpsPublicLens": {
+      "address": "0x000000000000000000000000000000000000001a",
+      "runtimeCodeHash": "0x86f9b136241bd398df104b89547de41eb3e360fc130e0dbfb8ba748fd5adbe08"
+    },
+    "settlementMonitorLens": {
+      "address": "0x000000000000000000000000000000000000001b",
+      "runtimeCodeHash": "0xe3331455073cc25b057a1d5e299a2cdf8b74a740de7849e4690ae1ed8666525a"
+    },
+    "settlementMonitorLensSidecar": {
+      "address": "0x000000000000000000000000000000000000001c",
+      "runtimeCodeHash": "0xb2d448c9d0d5e3379052f3acb861573fda42464cc91647e671ba1c6d0cc14d3e"
+    },
+    "emergencyPauseCoordinator": {
+      "address": "0x000000000000000000000000000000000000001d",
+      "runtimeCodeHash": "0x5cfec82df84254eeeaa14e192c72ed25aed55807d876cc752bc845dd62d0ac71"
+    },
+    "cfdEnginePlanningReader": {
+      "address": "0x000000000000000000000000000000000000001e",
+      "runtimeCodeHash": "0x2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  },
+  "settlementToken": {
+    "name": "Mock USDG",
+    "symbol": "USDG",
+    "decimals": 6,
+    "isMock": true,
+    "supportsReceiveWithAuthorization": false,
+    "supportsBridgeFunding": false
+  },
+  "rewards": {
+    "status": "not_applicable",
+    "holdingContracts": [
+      "marginClearinghouse",
+      "housePool"
+    ],
+    "payoutAddress": null,
+    "payoutController": null
+  },
+  "economics": {
+    "vpiFactorWad": "10000000000000000",
+    "maxSkewRatioWad": "400000000000000000",
+    "maintenanceMarginBps": 10,
+    "initialMarginBps": 20,
+    "liquidationChargeBps": 10,
+    "minimumLiquidationChargeAssets": "1000000",
+    "keeperShareBps": 5000,
+    "protocolShareBps": 0,
+    "minimumKeeperPayoutAssets": "500000",
+    "fadMarginBps": 300,
+    "baseCarryBps": 500,
+    "executionFeeBps": 4,
+    "settlementBufferBps": 25,
+    "frozenCloseSpreadBps": 50,
+    "basketMaxConfidenceRatioBps": 10,
+    "adverseConfidenceMultiplierBps": 2500,
+    "minimumOpenNotionalAssets": "1000000000",
+    "maxPendingOrders": 5,
+    "closeOrderExecutionBountyAssets": "0",
+    "positionProtectionTriggerBountyAssets": "200000",
+    "maxSeniorExposureAssets": "40000000000000",
+    "maxSeniorShareBps": 8000,
+    "seniorSeedAssets": "1000000",
+    "juniorSeedAssets": "1000000",
+    "seniorSeedReceiver": null,
+    "juniorSeedReceiver": null,
+    "juniorMaintenanceFeeAprBps": 100,
+    "juniorMaintenanceFeeRecipient": null,
+    "juniorFeeRecipientIsDeploymentTreasurySnapshot": true
+  },
+  "deploymentInitialization": {
+    "housePoolReleaseValuesConstructorInitialized": true,
+    "routerReleaseValuesConstructorInitialized": true,
+    "housePoolConfigActivationTimeAtDeployment": "0",
+    "routerConfigActivationTimeAtDeployment": "0"
+  },
+  "transactions": {
+    "deployment": [],
+    "bootstrapSeeding": [],
+    "activation": []
+  },
+  "verification": {
+    "deployedPhase": {
+      "txOrRunId": null,
+      "passed": false
+    },
+    "seededPhase": {
+      "txOrRunId": null,
+      "passed": false
+    },
+    "activePhase": {
+      "txOrRunId": null,
+      "passed": false
+    },
+    "authenticatedPythDryRun": {
+      "timestamp": null,
+      "passed": false
+    }
+  },
+  "integration": {
+    "aaManifestVersion": "candle-admin-integration-fixture",
+    "orderInterfaceVersion": 3,
+    "volumeHistoryStartTimestamp": 1699920000
+  },
+  "fixtureNote": "Synthetic schema-four deployed profile for local candle-admin integration only; no chain, credential, transaction, or production deployment."
+}

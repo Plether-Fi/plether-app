@@ -8,6 +8,19 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "renderDivisionsWalletChallenge" $ do
+    it "binds the signature to the Divisions registration page and owner" $ do
+      let result = renderDivisionsWalletChallenge canonicalOrigin chainId owner nonce issuedAt expiresAt
+      result `shouldSatisfy` either (const False) (T.isInfixOf "Link this owner wallet to Discord for Plether Divisions.")
+      result `shouldSatisfy` either (const False) (T.isInfixOf "URI: https://insights.plether.com/register\nVersion: 1\nChain ID: 421614")
+      result `shouldSatisfy` either (const False) (T.isInfixOf owner)
+
+    it "rejects invalid owners and expired challenges" $ do
+      renderDivisionsWalletChallenge canonicalOrigin chainId zeroOwner nonce issuedAt expiresAt
+        `shouldBe` Left "Wallet address is invalid"
+      renderDivisionsWalletChallenge canonicalOrigin chainId owner nonce issuedAt issuedAt
+        `shouldBe` Left "Wallet challenge expiry is invalid"
+
   describe "renderWalletChallenge" $ do
     it "renders the exact viem-compatible September registration message" $ do
       renderWalletChallenge

@@ -2,6 +2,7 @@ import type { Address, Hex } from 'viem'
 import { recoveryFetch } from './recoveryTransport'
 import { preparationIdentifier } from './nativePreparation'
 import { parsePreparationStatus, type PreparationStatusV1 } from './preparedOperation'
+import { responseClock } from './responseClock'
 
 export const PREPARATION_RECOVERY_HEADER = 'X-Plether-AA-Preparation-Recovery'
 export type WalletRecoveryResult = (PreparationStatusV1 & { recoveryVerified: true; canRetire: boolean; retirementReason?: string | null }) | {
@@ -68,7 +69,7 @@ export function recoveryMessage(reason?: string): string {
     case 'WALLET_REQUEST_PENDING': return 'A wallet request is already open. Open your wallet and complete or dismiss it, then try verification again.'
     case 'RECOVERY_TIMEOUT': return 'The recovery request timed out. Your saved attempt is retained; check recovery again.'
     case 'RECOVERY_CHALLENGE_EXPIRED': return 'The ownership message expired. Verify your wallet again to request a fresh message.'
-    case 'RECOVERY_CLOCK_MISMATCH': return 'Your device clock does not match the recovery service. Enable automatic date and time, then verify your wallet again.'
+    case 'RECOVERY_CLOCK_MISMATCH': return 'The recovery service timing could not be verified. Refresh the app and verify your wallet again.'
     case 'INVALID_RECOVERY_RESPONSE': return 'The recovery response could not be verified. Refresh the app and try again. If this continues, contact support with the support reference.'
     case 'POLICY_DENIED': return 'The recovery request was rejected. Refresh the app and verify the original owner wallet. If this continues, contact support with the support reference.'
     case 'PREPARATION_UNUSABLE': return 'The saved preparation can no longer be signed. Check recovery to discard it when available.'
@@ -132,11 +133,12 @@ export function createWalletPreparationRecovery(input: {
   const request = recoveryFetch(input.rpcUrl, input.fetcher ?? fetch, input.credentialScope ?? input.rpcUrl)
   const headers = (id: string): Record<string, string> => {
     const session = sessions.get(id)
-    if (session && session.expiresAt > Date.now()) return { [PREPARATION_RECOVERY_HEADER]: session.token }
+    if (session && session.expiresAt > performance.now()) return { [PREPARATION_RECOVERY_HEADER]: session.token }
     sessions.delete(id)
     return {}
   }
   async function rpc(method: string, id: string, extra: Record<string, unknown> = {}) {
+    const startedAt = performance.now()
     let response: Response
     try {
       response = await request(endpoint, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
@@ -153,30 +155,35 @@ export function createWalletPreparationRecovery(input: {
       if (reason === 'RECOVERY_VERIFICATION_REQUIRED') sessions.delete(id)
       throw new PreparationRecoveryError(reason)
     }
-    return body.result
+    return { value: body.result, response, startedAt }
   }
   return {
     headers,
     bindOperation(id, hash) { if (sessions.has(id)) operationIds.set(hash.toLowerCase(), id) },
     operationHeaders(hash) { const id = operationIds.get(hash.toLowerCase()); return id ? headers(id) : {} },
     async verify(id) {
-      const challenge = record(await rpc('plether_getRecoveryChallenge', id, { owner: input.owner.toLowerCase(), origin }))
+      const received = await rpc('plether_getRecoveryChallenge', id, { owner: input.owner.toLowerCase(), origin })
+      const challenge = record(received.value)
       if (challenge.version !== 1 || typeof challenge.challengeId !== 'string' || !/^[0-9a-f]{64}$/.test(challenge.challengeId)
         || typeof challenge.expiresAt !== 'number' || !Number.isSafeInteger(challenge.expiresAt)) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
-      if (challenge.expiresAt * 1000 <= Date.now()) throw new PreparationRecoveryError('RECOVERY_CHALLENGE_EXPIRED')
-      if (challenge.expiresAt * 1000 > Date.now() + 305_000) throw new PreparationRecoveryError('RECOVERY_CLOCK_MISMATCH')
+      let now: number
+      try { now = responseClock(received.response, received.startedAt).now() }
+      catch { throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE') }
+      if (challenge.expiresAt * 1000 <= now) throw new PreparationRecoveryError('RECOVERY_CHALLENGE_EXPIRED')
+      if (challenge.expiresAt * 1000 > now + 305_000) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
       const message = recoveryChallengeMessage({ ...input, origin, preparationId: preparationIdentifier(id), nonce: challenge.challengeId, expiresAt: challenge.expiresAt })
       if (challenge.message !== message) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
       const signature = await input.signMessage(message)
-      const result = record(await rpc('plether_verifyRecoveryChallenge', id, { challengeId: challenge.challengeId, signature: signature.toLowerCase() }))
+      const verification = await rpc('plether_verifyRecoveryChallenge', id, { challengeId: challenge.challengeId, signature: signature.toLowerCase() })
+      const result = record(verification.value)
       if (result.version !== 1 || typeof result.sessionToken !== 'string' || !/^[0-9a-f]{64}$/.test(result.sessionToken) || result.expiresIn !== 900) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
-      sessions.set(id, { token: result.sessionToken, expiresAt: Date.now() + 895_000 })
+      sessions.set(id, { token: result.sessionToken, expiresAt: verification.startedAt + 895_000 })
     },
     status: async id => {
-      const result = parseWalletRecoveryResult(await rpc('plether_getRecoveryStatus', id))
+      const result = parseWalletRecoveryResult((await rpc('plether_getRecoveryStatus', id)).value)
       if ('phase' in result && result.userOperationHash) operationIds.set(result.userOperationHash.toLowerCase(), id)
       return result
     },
-    retire: async id => parseWalletRecoveryResult(await rpc('plether_retirePreparation', id)),
+    retire: async id => parseWalletRecoveryResult((await rpc('plether_retirePreparation', id)).value),
   }
 }

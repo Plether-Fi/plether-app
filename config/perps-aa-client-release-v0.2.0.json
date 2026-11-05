@@ -1,0 +1,10 @@
+{
+  "package": "@plether-fi/perps-aa-client",
+  "version": "0.2.0",
+  "distribution": "vendored",
+  "sourceRepository": "Plether-Fi/plether-core",
+  "sourceCommit": "cf86189bcca4813f39d6405a338b77176783eb42",
+  "integrity": "sha512-2x9fG+Pw8Mx0AbWrZibEv4tGlnLub5i0E56CAXj2q8gOmxWpbFtwNYMp7A08M9oLgSGrNmS2xbSHK7RKp7Nrxg==",
+  "tarball": "file:vendor/perps-aa-client/plether-fi-perps-aa-client-0.2.0.tgz",
+  "corePr": "https://github.com/Plether-Fi/plether-core/pull/111"
+}

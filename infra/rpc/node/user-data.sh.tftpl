@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+dnf install -y docker nvme-cli xfsprogs amazon-cloudwatch-agent
+install -d -m 0755 /opt/plether-rpc
+printf '%s' '${node_script}' | base64 -d | gzip -d > /opt/plether-rpc/node.py
+chmod 0755 /opt/plether-rpc/node.py
+systemctl enable --now docker
+python3 /opt/plether-rpc/node.py initialize '${config_parameter}' '${region}'
+cat > /etc/systemd/system/plether-nitro.service <<'UNIT'
+[Unit]
+Description=Plether pruned Arbitrum Sepolia RPC
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+RequiresMountsFor=/srv/nitro
+[Service]
+Type=simple
+UMask=0077
+ExecStartPre=/usr/bin/python3 /opt/plether-rpc/node.py prepare ${config_parameter} ${region}
+ExecStart=/usr/bin/python3 /opt/plether-rpc/node.py run ${config_parameter} ${region}
+ExecStop=/usr/bin/docker stop --time=1800 plether-nitro
+TimeoutStartSec=infinity
+TimeoutStopSec=1900
+Restart=on-failure
+RestartSec=60
+[Install]
+WantedBy=multi-user.target
+UNIT
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'METRICS'
+{"agent":{"metrics_collection_interval":60},"metrics":{"namespace":"Plether/RPC","append_dimensions":{"InstanceId":"$${aws:InstanceId}"},"metrics_collected":{"disk":{"measurement":["used_percent"],"resources":["/srv/nitro"],"drop_device":true},"mem":{"measurement":["mem_used_percent"]}}}}
+METRICS
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+systemctl daemon-reload
+systemctl enable --now --no-block plether-nitro

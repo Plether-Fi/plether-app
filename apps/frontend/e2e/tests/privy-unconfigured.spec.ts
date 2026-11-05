@@ -1,4 +1,4 @@
-import { test, expect } from '../fixtures/wallet'
+import { test, expect } from '../fixtures/signingWallet'
 
 test('missing Privy configuration keeps public pages readable and wallet actions unavailable', async ({ page, baseURL, mockConnectedWallet }, testInfo) => {
   test.skip(testInfo.project.name !== 'privy-unconfigured', 'Run with e2e/privy.playwright.config.ts to force an empty Privy app ID')

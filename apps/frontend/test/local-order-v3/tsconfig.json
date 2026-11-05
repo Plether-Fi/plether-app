@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.app.json",
+  "compilerOptions": { "types": ["vite/client", "node"], "noUnusedLocals": true },
+  "include": ["*.ts"],
+  "exclude": []
+}

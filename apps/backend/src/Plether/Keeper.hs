@@ -9,6 +9,9 @@ module Plether.Keeper
   , auditLpSettlementStartup
   , runLpSettlementPreflight
   , processLpSettlementCycle
+  , buildLpSettlementTransaction
+  , buildLpSettlementTransactionWith
+  , buildLpSettlementReplacement
   , processLpSettlementCycleWithCodeHashes
   , assessLpSettlementStatus
   , isLpSettlementObservationSafe
@@ -30,9 +33,11 @@ module Plether.Keeper
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (concurrently_, withAsync)
+import Control.Concurrent.QSem (newQSem, waitQSem, signalQSem)
+import Control.Concurrent.Async (Concurrently (..), concurrently_, runConcurrently, withAsync, mapConcurrently)
 import Control.Exception
-  ( SomeAsyncException
+  ( bracket_
+  , SomeAsyncException
   , SomeException
   , displayException
   , fromException
@@ -55,10 +60,13 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, execute)
+import GHC.Clock (getMonotonicTimeNSec)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, withTransaction)
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
+import Plether.Keeper.Broadcast (saveBroadcast, clearBroadcast, reconcileBroadcast)
+import Plether.Keeper.Reliability (runOrderReliabilityObserver)
 import Plether.Keeper.Deferrals (recordDeferral, finishDeferrals, pendingReasonCode)
 import Plether.Keeper.Funding
   ( readFundingEvidence, keeperFeeCaps, keeperReserveCost, classifyKeeperReserve )
@@ -136,7 +144,6 @@ import Plether.Ethereum.Rpc
   , ethGetTransactionCount
   , ethGetTransactionCountAtBlock
   , ethGetTransactionReceipt
-  , ethLatestBlockTimestamp
   , ethMaxPriorityFeePerGas
   , ethSendRawTransaction
   )
@@ -169,9 +176,11 @@ data KeeperMode
 data KeeperIterationActivity
   = KeeperIdle
   | KeeperPending
+  | KeeperProgress
   deriving stock (Show, Eq)
 
 keeperPollDelayMicros :: Int -> Int -> KeeperIterationActivity -> Int
+keeperPollDelayMicros _ _ KeeperProgress = 0
 keeperPollDelayMicros activeSeconds idleSeconds activity =
   max 1 selectedSeconds * 1_000_000
  where
@@ -331,7 +340,11 @@ runOrderKeeperSession cfg pool client mode dryRun =
                   threadDelay 10_000_000
             case mode of
               KeeperOnce -> void iteration
-              KeeperLoop -> withAsync observeLoop $ \_ -> loop iteration
+              KeeperLoop -> withAsync observeLoop $ \_ ->
+                case (dryRun, cfgDatabaseUrl cfg) of
+                  (False, Just databaseUrl) ->
+                    withAsync (runOrderReliabilityObserver databaseUrl $ cfgPerpsOrderRouter cfg) $ \_ -> loop iteration
+                  _ -> loop iteration
   where
     loop iteration = do
       activity <- iteration
@@ -345,7 +358,12 @@ runOrderKeeperSession cfg pool client mode dryRun =
 runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> IO KeeperIterationActivity
 runKeeperIteration cfg conn client dryRun observeCost = do
   indexNewLogs cfg conn client
-  processQueueHead cfg conn client dryRun observeCost
+  clearToSubmit <- if dryRun then pure True else reconcileOrderBroadcast cfg conn client
+  if clearToSubmit then processQueueHead cfg conn client dryRun observeCost else pure KeeperPending
+
+reconcileOrderBroadcast :: Config -> Connection -> EthClient -> IO Bool
+reconcileOrderBroadcast cfg conn client =
+  reconcileBroadcast conn (cfgPerpsOrderRouter cfg) client (applyReceipt cfg conn [])
 
 -- Diagnostic writes never alter trade admission or the keeper's existing
 -- transaction path. Missing additive schema degrades monitoring, not execution.
@@ -1444,9 +1462,13 @@ hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
                   Left err -> do
                     logInvariantFailure "competing_settlement_event" err
                     pure False
-                  Right events ->
+                  Right events -> do
                     let qualifyingEvents = filter (isQualifyingCompetitor fromBlock) events
-                     in if null qualifyingEvents
+                    if null qualifyingEvents
+                      then pure False
+                      else do
+                        canonicalBefore <- competingBlocksAreCanonical qualifyingEvents
+                        if not canonicalBefore
                           then pure False
                           else
                             ethEstimateGasAtBlock
@@ -1458,7 +1480,8 @@ hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
                               (receiptBlockNumber receipt)
                               >>= \case
                                 Left replayError
-                                  | Perps.isNoLpEpochProgressRpcError replayError -> pure True
+                                  | Perps.isNoLpEpochProgressRpcError replayError ->
+                                      competingBlocksAreCanonical qualifyingEvents
                                   | otherwise -> do
                                       logWarn
                                         "lp_settlement_supersession_replay_failed"
@@ -1469,6 +1492,35 @@ hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
                                       pure False
                                 Right _ -> pure False
  where
+  -- A log range and a numbered eth_call/estimate can straddle a reorg. Bind
+  -- every qualifying event to a canonical header and keep the reverted receipt
+  -- as the range anchor on both sides of the exact no-progress replay.
+  competingBlocksAreCanonical events = do
+    checked <- runExceptT $ do
+      forM_ events $ \event ->
+        ExceptT $ pure $ unlessEither
+          ( Perps.lpesBlockNumber event /= receiptBlockNumber receipt
+              || normalizeHex (Perps.lpesBlockHash event) == normalizeHex (receiptBlockHash receipt)
+          )
+          "same-block competing settlement log differs from the reverted receipt block"
+      let identities = nub $
+            (receiptBlockNumber receipt, normalizeHex $ receiptBlockHash receipt)
+              : [(Perps.lpesBlockNumber event, normalizeHex $ Perps.lpesBlockHash event) | event <- events]
+      forM_ identities $ \(number, expectedHash) -> do
+        canonical <- ExceptT $ rpcStep "competing LP settlement canonical block" $
+          ethGetBlockByNumber client number
+        ExceptT $ pure $ unlessEither
+          (rpcBlockNumber canonical == number && normalizeHex (rpcBlockHash canonical) == expectedHash)
+          "competing LP settlement evidence is not on the canonical receipt branch"
+    case checked of
+      Right () -> pure True
+      Left err -> do
+        logWarn
+          "lp_settlement_competing_event_lookup_failed"
+          "Competing LP settlement block identity could not be verified; the nonce lane remains active"
+          [field "transaction_hash" $ receiptTxHash receipt, field "error" err]
+        pure False
+
   isQualifyingCompetitor fromBlock event =
     Perps.lpesCutoffEpoch event == lstrEpoch transaction
       && normalizeHex (Perps.lpesTxHash event)
@@ -1620,17 +1672,7 @@ replaceStaleLpSettlementTransaction cfg conn client transaction = do
               priorityBase
               (lstrMaxPriorityFeePerGas transaction)
               (lstrMaxFeePerGas transaction)
-          replacementTx =
-            Tx1559
-              { txChainId = lstrChainId transaction
-              , txNonce = lstrNonce transaction
-              , txMaxPriorityFeePerGas = replacementPriorityFee
-              , txMaxFeePerGas = replacementMaxFee
-              , txGasLimit = lstrGasLimit transaction
-              , txTo = lstrTargetAddress transaction
-              , txValue = lstrValue transaction
-              , txData = lstrCalldata transaction
-              }
+          replacementTx = buildLpSettlementReplacement transaction replacementPriorityFee replacementMaxFee
           maximumCost = transactionMaximumCost replacementTx
       balanceResult <- ethGetBalance client (lstrSignerAddress transaction)
       case balanceResult of
@@ -1677,6 +1719,20 @@ replaceStaleLpSettlementTransaction cfg conn client transaction = do
                     , field "maximum_transaction_cost_wei" maximumCost
                     ]
                   pure LpReconcilePending
+
+-- Replacements preserve the persisted nonce and complete transaction intent.
+buildLpSettlementReplacement :: LpSettlementTransactionRow -> Integer -> Integer -> Tx1559
+buildLpSettlementReplacement transaction priority maxFee =
+  Tx1559
+    { txChainId = lstrChainId transaction
+    , txNonce = lstrNonce transaction
+    , txMaxPriorityFeePerGas = priority
+    , txMaxFeePerGas = maxFee
+    , txGasLimit = lstrGasLimit transaction
+    , txTo = lstrTargetAddress transaction
+    , txValue = lstrValue transaction
+    , txData = lstrCalldata transaction
+    }
 
 ageSeconds :: UTCTime -> UTCTime -> Int
 ageSeconds now thenTime = max 0 $ floor $ diffUTCTime now thenTime
@@ -1840,7 +1896,20 @@ buildLpSettlementTransaction
   -> EthClient
   -> SettlementMonitor.SettlementStatus
   -> IO (Either Text (Text, Integer, ByteString))
-buildLpSettlementTransaction cfg conn client status =
+buildLpSettlementTransaction cfg conn client =
+  buildLpSettlementTransactionWith cfg
+    (getLatestPythUpdatePayloadAtOrAfter conn)
+    (Perps.getUpdateFee client (cfgPerpsPletherOracle cfg))
+
+-- The production builder owns selection, admission and exact transaction bytes.
+-- IO dependencies permit deterministic boundary tests without replacing this flow.
+buildLpSettlementTransactionWith
+  :: Config
+  -> (Integer -> IO (Maybe PythUpdatePayloadRow))
+  -> ([ByteString] -> IO (Either RpcError Integer))
+  -> SettlementMonitor.SettlementStatus
+  -> IO (Either Text (Text, Integer, ByteString))
+buildLpSettlementTransactionWith cfg loadPayload quoteFee status =
   case SettlementMonitor.ssRequiredExecutionPath status of
     SettlementMonitor.CachedMark ->
       pure $
@@ -1853,9 +1922,7 @@ buildLpSettlementTransaction cfg conn client status =
           )
     SettlementMonitor.AtomicOracleRefresh -> do
       payload <-
-        getLatestPythUpdatePayloadAtOrAfter
-          conn
-          (SettlementMonitor.ssMinimumAtomicPublishTime status)
+        loadPayload (SettlementMonitor.ssMinimumAtomicPublishTime status)
       case payload of
         Nothing -> pure $ Left "no admitted latest six-feed Pyth payload is cached"
         Just cachedPayload ->
@@ -1868,7 +1935,7 @@ buildLpSettlementTransaction cfg conn client status =
                 updateData of
                 Left err -> pure $ Left err
                 Right () -> do
-                  feeResult <- Perps.getUpdateFee client (cfgPerpsPletherOracle cfg) updateData
+                  feeResult <- quoteFee updateData
                   pure $ case feeResult of
                     Left err -> Left $ rpcErrorText err
                     Right exactFee ->
@@ -2089,9 +2156,12 @@ processQueueHead cfg conn client dryRun observeCost = do
   case pending of
     [] -> pure KeeperIdle
     headOrder : _ -> do
-      settlementWindowResult <- Perps.orderSettlementWindow client (cfgPerpsPletherOracle cfg)
-      chainNowResult <- ethLatestBlockTimestamp client
       latestBlockResult <- ethBlockNumber client
+      (settlementWindowResult, chainNowResult) <- case latestBlockResult of
+        Left err -> pure (Left err, Left err)
+        Right blockNumber -> runConcurrently $
+          (,) <$> Concurrently (Perps.orderSettlementWindowAtBlock client (cfgPerpsPletherOracle cfg) blockNumber)
+              <*> Concurrently (ethBlockTimestamp client blockNumber)
       case (settlementWindowResult, chainNowResult, latestBlockResult) of
         (Right settlementWindow, Right chainNow, Right latestBlock) ->
           decideExecution cfg conn client dryRun observeCost pending headOrder settlementWindow chainNow latestBlock
@@ -2108,7 +2178,9 @@ processQueueHead cfg conn client dryRun observeCost = do
             [ field "pending_order_count" $ length pending
             , field "error" $ T.intercalate "; " $ catMaybes errors
             ]
-      pure KeeperPending
+      outcome <- query conn "SELECT status FROM perps_keeper_orders WHERE order_router=? AND order_id=?"
+        (T.toLower $ cfgPerpsOrderRouter cfg, pkorOrderId headOrder) :: IO [Only Text]
+      pure $ if any (\(Only status) -> status /= "pending") outcome then KeeperProgress else KeeperPending
 
 decideExecution
   :: Config
@@ -2123,7 +2195,7 @@ decideExecution
   -> Integer
   -> IO ()
 decideExecution cfg conn client dryRun observeCost pending headOrder settlementWindow chainNow latestBlock = do
-  freshHeadResult <- refreshPendingOrder cfg client headOrder
+  freshHeadResult <- refreshPendingOrder cfg client latestBlock headOrder
   case freshHeadResult of
     Left err -> do
       recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId headOrder) err
@@ -2218,6 +2290,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
                     refreshContiguousOrders
                       cfg
                       client
+                      latestBlock
                       (take (cfgKeeperMaxBatchSize cfg - 1) remainingPending)
                   let refreshed =
                         FreshPendingOrder
@@ -2326,13 +2399,13 @@ reconcileTerminalOrder cfg conn order outcome = do
   where
     orderId = pkorOrderId order
 
-refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text PendingOrderRefresh)
-refreshPendingOrder cfg client order =
+refreshPendingOrder :: Config -> EthClient -> Integer -> PerpsKeeperOrderRow -> IO (Either Text PendingOrderRefresh)
+refreshPendingOrder cfg client blockNumber order =
   case cfgPerpsOrderLifecycleBook cfg of
     Nothing ->
       pure $ Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V2 keeper execution"
     Just lifecycleBook -> do
-      statusResult <- Perps.lifecycleStatus client lifecycleBook orderId
+      statusResult <- Perps.lifecycleStatusAtBlock client lifecycleBook orderId blockNumber
       case statusResult of
         Left err -> pure $ Left $ lifecycleReadError err
         Right status ->
@@ -2344,8 +2417,9 @@ refreshPendingOrder cfg client order =
     orderId = pkorOrderId order
 
     refreshPending lifecycleBook = do
-      viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) orderId
-      policyResult <- Perps.pendingPolicyValidUntil client lifecycleBook orderId
+      (viewResult, policyResult) <- runConcurrently $
+        (,) <$> Concurrently (Perps.getPendingOrderViewAtBlock client (cfgPerpsOrderRouter cfg) orderId blockNumber)
+            <*> Concurrently (Perps.orderExecutionDeadlineAtBlock client lifecycleBook orderId blockNumber)
       case policyResult of
         Left err ->
           pure $
@@ -2358,7 +2432,7 @@ refreshPendingOrder cfg client order =
           -- Another executor may have finalized the order between the status
           -- and policy reads. Re-read the immutable lifecycle state rather
           -- than wedging the FIFO queue on the now-cleared pending policy.
-          statusResult <- Perps.lifecycleStatus client lifecycleBook orderId
+          statusResult <- Perps.lifecycleStatusAtBlock client lifecycleBook orderId blockNumber
           case statusResult of
             Left err -> pure $ Left $ lifecycleReadError err
             Right status ->
@@ -2400,7 +2474,7 @@ refreshPendingOrder cfg client order =
                         }
 
     refreshTerminal lifecycleBook status = do
-      outcomeResult <- Perps.orderTerminalOutcome client lifecycleBook orderId
+      outcomeResult <- Perps.orderTerminalOutcomeAtBlock client lifecycleBook orderId blockNumber
       pure $ case outcomeResult of
         Left err ->
           Left $
@@ -2423,23 +2497,17 @@ refreshPendingOrder cfg client order =
 
     orderError err = err <> " " <> T.pack (show orderId)
 
-refreshContiguousOrders :: Config -> EthClient -> [PerpsKeeperOrderRow] -> IO [FreshPendingOrder]
-refreshContiguousOrders _ _ [] = pure []
-refreshContiguousOrders cfg client (order : orders) = do
-  result <- refreshPendingOrder cfg client order
-  case result of
-    Left err -> do
-      logWarnEvery
-        60
-        "keeper_batch_refresh_failed"
-        "Keeper stopped refreshing a candidate batch"
-        [ field "order_id" $ pkorOrderId order
-        , field "error" err
-        ]
-      pure []
-    Right (RefreshedPendingOrder freshOrder) ->
-      (freshOrder :) <$> refreshContiguousOrders cfg client orders
-    Right (RefreshedTerminalOrder _) -> pure []
+refreshContiguousOrders :: Config -> EthClient -> Integer -> [PerpsKeeperOrderRow] -> IO [FreshPendingOrder]
+refreshContiguousOrders cfg client blockNumber orders = do
+  -- Bounded by the configured batch size. Preserve input order, stopping at the
+  -- first missing/terminal record even when later independent reads finish first.
+  slots <- newQSem 2
+  results <- mapConcurrently (\order -> bracket_ (waitQSem slots) (signalQSem slots) $
+    refreshPendingOrder cfg client blockNumber order) orders
+  pure $ contiguous results
+ where
+  contiguous (Right (RefreshedPendingOrder order) : rest) = order : contiguous rest
+  contiguous _ = []
 
 submitIntent :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> [(Integer, Integer)] -> ExecutionIntent -> IO ()
 submitIntent cfg conn client dryRun observeCost deadlines intent = do
@@ -2493,22 +2561,24 @@ submitIntent cfg conn client dryRun observeCost deadlines intent = do
                 ]
             else do
               forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
-              sent <- submitKeeperTransaction cfg client value callData gasLimit observeCost
+              sent <- submitKeeperTransaction cfg conn client value callData gasLimit observeCost
               case sent of
                 Left err -> recordAllErrors cfg conn targetIds err
-                Right receipt -> applyReceipt cfg conn targetIds receipt
+                Right receipt -> withTransaction conn $ do
+                  applyReceipt cfg conn targetIds receipt
+                  clearBroadcast conn (cfgPerpsOrderRouter cfg) (receiptTxHash receipt)
 
 intentValue :: Config -> EthClient -> ExecutionIntent -> IO (Either Text Integer)
 intentValue _ _ (CleanupExpired _) = pure $ Right 0
 intentValue cfg client (ExecuteReady orders _ _ updateData) = do
-  feeResult <- Perps.getUpdateFee client (cfgPerpsPletherOracle cfg) updateData
+  feeResult <- Perps.getOrderExecutionFee client (cfgPerpsPletherOracle cfg) updateData
   pure $
     case feeResult of
       Left err -> Left $ rpcErrorText err
       Right updateFee -> Right $ updateFee * fromIntegral (length orders)
 
-submitKeeperTransaction :: Config -> EthClient -> Integer -> ByteString -> Integer -> (Integer -> IO ()) -> IO (Either Text TxReceipt)
-submitKeeperTransaction cfg client value callData gasLimit observeCost = do
+submitKeeperTransaction :: Config -> Connection -> EthClient -> Integer -> ByteString -> Integer -> (Integer -> IO ()) -> IO (Either Text TxReceipt)
+submitKeeperTransaction cfg conn client value callData gasLimit observeCost = do
   result <-
     submitKeeperTransactionTo
       cfg
@@ -2518,7 +2588,7 @@ submitKeeperTransaction cfg client value callData gasLimit observeCost = do
       callData
       (Just gasLimit)
       observeCost
-      (const $ pure ())
+      (saveBroadcast conn $ cfgPerpsOrderRouter cfg)
   pure $ either (Left . snd) Right result
 
 preflightV2OrderTransaction
@@ -2658,9 +2728,9 @@ submitKeeperTransactionTo
   -> ByteString
   -> Maybe Integer
   -> (Integer -> IO ())
-  -> (Text -> IO ())
+  -> (SignedTransaction -> IO ())
   -> IO (Either (Bool, Text) TxReceipt)
-submitKeeperTransactionTo cfg client target value callData gasLimitOverride observeCost onBroadcast =
+submitKeeperTransactionTo cfg client target value callData gasLimitOverride observeCost beforeBroadcast =
   case cfgKeeperPrivateKey cfg of
     Nothing -> pure $ Left (False, "KEEPER_PRIVATE_KEY is not configured")
     Just privateKey ->
@@ -2698,12 +2768,13 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
               case signResult of
                 Left err -> pure $ Left (False, err)
                 Right signed -> do
+                  beforeBroadcast signed
                   sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
                   case sendResult of
                     Left err -> pure $ Left (False, rpcErrorText err)
                     Right txHash -> do
-                      onBroadcast txHash
-                      receiptResult <- waitForReceipt client txHash 60
+                      unless (T.toLower txHash == T.toLower (signedTransactionHash signed)) $ fail "Keeper RPC returned a different transaction hash"
+                      receiptResult <- waitForReceipt client txHash
                       pure $ either (\err -> Left (True, err)) Right receiptResult
             _ ->
               pure $
@@ -2718,16 +2789,22 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
                         ]
                   )
 
-waitForReceipt :: EthClient -> Text -> Int -> IO (Either Text TxReceipt)
-waitForReceipt _ txHash 0 = pure $ Left $ "timed out waiting for receipt " <> txHash
-waitForReceipt client txHash attempts = do
-  receiptResult <- ethGetTransactionReceipt client txHash
-  case receiptResult of
-    Left err -> pure $ Left $ rpcErrorText err
-    Right (Just receipt) -> pure $ Right receipt
-    Right Nothing -> do
-      threadDelay 2_000_000
-      waitForReceipt client txHash (attempts - 1)
+waitForReceipt :: EthClient -> Text -> IO (Either Text TxReceipt)
+waitForReceipt client txHash = do
+  started <- getMonotonicTimeNSec
+  let poll = do
+        now <- getMonotonicTimeNSec
+        if now - started >= 120_000_000_000
+          then pure $ Left $ "timed out waiting for receipt " <> txHash
+          else ethGetTransactionReceipt client txHash >>= \case
+            Left err -> pure $ Left $ rpcErrorText err
+            Right (Just receipt) -> pure $ Right receipt
+            Right Nothing -> do
+              -- Arbitrum normally includes quickly. Avoid adding two seconds
+              -- per batch, while reducing RPC pressure on delayed transactions.
+              threadDelay $ if now - started < 5_000_000_000 then 250_000 else 1_000_000
+              poll
+  poll
 
 applyReceipt :: Config -> Connection -> [Integer] -> TxReceipt -> IO ()
 applyReceipt cfg conn targetIds receipt = do

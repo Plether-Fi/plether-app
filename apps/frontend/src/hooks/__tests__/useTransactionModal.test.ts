@@ -353,7 +353,9 @@ describe('useTransactionModal', () => {
       expect(tx.steps[0].status).toBe('completed')
       expect(tx.steps[1].status).toBe('error')
       expect(tx.status).toBe('failed')
-      expect(tx.errorMessage).toBe('User rejected')
+      expect(tx.errorMessage).toBe('You declined the request in your wallet. Review the transaction again when you are ready.')
+      expect(tx.errorCode).toBe('WALLET_DECLINED')
+      expect(tx.supportReference).toEqual(expect.any(String))
     })
 
     it('setStepSuccess marks all steps as completed', () => {

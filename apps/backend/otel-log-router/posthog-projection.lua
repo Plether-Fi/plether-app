@@ -4,7 +4,7 @@ local categories = {
   event=true, component=true, stage=true, reason_code=true, outcome=true,
   action_kind=true, sponsorship_status=true, terminal_outcome=true,
   deployment_name=true, rpc_role=true, wallet_family=true,
-  recovery_source=true, diagnostic_code=true,
+  recovery_source=true, diagnostic_code=true, failure_step=true, failure_source=true,
 }
 local function set(words)
   local values = {}
@@ -14,7 +14,7 @@ end
 -- Values as well as keys are allowlisted. An arbitrary alphanumeric exception
 -- or provider credential must not become an event, stage or reason label.
 local events = set([[
-aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed aa_receipt_recovery
+aa_browser_attempt_failure aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed aa_receipt_recovery
 aa_preparation_gas_headroom aa_preparation_rpc_failed aa_preparation_failed aa_execution_diagnosed
 worker_funding_observation worker_funding_monitor_failed
 aa_order_execution_attempt_failed aa_diagnostic_export_dropped aa_diagnostic_queue_full
@@ -27,8 +27,10 @@ aa_reconciler_cost_exceeds_reservation aa_reconciler_cursor_discontinuity
 aa_reconciler_safe_block_advanced aa_reconciler_timestamp_invalid
 keeper_transaction_failed keeper_transaction_mined keeper_transaction_deferred
 keeper_order_deferral_summary keeper_deferral_cache_evicted
+keeper_order_reliability_snapshot keeper_order_reliability_unavailable
 keeper_order_failed keeper_order_finalized_failed keeper_readiness_unavailable keeper_funding_low
 keeper_queue_head_refresh_failed keeper_queue_context_fetch_failed keeper_batch_refresh_failed
+keeper_broadcast_unresolved keeper_broadcast_invalid keeper_broadcast_nonce_consumed reveal_queue_load_failed reveal_payload_fetch_completed
 keeper_cached_payload_decode_failed keeper_cached_payload_invalid keeper_order_logs_fetch_failed
 keeper_frozen_close_payload_failed keeper_chain_head_fetch_failed keeper_commit_metadata_fetch_failed
 order_keeper_worker_restarting order_keeper_worker_stopped
@@ -46,10 +48,12 @@ oracle_worker_iteration_failed oracle_worker_fatal
 api_started rpc_request_failed rpc_request_completed
 ]])
 local values = {
+  failure_source=set('browser'),
+  failure_step=set('preflight review_read preparation_journal review_clock review_deadline recovery_check sponsorship prepared_payload_check pre_sign_journal readiness_check review_revalidation signing_clock signing_deadline wallet_approval signed_payload_check signed_journal submission_clock submission_deadline submission_journal submission confirmation'),
   diagnostic_code=set('DEPENDENCY_FAILED JOURNAL_READ_FAILED JOURNAL_BOUND_EXCEEDED JOURNAL_DECODE_FAILED JOURNAL_IDENTITY_MISMATCH PENDING_LIABILITY_UNKNOWN RESERVE_EVIDENCE_INVALID SNAPSHOT_UNVERIFIED OBSERVATION_EXPIRED'),
   recovery_source=set('finalized_record transaction_hint'),
   component=set('keeper funding oracle readiness sponsorship reconciliation bundler paymaster liquidation protection lp_settlement alto'),
-  stage=set('prepared preparation authorization estimation signing persistence gateway submitted submitting included committed execution execution_attempt_failed user_operation_confirmed user_operation_reverted authorization_expired recovery'),
+  stage=set('execution_interrupted deadline_elapsed prepared preparation authorization estimation signing persistence gateway submitted submitting included committed execution execution_attempt_failed user_operation_confirmed user_operation_reverted authorization_expired recovery'),
   outcome=set('ready blocked unknown rejected failure success confirmed expired pending'),
   action_kind=set('deposit withdraw place-order open close protection'),
   sponsorship_status=set('building requesting-stub estimating requesting-sponsorship awaiting-signature journaling submitting confirming confirmed failed cancelled execution-reverted dropped replaced expired receipt-timeout'),
@@ -57,6 +61,7 @@ local values = {
   deployment_name=set('sepolia mainnet'),
   rpc_role=set('api-core api-perps keeper oracle liquidation protection aa-reconciler'),
   reason_code=set([[
+UNKNOWN REQUEST_ABORTED REQUEST_TIMEOUT WALLET_DECLINED WALLET_DISCONNECTED NETWORK_ERROR REVIEW_CHANGED PREPARED_PAYLOAD_CHANGED PREPARATION_UNUSABLE OPERATION_STORE_UNAVAILABLE INVALID_ORDER_DEADLINE DEADLINE_TOO_CLOSE SPONSOR_UNAVAILABLE SPONSOR_REQUEST_TIMEOUT RATE_LIMITED SPONSOR_BUDGET_EXCEEDED SIMULATION_FAILED POLICY_DENIED PAYMASTER_PAUSED ACCOUNT_NOT_TRUSTED ACCOUNT_DEPLOYMENT_PENDING INSUFFICIENT_FREE_EQUITY MUST_CLOSE_OPPOSING EXECUTION_GAS_CAP_EXCEEDED RESTART_ESTIMATION SECURITY_ATTESTATION_UNAVAILABLE SUBMISSION_PAUSED SPONSORSHIP_NOT_AUTHORIZED DATABASE_UNAVAILABLE BUNDLER_UNAVAILABLE SUBMISSION_OUTCOME_UNKNOWN SUBMISSION_HASH_MISMATCH RECEIPT_TIMEOUT USER_OPERATION_REVERTED READINESS_UNAVAILABLE OPEN_EXECUTION_UNAVAILABLE PROTECTION_TRIGGER_UNAVAILABLE
 READY FUNDING_LOW FUNDING_UNVERIFIED KEEPER_INSUFFICIENT_FUNDS KEEPER_RPC_TIMEOUT
 WORKER_INSUFFICIENT_FUNDS
 KEEPER_EXECUTION_FAILED READINESS_UNAVAILABLE WORKER_HEARTBEAT_STALE ORACLE_UNAVAILABLE
@@ -72,16 +77,17 @@ ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
 INSUFFICIENT_FREE_EQUITY INVALID_ORDER_DEADLINE MUST_CLOSE_OPPOSING
-AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
+AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE SUBMISSION_OUTCOME_UNKNOWN
 USER_OPERATION_OUT_OF_GAS EXECUTION_GAS_CAP_EXCEEDED
 RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE
 ]]),
 }
 local numbers = {
   duration_ms=true, retry_count=true, occurrence_count=true, suppressed_count=true,
+  log_lock_wait_ms=true, log_write_ms=true,
   http_status=true, request_count=true, failure_count=true,
   gas_headroom_bps=true, gas_utilization_bps=true,
-  remaining_deadline_seconds=true,
+  remaining_deadline_seconds=true, commit_to_price_available_ms=true,
   lag_seconds=true, previous_lag_seconds=true, poll_seconds=true, health_poll_seconds=true,
 }
 local resources = {
@@ -121,6 +127,23 @@ local function projection(record)
   if event:match('^oracle_') then
     for _,key in ipairs({'repair','synchronized'}) do
       if type(record[key]) == 'boolean' then output[key] = record[key] end
+    end
+  end
+  -- Canonical enum only; never forward arbitrary terminal labels or IDs.
+  if event == 'keeper_order_finalized_failed' then
+    local reasons = {[0]='NONE',[1]='EXECUTED',[2]='EXPIRED',[3]='SLIPPAGE',
+      [4]='CONFIG_MISMATCH',[5]='EXECUTION_MODE_DISALLOWED',[6]='RISK_OFF',
+      [7]='PLANNER_REJECTED',[8]='CONSTRAINT_VIOLATION',[9]='ACCOUNT_LIQUIDATED'}
+    output.terminal_reason = reasons[record.terminal_reason_code] or 'UNKNOWN'
+  end
+  if event == 'keeper_order_reliability_snapshot' then
+    for _,key in ipairs({'window_seconds','cohort_end_unix','total_orders','executed_orders',
+      'expired_orders','other_failed_orders','pending_orders','active_accounts',
+      'affected_accounts','repeat_affected_accounts'}) do
+      local value = record[key]
+      if type(value) == 'number' and value >= 0 and value < 1e12 and value == math.floor(value) then
+        output[key] = value
+      end
     end
   end
   if uuid(record.attempt_id) then output.attempt_id = record.attempt_id end

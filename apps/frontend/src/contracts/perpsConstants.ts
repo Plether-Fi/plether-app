@@ -20,13 +20,13 @@ export const PERPS_PROTOCOL_PHASE_LABELS = {
 } as const satisfies Record<PerpsProtocolPhase, string>
 
 export const PERPS_DECIMALS = {
-  USDC: 6,
+  ASSETS: 6,
   PRICE: 8,
   POSITION_SIZE: 18,
 } as const
 
-export const PERPS_POSITION_SIZE_TO_USDC_SCALE =
-  10n ** BigInt(PERPS_DECIMALS.POSITION_SIZE + PERPS_DECIMALS.PRICE - PERPS_DECIMALS.USDC)
+export const PERPS_POSITION_SIZE_TO_ASSETS_SCALE =
+  10n ** BigInt(PERPS_DECIMALS.POSITION_SIZE + PERPS_DECIMALS.PRICE - PERPS_DECIMALS.ASSETS)
 
 // OrderRouter and CfdEngine require every open, increase, reduce, and close
 // size delta to use this canonical synthetic-token quantum. Live position

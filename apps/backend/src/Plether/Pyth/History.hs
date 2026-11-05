@@ -12,6 +12,8 @@ module Plether.Pyth.History
   , pythHistoryRequestUrl
   , fetchBasketSnapshotAt
   , fetchBasketHistoryActivity
+  , fetchContinuousBasketHistory
+  , deriveContinuousBasketHistory
   , legacyObservationId
   , runBasketBackfill
   , startBasketHistoryIngestor
@@ -123,6 +125,39 @@ data BasketHistoryActivity = BasketHistoryActivity
   , bhaTimestamps :: [Integer]
   }
   deriving stock (Eq, Show)
+
+-- Recovery is deliberately stricter than normal history ingestion: every
+-- feed must contain an actual close for every minute. Never use carry-forward
+-- or a no-data response as evidence for a live-market gap.
+deriveContinuousBasketHistory
+  :: Integer
+  -> Integer
+  -> [[(Integer, Scientific)]]
+  -> Either Text [(Integer, Integer, Value)]
+deriveContinuousBasketHistory start end histories = do
+  unless (start >= 0 && start `mod` 60 == 0 && end `mod` 60 == 0
+          && end > start && end - start <= 86_400) $
+    Left "Live price recovery requires an aligned range of at most 24 hours"
+  unless (length histories == length basketComponents) $
+    Left "Live price recovery requires all six Pyth histories"
+  let expected = [start, start + 60 .. end - 60]
+      within = map (filter (\(t, _) -> t >= start && t < end)) histories
+  unless (all ((== expected) . map fst) within) $
+    Left "Live price recovery requires a close at every minute from every feed"
+  samples <- deriveTradingViewBasketHistory start end (zip basketComponents within)
+  unless (map (\(t, _, _) -> t) samples == expected) $
+    Left "Live price recovery did not derive every requested basket minute"
+  pure samples
+
+fetchContinuousBasketHistory
+  :: Manager
+  -> BasketIngestorConfig
+  -> Integer
+  -> Integer
+  -> IO (Either Text [(Integer, Integer, Value)])
+fetchContinuousBasketHistory manager cfg start end = do
+  results <- fetchTradingViewComponentWindow manager cfg start end
+  pure $ sequence results >>= deriveContinuousBasketHistory start end
 
 -- | Choose the first Pyth sampling-grid timestamp to ingest. A persisted
 -- history target is authoritative when present; the relative-day window is

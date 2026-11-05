@@ -48,7 +48,7 @@ export function useContractTransaction() {
       updateTransaction(txIdRef.current, {
         status: 'failed',
         errorMessage: getErrorMessage(txError),
-      })
+      }, txError)
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
@@ -85,7 +85,7 @@ export function useContractTransaction() {
                 updateTransaction(txId, {
                   status: 'failed',
                   errorMessage: getErrorMessage(txError),
-                })
+                }, txError)
                 txIdRef.current = null
                 reject(txError)
               },
@@ -100,7 +100,7 @@ export function useContractTransaction() {
         updateTransaction(txId, {
           status: 'failed',
           errorMessage: getErrorMessage(txError),
-        })
+        }, txError)
         txIdRef.current = null
         return txError
       },

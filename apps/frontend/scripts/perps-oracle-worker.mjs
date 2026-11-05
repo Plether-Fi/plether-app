@@ -1,14 +1,14 @@
 import { pathToFileURL } from 'node:url'
-import { createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
+import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 
 const ADDRESSES = {
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-  pletherOracle: '0x9f4d9ae736b94249b18a85a7e14092bfca0688eb',
-  perpsPublicLens: '0x63a6ee8ef44cf13d0d1f393a1e9f8d25da1abfb4',
+  orderRouter: '0x918663d6da8cb33b325a04c4a5e8c51d42f3b444',
+  pletherOracle: '0x4f2c62a0e03657f52c633c19c11f88d8f0897bb2',
+  perpsPublicLens: '0xe1c9c8d3c068c49d933396c9591a55126f29d10e',
 }
 
 const PERPS_PUBLIC_LENS_ABI = [
@@ -36,8 +36,26 @@ const PERPS_PUBLIC_LENS_ABI = [
   },
 ]
 
+const ORACLE_HEALTH_ERRORS = parseAbi([
+  'error PletherOracle__NoAcceptedBasket()',
+  'error PletherOracle__PriceOutOfOrder(uint64 publishTime, uint64 lastMarkTime)',
+  'error PletherOracle__EqualTimeMarkMismatch(uint64 publishTime, uint256 basketPrice, uint256 enginePrice)',
+  'error PletherOracle__StalePrice(uint8 mode, bytes32 feedId, uint256 publishTime, uint256 maxStaleness, uint256 currentTimestamp)',
+  'error PletherOracle__PublishTimeDivergence(uint8 mode, uint256 minPublishTime, uint256 maxPublishTime, uint256 maxDivergence)',
+  'error PletherOracle__BasketConfidenceTooWide(uint8 mode, uint256 basketConfidence, uint256 basketPrice, uint256 maxConfidenceBps)',
+  'error PletherOracle__InvalidPrice(bytes32 feedId, int64 price)',
+  'error PletherOracle__InvalidInverseConfidence(bytes32 feedId, int64 price, uint64 confidence)',
+  'error PletherOracle__ZeroBasketPrice()',
+])
+const RECOVERABLE_HEALTH_ERRORS = new Set(ORACLE_HEALTH_ERRORS.map(error => error.name))
+
 const PLETHER_ORACLE_ABI = [
+  ...ORACLE_HEALTH_ERRORS,
   ...parseAbi(['function pyth() view returns (address)', 'function pythFeedIds(uint256) view returns (bytes32)']),
+  ...parseAbi([
+    'function getAcceptedBasketMark() view returns (bool accepted, uint256 markPrice, uint64 publishTime)',
+    'function getLatestPrice(uint8 mode) view returns ((uint256 price, uint256 markPrice, uint64 publishTime, uint256 updateFee, uint256 maxStaleness, bool closeOnly, bool oracleFrozen, bool isFadWindow) snapshot)',
+  ]),
   {
     type: 'function',
     name: 'getUpdateFee',
@@ -48,6 +66,7 @@ const PLETHER_ORACLE_ABI = [
 ]
 
 const ORDER_ROUTER_ABI = [
+  ...parseAbi(['error PletherOracle__BasketConfidenceTooWide(uint8 mode, uint256 basketConfidence, uint256 basketPrice, uint256 maxConfidenceBps)']),
   {
     type: 'function',
     name: 'updateMarkPrice',
@@ -56,10 +75,6 @@ const ORDER_ROUTER_ABI = [
     outputs: [],
   },
 ]
-
-const PYTH_ABI = parseAbi([
-  'function getPriceUnsafe(bytes32 id) view returns ((int64 price,uint64 conf,int32 expo,uint256 publishTime))',
-])
 
 export async function loadOracleFeeds(publicClient) {
   const block = await publicClient.getBlock({ blockTag: 'latest' })
@@ -76,16 +91,47 @@ export async function loadOracleFeeds(publicClient) {
   return { pyth, feedIds }
 }
 
-async function readHealth(publicClient, feeds, block = undefined) {
+function decodedContractError(error) {
+  return error instanceof BaseError
+    ? error.walk(cause => cause instanceof ContractFunctionRevertedError)
+    : undefined
+}
+
+async function readValidatedBasket(publicClient, blockNumber) {
+  try {
+    // MarkRefresh is the policy of the transaction this worker submits. In
+    // frozen periods Core validates the engine mark instead of the live basket.
+    const snapshot = await publicClient.readContract({ address: ADDRESSES.pletherOracle,
+      abi: PLETHER_ORACLE_ABI, functionName: 'getLatestPrice', args: [1], blockNumber })
+    if (!(snapshot.price > 0n && snapshot.markPrice > 0n && snapshot.publishTime > 0n)) {
+      throw new Error('Oracle returned an invalid mark-refresh snapshot')
+    }
+    return { valid: true }
+  } catch (error) {
+    const reverted = decodedContractError(error)
+    // A transport/ABI/unknown failure is not evidence that sending a paid update
+    // can repair the oracle. Only decoded basket-validation failures permit it.
+    if (!(reverted instanceof ContractFunctionRevertedError) ||
+        !RECOVERABLE_HEALTH_ERRORS.has(reverted.data?.errorName)) throw error
+    return { valid: false, validationError: error }
+  }
+}
+
+async function readHealth(publicClient, block = undefined) {
   block ??= await publicClient.getBlock({ blockTag: 'latest' })
-  const [status, ...prices] = await Promise.all([
+  const [status, [accepted, , acceptedPublishTime], validation] = await Promise.all([
     publicClient.readContract({ address: ADDRESSES.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'getProtocolStatus', blockNumber: block.number }),
-    ...feeds.feedIds.map(id => publicClient.readContract({ address: feeds.pyth, abi: PYTH_ABI,
-      functionName: 'getPriceUnsafe', args: [id], blockNumber: block.number })),
+    publicClient.readContract({ address: ADDRESSES.pletherOracle, abi: PLETHER_ORACLE_ABI,
+      functionName: 'getAcceptedBasketMark', blockNumber: block.number }),
+    readValidatedBasket(publicClient, block.number),
   ])
-  const oldest = prices.reduce((min, price) => price.publishTime < min ? price.publishTime : min, prices[0].publishTime)
-  return { status, block, oldest, lag: status.lastMarkTime > oldest ? status.lastMarkTime - oldest : 0n }
+  // Core v2's accepted basket is independent of Pyth's mutable stored feeds.
+  // Its newest component time is ordered against the engine mark; Core itself
+  // validates every component's age, divergence, confidence and equal-time price.
+  const lag = accepted && !status.oracleFrozen && status.lastMarkTime > acceptedPublishTime
+    ? status.lastMarkTime - acceptedPublishTime : 0n
+  return { status, block, accepted, acceptedPublishTime, lag, ...validation }
 }
 
 function requiredEnv(...names) {
@@ -223,7 +269,7 @@ async function fetchCachedPythUpdate(backendUrl) {
 
 /** One serial worker instance retains an unresolved transaction across health ticks. */
 export function createOracleWorker({ account, backendUrl, dryRun = false, maxPayloadAgeSeconds = 50,
-  publicClient, walletClient, feeds, pollSeconds = 30, now = Date.now,
+  publicClient, walletClient, pollSeconds = 30, now = Date.now,
   fetchPayload = () => fetchCachedPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
 }) {
   let nextRefreshAt = 0
@@ -237,14 +283,21 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
   const refreshHealth = async previous => {
     const block = await publicClient.getBlock({ blockTag: 'latest' })
     // Reuse pinned reads only for the identical block, including across reorgs.
-    // Normally this adds one block lookup, not another seven contract reads.
+    // Normally this adds one block lookup, not another three contract reads.
     if (block.hash && block.hash === previous.block.hash) return previous
-    return readHealth(publicClient, feeds, block)
+    return readHealth(publicClient, block)
   }
   const checkPayload = (health, minPublishTime, maxPublishTime) => {
-    const repair = health.lag > 0n
-    const markTime = health.status.lastMarkTime
-    if (BigInt(minPublishTime) < markTime || (!repair && BigInt(minPublishTime) === markTime)) {
+    if (health.status.oracleFrozen) {
+      if (!health.valid) throw health.validationError
+      return 'healthy'
+    }
+    const repair = !health.valid
+    const markTime = health.status.lastMarkTime > health.acceptedPublishTime
+      ? health.status.lastMarkTime : health.acceptedPublishTime
+    // Core v2 orders by the newest component, while validating all components
+    // independently in simulation. The oldest need not cover the engine mark.
+    if (BigInt(maxPublishTime) < markTime || (!repair && BigInt(maxPublishTime) === markTime)) {
       logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
         min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
         lag_seconds: Number(health.lag),
@@ -274,8 +327,8 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     })
     pending = undefined
     if (receipt.status !== 'success') throw new Error(`updateMarkPrice tx failed: ${tx.hash}`)
-    const after = await readHealth(publicClient, feeds)
-    const recovered = after.lag === 0n
+    const after = await readHealth(publicClient)
+    const recovered = after.valid
     log('INFO', 'oracle_update_mined', 'Oracle mark-price update was mined', {
       transaction_hash: tx.hash, block_number: receipt.blockNumber, update_fee_wei: tx.fee,
       previous_mark_time: tx.markTime, mark_time: after.status.lastMarkTime,
@@ -283,8 +336,8 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       trading_active: after.status.tradingActive, repair: tx.repair,
       previous_lag_seconds: Number(tx.lag), lag_seconds: Number(after.lag), synchronized: recovered,
     })
-    if (!recovered) logEvery(60, 'WARN', 'oracle_sync_pending', 'Stored Pyth feeds remain behind the engine mark', {
-      lag_seconds: Number(after.lag), mark_time: after.status.lastMarkTime, oldest_publish_time: after.oldest,
+    if (!recovered) logEvery(60, 'WARN', 'oracle_sync_pending', 'Accepted oracle basket still fails mark-refresh validation', {
+      lag_seconds: Number(after.lag), mark_time: after.status.lastMarkTime, accepted_publish_time: after.acceptedPublishTime,
     })
     return { status: recovered ? 'synchronized' : 'lagging', hash: tx.hash, lag: after.lag }
   }
@@ -294,10 +347,14 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     try {
       if (pending) return await reconcile()
       if (now() < retryAt) return { status: 'backoff' }
-      let before = await readHealth(publicClient, feeds)
-      let repair = before.lag > 0n
-      if (repair) logEvery(60, 'WARN', 'oracle_sync_lag', 'Stored Pyth feeds are behind the engine mark', {
-        lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, oldest_publish_time: before.oldest,
+      let before = await readHealth(publicClient)
+      if (before.status.oracleFrozen) {
+        if (!before.valid) throw before.validationError
+        return { status: 'healthy' }
+      }
+      let repair = !before.valid
+      if (repair) logEvery(60, 'WARN', 'oracle_sync_lag', 'Accepted oracle basket fails mark-refresh validation', {
+        lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, accepted_publish_time: before.acceptedPublishTime,
       })
       if (!repair && now() < nextRefreshAt) return { status: 'healthy' }
       const payload = validatePythPayload(await fetchPayload())
@@ -313,7 +370,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         failures = 0
         retryAt = 0
         log('INFO', 'oracle_update_dry_run', 'Oracle updater prepared a dry-run transaction', {
-          min_publish_time: minPublishTime, update_fee_wei: fee, repair: before.lag > 0n, lag_seconds: Number(before.lag),
+          min_publish_time: minPublishTime, update_fee_wei: fee, repair: !before.valid, lag_seconds: Number(before.lag),
         })
         return { status: 'dry_run' }
       }
@@ -324,10 +381,26 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       before = await refreshHealth(before)
       rejection = checkPayload(before, minPublishTime, maxPublishTime)
       if (rejection) return { status: rejection }
-      repair = before.lag > 0n
+      repair = !before.valid
       const markTime = before.status.lastMarkTime
-      const { request } = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+      let request
+      try {
+        const simulation = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
+          abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+        request = simulation.request
+      } catch (error) {
+        const reverted = decodedContractError(error)
+        if (!(reverted instanceof ContractFunctionRevertedError) ||
+            reverted.data?.errorName !== 'PletherOracle__BasketConfidenceTooWide') throw error
+        const [mode, basketConfidence, basketPrice, maxConfidenceBps] = reverted.data.args
+        deferRetry()
+        logEvery(60, 'WARN', 'oracle_update_confidence_too_wide', 'Pyth basket confidence exceeds the contract limit; waiting for a narrower payload', {
+          price_mode: mode, basket_confidence: basketConfidence, basket_price: basketPrice,
+          confidence_ratio_bps: Number(basketConfidence) * 10_000 / Number(basketPrice),
+          max_confidence_bps: maxConfidenceBps, min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
+        })
+        return { status: 'confidence_too_wide' }
+      }
       const hash = await walletClient.writeContract(request)
       nextRefreshAt = now() + pollSeconds * 1000
       failures = 0
@@ -383,9 +456,9 @@ async function main() {
     })
     : undefined
 
-  const feeds = await loadOracleFeeds(publicClient)
+  await loadOracleFeeds(publicClient)
   const run = createOracleWorker({ account, backendUrl, dryRun, maxPayloadAgeSeconds,
-    publicClient, walletClient, feeds, pollSeconds })
+    publicClient, walletClient, pollSeconds })
 
   if (!loop) {
     await run()

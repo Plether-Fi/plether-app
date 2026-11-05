@@ -1,13 +1,17 @@
+vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address, Hex } from 'viem'
+import { decodeFunctionData, type Address, type Hex } from 'viem'
+import { ERC20_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI } from '../../contracts/abis'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
 const USER_OPERATION_HASH = `0x${'77'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
+const SETTLEMENT_TOKEN = '0x0000000000000000000000000000000000000001' as const
+const CLEARINGHOUSE = '0x0000000000000000000000000000000000000002' as const
 
 const mocks = vi.hoisted(() => ({
   executeSponsoredPerpsAction: vi.fn(),
@@ -15,6 +19,14 @@ const mocks = vi.hoisted(() => ({
   writeContractAsync: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
   invalidateQueries: vi.fn(),
+  readinessBlocker: vi.fn(),
+}))
+
+vi.mock('../../perps-aa/readiness', () => ({
+  refreshReadiness: vi.fn(async () => {}),
+  currentReadiness: () => undefined,
+  readinessBlocker: mocks.readinessBlocker,
+  readinessMessage: () => 'Gas sponsorship is temporarily paused.',
 }))
 
 vi.mock('wagmi', () => ({
@@ -34,6 +46,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const manifest = {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
     entryPointVersion: '0.8' as const,
@@ -42,16 +55,16 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
-    marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-    cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-    orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-    orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
-    policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
-    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+    settlementToken: '0x0000000000000000000000000000000000000001',
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
+    marginClearinghouse: '0x0000000000000000000000000000000000000002',
+    cfdEngine: '0x0000000000000000000000000000000000000003',
+    orderRouter: '0x0000000000000000000000000000000000000017',
+    orderLifecycleBook: '0x519f57a34fb440c42bfd2d8328d2f80349af3872',
+    policyEvaluator: '0xf550cada6b7d477b23069c8b4f254d19088f28c8',
+    positionProtectionBook: '0x0000000000000000000000000000000000000019',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -110,6 +123,7 @@ function wrapper({ children }: { children: ReactNode }) {
 describe('usePerpsTrading sponsorship route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.readinessBlocker.mockReset()
     mocks.executeSponsoredPerpsAction.mockResolvedValue({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -121,7 +135,15 @@ describe('usePerpsTrading sponsorship route', () => {
     })
   })
 
-  it('funds the Trading Account with an exact owner-wallet USDC transfer', async () => {
+  it.each(['fundTradingAccount', 'depositMargin'] as const)('blocks %s before a transfer or sponsorship when paused', async method => {
+    mocks.readinessBlocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current[method](25_000_000n)).rejects.toThrow()
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it('funds the Trading Account with an exact owner-wallet USDG transfer', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.fundTradingAccount(25_000_000n))
@@ -131,7 +153,7 @@ describe('usePerpsTrading sponsorship route', () => {
       expect.objectContaining({
         account: OWNER,
         chainId: 421614,
-        address: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+        address: '0x0000000000000000000000000000000000000001',
         functionName: 'transfer',
         args: [ACCOUNT, 25_000_000n],
       })
@@ -148,28 +170,31 @@ describe('usePerpsTrading sponsorship route', () => {
     await expect(result.current.depositMargin(25_000_000n, 0n))
       .resolves.toBe(TRANSACTION_HASH)
 
-    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ownerAddress: OWNER,
-        action: expect.objectContaining({
-          kind: 'deposit',
-          account: ACCOUNT,
-          calls: expect.arrayContaining([
-            expect.objectContaining({ value: 0n }),
-            expect.objectContaining({ value: 0n }),
-          ]),
-        }),
-      })
-    )
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledTimes(1)
+    const { action, ownerAddress } = mocks.executeSponsoredPerpsAction.mock.calls[0][0]
+    expect(ownerAddress).toBe(OWNER)
+    expect(action).toMatchObject({ kind: 'deposit', account: ACCOUNT })
+    expect(action.calls).toHaveLength(2)
+    expect(action.calls.map(({ to, value }: { to: Address; value: bigint }) => ({ to, value }))).toEqual([
+      { to: SETTLEMENT_TOKEN, value: 0n },
+      { to: CLEARINGHOUSE, value: 0n },
+    ])
+    expect(decodeFunctionData({ abi: ERC20_ABI, data: action.calls[0].data })).toEqual({
+      functionName: 'approve', args: [CLEARINGHOUSE, 25_000_000n],
+    })
+    expect(decodeFunctionData({ abi: PERPS_MARGIN_CLEARINGHOUSE_ABI, data: action.calls[1].data })).toEqual({
+      functionName: 'depositMargin', args: [25_000_000n],
+    })
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 
   it('tracks invalid deposits as explicit preflight failures', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.depositMargin(0n)).rejects.toThrow(
-      'Deposit amount must be greater than zero'
-    )
+    await expect(result.current.depositMargin(0n)).rejects.toMatchObject({
+      message: expect.stringContaining('Enter an amount greater than zero and within the available balance.'),
+      cause: expect.objectContaining({ reason: 'INVALID_AMOUNT' }),
+    })
 
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
     expect(
@@ -186,18 +211,21 @@ describe('usePerpsTrading sponsorship route', () => {
     await expect(result.current.withdrawMargin(10_000_000n))
       .resolves.toBe(TRANSACTION_HASH)
 
-    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: expect.objectContaining({
-          kind: 'withdraw-to-owner',
-          account: ACCOUNT,
-          calls: expect.arrayContaining([
-            expect.objectContaining({ value: 0n }),
-            expect.objectContaining({ value: 0n }),
-          ]),
-        }),
-      })
-    )
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledTimes(1)
+    const { action, ownerAddress } = mocks.executeSponsoredPerpsAction.mock.calls[0][0]
+    expect(ownerAddress).toBe(OWNER)
+    expect(action).toMatchObject({ kind: 'withdraw-to-owner', account: ACCOUNT })
+    expect(action.calls).toHaveLength(2)
+    expect(action.calls.map(({ to, value }: { to: Address; value: bigint }) => ({ to, value }))).toEqual([
+      { to: CLEARINGHOUSE, value: 0n },
+      { to: SETTLEMENT_TOKEN, value: 0n },
+    ])
+    expect(decodeFunctionData({ abi: PERPS_MARGIN_CLEARINGHOUSE_ABI, data: action.calls[0].data })).toEqual({
+      functionName: 'withdrawMargin', args: [10_000_000n],
+    })
+    expect(decodeFunctionData({ abi: ERC20_ABI, data: action.calls[1].data })).toEqual({
+      functionName: 'transfer', args: [OWNER, 10_000_000n],
+    })
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 

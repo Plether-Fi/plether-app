@@ -105,7 +105,7 @@ export function useApprovalFlow({
       setApprovePending(false)
 
       if (Result.isError(approveResult)) {
-        setStepError(txId, 0, getErrorMessage(approveResult.error))
+        setStepError(txId, 0, getErrorMessage(approveResult.error), approveResult.error)
         setFlowState('idle')
         return
       }

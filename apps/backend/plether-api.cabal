@@ -9,10 +9,17 @@ maintainer:         dev@plether.io
 category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
-                    config/migrations/insights-integrity-epoch-v1.sql
+                    test/fixtures/divisions-publications.json
+                    config/migrations/insights-integrity-epoch-v2.sql
+                    config/migrations/testnet-margin-funding-v1.sql
+                    config/migrations/perps-settlement-assets-v1.sql
                     config/migrations/insights-snapshot-deferred-fk-v1.sql
-                    config/migrations/insights-integrity-indexes-v1.sql
+                    config/migrations/insights-integrity-indexes-v2.sql
                     test/fixtures/insights-funding-integrity-baseline.sql
+                    test/fixtures/divisions-deposit-for.json
+                    test/fixtures/token-neutral-close-waiver.json
+                    test/fixtures/token-neutral-close-rebate.json
+                    test/fixtures/candle-admin-deployed-release.json
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -30,13 +37,16 @@ library
         Plether.AA.Timing
         Plether.AA.Readiness
         Plether.AA.OracleReadiness
+        Plether.Keeper.Broadcast
         Plether.Keeper.Funding
+        Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
         Plether.AA.Diagnostics
         Plether.AA.ExecutionDiagnostics
         Plether.AA.RecoveryReceipt
         Plether.AA.OrderDiagnostics
         Plether.AA.Preparation
+        Plether.AA.PreparationGas
         Plether.AA.EvidenceCache
         Plether.AA.Kms
         Plether.AA.Paymaster
@@ -46,6 +56,7 @@ library
         Plether.Config
         Plether.Logging
         Plether.RequestLogging
+        Plether.Server
         Plether.Types
         Plether.Types.Api
         Plether.Types.Protocol
@@ -97,6 +108,7 @@ library
         Plether.Database.CandleHistory
         Plether.Database.Candles
         Plether.Database.Schema
+        Plether.Database.TestnetFunding
         Plether.Database.Protection
         Plether.Database.Insights
         Plether.Database.Insights.Registration
@@ -109,6 +121,9 @@ library
         Plether.Insights.Registration.Types
         Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
+        Plether.Insights.Divisions
+        Plether.Insights.DivisionsLive
+        Plether.Insights.DivisionsFunding
         Plether.Insights.SnapshotObservability
         Plether.Vaults.PerformanceIndexer
         Plether.Vaults.ActivityIndexer
@@ -116,13 +131,16 @@ library
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
+        Plether.Pyth.Prefetch
         Plether.Pyth.RevealPayload
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
         Plether.Perps.CandleFinalizerProbe
+        Plether.Perps.CandleAdmin
         Plether.Perps.ClosedPriceGap
         Plether.Perps.HistoryIndexer
         Plether.Perps.Release
+        Plether.Perps.Workers
         Plether.Perps.Manifest
         Plether.Perps.IndexerFormat
         Plether.Perps.Manifest.Embed
@@ -138,9 +156,11 @@ library
         Plether.Handlers.PerpsHistory
         Plether.Handlers.ProtectionHistory
         Plether.Handlers.TestnetFaucet
+        Plether.Handlers.TestnetMarginFunding
         Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
         Plether.Handlers.InsightsRegistration
+        Plether.Handlers.DivisionsRegistration
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -170,7 +190,8 @@ library
         postgresql-simple >= 0.7,
         resource-pool >= 0.4,
         template-haskell,
-        directory
+        directory,
+        unliftio-core >= 0.2
     pkgconfig-depends:
         libsecp256k1
     hs-source-dirs:   src
@@ -188,11 +209,14 @@ library
 
 executable plether-api
     import:           warnings
+    other-modules: VaultReturnWorker
     main-is:          Main.hs
     build-depends:
         aeson >= 2.1,
         base >= 4.17 && < 5,
         bytestring >= 0.11,
+        directory >= 1.3,
+        process >= 1.6,
         plether-api,
         scotty >= 0.22,
         text >= 2.0,
@@ -239,12 +263,14 @@ executable plether-basket-worker
     import:           warnings
     main-is:          BasketWorker.hs
     build-depends:
+        async >= 2.2,
         base >= 4.17 && < 5,
         plether-api,
         aeson >= 2.1,
         bytestring >= 0.11,
         postgresql-simple >= 0.7,
         text >= 2.0,
+        time >= 1.12,
         http-client >= 0.7,
         http-client-tls >= 0.3
     hs-source-dirs:   app
@@ -342,6 +368,21 @@ executable plether-insights-admin
         RecordWildCards
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+-- An internal integration tool, never selected by production entrypoints.
+executable plether-candle-admin-fixture
+    import:           warnings
+    scope:            private
+    main-is:          CandleAdminFixtureMain.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        aeson >= 2.1,
+        plether-api
+    hs-source-dirs:   test-support
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1
+
 executable plether-candle-admin
     import:           warnings
     main-is:          CandleAdmin.hs
@@ -365,6 +406,7 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.AA.CloseAssistanceEvidenceSpec
         Plether.AA.GatewaySpec
         Plether.AA.RecoveryCapabilitySpec
         Plether.AA.PaymasterSpec
@@ -401,11 +443,15 @@ test-suite plether-api-test
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.ProtectionHistorySpec
         Plether.Handlers.TestnetFaucetSpec
+        Plether.Handlers.TestnetMarginFundingSpec
         Plether.Handlers.TestnetFaucetGuardSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
         Plether.RequestLoggingSpec
+        Plether.ServerSpec
+        Plether.AA.TimingSpec
         Plether.LiquidationWorkerSpec
+        Plether.Pyth.PrefetchSpec
         Plether.Pyth.HermesSpec
         Plether.Pyth.HistorySpec
         Plether.Pyth.RevealPayloadSpec
@@ -416,6 +462,8 @@ test-suite plether-api-test
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Perps.ReleaseSpec
+        Plether.Perps.ManifestSpec
+        Plether.Perps.ActivationSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.ObservationSpec
         Plether.Database.VaultPerformanceSpec
@@ -429,6 +477,8 @@ test-suite plether-api-test
         Plether.Insights.Registration.RotationSpec
         Plether.Insights.Registration.TypesSpec
         Plether.Insights.Registration.WalletSpec
+        Plether.Insights.DivisionsSpec
+        Plether.Insights.DivisionsFundingSpec
         Plether.Insights.SnapshotWorkerSpec
         Plether.Vaults.PerformanceIndexerSpec
         Plether.Vaults.ActivityIndexerSpec
@@ -441,9 +491,13 @@ test-suite plether-api-test
         hspec-discover >= 2.11,
         async >= 2.2,
         QuickCheck >= 2.14,
+        transformers >= 0.6,
+        network >= 3.1,
         aeson >= 2.1,
         bytestring >= 0.11,
         containers >= 0.6,
+        crypton >= 0.34,
+        memory >= 0.18,
         directory >= 1.3,
         http-types >= 0.12,
         http-client >= 0.7,
@@ -452,7 +506,8 @@ test-suite plether-api-test
         base16-bytestring >= 1.0,
         time >= 1.12,
         wai >= 3.2,
-        warp >= 3.3
+        warp >= 3.3,
+        scotty >= 0.22
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
@@ -466,13 +521,19 @@ test-suite plether-api-integration-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.Keeper.BroadcastSpec
+        Plether.Keeper.ReliabilitySpec
         Plether.DatabaseDiagnosticsSpec
+        Plether.BackendUnitRepairSpec
+        Plether.MarginFundingForkSpec
+        Plether.LiquidationWorkerIntegrationSpec
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
         Plether.Perps.ProtectionExecutionSpec
         Plether.Keeper.LpSettlementDatabaseSpec
         Plether.Keeper.LiquidationMonitoringSpec
+        Plether.Keeper.PythCachePairSpec
         Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec
@@ -498,7 +559,8 @@ test-suite plether-api-integration-test
         wai-extra >= 3.1,
         warp >= 3.3
     build-tool-depends:
-        plether-api:plether-candle-admin
+        plether-api:plether-candle-admin,
+        plether-api:plether-candle-admin-fixture
     hs-source-dirs:   test-integration
     default-language: GHC2021
     default-extensions:

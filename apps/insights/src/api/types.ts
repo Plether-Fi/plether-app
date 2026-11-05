@@ -1,10 +1,10 @@
-export type UsdcUnits = string
+export type AssetsUnits = string
 
 export type CompetitionStatus = 'scheduled' | 'live' | 'ended' | 'review' | 'final'
 
 export interface CompetitionPrize {
   place: number
-  amount: UsdcUnits
+  amount: AssetsUnits
 }
 
 export type CompetitionRegistrationStatus = 'upcoming' | 'open' | 'closed'
@@ -27,8 +27,8 @@ export interface Competition {
   startsAt: string
   tradingCutoffAt: string
   resultsAt: string
-  startingBalance: UsdcUnits
-  pnlEligibilityThreshold: UsdcUnits
+  startingBalance: AssetsUnits
+  pnlEligibilityThreshold: AssetsUnits
   minActiveDays: number
   prizes: CompetitionPrize[]
   latestIndexedBlock: number | null
@@ -81,16 +81,16 @@ export interface Standing {
   rank: number | null
   address: string
   displayName: string | null
-  pnl: UsdcUnits | null
-  realizedPnl: UsdcUnits
+  pnl: AssetsUnits | null
+  realizedPnl: AssetsUnits
   roiBps: number | null
-  volume: UsdcUnits
+  volume: AssetsUnits
   trades: number
   activeDays: number
   liquidations: number
   prizePlace: number | null
   prizePlaces: number[]
-  prizeAmountUsdc: UsdcUnits | null
+  prizeAmountAssets: AssetsUnits | null
   eligible: boolean
   eligibilityStatus: string
   eligibilityReasons: string[]
@@ -99,26 +99,26 @@ export interface Standing {
 export interface WalletPosition {
   market: string
   side: 'long' | 'short' | null
-  size: UsdcUnits | null
+  size: AssetsUnits | null
   sizeDelta: string | null
-  margin: UsdcUnits | null
+  margin: AssetsUnits | null
   entryPrice: string | null
   markPrice: string | null
-  unrealizedPnl: UsdcUnits | null
+  unrealizedPnl: AssetsUnits | null
   liquidatable: boolean | null
 }
 
 export interface WalletDetails extends Standing {
-  equity: UsdcUnits | null
+  equity: AssetsUnits | null
   position: WalletPosition | null
 }
 
 export interface TradeSettlement {
-  protocolFeeCollectedUsdc?: string
+  protocolFeeCollectedAssets?: string
   kind: 'ActionChargeSettled' | 'ActionRebateSettled' | 'FrozenCloseSpreadSettled'
-  assessedUsdc: string
-  recoveredUsdc: string
-  waivedUsdc: string
+  assessedAssets: string
+  recoveredAssets: string
+  waivedAssets: string
 }
 
 export interface TradeExecution {
@@ -135,13 +135,13 @@ export interface WalletActivity {
   occurredAt: string
   market: string | null
   side: 'long' | 'short' | null
-  size: UsdcUnits | null
+  size: AssetsUnits | null
   sizeDelta: string | null
   price: string | null
-  pnl: UsdcUnits | null
+  pnl: AssetsUnits | null
   execution?: TradeExecution | null
-  executionFee: UsdcUnits | null
-  vpi: UsdcUnits | null
+  executionFee: AssetsUnits | null
+  vpi: AssetsUnits | null
   txHash: string | null
 }
 

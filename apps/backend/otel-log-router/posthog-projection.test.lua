@@ -1,4 +1,8 @@
 dofile('posthog-projection.lua')
+local _,_,timing=project_posthog('test',0,{event='aa_preparation_timing',log_lock_wait_ms=12.5,log_write_ms=20,
+  stages='private input',request_id='private input',token='secret'})
+assert(timing.log_lock_wait_ms==12.5 and timing.log_write_ms==20)
+assert(timing.stages==nil and timing.request_id==nil and timing.token==nil)
 for _,reason in ipairs({'INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','MUST_CLOSE_OPPOSING'}) do
   local _,_,safe=project_posthog('test',0,{event='aa_request_failed',reason_code=reason,error='private calldata'})
   assert(safe.reason_code==reason and safe.error==nil)
@@ -95,3 +99,41 @@ for _,event in ipairs({'oracle_sync_lag','oracle_sync_pending','oracle_update_mi
 end
 local _,_,badLag = project_posthog('test',0,{event='oracle_sync_lag',lag_seconds='secret',repair='secret',synchronized={private='secret'}})
 assert(badLag.lag_seconds==nil and badLag.repair==nil and badLag.synchronized==nil)
+
+for code,reason in pairs({[0]='NONE',[1]='EXECUTED',[2]='EXPIRED',[3]='SLIPPAGE',
+  [4]='CONFIG_MISMATCH',[5]='EXECUTION_MODE_DISALLOWED',[6]='RISK_OFF',
+  [7]='PLANNER_REJECTED',[8]='CONSTRAINT_VIOLATION',[9]='ACCOUNT_LIQUIDATED'}) do
+  local _,_,out=project_posthog('test',0,{event='keeper_order_finalized_failed',terminal_reason_code=code,
+    terminal_reason='secret',order_id=12,account='0xsecret',transaction_hash='0xsecret'})
+  assert(out.terminal_reason==reason and out.order_id==nil and out.account==nil and out.transaction_hash==nil)
+end
+for _,code in ipairs({-1,10,2.5,'2','secret',false,{secret=true}}) do
+  local _,_,out=project_posthog('test',0,{event='keeper_order_finalized_failed',terminal_reason_code=code})
+  assert(out.terminal_reason=='UNKNOWN')
+end
+local snapshot={event='keeper_order_reliability_snapshot',window_seconds=3600,cohort_end_unix=12345678,
+  total_orders=20,executed_orders=15,expired_orders=3,other_failed_orders=1,pending_orders=1,
+  active_accounts=12,affected_accounts=2,repeat_affected_accounts=1,account='0xsecret',order_ids={1,2}}
+local _,_,out=project_posthog('test',0,snapshot)
+assert(out.expired_orders==3 and out.affected_accounts==2 and out.repeat_affected_accounts==1)
+assert(out.window_seconds==3600 and out.cohort_end_unix==12345678 and out.pending_orders==1)
+assert(out.account==nil and out.order_ids==nil)
+for _,bad in ipairs({-1,0/0,math.huge,1e12,1.5,'3',{secret=true}}) do
+  local _,_,invalid=project_posthog('test',0,{event='keeper_order_reliability_snapshot',expired_orders=bad})
+  assert(invalid.expired_orders==nil)
+end
+local _,_,other=project_posthog('test',0,{event='rpc_request_failed',expired_orders=3,terminal_reason_code=2})
+assert(other.expired_orders==nil and other.terminal_reason==nil)
+for _,event in ipairs({'keeper_broadcast_unresolved','keeper_broadcast_invalid','reveal_queue_load_failed'}) do
+  local _,_,projected=project_posthog('test',0,{event=event,raw_tx='secret',tx_hash='secret'})
+  assert(projected.event==event and projected.raw_tx==nil and projected.tx_hash==nil)
+end
+
+local _,_,failure=project_posthog('test',0,{event='aa_browser_attempt_failure',stage='execution_interrupted',
+  failure_step='wallet_approval',reason_code='WALLET_DECLINED',failure_source='browser',
+  signature='secret',error='private wallet message',sender='0x1234',operation={secret=true}})
+assert(failure.event=='aa_browser_attempt_failure' and failure.failure_step=='wallet_approval')
+assert(failure.reason_code=='WALLET_DECLINED' and failure.failure_source=='browser')
+assert(failure.signature==nil and failure.error==nil and failure.sender==nil and failure.operation==nil)
+local _,_,unsafe=project_posthog('test',0,{event='aa_browser_attempt_failure',failure_step='private_payload',reason_code='private_token',failure_source='backend'})
+assert(unsafe.failure_step==nil and unsafe.reason_code==nil and unsafe.failure_source==nil)

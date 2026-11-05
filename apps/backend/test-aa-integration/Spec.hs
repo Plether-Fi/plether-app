@@ -25,7 +25,7 @@ import Database.PostgreSQL.Simple
   , query_
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
-import Plether.AA.Diagnostics (persistAttemptStage)
+import Plether.AA.Diagnostics (persistAttemptStage, persistBrowserStage, BrowserFailure(..))
 import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
 import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.ExecutionDiagnostics (claimExecutionDiagnostics, completeExecutionDiagnostic)
@@ -113,6 +113,14 @@ aaIntegrationSpec databaseUrl =
         persistAttemptStage conn client operationHash "backend" "arbitrary error payload" `shouldReturn` 0
         rows <- query_ conn "SELECT source,stage FROM aa_attempt_events ORDER BY source,stage" :: IO [(Text,Text)]
         rows `shouldBe` [("backend","security_rejected"),("backend","submission_received"),("browser","wallet_approved")]
+        let failure = Just $ BrowserFailure "wallet_approval" "WALLET_DECLINED"
+        persistBrowserStage conn (clientKeyOf 'f') attempt "execution_interrupted" failure `shouldReturn` 0
+        persistBrowserStage conn client attempt "submission_received" failure `shouldReturn` 0
+        persistBrowserStage conn client attempt "execution_interrupted" (Just $ BrowserFailure "wallet_approval" "secret") `shouldReturn` 0
+        persistBrowserStage conn client attempt "execution_interrupted" failure `shouldReturn` 1
+        persistBrowserStage conn client attempt "execution_interrupted" (Just $ BrowserFailure "submission" "REQUEST_TIMEOUT") `shouldReturn` 0
+        failures <- query_ conn "SELECT source,failure_step,reason_code FROM aa_attempt_events WHERE stage='execution_interrupted'" :: IO [(Text,Text,Text)]
+        failures `shouldBe` [("browser","wallet_approval","WALLET_DECLINED")]
         stored <- getSponsorshipByDigest conn digest
         fmap saState stored `shouldBe` Just "signed"
 
@@ -876,6 +884,9 @@ resetSchema conn = do
   void $ execute_ conn observability
   timeline <- fromString <$> readFile "config/migrations/aa-attempt-events-v1.sql"
   void $ execute_ conn timeline
+  failureDetails <- fromString <$> readFile "config/migrations/aa-attempt-failure-v1.sql"
+  void $ execute_ conn failureDetails
+  void $ execute_ conn failureDetails
   correlation <- fromString <$> readFile "config/migrations/aa-observability-v2.sql"
   void $ execute_ conn correlation
   recovery <- fromString <$> readFile "config/migrations/aa-preparation-recovery-v1.sql"

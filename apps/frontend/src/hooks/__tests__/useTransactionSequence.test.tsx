@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { captureAnalyticsEvent } from '../../analytics/client'
 import { useTransactionStore } from '../../stores/transactionStore'
 import { useTransactionModal } from '../useTransactionModal'
 import { useTransactionSequence } from '../useTransactionSequence'
@@ -9,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   getTransaction: vi.fn(),
   call: vi.fn(),
 }))
+
+vi.mock('../../analytics/client', () => ({ captureAnalyticsEvent: vi.fn(), captureFrontendLog: vi.fn() }))
 
 vi.mock('wagmi', () => ({
   usePublicClient: () => ({
@@ -69,4 +72,33 @@ describe('useTransactionSequence', () => {
     expect(useTransactionStore.getState().transactions).toHaveLength(1)
     expect(result.current.status).toBe('success')
   })
+  it('shows a reference for embedded preparation errors and records it once', async () => {
+    const { result } = renderHook(() => useTransactionSequence())
+    await act(async () => {
+      await result.current.execute({ title: 'Deposit', type: 'supply', showModal: false,
+        buildSteps: () => { throw new Error('Failed to fetch') },
+      })
+    })
+    expect(result.current.error).toContain('Support reference:')
+    expect(result.current.status).toBe('error')
+    expect(captureAnalyticsEvent).toHaveBeenCalledWith('transaction failed', expect.objectContaining({
+      surface: 'vault', action_kind: 'supply', stage: 'preparation', reason_code: 'NETWORK_ERROR',
+      support_reference: result.current.error!.split('Support reference: ')[1],
+    }))
+  })
+
+  it('keeps wallet rejection in the submission stage after an earlier approval succeeds', async () => {
+    const { result } = renderHook(() => useTransactionSequence())
+    await act(async () => {
+      await result.current.execute({ title: 'Deposit', type: 'supply', buildSteps: () => [
+        { label: 'Approve', action: async () => '0xabc' },
+        { label: 'Deposit', action: () => Promise.reject(Object.assign(new Error('User rejected the request'), { code: 4001 })) },
+      ] })
+    })
+    const event = vi.mocked(captureAnalyticsEvent).mock.calls.find(([name]) => name === 'transaction failed')!
+    expect(event[1]).toMatchObject({ stage: 'submission', reason_code: 'WALLET_DECLINED' })
+    expect(useTransactionStore.getState().transactions[0].supportReference).toBe(event[1]?.support_reference)
+    expect(vi.mocked(captureAnalyticsEvent).mock.calls.filter(([name]) => name === 'transaction failed')).toHaveLength(1)
+  })
+
 })

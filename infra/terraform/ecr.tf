@@ -35,22 +35,11 @@ resource "aws_ecr_repository" "otel_log_router" {
   }
 }
 
-resource "aws_ecr_lifecycle_policy" "otel_log_router" {
-  repository = aws_ecr_repository.otel_log_router.name
-
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Keep last 10 images"
-      selection = {
-        tagStatus   = "any"
-        countType   = "imageCountMoreThan"
-        countNumber = 10
-      }
-      action = { type = "expire" }
-    }]
-  })
-}
+# The API and independently deployed AA services share this repository. Alto
+# pins a digest that can remain active across many backend releases. ECR's
+# count/age policies do not check ECS references, so even an untagged-only rule
+# could remove a required image. Retain these images until cleanup can verify
+# every live task and retained rollback definition before deleting a digest.
 
 resource "aws_ecr_repository" "alto" {
   count = local.self_hosted_aa_resource_count

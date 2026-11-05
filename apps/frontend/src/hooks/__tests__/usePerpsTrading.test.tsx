@@ -1,17 +1,20 @@
+vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeFunctionData, getAddress, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, getAddress, type AbiParameter, type Address, type Hex } from 'viem'
+import { hashOrderReceiptV5, orderLifecycleV5Abi, type OrderReceiptV5 } from '@plether-fi/perps-aa-client'
+import { relaxedProtectionCloseLimits } from '../../contracts/positionProtection'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../../contracts/perpsAddresses'
-import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import { usePerpsTrading } from '../usePerpsTrading'
-import * as orderV2 from '../../contracts/perpsOrderV2'
-import * as orderPreparation from '../../contracts/preparePerpsOrderV2'
-import * as deploymentBindings from '../../contracts/verifyPerpsV2Bindings'
+import * as orderV2 from '../../contracts/perpsOrderV3'
+import * as orderPreparation from '../../contracts/preparePerpsOrderV3'
+import * as deploymentBindings from '../../contracts/verifyPerpsV3Bindings'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { useSponsoredOperationStore } from '../../perps-aa'
 import { SponsorRequestError } from '../../perps-aa/errors'
@@ -31,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   resolvedOrderId: 0n,
   protectionParent: 42n,
   getBlock: vi.fn(),
+  getContractEvents: vi.fn(),
   readContract: vi.fn(),
   simulateContract: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
@@ -58,6 +62,7 @@ vi.mock('wagmi', () => ({
   useWalletClient: () => ({ data: undefined }),
   usePublicClient: () => ({
     getBlock: mocks.getBlock,
+    getContractEvents: mocks.getContractEvents,
     readContract: mocks.readContract,
     simulateContract: mocks.simulateContract,
     waitForTransactionReceipt: mocks.waitForTransactionReceipt,
@@ -74,6 +79,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const manifest = {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
     entryPointVersion: '0.8' as const,
@@ -82,15 +88,15 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
-    marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-    cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-    orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
+    settlementToken: '0x0000000000000000000000000000000000000001',
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
+    marginClearinghouse: '0x0000000000000000000000000000000000000002',
+    cfdEngine: '0x0000000000000000000000000000000000000003',
+    orderRouter: '0x0000000000000000000000000000000000000017',
     orderLifecycleBook: '0x1111111111111111111111111111111111111111',
-    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+    positionProtectionBook: '0x0000000000000000000000000000000000000019',
     policyEvaluator: '0x2222222222222222222222222222222222222222',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
@@ -190,7 +196,7 @@ function sponsoredResult() {
   }
 }
 
-function preparedOrder(): PreparedPerpsOrderV2 {
+function preparedOrder(): PreparedPerpsOrderV3 {
   const request = {
     clientOrderId: CLIENT_ORDER_ID,
     side: 0,
@@ -199,17 +205,17 @@ function preparedOrder(): PreparedPerpsOrderV2 {
     targetPrice: 98_398_300n,
     isClose: false,
     bounds: {
-      validUntil: 1_700_000_300n,
+      submitBy: 1_700_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: 1,
       expectedConfigHash: CONFIG_HASH,
-      maxExecutionBountyUsdc: 10_000n,
-      maxExecutionNotionalUsdc: 1_000_000_000n,
-      maxGrossAccountDebitUsdc: 200_010_000n,
-      maxActionChargeUsdc: 2_000_000n,
-      maxExplicitFeesUsdc: 2_000_000n,
+      maxExecutionBountyAssets: 10_000n,
+      maxExecutionNotionalAssets: 1_000_000_000n,
+      maxGrossAccountDebitAssets: 200_010_000n,
+      maxActionChargeAssets: 2_000_000n,
+      maxExplicitFeesAssets: 2_000_000n,
       maxPostPositionSize: 100_000_000_000_000_000_000n,
-      minPostSettlementBalanceUsdc: 700_000_000n,
-      minPostPositionEquityUsdc: 198_000_000n,
+      minPostSettlementBalanceAssets: 700_000_000n,
+      minPostPositionEquityAssets: 198_000_000n,
       maxPostLeverageBps: 50_000,
     },
   } as const
@@ -219,14 +225,14 @@ function preparedOrder(): PreparedPerpsOrderV2 {
     orderRouter: PERPS_ARBITRUM_SEPOLIA.orderRouter,
     orderLifecycleBook: ORDER_LIFECYCLE_BOOK,
     request,
-    executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
+    executionBountyAssets: request.bounds.maxExecutionBountyAssets,
     reviewedBlockNumber: 123n,
     reviewedBlockHash: REVIEWED_BLOCK_HASH,
     reviewedPrice: 98_300_000n,
     protection: {
-      validUntil: request.bounds.validUntil,
+      submitBy: request.bounds.submitBy, executionWindowSeconds: 60,
       executionMode: 1,
-      executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
+      executionBountyAssets: request.bounds.maxExecutionBountyAssets,
     },
   }
 }
@@ -234,9 +240,9 @@ function preparedOrder(): PreparedPerpsOrderV2 {
 function commitInput() {
   return {
     direction: 'long' as const,
-    notionalUsdc: 1_000_000_000n,
+    notionalAssets: 1_000_000_000n,
     sizeDelta: 100_000_000_000_000_000_000n,
-    marginUsdc: 200_000_000n,
+    marginAssets: 200_000_000n,
     oraclePrice: 98_300_000n,
     slippagePercent: 0.1,
     isClose: false,
@@ -247,12 +253,12 @@ function commitInput() {
 
 describe('usePerpsTrading', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mocks.identityReady = false
     mocks.intentResolution = 0
     mocks.resolvedOrderId = 0n
     mocks.protectionParent = 42n
-    mocks.getBlock.mockResolvedValue({ timestamp: 1_700_000_000n })
+    mocks.getBlock.mockResolvedValue({ number: 123n, timestamp: 1_700_000_000n })
     mocks.simulateContract.mockResolvedValue({})
     mocks.executeSponsoredPerpsAction.mockResolvedValue(sponsoredResult())
     mocks.parseEventLogs.mockImplementation(({ eventName }: { eventName: string }) =>
@@ -263,16 +269,18 @@ describe('usePerpsTrading', () => {
     )
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
       switch (functionName) {
+        case 'maxExecutionWindowSeconds':
+          return 60n
         case 'getPendingOrders':
           return []
         case 'maxPendingOrders':
           return 10n
         case 'getTraderAccount':
           return {
-            equityUsdc: 900_000_000n,
-            withdrawableUsdc: 500_000_000n,
-            pendingOrderMarginUsdc: 250_000_000n,
-            pendingExecutionBountyUsdc: 10_000n,
+            equityAssets: 900_000_000n,
+            withdrawableAssets: 500_000_000n,
+            pendingOrderMarginAssets: 250_000_000n,
+            pendingExecutionBountyAssets: 10_000n,
           }
         case 'previewOpenRevertCode':
           return 0
@@ -292,11 +300,11 @@ describe('usePerpsTrading', () => {
   })
 
   describe('position protection management', () => {
-    const params = { takeProfitTriggerPrice: 98_500_000n, stopLossTriggerPrice: 0n }
+    const params = { takeProfitTriggerPrice: 98_500_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }
 
     beforeEach(() => {
       mocks.identityReady = true
-      vi.spyOn(deploymentBindings, 'verifyPerpsV2DeploymentBindings').mockResolvedValue({
+      vi.spyOn(deploymentBindings, 'verifyPerpsV3DeploymentBindings').mockResolvedValue({
         positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
         blockNumber: 123n,
         block: { number: 123n, timestamp: 1_700_000_000n, hash: REVIEWED_BLOCK_HASH },
@@ -366,7 +374,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
-        message: 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.',
+        message: expect.stringContaining('Not enough free USDG to reserve TP/SL keeper rewards. Deposit USDG into your margin account and retry.\n\nSupport reference: '),
         cause: failure,
       })
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -379,7 +387,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action, protectionId: 7n, params })).rejects.toMatchObject({
-        message: 'TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.',
+        message: expect.stringContaining('TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.\n\nSupport reference: '),
         cause: failure,
       })
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -391,7 +399,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
-        message: 'Plether gas sponsorship is temporarily paused.',
+        message: expect.stringContaining('Plether gas sponsorship is temporarily paused.\n\nSupport reference: '),
         cause: failure,
       })
     })
@@ -410,11 +418,13 @@ describe('usePerpsTrading', () => {
 
   it('commits protected opens atomically and reconciles the unique parent/protection pair', async () => {
     mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
     const input = commitInput()
-    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n, protectionId: 7n })
-    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [input.preparedOrder.request, input.preparedOrder.positionProtection.params] }))
+    const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, submitBy: 1_700_000_720n, executionWindowSeconds: 60 } }
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [finalized, input.preparedOrder.positionProtection.params] }))
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({ action: expect.objectContaining({ kind: 'place-protected-order' }), protectionIntent: expect.objectContaining({ takeProfitTriggerPrice: '90000000', stopLossTriggerPrice: '110000000' }) }))
   })
 
@@ -423,7 +433,7 @@ describe('usePerpsTrading', () => {
     mocks.intentResolution = 1
     mocks.resolvedOrderId = 42n
     const input = commitInput()
-    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).rejects.toThrow('cannot be resubmitted')
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -433,7 +443,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     mocks.protectionParent = 43n
     const input = commitInput()
-    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).rejects.toThrow('unique protection record')
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
@@ -442,8 +452,8 @@ describe('usePerpsTrading', () => {
   it('never exposes a direct owner-wallet approval path', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.approveUsdcForMargin(25_000_000n))
-      .rejects.toThrow('Direct USDC approvals are disabled')
+    await expect(result.current.approveSettlementTokenForMargin(25_000_000n))
+      .rejects.toThrow('Direct USDG approvals are disabled')
   })
 
   it('blocks order submission until the Trading Account is ready', async () => {
@@ -459,7 +469,7 @@ describe('usePerpsTrading', () => {
 
   it('passes explicit Max intent and cancellation to the review', async () => {
     mocks.identityReady = true
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(preparedOrder())
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockResolvedValue(preparedOrder())
     const maxSize = true
     const signal = new AbortController().signal
     try {
@@ -476,7 +486,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const reviewSummary = { worstPostLeverageBps: 50_001n } as orderV2.PerpsOrderReviewSummary
     const error = new orderPreparation.PerpsOrderReviewError(reviewSummary, new Error('Leverage limit exceeded'))
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockRejectedValue(error)
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockRejectedValue(error)
     try {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
       await expect(result.current.prepareOrder(commitInput())).rejects.toBe(error)
@@ -489,7 +499,7 @@ describe('usePerpsTrading', () => {
   it('blocks stale reviews while a failed submission is unresolved, then prepares a fresh order', async () => {
     mocks.identityReady = true
     const fresh = preparedOrder()
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(fresh)
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockResolvedValue(fresh)
     const store = useSponsoredOperationStore.getState()
     globalThis.localStorage.clear()
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
@@ -498,8 +508,8 @@ describe('usePerpsTrading', () => {
         id: 'expired-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2',
         action: 'place-order',
-        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
-          ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n },
+        orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, {
+          ...fresh.request, bounds: { ...fresh.request.bounds, submitBy: 1n },
         }),
       })
       store.recordUserOperationHash('expired-order', USER_OPERATION_HASH)
@@ -531,8 +541,8 @@ describe('usePerpsTrading', () => {
       store.beginOperation({
         id: 'unsigned-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
-        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
-          ...original.request, bounds: { ...original.request.bounds, validUntil: 1n },
+        orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, {
+          ...original.request, bounds: { ...original.request.bounds, submitBy: 1n },
         }),
       })
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
@@ -551,7 +561,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const unalignedSizeDelta = 100_000_000_000_000_000_001n
     const basePreparedOrder = preparedOrder()
-    const closePreparedOrder: PreparedPerpsOrderV2 = {
+    const closePreparedOrder: PreparedPerpsOrderV3 = {
       ...basePreparedOrder,
       request: {
         ...basePreparedOrder.request,
@@ -566,7 +576,7 @@ describe('usePerpsTrading', () => {
     await expect(result.current.commitOrder({
       ...commitInput(),
       sizeDelta: unalignedSizeDelta,
-      marginUsdc: 0n,
+      marginAssets: 0n,
       isClose: true,
       preparedOrder: closePreparedOrder,
     })).rejects.toThrow('Order size must use 100 plDXY increments')
@@ -581,9 +591,9 @@ describe('usePerpsTrading', () => {
 
     await expect(result.current.prepareOrder({
       direction: 'long',
-      notionalUsdc: 1_000_000_000n,
+      notionalAssets: 1_000_000_000n,
       sizeDelta: 100_000_000_000_000_000_001n,
-      marginUsdc: 0n,
+      marginAssets: 0n,
       oraclePrice: 98_300_000n,
       slippagePercent: 0.1,
       isClose: true,
@@ -603,43 +613,55 @@ describe('usePerpsTrading', () => {
       .rejects.toThrow('Expired-order cleanup is keeper-operated')
   })
 
-  it('reads terminal constraint evidence directly from the lifecycle book', async () => {
+  it('authenticates terminal evidence using the receipt clock rather than the RPC log block', async () => {
     mocks.identityReady = true
-    mocks.readContract.mockResolvedValueOnce({
-      account: ACCOUNT,
-      clientOrderId: CLIENT_ORDER_ID,
-      status: 3,
-      reason: 8,
-      executionMode: 1,
-      terminalBlock: 11_604_786n,
-      terminalTime: 1_788_167_807n,
-      executionPrice: 98_750_341n,
-      failedConstraint: 2,
-      receiptHash: `0x${'46'.repeat(32)}`,
-    })
+    const safeBlock = 302_300_000n
+    const terminalBlock = 11_604_786n
+    const terminalTime = 1_788_167_807n
+    const rpcLogBlock = 302_299_900n
+    const event = orderLifecycleV5Abi.find(item => item.type === 'event' && item.name === 'OrderFinalized')!
+    function zero(parameter: AbiParameter): unknown {
+      if (parameter.type === 'tuple' && 'components' in parameter) return Object.fromEntries(parameter.components.map(part => [part.name, zero(part)]))
+      if (parameter.type === 'address') return `0x${'00'.repeat(20)}`
+      if (parameter.type === 'bool') return false
+      if (parameter.type.startsWith('bytes')) return `0x${'00'.repeat(Number(parameter.type.slice(5)))}`
+      return Number(parameter.type.replace(/\D/g, '')) <= 48 ? 0 : 0n
+    }
+    const empty = zero(event.inputs[6]) as OrderReceiptV5
+    const receipt: OrderReceiptV5 = { ...empty, orderId: 12n, account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID,
+      status: 3, reason: 8, executionMode: 1, executionPrice: 98_750_341n,
+      failure: { ...empty.failure, constraint: 2 } }
+    const receiptHash = hashOrderReceiptV5({ chainId: 421614n, book: ORDER_LIFECYCLE_BOOK,
+      router: PERPS_ARBITRUM_SEPOLIA.orderRouter, terminalBlock, terminalTime, receipt })
+    mocks.getBlock.mockResolvedValue({ number: safeBlock, timestamp: 1_788_168_000n })
+    mocks.readContract.mockResolvedValue({ account: ACCOUNT, status: 3, reason: 8, terminalBlock, receiptHash })
+    const log = {
+      address: ORDER_LIFECYCLE_BOOK, blockNumber: rpcLogBlock,
+      topics: encodeEventTopics({ abi: orderLifecycleV5Abi, eventName: 'OrderFinalized', args: {
+        orderId: receipt.orderId, account: receipt.account, clientOrderId: receipt.clientOrderId,
+      } }),
+      data: encodeAbiParameters(event.inputs.filter(part => !part.indexed), [receiptHash, terminalBlock, terminalTime, receipt]),
+      args: { ...receipt, terminalBlock, terminalTime, receiptHash, receipt },
+    }
+    mocks.getContractEvents.mockResolvedValue([log])
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.readOrderLifecycleOutcome(12n)).resolves.toEqual({
-      orderId: 12n,
-      account: ACCOUNT,
-      clientOrderId: CLIENT_ORDER_ID,
-      status: 3,
-      terminalReason: 8,
-      executionMode: 1,
-      terminalBlock: 11_604_786n,
-      terminalTime: 1_788_167_807n,
-      executionPrice: 98_750_341n,
-      failedConstraint: 2,
-      receiptHash: `0x${'46'.repeat(32)}`,
+      orderId: 12n, account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID, status: 3,
+      terminalReason: 8, executionMode: 1, terminalBlock, terminalTime,
+      executionPrice: 98_750_341n, failedConstraint: 2, receiptHash,
     })
-    expect(mocks.readContract).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address: ORDER_LIFECYCLE_BOOK,
-        functionName: 'outcome',
-        args: [12n],
-        blockTag: 'safe',
-      })
-    )
+    expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: ORDER_LIFECYCLE_BOOK, functionName: 'terminalOutcome', args: [12n], blockNumber: safeBlock,
+    }))
+    expect(mocks.getContractEvents).toHaveBeenCalledWith(expect.objectContaining({
+      fromBlock: safeBlock - 10_000n, toBlock: safeBlock,
+    }))
+
+    mocks.getContractEvents.mockResolvedValue([{ ...log,
+      data: encodeAbiParameters(event.inputs.filter(part => !part.indexed), [receiptHash, rpcLogBlock, terminalTime, receipt]),
+    }])
+    await expect(result.current.readOrderLifecycleOutcome(12n)).rejects.toThrow('authenticated history')
   })
 
   it('forwards managed sponsored operation status changes', async () => {
@@ -753,6 +775,105 @@ describe('usePerpsTrading', () => {
     )
   })
 
+  it.each([false, true])('sets the deadline at confirmation while preserving every reviewed term (close=%s)', async isClose => {
+    mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
+    const input = commitInput()
+    input.isClose = isClose
+    input.preparedOrder.request.isClose = isClose
+    if (isClose) {
+      input.preparedOrder.request.marginDelta = 0n
+      input.preparedOrder.request.bounds.minPostSettlementBalanceAssets = 0n
+      input.preparedOrder.request.bounds.maxExecutionBountyAssets = 0n
+    }
+    const reviewed = structuredClone(input.preparedOrder)
+    const expected = { ...reviewed.request, bounds: { ...reviewed.request.bounds, submitBy: 1_700_000_720n, executionWindowSeconds: 60 } }
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await result.current.commitOrder(input)
+
+    expect(mocks.getBlock).toHaveBeenCalledExactlyOnceWith({ blockTag: 'latest' })
+    expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: reviewed.orderRouter, functionName: 'maxExecutionWindowSeconds', blockNumber: 456n,
+    }))
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'commitOrder', args: [expected] }))
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({
+      orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, expected),
+    }))
+    expect(input.preparedOrder).toEqual(reviewed)
+    expect(mocks.readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getLatestPrice' }))
+  })
+
+  it('preserves the finalized request when confirmation is retried after a failed attempt', async () => {
+    mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
+    mocks.executeSponsoredPerpsAction.mockRejectedValueOnce(new Error('Network unavailable'))
+    const input = commitInput()
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).rejects.toThrow()
+    const first = mocks.executeSponsoredPerpsAction.mock.calls[0][0].orderRequestV3
+    mocks.getBlock.mockResolvedValue({ number: 789n, timestamp: 1_700_001_200n })
+
+    await result.current.commitOrder(input)
+
+    expect(mocks.getBlock).toHaveBeenCalledOnce()
+    expect(mocks.executeSponsoredPerpsAction.mock.calls[1][0].orderRequestV3).toEqual(first)
+    expect(mocks.readContract).toHaveBeenLastCalledWith(expect.objectContaining({
+      functionName: 'resolveClientIntent', args: [ACCOUNT, orderV2.restorePerpsOrderRequestV3(first)],
+    }))
+  })
+
+  it('allows retry after a deadline read fails without simulating or signing the failed request', async () => {
+    mocks.identityReady = true
+    mocks.getBlock.mockRejectedValueOnce(new Error('Block unavailable'))
+    const input = commitInput()
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).rejects.toThrow()
+    expect(mocks.simulateContract).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    await result.current.commitOrder(input)
+    expect(mocks.getBlock).toHaveBeenCalledTimes(2)
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
+  })
+
+  it('does not sign if current-state simulation rejects the finalized request', async () => {
+    mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
+    mocks.simulateContract.mockRejectedValueOnce(new Error('Order no longer valid'))
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(commitInput())).rejects.toThrow()
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      args: [expect.objectContaining({ bounds: expect.objectContaining({ submitBy: 1_700_000_720n, executionWindowSeconds: 60 }) })],
+    }))
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('never renews an existing recorded attempt (submitted=%s)', async submitted => {
+    mocks.identityReady = true
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    const input = commitInput()
+    const persisted = orderV2.persistPerpsOrderRequestV3(ACCOUNT, input.preparedOrder.request)
+    const store = useSponsoredOperationStore.getState()
+    try {
+      store.beginOperation({
+        id: 'recorded-confirmation', ownerAddress: OWNER, accountAddress: ACCOUNT,
+        chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
+        orderRequestV3: persisted,
+      })
+      if (submitted) store.recordUserOperationHash('recorded-confirmation', USER_OPERATION_HASH)
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.commitOrder(input)).rejects.toThrow('recorded attempt')
+      expect(mocks.getBlock).not.toHaveBeenCalled()
+      expect(mocks.simulateContract).not.toHaveBeenCalled()
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+      expect(useSponsoredOperationStore.getState().operations.find(operation => operation.id === 'recorded-confirmation')?.orderRequestV3).toEqual(persisted)
+    } finally {
+      globalThis.localStorage.clear()
+      useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    }
+  })
+
   it('returns an exact replay without creating another UserOperation', async () => {
     mocks.identityReady = true
     mocks.intentResolution = 1
@@ -777,6 +898,7 @@ describe('usePerpsTrading', () => {
       orderId: 42n,
       replayed: true,
     })
+    expect(mocks.getBlock).not.toHaveBeenCalled()
     expect(mocks.simulateContract).not.toHaveBeenCalled()
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
@@ -795,41 +917,45 @@ describe('usePerpsTrading', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it('shows commit diagnostics when an undecoded pre-submission simulation fails', async () => {
+  it('returns a support reference without exposing a diagnostic dump when pre-submission simulation fails', async () => {
     mocks.identityReady = true
     mocks.simulateContract.mockRejectedValueOnce(new Error('Transaction failed'))
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.commitOrder(commitInput())).rejects.toThrow([
-      'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.',
-      'No transaction hash was returned by the wallet/RPC, so no mined transaction could be checked.',
-      'Current account state: 0/10 pending orders, equity 900 USDC, free/withdrawable 500 USDC, pending margin 250 USDC, pending bounty 0.01 USDC.',
-      'Latest open preview still passes.',
-      'A fresh commit simulation still passes, so this looks like a wallet/RPC submission failure rather than a contract rejection. Retry the commit; if your wallet still shows a pending request, reject it first or reconnect the wallet.',
-    ].join('\n'))
+    const failure = await result.current.commitOrder(commitInput()).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toMatch(
+      /^We could not determine why this transaction failed\. Check account activity before retrying, or contact support with your support reference\.\n\nSupport reference: tx-[0-9a-f-]{36}$/
+    )
+    expect(mocks.simulateContract).toHaveBeenCalledTimes(2)
 
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it('shows the transaction hash and diagnostics when sponsored submission fails opaquely', async () => {
+  it('shows the transaction hash and support reference without a diagnostic dump when submission fails opaquely', async () => {
     mocks.identityReady = true
     const failedHash = `0x${'11'.repeat(32)}` as Hex
+    const diagnosticCanary = 'private-rpc-diagnostic-canary'
     mocks.executeSponsoredPerpsAction.mockRejectedValueOnce(
       new Error('Transaction failed', {
-        cause: new Error(`Failed transaction: ${failedHash}`),
+        cause: new Error(`Failed transaction: ${failedHash}`, {
+          cause: new Error(`Request body: {"calldata":"${diagnosticCanary}"}`),
+        }),
       })
     )
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.commitOrder(commitInput())).rejects.toThrow([
-      'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
-      `Failed tx: ${failedHash}`,
-      'Current account state: 0/10 pending orders, equity 900 USDC, free/withdrawable 500 USDC, pending margin 250 USDC, pending bounty 0.01 USDC.',
-      'Latest open preview still passes.',
-      'A fresh commit simulation still passes, so the mined revert likely came from state changing between simulation and confirmation or from RPC-hidden revert data.',
-    ].join('\n'))
+    const failure = await result.current.commitOrder(commitInput()).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    const message = (failure as Error).message
+    expect(message.split('\n\n')).toEqual([
+      `We could not determine why this transaction failed. Check account activity before retrying, or contact support with your support reference.\nTransaction: ${failedHash}`,
+      expect.stringMatching(/^Support reference: tx-[0-9a-f-]{36}$/),
+    ])
+    expect(message).not.toContain(diagnosticCanary)
+    expect(message).not.toMatch(/Request body:|Current account state:|calldata/i)
   })
 
   it('adds isolated margin through the Trading Account and invalidates only perps reads', async () => {

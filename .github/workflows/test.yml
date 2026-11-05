@@ -7,7 +7,37 @@ on:
     branches: [master, main]
 
 jobs:
+  vault-return-attribution:
+    name: Vault return attribution tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: attribution_test
+          POSTGRES_PASSWORD: attribution_test
+          POSTGRES_DB: attribution_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U attribution_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/backend/return-attribution
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/backend/return-attribution/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+        env:
+          ATTRIBUTION_TEST_DATABASE_URL: postgres://attribution_test:attribution_test@127.0.0.1:5432/attribution_test
+
   protection-worker:
+    name: Protection worker tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -36,6 +66,7 @@ jobs:
           PROTECTION_TEST_DATABASE_URL: postgres://protection_test:protection_test@127.0.0.1:5432/protection_test
 
   credential-hygiene:
+    name: Credential hygiene
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,13 +78,14 @@ jobs:
           matches="$(git grep -nEo '(https|wss)://[A-Za-z0-9.-]+\.g\.alchemy\.com/v2/[A-Za-z0-9_-]{8,}' -- . || true)"
           unsafe="$(printf '%s\n' "$matches" | grep -v '/v2/YOUR_KEY$' || true)"
           if [ -n "$unsafe" ]; then
-            printf '%s\n' "$unsafe"
+            printf '%s\n' "$unsafe" | sed -E 's@(https|wss)://([A-Za-z0-9.-]+\.g\.alchemy\.com)/v2/[A-Za-z0-9_-]+@\1://\2/v2/<redacted>@g'
             echo 'Committed Alchemy endpoint credential detected.' >&2
             exit 1
           fi
 
   test:
-    runs-on: ubuntu-latest
+    name: Frontend unit and build
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
@@ -85,22 +117,29 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs
 
       - name: Install pinned local EVM for AA execution regressions
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
         with:
           version: v1.5.1
 
+      - name: Install the compiler for the production gas-policy adapter
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: 'latest'
+          cabal-update: false
+
       - name: Require real-contract AA execution regressions (offline)
         working-directory: .
         run: node --test scripts/aa-execution-regression.test.mjs
 
-      - name: Fetch immutable Core v1.2.3 lifecycle test source
+      - name: Fetch the deployed Core lifecycle source
         uses: actions/checkout@v4
         with:
           repository: Plether-Fi/plether-core
-          ref: ffe45937b7f38133133ad292c5435828bf99357d
+          ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
           path: .ci-core
           submodules: recursive
           persist-credentials: false
@@ -108,6 +147,15 @@ jobs:
       - name: Cache the pinned Core compiler (no RPC)
         working-directory: .ci-core/packages/perps
         run: forge build --skip test --skip script
+
+      - name: Verify and test the deployless maximum-size quoter (no RPC)
+        run: |
+          npm run verify:max-open-quoter
+          npm run test:max-open-quoter
+
+      - name: Verify generated v2 consumer ABIs
+        working-directory: .
+        run: node scripts/generate-perps-consumer-abis.mjs --artifacts-dir .ci-core/packages/perps/out --source-root .ci-core/packages/perps --check
 
       - name: Require AA lifecycle, bounty drift and keeper gas regressions (offline)
         working-directory: .
@@ -127,6 +175,7 @@ jobs:
         run: npm run build
 
   insights:
+    name: Insights unit and build
     runs-on: ubuntu-latest
     defaults:
       run:

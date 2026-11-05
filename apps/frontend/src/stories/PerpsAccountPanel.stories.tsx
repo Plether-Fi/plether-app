@@ -14,7 +14,7 @@ import type {
   PerpsTradeHistoryRow,
 } from '../hooks'
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const NOW_SECONDS = Math.floor(Date.now() / 1_000)
 const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 
@@ -36,7 +36,7 @@ const STORY_IDENTITY: PerpsIdentityContextValue = {
 
 const connectedPosition = accountPositionFixture()
 
-const largeConnectedPosition = accountPositionFixture({ size: 4_000_000n * 10n ** 18n, entryCostUsdcAtoms: 3_875_200_000_000n, positionMarginUsdc: 800_000_000_000n }, 95_651_300n)
+const largeConnectedPosition = accountPositionFixture({ size: 4_000_000n * 10n ** 18n, entryCostAssetAtoms: 3_875_200_000_000n, positionMarginAssets: 800_000_000_000n }, 95_651_300n)
 
 const pendingOrders = [
   {
@@ -44,11 +44,11 @@ const pendingOrders = [
     side: 0,
     direction: 'long',
     sizeDelta: 500n * 10n ** 18n,
-    marginDeltaUsdc: 100n * USDC,
+    marginDeltaAssets: 100n * ASSETS,
     acceptablePrice: 102_400_000n,
     isReduceOnly: false,
     status: 1,
-    estimatedNotionalUsdc: 520n * USDC,
+    estimatedNotionalAssets: 520n * ASSETS,
     commitTime: BigInt(NOW_SECONDS - 42),
     expiryTime: BigInt(NOW_SECONDS + 2_958),
   },
@@ -57,11 +57,11 @@ const pendingOrders = [
     side: 0,
     direction: 'long',
     sizeDelta: 250n * 10n ** 18n,
-    marginDeltaUsdc: 0n,
+    marginDeltaAssets: 0n,
     acceptablePrice: 99_100_000n,
     isReduceOnly: true,
     status: 1,
-    estimatedNotionalUsdc: 255n * USDC,
+    estimatedNotionalAssets: 255n * ASSETS,
     commitTime: BigInt(NOW_SECONDS - 3_700),
     expiryTime: BigInt(NOW_SECONDS - 100),
   },
@@ -129,23 +129,23 @@ const closeOrderHistory = [{
   receiptHash: `0x${'76'.repeat(32)}`,
   activitySizeDeltaRaw: 650n * 10n ** 18n,
   receiptEconomics: {
-    executionNotionalUsdc: (650n * USDC).toString(),
-    executionBountyUsdc: '0',
-    realizedPnlUsdc: '75400000',
-    vpiUsdc: '2000000',
-    carryUsdc: '4000000',
-    executionFeeUsdc: '1000000',
-    frozenSpreadUsdc: '0',
-    actionChargeAssessedUsdc: '6000000',
-    actionChargeCollectedUsdc: '6000000',
-    grossAccountDebitUsdc: '7000000',
-    preSettlementBalanceUsdc: (1_000n * USDC).toString(),
-    postSettlementBalanceUsdc: '1068400000',
-    preTraderClaimBalanceUsdc: '0',
-    postTraderClaimBalanceUsdc: '0',
+    executionNotionalAssets: (650n * ASSETS).toString(),
+    executionBountyAssets: '0',
+    realizedPnlAssets: '75400000',
+    vpiAssets: '2000000',
+    carryAssets: '4000000',
+    executionFeeAssets: '1000000',
+    frozenSpreadAssets: '0',
+    actionChargeAssessedAssets: '6000000',
+    actionChargeCollectedAssets: '6000000',
+    grossAccountDebitAssets: '7000000',
+    preSettlementBalanceAssets: (1_000n * ASSETS).toString(),
+    postSettlementBalanceAssets: '1068400000',
+    preTraderClaimBalanceAssets: '0',
+    postTraderClaimBalanceAssets: '0',
     postPositionSize: '0',
-    postPositionMarginUsdc: '0',
-    postPositionEquityUsdc: '0',
+    postPositionMarginAssets: '0',
+    postPositionEquityAssets: '0',
     postLeverageBps: '0',
   },
 }] satisfies PerpsOrderHistoryRow[]
@@ -185,8 +185,8 @@ export const ConnectedPosition: Story = {
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={448_250_000n}
-          freeBuyingPowerUsdc={848_250_000n}
+          equityAssets={448_250_000n}
+          freeBuyingPowerAssets={848_250_000n}
           position={connectedPosition}
           onClosePosition={() => undefined}
         />
@@ -201,8 +201,8 @@ export const LargeConnectedPosition: Story = {
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={largeConnectedPosition.positionEquityUsdc}
-          freeBuyingPowerUsdc={248_250n * USDC}
+          equityAssets={largeConnectedPosition.positionEquityAssets}
+          freeBuyingPowerAssets={248_250n * ASSETS}
           position={largeConnectedPosition}
           onClosePosition={() => undefined}
         />
@@ -219,8 +219,8 @@ function ClosePositionFlowStory() {
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={448_250_000n}
-          freeBuyingPowerUsdc={848_250_000n}
+          equityAssets={448_250_000n}
+          freeBuyingPowerAssets={848_250_000n}
           position={connectedPosition}
           onClosePosition={() => {
             setClosePositionRequestId((requestId) => requestId + 1)
@@ -247,8 +247,8 @@ export const EditPositionMargin: Story = {
         <PerpsAccountPanel
           initialPositionMarginModalOpen
           isConnected
-          equityUsdc={448_250_000n}
-          freeBuyingPowerUsdc={848_250_000n}
+          equityAssets={448_250_000n}
+          freeBuyingPowerAssets={848_250_000n}
           position={connectedPosition}
         />
       </div>
@@ -312,14 +312,14 @@ export const UnrealizedPnlTooltip: Story = {
 
 export const LiquidationRegression: Story = {
   render: () => <div className="min-h-screen bg-app-bg p-8"><PerpsAccountPanel isConnected
-    equityUsdc={250_000_000n} freeBuyingPowerUsdc={750_000_000n}
-    position={accountPositionFixture({ size: 10_000n * 10n ** 18n, entryCostUsdcAtoms: 10_000_000_000n, positionMarginUsdc: 250_000_000n }, 100_000_000n)} /></div>,
+    equityAssets={250_000_000n} freeBuyingPowerAssets={750_000_000n}
+    position={accountPositionFixture({ size: 10_000n * 10n ** 18n, entryCostAssetAtoms: 10_000_000_000n, positionMarginAssets: 250_000_000n }, 100_000_000n)} /></div>,
 }
 export const UnavailableRisk: Story = {
   render: () => <div className="min-h-screen bg-app-bg p-8"><PerpsAccountPanel isConnected
-    position={{ ...connectedPosition, riskStatus: 'unavailable', liquidationPrice: undefined, liquidationThreshold: { status: 'unavailable' }, pendingCarryUsdc: undefined }} /></div>,
+    position={{ ...connectedPosition, riskStatus: 'unavailable', liquidationPrice: undefined, liquidationThreshold: { status: 'unavailable' }, pendingCarryAssets: undefined }} /></div>,
 }
 export const LiquidatableCarry: Story = {
   render: () => <div className="min-h-screen bg-app-bg p-8"><PerpsAccountPanel isConnected
-    position={{ ...accountPositionFixture({ positionMarginUsdc: 10_000_000_000n }), liquidatable: true, uncoveredCarryUsdc: 1_250_000n }} /></div>,
+    position={{ ...accountPositionFixture({ positionMarginAssets: 10_000_000_000n }), liquidatable: true, uncoveredCarryAssets: 1_250_000n }} /></div>,
 }

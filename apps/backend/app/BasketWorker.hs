@@ -1,12 +1,19 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Exception (SomeException, displayException, try)
-import Control.Monad (forM_, when)
+import Control.Concurrent.Async (concurrently_)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Control.Monad (when)
 import Data.Aeson (toJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Maybe (fromMaybe)
+import Data.Function (on)
+import Data.List (nubBy)
+import Data.Maybe (fromMaybe, isJust)
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import GHC.Clock (getMonotonicTimeNSec)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (withTransaction)
 import Network.HTTP.Client (Manager, newManager)
@@ -24,16 +31,21 @@ import Plether.Database.Candles
   , getRollupCoverage
   , recomputeBasketCandleHierarchy
   , recoverBasketPriceCoverageGap
+  , recoverLiveBasketPriceCoverageGap
   , upsertBasketObservation
   )
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
+  , PairedPythUpdatePayloadRow (..)
+  , PythUpdatePayloadRow (..)
   , ensureBasketSnapshotSchema
   , ensurePerpsKeeperSchema
   , getPendingPerpsKeeperOrders
   , getPythUpdatePayloadForWindow
   , insertBasketSnapshotWithSource
-  , insertPythUpdatePayload
+  , insertPairedPythUpdatePayload
+  , hydratePythUpdatePayloadBasket
+  , getLatestPairedPythUpdatePayload
   , isHistoricalRevealPayload
   , promotePythPayloadSource
   )
@@ -63,9 +75,11 @@ import Plether.Pyth.History
   , BasketIngestorConfig (..)
   , basketObservationId
   , fetchBasketHistoryActivity
+  , fetchContinuousBasketHistory
   , runBasketBackfill
   , startBasketHistoryIngestor
   )
+import Plether.Pyth.Prefetch (runPriorityPrefetch, retryAfterSeconds, ProviderGate, newProviderGate, withProviderGate)
 import Plether.Pyth.RevealPayload
   ( PythPayloadAdmission (..)
   , classifyPythPayloadAdmission
@@ -77,6 +91,7 @@ import Plether.Perps.ClosedPriceGap (validateClosedPriceGapEvidence)
 import Plether.Utils.Hex (hexToByteStringEither)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 data WorkerMode
@@ -84,6 +99,7 @@ data WorkerMode
   | LatestLoop
   | BackfillOnce
   | RecoverClosedPriceGap
+  | RecoverLivePriceGap
   deriving (Eq, Show)
 
 data WorkerArgs = WorkerArgs
@@ -102,6 +118,7 @@ defaultPollSeconds = 5
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   rawArgs <- getArgs
   case parseWorkerArgs rawArgs of
     Left err -> do
@@ -139,6 +156,7 @@ runWorker args = do
             exitFailure
           Just dbUrl -> do
             manager <- newManager tlsManagerSettings
+            providerGate <- newProviderGate
             ethClient <-
               newClientWithOptions $
                 RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "basket-worker"
@@ -154,7 +172,7 @@ runWorker args = do
               ]
             case waMode args of
               RunOnce -> do
-                result <- runLatestOnce manager ethClient pool cfg
+                result <- runLatestOnce providerGate manager ethClient pool cfg
                 case result of
                   Left err -> do
                     logError
@@ -183,7 +201,9 @@ runWorker args = do
                           , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                           }
                   pure ()
-                latestLoop manager ethClient pool cfg (waPollSeconds args)
+                concurrently_
+                  (latestLoop providerGate manager ethClient pool cfg (waPollSeconds args))
+                  (revealLoop providerGate manager ethClient pool cfg)
               BackfillOnce -> do
                 let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
                 runBasketBackfill manager pool BasketIngestorConfig
@@ -198,6 +218,29 @@ runWorker args = do
                   , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
                   , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
+              RecoverLivePriceGap -> do
+                -- One absolute bound covers network work, pool acquisition,
+                -- and the transaction; cancellation rolls back all DB writes.
+                outcome <- try @SomeException $ timeout 90_000_000 $
+                  runLivePriceGapRecovery manager ethClient pool cfg args
+                case outcome of
+                  Right (Just (Right recovery)) ->
+                    logInfo "basket_live_price_gap_recovered" "Verified live-market price history was recovered"
+                      [ field "previous_coverage_end" $ pgrPreviousCoverageEnd recovery
+                      , field "recovered_through" $ pgrRecoveredThrough recovery
+                      , field "generation" $ pgrGeneration recovery
+                      , field "requested_by" $ waRequestedBy args
+                      , field "request_reference" $ waRequestReference args
+                      ]
+                  _ -> do
+                    -- Network exceptions can contain credential-bearing URLs.
+                    logError "basket_live_price_gap_failed" "Live price recovery aborted; no partial coverage was published"
+                      [ field "reason" $ case outcome of
+                          Right (Just (Left reason)) -> reason
+                          Right Nothing -> "absolute recovery deadline exceeded"
+                          _ -> "recovery exception (details withheld)"
+                      ]
+                    exitFailure
               RecoverClosedPriceGap ->
                 case
                     ( waExpectedCoverageEnd args
@@ -246,11 +289,14 @@ runWorker args = do
                         []
                       exitFailure
 
-latestLoop :: Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
-latestLoop manager ethClient pool cfg pollSeconds = do
-  result <- try (runLatestCycle manager ethClient pool cfg) :: IO (Either SomeException (Either T.Text ()))
+latestLoop :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
+latestLoop providerGate manager ethClient pool cfg pollSeconds = do
+  result <- try (runLatestOnce providerGate manager ethClient pool cfg) :: IO (Either SomeException (Either T.Text ()))
   delaySeconds <- case result of
     Left err -> do
+      case fromException err :: Maybe SomeAsyncException of
+        Just _ -> throwIO err
+        Nothing -> pure ()
       logErrorEvery
         60
         "basket_worker_iteration_failed"
@@ -272,24 +318,15 @@ latestLoop manager ethClient pool cfg pollSeconds = do
             [ field "rate_limited" $ "429" `T.isInfixOf` err
             , field "error" err
             ]
-          pure $ if "429" `T.isInfixOf` err then 60 else pollSeconds
+          pure $ fromMaybe pollSeconds $ retryAfterSeconds err
     Right (Right ()) ->
       pure pollSeconds
   threadDelay (max 1 delaySeconds * 1_000_000)
-  latestLoop manager ethClient pool cfg pollSeconds
+  latestLoop providerGate manager ethClient pool cfg pollSeconds
 
-runLatestCycle :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
-runLatestCycle manager ethClient pool cfg = do
-  latestResult <- runLatestOnce manager ethClient pool cfg
-  backfillResult <- backfillPendingOrderRevealPayloads manager ethClient pool cfg
-  pure $ case (latestResult, backfillResult) of
-    (Left err, _) -> Left err
-    (_, Left err) -> Left err
-    (Right (), Right ()) -> Right ()
-
-runLatestOnce :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
-runLatestOnce manager ethClient pool cfg = do
-  result <- fetchLatestBasketUpdate manager cfg
+runLatestOnce :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
+runLatestOnce providerGate manager ethClient pool cfg = do
+  result <- withProviderGate providerGate $ fetchLatestBasketUpdate manager cfg
   case result of
     Left err -> pure $ Left err
     Right update -> cacheBasketUpdate ethClient pool cfg Nothing update
@@ -374,6 +411,59 @@ runClosedPriceGapRecovery manager ethClient pool cfg expectedCoverageEnd recover
                               ]
                             pure $ Right recovery
 
+runLivePriceGapRecovery
+  :: Manager -> EthClient -> DbPool -> Config -> WorkerArgs
+  -> IO (Either T.Text PriceGapRecoveryResult)
+runLivePriceGapRecovery manager client pool cfg args =
+  case (waExpectedCoverageEnd args, waRecoverBefore args) of
+    (Just start, Just deadline)
+      | cfgPerpsChainId cfg == 421_614
+      , candleWritesEnabled cfg
+      , Just key <- cfgPythApiKey cfg
+      , not (T.null $ T.strip key) -> do
+          now <- floor <$> getPOSIXTime
+          let end = ((now - max 120 (cfgPerpsCandleLatenessSeconds cfg)) `div` 60) * 60
+              historyCfg = BasketIngestorConfig
+                { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                , bicHistoryUrl = cfgPythHistoryUrl cfg
+                , bicApiKey = cfgPythApiKey cfg
+                , bicChainId = cfgPerpsChainId cfg
+                , bicBackfillDays = 1
+                , bicOwnHistoryTargets = False
+                , bicSampleIntervalSeconds = 60
+                , bicPollSeconds = 0
+                , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
+                }
+          if now >= deadline || start `mod` 60 /= 0 || start >= end || end - start > 86_400
+            then pure $ Left "Invalid, expired, or greater-than-24-hour live recovery range"
+            else do
+              history <- fetchContinuousBasketHistory manager historyCfg start end
+              case history of
+                Left reason -> pure $ Left reason
+                Right samples -> do
+                  latest <- fetchLatestBasketUpdate manager cfg
+                  case latest of
+                    Left _ -> pure $ Left "Latest signed Pyth request failed"
+                    Right update -> do
+                      signed <- verifyLatestRecoveryPayload client cfg update
+                      case signed of
+                        Right (firstTime, lastTime, _, _)
+                          | firstTime >= end
+                          , lastTime <= hbuFetchedAt update
+                          , hbuFetchedAt update - firstTime <= 10 -> do
+                              logInfo "basket_live_price_gap_evidence_verified" "Verified continuous six-feed minute history and fresh onchain Pyth evidence"
+                                [ field "from_timestamp" start, field "to_timestamp" end
+                                , field "sample_count" $ length samples
+                                , field "requested_by" $ waRequestedBy args
+                                , field "request_reference" $ waRequestReference args
+                                ]
+                              Right <$> withDb pool (\conn -> withTransaction conn $
+                                recoverLiveBasketPriceCoverageGap conn defaultBasketSeriesId start end deadline samples
+                                  (cfgPerpsCandleLatenessSeconds cfg))
+                        _ -> pure $ Left "Fresh signed Pyth/RPC validation failed"
+    _ -> pure $ Left "Live price recovery requires Sepolia, dual writes, authenticated Pyth, and bounded arguments"
+
 verifyLatestRecoveryPayload
   :: EthClient
   -> Config
@@ -414,68 +504,48 @@ verifyLatestRecoveryPayload ethClient cfg update
                       , signedComponents
                       )
 
-backfillPendingOrderRevealPayloads :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
-backfillPendingOrderRevealPayloads manager ethClient pool cfg = do
+-- Independent of latest prices and chart ingestion. Shared ticks are fetched once.
+revealLoop :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> IO ()
+revealLoop providerGate manager ethClient pool cfg = runPriorityPrefetch $ do
   pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) 20
-  case pending of
-    [] -> pure $ Right ()
-    _ -> do
-      settlementWindowResult <- orderSettlementWindow ethClient (cfgPerpsPletherOracle cfg)
-      case settlementWindowResult of
-        Left err ->
-          pure $ Left $ "could not read the on-chain order settlement window: " <> T.pack (show err)
-        Right settlementWindow -> do
-          forM_ pending $ \order -> do
-            let firstRevealTick = pkorCommitTime order + 1
-                maxRevealTick = pkorCommitTime order + settlementWindow
-            mExisting <- withDb pool $ \conn ->
-              getPythUpdatePayloadForWindow conn firstRevealTick maxRevealTick
-            when (maybe True (not . isHistoricalRevealPayload) mExisting) $ do
-              result <- fetchBasketUpdateAt manager cfg firstRevealTick
-              case result of
-                Left err ->
-                  logWarnEvery
-                    60
-                    "reveal_payload_backfill_fetch_failed"
-                    "Reveal payload backfill fetch failed"
-                    [ field "order_id" $ pkorOrderId order
-                    , field "error" err
-                    ]
-                Right update ->
-                  case validateRevealWindow (pkorCommitTime order) settlementWindow (hbuPublishTimes update) of
-                    Left err ->
-                      logWarnEvery
-                        60
-                        "reveal_payload_backfill_invalid"
-                        "Reveal payload backfill returned an unusable payload"
-                        [ field "order_id" $ pkorOrderId order
-                        , field "error" err
-                        ]
-                    Right _ -> do
-                      cacheResult <-
-                        cacheBasketUpdate
-                          ethClient
-                          pool
-                          cfg
-                          (Just (firstRevealTick, maxRevealTick))
-                          update
-                      case cacheResult of
-                        Left err ->
-                          logWarnEvery
-                            60
-                            "reveal_payload_backfill_cache_failed"
-                            "Reveal payload backfill could not be cached"
-                            [ field "order_id" $ pkorOrderId order
-                            , field "error" err
-                            ]
-                        Right () ->
-                          logInfo
-                            "reveal_payload_backfilled"
-                            "First reveal payload was backfilled for an order"
-                            [ field "order_id" $ pkorOrderId order
-                            , field "publish_time" firstRevealTick
-                            ]
-          pure $ Right ()
+  if null pending then pure [] else do
+    settlement <- orderSettlementWindow ethClient $ cfgPerpsPletherOracle cfg
+    case settlement of
+      Left _ -> do
+        logWarnEvery 30 "reveal_queue_load_failed" "Could not verify the historical-price settlement window" []
+        pure []
+      Right window -> pure
+        [ ((pkorCommitTime order + 1, window), fetchReveal order window)
+        | order <- nubBy ((==) `on` pkorCommitTime) pending ]
+ where
+  fetchReveal order window = do
+    let firstTick = pkorCommitTime order + 1
+        lastTick = pkorCommitTime order + window
+    cached <- withDb pool $ \conn -> getPythUpdatePayloadForWindow conn firstTick lastTick
+    case cached of
+      Just payload | isHistoricalRevealPayload payload -> pure $ Right ()
+      _ -> do
+        started <- getMonotonicTimeNSec
+        fetched <- withProviderGate providerGate $ fetchBasketUpdateAt manager cfg firstTick
+        case fetched of
+          Left err -> do
+            logWarnEvery 30 "reveal_payload_backfill_fetch_failed" "Historical reveal price unavailable" [field "order_id" $ pkorOrderId order]
+            pure $ Left err
+          Right update -> case validateRevealWindow (pkorCommitTime order) window (hbuPublishTimes update) of
+            Left err -> pure $ Left err
+            Right _ -> do
+              cachedResult <- cacheBasketUpdate ethClient pool cfg (Just (firstTick, lastTick)) update
+              case cachedResult of
+                Left err -> pure $ Left err
+                Right () -> do
+                  finished <- getMonotonicTimeNSec
+                  availableAt <- floor . (* 1000) <$> getPOSIXTime
+                  logInfo "reveal_payload_fetch_completed" "Historical price is validated and available"
+                    [field "duration_ms" (fromIntegral (finished - started) / 1_000_000 :: Double),
+                     field "commit_to_price_available_ms" (max 0 (availableAt - pkorCommitTime order * 1000) :: Integer)]
+                  logInfo "reveal_payload_backfilled" "First reveal payload was backfilled for an order"
+                    [field "order_id" $ pkorOrderId order, field "publish_time" firstTick]
+                  pure $ Right ()
 
 cacheBasketUpdate
   :: EthClient
@@ -527,6 +597,19 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                             update
                             minPublishTime
                         then do
+                          -- Re-admission above proves these components belong
+                          -- to these exact bytes, even while markets are closed.
+                          -- Repair an existing row only; never promote stale data.
+                          hydrated <- withDb pool $ \conn ->
+                            hydratePythUpdatePayloadBasket conn minPublishTime maxPublishTime
+                              (toJSON $ map pppPublishTime signedPoints)
+                              (toJSON $ hbuUpdateData update) admittedSource
+                              signedBasketPrice (toJSON signedComponents)
+                          when hydrated $
+                            logInfo "pyth_payload_basket_hydrated"
+                              "Attached verified basket components to an existing Pyth payload"
+                              [field "min_publish_time" minPublishTime, field "max_publish_time" maxPublishTime]
+                          emitPythCachePairStatus pool
                           -- A stale but signed latest response is expected when
                           -- the underlying markets are closed. It proves that
                           -- Hermes had no newer update as of the fetch time,
@@ -597,7 +680,7 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               signedBasketPrice
                               (toJSON signedComponents)
                               admittedSource
-                            insertPythUpdatePayload
+                            insertPairedPythUpdatePayload
                               conn
                               minPublishTime
                               maxPublishTime
@@ -605,6 +688,8 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               (toJSON $ hbuUpdateData update)
                               (hbuFetchedAt update)
                               admittedSource
+                              signedBasketPrice
+                              (toJSON signedComponents)
                           logInfoEvery
                             300
                             "basket_cache_progress"
@@ -614,6 +699,7 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                             , field "minute_bucket" minuteBucket
                             , field "source" admittedSource
                             ]
+                          when latestSourcePoll $ emitPythCachePairStatus pool
                           when (candleWritesEnabled cfg && latestSourcePoll) $
                             emitPriceWriterHeartbeat
                               pool
@@ -625,6 +711,22 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               "admitted_latest"
                               "An admitted latest Pyth update completed a basket source watermark poll"
                           pure $ Right ()
+
+-- A readback of the newest eligible row is the rollout gate, not an assumption
+-- that the preceding write won source precedence.
+emitPythCachePairStatus :: DbPool -> IO ()
+emitPythCachePairStatus pool = do
+  paired <- withDb pool getLatestPairedPythUpdatePayload
+  case paired of
+    Just row | isJust (ppuprBasket row) ->
+      logInfoEvery 60 "pyth_payload_basket_pair_ready"
+        "Newest admitted latest Pyth payload has its paired signed basket"
+        [ field "min_publish_time" $ puprMinPublishTime $ ppuprPayload row
+        , field "max_publish_time" $ puprMaxPublishTime $ ppuprPayload row
+        ]
+    _ ->
+      logWarnEvery 60 "pyth_payload_basket_pair_missing"
+        "Newest admitted latest Pyth payload is not ready for paired liquidation reads" []
 
 signedObservationPriority :: Int
 signedObservationPriority = 100
@@ -802,6 +904,9 @@ mapLeft f result =
 
 parseWorkerArgs :: [String] -> Either T.Text WorkerArgs
 parseWorkerArgs args
+  | "--recover-live-price-gap" `elem` args = do
+      parsed <- parseRecoveryArgs $ map (\arg -> if arg == "--recover-live-price-gap" then "--recover-closed-price-gap" else arg) args
+      pure parsed {waMode = RecoverLivePriceGap}
   | "--recover-closed-price-gap" `elem` args = parseRecoveryArgs args
   | otherwise =
       Right

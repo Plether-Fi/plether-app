@@ -1,19 +1,19 @@
 import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api'
 import { useUtcNow } from '../hooks/useUtcNow'
-import { formatCompactUsdc, formatCountdown, formatRoi, formatUsdc, formatUtc } from '../utils/format'
+import { formatCompactAssets, formatCountdown, formatRoi, formatAssets, formatUtc } from '../utils/format'
 import { EligibilityBadge, EmptyState, Panel, Pnl, WalletIdentity } from './ui'
 
-function labelMockUsdc(value: string): string {
-  return value.replace(/ USDC$/, ' mock USDC')
+function labelMockAssets(value: string): string {
+  return value.replace(/ USDG$/, ' mock USDC')
 }
 
-function formatMockUsdc(value: string): string {
-  return labelMockUsdc(formatUsdc(value))
+function formatMockAssets(value: string): string {
+  return labelMockAssets(formatAssets(value))
 }
 
-function formatCompactMockUsdc(value: string | null | undefined): string {
-  return labelMockUsdc(formatCompactUsdc(value))
+function formatCompactMockAssets(value: string | null | undefined): string {
+  return labelMockAssets(formatCompactAssets(value))
 }
 
 function statusLabel(status: Competition['status']): string {
@@ -27,7 +27,7 @@ function statusLabel(status: Competition['status']): string {
   return labels[status]
 }
 
-export function CompetitionHero({ competition }: { competition: Competition }) {
+export function CompetitionHero({ competition, archived = false }: { competition: Competition; archived?: boolean }) {
   const now = useUtcNow()
   const target = competition.status === 'scheduled' ? competition.startsAt : competition.tradingCutoffAt
   const countdown = formatCountdown(target, now)
@@ -59,7 +59,7 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
           <p className="mt-4 max-w-2xl text-sm leading-6 text-content-secondary sm:text-base">
             Follow every registered trader’s performance, activity, and prize eligibility from finalized onchain data.
           </p>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          {archived ? null : <div className="mt-5 flex flex-wrap items-center gap-3">
             <Link
               to={`/competitions/${encodeURIComponent(competition.slug)}/register`}
               className={`border border-brand-orange px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-brand-peach hover:text-app-bg ${registrationOpen ? 'bg-brand-orange text-content-primary' : 'bg-brand-orange/10 text-brand-peach'}`}
@@ -67,7 +67,7 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
               {registrationOpen ? 'Enter competition' : 'Competition application'}
             </Link>
             <span className="text-xs text-content-tertiary">{registrationStatus}</span>
-          </div>
+          </div>}
         </div>
         <div className="min-w-64 border-l-2 border-brand-orange pl-4 lg:text-right">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">
@@ -85,7 +85,7 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
 
 function prizePool(prizes: Competition['prizes']): string {
   try {
-    return formatUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString())
+    return formatAssets(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString()).replace(/ USDG$/, ' USDC')
   } catch {
     return '2,000.00 USDC'
   }
@@ -93,7 +93,7 @@ function prizePool(prizes: Competition['prizes']): string {
 
 export function CompetitionStats({ competition }: { competition: Competition }) {
   const stats = [
-    { label: 'Starting balance', value: formatMockUsdc(competition.startingBalance) },
+    { label: 'Starting balance', value: formatMockAssets(competition.startingBalance) },
     { label: 'Minimum activity', value: `${String(competition.minActiveDays)} active days` },
     { label: 'Registered traders', value: competition.participantCount?.toLocaleString() ?? '—' },
   ]
@@ -120,10 +120,10 @@ function Rank({ value, prizePlace }: { value: number | null; prizePlace: number 
 }
 
 function PrizeAward({ standing }: { standing: Standing }) {
-  if (standing.prizePlace === null || standing.prizeAmountUsdc === null) return null
+  if (standing.prizePlace === null || standing.prizeAmountAssets === null) return null
   const places = standing.prizePlaces.length > 0 ? standing.prizePlaces : [standing.prizePlace]
   const placeLabel = places.length > 1 ? `Places ${places.join('–')} tie` : `Place #${String(places[0])}`
-  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc)}</div>
+  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatAssets(standing.prizeAmountAssets).replace(/ USDG$/, ' USDC')}</div>
 }
 
 function DesktopTable({ standings, competitionSlug, competitionStatus }: { standings: Standing[]; competitionSlug: string; competitionStatus: Competition['status'] }) {
@@ -147,12 +147,12 @@ function DesktopTable({ standings, competitionSlug, competitionStatus }: { stand
             <tr key={standing.address} className={`transition-colors hover:bg-brand-peach/5 ${standing.prizePlace !== null ? 'bg-brand-yellow/5' : ''}`}>
               <td className="px-5 py-4"><Rank value={standing.rank} prizePlace={standing.prizePlace} /></td>
               <td className="px-3 py-4"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></td>
-              <td className="px-3 py-4 text-right font-semibold"><Pnl value={standing.pnl} usdcKind="mock" /></td>
+              <td className="px-3 py-4 text-right font-semibold"><Pnl value={standing.pnl} assetKind="mock" /></td>
               <td className={`px-3 py-4 text-right text-sm tabular-nums ${standing.roiBps !== null && standing.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}`}>{formatRoi(standing.roiBps)}</td>
-              <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{standing.pnl === null ? '—' : formatCompactMockUsdc(standing.volume)}</td>
+              <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{standing.pnl === null ? '—' : formatCompactMockAssets(standing.volume)}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.pnl === null ? '—' : standing.trades}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.pnl === null ? '—' : standing.activeDays}<span className="text-content-tertiary"> / 5</span></td>
-              <td className="px-5 py-4 text-right"><EligibilityBadge standing={standing} competitionStatus={competitionStatus} /></td>
+              <td className="px-5 py-4 text-right"><EligibilityBadge standing={standing} competitionStatus={competitionStatus} competitionSlug={competitionSlug} /></td>
             </tr>
           ))}
         </tbody>
@@ -173,12 +173,12 @@ function MobileList({ standings, competitionSlug, competitionStatus }: { standin
                 <div className="min-w-0"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></div>
                 <div className="text-right">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-content-tertiary">Net P&amp;L</div>
-                  <Pnl value={standing.pnl} usdcKind="mock" className="whitespace-nowrap text-sm font-semibold" />
+                  <Pnl value={standing.pnl} assetKind="mock" className="whitespace-nowrap text-sm font-semibold" />
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3 text-xs text-content-tertiary">
                 <span>{standing.pnl === null ? 'Updating trading data…' : <>{standing.activeDays} active days · {standing.trades} trades</>}</span>
-                <EligibilityBadge standing={standing} competitionStatus={competitionStatus} />
+                <EligibilityBadge standing={standing} competitionStatus={competitionStatus} competitionSlug={competitionSlug} />
               </div>
             </div>
           </div>
@@ -245,7 +245,7 @@ export function RulesSummary({ competition }: { competition: Competition }) {
               {competition.prizes.map((prize) => (
                 <li key={prize.place} className="flex items-center gap-2 border border-brand-orange/20 bg-brand-orange/5 px-3 py-2">
                   <span className="font-mono text-[10px] font-semibold text-brand-orange">#{String(prize.place).padStart(2, '0')}</span>
-                  <span className="text-sm font-semibold tabular-nums text-content-primary">{formatUsdc(prize.amount).replace(/ USDC$/, '')}</span>
+                  <span className="text-sm font-semibold tabular-nums text-content-primary">{formatAssets(prize.amount).replace(/ USDG$/, '')}</span>
                 </li>
               ))}
             </ol>

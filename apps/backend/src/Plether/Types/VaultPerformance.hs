@@ -10,7 +10,7 @@ module Plether.Types.VaultPerformance
   , isCanonicalVaultPerformanceRequest
   ) where
 
-import Data.Aeson (ToJSON (..), object, (.=))
+import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -24,14 +24,14 @@ vaultPerformanceIntervalSeconds = 3_600
 vaultPerformancePointCount :: Int
 vaultPerformancePointCount = 169
 
--- | The endpoint has one cacheable public shape. Rejecting extra, duplicate,
+-- | The endpoint has two cacheable public ranges. Rejecting extra, duplicate,
 -- or alternative spellings prevents semantically identical cache-key variants.
 isCanonicalVaultPerformanceRequest :: [Text] -> Maybe Text -> Maybe Text -> Bool
 isCanonicalVaultPerformanceRequest queryKeys requestedRange requestedInterval =
   length queryKeys == 2
     && count "range" == 1
     && count "interval" == 1
-    && requestedRange == Just vaultPerformanceRange
+    && requestedRange `elem` [Just vaultPerformanceRange, Just "30d"]
     && requestedInterval == Just "3600"
  where
   count key = length $ filter (== key) queryKeys
@@ -72,13 +72,14 @@ instance ToJSON VaultPerformanceCoverage where
       ]
 
 -- | All integer-valued EVM quantities are kept lossless in Haskell and encoded
--- as decimal strings below. 'vppSharePrice' is a 1e18-scaled USDC/share value.
+-- as decimal strings below. 'vppSharePrice' is a 1e18-scaled USDG/share value.
 data VaultPerformancePoint = VaultPerformancePoint
   { vppTimestamp :: Integer
   , vppBlockNumber :: Integer
   , vppMarkFresh :: Bool
   , vppSharePrice :: Integer
   , vppTotalAssets :: Integer
+  , vppLockedAssets :: Maybe Integer
   , vppTotalSupply :: Integer
   }
   deriving stock (Eq, Show, Generic)
@@ -91,12 +92,14 @@ instance ToJSON VaultPerformancePoint where
       , "markFresh" .= vppMarkFresh
       , "sharePrice" .= show vppSharePrice
       , "totalAssets" .= show vppTotalAssets
+      , "lockedAssets" .= fmap show vppLockedAssets
       , "totalSupply" .= show vppTotalSupply
       ]
 
 data VaultPerformanceTranche = VaultPerformanceTranche
   { vptApy7d :: Maybe Double
   , vptReturn7d :: Maybe Double
+  , vptReturnAttribution :: Maybe Value
   , vptPoints :: [VaultPerformancePoint]
   }
   deriving stock (Eq, Show, Generic)
@@ -106,6 +109,7 @@ instance ToJSON VaultPerformanceTranche where
     object
       [ "apy7d" .= vptApy7d
       , "return7d" .= vptReturn7d
+      , "returnAttribution" .= vptReturnAttribution
       , "points" .= vptPoints
       ]
 

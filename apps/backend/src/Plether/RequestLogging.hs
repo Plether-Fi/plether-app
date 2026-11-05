@@ -232,6 +232,7 @@ knownNormalizedRoutes =
   , ["api", "quotes", "trade"]
   , ["api", "quotes", "leverage"]
   , ["api", "insights", "v1", "competitions", "current"]
+  , ["api", "insights", "v1", "divisions", "history"]
   , ["api", "insights", "v1", "competitions", ":slug", "leaderboard"]
   , ["api", "insights", "v1", "competitions", ":slug", "wallets", ":address"]
   , ["api", "insights", "v1", "competitions", ":slug", "registrations", "session"]

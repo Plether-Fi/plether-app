@@ -5,41 +5,41 @@ export type PerpsDirectionalLimitSide = 'long' | 'short' | 'balanced'
 export interface PerpsDirectionalLimitMetrics {
   usagePercent: number
   side: PerpsDirectionalLimitSide
-  netExposureUsdc: bigint
-  limitUsdc: bigint
+  netExposureAssets: bigint
+  limitAssets: bigint
 }
 
 export function calculatePerpsDirectionalLimit({
-  longOpenInterestUsdc,
-  shortOpenInterestUsdc,
-  poolAssetsUsdc,
+  longOpenInterestAssets,
+  shortOpenInterestAssets,
+  poolAssets,
   maxSkewRatio,
 }: {
-  longOpenInterestUsdc: bigint | undefined
-  shortOpenInterestUsdc: bigint | undefined
-  poolAssetsUsdc: bigint | undefined
+  longOpenInterestAssets: bigint | undefined
+  shortOpenInterestAssets: bigint | undefined
+  poolAssets: bigint | undefined
   maxSkewRatio: bigint | undefined
 }): PerpsDirectionalLimitMetrics | undefined {
   if (
-    longOpenInterestUsdc === undefined ||
-    shortOpenInterestUsdc === undefined ||
-    poolAssetsUsdc === undefined ||
+    longOpenInterestAssets === undefined ||
+    shortOpenInterestAssets === undefined ||
+    poolAssets === undefined ||
     maxSkewRatio === undefined
   ) {
     return undefined
   }
 
-  const limitUsdc = (poolAssetsUsdc * maxSkewRatio) / WAD
-  if (limitUsdc <= 0n) return undefined
+  const limitAssets = (poolAssets * maxSkewRatio) / WAD
+  if (limitAssets <= 0n) return undefined
 
-  const signedExposureUsdc = longOpenInterestUsdc - shortOpenInterestUsdc
-  const netExposureUsdc = signedExposureUsdc < 0n ? -signedExposureUsdc : signedExposureUsdc
-  const usageBasisPoints = (netExposureUsdc * 10_000n + limitUsdc / 2n) / limitUsdc
+  const signedExposureAssets = longOpenInterestAssets - shortOpenInterestAssets
+  const netExposureAssets = signedExposureAssets < 0n ? -signedExposureAssets : signedExposureAssets
+  const usageBasisPoints = (netExposureAssets * 10_000n + limitAssets / 2n) / limitAssets
 
   return {
     usagePercent: Number(usageBasisPoints) / 100,
-    side: signedExposureUsdc > 0n ? 'long' : signedExposureUsdc < 0n ? 'short' : 'balanced',
-    netExposureUsdc,
-    limitUsdc,
+    side: signedExposureAssets > 0n ? 'long' : signedExposureAssets < 0n ? 'short' : 'balanced',
+    netExposureAssets,
+    limitAssets,
   }
 }

@@ -41,15 +41,15 @@ verifyCloseAssistanceReceipt grant operationHash tx blockNumber blockHash eventI
       previous = maximum $ startIndex : [rlIndex l | l <- operationEvents, rlIndex l < eventIndex]
       scoped = filter (\l -> rlIndex l > previous && rlIndex l < eventIndex) logs
       accountTopic = addressTopic $ carAccount grant
-      token = T.toLower Manifest.mockUsdcAddress
+      token = T.toLower Manifest.settlementTokenAddress
       house = T.toLower Manifest.marginClearinghouseAddress
       mints = filter (\l -> rlAddress l == token && rlTopics l == [topic "Transfer(address,address,uint256)", zeroTopic, accountTopic]
-        && word (rlData l) == Just (carAmountUsdc grant)) scoped
+        && word (rlData l) == Just (carAmountAssets grant)) scoped
       deposits = filter (\l -> rlAddress l == house && rlTopics l == [topic "Deposit(address,address,uint256)", accountTopic, addressTopic token]
-        && word (rlData l) == Just (carAmountUsdc grant)) scoped
+        && word (rlData l) == Just (carAmountAssets grant)) scoped
       intents = filter (\l -> rlAddress l == T.toLower Manifest.orderLifecycleBookAddress && length (rlTopics l) == 4
         && take 1 (rlTopics l) == [intentTopic] && drop 2 (rlTopics l) == [accountTopic,T.toLower $ carClientOrderId grant]
-        && BS.length (rlData l) == 20 * 32 && hex (keccak256 $ BS.drop 64 $ rlData l) == T.toLower (carRequestHash grant)) scoped
+        && BS.length (rlData l) == 25 * 32 && hex (keccak256 $ BS.take (19 * 32) $ BS.drop 64 $ rlData l) == T.toLower (carRequestHash grant)) scoped
   unless (length matching == 1) $ Left "Assistance UserOperation boundary is missing or ambiguous"
   case (mints,deposits,intents) of
     ([mint],[deposit],[intent]) -> do
@@ -85,7 +85,7 @@ entryPoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
 
 operationTopic, intentTopic, zeroTopic :: Text
 operationTopic = topic "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"
-intentTopic = topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+intentTopic = topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 zeroTopic = "0x" <> T.replicate 64 "0"
 
 topic :: Text -> Text

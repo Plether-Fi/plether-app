@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
-import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../contracts/perpsOrderV3'
+import { reportTransactionFailure } from '../analytics/transactionErrors'
 import { captureAnalyticsEvent } from '../analytics/client'
 import { getPreparationFailureProperties, preparationFailure } from '../utils/perpsPreparationDiagnostics'
 import { isPerpsOracleSyncError } from '../utils/perpsErrors'
@@ -7,7 +8,6 @@ import { isPerpsOracleSyncError } from '../utils/perpsErrors'
 export const PREPARATION_IDLE_MS = 500
 export const PREPARATION_REUSE_MS = 10_000
 export const PREPARATION_TIMEOUT_MS = 30_000
-export const REVIEW_REFRESH_SECONDS = 10
 export const ORACLE_RECOVERY_RETRY_MS = 2_000
 export const ORACLE_RECOVERY_UNAVAILABLE = 'Market prices are temporarily unavailable. Your order details are saved.'
 
@@ -32,16 +32,17 @@ interface Options<T> {
   contextKey?: string
   reviewValid?: boolean
   mode: Mode
-  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV2>
+  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV3>
 }
 interface PreparationState {
   key?: string
   identityKey?: string
   contextKey?: string
   status: 'idle' | 'pending' | 'ready' | 'error'
-  result?: PreparedPerpsOrderV2
-  previous?: PreparedPerpsOrderV2
+  result?: PreparedPerpsOrderV3
+  previous?: PreparedPerpsOrderV3
   error?: unknown
+  supportReference?: string
   startedAt: number
   visible: boolean
   slow: boolean
@@ -49,7 +50,7 @@ interface PreparationState {
   recoveringOracle: boolean
 }
 const initialState: PreparationState = {
-  key: undefined, identityKey: undefined, contextKey: undefined, result: undefined, previous: undefined, error: undefined,
+  key: undefined, identityKey: undefined, contextKey: undefined, result: undefined, previous: undefined, error: undefined, supportReference: undefined,
   status: 'idle', startedAt: 0, visible: true, slow: false, refreshing: false, recoveringOracle: false,
 }
 
@@ -64,7 +65,6 @@ class PreparationController<T> {
   timer?: ReturnType<typeof setTimeout>
   slowTimer?: ReturnType<typeof setTimeout>
   jobs = new Set<ReturnType<typeof setTimeout>>()
-  oracleRecoveryExhausted = false
   oracleRecovery?: { startedAt: number; deadline: number; error: unknown }
   resumeRecovery?: () => void
   backgroundGeneration?: number
@@ -82,11 +82,8 @@ class PreparationController<T> {
   }
   invalidate() { this.oracleRecovery = undefined; this.resumeRecovery = undefined; this.generation++; this.abortController?.abort(); this.clearTimers() }
   reusable() {
-    return Date.now() - this.state.startedAt < PREPARATION_REUSE_MS &&
-      (this.state.status === 'pending' || (this.state.status === 'ready' && this.hasDeadline()))
-  }
-  hasDeadline() {
-    return !!this.state.result && Number(this.state.result.protection.validUntil) * 1000 - Date.now() > REVIEW_REFRESH_SECONDS * 1000
+    return performance.now() - this.state.startedAt < PREPARATION_REUSE_MS &&
+      (this.state.status === 'pending' || this.state.status === 'ready')
   }
   configure(options: Options<T>) {
     this.disposed = false
@@ -99,9 +96,9 @@ class PreparationController<T> {
       if (this.state.status === 'ready') this.trackReady()
       return
     }
-    if (!changed && contextChanged && options.mode === 'review') {
-      if (this.oracleRecoveryExhausted) { this.publish({ contextKey: options.contextKey }); return }
-      this.start('refresh')
+    if (!changed && contextChanged && old.mode === 'review' && options.mode === 'review') {
+      // A review is a quote snapshot. Polling must not replace terms the user
+      // is reading or restart preparation/recovery already in progress.
       return
     }
     if (options.mode === 'inactive' || !options.candidate) {
@@ -115,13 +112,13 @@ class PreparationController<T> {
       this.publish({ ...initialState, visible: this.state.visible, key: options.candidate.key, identityKey: options.identityKey, contextKey: options.contextKey })
     }
     const opening = options.mode === 'review' && old?.mode !== 'review'
-    if (opening) this.openedAt = Date.now()
+    if (opening) this.openedAt = performance.now()
     if (options.mode === 'review') {
       if (!this.state.visible) return
       if (changed || contextChanged || opening) {
         if (!changed && !contextChanged && this.reusable()) {
           this.admission = this.state.status === 'ready' ? 'completed_reuse' : 'pending_reuse'
-          if (this.state.status === 'ready') { this.trackReady(); this.scheduleRefresh() }
+          if (this.state.status === 'ready') this.trackReady()
         } else {
           this.admission = 'cold'
           this.start('cold')
@@ -137,16 +134,10 @@ class PreparationController<T> {
     if (!this.state.visible || this.backgroundGeneration !== undefined) return
     this.timer = setTimeout(() => { this.start('background'); }, PREPARATION_IDLE_MS)
   }
-  scheduleRefresh() {
-    clearTimeout(this.timer)
-    if (!this.state.visible || this.options?.mode !== 'review' || !this.state.result || this.state.status !== 'ready') return
-    this.timer = setTimeout(() => { this.start('refresh'); }, Math.max(0,
-      Number(this.state.result.protection.validUntil) * 1000 - Date.now() - REVIEW_REFRESH_SECONDS * 1000))
-  }
   trackReady() {
     if (!this.state.visible || this.options?.mode !== 'review' || this.options.reviewValid === false || this.openedAt === undefined) return
     captureAnalyticsEvent('perps review ready', {
-      surface: 'perps', duration_ms: Date.now() - this.openedAt, reason_code: this.admission ?? 'cold',
+      surface: 'perps', duration_ms: performance.now() - this.openedAt, reason_code: this.admission ?? 'cold',
     })
     this.openedAt = undefined
   }
@@ -159,17 +150,16 @@ class PreparationController<T> {
       ? this.oracleRecovery : undefined
     this.invalidate()
     this.oracleRecovery = continuingRecovery
-    this.oracleRecoveryExhausted = false
     const abortController = new AbortController()
     this.abortController = abortController
     const candidate = options.candidate
     const generation = this.generation
-    const startedAt = continuingRecovery ? continuingRecovery.deadline - PREPARATION_TIMEOUT_MS : Date.now()
+    const startedAt = continuingRecovery ? continuingRecovery.deadline - PREPARATION_TIMEOUT_MS : performance.now()
     const previous = source === 'refresh' ? this.state.result : undefined
     if (source === 'background') this.backgroundGeneration = generation
     if (source === 'refresh') { this.openedAt = startedAt; this.admission = 'refresh' }
     this.publish({ key: options.candidate.key, identityKey: options.identityKey, contextKey: options.contextKey, status: 'pending', startedAt,
-      result: previous, previous, error: undefined, slow: false, recoveringOracle: continuingRecovery !== undefined, refreshing: source === 'refresh' })
+      result: previous, previous, error: undefined, supportReference: undefined, slow: false, recoveringOracle: continuingRecovery !== undefined, refreshing: source === 'refresh' })
     const current = () => !this.disposed && generation === this.generation
     let finished = false
     let recoveryStartedAt = continuingRecovery?.startedAt
@@ -178,34 +168,33 @@ class PreparationController<T> {
     let retryAt = 0
     const trackRecovery = (reason: 'started' | 'succeeded' | 'exhausted' | 'failed') => {
       captureAnalyticsEvent('perps oracle recovery', {
-        surface: 'perps', reason_code: reason, duration_ms: Date.now() - (recoveryStartedAt ?? Date.now()),
+        surface: 'perps', reason_code: reason, duration_ms: performance.now() - (recoveryStartedAt ?? performance.now()),
       })
     }
-    const finish = (result?: PreparedPerpsOrderV2, error?: unknown) => {
+    const finish = (result?: PreparedPerpsOrderV3, error?: unknown) => {
       if (finished) return
       finished = true
       releaseBackground()
       clearTimeout(jobTimeout)
       this.jobs.delete(jobTimeout)
-      if (current() && result && Number(result.protection.validUntil) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000) {
-        error = preparationFailure(new Error('This review has expired or is about to expire. Retry review for fresh order terms.'), 'review_freshness')
-        result = undefined
-      }
+      const failure = current() && error ? reportTransactionFailure(error, undefined, {
+        surface: 'perps', action: 'order_review', stage: getPreparationFailureProperties(error).stage,
+      }) : undefined
       if (!this.disposed) captureAnalyticsEvent('perps order preparation finished', {
-        surface: 'perps', duration_ms: Date.now() - startedAt, reason_code: source,
+        surface: 'perps', duration_ms: performance.now() - startedAt, reason_code: source,
         error_category: !current() ? 'cancelled' : error ? 'preparation_failed' : 'none',
         ...(current() && error ? getPreparationFailureProperties(error) : {}),
+        ...(failure ? { support_reference: failure.supportReference } : {}),
       })
       if (current()) {
         this.clearTimers()
         this.resumeRecovery = undefined
         this.oracleRecovery = undefined
-        this.oracleRecoveryExhausted = error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE
         if (recoveryStartedAt !== undefined) trackRecovery(error
           ? error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE ? 'exhausted' : 'failed'
           : 'succeeded')
-        this.publish({ status: error ? 'error' : 'ready', result: result ?? previous, error, slow: false, recoveringOracle: false })
-        if (!error) { this.trackReady(); this.scheduleRefresh() }
+        this.publish({ status: error ? 'error' : 'ready', result: result ?? previous, error, supportReference: failure?.supportReference, slow: false, recoveringOracle: false })
+        if (!error) this.trackReady()
       }
     }
     const releaseBackground = () => {
@@ -219,12 +208,12 @@ class PreparationController<T> {
       finish(undefined, recoveryStartedAt === undefined
         ? preparationFailure(new Error('Order checks took too long. Retry review.'), 'preparation_timeout')
         : new Error(ORACLE_RECOVERY_UNAVAILABLE, { cause: lastRecoveryError }))
-    }, Math.max(0, startedAt + PREPARATION_TIMEOUT_MS - Date.now()))
+    }, Math.max(0, startedAt + PREPARATION_TIMEOUT_MS - performance.now()))
     this.jobs.add(jobTimeout)
     const scheduleRecovery = () => {
       if (!current() || finished || inFlight || !this.state.visible || this.options?.mode !== 'review') return
       clearTimeout(this.timer)
-      this.timer = setTimeout(() => { runAttempt() }, Math.max(0, retryAt - Date.now()))
+      this.timer = setTimeout(() => { runAttempt() }, Math.max(0, retryAt - performance.now()))
     }
     const runAttempt = () => {
       if (!current() || finished || inFlight || !this.state.visible) return
@@ -233,10 +222,10 @@ class PreparationController<T> {
         inFlight = false
         if (current() && !finished && this.options?.mode === 'review' && isPerpsOracleSyncError(error)) {
           lastRecoveryError = error
-          if (recoveryStartedAt === undefined) { recoveryStartedAt = Date.now(); trackRecovery('started') }
+          if (recoveryStartedAt === undefined) { recoveryStartedAt = performance.now(); trackRecovery('started') }
           this.oracleRecovery = { startedAt: recoveryStartedAt, deadline: startedAt + PREPARATION_TIMEOUT_MS, error }
           this.publish({ recoveringOracle: true })
-          retryAt = Date.now() + ORACLE_RECOVERY_RETRY_MS
+          retryAt = performance.now() + ORACLE_RECOVERY_RETRY_MS
           this.resumeRecovery = scheduleRecovery
           scheduleRecovery()
         } else finish(undefined, error)
@@ -249,18 +238,16 @@ class PreparationController<T> {
     runAttempt()
   }
 
-  retry = () => { this.admission = 'cold'; this.openedAt = Date.now(); this.start(this.state.result ? 'refresh' : 'cold') }
+  retry = () => { this.admission = 'cold'; this.openedAt = performance.now(); this.start(this.state.result ? 'refresh' : 'cold') }
   setVisible = (visible: boolean) => {
     if (visible === this.state.visible) return
     this.publish({ visible })
     clearTimeout(this.timer)
     if (!visible) return
     if (this.options?.mode === 'review') {
-      if (this.options.contextKey !== this.state.contextKey) this.start(this.state.result ? 'refresh' : 'cold')
-      else if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
-      else if ((this.state.status === 'ready' || this.state.status === 'pending') && !this.reusable()) this.start(this.state.result ? 'refresh' : 'cold')
+      if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
+      else if (this.state.status === 'pending' && !this.reusable()) this.start(this.state.result ? 'refresh' : 'cold')
       else if (this.state.status === 'idle') this.start('cold')
-      else this.scheduleRefresh()
     } else if (this.options?.mode === 'background' && this.state.status === 'idle') this.scheduleBackground()
   }
   dispose = () => { this.disposed = true; this.invalidate(); this.jobs.forEach(clearTimeout); this.jobs.clear(); this.options = undefined; this.state = initialState; this.backgroundGeneration = undefined }
@@ -276,9 +263,10 @@ export function usePerpsOrderPreparation<T>(options: Options<T>) {
     document.addEventListener('visibilitychange', onVisibility)
     return () => { document.removeEventListener('visibilitychange', onVisibility); controller.dispose() }
   }, [controller])
-  const matches = options.candidate?.key === state.key && options.identityKey === state.identityKey && options.contextKey === state.contextKey
+  const matches = options.candidate?.key === state.key && options.identityKey === state.identityKey &&
+    (options.mode === 'review' && controller.options?.mode === 'review' || options.contextKey === state.contextKey)
   const ready = options.mode !== 'inactive' && options.reviewValid !== false && matches && state.status === 'ready' && state.visible &&
-    document.visibilityState !== 'hidden' && controller.hasDeadline() &&
+    document.visibilityState !== 'hidden' &&
     (options.mode === 'review' && controller.options?.mode === 'review' || controller.reusable())
   return { ...state, ready, matches, retry: controller.retry }
 }

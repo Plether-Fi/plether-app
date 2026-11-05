@@ -99,6 +99,8 @@ import Plether.Database.Candles
   , getBasketCandlePageSnapshot
   , getBasketCurrentCandleSnapshot
   , getBasketCandleRange
+  , candleRangeRowsSql
+  , invalidateMarketVolumeFromBlockSql
   , getCurrentBasketCandle
   , getRollupCoverage
   , invalidateMarketVolumeFromBlock
@@ -106,6 +108,7 @@ import Plether.Database.Candles
   , markRollupCoverageIncomplete
   , recomputeBasketCandleHierarchy
   , recoverBasketPriceCoverageGap
+  , recoverLiveBasketPriceCoverageGap
   , recomputeMarketVolumeHierarchy
   , recomputeMarketVolumeHierarchyBatch
   , beginRollupMaintenance
@@ -116,6 +119,8 @@ import Plether.Database.Candles
 import Plether.Database.Schema
   ( assertPerpsReplayEventExact
   , deletePerpsHistoryFromBlock
+  , deletePerpsActivityFromBlockSql
+  , deletePerpsEventsFromBlockSql
   , ensureBasketSnapshotSchema
   , ensurePerpsHistorySchema
   , insertBasketSnapshotWithSource
@@ -124,11 +129,6 @@ import Plether.Database.Schema
   , insertPerpsEvent
   , setPerpsIndexerState
   , setPerpsIndexerStateWithTimestamp
-  )
-import Plether.Perps.Release
-  ( perpsV2DeploymentBlock
-  , perpsV2OrderRouter
-  , perpsV2VolumeHistoryStartTimestamp
   )
 import Plether.Pyth.History (filterTradingViewHistorySamplesForPersistence)
 import System.Environment (getEnvironment)
@@ -1701,7 +1701,7 @@ candleRollupSpec databaseUrl =
             mapM (requirePriceCoverage connection) canonicalCandleIntervals
           repeated `shouldBe` invalidated
 
-    it "recovers only an exact price watermark gap backed by the stored signed state" $
+    it "recovers the verified latest signed state among same-second alternatives and rejects older states" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           ensureCurrentBasketDefinition connection testSeries
@@ -1723,6 +1723,21 @@ candleRollupSpec databaseUrl =
                 , boiSourcePriority = 100
                 }
           changed `shouldBe` True
+          -- A lexicographically greater hash must not replace authenticated
+          -- matching evidence from the same second.
+          void $ upsertBasketObservation connection $
+            BasketObservationInput testSeries "zz-same-second-alternative" lastObservationTime
+              101 componentPayload "backend_hermes_latest" 100
+          void $ upsertBasketObservation connection $
+            BasketObservationInput testSeries "newer-authenticated-state" (lastObservationTime + 1)
+              102 componentPayload "backend_hermes_latest" 100
+          withTransaction connection
+            (recoverBasketPriceCoverageGap connection testSeries coverageEnd recoveredThrough
+              lastObservationTime 100 componentPayload 120)
+            `shouldThrow` anyException
+          _ <- execute connection
+            "DELETE FROM perps_basket_observations WHERE series_id = ? AND observation_id = ?"
+            (testSeries, "newer-authenticated-state" :: Text)
           forM_ canonicalCandleIntervals $ \interval ->
             putPriceCoverage
               connection
@@ -1769,6 +1784,92 @@ candleRollupSpec databaseUrl =
             componentPayload
             120
             `shouldThrow` anyException
+
+    it "atomically recovers a live-gap, preserving observed prices and rejecting replays" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          [Only now] <- query_ connection "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+          let end = (now `div` 60) * 60 - 120
+              start = end - 600
+              samples = [(t, 100, componentPayload) | t <- [start,start + 60 .. end - 60]]
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage connection interval baseTime (alignDownForTest start interval)
+              (alignDownForTest start interval) 17 True
+          advanceBasketPriceCoverage connection testSeries (start + 301) 120
+          void $ upsertBasketObservation connection $
+            BasketObservationInput testSeries "live-gap-existing" (start + 1) 150 componentPayload "backend_hermes_latest" 100
+          insertBasketSnapshotWithSource connection (start + 60) 60 175 componentPayload latestSnapshotSource
+          result <- withTransaction connection $
+            recoverLiveBasketPriceCoverageGap connection testSeries start end (now + 300) samples 120
+          pgrGeneration result `shouldBe` 19
+          pgrRecoveredThrough result `shouldBe` end
+          forM_ canonicalCandleIntervals $ \interval -> do
+            row <- requirePriceCoverage connection interval
+            rcComplete row `shouldBe` True
+            rcGeneration row `shouldBe` 19
+            rcCoverageEnd row `shouldBe` Just (alignDownForTest end interval)
+          prices <- query connection
+            "SELECT raw_close_price FROM perps_basket_candles WHERE series_id = ? AND interval_seconds = 60 AND bucket_start = ?"
+            (testSeries, start) :: IO [Only Integer]
+          prices `shouldBe` [Only 150]
+          preserved <- query connection
+            "SELECT basket_price, source FROM perps_basket_snapshots WHERE timestamp = ? AND interval_seconds = 60"
+            (Only $ start + 60) :: IO [(Integer, Text)]
+          preserved `shouldBe` [(175, latestSnapshotSource)]
+          sampled <- query connection
+            "SELECT raw_close_price, quality FROM perps_basket_candles WHERE series_id = ? AND interval_seconds = 60 AND bucket_start = ?"
+            (testSeries, start + 120) :: IO [(Integer, Text)]
+          sampled `shouldBe` [(100, "legacy_sampled")]
+          withTransaction connection (recoverLiveBasketPriceCoverageGap connection testSeries start end (now + 300) samples 120)
+            `shouldThrow` anyException
+
+    forM_ ["missing-minute", "wrong-anchor", "expired", "stale", "mixed-generation", "maintenance"] $ \scenario ->
+      it ("rejects live-gap " <> scenario <> " without source writes") $
+        withCandleDatabase databaseUrl $ \pool ->
+          withDb pool $ \connection -> do
+            ensureCurrentBasketDefinition connection testSeries
+            [Only now] <- query_ connection "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+            let end = (now `div` 60) * 60 - if scenario == "stale" then 600 else 120
+                start = end - 600
+                inputStart = start + if scenario == "wrong-anchor" then 60 else 0
+                samples = [(t, 100, componentPayload) | t <- [inputStart,inputStart + 60 .. end - 60]]
+                input = if scenario == "missing-minute" then drop 1 samples else samples
+                deadline = now + if scenario == "expired" then -1 else 300
+            forM_ canonicalCandleIntervals $ \interval ->
+              putPriceCoverage connection interval baseTime (alignDownForTest start interval)
+                (alignDownForTest start interval) 17 True
+            advanceBasketPriceCoverage connection testSeries (start + 301) 120
+            when (scenario == "mixed-generation") $ void $ execute connection
+              "UPDATE perps_rollup_coverage SET generation = 19 WHERE series_id = ? AND kind = 'price' AND interval_seconds = 60" (Only testSeries)
+            when (scenario == "maintenance") $ void $ execute connection
+              "UPDATE perps_rollup_coverage SET last_error = 'bounded_admin_repair', maintenance_from = ?, maintenance_to = ? WHERE series_id = ? AND kind = 'price'" (start, end, testSeries)
+            withTransaction connection (recoverLiveBasketPriceCoverageGap connection testSeries inputStart end deadline input 120)
+              `shouldThrow` anyException
+            rows <- query connection "SELECT COUNT(*)::BIGINT FROM perps_basket_snapshots WHERE timestamp >= ? AND timestamp < ?"
+              (start,end) :: IO [Only Integer]
+            rows `shouldBe` [Only 0]
+
+    it "rolls live-gap source inserts back if canonical validation fails" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          [Only now] <- query_ connection "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+          let end = (now `div` 60) * 60 - 120
+              start = end - 600
+              invalid = [(t, -1, componentPayload) | t <- [start,start + 60 .. end - 60]]
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage connection interval baseTime (alignDownForTest start interval)
+              (alignDownForTest start interval) 17 True
+          advanceBasketPriceCoverage connection testSeries (start + 301) 120
+          withTransaction connection (recoverLiveBasketPriceCoverageGap connection testSeries start end (now + 300) invalid 120)
+            `shouldThrow` anyException
+          rows <- query connection "SELECT COUNT(*)::BIGINT FROM perps_basket_snapshots WHERE timestamp >= ? AND timestamp < ?"
+            (start,end) :: IO [Only Integer]
+          rows `shouldBe` [Only 0]
+          coverage <- requirePriceCoverage connection 60
+          rcComplete coverage `shouldBe` False
+          rcGeneration coverage `shouldBe` 18
 
     it "invalidates complete coarser coverage despite a minute repair marker" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -1929,15 +2030,15 @@ candleRollupSpec databaseUrl =
 
     it "uses the pinned Sepolia deployment minute despite later epoch metadata" $
       withCandleDatabase databaseUrl $ \pool -> do
-        let recordedDeploymentBlock = perpsV2DeploymentBlock + 50
-            activationBlock = perpsV2DeploymentBlock + 100
-            activationTimestamp = perpsV2VolumeHistoryStartTimestamp + 2 * 86_400 + 17
+        let recordedDeploymentBlock = candleAdminFixtureDeploymentBlock + 50
+            activationBlock = candleAdminFixtureDeploymentBlock + 100
+            activationTimestamp = candleAdminFixtureVolumeHistoryStartTimestamp + 2 * 86_400 + 17
             firstEventTimestamp = activationTimestamp + 2 * 86_400 + 5
             requestedTo = firstEventTimestamp - 5 + 60
         seedCertifiedCandleAdminVolumeSource
           pool
           421614
-          perpsV2OrderRouter
+          candleAdminFixtureOrderRouter
           recordedDeploymentBlock
           activationBlock
           activationTimestamp
@@ -1947,8 +2048,8 @@ candleRollupSpec databaseUrl =
             connection
             421614
             pinnedVolumeIndexerName
-            perpsV2OrderRouter
-            perpsV2DeploymentBlock
+            candleAdminFixtureOrderRouter
+            candleAdminFixtureDeploymentBlock
             (activationBlock + 100)
             (Just $ "0x" <> Text.replicate 64 "d")
 
@@ -1956,30 +2057,30 @@ candleRollupSpec databaseUrl =
           runCandleAdminWithRelease
             databaseUrl
             421614
-            perpsV2OrderRouter
+            candleAdminFixtureOrderRouter
             [ "estimate"
-            , "--from", show perpsV2VolumeHistoryStartTimestamp
+            , "--from", show candleAdminFixtureVolumeHistoryStartTimestamp
             , "--to", show requestedTo
             ]
         exitCode `shouldBe` ExitSuccess
         stderr `shouldBe` ""
         stdout
           `shouldContain`
-            ("\"from_timestamp\":" <> show perpsV2VolumeHistoryStartTimestamp)
+            ("\"from_timestamp\":" <> show candleAdminFixtureVolumeHistoryStartTimestamp)
 
     it "uses the pinned Sepolia deployment minute without a release epoch row" $
       withCandleDatabase databaseUrl $ \pool -> do
-        let firstEventTimestamp = perpsV2VolumeHistoryStartTimestamp + 2 * 86_400 + 5
+        let firstEventTimestamp = candleAdminFixtureVolumeHistoryStartTimestamp + 2 * 86_400 + 5
             requestedTo = firstEventTimestamp - 5 + 60
         withDb pool $ \connection -> do
           insertPerpsEvent
             connection
             421614
-            perpsV2OrderRouter
+            candleAdminFixtureOrderRouter
             "0x3333333333333333333333333333333333333333"
             "PositionOpened"
             ("0x" <> Text.replicate 64 "e")
-            (perpsV2DeploymentBlock + 50)
+            (candleAdminFixtureDeploymentBlock + 50)
             ("0x" <> Text.replicate 64 "f")
             0
             0
@@ -1992,25 +2093,25 @@ candleRollupSpec databaseUrl =
             connection
             421614
             pinnedVolumeIndexerName
-            perpsV2OrderRouter
-            perpsV2DeploymentBlock
-            (perpsV2DeploymentBlock + 100)
+            candleAdminFixtureOrderRouter
+            candleAdminFixtureDeploymentBlock
+            (candleAdminFixtureDeploymentBlock + 100)
             (Just $ "0x" <> Text.replicate 64 "d")
 
         (exitCode, stdout, stderr) <-
           runCandleAdminWithRelease
             databaseUrl
             421614
-            perpsV2OrderRouter
+            candleAdminFixtureOrderRouter
             [ "estimate"
-            , "--from", show perpsV2VolumeHistoryStartTimestamp
+            , "--from", show candleAdminFixtureVolumeHistoryStartTimestamp
             , "--to", show requestedTo
             ]
         exitCode `shouldBe` ExitSuccess
         stderr `shouldBe` ""
         stdout
           `shouldContain`
-            ("\"from_timestamp\":" <> show perpsV2VolumeHistoryStartTimestamp)
+            ("\"from_timestamp\":" <> show candleAdminFixtureVolumeHistoryStartTimestamp)
 
     it "uses the exact writer lock and releases it with a read-only transaction" $
       withCandleAdminDatabase databaseUrl $ \pool -> do
@@ -2148,6 +2249,17 @@ candleRollupSpec databaseUrl =
         observedGeneration `shouldBe` [Only committedGeneration]
         writerResult <- timeout 5_000_000 $ takeMVar writerDone
         writerResult `shouldSatisfy` maybe False isRight
+
+    it "validates the deployed production CLI and still rejects explicit prepared profiles" $ do
+      (canonicalCode, canonicalOut, canonicalErr) <-
+        readCreateProcessWithExitCode (proc "plether-candle-admin" ["finalizer-probe"]) ""
+      canonicalCode `shouldSatisfy` (/= ExitSuccess)
+      (canonicalOut <> canonicalErr) `shouldContain` "requires --boundary"
+      (profileCode, profileOut, profileErr) <-
+        runCandleAdminWithProfile "../../config/perps/mock-usdg-prepared.json"
+          databaseUrl testChainId testRouter ["finalizer-probe"]
+      profileCode `shouldSatisfy` (/= ExitSuccess)
+      (profileOut <> profileErr) `shouldContain` "Perps release is prepared"
 
     it "rejects unsafe finalizer-probe CLI shapes before database access" $ do
       (missingCode, missingOut, missingErr) <-
@@ -2731,8 +2843,9 @@ candleRollupSpec databaseUrl =
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           ensureCurrentBasketDefinition connection testSeries
-          let pageRows = 12_001 :: Integer
-              pageEnd = baseTime + pageRows * 60
+          let pageRows = 120_001 :: Integer
+              pageStart = baseTime + 60_000 * 60
+              pageEnd = pageStart + 30 * 60
           void $
             execute
               connection
@@ -2798,25 +2911,17 @@ candleRollupSpec databaseUrl =
                 , "chain_id,release_router,interval_seconds,bucket_start,volume_numerator,trade_count,finalized"
                 )
               ]
-          plan <- withTransaction connection $ do
-            _ <- execute_ connection "SET LOCAL enable_seqscan = off"
-            query
-              connection
-              "EXPLAIN (COSTS OFF) \
-              \SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, \
-              \ c.raw_low_price, c.raw_close_price, c.sample_count, c.quality, \
-              \ c.revision, c.finalized, v.volume_numerator, v.trade_count, v.finalized \
-              \FROM perps_basket_candles c \
-              \LEFT JOIN perps_market_volume_rollups v \
-              \ ON v.chain_id = ? AND v.release_router = ? \
-              \ AND v.interval_seconds = c.interval_seconds AND v.bucket_start = c.bucket_start \
-              \WHERE c.series_id = ? AND c.interval_seconds = ? \
-              \AND c.bucket_start >= ? AND c.bucket_start < ? \
-              \ORDER BY c.bucket_start LIMIT ?"
-              ( testChainId, normalizedTestRouter, testSeries, 60 :: Integer
-              , baseTime, pageEnd, 12_001 :: Int
-              )
-              :: IO [Only Text]
+          -- Use the normal planner and the exact SQL called by the endpoint,
+          -- selecting a small middle page from representative retained history.
+          void $ execute_ connection "ANALYZE perps_basket_candles; ANALYZE perps_market_volume_rollups"
+          plan <- query connection ("EXPLAIN (ANALYZE, BUFFERS, COSTS OFF) " <> candleRangeRowsSql)
+            ( testChainId, normalizedTestRouter, testSeries, 60 :: Integer
+            , pageStart, pageEnd, 31 :: Int
+            ) :: IO [Only Text]
+          putPriceCoverage connection 60 baseTime (baseTime + pageRows * 60) (baseTime + pageRows * 60) 1 True
+          putVolumeCoverage connection 60 baseTime (baseTime + pageRows * 60) (baseTime + pageRows * 60) 1 True
+          actual <- getBasketCandleRange connection testSeries testChainId testRouter 60 pageStart pageEnd 31
+          map bcrBucketStart (crCandles actual) `shouldBe` [pageStart, pageStart + 60 .. pageEnd - 60]
           let renderedPlan = Text.unlines [line | Only line <- plan]
               usesIndex names =
                 any
@@ -2863,27 +2968,50 @@ candleRollupSpec databaseUrl =
     it "uses block-number indexes for reorg discovery and history deletion" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
-          insertActivity connection "reorg-plan-volume" baseTime 950 2 10 "Open"
-          insertRawEvent connection "reorg-plan-event" baseTime 950
-          (activityPlan, eventPlan) <- withTransaction connection $ do
-            _ <- execute_ connection "SET LOCAL enable_seqscan = off"
-            activityPlan <-
-              query
-                connection
-                "EXPLAIN (COSTS OFF) SELECT id, timestamp FROM perps_account_activity \
-                \WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
-                (testChainId, testRouter, 950 :: Integer) :: IO [Only Text]
-            eventPlan <-
-              query
-                connection
-                "EXPLAIN (COSTS OFF) SELECT id FROM perps_events \
-                \WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
-                (testChainId, testRouter, 950 :: Integer) :: IO [Only Text]
-            pure (activityPlan, eventPlan)
-          let renderedActivityPlan = Text.unpack $ Text.unlines [line | Only line <- activityPlan]
-              renderedEventPlan = Text.unpack $ Text.unlines [line | Only line <- eventPlan]
-          renderedActivityPlan `shouldContain` "idx_perps_account_activity_reorg_blocks"
-          renderedEventPlan `shouldContain` "idx_perps_events_reorg_blocks"
+          insertActivity connection "reorg-plan-volume" baseTime 0 2 10 "Open"
+          insertRawEvent connection "reorg-plan-event" baseTime 0
+          -- Retain enough unrelated earlier history that the normal planner
+          -- must choose the selective rewind boundary rather than a full scan.
+          void $ execute connection
+            "INSERT INTO perps_account_activity SELECT copied.* FROM perps_account_activity seed \
+            \CROSS JOIN generate_series(1,50000) n CROSS JOIN LATERAL \
+            \jsonb_populate_record(NULL::perps_account_activity,to_jsonb(seed) || jsonb_build_object(\
+            \ 'id',nextval('perps_account_activity_id_seq'),'event_key','candle-rollup-integration:plan-'||n,\
+            \ 'tx_hash','plan-tx-'||n,'block_number',n,'log_index',n,'timestamp',?::bigint+n*60)) copied \
+            \WHERE seed.event_key='candle-rollup-integration:reorg-plan-volume'"
+            (Only baseTime)
+          void $ execute connection
+            "INSERT INTO perps_events SELECT copied.* FROM perps_events seed \
+            \CROSS JOIN generate_series(1,50000) n CROSS JOIN LATERAL \
+            \jsonb_populate_record(NULL::perps_events,to_jsonb(seed) || jsonb_build_object(\
+            \ 'id',nextval('perps_events_id_seq'),'tx_hash','plan-event-'||n,\
+            \ 'block_number',n,'log_index',n,'timestamp',?::bigint+n*60)) copied \
+            \WHERE seed.chain_id=? AND seed.release_router=? AND seed.block_number=0"
+            (baseTime,testChainId,normalizedTestRouter)
+          void $ execute_ connection "ANALYZE perps_account_activity; ANALYZE perps_events"
+          let rewindBlock = 49_990 :: Integer
+          discoveryPlan <- query connection ("EXPLAIN (COSTS OFF) " <> invalidateMarketVolumeFromBlockSql)
+            (testChainId,normalizedTestRouter,rewindBlock,testChainId,normalizedTestRouter) :: IO [Only Text]
+          activityPlan <- query connection ("EXPLAIN (COSTS OFF) " <> deletePerpsActivityFromBlockSql)
+            (testChainId,normalizedTestRouter,rewindBlock) :: IO [Only Text]
+          eventPlan <- query connection ("EXPLAIN (COSTS OFF) " <> deletePerpsEventsFromBlockSql)
+            (testChainId,normalizedTestRouter,rewindBlock) :: IO [Only Text]
+          let render rows = Text.unpack $ Text.unlines [line | Only line <- rows]
+          render discoveryPlan `shouldContain` "idx_perps_account_activity_reorg_blocks"
+          render activityPlan `shouldContain` "idx_perps_account_activity_reorg_blocks"
+          render eventPlan `shouldContain` "idx_perps_events_reorg_blocks"
+          withTransaction connection $ do
+            affected <- invalidateMarketVolumeFromBlock connection testChainId testRouter rewindBlock
+            affected `shouldBe` [baseTime + n*60 | n <- [rewindBlock..50000]]
+            deletePerpsHistoryFromBlock connection testChainId testRouter rewindBlock
+          remainingActivity <- query connection
+            "SELECT COUNT(*)::BIGINT,MAX(block_number) FROM perps_account_activity WHERE chain_id=? AND release_router=?"
+            (testChainId,normalizedTestRouter) :: IO [(Integer,Integer)]
+          remainingEvents <- query connection
+            "SELECT COUNT(*)::BIGINT,MAX(block_number) FROM perps_events WHERE chain_id=? AND release_router=?"
+            (testChainId,normalizedTestRouter) :: IO [(Integer,Integer)]
+          remainingActivity `shouldBe` [(rewindBlock,rewindBlock-1)]
+          remainingEvents `shouldBe` [(rewindBlock,rewindBlock-1)]
 
 data StoredCandle = StoredCandle
   { scBucketStart :: Integer
@@ -3118,7 +3246,7 @@ candleApiConfig databaseUrl =
     , cfgPerpsRpcUrl = ""
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = testChainId
-    , cfgPerpsUsdc = ""
+    , cfgPerpsSettlementToken = ""
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
@@ -3127,12 +3255,12 @@ candleApiConfig databaseUrl =
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
+    , cfgPerpsHousePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgPerpsSettlementMonitorLens = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
     , cfgPerpsIndexerStartBlock = 0
-    , cfgVaultHistoryHousePoolAddress = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgVaultHistorySeniorVaultAddress = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgVaultHistoryJuniorVaultAddress = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgVaultHistoryHousePoolAddress = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgVaultHistorySeniorVaultAddress = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgVaultHistoryJuniorVaultAddress = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
@@ -3142,6 +3270,7 @@ candleApiConfig databaseUrl =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
@@ -3151,8 +3280,8 @@ candleApiConfig databaseUrl =
     , cfgKeeperFeeBufferBps = 2_500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgLpSettlementJuniorVault = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -3165,7 +3294,7 @@ candleReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "candle-rollup-integration"
     , crmChainId = testChainId
-    , crmUsdc = ""
+    , crmSettlementToken = ""
     , crmOrderRouter = testRouter
     , crmMarginClearinghouse = ""
     , crmAccountLens = ""
@@ -3363,7 +3492,11 @@ runCandleAdminWithRouter databaseUrl =
 
 runCandleAdminWithRelease
   :: Text -> Integer -> Text -> [String] -> IO (ExitCode, String, String)
-runCandleAdminWithRelease databaseUrl chainId releaseRouter arguments = do
+runCandleAdminWithRelease = runCandleAdminWithProfile "test/fixtures/candle-admin-deployed-release.json"
+
+runCandleAdminWithProfile
+  :: FilePath -> Text -> Integer -> Text -> [String] -> IO (ExitCode, String, String)
+runCandleAdminWithProfile profilePath databaseUrl chainId releaseRouter arguments = do
   inheritedEnvironment <- getEnvironment
   let overrides =
         [ ("DATABASE_URL", Text.unpack databaseUrl)
@@ -3374,7 +3507,7 @@ runCandleAdminWithRelease databaseUrl chainId releaseRouter arguments = do
         ]
       overriddenNames = map fst overrides
       command =
-        (proc "plether-candle-admin" arguments)
+        (proc "plether-candle-admin-fixture" $ profilePath : arguments)
           { env =
               Just $
                 overrides
@@ -3859,8 +3992,17 @@ certifiedVolumeIndexerName = "perps-history-costs-v2:certified-volume-bound"
 pinnedVolumeIndexerName :: Text
 pinnedVolumeIndexerName = "perps-history-costs-v2:finalized-abi3"
 
+-- These are independent fixture expectations, matching the explicitly
+-- validated profile supplied to the separate candle-admin test executable.
+candleAdminFixtureDeploymentBlock, candleAdminFixtureVolumeHistoryStartTimestamp :: Integer
+candleAdminFixtureDeploymentBlock = 10_000
+candleAdminFixtureVolumeHistoryStartTimestamp = 1_699_920_000
+
+candleAdminFixtureOrderRouter :: Text
+candleAdminFixtureOrderRouter = "0x0000000000000000000000000000000000000017"
+
 normalizedPinnedV2Router :: Text
-normalizedPinnedV2Router = Text.toLower perpsV2OrderRouter
+normalizedPinnedV2Router = Text.toLower candleAdminFixtureOrderRouter
 
 certifiedVolumeActivationBlock :: Integer
 certifiedVolumeActivationBlock = 10_000

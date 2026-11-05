@@ -9,6 +9,7 @@ import {
 
 export const queryKeys = {
   competition: ['insights', 'competition', 'current'] as const,
+  archivedCompetition: (slug: string) => ['insights', 'competition', slug] as const,
   leaderboard: (slug: string, search: string) => ['insights', 'leaderboard', slug, search] as const,
   wallet: (slug: string, address: string) => ['insights', 'wallet', slug, address] as const,
   registration: (slug: string) => ['insights', 'registration', slug] as const,
@@ -25,6 +26,14 @@ export function useCurrentCompetition() {
     staleTime: 0,
     refetchInterval: (query) => query.state.data?.registration?.status === 'open' ? 1_000 : 30_000,
     refetchIntervalInBackground: false,
+  })
+}
+
+export function useArchivedCompetition(slug: string) {
+  return useQuery({
+    queryKey: queryKeys.archivedCompetition(slug),
+    queryFn: async ({ signal }) => (await getLeaderboard(slug, { limit: 1, signal })).competition,
+    staleTime: 60_000,
   })
 }
 

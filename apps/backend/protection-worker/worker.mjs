@@ -19,6 +19,7 @@ export class ProtectionWorker {
   }
 
   async verifyDeployment() {
+    if (this.release.orderInterfaceVersion !== 3) throw new Error('Protection worker requires a verified V3 release manifest')
     if (await this.publicClient.getChainId() !== this.chainId) throw new Error('Protection worker RPC chain does not match release')
     for (const name of ['positionProtectionBook', 'orderRouter', 'orderLifecycleBook', 'pletherOracle', 'cfdEngine']) {
       const contract = this.release.contracts[name]
@@ -163,8 +164,9 @@ export class ProtectionWorker {
     if (freshPayload) {
       fee = await this.read(this.oracle, 'PletherOracle', 'getUpdateFee', [payload.update_data], block.number)
       try {
-        // Simulate the same neutral MarkRefresh policy against the exact admitted Pyth bytes.
-        snapshot = (await this.publicClient.simulateContract({ account: this.account, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice', args: [this.account.address, payload.update_data, 1], value: fee, blockNumber: block.number })).result
+        // Current Oracle updates are Router-only. Model the Router's nested call
+        // for this read-only price check; Book submissions still use our signer.
+        snapshot = (await this.publicClient.simulateContract({ account: this.router, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice', args: [this.account.address, payload.update_data, 1], value: fee, blockNumber: block.number })).result
       } catch { this.log('warn', 'protection_oracle_unavailable', {}) }
     }
     if (!freshPayload && !frozen) this.log('warn', 'protection_oracle_unavailable', { reason: 'no-admitted-fresh-payload' })
@@ -180,26 +182,26 @@ export class ProtectionWorker {
           await this.observe(block, protection, 'trigger-ready')
           if (await this.submit('trigger', id, this.book, 'PositionProtectionBook', 'triggerPositionProtection', [id, payload.update_data], fee)) return
         } else if (protection.status === 8) {
-          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'outcome', [protection.linkedOrderId], block.number)
+          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'terminalOutcome', [protection.linkedOrderId], block.number)
           if (outcome.reason !== 2 || outcome.status !== 3) {
             await this.observe(block, protection, 'operator-required', { outcomeReason: outcome.reason })
-            this.log('error', 'protection_operator_required', { protectionId: id.toString(), linkedOrderId: protection.linkedOrderId.toString(), reason: outcome.reason, failureSelector: outcome.failureSelector, revertDataHash: outcome.revertDataHash }); continue
+            this.log('error', 'protection_operator_required', { protectionId: id.toString(), linkedOrderId: protection.linkedOrderId.toString(), reason: outcome.reason }); continue
           }
           const head = await this.read(this.router, 'OrderRouter', 'nextExecuteId', [], block.number)
           const tail = await this.read(this.router, 'OrderRouter', 'globalTailOrderId', [], block.number)
           if (tail !== 0n && head === tail) {
-            const policy = await this.read(this.lifecycle, 'OrderLifecycleBook', 'pendingPolicy', [head], block.number)
-            if (policy.validUntil > 0n && block.timestamp > policy.validUntil) {
+            const policy = await this.read(this.lifecycle, 'OrderLifecycleBook', 'orderTiming', [head], block.number)
+            if (policy.executionDeadline > 0n && block.timestamp > policy.executionDeadline) {
               await this.observe(block, protection, 'queue-cleanup', { outcomeReason: outcome.reason })
               if (await this.submit('prune', id, this.router, 'OrderRouter', 'executeOrder', [head, []])) return
               continue // Re-read protection and receipt after the separate cleanup transaction.
             }
           }
-          const maxOrderAge = await this.read(this.router, 'OrderRouter', 'maxOrderAge', [], block.number)
+          const maxExecutionWindowSeconds = await this.read(this.router, 'OrderRouter', 'maxExecutionWindowSeconds', [], block.number)
           // IDs include cancelled gaps. The span is a conservative upper bound on the live FIFO size.
           const queueSize = tail === 0n ? 0n : tail - head + 1n
           const pendingCount = await this.read(this.router, 'OrderRouter', 'pendingOrderCounts', [protection.account], block.number)
-          const decision = retryDecision({ protection, outcome, pendingCount, oracleAvailable: Boolean(snapshot) || frozen, queueSize, maxOrderAge, keeperBatchSize: this.keeperBatchSize, keeperPollSeconds: this.keeperPollSeconds })
+          const decision = retryDecision({ protection, outcome, pendingCount, oracleAvailable: Boolean(snapshot) || frozen, queueSize, maxExecutionWindowSeconds, keeperBatchSize: this.keeperBatchSize, keeperPollSeconds: this.keeperPollSeconds })
           await this.observe(block, protection, decision === 'retry' ? 'retry-ready' : decision, { outcomeReason: outcome.reason })
           if (decision === 'retry') {
             if (await this.submit('retry', id, this.book, 'PositionProtectionBook', 'retryPositionProtectionClose', [id])) return

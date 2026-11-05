@@ -1,7 +1,25 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { decodeFunctionResult, encodeFunctionResult, type Abi } from 'viem'
+import canonicalAbis from '../contracts/__tests__/fixtures/perps-canonical-source-abis.json'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vaults } from './Vaults'
+import { PERPS_ARBITRUM_SEPOLIA } from '../contracts/perpsAddresses'
+
+vi.mock('../contracts/perpsAddresses', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../contracts/perpsAddresses')>()
+  const { default: fixture } = await import('../contracts/__tests__/fixtures/perps-canonical-release.json')
+  return {
+    ...actual,
+    PERPS_RELEASE_IS_DEPLOYED: true,
+    PERPS_ARBITRUM_SEPOLIA: {
+      ...actual.PERPS_ARBITRUM_SEPOLIA,
+      housePool: fixture.contracts.housePool.address,
+      seniorVault: fixture.contracts.seniorVault.address,
+      juniorVault: fixture.contracts.juniorVault.address,
+    },
+  }
+})
 
 const mocks = vi.hoisted(() => ({
   account: {
@@ -52,10 +70,10 @@ const mocks = vi.hoisted(() => ({
   pendingDiscoveryError: false,
   vaultHolders: [] as {
     address: `0x${string}`
-    currentNavUsdc: bigint
+    currentNavAssets: bigint
     shareOfVaultNav: number
-    seniorNavUsdc: bigint
-    juniorNavUsdc: bigint
+    seniorNavAssets: bigint
+    juniorNavAssets: bigint
   }[],
   vaultOverviewActivity: [] as {
     id: string
@@ -63,7 +81,7 @@ const mocks = vi.hoisted(() => ({
     tranche: 'senior' | 'junior'
     account: `0x${string}`
     requestId: bigint
-    amountUsdc?: bigint
+    amountAssets?: bigint
     shares?: bigint
     amountIsEstimate: boolean
     timestamp: string
@@ -206,7 +224,7 @@ function renderVaults(path = '/vaults') {
   )
 }
 
-function usdc(value: number): bigint {
+function assets(value: number): bigint {
   return BigInt(value) * 1_000_000n
 }
 
@@ -216,6 +234,23 @@ function shares(value: number): bigint {
 
 function success(result: unknown) {
   return { status: 'success' as const, result }
+}
+
+// Encode against the independent compiled-source fixture before wagmi's decode
+// boundary. A uint8 phase must arrive as a number, not a hand-written bigint.
+function protocolStatusFixture(settlementPaused: boolean) {
+  const abi = canonicalAbis.PERPS_PUBLIC_LENS_ABI as Abi
+  return decodeFunctionResult({
+    abi, functionName: 'getProtocolStatus',
+    data: encodeFunctionResult({
+      abi, functionName: 'getProtocolStatus',
+      result: {
+        phase: 1, lastMarkPrice: 100_000_000n, lastMarkTime: 1_800_000_000n,
+        oracleFrozen: false, fadWindow: false, tradingActive: true,
+        withdrawalLive: true, lpEpochSettlementPaused: settlementPaused,
+      },
+    }),
+  })
 }
 
 function liveReadFixture({
@@ -238,7 +273,7 @@ function liveReadFixture({
   seniorRateBps = 800,
   juniorLastDepositTime = 0,
   juniorWithdrawalCooldown = 3_600,
-  walletUsdc = 1_000,
+  walletAssets = 1_000,
 }: {
   degradedMode?: boolean
   markFresh?: boolean
@@ -259,67 +294,67 @@ function liveReadFixture({
   seniorRateBps?: number
   juniorLastDepositTime?: number
   juniorWithdrawalCooldown?: number
-  walletUsdc?: number
+  walletAssets?: number
 } = {}) {
   return [
     success([
-      usdc(120_000_000),
-      usdc(90_000_000),
-      usdc(30_000_000),
+      assets(120_000_000),
+      assets(90_000_000),
+      assets(30_000_000),
       0n,
       0n,
-      usdc(seniorPrincipal),
-      usdc(50_000_000),
-      usdc(seniorHighWaterMark),
-      usdc(terminalDeficit),
+      assets(seniorPrincipal),
+      assets(50_000_000),
+      assets(seniorHighWaterMark),
+      assets(terminalDeficit),
       markFresh,
       oracleFrozen,
       degradedMode,
     ]),
-    success(usdc(70_000_000)),
+    success(assets(70_000_000)),
     success(shares(35_000_000)),
     success(shares(seniorUserShares)),
-    success(usdc(seniorMaxRequestDeposit)),
+    success(assets(seniorMaxRequestDeposit)),
     success(shares(seniorMaxRequestRedeem)),
-    success(usdc(50_000_000)),
+    success(assets(50_000_000)),
     success(shares(50_000_000)),
     success(shares(100)),
-    success(usdc(juniorMaxRequestDeposit)),
+    success(assets(juniorMaxRequestDeposit)),
     success(shares(100)),
-    success(usdc(walletUsdc)),
+    success(assets(walletAssets)),
     success(0n),
     success(0n),
     success([500_001n, 1_800_003_300n]),
     success([500_001n, 1_800_003_300n]),
     success(2n * 10n ** 24n),
     success(10n ** 24n),
-    success([0n, 10n ** 18n, 0n, false, false, true, true, settlementPaused]),
-    success([0n, 40n * 10n ** 18n, 0n, 0n]),
-    success([0n, 30n * 10n ** 18n, 0n, 0n]),
+    success(protocolStatusFixture(settlementPaused)),
+    success([0n, 40_000_000n * 10n ** 18n, 0n, 0n]),
+    success([0n, 30_000_000n * 10n ** 18n, 0n, 0n]),
     success([0n, 5n * 10n ** 17n, 0n, 0n, 0n, 0n, 0n, 0n]),
     success([
-      usdc(70_000_000),
+      assets(70_000_000),
       shares(35_000_000),
       shares(35_000_000),
       0n,
       0n,
       '0x0000000000000000000000000000000000000003',
       2n * 10n ** 15n,
-      usdc(70_000_000),
+      assets(70_000_000),
       25n,
       !poolPaused && !oracleFrozen && !degradedMode && terminalDeficit === 0 && markFresh,
       true,
       oracleFrozen,
     ]),
     success([
-      usdc(50_000_000),
+      assets(50_000_000),
       shares(50_000_000),
       shares(50_000_000 + juniorPendingMaintenanceFeeShares),
       shares(juniorPendingMaintenanceFeeShares),
       BigInt(juniorMaintenanceFeeAprBps),
       '0x0000000000000000000000000000000000000004',
       10n ** 15n,
-      usdc(20_000_000),
+      assets(20_000_000),
       25n,
       !poolPaused && !oracleFrozen && !degradedMode && terminalDeficit === 0 && markFresh,
       true,
@@ -327,13 +362,13 @@ function liveReadFixture({
     ]),
     success(['0x0000000000000000000000000000000000000001', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, poolPaused, settlementPaused]),
     success(['0x0000000000000000000000000000000000000002', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, poolPaused, settlementPaused]),
-    success([usdc(70_000_000), usdc(50_000_000), usdc(70_000_000), usdc(20_000_000)]),
-    success(usdc(100_000_000)),
+    success([assets(70_000_000), assets(50_000_000), assets(70_000_000), assets(20_000_000)]),
+    success(assets(100_000_000)),
     success(7_500n),
-    success(usdc(30_000_000)),
-    success(usdc(5_000_000)),
+    success(assets(30_000_000)),
+    success(assets(5_000_000)),
     success(true),
-    success(usdc(1)),
+    success(assets(1)),
     success(BigInt(seniorLastDepositTime)),
     success(BigInt(seniorWithdrawalCooldown)),
     success(BigInt(juniorLastDepositTime)),
@@ -359,9 +394,9 @@ function completeHistoryFixture() {
     intervalSeconds: 3600 as const,
     deployment: {
       chainId: 421614,
-      housePool: '0x87622630fb1941fe02731d4a9fcdec0388efd78b',
-      seniorVault: '0x970ac2cfe9a19d4318806812719a5c291711b33a',
-      juniorVault: '0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79',
+      housePool: PERPS_ARBITRUM_SEPOLIA.housePool,
+      seniorVault: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      juniorVault: PERPS_ARBITRUM_SEPOLIA.juniorVault,
     },
     coverage: { start, end, complete: true },
     senior: {
@@ -444,7 +479,7 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('link', { name: 'View Senior Vault' }))
 
     expect(screen.getByRole('heading', { name: 'Senior Vault', level: 1 })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Deposit USDC' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Deposit USDG' })).toBeInTheDocument()
     expect(screen.getAllByText('Deposit status unavailable').length).toBeGreaterThan(0)
   })
 
@@ -483,10 +518,10 @@ describe('Vaults page', () => {
     mocks.readContractsData = liveReadFixture()
     mocks.vaultHolders = [{
       address: '0x1111111111111111111111111111111111111111',
-      currentNavUsdc: usdc(12_500_000),
+      currentNavAssets: assets(12_500_000),
       shareOfVaultNav: 10.42,
-      seniorNavUsdc: usdc(10_000_000),
-      juniorNavUsdc: usdc(2_500_000),
+      seniorNavAssets: assets(10_000_000),
+      juniorNavAssets: assets(2_500_000),
     }]
     mocks.vaultOverviewActivity = [{
       id: 'request-1',
@@ -494,7 +529,7 @@ describe('Vaults page', () => {
       tranche: 'junior',
       account: '0x2222222222222222222222222222222222222222',
       requestId: 496_647n,
-      amountUsdc: usdc(5_000),
+      amountAssets: assets(5_000),
       amountIsEstimate: false,
       timestamp: '2026-08-28T14:40:46.000Z',
       blockNumber: 302_932_837,
@@ -527,7 +562,7 @@ describe('Vaults page', () => {
     expect(screen.getAllByText('20M').length).toBeGreaterThan(0)
     expect(screen.getAllByText('10M').length).toBeGreaterThan(0)
     expect(screen.getAllByText('psLP').some((label) => label.classList.contains('border'))).toBe(true)
-    expect(screen.getAllByLabelText('20,000,000 USDC').length).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText('20,000,000 USDG').length).toBeGreaterThan(0)
     expect(screen.getAllByLabelText('10,000,000 psLP').length).toBeGreaterThan(0)
   })
 
@@ -563,14 +598,14 @@ describe('Vaults page', () => {
     expect(within(timelocks).getByText('Pool risk settings')).toBeInTheDocument()
     expect(within(timelocks).getByText('Junior fee settings')).toBeInTheDocument()
     expect(within(timelocks).getByText('Trading and pricing settings')).toBeInTheDocument()
-    expect(within(timelocks).getAllByText('48 hours')).toHaveLength(3)
+    expect(within(timelocks).getAllByText('72 hours')).toHaveLength(3)
     expect(within(timelocks).getAllByRole('columnheader')).toHaveLength(2)
     expect(within(timelocks).queryByText('What it governs')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
     expect(screen.getByRole('button', { name: 'withdraw' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'withdraw' })).toHaveClass('bg-brand-peach', 'text-app-bg')
-    expect(screen.getByRole('heading', { name: 'Withdraw USDC' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Withdraw USDG' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }))
     expect(mocks.connectWallet).toHaveBeenCalledTimes(1)
@@ -644,15 +679,15 @@ describe('Vaults page', () => {
     expect(within(seniorCard).getByText('2.0000')).toBeInTheDocument()
     expect(within(juniorCard).getByText('50M')).toBeInTheDocument()
     expect(within(juniorCard).getByText('1.0000')).toBeInTheDocument()
-    expect(within(seniorCard).getAllByText('USDC').length).toBeGreaterThanOrEqual(2)
-    expect(within(juniorCard).getAllByText('USDC').length).toBeGreaterThanOrEqual(2)
+    expect(within(seniorCard).getAllByText('USDG').length).toBeGreaterThanOrEqual(2)
+    expect(within(juniorCard).getAllByText('USDG').length).toBeGreaterThanOrEqual(2)
 
     expect(screen.queryByRole('button', { name: 'Free pool liquidity details' })).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Pool liquidity and loss protection' })).toBeInTheDocument()
     expect(screen.getByText('Shared pool liquidity')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Pool liquidity and loss protection' })).toBeInTheDocument()
-    expect(screen.getByText('Total pool assets')).toBeInTheDocument()
-    expect(screen.getByText('Reserved pool assets')).toBeInTheDocument()
+    expect(screen.getByText('Total pool USDG')).toBeInTheDocument()
+    expect(screen.getByText('Reserved pool USDG')).toBeInTheDocument()
     expect(screen.queryByText(/Estimated (LONG|SHORT) trading capacity/)).not.toBeInTheDocument()
     expect(screen.getByText('Junior · absorbs losses first')).toBeInTheDocument()
     expect(screen.getByText('Senior · protected by Junior')).toBeInTheDocument()
@@ -701,12 +736,12 @@ describe('Vaults page', () => {
       'getTrancheQueues',
       'getTrancheQueues',
       'getPendingTrancheState',
-      'maxSeniorExposureUsdc',
+      'maxSeniorExposureAssets',
       'maxSeniorShareBps',
       'getSeniorDepositCapacity',
-      'reservedSeniorDepositAssetsUsdc',
+      'reservedSeniorDepositAssets',
       'areSeniorDepositReservationsWithinLimits',
-      'minTrancheDepositUsdc',
+      'minTrancheDepositAssets',
       'lastDepositTime',
       'DEPOSIT_COOLDOWN',
       'lastDepositTime',
@@ -820,11 +855,11 @@ describe('Vaults page', () => {
 
     fireEvent.focus(chart)
     expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveAttribute('data-placement', 'left')
-    expect(parseFloat(screen.getByRole('status').style.left)).toBeCloseTo(90.27, 1)
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveAttribute('data-placement', 'left')
+    expect(parseFloat(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status').style.left)).toBeCloseTo(90.27, 1)
     fireEvent.keyDown(chart, { key: 'Home' })
     expect(screen.getByText('0.00% since start')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveAttribute('data-placement', 'right')
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveAttribute('data-placement', 'right')
     fireEvent.keyDown(chart, { key: 'ArrowRight' })
     expect(screen.getByText('+0.05% since start')).toBeInTheDocument()
     fireEvent.pointerDown(chart, { pointerType: 'touch', clientX: 860 })
@@ -924,8 +959,8 @@ describe('Vaults page', () => {
       name: 'Senior Vault interactive seven-day share price chart',
     })
     fireEvent.focus(chart)
-    expect(screen.getByRole('status')).toHaveTextContent('1.001')
-    expect(screen.getByRole('status')).toHaveTextContent('+0.10% since start')
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveTextContent('1.001')
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveTextContent('+0.10% since start')
     expect(screen.queryByText(/last fresh valuation/i)).not.toBeInTheDocument()
   })
 
@@ -1012,6 +1047,26 @@ describe('Vaults page', () => {
     expect(screen.queryByRole('heading', { name: 'The market exposure' })).not.toBeInTheDocument()
   })
 
+  it('places the junior waterfall directly after share price and keeps one set of performance metrics', async () => {
+    mocks.vaultHistory = completeHistoryFixture()
+    const { unmount } = renderVaults('/vaults/junior')
+    const sharePrice = screen.getByRole('heading', { name: 'Seven-day share price' }).closest('figure')
+    const breakdown = screen.getByRole('heading', { name: 'Return breakdown' }).closest('figure')
+    expect(sharePrice?.nextElementSibling).toBe(breakdown)
+    expect(breakdown?.closest('section')).toHaveAttribute('id', 'performance')
+    expect(document.querySelector('#activity')).not.toContainElement(breakdown)
+    expect(screen.getAllByText('7d return')).toHaveLength(1)
+    expect(screen.queryByText('Period return')).not.toBeInTheDocument()
+    expect(screen.queryByText('Selected reporting period')).not.toBeInTheDocument()
+    expect(screen.queryByText('APY equivalent')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Return follows a share held/)).not.toBeInTheDocument()
+    fireEvent.focus(within(screen.getByRole('region', { name: 'Performance' })).getByLabelText('7d realized APY details'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('not a forecast')
+    unmount()
+    renderVaults('/vaults/senior')
+    expect(screen.queryByRole('heading', { name: 'Return breakdown' })).not.toBeInTheDocument()
+  })
+
   it('shows Junior market exposure between Overview and Performance', () => {
     mocks.vaultHistory = completeHistoryFixture()
     mocks.readContractsData = liveReadFixture()
@@ -1021,19 +1076,36 @@ describe('Vaults page', () => {
     expect(section.previousElementSibling).toHaveAttribute('id', 'overview')
     expect(section.nextElementSibling).toHaveAttribute('id', 'performance')
     expect(screen.getByRole('button', { name: 'Market exposure' })).toBeInTheDocument()
+    // 10M net displayed notional / 50M Junior capital gives ±0.20%
+    // Junior PnL for a 1% index move, distinct from the 2.40% capital-loss example.
+    expect(within(section).getByText('+0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(section).getByText('-0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(section).queryByText(/Market sensitivity is unavailable/)).not.toBeInTheDocument()
     expect(within(section).getByText('41.67%')).toBeInTheDocument()
     expect(within(section).getByText('11.20%')).toBeInTheDocument()
     expect(within(section).getByText('2.40%')).toBeInTheDocument()
     expect(within(section).getByRole('img', { name: 'Cash unavailable for LP withdrawals: 25.00%' })).toBeInTheDocument()
   })
 
-  it('withholds market sensitivity when the pool mark is stale', () => {
-    mocks.readContractsData = liveReadFixture({ markFresh: false })
-    renderVaults('/vaults/junior')
+  it.each([
+    ['stale', { markFresh: false }],
+    ['frozen', { oracleFrozen: true }],
+  ] as const)('withholds previously available sensitivity when the pool mark is %s', (_label, changes) => {
+    mocks.readContractsData = liveReadFixture()
+    const fresh = renderVaults('/vaults/junior')
+    const freshSection = screen.getByRole('region', { name: 'The market exposure' })
+    expect(within(freshSection).getByText('+0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(freshSection).getByText('-0.20%', { exact: true })).toBeInTheDocument()
+    expect(within(freshSection).queryByText(/Market sensitivity is unavailable/)).not.toBeInTheDocument()
+    fresh.unmount()
 
+    mocks.readContractsData = liveReadFixture(changes)
+    renderVaults('/vaults/junior')
     const section = screen.getByRole('region', { name: 'The market exposure' })
     expect(within(section).getByText(/Market sensitivity is unavailable/)).toBeInTheDocument()
     expect(within(section).getByText(/live pricing is unavailable/)).toBeInTheDocument()
+    expect(within(section).queryByText('+0.20%', { exact: true })).not.toBeInTheDocument()
+    expect(within(section).queryByText('-0.20%', { exact: true })).not.toBeInTheDocument()
     expect(within(section).getByText('11.20%')).toBeInTheDocument()
   })
 
@@ -1117,7 +1189,7 @@ describe('Vaults page', () => {
     const queueButton = await screen.findByRole('button', { name: 'Confirm deposit' })
     expect(queueButton).toBeEnabled()
     fireEvent.click(queueButton)
-    expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(usdc(2))
+    expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(assets(2))
     expect(screen.getByRole('dialog', { name: 'Deposit flow' })).toBeInTheDocument()
   })
 
@@ -1128,7 +1200,7 @@ describe('Vaults page', () => {
     mocks.depositRequests = [{
       requestId: 500_002n,
       targetTimestamp: 1_800_007_200,
-      pendingAssets: usdc(25),
+      pendingAssets: assets(25),
       pendingSharesEstimate: shares(12),
       claimableAssets: 0n,
       claimableShares: 0n,
@@ -1153,9 +1225,9 @@ describe('Vaults page', () => {
     mocks.depositRequests = [{
       requestId: 500_002n,
       targetTimestamp: 1_800_007_200,
-      pendingAssets: usdc(25),
+      pendingAssets: assets(25),
       pendingSharesEstimate: shares(12),
-      claimableAssets: usdc(25),
+      claimableAssets: assets(25),
       claimableShares: shares(12),
       refundableAssets: 0n,
       matured: true,
@@ -1181,9 +1253,9 @@ describe('Vaults page', () => {
       requestId: 500_003n,
       targetTimestamp: 1_800_010_800,
       pendingShares: 0n,
-      pendingAssetsEstimate: usdc(10),
+      pendingAssetsEstimate: assets(10),
       claimableShares: shares(5),
-      claimableAssets: usdc(10),
+      claimableAssets: assets(10),
       refundableShares: 0n,
       refundPending: false,
       matured: true,
@@ -1192,11 +1264,11 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
     const claimWithdrawalSection = screen.getByRole('heading', { name: 'Pending withdrawals' }).closest('section')
     expect(within(claimWithdrawalSection!).getByText('Eligible since')).toBeInTheDocument()
-    expect(within(claimWithdrawalSection!).queryByText('Estimated USDC')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Move USDC to wallet' }))
+    expect(within(claimWithdrawalSection!).queryByText('Estimated USDG')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Move USDG to wallet' }))
     expect(mocks.vaultClaimRedeem).not.toHaveBeenCalled()
-    const claimWithdrawalFlow = screen.getByRole('dialog', { name: 'Move USDC flow' })
-    fireEvent.click(within(claimWithdrawalFlow).getByRole('button', { name: 'Move USDC' }))
+    const claimWithdrawalFlow = screen.getByRole('dialog', { name: 'Move USDG flow' })
+    fireEvent.click(within(claimWithdrawalFlow).getByRole('button', { name: 'Move USDG' }))
     expect(mocks.vaultClaimRedeem).toHaveBeenCalledWith(500_003n, shares(5))
   })
 
@@ -1212,7 +1284,7 @@ describe('Vaults page', () => {
       directRedeemableShares: shares(12),
       pendingAssets: 0n,
       pendingSharesEstimate: 0n,
-      claimableAssets: usdc(25),
+      claimableAssets: assets(25),
       claimableShares: shares(12),
       refundableAssets: 0n,
       matured: true,
@@ -1246,7 +1318,7 @@ describe('Vaults page', () => {
       pendingSharesEstimate: 0n,
       claimableAssets: 0n,
       claimableShares: 0n,
-      refundableAssets: usdc(7),
+      refundableAssets: assets(7),
       matured: true,
     }]
 
@@ -1255,11 +1327,11 @@ describe('Vaults page', () => {
     const recoverDepositSection = screen.getByRole('heading', { name: 'Pending deposits' }).closest('section')
     expect(within(recoverDepositSection!).getByText('Eligible since')).toBeInTheDocument()
     expect(within(recoverDepositSection!).queryByText('Estimated shares')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Return USDC to wallet' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Return USDG to wallet' }))
     expect(mocks.vaultCancelPendingDeposit).not.toHaveBeenCalled()
-    const recoverFlow = screen.getByRole('dialog', { name: 'Return USDC flow' })
+    const recoverFlow = screen.getByRole('dialog', { name: 'Return USDG flow' })
     expect(within(recoverFlow).getByText('Complete')).toBeInTheDocument()
-    fireEvent.click(within(recoverFlow).getByRole('button', { name: 'Return USDC' }))
+    fireEvent.click(within(recoverFlow).getByRole('button', { name: 'Return USDG' }))
     expect(mocks.vaultCancelPendingDeposit).toHaveBeenCalledWith(500_004n)
 
     recoveryView.unmount()
@@ -1268,7 +1340,7 @@ describe('Vaults page', () => {
       requestId: 500_005n,
       targetTimestamp: 1_800_010_800,
       pendingShares: shares(3),
-      pendingAssetsEstimate: usdc(6),
+      pendingAssetsEstimate: assets(6),
       claimableShares: 0n,
       claimableAssets: 0n,
       refundableShares: 0n,
@@ -1301,7 +1373,7 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
     const reclaimWithdrawalSection = screen.getByRole('heading', { name: 'Pending withdrawals' }).closest('section')
     expect(within(reclaimWithdrawalSection!).getByText('Eligible since')).toBeInTheDocument()
-    expect(within(reclaimWithdrawalSection!).queryByText('Estimated USDC')).not.toBeInTheDocument()
+    expect(within(reclaimWithdrawalSection!).queryByText('Estimated USDG')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Return shares to wallet' }))
     expect(mocks.vaultClaimRedeemRefund).not.toHaveBeenCalled()
     const reclaimFlow = screen.getByRole('dialog', { name: 'Return shares flow' })
@@ -1337,7 +1409,7 @@ describe('Vaults page', () => {
     expect(mocks.quoteRefetch).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: 'Confirm deposit' }))
     expect(mocks.vaultReset).toHaveBeenCalledTimes(2)
-    expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(usdc(100))
+    expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(assets(100))
     expect(screen.getByRole('dialog', { name: 'Deposit flow' })).toBeInTheDocument()
 
     unmount()
@@ -1354,7 +1426,7 @@ describe('Vaults page', () => {
     mocks.readContractsData = liveReadFixture({
       degradedMode: true,
       seniorHighWaterMark: 70_000_000,
-      walletUsdc: 50,
+      walletAssets: 50,
     })
     mocks.quoteContractsData = [success(shares(1)), success(shares(1))]
 
@@ -1367,7 +1439,7 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
     fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: '0.5' } })
     expect(screen.getByRole('button', { name: 'Review withdrawal' })).toBeEnabled()
-    expect(screen.queryByText(/Withdrawals below 1 USDC/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Withdrawals below 1 USDG/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Withdrawals are unavailable while the protocol is in degraded mode/i)).not.toBeInTheDocument()
   })
 })

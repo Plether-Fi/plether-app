@@ -7,9 +7,9 @@ When a position closes, Plether answers two separate questions:
 1. What are the realized price PnL and the separate action charges or rebate?
 2. Can the liquidity pool fund the residual price payout immediately?
 
-Pledge release follows separately and must preserve the terminal cap of any remaining position. The residual **price payout** is either funded in full or recorded in full as a trader claim. With an open position, funded price payouts credit PnL pledge; without one, they credit free settlement. A separate net action rebate is limited by available cash, and its unpaid remainder is waived rather than recorded as a claim.
+Pledge release follows separately and must preserve the terminal cap of any remaining position. The residual **price payout** is either funded in full or recorded in full as a trader claim. With an open position, funded price payouts credit PnL pledge; without one, they credit free USDG. A separate net action rebate is limited by available cash, and its unpaid remainder is waived rather than recorded as a claim.
 
-This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDC[^usdc].
+This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDG[^usdg].
 
 > Bounded liability determines how much the protocol can owe. It does not guarantee that every amount owed can be withdrawn in the same transaction.
 
@@ -22,7 +22,7 @@ This separation prevents a temporary cash shortage from trapping traders in open
 | **Price payout**        | Positive price gain left after action charges withheld from it |
 | **Action rebate**       | A net action credit paid only from available cash; an unpaid remainder is waived |
 | **Trader claim**        | An entire residual price payout recorded because it could not be funded in full |
-| **Withdrawable USDC**   | Margin Account USDC that can currently leave the protocol after all account checks                                     |
+| **Withdrawable USDG**   | Margin Account USDG that can currently leave the protocol after all account checks                                     |
 
 A profitable close may involve several of these values at once.
 
@@ -78,9 +78,9 @@ The residual price payout is the positive price gain remaining after withheld ac
 
 The planner calculates how much PnL pledge can be released while preserving the terminal collectible cap of any remaining position. This is not always the full unused pro-rata allocation on a losing partial close.
 
-That USDC already exists inside the Margin Account. It does not require a new transfer from the liquidity pool.
+That USDG already exists inside the Margin Account. It does not require a new transfer from the liquidity pool.
 
-On a profitable close, the released margin normally becomes free settlement balance. On a losing close, some or all of it may be consumed by the loss.
+On a profitable close, the released margin normally becomes free USDG balance. On a losing close, some or all of it may be consumed by the loss.
 
 For a partial close, the margin supporting the remaining position stays locked.
 
@@ -88,7 +88,7 @@ For a partial close, the margin supporting the remaining position stays locked.
 
 Price loss is netted against the same account’s trader claim, then collectible PnL pledge. Excess beyond the terminal cap is recorded as a price-loss write-off.
 
-Separately, action charges offset a price gain first, then use the attributable VPI clawback reserve, spendable action reserve and free settlement. A full close can also use eligible committed-order margin. PnL pledge and protected execution bounties remain isolated from those charges.
+Carry is collected from active position margin first, then eligible free USDG, before close accounting. Any unpaid carry joins the close action charge. That charge offsets a price gain first, then uses attributable VPI clawback backing, spendable action reserve, free USDG and margin safely released by the close. A full close can also use eligible committed-order margin. The margin still backing a residual position and protected execution bounties remain isolated from those later action charges.
 
 #### Partial reductions must settle in full
 
@@ -130,9 +130,9 @@ Every dollar of spread actually retained, collected or recovered from the same a
 
 The onchain close preview exposes:
 
-* `frozenSpreadUsdc` — total spread assessed
-* `frozenSpreadPaidUsdc` — spread collected for LPs
-* `frozenSpreadWaivedUsdc` — uncollectible terminal spread waived
+* **Assessed spread (USDG)** — total spread assessed
+* **Paid spread (USDG)** — spread collected for LPs
+* **Waived spread (USDG)** — uncollectible terminal spread waived
 
 For a valid close:
 
@@ -144,49 +144,40 @@ spread assessed
 
 All three values are zero outside `oracleFrozen`.
 
-A successful close with a nonzero assessment emits:
-
-```
-FrozenCloseSpreadSettled(
-    account,
-    assessedUsdc,
-    paidUsdc,
-    waivedUsdc
-)
-```
+A successful close with a nonzero assessment records the assessed, paid and waived USDG amounts in its onchain result.
 
 #### Collection example
 
 Suppose a terminal full close has no price gain and these separate amounts:
 
 ```
-Price loss:                    100 USDC
-Collectible PnL pledge:         100 USDC
-Execution fee:                  10 USDC
-Carry and VPI:                   0 USDC
-Frozen-close spread:            50 USDC
-Eligible action funds:          30 USDC
+Price loss:                    100 USDG
+Collectible PnL pledge:         100 USDG
+Execution fee:                  10 USDG
+Carry and VPI:                   0 USDG
+Frozen-close spread:            50 USDG
+Eligible action funds:          30 USDG
 ```
 
 Price loss and action charges use different backing:
 
 ```
-100 USDC of pledge → price loss
-10 USDC of action funds → execution fee
-20 USDC of action funds → frozen-close spread
+100 USDG of pledge → price loss
+10 USDG of action funds → execution fee
+20 USDG of action funds → frozen-close spread
 ```
 
 The result is:
 
 ```
-Frozen spread assessed: 50 USDC
-Frozen spread paid:     20 USDC
-Frozen spread waived:   30 USDC
+Frozen spread assessed: 50 USDG
+Frozen spread paid:     20 USDG
+Frozen spread waived:   30 USDG
 ```
 
-The `30 USDC` waiver is not bad debt, a trader claim or an LP receivable.
+The `30 USDG` waiver is not bad debt, a trader claim or an LP receivable.
 
-The same action funding is insufficient for a partial reduction: its `60 USDC` action charge cannot be fully covered by `30 USDC`. Unused PnL pledge cannot be repurposed to cover the difference.
+For a partial reduction, `30 USDG` of action funds is insufficient for the `60 USDG` charge unless the close can safely release at least another `30 USDG` of position margin while preserving the residual position’s health. Margin still needed by that residual position cannot fund the difference. If the charge remains uncollectible, the partial reduction does not execute.
 
 ### Step 3: Fund or record the positive settlement
 
@@ -208,7 +199,7 @@ The new payout follows an all-or-nothing rule:
 
 Plether does not split one close between a partial immediate payment and a partial claim.
 
-For example, if a trader is owed `250 USDC` but only `200 USDC` is available above existing claims, the entire `250 USDC` becomes a claim.
+For example, if a trader is owed `250 USDG` but only `200 USDG` is available above existing claims, the entire `250 USDG` becomes a claim.
 
 Existing claims therefore cannot be bypassed by newer profitable closes.
 
@@ -217,18 +208,18 @@ Any applicable frozen-close spread has already been deducted before Plether dete
 For example:
 
 ```
-Positive settlement before spread: 300 USDC
-Frozen-close spread:                 50 USDC
-Fresh trader payout:                250 USDC
+Positive settlement before spread: 300 USDG
+Frozen-close spread:                 50 USDG
+Fresh trader payout:                250 USDG
 ```
 
-If immediate settlement liquidity is insufficient, the resulting claim is `250 USDC`, not `300 USDC`.
+If immediate settlement liquidity is insufficient, the resulting claim is `250 USDG`, not `300 USDG`.
 
 The current live final-close summary does not show the complete immediate-payout-versus-claim split; the onchain settlement result is authoritative.
 
 ### Immediate settlement does not mean wallet settlement
 
-An immediate payout moves USDC from the liquidity pool to the clearinghouse and credits the Trading Account’s Margin Account.
+An immediate payout moves USDG from the liquidity pool to the clearinghouse and credits the Trading Account’s Margin Account.
 
 It is not transferred directly to the trader’s wallet.
 
@@ -244,7 +235,7 @@ If the trader is flat and the balance is otherwise unencumbered, it can normally
 
 ### What is a trader claim?
 
-A trader claim is a USDC-denominated amount that the liquidity pool owes to a specific Trading Account.
+A trader claim is a USDG-denominated amount that the liquidity pool owes to a specific Trading Account.
 
 It is:
 
@@ -252,11 +243,11 @@ It is:
 * separate from the Trading Account’s Margin Account balance;
 * reserved ahead of LP withdrawals;
 * added to any existing claim belonging to the same account;
-* fixed in USDC rather than continuing to move with the index.
+* fixed in USDG rather than continuing to move with the index.
 
 It is not:
 
-* wallet USDC;
+* wallet USDG;
 * free margin or buying power;
 * collateral for ordinary position-health calculations;
 * an LP share;
@@ -305,15 +296,15 @@ If the account still has an open position, carry is checkpointed before the clai
 
 Aggregate coverage is enforced onchain. A claim settled while a position remains open credits PnL pledge instead of free Margin Account balance. The current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
 
-### A claim is price-risk backing, not free USDC
+### A claim is price-risk backing, not free USDG
 
-An unsettled same-account claim is included in V2 price-risk equity and can be netted against that account’s price losses. This is distinct from free buying power, action-charge collateral or withdrawable USDC.
+An unsettled same-account claim is included in V2 price-risk equity and can be netted against that account’s price losses. This is distinct from free buying power, action-charge collateral or withdrawable USDG.
 
 Price losses consume the same account’s claim before collectible PnL pledge, including on eligible partial closes. Action charges follow a separate funding path:
 
-![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
+![Carry consumes active position margin first, then free USDG. Price losses then use claims and remaining collectible pledge; later action charges can use safely released margin, not residual position backing.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
 
-Claim backing and PnL pledge are not general sources for execution fees, carry, VPI or frozen spread. A partial close must fund its action charge without waiver; a full close can waive the uncollectible remainder. Price-loss write-offs and waived action charges are reported separately.
+Claims cannot pay carry or general action costs. Active position margin pays accrued carry first; after that checkpoint, only margin safely released by the close can help fund its action charge. Margin still backing a residual position remains protected from those later charges. A partial close must fund its action charge without waiver; a full close can waive the uncollectible remainder. Price-loss write-offs and waived action charges are reported separately.
 
 Claims belonging to other traders are never used.
 
@@ -350,7 +341,7 @@ A generic “Pool liquidity” number should therefore not be treated as a guara
 
 ### How claims affect LP withdrawals
 
-Trader claims become reserved liabilities as soon as they are recorded. The liquidity pool does not need to transfer USDC for the reserve to take effect.
+Trader claims become reserved liabilities as soon as they are recorded. The liquidity pool does not need to transfer USDG for the reserve to take effect.
 
 For the holder-facing withdrawal flow and live-limit checks, see [Withdraw liquidity](../providing-liquidity/withdraw-liquidity.md).
 
@@ -451,7 +442,7 @@ Similarly, bad debt telemetry alone is not the degraded-mode condition. What mat
 
 A waived frozen-close spread is neither an asset nor bad debt. It therefore does not increase effective backing and does not create an additional degraded-mode liability.
 
-While degraded, risk-increasing trades and new LP deposits are blocked. Otherwise-eligible LP withdrawal requests can still enter the queue, but no new withdrawal USDC is allocated while the degraded latch remains active. Already-funded withdrawal actions remain usable. Funding can resume only after effective solvency is restored and the protocol owner explicitly clears degraded mode. Risk-reducing actions such as closes and liquidations remain available, along with recovery and recapitalization paths.
+While degraded, risk-increasing trades and new LP deposits are blocked. Otherwise-eligible LP withdrawal requests can still enter the queue, but no new withdrawal USDG is allocated while the degraded latch remains active. Already-funded withdrawal actions remain usable. Funding can resume only after effective solvency is restored and the protocol owner explicitly clears degraded mode. Risk-reducing actions such as closes and liquidations remain available, along with recovery and recapitalization paths.
 
 Claim settlement uses its own aggregate-coverage test. A fully covered claim can therefore be settled even while the protocol remains degraded for its live positions.
 
@@ -488,17 +479,17 @@ In Examples 1–3, the net positive settlement is the amount remaining after sig
 
 A trader closes a position with:
 
-* Released margin: `1,000 USDC`
-* Net positive settlement: `250 USDC`
-* Physical pool assets: `5,000 USDC`
-* Existing aggregate claims: `1,000 USDC`
+* Released margin: `1,000 USDG`
+* Net positive settlement: `250 USDG`
+* Physical pool assets: `5,000 USDG`
+* Existing aggregate claims: `1,000 USDG`
 
-Fresh payout capacity is `4,000 USDC`, so the entire payout fits.
+Fresh payout capacity is `4,000 USDG`, so the entire payout fits.
 
 Result:
 
-* `1,000 USDC` of margin is unlocked.
-* `250 USDC` is credited to the Margin Account.
+* `1,000 USDG` of margin is unlocked.
+* `250 USDG` is credited to the Margin Account.
 * No new claim is created.
 * Nothing reaches the wallet until the trader withdraws.
 
@@ -506,82 +497,82 @@ Result:
 
 Assume instead:
 
-* Released margin: `1,000 USDC`
-* Net positive settlement: `250 USDC`
-* Physical pool assets: `1,200 USDC`
-* Existing aggregate claims: `1,000 USDC`
+* Released margin: `1,000 USDG`
+* Net positive settlement: `250 USDG`
+* Physical pool assets: `1,200 USDG`
+* Existing aggregate claims: `1,000 USDG`
 
-Only `200 USDC` is available above existing claims.
+Only `200 USDG` is available above existing claims.
 
-Plether does not pay `200 USDC` and defer `50 USDC`.
+Plether does not pay `200 USDG` and defer `50 USDG`.
 
 Result:
 
-* The full `250 USDC` becomes a trader claim.
-* The `1,000 USDC` margin is still unlocked.
-* Aggregate claims increase to `1,250 USDC`.
+* The full `250 USDG` becomes a trader claim.
+* The `1,000 USDG` margin is still unlocked.
+* Aggregate claims increase to `1,250 USDG`.
 * Claims remain unavailable until aggregate coverage is restored.
 
 #### Example 3: claim coverage is restored
 
-Physical pool assets later reach `1,250 USDC`, matching aggregate claims of `1,250 USDC`.
+Physical pool assets later reach `1,250 USDG`, matching aggregate claims of `1,250 USDG`.
 
-The trader settles their `250 USDC` claim.
+The trader settles their `250 USDG` claim.
 
 Result:
 
-* `250 USDC` moves to the Trading Account’s Margin Account.
-* Physical pool assets fall to `1,000 USDC`.
-* Aggregate claims fall to `1,000 USDC`.
+* `250 USDG` moves to the Trading Account’s Margin Account.
+* Physical pool assets fall to `1,000 USDG`.
+* Aggregate claims fall to `1,000 USDG`.
 * The remaining claims stay fully covered.
 
 #### Example 4: the same account later incurs a loss
 
-An account has a `300 USDC` trader claim.
+An account has a `300 USDG` trader claim.
 
-A later full close realizes a price loss of `500 USDC`. Assume no collectible PnL pledge remains and no action charge applies.
+A later full close realizes a price loss of `500 USDG`. Assume no collectible PnL pledge remains and no action charge applies.
 
 Result:
 
-* `300 USDC` of the account’s claim is consumed.
+* `300 USDG` of the account’s claim is consumed.
 * The claim falls to zero.
-* The remaining `200 USDC` is recorded as a price-loss write-off.
+* The remaining `200 USDG` is recorded as a price-loss write-off.
 * No other trader’s claim is affected.
 
 #### Example 5: an underfunded frozen-close spread
 
-A trader voluntarily reduces `10,000 USDC` of notional[^notional] during `oracleFrozen`.
+A trader voluntarily reduces `10,000 USDG` of notional[^notional] during `oracleFrozen`.
 
 At the current rate:
 
 ```
 Frozen-close spread
-= 10,000 USDC × 0.50%
-= 50 USDC
+= 10,000 USDG × 0.50%
+= 50 USDG
 ```
 
-Assume price loss has been settled separately, there is no negative VPI offset, and recovered action funds leave only `20 USDC` for spread after execution fee, carry and positive VPI.
+Assume price loss has been settled separately, there is no negative VPI offset, and recovered action funds leave only `20 USDG` for spread after execution fee, carry and positive VPI.
 
 For a partial reduction:
 
-* The full `50 USDC` spread cannot be paid.
+* The full `50 USDG` spread cannot be paid.
 * The reduction does not execute.
 * No partial collection is finalized.
 * The original position remains open.
 
 For a terminal full close:
 
-* `20 USDC` is paid to LPs.
-* `30 USDC` is waived.
+* `20 USDG` is paid to LPs.
+* `30 USDG` is waived.
 * No trader claim is created for the waived amount.
 * The waiver adds no bad debt or LP receivable.
 
 The full-close result satisfies:
 
 ```
-50 USDC assessed
-= 20 USDC paid
-+ 30 USDC waived
+50 USDG assessed
+= 20 USDG paid
++ 30 USDG waived
 ```
 
 ### The distinction to remember
@@ -590,18 +581,18 @@ The full-close result satisfies:
 
 **Settlement** tells you whether the positive result became an immediate Margin Account credit or a trader claim.
 
-**Withdrawable** tells you how much USDC can reach your wallet now.
+**Withdrawable** tells you how much USDG can reach your wallet now.
 
 **Frozen-close spread** is a separate trader charge. The paid amount belongs to LPs; an uncollectible terminal amount is waived rather than becoming a claim, bad debt or LP receivable.
 
 They are related values. They are not the same value.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^bps]: Basis points; 100 bps equals 1%.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.

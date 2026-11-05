@@ -28,6 +28,18 @@ afterEach(() => {
 })
 
 describe('Cloudflare Pages Worker', () => {
+  it('serves the mutable Divisions publication without retaining browser caches', async () => {
+    const response = await worker.fetch(new Request('https://insights.plether.com/divisions/current.json'), { ASSETS: assets })
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.status).toBe(200)
+  })
+  it('returns 404 when Pages serves the SPA for a missing Divisions publication', async () => {
+    const htmlAssets = { fetch: vi.fn().mockResolvedValue(new Response('<html>SPA</html>', { headers: { 'Content-Type': 'text/html; charset=utf-8' } })) }
+    const response = await worker.fetch(new Request('https://insights.plether.com/divisions/current.json'), { ASSETS: htmlAssets })
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(htmlAssets.fetch).toHaveBeenCalledTimes(1)
+  })
   it('returns a controlled error when the backend binding is missing', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -101,6 +113,11 @@ describe('Cloudflare Pages Worker', () => {
 
   it.each([
     ['/api/insights/v1/status', 30],
+    ['/api/insights/v1/divisions/stats', 15],
+    ['/api/insights/v1/divisions/traders', 15],
+    ['/api/insights/v1/divisions/live', 15],
+    ['/api/insights/v1/divisions/current', 15],
+    ['/api/insights/v1/divisions/history?week=1791752400', 15],
     ['/api/insights/v1/competitions/summer-2026/leaderboard?limit=50', 15],
     ['/api/insights/v1/competitions/summer-2026/wallets/0x1234', 15],
   ])('edge-caches successful public reads for %s for %i seconds', async (path, cacheTtl) => {
@@ -180,9 +197,19 @@ describe('Cloudflare Pages Worker', () => {
       const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))
       vi.stubGlobal('fetch', fetchMock)
 
+      // The anonymous request must be cacheable, otherwise a missing bypass
+      // guard would be indistinguishable from an endpoint with no cache TTL.
+      await worker.fetch(apiRequest(), {
+        INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+        ASSETS: assets,
+      })
+      expect(proxiedFetchOptions(fetchMock).cf?.cacheTtlByStatus['200-299']).toBe(30)
+      expect(proxiedFetchOptions(fetchMock).cache).toBeUndefined()
+      fetchMock.mockClear()
+
       await worker.fetch(
         new Request(
-          'https://insights.plether.com/api/insights/v1/competitions/current',
+          apiRequest().url,
           { headers: { [headerName]: headerValue } },
         ),
         {
@@ -271,6 +298,50 @@ describe('Cloudflare Pages Worker', () => {
     )
     expect(options.headers?.get('x-forwarded-host')).toBe('insights.plether.com')
     expect(options.headers?.get('x-forwarded-proto')).toBe('https')
+  })
+
+  it('proxies Divisions registration with the same origin protection', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ registration: {} }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url = 'https://insights.plether.com/api/insights/v1/divisions/registrations/session'
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      INSIGHTS_REGISTRATION_PUBLIC_ORIGIN: 'https://insights.plether.com',
+      INSIGHTS_REGISTRATION_ORIGIN_TOKEN: 'trusted-pages-secret',
+      ASSETS: assets,
+    }
+    const response = await worker.fetch(new Request(url, {
+      method: 'POST', headers: { Origin: 'https://insights.plether.com' },
+    }), env)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('private, no-store, max-age=0')
+    expect(proxiedFetchOptions(fetchMock).headers?.get('x-plether-registration-origin')).toBe('trusted-pages-secret')
+
+    fetchMock.mockClear()
+    const rejected = await worker.fetch(new Request(url, {
+      method: 'POST', headers: { Origin: 'https://app.sepolia.plether.com' },
+    }), env)
+    expect(rejected.status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('permits only the canonical Discord callback redirect', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, {
+      status: 303, headers: { Location: 'https://insights.plether.com/register' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url = 'https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback?code=provider-code&state=opaque'
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      INSIGHTS_REGISTRATION_PUBLIC_ORIGIN: 'https://insights.plether.com',
+      INSIGHTS_REGISTRATION_ORIGIN_TOKEN: 'trusted-pages-secret',
+      ASSETS: assets,
+    }
+    expect((await worker.fetch(new Request(url, { headers: { 'Sec-Fetch-Site': 'cross-site' } }), env)).status).toBe(303)
+    fetchMock.mockResolvedValue(new Response(null, {
+      status: 303, headers: { Location: 'https://insights.plether.com/register?code=leaked' },
+    }))
+    expect((await worker.fetch(new Request(url), env)).status).toBe(502)
   })
 
   it.each([
@@ -447,14 +518,19 @@ describe('Cloudflare Pages Worker', () => {
     })
   })
 
-  it('rejects registration on Pages preview hosts before exposing the origin credential', async () => {
-    const fetchMock = vi.fn()
+  it.each([
+    ['POST', 'session'],
+    ['GET', 'x/callback?code=provider-code&state=opaque'],
+  ])('rejects preview-host registration %s %s before exposing the origin credential', async (method, path) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))
     vi.stubGlobal('fetch', fetchMock)
 
     const response = await worker.fetch(
       new Request(
-        'https://deployment.plether-insights.pages.dev/api/insights/v1/competitions/testnet-trading-2026-09/registrations/session',
-        { method: 'POST' },
+        `https://deployment.plether-insights.pages.dev/api/insights/v1/competitions/testnet-trading-2026-09/registrations/${path}`,
+        // Supply valid browser provenance so only the preview-host binding
+        // rejects this request. OAuth callbacks bypass that provenance gate.
+        { method, headers: { Origin: 'https://insights.plether.com' } },
       ),
       {
         INSIGHTS_BACKEND_URL: 'https://backend.example.com',

@@ -98,11 +98,16 @@ export async function journalLiabilities(db, chainId, release, monitor) {
   return rows.map(row => ({ nonce: uint(row.nonce), cost: uint(row.cost) }))
 }
 
-export async function observeFunding({ client, db, release, monitors, previous, now = () => BigInt(Math.floor(Date.now()/1000)) }) {
+function validateHead(block, previous) {
+  if (typeof block?.number !== 'bigint' || block.number < 0n || typeof block.hash !== 'string' || !block.hash
+    || previous && (block.number < previous.number || block.number === previous.number && block.hash !== previous.hash)) throw new Error('Funding head changed')
+}
+
+async function observeSnapshot({ client, db, release, monitors, previous, now = () => BigInt(Math.floor(Date.now()/1000)) }, head) {
   const chainId = release.network.chainId
   if (await client.getChainId() !== chainId) throw new Error('Funding chain mismatch')
-  const block = await client.getBlock({ blockTag: 'latest' })
-  if (block.number === null || !block.hash || previous && (block.number < previous.number || block.number === previous.number && block.hash !== previous.hash)) throw new Error('Funding head changed')
+  const block = head ?? await client.getBlock({ blockTag: 'latest' })
+  validateHead(block, previous)
   const [gasPrice, priorityFee, pendingBlock] = await Promise.all([
     client.getGasPrice(), client.estimateMaxPriorityFeePerGas().catch(() => undefined),
     client.getBlock({ blockTag: 'pending', includeTransactions: true }).catch(() => undefined),
@@ -135,4 +140,18 @@ export async function observeFunding({ client, db, release, monitors, previous, 
   const canonical = await client.getBlock({ blockNumber: block.number })
   if (canonical.hash !== block.hash || now()-block.timestamp > 15n || block.timestamp > now()+2n) throw new Error('Funding snapshot not canonical or fresh')
   return { block, results }
+}
+
+export async function observeFunding(options) {
+  const snapshot = await observeSnapshot(options)
+  if (!snapshot.results.some(r => r.diagnostic === 'PENDING_LIABILITY_UNKNOWN')) return snapshot
+
+  // A transaction can land between the fixed header, pending block and pending
+  // nonce reads. Resample once only when the head has advanced. The replacement
+  // snapshot rereads every balance, fee, nonce and journal at the new block;
+  // nothing from the earlier inventory is published alongside it.
+  const head = await options.client.getBlock({ blockTag: 'latest' })
+  validateHead(head, snapshot.block)
+  if (head.number === snapshot.block.number) return snapshot
+  return observeSnapshot({ ...options, previous: snapshot.block }, head)
 }

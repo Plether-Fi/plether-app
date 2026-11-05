@@ -6,9 +6,9 @@ import { formatUnits } from 'viem'
 export interface PerpsPriceRiskInputs {
   size: bigint
   side: number
-  entryCostUsdcAtoms: bigint
-  positionMarginUsdc: bigint
-  traderClaimBalanceUsdc: bigint
+  entryCostAssetAtoms: bigint
+  positionMarginAssets: bigint
+  traderClaimBalanceAssets: bigint
   capPrice: bigint
   maintenanceMarginBps: bigint
 }
@@ -20,20 +20,20 @@ export type LiquidationThreshold =
 
 export function calculatePriceRisk(input: PerpsPriceRiskInputs, rawPrice: bigint) {
   const price = rawPrice > input.capPrice ? input.capPrice : rawPrice
-  const notionalUsdc = input.size / 10n ** 20n * price
-  const pnlUsdc = input.side === 0
-    ? input.entryCostUsdcAtoms - notionalUsdc
-    : notionalUsdc - input.entryCostUsdcAtoms
-  const equityUsdc = input.positionMarginUsdc + input.traderClaimBalanceUsdc + pnlUsdc
-  const maintenanceMarginUsdc = notionalUsdc * input.maintenanceMarginBps / 10_000n
-  return { pnlUsdc, equityUsdc, notionalUsdc, maintenanceMarginUsdc, liquidatable: equityUsdc <= maintenanceMarginUsdc }
+  const notionalAssets = input.size / 10n ** 20n * price
+  const pnlAssets = input.side === 0
+    ? input.entryCostAssetAtoms - notionalAssets
+    : notionalAssets - input.entryCostAssetAtoms
+  const equityAssets = input.positionMarginAssets + input.traderClaimBalanceAssets + pnlAssets
+  const maintenanceMarginAssets = notionalAssets * input.maintenanceMarginBps / 10_000n
+  return { pnlAssets, equityAssets, notionalAssets, maintenanceMarginAssets, liquidatable: equityAssets <= maintenanceMarginAssets }
 }
 
 export function findLiquidationThreshold(input: PerpsPriceRiskInputs | undefined): LiquidationThreshold {
   if (!input || input.size <= 0n || input.size % (10n ** 20n) !== 0n ||
     (input.side !== 0 && input.side !== 1) || input.capPrice <= 0n ||
     input.maintenanceMarginBps < 0n || input.maintenanceMarginBps > 10_000n ||
-    input.entryCostUsdcAtoms < 0n || input.positionMarginUsdc < 0n || input.traderClaimBalanceUsdc < 0n) {
+    input.entryCostAssetAtoms < 0n || input.positionMarginAssets < 0n || input.traderClaimBalanceAssets < 0n) {
     return { status: 'unavailable' }
   }
   const at = (price: bigint) => calculatePriceRisk(input, price).liquidatable
@@ -67,13 +67,13 @@ export function formatLiquidationPrice(rawPrice: bigint | undefined, capPrice: b
 }
 
 /** MarginClearinghouseAccountingLib.projectCarryLoss: active margin, then free funds. */
-export function projectCarry(positionMarginUsdc: bigint, freeUsdc: bigint, carryUsdc: bigint) {
-  const fromMargin = carryUsdc < positionMarginUsdc ? carryUsdc : positionMarginUsdc
-  const residual = carryUsdc - fromMargin
-  const fromFree = residual < freeUsdc ? residual : freeUsdc
+export function projectCarry(positionMarginAssets: bigint, freeAssets: bigint, carryAssets: bigint) {
+  const fromMargin = carryAssets < positionMarginAssets ? carryAssets : positionMarginAssets
+  const residual = carryAssets - fromMargin
+  const fromFree = residual < freeAssets ? residual : freeAssets
   return {
-    positionMarginUsdc: positionMarginUsdc - fromMargin,
-    freeSettlementUsdc: freeUsdc - fromFree,
-    uncoveredCarryUsdc: residual - fromFree,
+    positionMarginAssets: positionMarginAssets - fromMargin,
+    freeSettlementAssets: freeAssets - fromFree,
+    uncoveredCarryAssets: residual - fromFree,
   }
 }

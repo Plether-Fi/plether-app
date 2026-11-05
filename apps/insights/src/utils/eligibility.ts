@@ -1,9 +1,14 @@
+import { manualFeeShareApproval, manualFeeShareExplanation } from '../feeShareApprovals'
 import type { Competition, Standing } from '../api/types'
 
 export function eligibilityPresentation(
-  standing: Pick<Standing, 'eligible' | 'eligibilityStatus'>,
+  standing: Pick<Standing, 'address' | 'eligible' | 'eligibilityStatus'>,
   competitionStatus: Competition['status'],
+  competitionSlug: string,
 ) {
+  if (manualFeeShareApproval(competitionSlug, standing.address)) {
+    return { label: 'Eligible after manual verification', neutral: false, explanation: `Fee share: ${manualFeeShareExplanation}` }
+  }
   if (standing.eligible) return { label: 'Prize eligible', neutral: false, explanation: null }
   if (standing.eligibilityStatus === 'pending') {
     const beforeReview = competitionStatus === 'scheduled' || competitionStatus === 'live'

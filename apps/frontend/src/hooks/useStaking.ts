@@ -1,3 +1,4 @@
+import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi'
 import { useCallback, useState } from 'react'
 import { zeroAddress } from 'viem'
@@ -6,6 +7,7 @@ import { STAKED_TOKEN_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import {
   parseTransactionError,
+  getErrorMessage,
   type TransactionError,
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
@@ -283,7 +285,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
         },
         catch: (err) => {
           setIsSigningPermit(false)
-          const error = err instanceof Error ? err : new Error(String(err))
+          const error = reportedTransactionError(err, getErrorMessage(parseTransactionError(err)), { surface: 'wallet', action: 'stake', stage: 'permit' })
           setPermitError(error)
           if (err instanceof Error && '_tag' in err) {
             return err as TransactionError

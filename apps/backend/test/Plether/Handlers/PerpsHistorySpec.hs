@@ -39,25 +39,25 @@ spec = do
   describe "perpsHistoryRouter" $ do
     it "defaults to the configured current router" $
       perpsHistoryRouter testConfig Nothing
-        `shouldBe` "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
+        `shouldBe` "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
 
     it "normalizes an explicit release router" $
       perpsHistoryRouter testConfig (Just "  0x485703D16FE36369C134DEe2A61C057733E7830F  ")
         `shouldBe` "0x485703d16fe36369c134dee2a61c057733e7830f"
 
-  describe "terminal execution evidence" $ do
-    it "hydrates and verifies the account from a standalone lifecycle finalization" $ do
+  describe "terminal evidence serializers and SQL source support (query results are tested in BackendUnitRepairSpec)" $ do
+    it "contains account hydration and identity-match predicates" $ do
       queryContains updatePerpsOrderLifecycleReceiptSql "account = COALESCE(perps_orders.account, ?)"
       queryContains updatePerpsOrderLifecycleReceiptSql "AND (account IS NULL OR account = ?)"
 
-    it "persists canonical oracle-frozen state from the lifecycle execution mode" $ do
+    it "maps execution modes and contains the oracle-frozen assignment" $ do
       executionModeOracleFrozen "Live" `shouldBe` Just False
       executionModeOracleFrozen "FAD" `shouldBe` Just False
       executionModeOracleFrozen "Frozen" `shouldBe` Just True
       executionModeOracleFrozen "Unknown(0)" `shouldBe` Nothing
       queryContains updatePerpsOrderLifecycleReceiptSql "execution_oracle_frozen = ?"
 
-    it "reserves two recent evidence slots and three fair-backlog slots" $ do
+    it "calculates lane sizes and contains recent/backlog SQL ordering" $ do
       perpsExecutionEvidenceLaneLimits 5 `shouldBe` (2, 3)
       queryContains pendingPerpsExecutionEvidenceSql "WHERE execution_evidence_last_attempt_at IS NULL"
       queryContains pendingPerpsExecutionEvidenceSql "ORDER BY terminal_block_number DESC, order_id DESC"
@@ -65,21 +65,21 @@ spec = do
       queryContains pendingPerpsExecutionEvidenceSql "execution_evidence_last_attempt_at < NOW() - INTERVAL '5 minutes'"
       queryContains pendingPerpsExecutionEvidenceSql "ORDER BY lane ASC, lane_order ASC"
 
-    it "projects exact execution VPI independently from activity data" $ do
-      queryContains perpsOrderBaseSelectSql "o.execution_vpi_usdc"
-      queryContains perpsOrderBaseSelectSql "data->>'vpiUsdc'"
+    it "contains separate execution and activity VPI projections" $ do
+      queryContains perpsOrderBaseSelectSql "o.execution_vpi_assets"
+      queryContains perpsOrderBaseSelectSql "data->>'vpiAssets'"
 
-    it "hydrates legacy receipt economics with the indexed execution bounty" $ do
-      queryContains perpsOrderBaseSelectSql "data->>'executionBountyUsdc'"
-      queryContains perpsOrderBaseSelectSql "jsonb_build_object('executionBountyUsdc'"
+    it "contains the legacy execution-bounty fallback expression" $ do
+      queryContains perpsOrderBaseSelectSql "data->>'executionBountyAssets'"
+      queryContains perpsOrderBaseSelectSql "jsonb_build_object('executionBountyAssets'"
       queryContains perpsOrderBaseSelectSql "e.event_name = 'IntentRegistered'"
 
-    it "projects the canonical terminal event block hash" $ do
+    it "contains the canonical terminal-event block-hash projection" $ do
       queryContains perpsOrderBaseSelectSql "terminal_event.block_hash"
       queryContains perpsOrderBaseSelectSql "e.block_number = o.terminal_block_number"
       queryContains perpsOrderBaseSelectSql "e.event_name = 'OrderFinalized'"
 
-    it "correlates batched activity with the nearest preceding V2 finalization" $ do
+    it "contains preceding-finalization bounds for batched activity" $ do
       queryContains perpsOrderBaseSelectSql "e.order_id = o.order_id"
       queryContains perpsOrderBaseSelectSql "'OrderFinalized'"
       queryContains perpsOrderBaseSelectSql "o.terminal_status = 'Executed'"
@@ -88,7 +88,7 @@ spec = do
       queryContains perpsOrderBaseSelectSql "a.log_index > previous_terminal_event.log_index"
       queryContains perpsOrderBaseSelectSql "ORDER BY a.log_index DESC"
 
-    it "excludes V1 orders that have no lifecycle client identity" $
+    it "contains the lifecycle client-identity predicate" $
       queryContains perpsOrderBaseSelectSql "o.client_order_id IS NOT NULL"
 
     it "serializes signed activity VPI as a lossless decimal string" $
@@ -108,8 +108,8 @@ spec = do
           , "terminalTimestamp" .= (1_785_437_841 :: Integer)
           , "terminalStatus" .= ("Executed" :: String)
           , "executionPrice" .= ("98391251" :: String)
-          , "vpiUsdc" .= ("182822887" :: String)
-          , "frozenCloseSpreadUsdc" .= ("0" :: String)
+          , "vpiAssets" .= ("182822887" :: String)
+          , "frozenCloseSpreadAssets" .= ("0" :: String)
           , "executionEconomicsVersion" .= (2 :: Int)
           , "executionOraclePrice" .= ("98391482" :: String)
           , "executionOracleFrozen" .= False
@@ -121,15 +121,15 @@ spec = do
           , "terminalReason" .= ("Executed" :: String)
           , "executionMode" .= ("Live" :: String)
           , "receiptEconomics" .= object
-              [ "executionBountyUsdc" .= ("200000" :: String)
-              , "vpiUsdc" .= ("182822887" :: String)
-              , "frozenSpreadUsdc" .= ("0" :: String)
+              [ "executionBountyAssets" .= ("200000" :: String)
+              , "vpiAssets" .= ("182822887" :: String)
+              , "frozenSpreadAssets" .= ("0" :: String)
               ]
           , "activityType" .= ("Close" :: String)
           , "activitySizeDelta" .= ("98308614058332359914207" :: String)
           , "activityPrice" .= ("98391251" :: String)
-          , "activityVpiUsdc" .= ("-182822887" :: String)
-          , "activityPnlUsdc" .= ("104909054" :: String)
+          , "activityVpiAssets" .= ("-182822887" :: String)
+          , "activityPnlAssets" .= ("104909054" :: String)
           ]
 
   describe "account order indexed-through proof" $ do
@@ -162,8 +162,8 @@ executedOrderRow =
     , porTerminalStatus = "Executed"
     , porFailureReason = Nothing
     , porExecutionPrice = Just 98_391_251
-    , porExecutionVpiUsdc = Just 182_822_887
-    , porExecutionFrozenCloseSpreadUsdc = Just 0
+    , porExecutionVpiAssets = Just 182_822_887
+    , porExecutionFrozenCloseSpreadAssets = Just 0
     , porExecutionEconomicsVersion = Just 2
     , porExecutionOraclePrice = Just 98_391_482
     , porExecutionOracleFrozen = Nothing
@@ -177,16 +177,16 @@ executedOrderRow =
     , porExecutionMode = Just "Live"
     , porFailedConstraint = Nothing
     , porReceiptEconomics = Just $ object
-        [ "executionBountyUsdc" .= ("200000" :: String)
-        , "vpiUsdc" .= ("182822887" :: String)
-        , "frozenSpreadUsdc" .= ("0" :: String)
+        [ "executionBountyAssets" .= ("200000" :: String)
+        , "vpiAssets" .= ("182822887" :: String)
+        , "frozenSpreadAssets" .= ("0" :: String)
         ]
     , porCleanupActor = Nothing
     , porActivityType = Just "Close"
     , porActivitySizeDelta = Just 98_308_614_058_332_359_914_207
     , porActivityPrice = Just 98_391_251
-    , porActivityVpiUsdc = Just (-182_822_887)
-    , porActivityPnlUsdc = Just 104_909_054
+    , porActivityVpiAssets = Just (-182_822_887)
+    , porActivityPnlAssets = Just 104_909_054
     , porSortBlock = 293_014_724
     }
 
@@ -229,17 +229,17 @@ testConfig =
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
-    , cfgPerpsOrderRouter = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
+    , cfgPerpsSettlementToken = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
+    , cfgPerpsOrderRouter = "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
     , cfgPerpsOrderLifecycleBook = Nothing
-    , cfgPerpsCfdEngine = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
-    , cfgPerpsCfdEngineLens = "0x8fe702213241482d6e94327f9e70195ad183d1ad"
-    , cfgPerpsCfdEngineSettlementSidecar = "0x69dc8489dc12bcfd74b4f453f59ec7381822f5bb"
-    , cfgPerpsMarginClearinghouse = "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
+    , cfgPerpsCfdEngine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
+    , cfgPerpsCfdEngineLens = "0xfffd7ef10a3cdd70a9f4d21a8349f70ce059dd7e"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x174b1231edbd6379877706c06898a20a5475ae73"
+    , cfgPerpsMarginClearinghouse = "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
-    , cfgPerpsAccountLens = "0x29fd3b5faf8de6c84405d28e1aac371e46a104c6"
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
+    , cfgPerpsAccountLens = "0xf520133a4f757a68a523c704512af24b1f5b7762"
+    , cfgPerpsHousePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+    , cfgPerpsSettlementMonitorLens = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
     , cfgPerpsIndexerStartBlock = 0
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
@@ -253,6 +253,7 @@ testConfig =
     , cfgFaucetGuardConfig = Nothing
     , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
+    , cfgTestnetMarginFundingEnabled = False
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperIdlePollSeconds = 5
@@ -262,8 +263,8 @@ testConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xee755754319be980dd0f7df77107720485fe9d20"
+    , cfgLpSettlementJuniorVault = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -276,7 +277,7 @@ testReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "perps-history-test"
     , crmChainId = 421614
-    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmSettlementToken = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
     , crmOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , crmMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"

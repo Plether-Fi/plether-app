@@ -7,7 +7,8 @@ import {
   PERPS_PUBLIC_LENS_ABI,
   TRANCHE_VAULT_READ_ABI,
 } from './abis'
-import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE_IS_DEPLOYED } from './perpsAddresses'
+import { integrationPrerequisitesAvailable } from '../test/integrationPrerequisites'
 import {
   decodePoolLiquidityView,
   decodeProtocolStatusView,
@@ -16,6 +17,10 @@ import {
 } from './vaultViewAdapters'
 
 const forkUrl = process.env.ARB_SEPOLIA_RPC_URL ?? process.env.ARBITRUM_SEPOLIA_RPC_URL
+const configured = integrationPrerequisitesAvailable('PERPS_FORK_REQUIRED', 'Vault fork integration', [
+  { available: Boolean(forkUrl), requirement: 'ARB_SEPOLIA_RPC_URL or ARBITRUM_SEPOLIA_RPC_URL' },
+  { available: PERPS_RELEASE_IS_DEPLOYED, requirement: 'the current deployed canonical release' },
+])
 const anvilPort = Number(process.env.VAULT_FORK_ANVIL_PORT ?? '18547')
 const anvilUrl = `http://127.0.0.1:${anvilPort}`
 const shareProbe = 10n ** 27n
@@ -45,7 +50,7 @@ async function waitForAnvil(): Promise<void> {
 }
 
 beforeAll(async () => {
-  if (!forkUrl) return
+  if (!configured || !forkUrl) return
   const forkBlock = process.env.VAULT_FORK_BLOCK_NUMBER
   const anvilArguments = [
     '--fork-url', forkUrl,
@@ -64,13 +69,8 @@ beforeAll(async () => {
 
 afterAll(() => anvil?.kill())
 
-describe('v1.2.0 vault deployment fork reads', () => {
-  it('decodes every vault-facing lens tuple without a legacy fallback', async (ctx) => {
-    if (!forkUrl) {
-      ctx.skip()
-      return
-    }
-
+describe.skipIf(!configured)('v1.2.0 vault deployment fork reads', () => {
+  it('decodes every vault-facing lens tuple without a legacy fallback', async () => {
     const client = createPublicClient({ chain: arbitrumSepolia, transport: http(anvilUrl) })
     const [pool, protocol, lpStatus, senior, junior, seniorQueue, juniorQueue, requestState] =
       await Promise.all([
@@ -133,7 +133,6 @@ describe('v1.2.0 vault deployment fork reads', () => {
     ['Senior', PERPS_ARBITRUM_SEPOLIA.seniorVault],
     ['Junior', PERPS_ARBITRUM_SEPOLIA.juniorVault],
   ] as const)('reads canonical %s vault pricing and estimate methods', async (_name, vault) => {
-    if (!forkUrl) return
     const client = createPublicClient({ chain: arbitrumSepolia, transport: http(anvilUrl) })
     const [assets, supply, converted, depositEstimate, mintEstimate, redeemEstimate, window] =
       await Promise.all([

@@ -218,6 +218,13 @@ describe('analytics client', () => {
     })
   })
 
+  it('accepts only fixed endpoint and response-format values and valid Cloudflare Ray IDs', () => {
+    expect(sanitizeFrontendLogAttributes({ endpoint: 'get_perps_basket_latest', response_format: 'html', cf_ray: 'a55dad75ebc80296-WAW' }))
+      .toEqual({ endpoint: 'get_perps_basket_latest', response_format: 'html', cf_ray: 'a55dad75ebc80296-WAW' })
+    expect(sanitizeFrontendLogAttributes({ endpoint: '/user/private-account', response_format: 'text/html; token=secret', cf_ray: 'Bearer secret' }))
+      .toEqual({})
+  })
+
   it('does not capture structured logs when analytics is disabled', () => {
     captureFrontendLog('error', 'frontend failed', { component: 'react_root' })
     expect(posthogMock.captureLog).not.toHaveBeenCalled()

@@ -8,16 +8,21 @@ module Plether.Logging
   , logInfoEvery
   , logWarnEvery
   , logErrorEvery
+  , LogTiming (..)
+  , withLogTiming
   ) where
 
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
-import Control.Exception (evaluate)
+import Control.Exception (bracket, evaluate)
+import Control.Concurrent (ThreadId, myThreadId)
+import Control.Monad.IO.Unlift (MonadUnliftIO, withRunInIO)
+import GHC.Clock (getMonotonicTimeNSec)
 import Data.Aeson (ToJSON, Value (..), encode, toJSON)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -30,6 +35,23 @@ data LogLevel = Debug | Info | Warn | Error
   deriving stock (Eq, Ord, Show)
 
 data LogField = LogField Key.Key Value
+
+data LogTiming = LogTiming
+  { logLockWaitMs :: Double
+  , logWriteMs :: Double
+  } deriving stock (Eq, Show)
+
+-- Request-local, not a delta of global counters: concurrent requests must not
+-- inherit each other's logging delays. Child threads are deliberately excluded.
+-- Observers must only update in-memory counters, never log recursively.
+withLogTiming :: MonadUnliftIO m => (LogTiming -> IO ()) -> m a -> m a
+withLogTiming observe action = withRunInIO $ \run -> do
+  tid <- myThreadId
+  let install = atomicModifyIORef' logObservers $ \current ->
+        (Map.insert tid observe current, Map.lookup tid current)
+      restore previous = atomicModifyIORef' logObservers $ \current ->
+        (maybe (Map.delete tid current) (\old -> Map.insert tid old current) previous, ())
+  bracket install restore $ \_ -> run action
 
 data RateState = RateState
   { rsLastEmittedAt :: POSIXTime
@@ -104,9 +126,20 @@ emit level eventName message fields = do
       record = LazyByteString.toStrict $ encode payload <> "\n"
       outputLock = if level < Warn then stdoutLock else stderrLock
   _ <- evaluate $ ByteString.length record
-  withMVar outputLock $ \_ -> do
-    ByteString.hPut target record
-    hFlush target
+  tid <- myThreadId
+  observer <- Map.lookup tid <$> readIORef logObservers
+  let writeRecord = ByteString.hPut target record >> hFlush target
+  case observer of
+    Nothing -> withMVar outputLock $ \_ -> writeRecord
+    Just observe -> do
+      started <- getMonotonicTimeNSec
+      measurement <- withMVar outputLock $ \_ -> do
+        acquired <- getMonotonicTimeNSec
+        writeRecord
+        ended <- getMonotonicTimeNSec
+        pure $ LogTiming (fromIntegral (acquired-started) / 1_000_000)
+          (fromIntegral (ended-acquired) / 1_000_000)
+      observe measurement
 
 levelMetadata :: LogLevel -> (Text, Int, Handle)
 levelMetadata = \case
@@ -158,3 +191,7 @@ stdoutLock = unsafePerformIO $ newMVar ()
 {-# NOINLINE stderrLock #-}
 stderrLock :: MVar ()
 stderrLock = unsafePerformIO $ newMVar ()
+
+{-# NOINLINE logObservers #-}
+logObservers :: IORef (Map.Map ThreadId (LogTiming -> IO ()))
+logObservers = unsafePerformIO $ newIORef Map.empty

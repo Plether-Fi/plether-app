@@ -1,12 +1,13 @@
 import { concatHex, numberToHex, type Hex } from 'viem'
 import { getUserOperationHash } from 'viem/account-abstraction'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { preparationIdentifier, validateNativePreparation, SEPOLIA_NATIVE_EXECUTION_GAS_CAP } from '../nativePreparation'
 import { PERPS_ENTRY_POINT_V08, type PerpsAaDeploymentManifestV2 } from '../manifest'
 import { PLETHER_PAYMASTER_POLICY_ID, PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH } from '../paymasterValidity'
 import type { ManagedUserOperation } from '../runtimeContext'
 
 const manifest = { chainId: 421614, entryPoint: PERPS_ENTRY_POINT_V08, version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   paymasterAddress: '0x1234567890123456789012345678901234567890', paymasterVersion: 'plether-verifying-v1',
   bundlerRpcUrl: '/api/perps/v1/aa/rpc', paymasterRpcUrl: '/api/perps/v1/aa/rpc',
 } as PerpsAaDeploymentManifestV2
@@ -76,3 +77,5 @@ describe('native preparation response binding', () => {
     expect(preparationIdentifier('attempt-a')).toMatch(/^0x[0-9a-f]{64}$/)
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

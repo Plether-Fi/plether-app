@@ -1,6 +1,6 @@
 import { type Page } from '@playwright/test'
 import { stringToHex, verifyMessage, verifyTypedData, type Hex } from 'viem'
-import { test, expect, TEST_WALLET_ADDRESSES } from '../fixtures/wallet'
+import { test, expect, TEST_WALLET_ADDRESSES } from '../fixtures/signingWallet'
 
 interface TestProviderWindow extends Window {
   ethereum: {

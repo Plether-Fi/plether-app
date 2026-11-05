@@ -1,3 +1,4 @@
+import { safeAttemptFailure, type AttemptFailure } from './attemptFailure'
 /** First-party, advisory telemetry. No payloads, signatures, addresses or raw errors. */
 export type AttemptStage = 'wallet_requested' | 'wallet_approved' | 'wallet_declined' |
   'wallet_interrupted' | 'signed_operation_saved' | 'submission_requested' |
@@ -5,7 +6,7 @@ export type AttemptStage = 'wallet_requested' | 'wallet_approved' | 'wallet_decl
   'execution_interrupted' | 'safe_expiry_verified'
 
 const sent = new Set<string>()
-export function reportAttemptStage(attemptId: string, stage: AttemptStage): void {
+export function reportAttemptStage(attemptId: string, stage: AttemptStage, failure?: AttemptFailure): void {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId)) return
   const key = `${attemptId}:${stage}`
   if (sent.has(key)) return
@@ -20,7 +21,7 @@ export function reportAttemptStage(attemptId: string, stage: AttemptStage): void
     void fetch('/api/perps/v1/aa/diagnostics', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ attemptId, stage }), signal: AbortSignal.timeout(5_000),
+      body: JSON.stringify({ attemptId, stage, ...(['execution_interrupted', 'deadline_elapsed'].includes(stage) ? safeAttemptFailure(failure) : undefined) }), signal: AbortSignal.timeout(5_000),
     }).catch(() => { /* Missing telemetry is not evidence of a rejected trade. */ })
   } catch { /* Diagnostic failures must never affect a trade. */ }
 }

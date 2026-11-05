@@ -1,3 +1,4 @@
+vi.mock('../contracts/perpsAddresses', async () => (await import('../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +17,7 @@ import {
   writePersistedPerpsIdentity,
 } from './identityPersistence'
 import { usePerpsIdentity } from './usePerpsIdentity'
+import { UnsupportedEmbeddedOwnerError } from './embeddedOwner'
 
 const ownerAddress =
   '0x1111111111111111111111111111111111111111' as Address
@@ -25,6 +27,7 @@ const accountAddress =
 function validManifest(): Record<string, unknown> {
   return {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: PERPS_ENTRY_POINT_V08,
     entryPointVersion: '0.8',
@@ -33,15 +36,15 @@ function validManifest(): Record<string, unknown> {
     smartAccountVersion: 'permissionless-simple-v0.8',
     smartAccountIndex: '0',
     smartAccountFactory: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
-    usdc: '0x9999999999999999999999999999999999999999',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
+    settlementToken: '0x0000000000000000000000000000000000000001',
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
     marginClearinghouse: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     cfdEngine: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     orderRouter: '0xcccccccccccccccccccccccccccccccccccccccc',
     orderLifecycleBook: '0xdddddddddddddddddddddddddddddddddddddddd',
-    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+    positionProtectionBook: '0x0000000000000000000000000000000000000019',
     policyEvaluator: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',
@@ -109,6 +112,42 @@ describe('PerpsIdentityProvider', () => {
       sponsorshipEnabled: false,
       error: { code: 'ACCOUNT_RESOLVER_MISSING' },
     })
+  })
+
+  it('blocks an unsupported embedded owner with actionable guidance and retains saved identity', async () => {
+    const previousIdentity = createPersistedPerpsIdentity({
+      chainId: 421614,
+      ownerAddress,
+      accountAddress,
+      accountMode: 'simple',
+      accountVersion: 'permissionless-simple-v0.8',
+      accountIndex: '0',
+      entryPoint: PERPS_ENTRY_POINT_V08,
+      entryPointVersion: '0.8',
+      factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      manifestVersion: String(validManifest().version),
+    })
+    writePersistedPerpsIdentity(localStorage, previousIdentity)
+    const before = { ...localStorage }
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    function wrapper({ children }: { children: ReactNode }) {
+      return <PerpsIdentityProvider
+        ownerAddress={ownerAddress}
+        chainId={421614}
+        manifestUrl="/perps-aa-manifest.json"
+        fetch={async () => new Response(JSON.stringify(validManifest()))}
+        accountAddressResolver={async () => { throw new UnsupportedEmbeddedOwnerError() }}
+      >{children}</PerpsIdentityProvider>
+    }
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+    await waitFor(() => expect(result.current.status).toBe('blocked'))
+    expect(result.current.accountAddress).toBeUndefined()
+    expect(result.current.error).toMatchObject({
+      code: 'UNSUPPORTED_OWNER_WALLET',
+      message: expect.stringContaining('Switch to your EOA'),
+    })
+    expect(write).not.toHaveBeenCalled()
+    expect({ ...localStorage }).toEqual(before)
   })
 
   it('automatically persists a newly derived account', async () => {
@@ -182,7 +221,7 @@ describe('PerpsIdentityProvider', () => {
     ).toBe(true)
 
     const nextManifest = validManifest()
-    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260910-v2'
+    nextManifest.version = 'perps-aa-arbitrum-sepolia-20261012-v131-v2'
     const fetchManifest = vi.fn(async () => new Response(
       JSON.stringify(nextManifest),
       {
@@ -221,7 +260,7 @@ describe('PerpsIdentityProvider', () => {
       expect(result.current.status).toBe('ready')
     })
     expect(result.current.identity?.manifestVersion).toBe(
-      'perps-aa-arbitrum-sepolia-20260910-v2'
+      'perps-aa-arbitrum-sepolia-20261012-v131-v2'
     )
   })
 

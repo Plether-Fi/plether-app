@@ -74,7 +74,7 @@ export function useApprove(tokenAddress: Address, spenderAddress: Address) {
         const txError = err instanceof Error && '_tag' in err
           ? err as TransactionError
           : parseTransactionError(err)
-        setStepError(txId, 0, getErrorMessage(txError))
+        setStepError(txId, 0, getErrorMessage(txError), txError)
         return txError
       },
     })

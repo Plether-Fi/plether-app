@@ -8,7 +8,8 @@ import {
 import { getAddress, isAddress, isAddressEqual, type Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useWalletActions } from '../wallet/useWalletActions'
-import { verifyPerpsV2DeploymentBindings } from '../contracts/verifyPerpsV2Bindings'
+import { UnsupportedEmbeddedOwnerError } from './embeddedOwner'
+import { verifyPerpsV3DeploymentBindings } from '../contracts/verifyPerpsV3Bindings'
 import {
   comparePerpsIdentities,
   createPersistedPerpsIdentity,
@@ -174,7 +175,10 @@ async function resolveConfiguredIdentity(input: {
       manifest,
       signal: input.signal,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof UnsupportedEmbeddedOwnerError) {
+      return blockedResolution('UNSUPPORTED_OWNER_WALLET', error.message, manifest)
+    }
     return blockedResolution(
       'ACCOUNT_RESOLUTION_FAILED',
       'The reviewed trading account address could not be resolved.',
@@ -630,7 +634,7 @@ export function WagmiPerpsIdentityProvider(
     signal,
   }) => {
     if (signal.aborted) return
-    await verifyPerpsV2DeploymentBindings(publicClient, manifest)
+    await verifyPerpsV3DeploymentBindings(publicClient, manifest)
   }, [publicClient])
   return (
     <PerpsIdentityProvider

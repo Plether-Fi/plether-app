@@ -113,7 +113,7 @@ describe('parseTransactionError', () => {
     it('constructs with no reason provided', () => {
       const error = new ContractRevertError({})
       expect(error.reason).toBe('Unknown reason')
-      expect(error.message).toBe('Unknown reason')
+      expect(error.message).toContain('could not determine why')
     })
   })
 
@@ -187,17 +187,17 @@ describe('parseTransactionError', () => {
       expect(error.message).toBe('Simple string error')
     })
 
-    it('truncates long messages to 200 characters', () => {
+    it('replaces unreadable diagnostic strings with useful guidance', () => {
       const longMessage = 'A'.repeat(250)
       const error = parseTransactionError({ message: longMessage })
-      expect(error.message.length).toBe(203)
-      expect(error.message).toBe('A'.repeat(200) + '...')
+      expect(error.message).toContain('Check account activity')
+      expect(error.message).not.toContain(longMessage)
     })
 
     it('returns default message for empty error object', () => {
       const error = parseTransactionError({})
       expect(error._tag).toBe('UnknownTransactionError')
-      expect(error.message).toBe('Transaction failed')
+      expect(error.message).toContain('could not determine why')
     })
 
     it('preserves cause in UnknownTransactionError', () => {

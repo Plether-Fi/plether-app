@@ -1,5 +1,10 @@
 # Plether Frontend
 
+Current perps source selects Core v2.0.0 and the checksum-pinned SDK 0.4.0.
+See `../../config/perps/ORDER_V3_TIMING.md` for provenance. The public AA manifest
+binds the new MockUSDG market to the reviewed existing paymaster. Backend
+readiness remains authoritative for sponsored funding and order submission.
+
 React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 
 ## Tech Stack
@@ -106,6 +111,55 @@ validation before merging, then use `gh` to check for existing runs, dispatch
 only missing deployments, monitor both workflows, and smoke-test the public
 applications. See the repository `AGENTS.md` for authentication and dispatch rules.
 
+## Maximum opening size
+
+The trading ticket calculates Max in one `eth_call`. viem executes the checked-in
+`contracts/max-open/PerpsMaxOpenQuoter.sol` helper deploylessly: its creation and
+read-only call exist only inside the RPC simulation. There is no persistent
+deployment, transaction, wallet signature, or gas payment. It reserves the current
+router bounty and optional protection rewards, asks the deployed canonical lens
+for its maximum, and applies selected leverage in 100 plDXY increments. Every
+internal read uses the same block. Invalid planner candidates, nonpositive equity,
+search exhaustion, and provider errors fail without an approximate fallback.
+
+Equivalent quotes share a ten-second frontend cache. A publication timestamp
+change alone does not clear or restart the quote; account, side, price, balance,
+protection rewards, leverage, and deployment addresses remain part of its key.
+Quotes still refresh every fifteen seconds and after trading invalidation. Max
+remains disabled during refresh, and a failed refresh hides the previous quote.
+Automatic price and balance refreshes retain the last number for display only,
+so Max, a filled maximum, and shortcut styling stay steady while fetching. This
+display value never supplies executable size or margin; changing account,
+direction, leverage, or protection settings clears it immediately.
+Review recalculates with its verified block and funding budget, then retains the
+existing adverse-price assessments, funding checks, and final simulation.
+
+Order quantity shortcuts show 25%, 50%, 75%, and Max as four equal-width outlined
+buttons spanning the full input width. Max fills the full available quantity
+without displaying an amount in the button.
+It stays highlighted while automatic Max sizing is active, including leverage
+changes and quote refreshes; manual entry or a partial shortcut clears selection.
+Partial percentages round down to 100 plDXY increments and fill a fixed quantity;
+Max keeps automatic sizing. Reductions use the size remaining after pending close
+orders, with exact full closes preserved.
+
+The generated ABI and bytecode use Solidity 0.8.35 with pinned settings. Foundry
+is needed to rebuild or verify this artifact, but normal frontend builds consume
+the checked-in artifact without requiring a compiler:
+
+```bash
+node ../../scripts/generate-perps-max-open-quoter.mjs
+npm run verify:max-open-quoter
+npm run test:max-open-quoter
+```
+
+An optional read-only comparison against the canonical contracts verifies full
+quote parity and reports RPC counts and timing:
+
+```bash
+npm run test:max-open-quote-live -- --help
+```
+
 ## TradingView Advanced Charts
 
 The plDXY Perpetual panel uses TradingView Advanced Charts exclusively. If its
@@ -159,7 +213,7 @@ Local and hosted testnet deployments use the bundled
 `/perps-aa-manifest.json` by default. Set `VITE_PERPS_AA_MANIFEST_URL` only to
 override that path. The manifest suffix identifies a deployment generation,
 not the AA provider. The current bundled manifest is
-`perps-aa-arbitrum-sepolia-20260910-v2` and deliberately uses Pimlico through
+`perps-aa-arbitrum-sepolia-20261012-v131-v2` and deliberately uses Pimlico through
 the exact same-origin `pimlicoRpcUrl` field.
 
 Transport is selected only after exact-key validation. A v1 suffix accepts
@@ -253,3 +307,24 @@ Operations are never automatically rebuilt or sent through the owner EOA.
 ## License
 
 AGPL-3.0-only
+
+### Preparing a MockUSDG perps release
+
+The frontend selects `config/perps/arbitrum-sepolia-v2.0.0.json`: canonical schema 4,
+order interface 3 and six-decimal MockUSDG metadata, with the complete deployed
+contract graph. AA trading/funding requires a separately configured paymaster
+and backend rollout. Spot remains separately configured. Historical USDC manifests are archived evidence; current perps
+consumers do not accept their keys or ABI.
+
+The breaking SDK 0.4.0 and current APIs use `settlementToken`, `Assets` and
+`AssetAtoms`, including `settlementTokenSupportsEip3009: false` and null EIP-712
+domain settings. No compatibility aliases remain. After a separately reviewed
+activation, the funding flow mints 100,000 MockUSDG to the confirmed Trading
+Account, checks the token runtime hash, and deposits with exact approval. The
+owner wallet pays testnet ETH and confirms the mint; a failed deposit can reuse
+the minted balance. Mock bridge funding and GDN rewards are unavailable.
+
+Use `node scripts/prepare-perps-release.mjs` from the repository root to generate
+a candidate only after verified deployed evidence exists. Read
+[`docs/runbooks/perps-mock-usdg.md`](../../docs/runbooks/perps-mock-usdg.md) for
+package/ABI provenance, activation guards and the unapplied SQL migration.
