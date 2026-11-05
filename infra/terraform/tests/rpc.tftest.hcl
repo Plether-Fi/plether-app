@@ -97,7 +97,7 @@ run "isolated_sepolia_pilot" {
     error_message = "Provisioning a pilot must not cut over existing traffic or shorten polling."
   }
   assert {
-    condition     = aws_ebs_volume.rpc_staging[0].encrypted && aws_ebs_volume.rpc_staging[0].size == 4096 && length(local.rpc_user_data) < 16384
+    condition     = aws_ebs_volume.rpc_staging[0].encrypted && aws_ebs_volume.rpc_staging[0].size == 4096 && aws_ebs_volume.rpc_staging[0].throughput >= 500 && length(local.rpc_user_data) < 16384
     error_message = "Staging must be encrypted, large enough for assembly and user data must fit EC2's limit."
   }
   assert {

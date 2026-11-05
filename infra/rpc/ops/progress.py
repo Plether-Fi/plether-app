@@ -13,7 +13,12 @@ for label, path in [('data', '/srv/nitro'), ('staging', '/srv/nitro-staging')]:
         usage = shutil.disk_usage(path)
         result[label + '_used_bytes'] = usage.used
         result[label + '_free_bytes'] = usage.free
-result['staging_file_bytes'] = sum(p.stat().st_size for p in Path('/srv/nitro-staging').rglob('*') if p.is_file())
+result['staging_file_bytes'] = 0
+for path in Path('/srv/nitro-staging').rglob('*'):
+    try:
+        if path.is_file(): result['staging_file_bytes'] += path.stat().st_size
+    except FileNotFoundError:
+        pass  # Import may remove an archive between enumeration and stat.
 result['import_marker'] = Path('/srv/nitro/.plether-snapshot-complete').exists()
 service = subprocess.run(['systemctl', 'show', 'plether-nitro', '--property=ActiveState,SubState'], capture_output=True, text=True)
 result['service_state'] = service.stdout.strip().splitlines()

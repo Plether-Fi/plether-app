@@ -259,8 +259,12 @@ staging volume. Nitro imports with checksums and `then-quit`, records completion
 then starts serving. An interrupted/unknown database requires operator
 inspection; the service never deletes it automatically.
 
-Staging adds approximately **$393/month, or $0.54/hour**, at the inspected
-Singapore gp3 storage price while it exists. This is separate from the steady-
+Staging uses 500 MiB/s throughput to avoid a 125 MiB/s bottleneck during parts
+concatenation and extraction. At the Singapore rates checked on 5 November,
+this adds $18/month in provisioned throughput to the approximately $393/month
+capacity charge: **$411/month, or $0.56/hour**, only while the disk exists.
+The throughput increase is about $0.025/hour and does not require stopping the
+host. This is separate from the steady-
 state node budget. After a successful import, unmount staging on the host,
 remove its UUID entry from `/etc/fstab`, then set `staging_volume_gib = 0` and
 review the plan to detach/delete the staging volume. This updates the runtime
@@ -314,7 +318,7 @@ database by deleting it.
 python infra/rpc/ops/finish_bootstrap.py \
   --directory /absolute/protected/path \
   --terraform /absolute/path/to/terraform \
-  --hours 12 --cleanup-staging
+  --hours 24 --cleanup-staging
 ```
 
 During the first launch, cloud-init recorded the original invalid XFS-label

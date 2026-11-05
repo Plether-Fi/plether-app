@@ -63,7 +63,7 @@ def main():
     parser.add_argument('--hours', type=float, default=6)
     parser.add_argument('--cleanup-staging', action='store_true')
     args = parser.parse_args()
-    require(0 < args.hours <= 12, 'invalid_wait_bound')
+    require(0 < args.hours <= 24, 'invalid_wait_bound')
     root = Path(__file__).resolve().parents[3]
     work = args.directory.resolve()
     work.mkdir(mode=0o700, exist_ok=True)
@@ -76,7 +76,8 @@ def main():
         (work / 'completion-status.json').write_text(json.dumps(state, indent=2) + '\n')
         print(json.dumps({'status': status, **fields}), flush=True)
     session = boto3.Session(profile_name='plether', region_name='ap-southeast-1')
-    require(session.client('sts').get_caller_identity()['Account'] == ACCOUNT, 'wrong_account')
+    identity = session.client('sts').get_caller_identity()
+    require(identity['Account'] == ACCOUNT and not identity['Arn'].endswith(':root'), 'wrong_account_or_root_identity')
     ssm, ecs, logs = session.client('ssm'), session.client('ecs'), session.client('logs')
     def command(commands, timeout=120):
         result = ssm.send_command(DocumentName='AWS-RunShellScript', InstanceIds=[INSTANCE], TimeoutSeconds=timeout,
@@ -108,6 +109,9 @@ def main():
                 return int(json.loads(response.read(65536))['result'], 16)
         except Exception:
             return None
+    def auth_expired(error):
+        code = getattr(error, 'response', {}).get('Error', {}).get('Code')
+        return type(error).__name__ in ['CredentialRetrievalError', 'TokenRetrievalError', 'NoCredentialsError'] or code in ['ExpiredToken', 'ExpiredTokenException', 'InvalidClientTokenId', 'UnrecognizedClientException']
     def primary_canary():
         service = ecs.describe_services(cluster='plether-sepolia', services=['plether-sepolia-rpc-gateway'])['services'][0]
         definition = ecs.describe_task_definition(taskDefinition=service['taskDefinition'])['taskDefinition']
@@ -152,7 +156,14 @@ def main():
         deadline = time.monotonic() + args.hours * 3600
         last_canary = 0
         while time.monotonic() < deadline:
-            raw = json.loads(command(progress_commands))
+            try:
+                raw = json.loads(command(progress_commands))
+            except Exception as error:
+                if auth_expired(error):
+                    emit('waiting_for_aws_session', reason='Refresh the existing plether AWS session; node import continues independently')
+                    time.sleep(120)
+                    continue
+                raise
             progress = {k: raw[k] for k in ['data_mounted', 'data_used_bytes', 'staging_mounted', 'staging_used_bytes', 'staging_file_bytes', 'import_marker', 'local_rpc_height', 'service_state'] if k in raw}
             height = reference_height()
             emit('waiting_for_import' if not progress.get('import_marker') else 'catching_up', progress=progress, reference_height=height)
@@ -160,7 +171,13 @@ def main():
             if progress.get('import_marker') and local_height is not None and height is not None and abs(height - local_height) <= 20 and time.monotonic() - last_canary >= 180:
                 emit('qualifying_primary')
                 last_canary = time.monotonic()
-                if primary_canary(): break
+                try:
+                    if primary_canary(): break
+                except Exception as error:
+                    if auth_expired(error):
+                        emit('waiting_for_aws_session', reason='Refresh the existing plether AWS session; node import continues independently')
+                    else:
+                        raise
             time.sleep(120)
         else:
             emit('needs_attention', reason='Import did not finish within the bounded wait; no cleanup performed')

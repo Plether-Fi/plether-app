@@ -181,6 +181,7 @@ resource "aws_ebs_volume" "rpc_staging" {
   availability_zone = local.rpc_public_subnets[0].availability_zone
   type              = "gp3"
   size              = local.rpc.staging_volume_gib
+  throughput        = 500 # Multi-terabyte parts, concatenation and extraction.
   encrypted         = true
   tags              = { Name = "plether-sepolia-rpc-import-staging" }
 }
