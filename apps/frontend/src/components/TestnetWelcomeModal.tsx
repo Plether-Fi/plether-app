@@ -169,7 +169,7 @@ export function TestnetWelcomeModalView({
           <div
             className={`space-y-2 border px-4 py-3 text-sm text-content-primary ${
               isPendingClaim
-                ? 'border-brand-orange/40 bg-brand-orange/10'
+                ? 'border-brand-border/25 bg-app-bg/30'
                 : 'border-positive/40 bg-positive/10'
             }`}
           >
@@ -219,7 +219,7 @@ export function TestnetWelcomeModalView({
                 href={`https://sepolia.arbiscan.io/tx/${activeClaim.txHash}`}
                 target="_blank"
                 rel="noreferrer"
-                className={`break-all hover:underline ${isPendingClaim ? 'text-brand-orange' : 'text-positive'}`}
+                className={`break-all hover:underline ${isPendingClaim ? 'text-content-secondary hover:text-content-primary' : 'text-positive'}`}
               >
                 {activeClaim.txHash}
               </a>
