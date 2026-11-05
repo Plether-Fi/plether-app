@@ -1,15 +1,16 @@
 # Worker funding and action-specific oracle readiness
 
-Status: implemented and tested locally. Not deployed. No funding, signing, Core
-configuration or Singapore changes are authorized by this implementation.
+Status: funding observer deployed on Sepolia; the snapshot-race retry is tested
+locally and pending rollout. No funding, signing, Core configuration or Singapore
+changes are authorized by this implementation.
 
 ## Readiness behavior
 
 The API reads both oracle policies at one exact block, validates current basket
 reads using the corresponding `getLatestPrice(uint8)` mode, checks the six-feed
 cached payload's age/divergence, then verifies that block is still canonical.
-It uses the released v1.2.3 contract semantics (Core source
-`ffe45937b7f38133133ad292c5435828bf99357d`).
+The current consumer release is Core v2.0.0, selected by
+`config/perps/arbitrum-sepolia-v2.0.0.json`.
 
 | Action | LIVE | FAD | Frozen |
 | --- | --- | --- | --- |
@@ -68,6 +69,17 @@ never zero liability. Providers without pending-body visibility may therefore
 show uncertainty while a transaction is in flight. This is not a complete view
 of private/provider-hidden mempools or Alto's not-yet-signed UserOperation queue;
 paymaster UserOperation reservations remain solely in the existing AA ledger.
+
+An inclusion can race these reads: the pending nonce can advance after the
+fixed header and pending-block snapshot were fetched. If a nonce liability is
+unresolved, the observer checks the latest head. When it has advanced, it
+resamples the entire inventory once, including balances, fees, pending data and
+journals, then verifies the replacement header is canonical and fresh. It never
+mixes observations from the two headers. An unchanged head or an unresolved
+replacement snapshot retains `FUNDING_UNVERIFIED`; missing liabilities are never
+treated as zero. Regressions, reorgs, invalid heads and dependency failures keep
+their existing failure behavior. The ten-second publication budget and
+15-second freshness/expiry checks also apply to the retried observation.
 
 Signed protection journal transactions can legitimately encode zero ETH value
 or nonce as empty RLP quantities. After decoding and verifying the signer and

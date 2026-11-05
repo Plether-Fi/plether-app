@@ -2605,6 +2605,9 @@ export function PerpsTradeTicket({
     selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
   })
   const maxOpenSizeRaw = maxOpenQuote.quote?.preview.valid ? maxOpenQuote.quote.maxSizeDelta : 0n
+  const maxOpenDisplayQuote = maxOpenQuote.displayQuote ?? maxOpenQuote.quote
+  const maxOpenDisplaySizeRaw = maxOpenDisplayQuote?.preview.valid ? maxOpenDisplayQuote.maxSizeDelta : 0n
+  const isMaxOpenRefreshing = !isReducingCurrentPosition && maxOpenQuote.isFetching && maxOpenDisplayQuote?.preview.valid === true
   const maxOpenQuoteMessage = maxOpenQuote.error
     ? 'Maximum size quote failed. Refresh market data or enter a quantity manually.'
     : maxOpenQuote.quote?.maxSizeDelta === 0n
@@ -2613,10 +2616,16 @@ export function PerpsTradeTicket({
         : getPerpsOpenRevertMessage(maxOpenQuote.quote.preview.invalidReason || maxOpenQuote.quote.limitingReason)
       : undefined
   const maxOrderSizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenSizeRaw
-  const maxOrderQuantityDisplayAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
+  const maxOrderDisplaySizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenDisplaySizeRaw
+  const maxOrderQuantityDisplayAmount = formatPerpsPositionSize(maxOrderDisplaySizeRaw, 0)
   const maxOrderQuantityInputAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
   const canUseMaxOrderQuantity = maxOrderSizeRaw > 0n &&
     (isReducingCurrentPosition || (!maxOpenQuote.isPending && !maxOpenQuote.isFetching && !maxOpenQuote.error))
+  const isMaxOrderQuantitySelected = isReducingCurrentPosition ? isFullCloseIntent : isMaxOpenIntent
+  const orderQuantityShortcuts = ([25, 50, 75] as const).map((percentage) => ({
+    percentage,
+    sizeDelta: quantizePerpsPositionSize(maxOrderDisplaySizeRaw * BigInt(percentage) / 100n, 'down'),
+  }))
   const fallbackCurrentPositionSizeRaw = quantizePerpsPositionSize(
     dxyExposureToSizeDelta(parsePerpsAssets(currentPositionExposureInputAmount), oraclePriceRaw) ?? 0n,
     'down'
@@ -2637,7 +2646,7 @@ export function PerpsTradeTicket({
     ? availableCloseSizeRaw
     : isMaxOpenIntent && !isReducingCurrentPosition && !isReviewOpen ? maxOpenSizeRaw : enteredOrderSizeRaw
   const orderQuantityInputValue = (isFullCloseIntent && isReducingCurrentPosition) || (isMaxOpenIntent && !isReducingCurrentPosition && !isReviewOpen)
-    ? maxOrderQuantityInputAmount
+    ? maxOrderQuantityDisplayAmount
     : orderQuantity
   const orderSizeDelta = isReviewOpen && reviewSnapshot && !reviewSnapshot.maxSize ? reviewSnapshot.sizeDelta : effectiveOrderSizeRaw
   const calculationOraclePriceRaw = (isReviewOpen && reviewSnapshot ? reviewSnapshot.oraclePrice : oraclePriceRaw) ?? (
@@ -4194,6 +4203,15 @@ export function PerpsTradeTicket({
     trackPerpsButtonClicked('leverage_input_changed', commonAnalyticsProperties)
   }
 
+  function fillOrderQuantity(percentage: number, sizeDelta: bigint) {
+    if (!canUseMaxOrderQuantity || sizeDelta <= 0n) return
+    const isMaximum = percentage === 100
+    trackPerpsButtonClicked(isMaximum ? 'fill_max_quantity' : `fill_order_quantity_${percentage.toString()}`, commonAnalyticsProperties)
+    setIsFullCloseIntent(isMaximum && isReducingCurrentPosition)
+    setIsMaxOpenIntent(isMaximum && !isReducingCurrentPosition)
+    setOrderQuantity(formatPerpsPositionSize(sizeDelta, 0))
+  }
+
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="space-y-4 panel-padding-x py-3 sm:space-y-5 sm:py-4">
@@ -4273,26 +4291,28 @@ export function PerpsTradeTicket({
             }}
             rightElement={<TokenLabel token="plDXY" />}
           />
-          <div className="mt-1.5 flex justify-end">
+          <div role="group" aria-label="Order quantity shortcuts" aria-busy={isMaxOpenRefreshing} className="mt-2 grid grid-cols-4 gap-1.5 whitespace-nowrap text-xs font-medium text-content-secondary">
+            {orderQuantityShortcuts.map(({ percentage, sizeDelta }) => (
+              <button
+                key={percentage}
+                type="button"
+                title={`Use ${percentage.toString()}% of maximum order quantity`}
+                disabled={!canUseMaxOrderQuantity || sizeDelta <= 0n}
+                className={`min-w-12 border border-brand-border/30 bg-transparent px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${sizeDelta > 0n && (canUseMaxOrderQuantity || isMaxOpenRefreshing) ? 'cursor-pointer hover:border-brand-border/60 hover:bg-[#3B212D] hover:text-content-primary' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
+                onClick={() => { fillOrderQuantity(percentage, sizeDelta) }}
+              >
+                {percentage}%
+              </button>
+            ))}
             <button
               type="button"
-              className="group cursor-pointer text-right text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-content-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+              title="Use the maximum order quantity"
+              aria-pressed={isMaxOrderQuantitySelected}
+              className={`min-w-12 cursor-pointer border px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${isMaxOrderQuantitySelected ? 'border-brand-orange/60 bg-brand-orange/10 text-content-primary hover:bg-brand-orange/20' : 'border-brand-border/30 bg-transparent hover:border-brand-border/60 hover:bg-[#3B212D] hover:text-content-primary'} ${isMaxOpenRefreshing ? '' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
               disabled={!canUseMaxOrderQuantity}
-              onClick={() => {
-                if (canUseMaxOrderQuantity) {
-                  trackPerpsButtonClicked('fill_max_quantity', commonAnalyticsProperties)
-                  setIsFullCloseIntent(isReducingCurrentPosition)
-                  setIsMaxOpenIntent(!isReducingCurrentPosition)
-                  setOrderQuantity(maxOrderQuantityInputAmount)
-                }
-              }}
+              onClick={() => { fillOrderQuantity(100, maxOrderSizeRaw) }}
             >
-              <span>Max: </span>
-              <span className="group-hover:underline group-focus-visible:underline">
-                {!isReducingCurrentPosition && (maxOpenQuote.isPending || maxOpenQuote.error || maxOpenQuote.marginDelta === undefined)
-                  ? maxOpenQuote.isPending ? 'Loading…' : 'Unavailable'
-                  : <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />}
-              </span>
+              Max
             </button>
           </div>
           {!isReducingCurrentPosition && maxOpenQuoteMessage ? (

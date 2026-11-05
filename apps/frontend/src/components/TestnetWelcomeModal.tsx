@@ -86,7 +86,13 @@ export function TestnetWelcomeModalView({
             }
             className="w-full"
           >
-            {isRecipientReady ? (
+            {!isWalletConnected && (
+              <span aria-hidden="true" className="material-symbols-outlined text-xl">
+                account_balance_wallet
+              </span>
+            )}
+            {/* Keep the label element stable when a translator replaces its text nodes. */}
+            <span>{isRecipientReady ? (
               fundingPhase === 'waiting' ? `Waiting for ${MOCK_TOKEN_LABEL}`
                 : fundingPhase === 'approving' ? 'Preparing margin funding'
                 : fundingPhase === 'depositing' ? `Depositing ${MOCK_TOKEN_LABEL}`
@@ -94,14 +100,7 @@ export function TestnetWelcomeModalView({
                 : isPendingClaim ? isDirectFunding ? 'Check funding' : 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL}`
             ) : isWalletConnected ? (
               recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
-            ) : (
-              <>
-                <span aria-hidden="true" className="material-symbols-outlined text-xl">
-                  account_balance_wallet
-                </span>
-                Connect Wallet
-              </>
-            )}
+            ) : 'Connect Wallet'}</span>
           </Button>
           <Button
             type="button"

@@ -1,6 +1,7 @@
 import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
 import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { decodeErrorResult } from 'viem'
+import { PERPS_MAX_OPEN_QUOTER_ABI } from '../contracts/generated/perpsMaxOpenQuoter'
 import {
   PERPS_MARGIN_CLEARINGHOUSE_ABI,
   PERPS_ORDER_ROUTER_ABI,
@@ -29,6 +30,7 @@ const ALL_PERPS_ERROR_ABI = [
   ...PERPS_CFD_CLOSE_PREVIEW_ABI.filter(item => item.type === 'error'),
   ...PERPS_PLETHER_ORACLE_ABI.filter(item => item.type === 'error'),
   ...PERPS_POSITION_PROTECTION_BOOK_ABI.filter(item => item.type === 'error'),
+  ...PERPS_MAX_OPEN_QUOTER_ABI.filter(item => item.type === 'error'),
 ]
 
 const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. Adjust the exposure and try again.'
@@ -274,6 +276,14 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     }
     case 'CfdEngineLens__QuoteSearchLimitExceeded':
       return 'The maximum size quote exceeded its search limit. Retry or enter a quantity manually.'
+    case 'PerpsMaxOpenQuoter__InvalidPreview':
+      return getPerpsOpenRevertMessage(argNumber(args))
+    case 'PerpsMaxOpenQuoter__NoPositiveEquity':
+      return 'Maximum size preview has no positive position equity'
+    case 'PerpsMaxOpenQuoter__SearchLimitExceeded':
+      return 'Maximum size leverage search did not converge'
+    case 'PerpsMaxOpenQuoter__InvalidMaxLeverage':
+      return 'Selected maximum leverage is invalid'
     case 'CfdEngine__TypedOrderFailure': {
       const code = argNumber(args, 1)
       const isClose = args?.[2] === true

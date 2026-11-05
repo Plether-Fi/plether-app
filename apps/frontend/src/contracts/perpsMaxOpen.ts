@@ -1,5 +1,4 @@
-import { getPerpsOpenRevertMessage } from '../utils/perpsErrors'
-import { PERPS_POSITION_SIZE_QUANTUM, PERPS_POSITION_SIZE_TO_ASSETS_SCALE } from './perpsConstants'
+import { PERPS_POSITION_SIZE_QUANTUM } from './perpsConstants'
 
 /** Keep router rewards outside the margin budget supplied to the engine lens. */
 export function perpsMaxOpenMarginBudget(
@@ -49,29 +48,4 @@ export async function constrainPerpsMaxOpen<T>(input: {
     }
   }
   return best
-}
-
-export function constrainPerpsMaxOpenPreview<T extends {
-  valid: boolean; invalidReason: number; postSize: bigint; postEquityAssets: bigint
-}>(input: {
-  quote: { maxSizeDelta: bigint; preview: T }
-  selectedMaxLeverageBps: number
-  oraclePrice: bigint
-  capPrice: bigint
-  preview: (sizeDelta: bigint) => Promise<T>
-  signal?: AbortSignal
-}) {
-  const price = input.oraclePrice < input.capPrice ? input.oraclePrice : input.capPrice
-  return constrainPerpsMaxOpen({
-    maxSizeDelta: input.quote.maxSizeDelta,
-    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
-    signal: input.signal,
-    assess: async (sizeDelta) => {
-      const preview = sizeDelta === input.quote.maxSizeDelta ? input.quote.preview : await input.preview(sizeDelta)
-      if (!preview.valid) throw new Error(getPerpsOpenRevertMessage(preview.invalidReason))
-      if (preview.postEquityAssets <= 0n) throw new Error('Maximum size preview has no positive position equity')
-      const notional = preview.postSize * price / PERPS_POSITION_SIZE_TO_ASSETS_SCALE
-      return { leverageBps: (notional * 10_000n + preview.postEquityAssets - 1n) / preview.postEquityAssets, value: preview }
-    },
-  })
 }
