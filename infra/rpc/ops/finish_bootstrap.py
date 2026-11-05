@@ -73,7 +73,9 @@ def main():
     state = {'instance_id': INSTANCE, 'staging_volume_id': STAGING, 'status': 'waiting_for_import', 'pid': os.getpid(), 'wait_bound_hours': args.hours}
     def emit(status, **fields):
         state.update(status=status, updated_at_utc=datetime.now(timezone.utc).isoformat(), **fields)
-        (work / 'completion-status.json').write_text(json.dumps(state, indent=2) + '\n')
+        temporary = work / 'completion-status.next.json'
+        temporary.write_text(json.dumps(state, indent=2) + '\n')
+        temporary.replace(work / 'completion-status.json')
         print(json.dumps({'status': status, **fields}), flush=True)
     session = boto3.Session(profile_name='plether', region_name='ap-southeast-1')
     identity = session.client('sts').get_caller_identity()
