@@ -1408,7 +1408,7 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getAllByText('1 553.25').length).toBeGreaterThan(0)
 
-    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
 
     expect(screen.getByRole('textbox')).toHaveValue('1 500')
 
@@ -1436,16 +1436,16 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Max: 700 plDXY' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
 
     expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('700')
     expect(screen.queryByText(/calculating executable max/i)).not.toBeInTheDocument()
   })
 
   it.each([
-    ['loading', { quote: undefined, marginDelta: undefined, isPending: true }, 'Max: Loading…'],
-    ['failed', { quote: undefined, error: new Error('RPC unavailable') }, 'Max: Unavailable'],
-    ['zero capacity', { quote: { maxSizeDelta: 0n, preview: { valid: false, invalidReason: 9 }, limitingReason: 9 } }, 'Max: 0 plDXY'],
+    ['loading', { quote: undefined, marginDelta: undefined, isPending: true }, 'Max'],
+    ['failed', { quote: undefined, error: new Error('RPC unavailable') }, 'Max'],
+    ['zero capacity', { quote: { maxSizeDelta: 0n, preview: { valid: false, invalidReason: 9 }, limitingReason: 9 } }, 'Max'],
   ])('disables Max when its quote is %s without using the old client estimate', (_state, value, label) => {
     mockIsConnected = true
     maxQuoteMocks.value = { ...maxQuoteMocks.value, ...value }
@@ -1473,7 +1473,7 @@ describe('perps lifecycle labels', () => {
       minOpenNotionalAssets={100_000_000n} minNewPositionNotionalAssets={100_000_000n}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
@@ -1501,7 +1501,7 @@ describe('perps lifecycle labels', () => {
       oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
       availableToTradeRaw={100_000_000n} longOpenCapacityAssets={1_000_000_000n}
     />)
-    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '300' } })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
@@ -1522,7 +1522,7 @@ describe('perps lifecycle labels', () => {
       oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
       availableToTradeRaw={100_000_000n} longOpenCapacityAssets={1_000_000_000n}
     />)
-    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
@@ -1965,8 +1965,8 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByText(/Order #33 is already closing the full current position/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /Max:/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /Max:/ })).toHaveTextContent('Max: 0')
+    expect(screen.getByRole('button', { name: 'Max' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Max' })).toHaveTextContent('Max')
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
@@ -2033,7 +2033,7 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeEnabled()
 
-    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
 
     expect(screen.getByRole('textbox', { name: 'Order quantity' }))
       .toHaveValue('5 000')
@@ -2085,7 +2085,7 @@ describe('perps lifecycle labels', () => {
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
 
-    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
 
     expect(screen.queryByText(/Minimum partial reduction/)).not.toBeInTheDocument()
     await waitFor(() => {
@@ -2144,7 +2144,7 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
 
     expect(screen.getByRole('textbox', { name: 'Order quantity' }))
       .toHaveValue('800')

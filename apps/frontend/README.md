@@ -63,9 +63,13 @@ direction, leverage, or protection settings clears it immediately.
 Review recalculates with its verified block and funding budget, then retains the
 existing adverse-price assessments, funding checks, and final simulation.
 
-Order quantity shortcuts fill 25%, 50%, 75%, or 100% of the available maximum.
+Order quantity shortcuts show 25%, 50%, 75%, and Max as four equal-width outlined
+buttons spanning the full input width. Max fills the full available quantity
+without displaying an amount in the button.
+It stays highlighted while automatic Max sizing is active, including leverage
+changes and quote refreshes; manual entry or a partial shortcut clears selection.
 Partial percentages round down to 100 plDXY increments and fill a fixed quantity;
-100% keeps Max behavior. Reductions use the size remaining after pending close
+Max keeps automatic sizing. Reductions use the size remaining after pending close
 orders, with exact full closes preserved.
 
 The generated ABI and bytecode use Solidity 0.8.35 with pinned settings. Foundry

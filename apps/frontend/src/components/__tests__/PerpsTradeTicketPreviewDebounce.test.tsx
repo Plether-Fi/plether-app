@@ -164,7 +164,7 @@ describe('Perps trade preview debounce', () => {
     const props = { enableLiveTrading: true, initialLeverage: 10, oraclePriceRaw: 100_000_000n,
       oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n }
     const maximum = (tokens: bigint) => ({
-      quote: { maxSizeDelta: tokens * 10n ** 18n, preview: { valid: true } },
+      quote: { maxSizeDelta: tokens * 10n ** 18n, preview: { valid: true, executionPrice: 100_000_000n } },
       marginDelta: 1_000_000_000n, isPending: false, isFetching: false,
     })
     const shortcuts = () => within(screen.getByRole('group', { name: 'Order quantity shortcuts' }))
@@ -172,17 +172,33 @@ describe('Perps trade preview debounce', () => {
     it('fills each percentage of the quoted maximum', () => {
       wagmiMocks.maxQuote.mockReturnValue(maximum(405_200n))
       render(<PerpsTradeTicket {...props} />)
-      for (const [percentage, amount] of [['25%', '101 300'], ['50%', '202 600'], ['75%', '303 900'], ['100%', '405 200']]) {
-        fireEvent.click(shortcuts().getByRole('button', { name: percentage }))
+      for (const [percentage, amount] of [['25%', '101 300'], ['50%', '202 600'], ['75%', '303 900'], ['Max', '405 200']]) {
+        fireEvent.click(shortcuts().getByRole('button', { name: percentage === 'Max' ? 'Max' : percentage }))
         expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(amount)
       }
+    })
+
+    it('shows a plain Max link that fills the full token quantity', () => {
+      const value = maximum(700n)
+      wagmiMocks.maxQuote.mockReturnValue({ ...value,
+        quote: { ...value.quote, preview: { ...value.quote.preview, executionPrice: 80_000_000n } },
+      })
+      render(<PerpsTradeTicket {...props} oraclePriceRaw={80_000_000n} />)
+      const group = shortcuts()
+      expect(group.getAllByRole('button').map(button => button.textContent)).toEqual(['25%', '50%', '75%', 'Max'])
+      expect(group.queryByRole('button', { name: '100%' })).not.toBeInTheDocument()
+      fireEvent.click(group.getByRole('button', { name: 'Max' }))
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('700')
+      expect(group.getByRole('button', { name: 'Max', pressed: true })).toHaveClass('border-brand-orange/60', 'bg-brand-orange/10')
+      fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '600' } })
+      expect(group.getByRole('button', { name: 'Max', pressed: false })).not.toHaveClass('bg-brand-orange/10')
     })
 
     it('rounds fractional lots down without exceeding the requested percentage', () => {
       wagmiMocks.maxQuote.mockReturnValue(maximum(700n))
       render(<PerpsTradeTicket {...props} />)
-      for (const [percentage, amount] of [['25%', '100'], ['50%', '300'], ['75%', '500'], ['100%', '700']]) {
-        fireEvent.click(shortcuts().getByRole('button', { name: percentage }))
+      for (const [percentage, amount] of [['25%', '100'], ['50%', '300'], ['75%', '500'], ['Max', '700']]) {
+        fireEvent.click(shortcuts().getByRole('button', { name: percentage === 'Max' ? 'Max' : percentage }))
         expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(amount)
       }
     })
@@ -191,12 +207,13 @@ describe('Perps trade preview debounce', () => {
       const previous = maximum(700n)
       wagmiMocks.maxQuote.mockReturnValue(previous)
       const view = render(<PerpsTradeTicket {...props} />)
-      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      fireEvent.click(shortcuts().getByRole('button', { name: 'Max' }))
       wagmiMocks.maxQuote.mockReturnValue({ quote: undefined, marginDelta: undefined,
         displayQuote: previous.quote, isPending: true, isFetching: true })
       view.rerender(<PerpsTradeTicket {...props} oraclePriceRaw={100_001_000n} />)
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('700')
-      expect(screen.getByRole('button', { name: 'Max: 700 plDXY' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Max' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Max', pressed: true })).toHaveClass('bg-brand-orange/10')
       expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
       expect(screen.getByRole('group', { name: 'Order quantity shortcuts' })).toHaveAttribute('aria-busy', 'true')
       for (const button of shortcuts().getAllByRole('button')) {
@@ -210,7 +227,7 @@ describe('Perps trade preview debounce', () => {
       wagmiMocks.maxQuote.mockReturnValue(maximum(600n))
       view.rerender(<PerpsTradeTicket {...props} oraclePriceRaw={100_001_000n} />)
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('600')
-      expect(shortcuts().getByRole('button', { name: '100%' })).toBeEnabled()
+      expect(shortcuts().getByRole('button', { name: 'Max' })).toBeEnabled()
     })
 
     it('keeps shortcuts visually steady during a periodic refresh while disabling clicks', () => {
@@ -219,10 +236,10 @@ describe('Perps trade preview debounce', () => {
       const view = render(<PerpsTradeTicket {...props} />)
       wagmiMocks.maxQuote.mockReturnValue({ ...previous, isFetching: true })
       view.rerender(<PerpsTradeTicket {...props} />)
-      const max = screen.getByRole('button', { name: 'Max: 700 plDXY' })
+      const max = screen.getByRole('button', { name: 'Max' })
       expect(max).toBeDisabled()
       expect(max).not.toHaveClass('disabled:opacity-50')
-      expect(shortcuts().getByRole('button', { name: '100%' })).not.toHaveClass('disabled:opacity-50')
+      expect(shortcuts().getByRole('button', { name: 'Max' })).not.toHaveClass('disabled:opacity-50')
     })
 
     it.each([
@@ -245,10 +262,10 @@ describe('Perps trade preview debounce', () => {
       wagmiMocks.maxQuote.mockReturnValue(maximum(100n))
       render(<PerpsTradeTicket {...props} />)
       for (const percentage of ['25%', '50%', '75%']) {
-        expect(shortcuts().getByRole('button', { name: percentage })).toBeDisabled()
+        expect(shortcuts().getByRole('button', { name: percentage === 'Max' ? 'Max' : percentage })).toBeDisabled()
       }
-      expect(shortcuts().getByRole('button', { name: '100%' })).toBeEnabled()
-      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      expect(shortcuts().getByRole('button', { name: 'Max' })).toBeEnabled()
+      fireEvent.click(shortcuts().getByRole('button', { name: 'Max' }))
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
     })
 
@@ -258,12 +275,16 @@ describe('Perps trade preview debounce', () => {
         quote: { maxSizeDelta: BigInt(selectedMaxLeverageBps) * 10n ** 17n, preview: { valid: true } },
       }))
       render(<PerpsTradeTicket {...props} />)
-      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      expect(shortcuts().getByRole('button', { name: 'Max', pressed: false })).toBeInTheDocument()
+      fireEvent.click(shortcuts().getByRole('button', { name: 'Max' }))
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('10 000')
+      expect(shortcuts().getByRole('button', { name: 'Max', pressed: true })).toBeInTheDocument()
       fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '5' } })
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('5 000')
+      expect(shortcuts().getByRole('button', { name: 'Max', pressed: true })).toBeInTheDocument()
       fireEvent.click(shortcuts().getByRole('button', { name: '50%' }))
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('2 500')
+      expect(shortcuts().getByRole('button', { name: 'Max', pressed: false })).toBeInTheDocument()
       fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '10' } })
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('2 500')
       await act(async () => { await vi.advanceTimersByTimeAsync(500) })
@@ -281,8 +302,8 @@ describe('Perps trade preview debounce', () => {
       const closeProps = { initialReduceOnly: true, currentPosition: existingLongPosition,
         oraclePriceRaw: 100_000_000n, oraclePublishTime: 1_700_000_000 }
       const view = render(<PerpsTradeTicket {...closeProps} pendingOrders={pendingClose(300n)} />)
-      for (const [percentage, amount] of [['25%', '100'], ['50%', '300'], ['75%', '500'], ['100%', '700']]) {
-        fireEvent.click(shortcuts().getByRole('button', { name: percentage }))
+      for (const [percentage, amount] of [['25%', '100'], ['50%', '300'], ['75%', '500'], ['Max', '700']]) {
+        fireEvent.click(shortcuts().getByRole('button', { name: percentage === 'Max' ? 'Max' : percentage }))
         expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(amount)
       }
       view.rerender(<PerpsTradeTicket {...closeProps} pendingOrders={pendingClose(400n)} />)
@@ -298,7 +319,7 @@ describe('Perps trade preview debounce', () => {
         oraclePriceRaw={98_580_000n} oraclePublishTime={1_700_000_000} />)
       fireEvent.click(shortcuts().getByRole('button', { name: '25%' }))
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('2 300')
-      fireEvent.click(shortcuts().getByRole('button', { name: '100%' }))
+      fireEvent.click(shortcuts().getByRole('button', { name: 'Max' }))
       expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('9 550')
       expect(screen.queryByText('Order quantity must be a multiple of 100 plDXY.')).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
@@ -312,7 +333,7 @@ describe('Perps trade preview debounce', () => {
     }))
     render(<PerpsTradeTicket enableLiveTrading initialLeverage={10} oraclePriceRaw={100_000_000n}
       oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
-    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('10 000')
     fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '5' } })
     expect(wagmiMocks.maxQuote).toHaveBeenLastCalledWith(expect.objectContaining({ selectedMaxLeverageBps: 50_000 }))
@@ -321,7 +342,7 @@ describe('Perps trade preview debounce', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Leverage' }), { target: { value: '20' } })
     expect(wagmiMocks.maxQuote).toHaveBeenLastCalledWith(expect.objectContaining({ selectedMaxLeverageBps: 200_000 }))
     expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
-    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '10' } })
     const quantity = screen.getByRole('textbox', { name: 'Order quantity' })
     await act(async () => { await vi.advanceTimersByTimeAsync(500) })

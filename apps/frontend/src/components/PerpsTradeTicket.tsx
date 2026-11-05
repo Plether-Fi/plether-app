@@ -2621,11 +2621,10 @@ export function PerpsTradeTicket({
   const maxOrderQuantityInputAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
   const canUseMaxOrderQuantity = maxOrderSizeRaw > 0n &&
     (isReducingCurrentPosition || (!maxOpenQuote.isPending && !maxOpenQuote.isFetching && !maxOpenQuote.error))
-  const orderQuantityShortcuts = ([25, 50, 75, 100] as const).map((percentage) => ({
+  const isMaxOrderQuantitySelected = isReducingCurrentPosition ? isFullCloseIntent : isMaxOpenIntent
+  const orderQuantityShortcuts = ([25, 50, 75] as const).map((percentage) => ({
     percentage,
-    sizeDelta: percentage === 100
-      ? maxOrderDisplaySizeRaw
-      : quantizePerpsPositionSize(maxOrderDisplaySizeRaw * BigInt(percentage) / 100n, 'down'),
+    sizeDelta: quantizePerpsPositionSize(maxOrderDisplaySizeRaw * BigInt(percentage) / 100n, 'down'),
   }))
   const fallbackCurrentPositionSizeRaw = quantizePerpsPositionSize(
     dxyExposureToSizeDelta(parsePerpsAssets(currentPositionExposureInputAmount), oraclePriceRaw) ?? 0n,
@@ -4292,34 +4291,29 @@ export function PerpsTradeTicket({
             }}
             rightElement={<TokenLabel token="plDXY" />}
           />
-          <div className="mt-1.5 flex justify-end">
-            <button
-              type="button"
-              className={`group cursor-pointer text-right text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${isMaxOpenRefreshing ? '' : 'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-content-secondary'}`}
-              disabled={!canUseMaxOrderQuantity}
-              onClick={() => { fillOrderQuantity(100, maxOrderSizeRaw) }}
-            >
-              <span>Max: </span>
-              <span className="group-hover:underline group-focus-visible:underline">
-                {!isReducingCurrentPosition && (maxOpenQuote.error || (!maxOpenDisplayQuote && (maxOpenQuote.isPending || maxOpenQuote.marginDelta === undefined)))
-                  ? maxOpenQuote.isPending ? 'Loading…' : 'Unavailable'
-                  : <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />}
-              </span>
-            </button>
-          </div>
-          <div role="group" aria-label="Order quantity shortcuts" aria-busy={isMaxOpenRefreshing} className="mt-2 grid grid-cols-4 gap-1.5">
+          <div role="group" aria-label="Order quantity shortcuts" aria-busy={isMaxOpenRefreshing} className="mt-2 grid grid-cols-4 gap-1.5 whitespace-nowrap text-xs font-medium text-content-secondary">
             {orderQuantityShortcuts.map(({ percentage, sizeDelta }) => (
               <button
                 key={percentage}
                 type="button"
                 title={`Use ${percentage.toString()}% of maximum order quantity`}
                 disabled={!canUseMaxOrderQuantity || sizeDelta <= 0n}
-                className={`min-h-9 border border-brand-border/30 bg-app-bg px-2 py-1.5 text-xs font-semibold text-content-secondary transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${sizeDelta > 0n && (canUseMaxOrderQuantity || isMaxOpenRefreshing) ? 'cursor-pointer hover:border-brand-orange/50 hover:bg-[#3B212D] hover:text-content-primary' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
+                className={`min-w-12 border border-brand-border/30 bg-transparent px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${sizeDelta > 0n && (canUseMaxOrderQuantity || isMaxOpenRefreshing) ? 'cursor-pointer hover:border-brand-border/60 hover:bg-[#3B212D] hover:text-content-primary' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
                 onClick={() => { fillOrderQuantity(percentage, sizeDelta) }}
               >
                 {percentage}%
               </button>
             ))}
+            <button
+              type="button"
+              title="Use the maximum order quantity"
+              aria-pressed={isMaxOrderQuantitySelected}
+              className={`min-w-12 cursor-pointer border px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${isMaxOrderQuantitySelected ? 'border-brand-orange/60 bg-brand-orange/10 text-content-primary hover:bg-brand-orange/20' : 'border-brand-border/30 bg-transparent hover:border-brand-border/60 hover:bg-[#3B212D] hover:text-content-primary'} ${isMaxOpenRefreshing ? '' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
+              disabled={!canUseMaxOrderQuantity}
+              onClick={() => { fillOrderQuantity(100, maxOrderSizeRaw) }}
+            >
+              Max
+            </button>
           </div>
           {!isReducingCurrentPosition && maxOpenQuoteMessage ? (
             <p role="status" className="mt-1 text-xs text-content-secondary">{maxOpenQuoteMessage}</p>
