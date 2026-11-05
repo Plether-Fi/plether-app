@@ -179,8 +179,33 @@ never automatically replayed after an ambiguous failure. Reverts are preserved.
 
 ## Provisioning and publishing
 
+Use `infra/terraform-rpc` for the live pilot. Its separate backend key is
+`plether/sepolia/rpc/terraform.tfstate` in the existing state bucket. The entry
+point reads the existing VPC, public subnets, application security group,
+cluster and GitHub OIDC provider as data sources; it does not manage them or
+require database, application signer or telemetry credentials. RPC definitions
+are symlinked from `infra/terraform` so the two entry points share their actual
+resource definitions, bootstrap and guard tests.
+
+Keep `provision_sepolia_rpc = false` in the application stack. Enable it only
+in the standalone RPC stack; never manage the same RPC resources in both states.
+The standalone context inputs are `existing_vpc_id`,
+`existing_public_subnet_ids` (two public AZs), `existing_ecs_cluster_name` and
+`existing_ecs_security_group_id`, plus `operations_alarm_sns_topic_arn` and the
+reviewed RPC overlay. The initial plan must contain only new RPC resources;
+reject application changes or existing network/cluster ownership.
+
+```bash
+AWS_PROFILE=plether terraform -chdir=infra/terraform-rpc init \
+  -backend-config=backend.sepolia.hcl -lockfile=readonly
+AWS_PROFILE=plether terraform -chdir=infra/terraform-rpc plan \
+  -var-file=/absolute/protected/path/rpc-only.tfvars.json \
+  -out=/absolute/protected/path/rpc.tfplan
+```
+
 1. Review a saved Terraform plan using the existing Sepolia base variables
-   plus the reviewed RPC overlay. Keep `gateway_image = ""` initially. The first
+   as read-only standalone context plus the reviewed RPC overlay. Keep
+   `gateway_image = ""` initially. The first
    apply creates the ECR repository and node, without starting gateway tasks.
    No application URL is switched by either apply.
 2. Configure GitHub environment `rpc-admin-sepolia` with reviewers and master-

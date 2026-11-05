@@ -4,6 +4,7 @@ on:
     paths:
       - 'infra/rpc/**'
       - 'infra/terraform/**'
+      - 'infra/terraform-rpc/**'
       - '.github/workflows/rpc-*.yml'
 permissions:
   contents: read
@@ -42,3 +43,17 @@ jobs:
       - run: terraform init -backend=false -lockfile=readonly -input=false
       - run: terraform validate
       - run: terraform test -filter=tests/rpc.tftest.hcl
+  standalone-terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/terraform-rpc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.16.1'
+      - run: terraform fmt -check
+      - run: terraform init -backend=false -lockfile=readonly -input=false
+      - run: terraform validate
