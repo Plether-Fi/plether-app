@@ -209,8 +209,8 @@ AWS_PROFILE=plether terraform -chdir=infra/terraform-rpc plan \
   -out=/absolute/protected/path/rpc.tfplan
 ```
 
-1. Review a saved Terraform plan using the existing Sepolia base variables
-   as read-only standalone context plus the reviewed RPC overlay. Keep
+1. Review a saved Terraform plan using only the standalone network/cluster
+   context and reviewed RPC overlay. Do not supply application tfvars. Keep
    `gateway_image = ""` initially. The first
    apply creates the ECR repository and node, without starting gateway tasks.
    No application URL is switched by either apply.
