@@ -34,9 +34,10 @@ authorize the next one. Pimlico-shaped recovery records remain supported.
 The default remains `aa_rpc_mode="dual-independent"` (`AA_RPC_MODE` in the
 API/reconciler). All independent-provider gates below apply to that mode.
 
-An explicitly approved, Plether-controlled Arbitrum Sepolia canary may instead
-use `aa_rpc_mode="single-provider-sepolia"`. It requires a nonempty owner
-allowlist, global rollout disabled, and the verification SSM parameter set to
+An explicitly approved Arbitrum Sepolia deployment may instead use
+`aa_rpc_mode="single-provider-sepolia"`. It requires either a nonempty owner
+allowlist or explicit public testnet rollout, and the verification SSM parameter
+set to
 `/plether/sepolia/perps-rpc-url` with the existing AWS-managed encryption mode.
 Both `PERPS_RPC_URL` and the legacy `AA_RECONCILER_SECONDARY_RPC_URL` environment
 slot then reference that same SecureString; do not create a duplicate secret
@@ -50,14 +51,24 @@ fails closed; mode is never changed automatically on an outage. Startup emits
 Backend budgets are not a defense against all incorrect settlement evidence:
 the small funded on-chain deposit remains the loss-exposure boundary.
 
-For the approved single-provider canary only, interpret the paired-provider
-commands and evidence below as repeated same-provider consistency checks. The
+For the approved single-provider Sepolia deployment only, interpret the
+paired-provider commands and evidence below as repeated same-provider consistency checks. The
 `test "$PERPS_RPC_URL" != "$AA_RECONCILER_SECONDARY_RPC_URL"` independence gate
 is replaced by an exact normalized equality check plus the explicit mode and
 cohort gates. Do not claim independent qualification. All other gates remain:
 schema validation, KMS attestation, pinned contract/account identities, fresh
-safe reads, caps, pause/drain, alarms, negative tests, and no global/mainnet use.
-The current operator choices and unapplied overlay are recorded in
+safe reads, caps, pause/drain, alarms, negative tests, and no mainnet use.
+The temporary `infra/terraform/sepolia-single-provider.tfvars` overlay changes
+only provider mode and the verification secret reference. Apply it after the
+current environment/release overlays so cohort and spending limits stay intact.
+On 2026-11-05, the operator approved temporary Alchemy-only Sepolia verification
+after the public secondary RPC intermittently rejected safe-block reads with
+missing historical state. The API and reconciler reuse the primary SecureString;
+the public testnet cohort, sponsorship limits, and canonical-state checks are
+preserved. [Backend rollout 42111680738](https://github.com/Plether-Fi/plether-app/actions/runs/42111680738)
+records the deployment. Mainnet retains its existing configuration.
+
+The original restricted-cohort preparation choices and overlay are recorded in
 [Sepolia canary preparation](sepolia-aa-canary-preparation.md).
 
 ### Moving to our own node later
