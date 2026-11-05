@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import worker from '../public/_worker.js';
@@ -16,6 +17,31 @@ const VAULT_HISTORY_URL =
 
 afterEach(() => {
   mock.restoreAll();
+});
+
+describe('Wallet content security policy', () => {
+  it('permits Privy authentication and external wallets without legacy AppKit services', () => {
+    const headers = readFileSync(new URL('../public/_headers', import.meta.url), 'utf8');
+    const policy = headers.split('\n').find(line => line.trim().startsWith('Content-Security-Policy:'));
+    assert.ok(policy);
+    const directives = Object.fromEntries(policy.slice(policy.indexOf(':') + 1).split(';').map(value => {
+      const [name, ...sources] = value.trim().split(/\s+/);
+      return [name, sources];
+    }));
+    assert.ok(directives['connect-src'].includes('https://auth.privy.io'));
+    assert.ok(directives['connect-src'].includes('https://*.rpc.privy.systems'));
+    assert.ok(directives['connect-src'].includes('https://explorer-api.walletconnect.com'));
+    assert.ok(directives['connect-src'].includes('wss://relay.walletconnect.com'));
+    assert.ok(directives['connect-src'].includes('https://eu.i.posthog.com'));
+    for (const name of ['child-src', 'frame-src']) {
+      for (const source of ['https://auth.privy.io', 'https://verify.walletconnect.com', 'https://verify.walletconnect.org']) {
+        assert.ok(directives[name].includes(source), `${name} must permit ${source}`);
+      }
+    }
+    assert.ok(directives['script-src'].includes('https://challenges.cloudflare.com'));
+    assert.equal(directives['script-src'].includes('https:'), false);
+    assert.doesNotMatch(policy, /web3modal\.org|fonts\.reown\.com|secure\.walletconnect\.org/);
+  });
 });
 
 function mockOriginFetch(response, durationMs) {

@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { getAddress, isAddress, isAddressEqual, type Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 import { verifyPerpsV2DeploymentBindings } from '../contracts/verifyPerpsV2Bindings'
 import {
   comparePerpsIdentities,
@@ -621,6 +622,8 @@ export function WagmiPerpsIdentityProvider(
   props: WagmiPerpsIdentityProviderProps
 ) {
   const { address: ownerAddress, chainId } = useAccount()
+  const wallet = useWalletActions()
+  const signerReady = !wallet.configured || wallet.signerReady
   const publicClient = usePublicClient()
   const deploymentVerifier = useCallback<PerpsDeploymentVerifier>(async ({
     manifest,
@@ -632,7 +635,7 @@ export function WagmiPerpsIdentityProvider(
   return (
     <PerpsIdentityProvider
       {...props}
-      ownerAddress={ownerAddress}
+      ownerAddress={signerReady ? ownerAddress : undefined}
       chainId={chainId}
       deploymentVerifier={deploymentVerifier}
     />

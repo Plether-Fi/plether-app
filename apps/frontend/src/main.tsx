@@ -1,17 +1,16 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { WagmiProvider } from 'wagmi'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { config, scheduleAppKitInitialization } from './config/wagmi'
+import { QueryClient } from '@tanstack/react-query'
 import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
 import { captureFrontendLog, captureReactException, scheduleAnalyticsInitialization } from './analytics/client'
 import { PerpsAaProvider } from './perps-aa'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
+import { WalletProvider } from './wallet/WalletProvider'
+import { WalletTelemetry } from './wallet/WalletTelemetry'
 
 scheduleAnalyticsInitialization()
-scheduleAppKitInitialization()
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -57,13 +56,12 @@ createRoot(rootElement, {
 }).render(
   <StrictMode>
     <AppErrorBoundary>
-      <WagmiProvider config={config}>
-        <QueryClientProvider client={queryClient}>
-          <PerpsAaProvider>
-            <App />
-          </PerpsAaProvider>
-        </QueryClientProvider>
-      </WagmiProvider>
+      <WalletProvider queryClient={queryClient}>
+        <WalletTelemetry />
+        <PerpsAaProvider>
+          <App />
+        </PerpsAaProvider>
+      </WalletProvider>
     </AppErrorBoundary>
   </StrictMode>
 )

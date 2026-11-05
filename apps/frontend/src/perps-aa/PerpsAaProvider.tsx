@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { isAddressEqual } from 'viem'
 import { usePublicClient, useWalletClient } from 'wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -52,7 +53,9 @@ export function PerpsAaProvider({
   runtime?: PerpsAaSmartAccountRuntime
 }) {
   const publicClient = usePublicClient()
-  const { data: walletClient } = useWalletClient()
+  const { data: connectedWalletClient } = useWalletClient()
+  const wallet = useWalletActions()
+  const walletClient = wallet.configured && !wallet.signerReady ? undefined : connectedWalletClient
   const [resolvedRuntime, setResolvedRuntime] = useState<{
     connectionKey: string
     runtime: PerpsAaSmartAccountRuntime

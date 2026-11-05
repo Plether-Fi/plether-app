@@ -30,25 +30,28 @@
     "build-storybook": "storybook build",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
-    "tradingview:install": "node scripts/install-tradingview-charting-library.mjs"
+    "tradingview:install": "node scripts/install-tradingview-charting-library.mjs",
+    "test:e2e:wallet": "playwright test --config=e2e/wallet.playwright.config.ts",
+    "test:e2e:privy": "playwright test --config=e2e/privy.playwright.config.ts"
   },
   "dependencies": {
     "@fontsource/uncut-sans": "^5.2.5",
     "@neoconfetti/react": "^1.0.0",
-    "@reown/appkit": "^1.8.18",
-    "@reown/appkit-adapter-wagmi": "^1.8.18",
+    "@plether-fi/perps-aa-client": "0.1.0",
+    "@privy-io/react-auth": "3.51.2",
+    "@privy-io/wagmi": "4.0.20",
     "@tanstack/react-query": "^5.90.16",
     "better-result": "^2.1.0",
     "idb-keyval": "^6.2.2",
-    "permissionless": "0.3.7",
+    "ox": "0.11.3",
+    "permissionless-v03": "npm:permissionless@0.3.7",
     "posthog-js": "^1.393.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.11.0",
-    "viem": "2.45.2",
+    "viem": "2.57.8",
     "wagmi": "^3.2.0",
-    "zustand": "^5.0.9",
-    "@plether-fi/perps-aa-client": "0.1.0"
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.0.0",

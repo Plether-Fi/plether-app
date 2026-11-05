@@ -5,7 +5,7 @@ import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { formatUnits, zeroAddress } from 'viem'
 import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
-import { openAppKit } from '../config/wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
@@ -1827,6 +1827,7 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
+  const { connect, ready: walletReady, configured: walletConfigured } = useWalletActions()
   const deploymentConfirmation = useAccountDeploymentConfirmation()
   const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
   const identity = usePerpsIdentity()
@@ -3554,7 +3555,7 @@ export function PerpsTradeTicket({
       : direction === 'long' ? 'Review Long' : 'Review Short'
   const isConnectWalletCta = enableLiveTrading && !isConnected
   const isSwitchNetworkCta = enableLiveTrading && isConnected && !isCorrectChain
-  const isReviewButtonDisabled = isAwaitingAccountConfirmation || (
+  const isReviewButtonDisabled = (isConnectWalletCta && (!walletReady || !walletConfigured)) || isAwaitingAccountConfirmation || (
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
@@ -3628,6 +3629,7 @@ export function PerpsTradeTicket({
   const shouldShowMarginActionPositionContext = currentPosition?.exists && marginActionCurrentCollateral !== undefined
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isAwaitingAccountConfirmation || isMarginActionPending
+    || (enableLiveTrading && !isConnected && (!walletReady || !walletConfigured))
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
   const orderDxyExposureNumber = usdcRawToNumber(orderDxyExposureUsdc)
   const commonAnalyticsProperties = useMemo<PerpsAnalyticsProperties>(() => ({
@@ -3691,7 +3693,7 @@ export function PerpsTradeTicket({
   async function handleMarginActionSubmit() {
     if (!marginAction) return
     if (enableLiveTrading && !isConnected) {
-      void openAppKit()
+      connect()
       return
     }
     if (enableLiveTrading && !isCorrectChain) {
@@ -4553,7 +4555,7 @@ export function PerpsTradeTicket({
           analyticsProperties={commonAnalyticsProperties}
           onClick={() => {
             if (enableLiveTrading && !isConnected) {
-              void openAppKit()
+              connect()
               return
             }
             if (enableLiveTrading && !isCorrectChain) {
@@ -4573,6 +4575,11 @@ export function PerpsTradeTicket({
           {isConnectWalletCta ? <span className="material-symbols-outlined text-xl">account_balance_wallet</span> : null}
           {reviewCtaLabel}
         </Button>
+        {isConnectWalletCta && (!walletConfigured || !walletReady) ? (
+          <p role="status" className="text-xs leading-4 text-content-secondary">
+            {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : 'Preparing wallet connection…'}
+          </p>
+        ) : null}
         {isSwitchNetworkCta && networkSwitchError ? (
           <div className="text-xs leading-4 text-[#FFAB96]">
             {networkSwitchError}

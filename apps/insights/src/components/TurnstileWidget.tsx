@@ -4,14 +4,14 @@ const TURNSTILE_SCRIPT_ID = 'cloudflare-turnstile-script'
 const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 
 interface TurnstileApi {
-  render: (container: HTMLElement, options: Record<string, unknown>) => string
+  render: (container: HTMLElement, options: Record<string, unknown>) => string | null | undefined
   remove: (widgetId: string) => void
 }
 
-declare global {
-  interface Window {
-    turnstile?: TurnstileApi
-  }
+function getTurnstileApi(): TurnstileApi | undefined {
+  // Keep this widget's minimal script contract local. Wallet SDKs may also
+  // install Turnstile and declare a larger Window.turnstile interface.
+  return (window as unknown as { turnstile?: TurnstileApi }).turnstile
 }
 
 export function TurnstileWidget({
@@ -35,10 +35,17 @@ export function TurnstileWidget({
     let widgetId: string | undefined
     let script: HTMLScriptElement | null = null
 
+    const reportScriptError = () => {
+      if (disposed) return
+      onToken(null)
+      setError('The spam-protection check could not load. Refresh the page and try again.')
+    }
+
     const renderWidget = () => {
-      if (disposed || widgetId || !window.turnstile || !containerRef.current) return
+      const turnstile = getTurnstileApi()
+      if (disposed || widgetId || !turnstile || !containerRef.current) return
       setError(null)
-      widgetId = window.turnstile.render(containerRef.current, {
+      widgetId = turnstile.render(containerRef.current, {
         sitekey: siteKey,
         action: 'competition_registration',
         theme: 'dark',
@@ -48,16 +55,11 @@ export function TurnstileWidget({
           onToken(null)
           setError('The spam-protection check could not load. Refresh the page and try again.')
         },
-      })
+      }) ?? undefined
+      if (!widgetId) reportScriptError()
     }
 
-    const reportScriptError = () => {
-      if (disposed) return
-      onToken(null)
-      setError('The spam-protection check could not load. Refresh the page and try again.')
-    }
-
-    if (window.turnstile) {
+    if (getTurnstileApi()) {
       renderWidget()
     } else {
       script = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null
@@ -78,7 +80,7 @@ export function TurnstileWidget({
       script?.removeEventListener('load', renderWidget)
       script?.removeEventListener('error', reportScriptError)
       onToken(null)
-      if (widgetId && window.turnstile) window.turnstile.remove(widgetId)
+      if (widgetId) getTurnstileApi()?.remove(widgetId)
     }
   }, [onToken, reactId, resetKey, siteKey])
 

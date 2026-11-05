@@ -3,7 +3,7 @@ import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
 import type { TestnetFaucetClaim } from '../api/types'
-import { openAppKit } from '../config/wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePerpsIdentity } from '../perps-aa'
@@ -13,6 +13,8 @@ import { Button, Input, Modal } from './ui'
 interface TestnetWelcomeModalViewProps {
   isOpen: boolean
   isWalletConnected: boolean
+  isWalletConnectionReady?: boolean
+  walletConnectionStatus?: string
   walletAddress: string
   fieldError?: string
   submitError?: string
@@ -31,6 +33,8 @@ interface TestnetWelcomeModalViewProps {
 export function TestnetWelcomeModalView({
   isOpen,
   isWalletConnected,
+  isWalletConnectionReady = true,
+  walletConnectionStatus,
   walletAddress,
   fieldError,
   submitError,
@@ -76,8 +80,8 @@ export function TestnetWelcomeModalView({
             onClick={isWalletConnected ? onRequestFunds : onConnectWallet}
             isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
             disabled={
-              isWalletConnected &&
-              (!isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError))
+              !isWalletConnected ? !isWalletConnectionReady :
+              !isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError)
             }
             className="w-full"
           >
@@ -109,6 +113,7 @@ export function TestnetWelcomeModalView({
       }
     >
       <div className="space-y-5 panel-padding text-sm text-content-secondary">
+        {!isWalletConnected && walletConnectionStatus ? <p role="status">{walletConnectionStatus}</p> : null}
         <p>
           This is a testnet version of Plether Perps, built for trying deposits, trades, and order
           execution without real funds.
@@ -228,6 +233,7 @@ export function TestnetWelcomeModalView({
 }
 
 export function TestnetWelcomeModal() {
+  const { connect, ready: walletReady, configured: walletConfigured } = useWalletActions()
   const { address: connectedAddress, isConnected } = useAccount()
   const perpsIdentity = usePerpsIdentity()
   const faucetRecipient = perpsIdentity.isAaManifestConfigured
@@ -287,10 +293,12 @@ export function TestnetWelcomeModal() {
     <TestnetWelcomeModalView
       isOpen={!dismissed}
       isWalletConnected={isConnected}
+      isWalletConnectionReady={walletReady && walletConfigured}
+      walletConnectionStatus={!walletConfigured ? 'Wallet connection is not configured for this deployment.' : !walletReady ? 'Preparing wallet connection…' : undefined}
       onClose={dismiss}
       onConnectWallet={() => {
         setFieldError(null)
-        void openAppKit()
+        connect()
       }}
       walletAddress={displayedWalletAddress}
       fieldError={fieldError ?? undefined}

@@ -25,17 +25,17 @@ const mocks = vi.hoisted(() => ({
   getUserOperationHash: vi.fn(),
 }))
 
-vi.mock('permissionless', () => ({
+vi.mock('permissionless-v03', () => ({
   createSmartAccountClient: mocks.createSmartAccountClient,
 }))
 
-vi.mock('permissionless/accounts/simple', () => ({
+vi.mock('permissionless-v03/accounts/simple', () => ({
   SimpleSmartAccount: {
     toSimpleSmartAccount: mocks.toSimpleSmartAccount,
   },
 }))
 
-vi.mock('permissionless/clients/pimlico', () => ({
+vi.mock('permissionless-v03/clients/pimlico', () => ({
   createPimlicoClient: mocks.createPimlicoClient,
 }))
 

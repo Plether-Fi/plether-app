@@ -5,7 +5,7 @@ React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 ## Tech Stack
 
 - React 19 + TypeScript + Vite
-- wagmi + viem + permissionless.js + Web3Modal
+- Privy + wagmi + viem + permissionless.js
 - Tailwind CSS v4
 - Zustand + TanStack Query
 
@@ -22,6 +22,13 @@ The exact client release, Core commit, and tarball integrity are recorded in
 version is independent of the deployed Core contract release. The old vendored
 client and Core patch are no longer used.
 
+Perps imports `permissionless-v03`, an npm alias pinned to `permissionless@0.3.7`.
+This keeps the existing SimpleAccount v0.8 runtime separate from Privy's optional
+`permissionless@0.2` integration, which is not installed or used. Keep the alias
+and its `ox@0.11.3` peer pin together; viem carries its own newer `ox` dependency.
+Normal `npm ci` resolves the dependency graph without
+`--force` or `--legacy-peer-deps`.
+
 ```bash
 npm install
 npm run dev        # Dev server at http://localhost:5173
@@ -30,10 +37,74 @@ npm run lint       # ESLint
 npm test           # Unit tests
 npm run anvil      # Start Anvil fork (port 8546, requires SEPOLIA_RPC_URL)
 npm run test:integration  # Integration tests (requires Anvil)
+npm run test:e2e:wallet  # Offline signing and wallet-event browser checks
+npm run test:e2e:privy   # Read-only browsing with Privy deliberately unconfigured
 npm run storybook  # Component explorer at http://localhost:6006
 npm run perps:oracle-worker -- --once  # Update the perps mark from backend-cached Pyth data
 npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backend cache
 ```
+
+## Login and wallet connection
+
+Set the public `VITE_PRIVY_APP_ID` in `.env.local` to enable email login
+and external EVM wallets. `VITE_PRIVY_CLIENT_ID` is optional. With no app ID,
+the application remains available for browsing and wallet connection is disabled.
+Never put a Privy app secret, OAuth client secret, or signing key in a `VITE_`
+variable: Vite includes these values in browser assets.
+
+The hosted Arbitrum Sepolia trading app (`https://app.sepolia.plether.com`) and
+Insights (`https://insights.plether.com`) must use the **same Privy application**
+so the same email login resolves the same embedded owner wallet. Insights is
+hosted as a production site but connects to the testnet, so do not select a
+different Privy application based only on the deployment's production label.
+Use a separate shared Privy application for local development or isolated previews.
+Separate app client IDs can scope origins and session settings within each app;
+sharing the application does not imply that browser sessions are shared across origins.
+
+In the Privy dashboard, enable the login methods shown by the application,
+configure their OAuth credentials/callbacks, and allow each exact application
+origin. Include the local Vite and Storybook origins in the development app when
+using them. External wallets connect without an extra Privy sign-in message;
+Insights still requires its own one-time ownership signature. Embedded wallets
+are EOA owners for the existing Perps trading account implementation, not a
+replacement Privy smart-account or sponsorship service. The connection popup offers email login first, followed by the complete searchable
+WalletConnect catalog and detected extensions. Email is optional for external-wallet
+users. Users explicitly select the active owner wallet when more than one is connected.
+
+This is a clean provider switch: Reown sessions and embedded-wallet keys are
+not imported. Privy email login uses a newly provisioned Privy wallet.
+
+Deployment configuration uses the shared GitHub Actions variable `PRIVY_APP_ID`
+and optional `PRIVY_TRADING_CLIENT_ID`; **Deploy Insights** uses that same app ID
+and optional `PRIVY_INSIGHTS_CLIENT_ID`. The Sepolia frontend workflow validates
+the public app ID before building. Its mainnet target publishes the existing
+redirect and does not require Privy configuration.
+
+Before merging, test both applications against the same Privy development app:
+external desktop/mobile wallets, email login, returning sessions, explicit owner
+selection, logout, message/typed-data signatures, and a sponsored Perps operation.
+Use the local registration service or an isolated backend with a matching
+canonical registration origin for the full Insights flow. A Pages preview with
+production backend settings cannot bypass the registration origin restriction.
+Check CSP enforcement in a browser; the checked-in policies follow
+[Privy's EVM CSP guidance](https://docs.privy.io/security/implementation-guide/content-security-policy).
+Do not record login credentials, OAuth callbacks, signatures, or wallet export UI
+in analytics or session replay.
+
+The trading app emits bounded `wallet_provider_ready` (including initialization
+duration), `wallet_connection_state_changed`, and `wallet_action_failed` events.
+These contain no owner addresses, user IDs, login credentials, or raw provider
+errors. During rollout, compare readiness latency and connection failures with
+the preview baseline. Stop the rollout on any owner mismatch, failed ownership
+verification, or inability to sign with the selected wallet. A frontend rollback
+does not migrate Privy wallets to Reown; validate the replacement build with a
+Privy account before changing the public deployment.
+
+The Insights workflow publishes on matching pushes to `master`; the trading
+frontend requires a manual Sepolia dispatch from `master`. Complete preview
+validation before merging, then use `gh` to check for existing runs, dispatch
+only missing deployments, monitor both workflows, and smoke-test the public
+applications. See the repository `AGENTS.md` for authentication and dispatch rules.
 
 ## TradingView Advanced Charts
 

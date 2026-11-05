@@ -1,8 +1,7 @@
 import type { Preview } from '@storybook/react-vite'
 import { createElement } from 'react'
-import { WagmiProvider } from 'wagmi'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { config } from '../src/config/wagmi'
+import { QueryClient } from '@tanstack/react-query'
+import { WalletProvider } from '../src/wallet/WalletProvider'
 import '../src/index.css'
 
 const queryClient = new QueryClient({
@@ -18,9 +17,8 @@ const preview: Preview = {
   decorators: [
     (Story) =>
       createElement(
-        WagmiProvider,
-        { config },
-        createElement(QueryClientProvider, { client: queryClient }, createElement(Story))
+        WalletProvider,
+        { queryClient, children: createElement(Story) }
       ),
   ],
   parameters: {

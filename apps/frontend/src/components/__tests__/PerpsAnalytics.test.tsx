@@ -52,11 +52,8 @@ const tradingMocks = vi.hoisted(() => ({
   withdrawMargin: vi.fn(),
 }))
 
-vi.mock('@reown/appkit/react', () => ({
-  createAppKit: vi.fn(),
-  useAppKit: () => ({
-    open: vi.fn(),
-  }),
+vi.mock('../../wallet/useWalletActions', () => ({
+  useWalletActions: () => ({ connect: vi.fn(), ready: true, configured: true }),
 }))
 
 vi.mock('wagmi', () => ({

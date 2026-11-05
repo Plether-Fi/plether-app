@@ -3,10 +3,10 @@ import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { createWalletPreparationRecovery, PreparationRecoveryError } from './walletRecovery'
 import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
-import { createSmartAccountClient } from 'permissionless'
+import { createSmartAccountClient } from 'permissionless-v03'
 import { recoveryHttp } from './recoveryTransport'
-import { SimpleSmartAccount } from 'permissionless/accounts/simple'
-import { createPimlicoClient } from 'permissionless/clients/pimlico'
+import { SimpleSmartAccount } from 'permissionless-v03/accounts/simple'
+import { createPimlicoClient } from 'permissionless-v03/clients/pimlico'
 import {
   getAddress,
   hexToBigInt,

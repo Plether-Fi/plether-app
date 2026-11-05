@@ -169,7 +169,7 @@ Before provisioning the application:
 Set `x_target_handle = "plether_fi"`. Registration accepts accounts created on
 or before `2026-06-15T21:00:00Z`.
 
-### Turnstile and Reown
+### Turnstile and Privy
 
 Create a Cloudflare Turnstile widget restricted to
 `insights.plether.com`. Its browser and server action is exactly
@@ -179,14 +179,36 @@ Configure these GitHub repository values for **Deploy Insights**:
 
 ```text
 INSIGHTS_TURNSTILE_SITE_KEY
-WALLETCONNECT_PROJECT_ID
+PRIVY_APP_ID
+PRIVY_INSIGHTS_CLIENT_ID (optional)
+PRIVY_TRADING_CLIENT_ID (optional; trading frontend only)
 INSIGHTS_REGISTRATION_ORIGIN_TOKEN_SLOT=current
 ```
 
-Authorize `https://insights.plether.com` in the Reown project. Confirm that the
-registration wallet flow is restricted to Arbitrum Sepolia and that the public
-RPC origin remains `https://sepolia-rollup.arbitrum.io/rpc`, matching the Pages
-Worker CSP.
+Use the same Privy app ID for `https://insights.plether.com` and the Arbitrum
+Sepolia trading app at `https://app.sepolia.plether.com`. Insights' production
+hosting label must not cause it to use a different application from the testnet
+trading app. Configure exact allowed origins, the displayed login methods, and
+their OAuth callbacks in Privy; optional app client IDs can separate origin and
+session settings. Do not put the Privy app secret or OAuth secrets in GitHub
+public variables or any `VITE_` variable. Both workflows pass the public app ID
+as `VITE_PRIVY_APP_ID` and fail their application build if it is absent or invalid.
+
+Confirm that registration selects the same owner address as trading, explicitly
+switches to Arbitrum Sepolia before its ownership challenge, and keeps the public
+RPC origin `https://sepolia-rollup.arbitrum.io/rpc` aligned with the Pages Worker
+CSP. Privy social login creates a new wallet; Reown sessions and keys are not
+imported. The existing X verification and registration session remain required.
+
+The CSP permits Privy's documented authentication iframe/API, RPC subdomains,
+WalletConnect verification/explorer/relay endpoints, and Coinbase Wallet relay,
+in addition to Turnstile and the existing public RPC. Revalidate social login,
+embedded signing, external wallets, logout, and CSP in an isolated preview before
+merging: **Deploy Insights** publishes matching pushes to `master`, while the
+trading frontend's Sepolia deployment is manually dispatched. Full registration
+tests need a backend configured for the test origin; the production origin check
+is not bypassed for Pages previews. A shared Privy application preserves wallet
+identity across origins, not a guarantee of a shared browser session.
 
 ### Private registration material
 
@@ -305,7 +327,8 @@ has already deployed that commit.
 
 6. Confirm that the canonical page
    `https://insights.plether.com/competitions/testnet-trading-2026-09/register`
-   loads, its CSP permits Turnstile/Reown and Arbitrum Sepolia RPC only, and the
+   loads, its CSP permits the configured Turnstile, Privy, WalletConnect, and
+   Arbitrum Sepolia endpoints, and the
    public endpoints below return the September competition while registration
    remains unavailable:
 

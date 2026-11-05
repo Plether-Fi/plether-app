@@ -1,11 +1,12 @@
 import { Suspense } from 'react'
 import { lazyWithRetry as lazy } from '../../utils/lazyWithRetry'
-import { useAccount, useDisconnect, useChainId } from 'wagmi'
+import { useAccount, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { useLocation } from 'react-router-dom'
-import { anvil, openAppKit } from '../../config/wagmi'
+import { anvil } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
+import { useWalletActions } from '../../wallet/useWalletActions'
 
 const SponsoredOperationHistoryButton = lazy(() => import('../SponsoredOperationActivity').then((module) => ({ default: module.SponsoredOperationHistoryButton })))
 
@@ -17,7 +18,7 @@ const SWITCH_NETWORK_BUTTON_CLASS =
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
-  const { disconnect } = useDisconnect()
+  const { connect, openAccount, disconnect, ready, configured, error } = useWalletActions()
   const {
     switchToArbitrumSepolia,
     isSwitching: isSwitchingNetwork,
@@ -52,20 +53,25 @@ export function ConnectButton() {
 
   if (!isConnected) {
     return (
-      <button
-        type="button"
-        aria-label="Connect Wallet"
-        onClick={() => {
-          clearSwitchError()
-          void openAppKit()
-        }}
-        className={`${WALLET_BUTTON_CLASS} text-xs font-medium sm:text-sm`}
-      >
-        <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
-        <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[340px]:inline">
-          Connect Wallet
-        </span>
-      </button>
+      <div className="flex max-w-xs flex-col items-end gap-1">
+        <button
+          type="button"
+          aria-label="Connect Wallet"
+          onClick={() => {
+            clearSwitchError()
+            connect()
+          }}
+          disabled={!ready || !configured}
+          className={`${WALLET_BUTTON_CLASS} text-xs font-medium sm:text-sm`}
+        >
+          <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
+          <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[340px]:inline">
+            Connect Wallet
+          </span>
+        </button>
+        {!configured ? <p role="status" className="text-right text-xs text-content-secondary">Wallet login is not configured for this deployment.</p> : null}
+        {error ? <p role="alert" className="text-right text-xs text-brand-orange">{error}</p> : null}
+      </div>
     )
   }
 
@@ -125,8 +131,9 @@ export function ConnectButton() {
         {/* Account button */}
         <button
           onClick={() => {
-            void openAppKit({ view: 'Account' })
+            void openAccount()
           }}
+          disabled={!ready}
           title="Open wallet account"
           aria-label={`Open wallet account ${formatAddress(address ?? '')}`}
           className={`group h-11 w-11 !px-0 sm:w-auto sm:!px-3 ${WALLET_BUTTON_CLASS}`}
@@ -142,7 +149,8 @@ export function ConnectButton() {
 
         {/* Disconnect button */}
         <button
-          onClick={() => { disconnect(); }}
+          onClick={() => { void disconnect() }}
+          disabled={!ready}
           className="hidden h-11 w-11 items-center justify-center text-content-secondary transition-colors hover:text-content-primary sm:inline-flex"
           title="Disconnect"
           aria-label="Disconnect wallet"
@@ -150,6 +158,7 @@ export function ConnectButton() {
           <span className="material-symbols-outlined text-xl">logout</span>
         </button>
       </div>
+      {error ? <p role="alert" className="max-w-md text-right text-xs text-brand-orange">{error}</p> : null}
       {switchError && shouldShowPerpsNetworkSwitch ? (
         <p className="max-w-md text-right text-xs leading-4 text-[#FFAB96]">
           {switchError}

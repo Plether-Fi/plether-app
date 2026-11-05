@@ -3,17 +3,19 @@ export function Privacy() {
     <div className="page-stack max-w-3xl mx-auto text-sm text-content-secondary">
       <div>
         <h1 className="text-2xl font-bold text-content-primary mb-2">Privacy Policy</h1>
-        <p className="text-xs text-content-secondary/70">Last updated: March 2026</p>
+        <p className="text-xs text-content-secondary/70">Last updated: November 2026</p>
       </div>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-content-primary">1. Information We Collect</h2>
         <p>
-          The Plether Interface is designed to minimize data collection. We do not collect
-          personally identifiable information (PII). The following data may be processed:
+          The Plether Interface is designed to minimize data collection. The following
+          data may be processed when you use the Interface:
         </p>
         <ul className="list-disc list-inside space-y-1 ml-2">
           <li>Public wallet addresses used to interact with the protocol</li>
+          <li>Email addresses or social account identifiers when you choose those login methods</li>
+          <li>Authentication session information used by Privy to provide login and embedded wallets</li>
           <li>On-chain transaction data (publicly available on the Ethereum blockchain)</li>
           <li>Browser type, device information, and IP address for security and analytics</li>
         </ul>
@@ -24,6 +26,7 @@ export function Privacy() {
         <p>We use the information described above to:</p>
         <ul className="list-disc list-inside space-y-1 ml-2">
           <li>Display your positions, balances, and transaction history</li>
+          <li>Authenticate your chosen login method and provide access to your embedded wallet</li>
           <li>Provide protocol analytics and price data</li>
           <li>Maintain security and prevent abuse</li>
           <li>Improve the Interface and user experience</li>
@@ -35,8 +38,12 @@ export function Privacy() {
         <p>The Interface integrates with the following third-party services:</p>
         <ul className="list-disc list-inside space-y-1 ml-2">
           <li>
-            <span className="text-content-primary">WalletConnect / Reown</span> — for wallet
-            connectivity. Subject to their own privacy policies.
+            <span className="text-content-primary">Privy</span> — for email and social login,
+            authentication sessions, and embedded wallets.
+          </li>
+          <li>
+            <span className="text-content-primary">WalletConnect</span> — for connecting
+            supported external wallets through Privy.
           </li>
           <li>
             <span className="text-content-primary">RPC Providers (Alchemy)</span> — to read
@@ -59,7 +66,8 @@ export function Privacy() {
           On-chain data is permanent and publicly accessible on the Ethereum blockchain. We do
           not store wallet addresses or transaction data beyond what is necessary for the
           Interface to function. Local settings (such as slippage preferences) are stored in
-          your browser's localStorage and are never transmitted to our servers.
+          your browser's localStorage and are never transmitted to our servers. Privy manages
+          authentication and linked-account data under its own retention policy.
         </p>
       </section>
 
@@ -69,7 +77,7 @@ export function Privacy() {
           The Interface uses browser localStorage to persist your preferences (slippage settings,
           risk acknowledgment). We do not use tracking cookies. PostHog analytics is configured
           with browser persistence disabled. Third-party services integrated into the Interface may
-          set their own cookies.
+          set their own cookies or store authentication sessions locally, including Privy.
         </p>
         <p>
           Sampled session replay is masked and is not intended to capture wallet addresses,
@@ -80,10 +88,11 @@ export function Privacy() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-content-primary">6. Your Rights</h2>
         <p>
-          Since we do not collect PII, most data subject rights (access, deletion, portability)
-          do not apply. You can clear your local preferences at any time by clearing your
-          browser's localStorage. On-chain data cannot be deleted as it is part of the public
-          blockchain.
+          You can log out and clear your local preferences by clearing your browser's
+          storage. For requests about personal information associated with login, contact
+          us using the details below; Privy also provides information about its processing
+          in its own privacy policy. On-chain data cannot be deleted as it is part of the
+          public blockchain.
         </p>
       </section>
 
