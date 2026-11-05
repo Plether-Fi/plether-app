@@ -74,6 +74,83 @@ describe('isUpstreamApiError', () => {
   });
 });
 
+describe('API failure diagnostics', () => {
+  const ray = 'a55dad75ebc80296-WAW';
+  function failure(status = 503, contentType = 'text/html', body = '<p>private response body</p>', cfRay = ray) {
+    return new Response(body, { status, headers: { 'Content-Type': contentType, 'CF-Ray': cfRay } });
+  }
+  function lastFailure() {
+    return analyticsMock.captureFrontendLog.mock.calls.findLast(([, body]) => body === 'frontend api request failed')?.[2];
+  }
+
+  it('identifies a non-JSON 503 without exporting the request path, body or account', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => failure()));
+    const client = new PlethApiClient({ baseUrl: 'https://private-origin.example/key' });
+    await client.getPerpsVaultRequestIds('junior', 'private-account', 'private-cursor');
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_perps_vault_request_ids',
+      http_status: 503, response_format: 'html', cf_ray: ray, error_category: 'network_error' });
+    const logged = JSON.stringify(analyticsMock.captureFrontendLog.mock.calls);
+    for (const secret of ['private-origin', 'private-account', 'private-cursor', 'private response body', '/perps/']) {
+      expect(logged).not.toContain(secret);
+    }
+  });
+
+  it('identifies failures on order and quote routes without exporting their parameters', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => failure(503, 'text/plain')));
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    await client.getPerpsRevealPayload('private-order', 1, 2);
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_perps_reveal_payload', response_format: 'text' });
+    await client.getMintQuote('private-amount');
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_mint_quote' });
+    expect(JSON.stringify(analyticsMock.captureFrontendLog.mock.calls)).not.toMatch(/private-order|private-amount/);
+  });
+
+  it('retains metadata for JSON errors and rejects arbitrary correlation-header content', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => failure(503, 'application/json', JSON.stringify({
+      error: { code: 'RPC_ERROR', message: 'private provider message', details: { secret: 'private payload' } },
+    }), 'Bearer private-token')));
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    const result = await client.getProtocolStatus();
+    expect(Result.isError(result)).toBe(true);
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_protocol_status', response_format: 'json', http_status: 503 });
+    expect(lastFailure()).not.toHaveProperty('cf_ray');
+    expect(JSON.stringify(analyticsMock.captureFrontendLog.mock.calls)).not.toContain('private');
+  });
+
+  it('preserves response metadata when decoding a successful response fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => failure(200, 'application/json', '{invalid')));
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    await client.getPerpsBasketLatest();
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_perps_basket_latest', response_format: 'json', http_status: 200, cf_ray: ray });
+  });
+
+  it('distinguishes a transport failure with no response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('private transport error')));
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    await client.getUserDashboard('private-account');
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_user_dashboard', response_format: 'none' });
+    expect(lastFailure()?.http_status).toBeUndefined();
+    expect(lastFailure()).not.toHaveProperty('cf_ray');
+  });
+
+  it('retains received headers when the response body times out', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => ({
+      ok: true, status: 200,
+      headers: new Headers({ 'Content-Type': 'application/json', 'CF-Ray': ray }),
+      json: () => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      }),
+    }) as Response));
+    const client = new PlethApiClient({ baseUrl: '/api', timeout: 100 });
+    const pending = client.getPerpsBasketLatest();
+    await vi.advanceTimersByTimeAsync(100);
+    await pending;
+    expect(lastFailure()).toMatchObject({ endpoint: 'get_perps_basket_latest', response_format: 'json',
+      http_status: 200, cf_ray: ray, reason_code: 'client_timeout' });
+  });
+});
+
 describe('API request timeouts', () => {
   it('uses distinct direct funding start and status routes with a versioned request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({

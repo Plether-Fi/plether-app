@@ -8,6 +8,7 @@
 import { Result } from 'better-result';
 import { captureFrontendLog } from '../analytics/client';
 import { isSepoliaDeployment } from '../utils/deployment';
+import { validCloudflareRayId, type ApiEndpoint, type ApiResponseFormat } from './diagnostics';
 import type {
   ApiResponse,
   ApiError,
@@ -223,6 +224,24 @@ function isJsonResponse(response: Response): boolean {
   return response.headers.get('content-type')?.toLowerCase().includes('application/json') ?? false;
 }
 
+interface ApiResponseDiagnostics {
+  http_status?: number;
+  response_format: ApiResponseFormat;
+  cf_ray?: string;
+}
+
+function responseDiagnostics(response: Response): ApiResponseDiagnostics {
+  const mediaType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+  const ray = response.headers.get('cf-ray');
+  return {
+    http_status: response.status,
+    response_format: isJsonResponse(response) ? 'json'
+      : mediaType === 'text/html' || mediaType === 'application/xhtml+xml' ? 'html'
+      : mediaType?.startsWith('text/') ? 'text' : 'other',
+    ...(validCloudflareRayId(ray) ? { cf_ray: ray } : {}),
+  };
+}
+
 async function readResponsePreview(response: Response): Promise<string> {
   const body = await response.text().catch(() => '');
   return body.trim().slice(0, 180);
@@ -270,17 +289,21 @@ async function parseErrorResponse(response: Response, url: string): Promise<Plet
 
 function logApiFailure(
   apiError: PlethApiError,
+  endpoint: ApiEndpoint,
   policy: ApiRequestPolicy,
   durationMs: number,
   timeoutMs: number,
+  response: ApiResponseDiagnostics,
   didTimeout = false
 ): void {
   captureFrontendLog('error', 'frontend api request failed', {
     component: 'api_client',
     operation: policy.operation ?? 'request',
+    endpoint,
     outcome: 'failure',
     error_category: didTimeout ? 'timeout' : apiError.code.toLowerCase(),
-    http_status: apiError.status,
+    ...response,
+    http_status: apiError.status ?? response.http_status,
     duration_ms: durationMs,
     timeout_ms: timeoutMs,
     reason_code: didTimeout ? 'client_timeout' : undefined,
@@ -306,12 +329,14 @@ function logApiSuccess(
 async function fetchApi<T>(
   config: PlethApiConfig,
   path: string,
+  endpoint: ApiEndpoint,
   options?: RequestInit,
   policy: ApiRequestPolicy = {}
 ): Promise<Result<ApiResponse<T>, PlethApiError>> {
   const url = `${config.baseUrl}${path}`;
   const timeoutMs = policy.timeoutMs ?? config.timeout ?? DEFAULT_CONFIG.timeout;
   const startedAt = Date.now();
+  let diagnostics: ApiResponseDiagnostics = { response_format: 'none' };
   const controller = new AbortController();
   const headers = new Headers(options?.headers);
   if (options?.body !== undefined && !headers.has('Content-Type')) {
@@ -345,6 +370,8 @@ async function fetchApi<T>(
       signal: controller.signal,
       headers,
     });
+    // Capture only bounded metadata before reading a body that may fail or time out.
+    diagnostics = responseDiagnostics(response);
 
     if (!response.ok) {
       const apiError = await parseErrorResponse(response, url);
@@ -352,7 +379,7 @@ async function fetchApi<T>(
         throw controller.signal.reason;
       }
 
-      logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs);
+      logApiFailure(apiError, endpoint, policy, Date.now() - startedAt, timeoutMs, diagnostics);
       config.onError?.(apiError);
       return Result.err(apiError);
     }
@@ -364,7 +391,7 @@ async function fetchApi<T>(
       }
       const apiError = createNonJsonApiError(response, url, preview);
 
-      logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs);
+      logApiFailure(apiError, endpoint, policy, Date.now() - startedAt, timeoutMs, diagnostics);
       config.onError?.(apiError);
       return Result.err(apiError);
     }
@@ -389,7 +416,7 @@ async function fetchApi<T>(
       err
     );
 
-    logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs, didTimeout);
+    logApiFailure(apiError, endpoint, policy, Date.now() - startedAt, timeoutMs, diagnostics, didTimeout);
     config.onError?.(apiError);
     return Result.err(apiError);
   } finally {
@@ -439,17 +466,17 @@ export class PlethApiClient {
   // ===========================================================================
 
   async getProtocolStatus(): Promise<Result<ApiResponse<ProtocolStatus>, PlethApiError>> {
-    return fetchApi<ProtocolStatus>(this.config, '/protocol/status');
+    return fetchApi<ProtocolStatus>(this.config, '/protocol/status', 'get_protocol_status');
   }
 
   async getProtocolConfig(): Promise<Result<ApiResponse<ProtocolConfig>, PlethApiError>> {
-    return fetchApi<ProtocolConfig>(this.config, '/protocol/config');
+    return fetchApi<ProtocolConfig>(this.config, '/protocol/config', 'get_protocol_config');
   }
 
   async claimTestnetFaucet(
     address: string
   ): Promise<Result<ApiResponse<TestnetFaucetClaim>, PlethApiError>> {
-    return fetchApi<TestnetFaucetClaim>(this.config, '/testnet/faucet', {
+    return fetchApi<TestnetFaucetClaim>(this.config, '/testnet/faucet', 'claim_testnet_faucet', {
       method: 'POST',
       body: JSON.stringify({ address, confirmationMode: 'async' }),
     }, {
@@ -460,14 +487,14 @@ export class PlethApiClient {
   }
 
   async claimMarginFunding(owner: string, address: string): Promise<Result<ApiResponse<MarginFundingProgress | LegacyMarginFunding>, PlethApiError>> {
-    return fetchApi(this.config, '/testnet/margin-funding', {
+    return fetchApi(this.config, '/testnet/margin-funding', 'claim_margin_funding', {
       method: 'POST',
       body: JSON.stringify({ version: 1, owner, address }),
     }, { operation: 'claim_margin_funding', timeoutMs: TESTNET_FAUCET_TIMEOUT_MS, timeoutMessage: TESTNET_FAUCET_TIMEOUT_MESSAGE });
   }
 
   async getMarginFunding(claimId: string): Promise<Result<ApiResponse<MarginFundingProgress>, PlethApiError>> {
-    return fetchApi(this.config, `/testnet/margin-funding/${encodeURIComponent(claimId)}`, undefined, { operation: 'margin_funding_status' });
+    return fetchApi(this.config, `/testnet/margin-funding/${encodeURIComponent(claimId)}`, 'get_margin_funding', undefined, { operation: 'margin_funding_status' });
   }
 
   // ===========================================================================
@@ -488,13 +515,13 @@ export class PlethApiClient {
 
     return fetchApi<BasketHistory>(
       this.config,
-      `/perps/basket/history?${params.toString()}`,
+      `/perps/basket/history?${params.toString()}`, 'get_perps_basket_history',
       { credentials: 'omit', signal }
     );
   }
 
   async getPerpsBasketLatest(signal?: AbortSignal): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
-    return fetchApi<BasketLatest>(this.config, '/perps/basket/latest', {
+    return fetchApi<BasketLatest>(this.config, '/perps/basket/latest', 'get_perps_basket_latest', {
       credentials: 'omit',
       signal,
     });
@@ -512,7 +539,7 @@ export class PlethApiClient {
     });
     return fetchApi<PerpsBasketCandlePage>(
       this.config,
-      `/perps/basket/candles?${params.toString()}`,
+      `/perps/basket/candles?${params.toString()}`, 'get_perps_basket_candles',
       {
         credentials: 'omit',
         signal,
@@ -529,7 +556,7 @@ export class PlethApiClient {
     const params = new URLSearchParams({ interval: String(intervalSeconds) });
     return fetchApi<PerpsBasketCurrentCandle>(
       this.config,
-      `/perps/basket/candles/current?${params.toString()}`,
+      `/perps/basket/candles/current?${params.toString()}`, 'get_perps_basket_current_candle',
       {
         credentials: 'omit',
         signal,
@@ -539,7 +566,7 @@ export class PlethApiClient {
   }
 
   async getPerpsMarketStats(signal?: AbortSignal): Promise<Result<ApiResponse<PerpsMarketStats>, PlethApiError>> {
-    return fetchApi<PerpsMarketStats>(this.config, '/perps/market/stats', {
+    return fetchApi<PerpsMarketStats>(this.config, '/perps/market/stats', 'get_perps_market_stats', {
       credentials: 'omit',
       signal,
     });
@@ -555,7 +582,7 @@ export class PlethApiClient {
     });
     return fetchApi<VaultHistory>(
       this.config,
-      `/perps/vaults/history?${params.toString()}`,
+      `/perps/vaults/history?${params.toString()}`, 'get_perps_vault_history',
       {
         credentials: 'omit',
         signal,
@@ -566,7 +593,7 @@ export class PlethApiClient {
   async getPerpsVaultActivity(
     signal?: AbortSignal
   ): Promise<Result<ApiResponse<VaultActivity>, PlethApiError>> {
-    return fetchApi<VaultActivity>(this.config, '/perps/vaults/activity', {
+    return fetchApi<VaultActivity>(this.config, '/perps/vaults/activity', 'get_perps_vault_activity', {
       credentials: 'omit',
       signal,
     });
@@ -583,7 +610,7 @@ export class PlethApiClient {
     if (cursor !== undefined) params.set('cursor', cursor);
     return fetchApi<VaultRequestIdsPage>(
       this.config,
-      `/perps/vaults/${tranche}/accounts/${address}/request-ids?${params.toString()}`,
+      `/perps/vaults/${tranche}/accounts/${address}/request-ids?${params.toString()}`, 'get_perps_vault_request_ids',
       { credentials: 'omit', signal }
     );
   }
@@ -599,7 +626,7 @@ export class PlethApiClient {
     });
     return fetchApi<PerpsRevealPayload>(
       this.config,
-      `/perps/orders/${orderId}/reveal-payload?${params.toString()}`
+      `/perps/orders/${orderId}/reveal-payload?${params.toString()}`, 'get_perps_reveal_payload'
     );
   }
 
@@ -610,19 +637,19 @@ export class PlethApiClient {
   async getUserDashboard(
     address: string
   ): Promise<Result<ApiResponse<UserDashboard>, PlethApiError>> {
-    return fetchApi<UserDashboard>(this.config, `/user/${address}/dashboard`);
+    return fetchApi<UserDashboard>(this.config, `/user/${address}/dashboard`, 'get_user_dashboard');
   }
 
   async getUserBalances(
     address: string
   ): Promise<Result<ApiResponse<UserBalances>, PlethApiError>> {
-    return fetchApi<UserBalances>(this.config, `/user/${address}/balances`);
+    return fetchApi<UserBalances>(this.config, `/user/${address}/balances`, 'get_user_balances');
   }
 
   async getUserPositions(
     address: string
   ): Promise<Result<ApiResponse<UserPositions>, PlethApiError>> {
-    return fetchApi<UserPositions>(this.config, `/user/${address}/positions`);
+    return fetchApi<UserPositions>(this.config, `/user/${address}/positions`, 'get_user_positions');
   }
 
   async getUserAllowances(
@@ -635,7 +662,7 @@ export class PlethApiClient {
     }
     const query = searchParams.toString();
     const path = `/user/${address}/allowances${query ? `?${query}` : ''}`;
-    return fetchApi<UserAllowances>(this.config, path);
+    return fetchApi<UserAllowances>(this.config, path, 'get_user_allowances');
   }
 
   // ===========================================================================
@@ -643,11 +670,11 @@ export class PlethApiClient {
   // ===========================================================================
 
   async getMintQuote(amount: string): Promise<Result<ApiResponse<MintQuote>, PlethApiError>> {
-    return fetchApi<MintQuote>(this.config, `/quotes/mint?amount=${amount}`);
+    return fetchApi<MintQuote>(this.config, `/quotes/mint?amount=${amount}`, 'get_mint_quote');
   }
 
   async getBurnQuote(amount: string): Promise<Result<ApiResponse<BurnQuote>, PlethApiError>> {
-    return fetchApi<BurnQuote>(this.config, `/quotes/burn?amount=${amount}`);
+    return fetchApi<BurnQuote>(this.config, `/quotes/burn?amount=${amount}`, 'get_burn_quote');
   }
 
   async getZapQuote(
@@ -656,7 +683,7 @@ export class PlethApiClient {
   ): Promise<Result<ApiResponse<ZapQuote>, PlethApiError>> {
     return fetchApi<ZapQuote>(
       this.config,
-      `/quotes/zap?direction=${direction}&amount=${amount}`
+      `/quotes/zap?direction=${direction}&amount=${amount}`, 'get_zap_quote'
     );
   }
 
@@ -664,7 +691,7 @@ export class PlethApiClient {
     from: TradeFrom,
     amount: string
   ): Promise<Result<ApiResponse<TradeQuote>, PlethApiError>> {
-    return fetchApi<TradeQuote>(this.config, `/quotes/trade?from=${from}&amount=${amount}`);
+    return fetchApi<TradeQuote>(this.config, `/quotes/trade?from=${from}&amount=${amount}`, 'get_trade_quote');
   }
 
   async getLeverageQuote(
@@ -674,7 +701,7 @@ export class PlethApiClient {
   ): Promise<Result<ApiResponse<LeverageQuote>, PlethApiError>> {
     return fetchApi<LeverageQuote>(
       this.config,
-      `/quotes/leverage?side=${side}&principal=${principal}&leverage=${leverage}`
+      `/quotes/leverage?side=${side}&principal=${principal}&leverage=${leverage}`, 'get_leverage_quote'
     );
   }
 
@@ -693,7 +720,7 @@ export class PlethApiClient {
     if (params?.side) searchParams.set('side', params.side);
     const query = searchParams.toString();
     const path = `/user/${address}/history${query ? `?${query}` : ''}`;
-    return fetchApi<TransactionHistory>(this.config, path);
+    return fetchApi<TransactionHistory>(this.config, path, 'get_transaction_history');
   }
 
   async getLeverageHistory(
@@ -706,7 +733,7 @@ export class PlethApiClient {
     if (params?.side) searchParams.set('side', params.side);
     const query = searchParams.toString();
     const path = `/user/${address}/history/leverage${query ? `?${query}` : ''}`;
-    return fetchApi<TransactionHistory>(this.config, path);
+    return fetchApi<TransactionHistory>(this.config, path, 'get_leverage_history');
   }
 
   async getLendingHistory(
@@ -719,7 +746,7 @@ export class PlethApiClient {
     if (params?.side) searchParams.set('side', params.side);
     const query = searchParams.toString();
     const path = `/user/${address}/history/lending${query ? `?${query}` : ''}`;
-    return fetchApi<TransactionHistory>(this.config, path);
+    return fetchApi<TransactionHistory>(this.config, path, 'get_lending_history');
   }
 
   // ===========================================================================

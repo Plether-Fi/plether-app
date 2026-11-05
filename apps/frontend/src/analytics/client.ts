@@ -7,6 +7,7 @@ import type {
 } from 'posthog-js'
 import { BUILD_COMMIT } from '../config/buildInfo'
 import { sanitizedReactException } from './reactErrors'
+import { API_ENDPOINTS, API_RESPONSE_FORMATS, validCloudflareRayId } from '../api/diagnostics'
 
 type PostHogClient = typeof import('posthog-js')['default']
 
@@ -64,6 +65,9 @@ const ALLOWED_LOG_ATTRIBUTE_KEYS = new Set([
   ...ALLOWED_PROPERTY_KEYS,
   'component',
   'http_status',
+  'endpoint',
+  'response_format',
+  'cf_ray',
   'safe_block_number',
   'included_block_number',
   'operation',
@@ -153,6 +157,9 @@ export function sanitizeFrontendLogAttributes(
 
   const sanitized: LogAttributes = {}
   for (const [key, value] of Object.entries(attributes)) {
+    if (key === 'endpoint' && !(API_ENDPOINTS as readonly unknown[]).includes(value)) continue
+    if (key === 'response_format' && !(API_RESPONSE_FORMATS as readonly unknown[]).includes(value)) continue
+    if (key === 'cf_ray' && !validCloudflareRayId(value)) continue
     if (key === 'support_reference' && (typeof value !== 'string' || !/^(?:ui-[a-z0-9-]{1,60}|(?:tx-)?[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(value))) continue
     if (key === 'attempt_id' && (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) continue
     if (!ALLOWED_LOG_ATTRIBUTE_KEYS.has(key) || value === undefined || value === null) continue

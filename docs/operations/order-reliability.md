@@ -110,6 +110,30 @@ WHERE attempt_id = :'attempt_id'::uuid
 ORDER BY observed_at;
 ```
 
+## Frontend API and recovery diagnostics
+
+The `plether-web` log `frontend api request failed` includes a fixed `endpoint`
+identifier for each typed API-client method. It exports no path, query string,
+request body, response body, account, order or claim identifier. Existing
+`operation` values and success-log volume are unchanged.
+
+Use `response_format` (`json`, `html`, `text`, `other`, or `none`) alongside
+`http_status` to distinguish a non-JSON HTTP failure from a transport failure.
+`none` means no response was received. Status and format remain available if
+body decoding fails or times out, so a logged failure with HTTP 200 can mean
+the response body was unusable. `cf_ray` is exported only when the response
+header matches the bounded Cloudflare Ray-ID format; missing or inaccessible
+headers remain absent. A Ray ID enables edge correlation but does not itself
+establish which layer caused the failure.
+
+The `react application recovery screen shown` log includes a support reference
+and a bounded `reason_code`: `module_load_failed`, `dom_node_missing`, or
+`render_failed`. This log is attempted independently of exception export.
+`dom_node_missing` classifies a `NotFoundError`; it does not prove that a
+translator or browser extension caused it. Missing historical exception
+details cannot be reconstructed from these new fields. These changes require
+a frontend deployment; they do not enable ALB access logs or change edge rules.
+
 ## Validation
 
 Run `lua posthog-projection.test.lua` in `apps/backend/otel-log-router` and

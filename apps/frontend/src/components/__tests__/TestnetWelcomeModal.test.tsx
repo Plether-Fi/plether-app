@@ -11,10 +11,32 @@ vi.mock('../../config/wagmi', () => ({
 
 import { TestnetWelcomeModalView } from '../TestnetWelcomeModal'
 import { TESTNET_FAUCET_TIMEOUT_MESSAGE } from '../../api/client'
+import { replaceTextNodes } from '../../test/replaceTextNodes'
 
 const walletAddress = '0x6b72fE6CC52201a1eb7892A813C6C10cCe62745c'
 
 describe('TestnetWelcomeModalView wallet connection states', () => {
+  it('keeps translated button labels safe through wallet and funding transitions', () => {
+    const props = { isOpen: true, isWalletConnected: false, isTradingAccountRecipient: true,
+      walletAddress: '', onClose: vi.fn(), onWalletAddressChange: vi.fn(),
+      onConnectWallet: vi.fn(), onRequestFunds: vi.fn() }
+    const view = render(<TestnetWelcomeModalView {...props} />)
+    const transition = (next: React.ComponentProps<typeof TestnetWelcomeModalView>, label: string) => {
+      replaceTextNodes(screen.getByRole('button', { name: /Connect Wallet|Preparing Trading Account|Get 100,000 USDG|Waiting for USDG|USDG deposited/ }))
+      expect(() => view.rerender(<TestnetWelcomeModalView {...next} />)).not.toThrow()
+      return screen.getByRole('button', { name: label })
+    }
+    const connected = { ...props, isWalletConnected: true }
+    expect(transition(connected, 'Preparing Trading Account')).toBeDisabled()
+    const ready = { ...connected, walletAddress }
+    fireEvent.click(transition(ready, 'Get 100,000 USDG'))
+    expect(props.onRequestFunds).toHaveBeenCalledOnce()
+    expect(transition({ ...ready, isSubmitting: true, fundingPhase: 'waiting' }, 'Waiting for USDG')).toBeDisabled()
+    expect(transition({ ...ready, fundingPhase: 'deposited' }, 'USDG deposited')).toBeDisabled()
+    fireEvent.click(transition(props, 'Connect Wallet'))
+    expect(props.onConnectWallet).toHaveBeenCalledOnce()
+  })
+
   it('prompts a disconnected user to connect their wallet without showing the address field', () => {
     const onConnectWallet = vi.fn()
     const onRequestFunds = vi.fn()
