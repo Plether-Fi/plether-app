@@ -48,7 +48,7 @@
 <text x="346" y="804" font-size="26" font-weight="700" fill="#250917" data-max-width="246">No open position</text>
 <path d="M346 825 L592 825" stroke="#9A8890" stroke-width="2" fill="none"/>
 <text x="346" y="855" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Credit settlement</text>
-<text x="346" y="894" font-size="24" font-weight="400" fill="#250917" data-max-width="246">USDC enters the</text>
+<text x="346" y="894" font-size="24" font-weight="400" fill="#250917" data-max-width="246">USDG enters the</text>
 <text x="346" y="926" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Margin Account;</text>
 <text x="346" y="958" font-size="24" font-weight="400" fill="#250917" data-max-width="246">withdrawal is a</text>
 <text x="346" y="990" font-size="24" font-weight="400" fill="#250917" data-max-width="246">separate action.</text>

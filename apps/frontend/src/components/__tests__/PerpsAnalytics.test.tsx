@@ -75,18 +75,18 @@ vi.mock('wagmi', () => ({
         failureCategory: 0,
         executionPrice: 99_000_000n,
         sizeDelta: 100_000_000n,
-        notionalUsdc: 100_000_000n,
-        marginDeltaUsdc: 20_000_000n,
-        vpiUsdc: 0n,
-        executionFeeUsdc: 40_000n,
-        initialMarginRequirementUsdc: 20_000_000n,
-        maintenanceMarginUsdc: 5_000_000n,
+        notionalAssets: 100_000_000n,
+        marginDeltaAssets: 20_000_000n,
+        vpiAssets: 0n,
+        executionFeeAssets: 40_000n,
+        initialMarginRequirementAssets: 20_000_000n,
+        maintenanceMarginAssets: 5_000_000n,
         postSize: 100_000_000n,
-        postMarginUsdc: 20_000_000n,
+        postMarginAssets: 20_000_000n,
         postEntryPrice: 99_000_000n,
         postVpiAccrued: 0n,
-        postUnrealizedPnlUsdc: 0n,
-        postEquityUsdc: 20_000_000n,
+        postUnrealizedPnlAssets: 0n,
+        postEquityAssets: 20_000_000n,
         postHealthBps: 4000n,
         postLiquidatable: false,
         hasLiquidationPrice: true,
@@ -136,11 +136,19 @@ function renderTicket(overrides: Partial<Parameters<typeof PerpsTradeTicket>[0]>
       oraclePriceRaw={99_000_000n}
       oraclePublishTime={1_700_000_000}
       availableToTradeRaw={1_000_000_000n}
-      marginAllowanceUsdc={1_000_000_000n}
+      marginAllowanceAssets={1_000_000_000n}
       marketPhase="open"
       {...overrides}
     />
   )
+}
+
+function expectSafeTicketProperties(properties: Record<string, unknown>, extraKeys: string[] = []) {
+  const allowedKeys = new Set([
+    'surface', 'market_phase', 'lifecycle_state', 'direction', 'reduce_only',
+    'connected_state', 'chain_state', 'size_bucket', ...extraKeys,
+  ])
+  expect(Object.keys(properties).filter((key) => !allowedKeys.has(key))).toEqual([])
 }
 
 describe('Perps analytics', () => {
@@ -165,25 +173,25 @@ describe('Perps analytics', () => {
           submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
-          maxExecutionBountyUsdc: 10_000n,
-          maxExecutionNotionalUsdc: 100_000_000n,
-          maxGrossAccountDebitUsdc: 120_010_000n,
-          maxActionChargeUsdc: 1_000_000n,
-          maxExplicitFeesUsdc: 1_000_000n,
+          maxExecutionBountyAssets: 10_000n,
+          maxExecutionNotionalAssets: 100_000_000n,
+          maxGrossAccountDebitAssets: 120_010_000n,
+          maxActionChargeAssets: 1_000_000n,
+          maxExplicitFeesAssets: 1_000_000n,
           maxPostPositionSize: 100_000_000n,
-          minPostSettlementBalanceUsdc: 800_000_000n,
-          minPostPositionEquityUsdc: 20_000_000n,
+          minPostSettlementBalanceAssets: 800_000_000n,
+          minPostPositionEquityAssets: 20_000_000n,
           maxPostLeverageBps: 50_000,
         },
       },
-      executionBountyUsdc: 10_000n,
+      executionBountyAssets: 10_000n,
       reviewedBlockNumber: 123n,
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 99_000_000n,
       protection: {
         submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
         executionMode: 1,
-        executionBountyUsdc: 10_000n,
+        executionBountyAssets: 10_000n,
       },
     })
   })
@@ -200,12 +208,14 @@ describe('Perps analytics', () => {
       size_bucket: '100_999',
     }))
     await waitFor(() => {
-      expect(analyticsMocks.trackPerpsModalOpened).toHaveBeenCalledWith('trade_review', expect.not.objectContaining({
-        address: expect.anything(),
-        amount: expect.anything(),
-        tx_hash: expect.anything(),
-      }))
+      expect(analyticsMocks.trackPerpsModalOpened).toHaveBeenCalledWith('trade_review', expect.any(Object))
     })
+    for (const [event, properties] of analyticsMocks.trackPerpsModalOpened.mock.calls) {
+      if (event === 'trade_review') expectSafeTicketProperties(properties)
+    }
+    for (const [event, properties] of analyticsMocks.trackPerpsButtonClicked.mock.calls) {
+      if (event === 'review_trade') expectSafeTicketProperties(properties)
+    }
   })
 
   it('tracks margin modal and margin lifecycle events', async () => {
@@ -242,10 +252,9 @@ describe('Perps analytics', () => {
         error_category: 'unknown',
       }))
     })
-    expect(analyticsMocks.trackPerpsOrderLifecycle).not.toHaveBeenCalledWith('commit_failed', expect.objectContaining({
-      tx_hash: expect.anything(),
-      order_id: expect.anything(),
-    }))
+    for (const [event, properties] of analyticsMocks.trackPerpsOrderLifecycle.mock.calls) {
+      if (event === 'commit_failed') expectSafeTicketProperties(properties, ['error_category'])
+    }
   })
 
   it('tracks validation blocked with a category instead of the display message', async () => {

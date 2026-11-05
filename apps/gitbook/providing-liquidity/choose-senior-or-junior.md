@@ -2,7 +2,7 @@
 
 > **Both vaults underwrite the same trader liabilities. Senior changes the order of loss and withdrawal priority; it does not remove risk.**
 
-Plether LPs[^lp] supply USDC[^usdc] through one of two ERC-4626[^erc4626] tranche[^tranche] vaults:
+Plether LPs[^lp] supply USDG[^usdg] through one of two ERC-4626[^erc4626] tranche[^tranche] vaults:
 
 * The **Senior Vault**, represented by `psLP` shares
 * The **Junior Vault**, represented by `pjLP` shares
@@ -89,7 +89,7 @@ The remaining free LP liquidity is then allocated by tranche priority:
 1. Matured Senior requests are funded first, up to their demand, Senior principal and available free cash.
 2. If no matured Senior backlog remains, Junior funding is capped independently by remaining free cash, Junior principal and the governed maximum Senior share of protected tranche capital. Dormant Senior principal is not fully reserved against Junior withdrawals.
 
-Positive NAV[^nav] is therefore not a promise of immediate redemption. A Junior position can retain positive value while its current withdrawal capacity is zero. Senior can also have less withdrawable USDC than accounting value.
+Positive NAV[^nav] is therefore not a promise of immediate redemption. A Junior position can retain positive value while its current withdrawal capacity is zero. Senior can also have less withdrawable USDG than accounting value.
 
 See [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md) for the trader-priority rules and [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) for the complete withdrawal firewall.
 
@@ -102,7 +102,7 @@ After opening a vault, use the live sections rather than the headline return alo
 * **Vault header:** **Current vault value**, **Share price**, **Estimated withdrawal liquidity** and **How returns work**
 * **Overview:** the connected wallet's position summary, **How this vault works**, shared pool status, the Senior protection or Junior loss buffer, delayed settings changes and the five-minute submission deadline
 * **Performance:** the **Seven-day share price** chart, **7d realized APY**, **7d return**, **Start share price** and **Current share price**; this section appears only when complete deployment-matched history is available
-* **Your position:** **Current value**, **Shares available to withdraw**, **USDC ready for wallet**, and pending deposit or withdrawal claims
+* **Your position:** **Current value**, **Shares available to withdraw**, **USDG ready for wallet**, and pending deposit or withdrawal claims
 * **Activity:** holder distribution and recent vault activity for the selected tranche
 * **Action panel:** **Deposit status**, the current share estimate and processing state; the overview also shows the selected tranche's withdrawal-only **Temporary pricing fee**, and a withdrawal's **Expected processing** appears in its preview
 
@@ -116,12 +116,12 @@ Treat **7d realized APY**, **7d return** and the share-price chart as historical
 * **“Junior has the higher displayed APY, so it is better.”** Return must be read alongside first-loss and withdrawal subordination.
 * **“A lower share price is cheaper.”** Senior and Junior have separate share supplies and accounting principals; their prices are not directly comparable.
 * **“Available liquidity is what I can withdraw.”** Pool-level liquidity is only one input to **Estimated withdrawal liquidity** and your holder-specific **Shares available to withdraw**.
-* **“Splitting between both vaults removes protocol risk.”** Both claims depend on the same liquidity pool, contracts, oracle and USDC.
+* **“Splitting between both vaults removes protocol risk.”** Both claims depend on the same liquidity pool, contracts, oracle and USDG.
 
 Before depositing, continue to [**Understand LP returns and share value**](understand-lp-returns-and-share-value.md) and [**LP risks and safeguards**](lp-risks-and-safeguards.md). For the full accounting mechanics, use [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) as the canonical reference.
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.

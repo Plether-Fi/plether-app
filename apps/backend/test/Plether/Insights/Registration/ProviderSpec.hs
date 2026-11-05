@@ -51,16 +51,30 @@ spec = do
         (turnstileBody "2026-09-01T00:00:00.001Z" "INSIGHTS.PLETHER.COM" "competition_registration")
         `shouldSatisfy` isRight
 
-    it "rejects failed, stale, future-dated, wrong-host, and wrong-action evidence" $ do
+    it "rejects failed, stale, and future-dated evidence" $ do
       mapM_
         (\body -> leftCode (parseTurnstileResponseAt testConfig turnstileNow body) `shouldBe` Just TurnstileFailed)
         [ "{\"success\":false}"
         , turnstileBody "2026-08-31T23:59:59Z" "INSIGHTS.PLETHER.COM" "competition_registration"
         , turnstileBody "2026-09-01T00:05:31Z" "INSIGHTS.PLETHER.COM" "competition_registration"
-        , turnstileBody "2026-09-01T00:00:00Z" "evil.example" "competition_registration"
-        , turnstileBody "2026-09-01T00:00:00Z" "INSIGHTS.PLETHER.COM" "login"
         , "{\"success\":true,\"challenge_ts\":\"2026-09-01T00:00:00Z\"}"
         ]
+
+    it "rejects a different hostname while all other evidence is fresh and valid" $ do
+      parseTurnstileResponseAt testConfig turnstileNow turnstileSuccess
+        `shouldSatisfy` isRight
+      leftCode
+        (parseTurnstileResponseAt testConfig turnstileNow $
+          turnstileBody "2026-09-01T00:00:01Z" "evil.example" "competition_registration")
+        `shouldBe` Just TurnstileFailed
+
+    it "rejects a different action while all other evidence is fresh and valid" $ do
+      parseTurnstileResponseAt testConfig turnstileNow turnstileSuccess
+        `shouldSatisfy` isRight
+      leftCode
+        (parseTurnstileResponseAt testConfig turnstileNow $
+          turnstileBody "2026-09-01T00:00:01Z" "INSIGHTS.PLETHER.COM" "login")
+        `shouldBe` Just TurnstileFailed
 
     it "maps malformed provider JSON to a provider outage without reflecting details" $ do
       let result = parseTurnstileResponseAt testConfig turnstileNow "not-json"

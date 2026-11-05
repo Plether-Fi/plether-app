@@ -1,114 +1,34 @@
 import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
-import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
-import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { decodeErrorResult } from 'viem'
+import {
+  PERPS_MARGIN_CLEARINGHOUSE_ABI,
+  PERPS_ORDER_ROUTER_ABI,
+  PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+  PERPS_ORDER_POLICY_EVALUATOR_ABI,
+  PERPS_CFD_ENGINE_ABI,
+  PERPS_CFD_ENGINE_LENS_ABI,
+  PERPS_CFD_CLOSE_PREVIEW_ABI,
+  PERPS_PLETHER_ORACLE_ABI,
+  PERPS_POSITION_PROTECTION_BOOK_ABI,
+} from '../contracts/abis'
 
 type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'review' | 'commit' | 'execute' | 'protection'
 
 export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
 
-const PERPS_ERROR_ABI = parseAbi([
-  'error EnforcedPause()',
-
-  'error MarginClearinghouse__NotOperator()',
-  'error MarginClearinghouse__NotAccountOwner()',
-  'error MarginClearinghouse__ZeroAmount()',
-  'error MarginClearinghouse__InsufficientBalance()',
-  'error MarginClearinghouse__InsufficientFreeEquity()',
-  'error MarginClearinghouse__InsufficientUsdcForSettlement()',
-  'error MarginClearinghouse__InsufficientAssetToSeize()',
-  'error MarginClearinghouse__InvalidMarginBucket()',
-  'error MarginClearinghouse__ReservationAlreadyExists()',
-  'error MarginClearinghouse__ReservationNotActive()',
-  'error MarginClearinghouse__IncompleteReservationCoverage()',
-  'error MarginClearinghouse__ReservationLedgerActive()',
-  'error MarginClearinghouse__InsufficientBucketMargin()',
-
-  'error OrderRouter__ZeroSize()',
-  'error OrderRouter__InvalidSizeQuantum()',
-  'error OrderRouter__CommitValidation(uint8 code)',
-  'error OrderRouter__InvalidPletherOracle()',
-  'error OrderRouter__EmptyPythUpdateData()',
-  'error OrderRouter__InsufficientPythFee()',
-  'error OrderRouter__InvalidEngineLens()',
-  'error OrderRouter__InvalidOraclePrice()',
-  'error OrderRouter__MarkPriceOutOfOrder()',
-  'error OrderRouter__OraclePriceTooStale()',
-  'error OrderRouter__OracleConfidenceTooWide()',
-  'error OrderRouter__MevDetected()',
-  'error OrderRouter__OraclePublishTimesDiverged()',
-  'error OrderRouter__NoOrdersToExecute()',
-  'error OrderRouter__OrderNotQueueHead()',
-  'error OrderRouter__BatchBeforeQueueHead()',
-  'error OrderRouter__BatchOrderNotCommitted()',
-  'error OrderRouter__OrderNotPending()',
-  'error OrderRouter__MarginQueueCorrupt()',
-  'error OrderRouter__AccountQueueCorrupt()',
-  'error OrderRouter__GlobalQueueCorrupt()',
-  'error OrderRouter__NotInSeedLifecycle()',
-  'error OrderRouter__VaultRiskBlocked()',
-  'error OrderRouter__CloseWithPositiveMargin()',
-  'error OrderRouter__NoQueuedPosition()',
-  'error OrderRouter__SideMismatch()',
-  'error OrderRouter__SizeExceedsQueued()',
-  'error OrderRouter__InsufficientFreeEquity()',
-  'error OrderRouter__TooManyPendingOrders()',
-  'error OrderRouter__Unauthorized()',
-  'error OrderRouter__DegradedMode()',
-  'error OrderRouter__CloseOnlyWindow()',
-  'error OrderRouter__InsufficientGas()',
-  'error OrderRouter__PredictableOpenInvalid(uint8 code)',
-  'error OrderRouter__ZeroClientOrderId()',
-  'error OrderRouter__ZeroTargetPrice()',
-  'error OrderRouter__InvalidSubmitBy()',
-  'error OrderRouter__InvalidExecutionWindow()',
-  'error OrderRouter__InvalidExecutionModeMask()',
-  'error OrderRouter__ExecutionConfigMismatch(bytes32 expectedConfigHash,bytes32 currentConfigHash)',
-  'error OrderRouter__ZeroPostLeverageBound()',
-  'error OrderRouter__ExecutionBountyAboveGrossDebit(uint256 executionBountyUsdc,uint256 maximumGrossDebitUsdc)',
-  'error OrderRouter__ProtectionActive()',
-
-  'error OrderLifecycleBook__ZeroClientOrderId()',
-  'error OrderLifecycleBook__ClientIdConflict(address account,bytes32 clientOrderId,bytes32 existingIntentHash,bytes32 suppliedIntentHash)',
-  'error OrderLifecycleBook__ClientIdDomainMismatch(bytes32 clientOrderId,bool protocolIntent)',
-  'error OrderLifecycleBook__ExecutionBountyAboveBound(uint256 actualBountyUsdc,uint256 maximumBountyUsdc)',
-
-  'error CfdOrderPolicyEvaluator__ExecutionModeDisallowed(uint8 mode,uint8 allowedExecutionModes)',
-  'error CfdOrderPolicyEvaluator__ConstraintViolation(uint8 constraint,uint256 actual,uint256 limit)',
-
-  'error PletherOracle__MissingUpdateData()',
-  'error PletherOracle__InsufficientFee(uint256 provided,uint256 required)',
-  'error PletherOracle__StalePrice(uint8 mode, bytes32 feedId, uint256 publishTime, uint256 maxStaleness, uint256 currentTimestamp)',
-  'error PletherOracle__InvalidPrice(bytes32 feedId, int64 price)',
-  'error PletherOracle__ConfidenceTooWide(bytes32 feedId, uint64 confidence, int64 price, uint256 maxConfidenceBps)',
-  'error PletherOracle__PublishTimeDivergence(uint8 mode,uint256 minPublishTime,uint256 maxPublishTime,uint256 maxDivergence)',
-  'error PletherOracle__ZeroBasketPrice()',
-
-  'error CfdEngineLens__QuoteSearchLimitExceeded()',
-  'error CfdEngine__TypedOrderFailure(uint8 failureCategory,uint8 failureCode,bool isClose)',
-  'error CfdEngine__NotAccountOwner()',
-  'error CfdEngine__MustCloseOpposingPosition()',
-  'error CfdEngine__DegradedMode()',
-  'error CfdEngine__PositionTooSmall()',
-  'error CfdEngine__SkewTooHigh()',
-  'error CfdEngine__MarginDrainedByFees()',
-  'error CfdEngine__InsufficientInitialMargin()',
-  'error CfdEngine__PoolSolvencyExceeded()',
-  'error CfdEngine__InsufficientPoolLiquidity()',
-  'error CfdEngine__CloseSizeExceedsPosition()',
-  'error CfdEngine__DustPosition()',
-  'error CfdEngine__PartialCloseUnderwaterCarry()',
-  'error CfdEngine__NoOpenPosition()',
-  'error CfdEngine__WithdrawBlockedByOpenPosition()',
-  'error CfdEngine__MarkPriceStale()',
-  'error CfdEngine__MarkPriceOutOfOrder()',
-  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableBackingUsdc,uint256 unpaidCarryUsdc)',
-])
-
+// Decode exactly the current compiled selectors, including errors bubbled by
+// the Oracle, protection Book and supplemental close preview.
 const ALL_PERPS_ERROR_ABI = [
-  ...PERPS_ERROR_ABI,
+  ...PERPS_MARGIN_CLEARINGHOUSE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_ROUTER_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_LIFECYCLE_BOOK_ABI.filter(item => item.type === 'error'),
+  ...PERPS_ORDER_POLICY_EVALUATOR_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_ENGINE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_ENGINE_LENS_ABI.filter(item => item.type === 'error'),
+  ...PERPS_CFD_CLOSE_PREVIEW_ABI.filter(item => item.type === 'error'),
   ...PERPS_PLETHER_ORACLE_ABI.filter(item => item.type === 'error'),
-  ...PERPS_POSITION_PROTECTION_BOOK_ABI,
-  ...PERPS_CFD_CLOSE_PREVIEW_ABI,
+  ...PERPS_POSITION_PROTECTION_BOOK_ABI.filter(item => item.type === 'error'),
 ]
 
 const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. Adjust the exposure and try again.'
@@ -166,7 +86,7 @@ const V2_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   4: 'action charge',
   5: 'explicit fees',
   6: 'post-position size',
-  7: 'post-settlement balance',
+  7: 'USDG balance after settlement',
   8: 'post-position equity',
   9: 'post-position leverage',
 }
@@ -236,9 +156,7 @@ function decodePerpsError(error: unknown): DecodedPerpsError {
 }
 
 const KNOWN_PERPS_ERROR_NAMES = new Set<string>(
-  ALL_PERPS_ERROR_ABI
-    .filter(item => item.type === 'error')
-    .map(item => item.name)
+  ALL_PERPS_ERROR_ABI.map(item => item.name)
 )
 
 /** Only ABI-defined names may leave the app; never return error arguments or data. */
@@ -335,13 +253,13 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'MarginClearinghouse__InsufficientBalance':
       return 'Your margin account balance is too low for this withdrawal.'
     case 'MarginClearinghouse__InsufficientFreeEquity':
-      if (action === 'protection') return 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
+      if (action === 'protection') return `Not enough free ${PERPS_SETTLEMENT_TOKEN_LABEL} to reserve TP/SL keeper rewards. Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account and retry.`
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'OrderRouter__InsufficientFreeEquity':
       if (action === 'protection') return 'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
-    case 'MarginClearinghouse__InsufficientUsdcForSettlement':
-      return 'The margin account does not have enough USDC settlement balance.'
+    case 'MarginClearinghouse__InsufficientAssetsForSettlement':
+      return `The margin account does not have enough ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     case 'OrderRouter__ZeroSize':
       return 'Order size must be greater than zero.'
     case 'OrderRouter__InvalidSizeQuantum':
@@ -364,27 +282,14 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     }
     case 'CfdEngine__NotAccountOwner':
       return 'This wallet can only add margin to its own position.'
-    case 'CfdEngine__MustCloseOpposingPosition':
-      return OPEN_REVERT_MESSAGES[1]
     case 'CfdEngine__DegradedMode':
       return OPEN_REVERT_MESSAGES[2]
     case 'CfdEngine__PositionTooSmall':
       return OPEN_REVERT_MESSAGES[3]
-    case 'CfdEngine__SkewTooHigh':
-      return OPEN_REVERT_MESSAGES[4]
-    case 'CfdEngine__MarginDrainedByFees':
-      return OPEN_REVERT_MESSAGES[5]
-    case 'CfdEngine__InsufficientInitialMargin':
-      return OPEN_REVERT_MESSAGES[6]
-    case 'CfdEngine__PoolSolvencyExceeded':
     case 'CfdEngine__InsufficientPoolLiquidity':
       return OPEN_REVERT_MESSAGES[7]
     case 'CfdEngine__CloseSizeExceedsPosition':
       return CLOSE_REVERT_MESSAGES[1]
-    case 'CfdEngine__DustPosition':
-      return CLOSE_REVERT_MESSAGES[2]
-    case 'CfdEngine__PartialCloseUnderwaterCarry':
-      return CLOSE_REVERT_MESSAGES[4]
     case 'CfdEngine__NoOpenPosition':
     case 'OrderRouter__NoOpenPosition':
       return 'There is no open position for this account.'
@@ -394,13 +299,6 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The engine mark price is stale. Refresh the oracle mark before committing.'
     case 'CfdEngine__MarkPriceOutOfOrder':
       return 'The engine rejected an out-of-order mark price. Refresh and retry.'
-    case 'CfdEngine__InsufficientCloseOrderBountyBacking':
-      if (args?.length === 3 && args.every(value => typeof value === 'bigint' && value >= 0n)) {
-        const [required, available, unpaid] = args as readonly bigint[]
-        const shortfall = required > available ? required - available : 0n
-        return `The close needs ${formatUnits(required, 6)} USDC reserved for execution, but only ${formatUnits(available, 6)} USDC is backed by free settlement and eligible position margin after carry. Backing is short by ${formatUnits(shortfall, 6)} USDC.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} USDC.` : ''} Refresh the review after funding changes.`
-      }
-      return 'Free settlement and eligible position margin after carry cannot fund the close execution reserve. Refresh the account and review again.'
     case 'CfdOrderPolicyEvaluator__InsufficientBountyBacking':
       return 'The protocol returned inconsistent execution-bounty accounting. Refresh the review; contact support if this persists.'
     case 'CfdEngine__PartialCloseUnhealthy':
@@ -452,8 +350,6 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Your position changed. Refresh and review your TP/SL again.'
     case 'OrderRouter__ConditionalTriggerFrozen':
       return 'TP/SL changes are unavailable while the market oracle is frozen. Wait for the market to reopen.'
-    case 'OrderRouter__ProtectionDisabled':
-      return 'New TP/SL protections are currently disabled.'
     case 'OrderRouter__InvalidProtectionPrices':
     case 'OrderRouter__ProtectionTriggerAlreadyMet':
       return 'The trigger price is no longer valid against the current market. Review fresh TP/SL prices.'
@@ -477,31 +373,20 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The LP pool is still in seed lifecycle. Trading is not open yet.'
     case 'OrderRouter__VaultRiskBlocked':
       return 'The LP vault is blocking additional risk right now.'
-    case 'OrderRouter__EmptyPythUpdateData':
     case 'PletherOracle__MissingUpdateData':
       return 'Missing Pyth price update data. Retry execution.'
-    case 'OrderRouter__InsufficientPythFee':
     case 'PletherOracle__InsufficientFee':
       return 'The Pyth update fee changed. Retry execution to quote a fresh fee.'
-    case 'OrderRouter__OraclePriceTooStale':
-      return 'Pyth price data expired before the transaction landed. Retry self-execute and confirm promptly.'
     case 'PletherOracle__StalePrice':
       return formatStalePriceMessage(args)
-    case 'OrderRouter__OracleConfidenceTooWide':
-    case 'PletherOracle__ConfidenceTooWide':
-      return 'Pyth confidence is too wide right now. Retry when the oracle update is cleaner.'
-    case 'OrderRouter__OraclePublishTimesDiverged':
     case 'PletherOracle__PublishTimeDivergence':
       return 'Pyth component prices are not aligned closely enough. Retry in a few seconds.'
-    case 'OrderRouter__InvalidOraclePrice':
     case 'PletherOracle__InvalidPrice':
     case 'PletherOracle__ZeroBasketPrice':
       return 'The oracle returned an invalid basket price.'
     case 'OrderRouter__MarkPriceOutOfOrder':
     case 'PletherOracle__PriceOutOfOrder':
       return 'The oracle update is older than the stored mark. Refresh the mark or retry with newer Pyth data.'
-    case 'OrderRouter__MevDetected':
-      return 'Reveal is not ready yet. Wait a few seconds and retry self-execute.'
     case 'OrderRouter__NoOrdersToExecute':
       return 'This order is no longer pending. It likely expired or was already processed; your reserved margin has been released.'
     case 'OrderRouter__OrderNotQueueHead':
@@ -528,11 +413,11 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
 function fallbackMessage(action: PerpsAction): string {
   switch (action) {
     case 'approve':
-      return 'USDC approval failed. Check the wallet message and retry.'
+      return `${PERPS_SETTLEMENT_TOKEN_LABEL} approval failed. Check the wallet message and retry.`
     case 'fund':
-      return 'Transfer to the Trading Account failed. Check the Owner Wallet USDC balance and Arbitrum Sepolia ETH for gas.'
+      return `Transfer to the Trading Account failed. Check the Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL} balance and Arbitrum Sepolia ETH for gas.`
     case 'deposit':
-      return 'Deposit failed. Check USDC balance, allowance, and wallet gas.'
+      return `Deposit failed. Check ${PERPS_SETTLEMENT_TOKEN_LABEL} balance, allowance, and wallet gas.`
     case 'withdraw':
       return 'Withdraw failed. Check free margin and pending orders.'
     case 'addPositionMargin':

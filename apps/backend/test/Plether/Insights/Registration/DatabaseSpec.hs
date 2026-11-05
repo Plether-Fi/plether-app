@@ -6,7 +6,7 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "RegistrationSessionRow SQL projection contract" $ do
+  describe "registration SQL source support (opening effects are tested in BackendUnitRepairSpec)" $ do
     it "keeps csrf_digest in the same slot in registrationSessionSelect and FromRow" $ do
       sourcePath <- locateRegistrationSource
       source <- normalizeWhitespace <$> readFile sourcePath
@@ -42,7 +42,7 @@ spec = do
         `shouldSatisfy` isInfixOf
           (normalizeWhitespace "INSERT INTO insights_competition_participants (competition_slug, wallet, trader_reference, alias, eligibility_status)")
 
-    it "publishes the exact privacy version in the same transaction that opens registration" $ do
+    it "contains privacy-version and registration-opening assignments and guards" $ do
       sourcePath <- locateRegistrationSource
       source <- normalizeWhitespace <$> readFile sourcePath
       source

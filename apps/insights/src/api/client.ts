@@ -8,7 +8,7 @@ import type {
   WalletChallenge,
   WalletResponse,
 } from './types'
-import { minimumProfitUsdcForSlug } from '../competitionRules'
+import { minimumProfitAssetsForSlug } from '../competitionRules'
 
 export const DEFAULT_COMPETITION_SLUG = 'testnet-trading-2026-09'
 const API_ROOT = '/api/insights/v1'
@@ -23,7 +23,7 @@ interface ApiEnvelope<T> {
 interface WirePrize {
   place: number
   amount?: string
-  amountUsdc?: string
+  amountAssets?: string
 }
 
 interface WireCompetition {
@@ -39,9 +39,9 @@ interface WireCompetition {
   scoreCutoffAt?: string
   resultsAt: string
   startingBalance?: string
-  startingBalanceUsdc?: string
+  startingBalanceAssets?: string
   pnlEligibilityThreshold?: string
-  minimumProfitUsdc?: string
+  minimumProfitAssets?: string
   minActiveDays?: number
   minimumActiveDays?: number
   prizes: WirePrize[]
@@ -73,19 +73,19 @@ interface WireStanding {
   displayName?: string | null
   alias?: string | null
   pnl?: string | null
-  finalPnlUsdc?: string | null
+  finalPnlAssets?: string | null
   realizedPnl?: string | null
-  realizedPnlUsdc?: string | null
+  realizedPnlAssets?: string | null
   roiBps?: number | null
   volume?: string
-  volumeUsdc?: string
+  volumeAssets?: string
   trades?: number
   executedTrades?: number
   activeDays: number
   liquidations: number
   prizePlace?: number | null
   prizePlaces?: number[]
-  prizeAmountUsdc?: string | null
+  prizeAmountAssets?: string | null
   eligible?: boolean
   prizeEligible?: boolean
   eligibilityReasons?: string[]
@@ -94,7 +94,7 @@ interface WireStanding {
   meetsProfitRequirement?: boolean
   meetsActiveDaysRequirement?: boolean
   scoreAvailable?: boolean
-  currentAccountValueUsdc?: string
+  currentAccountValueAssets?: string
   equity?: string
   position?: WirePosition | null
 }
@@ -106,11 +106,11 @@ interface WirePosition {
   size?: string | null
   sizeDelta?: string | null
   margin?: string | null
-  marginUsdc?: string | null
+  marginAssets?: string | null
   entryPrice?: string | null
   markPrice?: string | null
   unrealizedPnl?: string | null
-  unrealizedPnlUsdc?: string | null
+  unrealizedPnlAssets?: string | null
   liquidatable?: boolean | null
 }
 
@@ -124,17 +124,17 @@ interface WireActivity {
   side?: 'long' | 'short' | number | null
   size?: string | null
   sizeDelta?: string | null
-  amountUsdc?: string | null
+  amountAssets?: string | null
   price?: string | null
   pnl?: string | null
-  pnlUsdc?: string | null
+  pnlAssets?: string | null
   executionFee?: string | null
-  executionFeeUsdc?: string | null
+  executionFeeAssets?: string | null
   protocolFee?: string | null
-  protocolFeeUsdc?: string | null
+  protocolFeeAssets?: string | null
   vpi?: string | null
-  vpiUsdc?: string | null
-  vpiDeltaUsdc?: string | null
+  vpiAssets?: string | null
+  vpiDeltaAssets?: string | null
   txHash?: string | null
   blockNumber?: string
   logIndex?: number
@@ -410,9 +410,9 @@ export async function getWallet(slug: string, address: string, signal?: AbortSig
       ...standing,
       realizedPnl:
         response.wallet.realizedPnl
-        ?? response.wallet.realizedPnlUsdc
+        ?? response.wallet.realizedPnlAssets
         ?? sumRealizedPnl(activity),
-      equity: response.wallet.equity ?? response.wallet.currentAccountValueUsdc ?? null,
+      equity: response.wallet.equity ?? response.wallet.currentAccountValueAssets ?? null,
       position: normalizePosition(response.wallet.position),
     },
     activity,
@@ -434,16 +434,16 @@ function normalizeCompetition(raw: WireCompetition): Competition {
     startsAt: raw.startsAt ?? raw.startAt ?? '',
     tradingCutoffAt: raw.tradingCutoffAt ?? raw.scoreCutoffAt ?? '',
     resultsAt: raw.resultsAt,
-    startingBalance: raw.startingBalance ?? raw.startingBalanceUsdc ?? '0',
+    startingBalance: raw.startingBalance ?? raw.startingBalanceAssets ?? '0',
     pnlEligibilityThreshold:
-      minimumProfitUsdcForSlug(raw.slug)
+      minimumProfitAssetsForSlug(raw.slug)
       ?? raw.pnlEligibilityThreshold
-      ?? raw.minimumProfitUsdc
+      ?? raw.minimumProfitAssets
       ?? '0',
     minActiveDays: raw.minActiveDays ?? raw.minimumActiveDays ?? 0,
     prizes: raw.prizes.map((prize) => ({
       place: prize.place,
-      amount: prize.amount ?? prize.amountUsdc ?? '0',
+      amount: prize.amount ?? prize.amountAssets ?? '0',
     })),
     latestIndexedBlock: raw.latestIndexedBlock ?? null,
     latestIndexedAt: raw.latestIndexedAt ?? null,
@@ -489,20 +489,20 @@ function normalizeStanding(raw: WireStanding, competition: WireCompetition): Wal
     snapshotAt: raw.snapshotAt ?? null,
     address: raw.address ?? raw.wallet ?? '',
     displayName: raw.displayName ?? raw.alias ?? null,
-    pnl: raw.pnl ?? raw.finalPnlUsdc ?? null,
-    realizedPnl: raw.realizedPnl ?? raw.realizedPnlUsdc ?? '0',
+    pnl: raw.pnl ?? raw.finalPnlAssets ?? null,
+    realizedPnl: raw.realizedPnl ?? raw.realizedPnlAssets ?? '0',
     roiBps: raw.roiBps ?? null,
-    volume: raw.volume ?? raw.volumeUsdc ?? '0',
+    volume: raw.volume ?? raw.volumeAssets ?? '0',
     trades: raw.trades ?? raw.executedTrades ?? 0,
     activeDays: raw.activeDays,
     liquidations: raw.liquidations,
     prizePlace: raw.prizePlace ?? null,
     prizePlaces: raw.prizePlaces ?? [],
-    prizeAmountUsdc: raw.prizeAmountUsdc ?? null,
+    prizeAmountAssets: raw.prizeAmountAssets ?? null,
     eligible: raw.eligible ?? raw.prizeEligible ?? false,
     eligibilityStatus: raw.eligibilityStatus ?? ((raw.eligible ?? raw.prizeEligible) ? 'eligible' : 'pending'),
     eligibilityReasons: [...new Set(reasons)],
-    equity: raw.equity ?? raw.currentAccountValueUsdc ?? null,
+    equity: raw.equity ?? raw.currentAccountValueAssets ?? null,
     position: normalizePosition(raw.position),
   }
 }
@@ -518,18 +518,18 @@ function normalizeActivity(raw: WireActivity): WalletActivity {
     occurredAt: raw.occurredAt,
     market: raw.market ?? (['Open', 'Close', 'Liquidated'].includes(activityType) ? 'DXY' : null),
     side,
-    size: raw.size ?? sizeDeltaToNotionalUsdc(sizeDelta, priceRaw) ?? raw.amountUsdc ?? null,
+    size: raw.size ?? sizeDeltaToNotionalAssets(sizeDelta, priceRaw) ?? raw.amountAssets ?? null,
     sizeDelta,
     price: normalizePrice(priceRaw),
-    pnl: raw.pnl ?? raw.pnlUsdc ?? null,
+    pnl: raw.pnl ?? raw.pnlAssets ?? null,
     execution: raw.execution ?? null,
     executionFee:
       raw.executionFee
-      ?? raw.executionFeeUsdc
+      ?? raw.executionFeeAssets
       ?? raw.protocolFee
-      ?? raw.protocolFeeUsdc
+      ?? raw.protocolFeeAssets
       ?? null,
-    vpi: raw.vpi ?? raw.vpiUsdc ?? raw.vpiDeltaUsdc ?? null,
+    vpi: raw.vpi ?? raw.vpiAssets ?? raw.vpiDeltaAssets ?? null,
     txHash: raw.txHash ?? null,
   }
 }
@@ -554,12 +554,12 @@ function normalizePosition(raw: WirePosition | null | undefined): WalletResponse
   return {
     market: raw.market ?? 'plDXY Perp',
     side,
-    size: raw.size ?? sizeDeltaToNotionalUsdc(sizeDelta, entryPriceRaw),
+    size: raw.size ?? sizeDeltaToNotionalAssets(sizeDelta, entryPriceRaw),
     sizeDelta,
-    margin: raw.margin ?? raw.marginUsdc ?? null,
+    margin: raw.margin ?? raw.marginAssets ?? null,
     entryPrice: normalizePrice(entryPriceRaw),
     markPrice: normalizePrice(raw.markPrice),
-    unrealizedPnl: raw.unrealizedPnl ?? raw.unrealizedPnlUsdc ?? null,
+    unrealizedPnl: raw.unrealizedPnl ?? raw.unrealizedPnlAssets ?? null,
     liquidatable: raw.liquidatable ?? null,
   }
 }
@@ -570,7 +570,7 @@ function normalizeSide(value: string | number | null | undefined): 'long' | 'sho
   return null
 }
 
-function sizeDeltaToNotionalUsdc(
+function sizeDeltaToNotionalAssets(
   sizeDelta: string | null | undefined,
   price: string | null | undefined,
 ): string | null {

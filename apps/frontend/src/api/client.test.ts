@@ -75,6 +75,23 @@ describe('isUpstreamApiError', () => {
 });
 
 describe('API request timeouts', () => {
+  it('uses distinct direct funding start and status routes with a versioned request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { version: 1, destination: 'margin', status: 'pending' },
+      meta: { chainId: 421614, blockNumber: 0, cached: false },
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    await client.claimMarginFunding('owner', 'account');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/testnet/margin-funding', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ version: 1, owner: 'owner', address: 'account' }),
+    }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      data: { status: 'funded' }, meta: { chainId: 421614, blockNumber: 1, cached: false },
+    })));
+    await client.getMarginFunding('a6415ba2-5668-4ba5-a058-f627bd1b938d');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/testnet/margin-funding/a6415ba2-5668-4ba5-a058-f627bd1b938d', expect.any(Object));
+  });
   it('keeps the faucet client deadline below the ALB idle timeout', () => {
     expect(TESTNET_FAUCET_TIMEOUT_MS).toBe(65_000);
     expect(TESTNET_FAUCET_TIMEOUT_MS).toBeLessThan(75_000);

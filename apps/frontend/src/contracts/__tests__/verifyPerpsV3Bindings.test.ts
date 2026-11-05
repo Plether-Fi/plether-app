@@ -1,6 +1,7 @@
+vi.mock('../perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { describe, expect, it, vi } from 'vitest'
 import type { Address, Hex, PublicClient } from 'viem'
-import rawManifest from '../../../public/perps-aa-manifest.json'
+import rawManifest from './fixtures/perps-canonical-aa.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import { PERPS_ARBITRUM_SEPOLIA } from '../perpsAddresses'
 import { ORDER_V3_INTENT_TYPEHASH, verifyPerpsV3DeploymentBindings } from '../verifyPerpsV3Bindings'

@@ -5,13 +5,15 @@ import { LeaderboardPage } from './LeaderboardPage'
 import { account, input } from '../test/divisions'
 import { publishWeek } from '../divisions/engine'
 
+const statsQuery = vi.hoisted(() => vi.fn())
 const query = vi.hoisted(() => vi.fn())
 const liveQuery = vi.hoisted(() => vi.fn())
 const clock = vi.hoisted(() => ({ now: Date.parse('2026-10-12T12:00:00Z') }))
-vi.mock('../divisions/query', () => ({ useDivisions: query, useLiveDivisions: liveQuery }))
+vi.mock('../divisions/query', () => ({ useDivisionsStats: statsQuery, useDivisions: query, useLiveDivisions: liveQuery }))
 vi.mock('../hooks/useUtcNow', () => ({ useUtcNow: () => clock.now }))
 
 beforeEach(() => {
+  statsQuery.mockReturnValue({ data: { registeredWallets: 42 }, isError: false })
   clock.now = Date.parse('2026-10-12T12:00:00Z')
   query.mockReturnValue({ data: null, isLoading: false, isError: false })
   liveQuery.mockReturnValue({ data: { status: 'pending', weekStartsAt: '2026-10-11T21:00:00Z' }, isLoading: false, isError: false })
@@ -20,6 +22,29 @@ beforeEach(() => {
 function show() { render(<MemoryRouter><LeaderboardPage /></MemoryRouter>) }
 
 describe('Divisions leaderboard', () => {
+  it('shows total Discord registrations before rankings exist, independently of search', () => {
+    statsQuery.mockReturnValue({ data: { registeredWallets: 1234 } })
+    show()
+    const counter = screen.getByText('Wallets registered with Discord').closest('div')!
+    expect(counter).toHaveTextContent('1,234')
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing' } })
+    expect(counter).toHaveTextContent('1,234')
+  })
+  it('distinguishes a genuine zero registration count from loading and failed reads', () => {
+    statsQuery.mockReturnValue({ data: { registeredWallets: 0 } })
+    show()
+    expect(screen.getByText('Wallets registered with Discord').closest('div')).toHaveTextContent('0')
+  })
+  it('shows unavailable and retries a failed count without blocking the leaderboard', () => {
+    const refetch = vi.fn()
+    statsQuery.mockReturnValue({ isError: true, refetch })
+    show()
+    expect(screen.getByText('Wallets registered with Discord').closest('div')).toHaveTextContent('Unavailable')
+    expect(screen.getByRole('heading', { name: 'Live weekly leaderboard' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Discord registration count' }))
+    expect(refetch).toHaveBeenCalledOnce()
+  })
+
   it('shows launch rules without pretending September scores are weekly results', () => {
     show()
     expect(screen.getByRole('heading', { name: 'Plether Divisions' })).toBeInTheDocument()
@@ -46,10 +71,10 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
-  it('shows public handles and earned badges without deriving tiers from live returns', () => {
+  it('keeps earned badges across contract upgrades without deriving tiers from live returns', () => {
     const publication = publishWeek(input(0, [account(1)]), null)
-    query.mockReturnValue({ data: publication })
-    liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 2, standings: [
+    query.mockReturnValue({ data: { ...publication, scoringRelease: { router: `0x${'1'.repeat(40)}`, version: 'v1.3.1', assetSymbol: 'USDC' } } })
+    liveQuery.mockReturnValue({ data: { status: 'ready', scoringRelease: { router: `0x${'2'.repeat(40)}`, version: 'v2.0.0', assetSymbol: 'USDG' }, walletCount: 2, standings: [
       { address: account(2).address, discordUsername: null, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
       { address: account(1).address, discordUsername: 'mellboi', rank: 2, weeklyReturnBps: -100, activeDays: 0 },
     ] } })
@@ -69,7 +94,7 @@ describe('Divisions leaderboard', () => {
   })
   it('shows Iron only after a completed week publishes it, regardless of current-week gains', () => {
     clock.now = Date.parse('2026-10-20T12:00:00Z')
-    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { closingEquityUsdc: '99000000000' })]), null) })
+    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { closingEquityAssets: '99000000000' })]), null) })
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 2 },
     ] } })

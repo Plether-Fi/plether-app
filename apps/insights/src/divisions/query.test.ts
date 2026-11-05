@@ -1,9 +1,32 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDivisions, getDivisionsHistory, getLiveDivisions, getTradedWallets } from './query'
+import { getDivisions, getDivisionsHistory, getDivisionsStats, getLiveDivisions, getTradedWallets } from './query'
 import { publishWeek } from './engine'
 import { input } from '../test/divisions'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+
+describe('Discord registration count', () => {
+  it('reads the completed registration total with cancellation and no browser cache', async () => {
+    const signal = new AbortController().signal
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data: { registeredWallets: 1234 } }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await getDivisionsStats(signal)).toEqual({ registeredWallets: 1234 })
+    expect(fetcher).toHaveBeenCalledWith('/api/insights/v1/divisions/stats', expect.objectContaining({ signal, cache: 'no-store' }))
+  })
+  it('accepts zero but rejects missing, negative, fractional, unsafe and non-numeric totals', async () => {
+    for (const registeredWallets of [0, undefined, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '42', null]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: { registeredWallets } })))
+      if (registeredWallets === 0) await expect(getDivisionsStats()).resolves.toEqual({ registeredWallets: 0 })
+      else await expect(getDivisionsStats()).rejects.toThrow('Discord registration count is invalid')
+    }
+  })
+  it('reports failed or malformed responses instead of displaying zero registrations', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })))
+    await expect(getDivisionsStats()).rejects.toThrow('unavailable')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>SPA</html>')))
+    await expect(getDivisionsStats()).rejects.toThrow('invalid')
+  })
+})
 
 describe('Divisions publications', () => {
   it('returns the pre-publication state only for an explicit empty result', async () => {
@@ -128,5 +151,24 @@ describe('published week pagination', () => {
       await expect(getDivisionsHistory(invalid)).rejects.toThrow('Invalid results week')
     }
     expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('reads the fixed scoring release without adding a contract selector to the request', async () => {
+    const scoringRelease = { router: `0x${'b'.repeat(40)}`, version: 'v1.3.1', assetSymbol: 'USDC' }
+    const data = { publication: { ...publication, scoringRelease }, olderCursor: null, newerCursor: null }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await getDivisionsHistory(cursor)).toEqual(data)
+    expect(fetcher.mock.calls[0][0]).toBe(`/api/insights/v1/divisions/history?week=${cursor}`)
+  })
+
+  it('rejects malformed scoring release metadata', async () => {
+    const release = { router: `0x${'b'.repeat(40)}`, version: 'v1.3.1', assetSymbol: 'USDC' }
+    for (const scoringRelease of [{ ...release, router: 'bad' }, { ...release, version: 'bad' }, { ...release, assetSymbol: 'ETH' }]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: {
+        publication: { ...publication, scoringRelease }, olderCursor: null, newerCursor: null,
+      } })))
+      await expect(getDivisionsHistory(null)).rejects.toThrow('Weekly results are invalid')
+    }
   })
 })

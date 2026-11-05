@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
@@ -19,6 +21,7 @@ import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   loaded <- loadConfig
   case loaded of
     Left err -> failPreflight err

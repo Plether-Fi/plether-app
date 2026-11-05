@@ -4,29 +4,29 @@ import { derivePerpsCloseReconciliation } from './perpsCloseReconciliation'
 import { closeOrder14Receipt } from './__fixtures__/closeOrder14'
 import { closeSettlementAdjustmentReceipt } from './__fixtures__/closeSettlementAdjustment'
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 
 function receipt(
   overrides: Partial<PerpsOrderReceiptEconomics> = {}
 ): PerpsOrderReceiptEconomics {
   return {
-    executionNotionalUsdc: (1_000n * USDC).toString(),
-    executionBountyUsdc: '0',
-    realizedPnlUsdc: (30n * USDC).toString(),
-    vpiUsdc: (2n * USDC).toString(),
-    carryUsdc: (4n * USDC).toString(),
-    executionFeeUsdc: (1n * USDC).toString(),
-    frozenSpreadUsdc: '0',
-    actionChargeAssessedUsdc: (7n * USDC).toString(),
-    actionChargeCollectedUsdc: '0',
-    grossAccountDebitUsdc: '0',
-    preSettlementBalanceUsdc: (100n * USDC).toString(),
-    postSettlementBalanceUsdc: (123n * USDC).toString(),
-    preTraderClaimBalanceUsdc: '0',
-    postTraderClaimBalanceUsdc: '0',
+    executionNotionalAssets: (1_000n * ASSETS).toString(),
+    executionBountyAssets: '0',
+    realizedPnlAssets: (30n * ASSETS).toString(),
+    vpiAssets: (2n * ASSETS).toString(),
+    carryAssets: (4n * ASSETS).toString(),
+    executionFeeAssets: (1n * ASSETS).toString(),
+    frozenSpreadAssets: '0',
+    actionChargeAssessedAssets: (7n * ASSETS).toString(),
+    actionChargeCollectedAssets: '0',
+    grossAccountDebitAssets: '0',
+    preSettlementBalanceAssets: (100n * ASSETS).toString(),
+    postSettlementBalanceAssets: (123n * ASSETS).toString(),
+    preTraderClaimBalanceAssets: '0',
+    postTraderClaimBalanceAssets: '0',
     postPositionSize: '0',
-    postPositionMarginUsdc: '0',
-    postPositionEquityUsdc: '0',
+    postPositionMarginAssets: '0',
+    postPositionEquityAssets: '0',
     postLeverageBps: '0',
     ...overrides,
   }
@@ -36,166 +36,166 @@ describe('derivePerpsCloseReconciliation', () => {
   it('keeps a screenshot-sized settlement difference unclassified and reports the actual account change', () => {
     const result = derivePerpsCloseReconciliation(closeSettlementAdjustmentReceipt)!
     expect(result).toMatchObject({
-      netCloseResultUsdc: -13_228_098_000n,
-      settlementAdjustmentUsdc: 5_956_960_000n,
-      actualAccountChangeUsdc: -7_271_138_000n,
-      marginAccountChangeUsdc: -7_271_138_000n,
-      traderClaimChangeUsdc: 0n,
+      netCloseResultAssets: -13_228_098_000n,
+      settlementAdjustmentAssets: 5_956_960_000n,
+      actualAccountChangeAssets: -7_271_138_000n,
+      marginAccountChangeAssets: -7_271_138_000n,
+      traderClaimChangeAssets: 0n,
     })
-    expect(result.netCloseResultUsdc + result.settlementAdjustmentUsdc)
-      .toBe(result.marginAccountChangeUsdc + result.traderClaimChangeUsdc)
+    expect(result.netCloseResultAssets + result.settlementAdjustmentAssets)
+      .toBe(result.marginAccountChangeAssets + result.traderClaimChangeAssets)
   })
 
   it('reconciles order 14 without treating VPI netting or withheld profit as a waiver', () => {
     expect(derivePerpsCloseReconciliation(closeOrder14Receipt)).toMatchObject({
-      frozenSpreadAssessedUsdc: 5_455_562n,
-      frozenSpreadChargedUsdc: 5_455_562n,
-      frozenSpreadWaivedUsdc: 0n,
-      netCloseResultUsdc: -4_731_125n,
-      marginAccountChangeUsdc: -4_731_125n,
-      traderClaimChangeUsdc: 0n,
-      settlementAdjustmentUsdc: 0n,
+      frozenSpreadAssessedAssets: 5_455_562n,
+      frozenSpreadChargedAssets: 5_455_562n,
+      frozenSpreadWaivedAssets: 0n,
+      netCloseResultAssets: -4_731_125n,
+      marginAccountChangeAssets: -4_731_125n,
+      traderClaimChangeAssets: 0n,
+      settlementAdjustmentAssets: 0n,
     })
   })
 
   it('reconciles a profitable close paid immediately', () => {
     expect(derivePerpsCloseReconciliation(receipt())).toMatchObject({
-      realizedPnlUsdc: 30n * USDC,
-      vpiUsdc: 2n * USDC,
-      carryUsdc: 4n * USDC,
-      executionFeeUsdc: 1n * USDC,
-      netCloseResultUsdc: 23n * USDC,
-      actualAccountChangeUsdc: 23n * USDC,
-      marginAccountChangeUsdc: 23n * USDC,
-      traderClaimChangeUsdc: 0n,
-      settlementAdjustmentUsdc: 0n,
+      realizedPnlAssets: 30n * ASSETS,
+      vpiAssets: 2n * ASSETS,
+      carryAssets: 4n * ASSETS,
+      executionFeeAssets: 1n * ASSETS,
+      netCloseResultAssets: 23n * ASSETS,
+      actualAccountChangeAssets: 23n * ASSETS,
+      marginAccountChangeAssets: 23n * ASSETS,
+      traderClaimChangeAssets: 0n,
+      settlementAdjustmentAssets: 0n,
     })
   })
 
   it('includes the finalized execution reward in the exact close result', () => {
     expect(derivePerpsCloseReconciliation(receipt({
-      executionNotionalUsdc: '9925809400',
-      executionBountyUsdc: '200000',
-      realizedPnlUsdc: '-52382100',
-      vpiUsdc: '667142',
-      carryUsdc: '42',
-      executionFeeUsdc: '3970323',
-      actionChargeAssessedUsdc: '4637507',
-      actionChargeCollectedUsdc: '4637507',
-      grossAccountDebitUsdc: '57219607',
-      preSettlementBalanceUsdc: '14994820546',
-      postSettlementBalanceUsdc: '14937600939',
+      executionNotionalAssets: '9925809400',
+      executionBountyAssets: '200000',
+      realizedPnlAssets: '-52382100',
+      vpiAssets: '667142',
+      carryAssets: '42',
+      executionFeeAssets: '3970323',
+      actionChargeAssessedAssets: '4637507',
+      actionChargeCollectedAssets: '4637507',
+      grossAccountDebitAssets: '57219607',
+      preSettlementBalanceAssets: '14994820546',
+      postSettlementBalanceAssets: '14937600939',
     }))).toMatchObject({
-      executionBountyUsdc: 200_000n,
-      netCloseResultUsdc: -57_219_607n,
-      marginAccountChangeUsdc: -57_219_607n,
-      traderClaimChangeUsdc: 0n,
-      settlementAdjustmentUsdc: 0n,
+      executionBountyAssets: 200_000n,
+      netCloseResultAssets: -57_219_607n,
+      marginAccountChangeAssets: -57_219_607n,
+      traderClaimChangeAssets: 0n,
+      settlementAdjustmentAssets: 0n,
     })
   })
 
   it('reconciles VPI rebates and a newly created trader claim', () => {
     expect(derivePerpsCloseReconciliation(receipt({
-      vpiUsdc: (-2n * USDC).toString(),
-      actionChargeAssessedUsdc: (3n * USDC).toString(),
-      postSettlementBalanceUsdc: (100n * USDC).toString(),
-      postTraderClaimBalanceUsdc: (27n * USDC).toString(),
+      vpiAssets: (-2n * ASSETS).toString(),
+      actionChargeAssessedAssets: (3n * ASSETS).toString(),
+      postSettlementBalanceAssets: (100n * ASSETS).toString(),
+      postTraderClaimBalanceAssets: (27n * ASSETS).toString(),
     }))).toMatchObject({
-      netCloseResultUsdc: 27n * USDC,
-      actualAccountChangeUsdc: 27n * USDC,
-      marginAccountChangeUsdc: 0n,
-      traderClaimChangeUsdc: 27n * USDC,
+      netCloseResultAssets: 27n * ASSETS,
+      actualAccountChangeAssets: 27n * ASSETS,
+      marginAccountChangeAssets: 0n,
+      traderClaimChangeAssets: 27n * ASSETS,
     })
   })
 
   it('reconciles a loss that consumes account funds and an existing claim', () => {
     expect(derivePerpsCloseReconciliation(receipt({
-      realizedPnlUsdc: (-90n * USDC).toString(),
-      actionChargeCollectedUsdc: (7n * USDC).toString(),
-      grossAccountDebitUsdc: (97n * USDC).toString(),
-      preSettlementBalanceUsdc: (80n * USDC).toString(),
-      postSettlementBalanceUsdc: '0',
-      preTraderClaimBalanceUsdc: (17n * USDC).toString(),
-      postTraderClaimBalanceUsdc: '0',
+      realizedPnlAssets: (-90n * ASSETS).toString(),
+      actionChargeCollectedAssets: (7n * ASSETS).toString(),
+      grossAccountDebitAssets: (97n * ASSETS).toString(),
+      preSettlementBalanceAssets: (80n * ASSETS).toString(),
+      postSettlementBalanceAssets: '0',
+      preTraderClaimBalanceAssets: (17n * ASSETS).toString(),
+      postTraderClaimBalanceAssets: '0',
     }))).toMatchObject({
-      netCloseResultUsdc: -97n * USDC,
-      actualAccountChangeUsdc: -97n * USDC,
-      marginAccountChangeUsdc: -80n * USDC,
-      traderClaimChangeUsdc: -17n * USDC,
-      settlementAdjustmentUsdc: 0n,
+      netCloseResultAssets: -97n * ASSETS,
+      actualAccountChangeAssets: -97n * ASSETS,
+      marginAccountChangeAssets: -80n * ASSETS,
+      traderClaimChangeAssets: -17n * ASSETS,
+      settlementAdjustmentAssets: 0n,
     })
   })
 
   it('reports a terminal settlement adjustment without assigning a cause', () => {
     expect(derivePerpsCloseReconciliation(receipt({
-      realizedPnlUsdc: (-100n * USDC).toString(),
-      actionChargeCollectedUsdc: (7n * USDC).toString(),
-      grossAccountDebitUsdc: (100n * USDC).toString(),
-      preSettlementBalanceUsdc: (80n * USDC).toString(),
-      postSettlementBalanceUsdc: '0',
-      preTraderClaimBalanceUsdc: (20n * USDC).toString(),
-      postTraderClaimBalanceUsdc: '0',
+      realizedPnlAssets: (-100n * ASSETS).toString(),
+      actionChargeCollectedAssets: (7n * ASSETS).toString(),
+      grossAccountDebitAssets: (100n * ASSETS).toString(),
+      preSettlementBalanceAssets: (80n * ASSETS).toString(),
+      postSettlementBalanceAssets: '0',
+      preTraderClaimBalanceAssets: (20n * ASSETS).toString(),
+      postTraderClaimBalanceAssets: '0',
     }))).toMatchObject({
-      netCloseResultUsdc: -107n * USDC,
-      actualAccountChangeUsdc: -100n * USDC,
-      marginAccountChangeUsdc: -80n * USDC,
-      traderClaimChangeUsdc: -20n * USDC,
-      settlementAdjustmentUsdc: 7n * USDC,
+      netCloseResultAssets: -107n * ASSETS,
+      actualAccountChangeAssets: -100n * ASSETS,
+      marginAccountChangeAssets: -80n * ASSETS,
+      traderClaimChangeAssets: -20n * ASSETS,
+      settlementAdjustmentAssets: 7n * ASSETS,
     })
   })
 
   it('derives fully paid and partially waived frozen spread from collection priority', () => {
     const fullyPaid = derivePerpsCloseReconciliation(receipt({
-      frozenSpreadUsdc: (5n * USDC).toString(),
-      actionChargeAssessedUsdc: (12n * USDC).toString(),
-      postSettlementBalanceUsdc: (118n * USDC).toString(),
+      frozenSpreadAssets: (5n * ASSETS).toString(),
+      actionChargeAssessedAssets: (12n * ASSETS).toString(),
+      postSettlementBalanceAssets: (118n * ASSETS).toString(),
     }))
     expect(fullyPaid).toMatchObject({
-      frozenSpreadAssessedUsdc: 5n * USDC,
-      frozenSpreadChargedUsdc: 5n * USDC,
-      frozenSpreadWaivedUsdc: 0n,
-      netCloseResultUsdc: 18n * USDC,
+      frozenSpreadAssessedAssets: 5n * ASSETS,
+      frozenSpreadChargedAssets: 5n * ASSETS,
+      frozenSpreadWaivedAssets: 0n,
+      netCloseResultAssets: 18n * ASSETS,
     })
 
     const partiallyWaived = derivePerpsCloseReconciliation(receipt({
-      realizedPnlUsdc: (-92n * USDC).toString(),
-      frozenSpreadUsdc: (5n * USDC).toString(),
-      actionChargeAssessedUsdc: (12n * USDC).toString(),
-      actionChargeCollectedUsdc: (8n * USDC).toString(),
-      grossAccountDebitUsdc: (100n * USDC).toString(),
-      preSettlementBalanceUsdc: (100n * USDC).toString(),
-      postSettlementBalanceUsdc: '0',
+      realizedPnlAssets: (-92n * ASSETS).toString(),
+      frozenSpreadAssets: (5n * ASSETS).toString(),
+      actionChargeAssessedAssets: (12n * ASSETS).toString(),
+      actionChargeCollectedAssets: (8n * ASSETS).toString(),
+      grossAccountDebitAssets: (100n * ASSETS).toString(),
+      preSettlementBalanceAssets: (100n * ASSETS).toString(),
+      postSettlementBalanceAssets: '0',
     }))
     expect(partiallyWaived).toMatchObject({
-      frozenSpreadAssessedUsdc: 5n * USDC,
-      frozenSpreadChargedUsdc: 1n * USDC,
-      frozenSpreadWaivedUsdc: 4n * USDC,
-      netCloseResultUsdc: -100n * USDC,
-      settlementAdjustmentUsdc: 0n,
+      frozenSpreadAssessedAssets: 5n * ASSETS,
+      frozenSpreadChargedAssets: 1n * ASSETS,
+      frozenSpreadWaivedAssets: 4n * ASSETS,
+      netCloseResultAssets: -100n * ASSETS,
+      settlementAdjustmentAssets: 0n,
     })
     expect(
-      partiallyWaived!.frozenSpreadChargedUsdc + partiallyWaived!.frozenSpreadWaivedUsdc
-    ).toBe(partiallyWaived!.frozenSpreadAssessedUsdc)
+      partiallyWaived!.frozenSpreadChargedAssets + partiallyWaived!.frozenSpreadWaivedAssets
+    ).toBe(partiallyWaived!.frozenSpreadAssessedAssets)
   })
 
   it('shows remaining and released margin only from an authoritative snapshot', () => {
     const partial = receipt({
       postPositionSize: (500n * 10n ** 18n).toString(),
-      postPositionMarginUsdc: (250n * USDC).toString(),
+      postPositionMarginAssets: (250n * ASSETS).toString(),
     })
     expect(derivePerpsCloseReconciliation(partial)).toMatchObject({
-      postPositionMarginUsdc: 250n * USDC,
-      releasedPositionMarginUsdc: undefined,
+      postPositionMarginAssets: 250n * ASSETS,
+      releasedPositionMarginAssets: undefined,
     })
     expect(derivePerpsCloseReconciliation(partial, {
-      preExecutionPositionMarginUsdc: 500n * USDC,
+      preExecutionPositionMarginAssets: 500n * ASSETS,
     })).toMatchObject({
-      releasedPositionMarginUsdc: 250n * USDC,
+      releasedPositionMarginAssets: 250n * ASSETS,
     })
     expect(derivePerpsCloseReconciliation(partial, {
-      preExecutionPositionMarginUsdc: 200n * USDC,
+      preExecutionPositionMarginAssets: 200n * ASSETS,
     })).toMatchObject({
-      releasedPositionMarginUsdc: undefined,
+      releasedPositionMarginAssets: undefined,
     })
   })
 
@@ -205,18 +205,18 @@ describe('derivePerpsCloseReconciliation', () => {
     { pnl: 10n, collected: 0n, waived: 0n, net: 2n },
   ])('separates VPI credit, profit withholding and actual waiver (case %#)', ({ pnl, collected, waived, net }) => {
     expect(derivePerpsCloseReconciliation(receipt({
-      realizedPnlUsdc: (pnl * USDC).toString(),
-      vpiUsdc: (-2n * USDC).toString(),
-      frozenSpreadUsdc: (5n * USDC).toString(),
-      actionChargeAssessedUsdc: (8n * USDC).toString(),
-      actionChargeCollectedUsdc: (collected * USDC).toString(),
-      grossAccountDebitUsdc: (collected * USDC).toString(),
-      postSettlementBalanceUsdc: ((100n + net) * USDC).toString(),
+      realizedPnlAssets: (pnl * ASSETS).toString(),
+      vpiAssets: (-2n * ASSETS).toString(),
+      frozenSpreadAssets: (5n * ASSETS).toString(),
+      actionChargeAssessedAssets: (8n * ASSETS).toString(),
+      actionChargeCollectedAssets: (collected * ASSETS).toString(),
+      grossAccountDebitAssets: (collected * ASSETS).toString(),
+      postSettlementBalanceAssets: ((100n + net) * ASSETS).toString(),
     }))).toMatchObject({
-      frozenSpreadChargedUsdc: (5n - waived) * USDC,
-      frozenSpreadWaivedUsdc: waived * USDC,
-      netCloseResultUsdc: net * USDC,
-      settlementAdjustmentUsdc: 0n,
+      frozenSpreadChargedAssets: (5n - waived) * ASSETS,
+      frozenSpreadWaivedAssets: waived * ASSETS,
+      netCloseResultAssets: net * ASSETS,
+      settlementAdjustmentAssets: 0n,
     })
   })
 
@@ -226,51 +226,51 @@ describe('derivePerpsCloseReconciliation', () => {
     { vpi: -8n, assessed: 2n, collected: 4n, net: 28n },
   ])('handles net rebates and already-realized carry (case %#)', ({ vpi, assessed, collected, net }) => {
     expect(derivePerpsCloseReconciliation(receipt({
-      vpiUsdc: (vpi * USDC).toString(),
-      frozenSpreadUsdc: (5n * USDC).toString(),
-      actionChargeAssessedUsdc: (assessed * USDC).toString(),
-      actionChargeCollectedUsdc: (collected * USDC).toString(),
-      grossAccountDebitUsdc: (collected * USDC).toString(),
-      postSettlementBalanceUsdc: ((100n + net) * USDC).toString(),
+      vpiAssets: (vpi * ASSETS).toString(),
+      frozenSpreadAssets: (5n * ASSETS).toString(),
+      actionChargeAssessedAssets: (assessed * ASSETS).toString(),
+      actionChargeCollectedAssets: (collected * ASSETS).toString(),
+      grossAccountDebitAssets: (collected * ASSETS).toString(),
+      postSettlementBalanceAssets: ((100n + net) * ASSETS).toString(),
     }))).toMatchObject({
-      frozenSpreadChargedUsdc: 5n * USDC,
-      frozenSpreadWaivedUsdc: 0n,
-      netCloseResultUsdc: net * USDC,
-      settlementAdjustmentUsdc: 0n,
+      frozenSpreadChargedAssets: 5n * ASSETS,
+      frozenSpreadWaivedAssets: 0n,
+      netCloseResultAssets: net * ASSETS,
+      settlementAdjustmentAssets: 0n,
     })
   })
 
   it('does not invent a cause when receipt balances do not support the calculated rebate', () => {
     expect(derivePerpsCloseReconciliation(receipt({
-      vpiUsdc: (-12n * USDC).toString(),
-      frozenSpreadUsdc: (5n * USDC).toString(),
-      actionChargeAssessedUsdc: '0',
-      postSettlementBalanceUsdc: (131n * USDC).toString(),
+      vpiAssets: (-12n * ASSETS).toString(),
+      frozenSpreadAssets: (5n * ASSETS).toString(),
+      actionChargeAssessedAssets: '0',
+      postSettlementBalanceAssets: (131n * ASSETS).toString(),
     }))).toBeUndefined()
   })
 
   it.each([
     undefined,
-    receipt({ executionBountyUsdc: undefined }),
-    receipt({ realizedPnlUsdc: undefined }),
-    receipt({ realizedPnlUsdc: 'not-a-number' }),
-    receipt({ actionChargeCollectedUsdc: (8n * USDC).toString() }),
-    receipt({ carryUsdc: '-1' }),
-    receipt({ frozenSpreadUsdc: (7n * USDC).toString() }),
-    receipt({ executionBountyUsdc: (8n * USDC).toString() }),
-    receipt({ postPositionMarginUsdc: (1n * USDC).toString() }),
+    receipt({ executionBountyAssets: undefined }),
+    receipt({ realizedPnlAssets: undefined }),
+    receipt({ realizedPnlAssets: 'not-a-number' }),
+    receipt({ actionChargeCollectedAssets: (8n * ASSETS).toString() }),
+    receipt({ carryAssets: '-1' }),
+    receipt({ frozenSpreadAssets: (7n * ASSETS).toString() }),
+    receipt({ executionBountyAssets: (8n * ASSETS).toString() }),
+    receipt({ postPositionMarginAssets: (1n * ASSETS).toString() }),
     receipt({
       postPositionSize: (1n * 10n ** 18n).toString(),
-      postPositionMarginUsdc: (1n * USDC).toString(),
-      postPositionEquityUsdc: '-1',
+      postPositionMarginAssets: (1n * ASSETS).toString(),
+      postPositionEquityAssets: '-1',
     }),
-    receipt({ postSettlementBalanceUsdc: (122n * USDC).toString() }),
+    receipt({ postSettlementBalanceAssets: (122n * ASSETS).toString() }),
     receipt({
-      realizedPnlUsdc: (-100n * USDC).toString(),
-      preSettlementBalanceUsdc: (80n * USDC).toString(),
-      postSettlementBalanceUsdc: '0',
+      realizedPnlAssets: (-100n * ASSETS).toString(),
+      preSettlementBalanceAssets: (80n * ASSETS).toString(),
+      postSettlementBalanceAssets: '0',
       postPositionSize: (1n * 10n ** 18n).toString(),
-      postPositionMarginUsdc: (1n * USDC).toString(),
+      postPositionMarginAssets: (1n * ASSETS).toString(),
     }),
   ])('rejects missing, malformed, legacy, and inconsistent receipt evidence', (value) => {
     expect(derivePerpsCloseReconciliation(value)).toBeUndefined()

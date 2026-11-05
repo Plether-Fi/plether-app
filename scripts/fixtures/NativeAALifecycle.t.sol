@@ -6,7 +6,7 @@ import {IPositionProtectionBook} from "@plether/perps/interfaces/IPositionProtec
 import {IPositionProtectionActions} from "@plether/perps/interfaces/IPositionProtectionActions.sol";
 import {IPositionProtectionViews} from "@plether/perps/interfaces/IPositionProtectionViews.sol";
 import {CfdTypes} from "@plether/perps/CfdTypes.sol";
-import {OrderV2Types} from "@plether/perps/OrderV2Types.sol";
+import {OrderV3Types} from "@plether/perps/OrderV3Types.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {StdStorage, stdStorage} from "forge-std/StdStorage.sol";
 
@@ -35,18 +35,18 @@ interface PM {
     function policyId() external view returns (bytes32);
 }
 
-interface V2Committer {
-    function commitOrder(OrderV2Types.OrderRequest calldata request) external returns (uint64);
+interface V3Committer {
+    function commitOrder(OrderV3Types.OrderRequest calldata request) external returns (uint64);
 }
 
-// Exact release source + real captured AA runtime. Only Pyth input and initial
-// claims are synthetic; no RPC, production key, Core deployment or authorization.
+// Current Core interfaces + immutable captured AA runtime evidence. Pyth input
+// and initial claims are synthetic; no RPC, production key or live deployment.
 contract NativeAALifecycleTest is BasePerpTest {
     using stdStorage for StdStorage;
     address constant ALICE = address(0xA11CE);
     address constant EXECUTION_KEEPER = address(0xE0EC);
     uint256 constant POSITION_SIZE = 10_000e18;
-    uint256 constant POSITION_MARGIN_USDC = 2000e6;
+    uint256 constant POSITION_MARGIN_ASSETS = 2000e6;
     IPositionProtectionBook protectionBook;
     IPositionProtectionActions protectionActions;
     IPositionProtectionViews protectionViews;
@@ -63,6 +63,8 @@ contract NativeAALifecycleTest is BasePerpTest {
         protectionViews = IPositionProtectionViews(address(protectionBook));
         _fundTrader(ALICE, 20_000e6);
         vm.chainId(421614);
+        // Local EVM: emulate ArbSys.arbBlockNumber using this test chain's block clock.
+        vm.etch(address(100), hex"4360005260206000f3");
         string memory f = vm.readFile("aa-fixture.json");
         vm.etch(ENTRY, vm.parseJsonBytes(f, ".accounts.0x4337084d9e255ff0702461cf8895ce9e3b5ff108.code"));
         vm.etch(
@@ -102,18 +104,30 @@ contract NativeAALifecycleTest is BasePerpTest {
         pure
         returns (PositionProtectionTypes.PositionProtectionParams memory)
     {
-        return PositionProtectionTypes.PositionProtectionParams(tp, sl);
+        // This lifecycle fixture explicitly authorizes unlimited close economics.
+        return PositionProtectionTypes.PositionProtectionParams({
+            takeProfitTriggerPrice: tp,
+            stopLossTriggerPrice: sl,
+            closeLimits: PositionProtectionTypes.CloseFinancialLimits({
+                maxExecutionNotionalAssets: type(uint256).max,
+                maxGrossAccountDebitAssets: type(uint256).max,
+                maxActionChargeAssets: type(uint256).max,
+                maxExplicitFeesAssets: type(uint256).max
+            })
+        });
     }
 
-    function _totalProtectionBountyUsdc() internal view returns (uint256) {
-        return router.positionProtectionTriggerBountyUsdc() + router.closeOrderExecutionBountyUsdc();
+    function _totalProtectionBountyAssets() internal view returns (uint256) {
+        // Protection closes have zero execution bounty; only the trigger is reserved.
+        return router.positionProtectionTriggerBountyAssets();
     }
 
     function _seedAuthenticatedTraderClaim(address account, uint256 amount) internal {
         bytes32 oldHash = terminalNavBook.curveHashOf(account);
-        uint256 total = engine.totalTraderClaimBalanceUsdc() - engine.traderClaimBalanceUsdc(account) + amount;
-        stdstore.target(address(engine)).sig("traderClaimBalanceUsdc(address)").with_key(account).checked_write(amount);
-        stdstore.target(address(engine)).sig("totalTraderClaimBalanceUsdc()").checked_write(total);
+        uint256 total = engine.totalTraderClaimBalanceAssets() - engine.traderClaimBalanceAssets(account) + amount;
+        stdstore.target(address(engine)).sig("traderClaimBalanceAssets(address)").with_key(account)
+            .checked_write(amount);
+        stdstore.target(address(engine)).sig("totalTraderClaimBalanceAssets()").checked_write(total);
         vm.startPrank(address(engine));
         terminalNavBook.syncFromEngine(account, oldHash);
         terminalNavBook.authenticateEngineState(account);
@@ -187,20 +201,21 @@ contract NativeAALifecycleTest is BasePerpTest {
         assertTrue(found, "must observe exact UserOperation outcome");
     }
 
-    function _protectedOpenRequest() internal view returns (OrderV2Types.OrderRequest memory request) {
+    function _protectedOpenRequest() internal view returns (OrderV3Types.OrderRequest memory request) {
         request.side = CfdTypes.Side.LONG;
         request.sizeDelta = POSITION_SIZE;
-        request.marginDelta = POSITION_MARGIN_USDC;
+        request.marginDelta = POSITION_MARGIN_ASSETS;
         request.targetPrice = 1;
         request.clientOrderId = keccak256("offline-native-protected-open");
         request.bounds.allowedExecutionModes = 1;
-        request.bounds.validUntil = uint64(block.timestamp + 60);
+        request.bounds.submitBy = uint64(block.timestamp + 120);
+        request.bounds.executionWindowSeconds = 60;
         request.bounds.expectedConfigHash = router.lifecycleBook().currentExecutionConfigHash();
-        request.bounds.maxExecutionBountyUsdc = 10e6;
-        request.bounds.maxExecutionNotionalUsdc = 20_000e6;
-        request.bounds.maxGrossAccountDebitUsdc = 10_000e6;
-        request.bounds.maxActionChargeUsdc = 1000e6;
-        request.bounds.maxExplicitFeesUsdc = 1000e6;
+        request.bounds.maxExecutionBountyAssets = 10e6;
+        request.bounds.maxExecutionNotionalAssets = 20_000e6;
+        request.bounds.maxGrossAccountDebitAssets = 10_000e6;
+        request.bounds.maxActionChargeAssets = 1000e6;
+        request.bounds.maxExplicitFeesAssets = 1000e6;
         request.bounds.maxPostPositionSize = POSITION_SIZE;
         request.bounds.maxPostLeverageBps = 100_000;
     }
@@ -221,13 +236,13 @@ contract NativeAALifecycleTest is BasePerpTest {
         );
         assertEq(protectionViews.activePositionProtectionId(ALICE), 0);
         assertEq(router.pendingOrderCounts(ALICE), 0);
-        assertEq(router.getAccountReservations(ALICE).executionBountyUsdc, 0);
+        assertEq(router.getAccountReservations(ALICE).executionBountyAssets, 0);
     }
 
     function test_NativeAA_ProtectedOpenReplaceTriggerExecute() public {
         _setupAA();
         uint64 parent = router.nextCommitId();
-        OrderV2Types.OrderRequest memory request = _protectedOpenRequest();
+        OrderV3Types.OrderRequest memory request = _protectedOpenRequest();
         // The recorded cold execution was 1,545,240 gas. Exercise the exact
         // rounded policy result (2,317,860), not an arbitrary assigned 3M.
         uint256 raw = 1_545_240;
@@ -276,13 +291,13 @@ contract NativeAALifecycleTest is BasePerpTest {
         (size,,,,,,) = engine.positions(ALICE);
         assertEq(size, 0);
         assertEq(protectionViews.activePositionProtectionId(ALICE), 0);
-        assertEq(router.getAccountReservations(ALICE).executionBountyUsdc, 0);
+        assertEq(router.getAccountReservations(ALICE).executionBountyAssets, 0);
     }
 
     function test_NativeAA_CreateReplaceCancel() public {
         _setupAA();
-        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_USDC, 120_000_000);
-        uint256 free = _freeSettlementUsdc(ALICE);
+        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_ASSETS, 120_000_000);
+        uint256 free = _freeSettlementAssets(ALICE);
         _sponsor(
             "protection_create",
             address(protectionBook),
@@ -291,7 +306,7 @@ contract NativeAALifecycleTest is BasePerpTest {
         );
         uint64 id = protectionViews.activePositionProtectionId(ALICE);
         assertGt(id, 0);
-        assertEq(_freeSettlementUsdc(ALICE), free - _totalProtectionBountyUsdc());
+        assertEq(_freeSettlementAssets(ALICE), free - _totalProtectionBountyAssets());
         _sponsor(
             "protection_replace",
             address(protectionBook),
@@ -306,22 +321,22 @@ contract NativeAALifecycleTest is BasePerpTest {
             true
         );
         assertEq(protectionViews.activePositionProtectionId(ALICE), 0);
-        assertEq(_freeSettlementUsdc(ALICE), free);
-        assertEq(router.getAccountReservations(ALICE).executionBountyUsdc, 0);
+        assertEq(_freeSettlementAssets(ALICE), free);
+        assertEq(router.getAccountReservations(ALICE).executionBountyAssets, 0);
     }
 
     // A typed no-op is a successful EVM call, so estimating it does not prove
     // that the engine has enough gas to settle once the MEV boundary clears.
-    function test_NativeAA_KeeperEngineFailureGasEnvelope() public {
+    function test_NativeAA_KeeperGasEnvelope() public {
         _setupAA();
-        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_USDC, 120_000_000);
-        OrderV2Types.OrderRequest memory request = _protectedOpenRequest();
+        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_ASSETS, 120_000_000);
+        OrderV3Types.OrderRequest memory request = _protectedOpenRequest();
         request.isClose = true;
         request.side = CfdTypes.Side.SHORT;
         request.marginDelta = 0;
         request.targetPrice = 120_000_000;
         uint64 id = router.nextCommitId();
-        _sponsor("keeper_close_commit", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), true);
+        _sponsor("keeper_close_commit", address(router), abi.encodeCall(V3Committer.commitOrder, (request)), true);
         // Cheatcode read avoids Solidity treating block.number as invariant
         // across the later vm.roll inside _mockPythUpdateData.
         uint256 commitBlock = vm.getBlockNumber();
@@ -329,69 +344,81 @@ contract NativeAALifecycleTest is BasePerpTest {
         uint256 baseline = vm.snapshotState();
         vm.roll(commitBlock);
         vm.prank(EXECUTION_KEEPER);
-        OrderV2Types.ExecutionResult memory sameBlock = router.executeOrder(id, tick);
-        assertEq(uint8(sameBlock.pendingReason), uint8(OrderV2Types.PendingReason.SameBlock));
+        OrderV3Types.ExecutionResult memory sameBlock = router.executeOrder(id, tick);
+        assertEq(uint8(sameBlock.pendingReason), uint8(OrderV3Types.PendingReason.SameBlock));
         assertTrue(vm.revertToState(baseline));
-        bool sawEngineFailure;
+        bool sawInsufficientGas;
         bool sawSuccess;
         for (uint256 allowance = 500_000; allowance <= 8_000_000; allowance += 250_000) {
             vm.prank(EXECUTION_KEEPER);
-            (bool ok, bytes memory result) = address(router).call{gas: allowance}(
-                abi.encodeCall(router.executeOrder, (id, tick))
-            );
+            (bool ok, bytes memory result) =
+                address(router).call{gas: allowance}(abi.encodeCall(router.executeOrder, (id, tick)));
             if (ok) {
-                OrderV2Types.ExecutionResult memory outcome = abi.decode(result, (OrderV2Types.ExecutionResult));
+                OrderV3Types.ExecutionResult memory outcome = abi.decode(result, (OrderV3Types.ExecutionResult));
                 emit log_named_uint("keeper allowance", allowance);
                 emit log_named_uint("pending reason", uint8(outcome.pendingReason));
-                if (outcome.pendingReason == OrderV2Types.PendingReason.EngineFailure) sawEngineFailure = true;
-                if (outcome.status == OrderV2Types.LifecycleStatus.Executed) sawSuccess = true;
+                if (outcome.pendingReason == OrderV3Types.PendingReason.InsufficientGas) sawInsufficientGas = true;
+                if (outcome.status == OrderV3Types.LifecycleStatus.Executed) sawSuccess = true;
             }
             assertTrue(vm.revertToState(baseline));
         }
-        assertTrue(sawEngineFailure, "must reproduce successful call reporting EngineFailure at low gas");
+        assertTrue(sawInsufficientGas, "low gas must defer execution with InsufficientGas");
         assertTrue(sawSuccess, "same order must execute at a bounded larger allowance");
 
         // A genuine engine error is still pending even at the keeper hard cap.
         vm.mockCallRevert(address(engine), abi.encodeWithSelector(engine.processOrderTyped.selector), hex"deadbeef");
         vm.prank(EXECUTION_KEEPER);
-        (bool ok, bytes memory result) = address(router).call{gas: 30_000_000}(
-            abi.encodeCall(router.executeOrder, (id, tick))
-        );
+        (bool ok, bytes memory result) =
+            address(router).call{gas: 30_000_000}(abi.encodeCall(router.executeOrder, (id, tick)));
         assertTrue(ok);
-        OrderV2Types.ExecutionResult memory failed = abi.decode(result, (OrderV2Types.ExecutionResult));
-        assertEq(uint8(failed.status), uint8(OrderV2Types.LifecycleStatus.Pending));
-        assertEq(uint8(failed.pendingReason), uint8(OrderV2Types.PendingReason.EngineFailure));
+        OrderV3Types.ExecutionResult memory failed = abi.decode(result, (OrderV3Types.ExecutionResult));
+        assertEq(uint8(failed.status), uint8(OrderV3Types.LifecycleStatus.Pending));
+        assertEq(uint8(failed.pendingReason), uint8(OrderV3Types.PendingReason.EngineFailure));
     }
 
-    function test_NativeAA_RecordedBountyDriftFirst() public { _bountyDrift(119_061, 119_064); }
-    function test_NativeAA_RecordedBountyDriftSecond() public { _bountyDrift(118_746, 118_750); }
+    function test_NativeAA_RecordedBountyDriftFirst() public {
+        _bountyDrift(119_061, 119_064);
+    }
+
+    function test_NativeAA_RecordedBountyDriftSecond() public {
+        _bountyDrift(118_746, 118_750);
+    }
 
     function _bountyDrift(uint256 quote, uint256 actual) private {
         _setupAA();
         bytes[] memory tick = _mockPythUpdateData(actual * 1000);
         router.updateMarkPrice(tick);
-        OrderV2Types.OrderRequest memory request = _protectedOpenRequest();
+        OrderV3Types.OrderRequest memory request = _protectedOpenRequest();
         request.sizeDelta = 1000e18;
         request.marginDelta = 200e6;
-        request.bounds.maxExecutionBountyUsdc = quote;
-        _sponsor("exact_bounty_rejected", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), false);
-        assertEq(lastOperationRevert, abi.encodeWithSelector(
-            bytes4(keccak256("OrderLifecycleBook__ExecutionBountyAboveBound(uint256,uint256)")), actual, quote
-        ));
+        request.bounds.maxExecutionBountyAssets = quote;
+        _sponsor("exact_bounty_rejected", address(router), abi.encodeCall(V3Committer.commitOrder, (request)), false);
+        assertEq(
+            lastOperationRevert,
+            abi.encodeWithSelector(
+                bytes4(keccak256("OrderLifecycleBook__ExecutionBountyAboveBound(uint256,uint256)")), actual, quote
+            )
+        );
         assertEq(router.pendingOrderCounts(ALICE), 0);
         uint256 tolerance = (quote + 99) / 100;
-        request.bounds.maxExecutionBountyUsdc = quote + (tolerance > 10 ? tolerance : 10);
+        request.bounds.maxExecutionBountyAssets = quote + (tolerance > 10 ? tolerance : 10);
         uint256 baseline = vm.snapshotState();
-        _sponsor("bounded_bounty_accepted", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), true);
-        assertEq(router.getAccountReservations(ALICE).executionBountyUsdc, actual, "charge actual, not cap");
+        _sponsor("bounded_bounty_accepted", address(router), abi.encodeCall(V3Committer.commitOrder, (request)), true);
+        assertEq(router.getAccountReservations(ALICE).executionBountyAssets, actual, "charge actual, not cap");
         assertTrue(vm.revertToState(baseline));
-        tick = _mockPythUpdateData((request.bounds.maxExecutionBountyUsdc + 1) * 1000);
+        tick = _mockPythUpdateData((request.bounds.maxExecutionBountyAssets + 1) * 1000);
         router.updateMarkPrice(tick);
-        _sponsor("above_reviewed_cap_rejected", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), false);
-        assertEq(lastOperationRevert, abi.encodeWithSelector(
-            bytes4(keccak256("OrderLifecycleBook__ExecutionBountyAboveBound(uint256,uint256)")),
-            request.bounds.maxExecutionBountyUsdc + 1, request.bounds.maxExecutionBountyUsdc
-        ));
+        _sponsor(
+            "above_reviewed_cap_rejected", address(router), abi.encodeCall(V3Committer.commitOrder, (request)), false
+        );
+        assertEq(
+            lastOperationRevert,
+            abi.encodeWithSelector(
+                bytes4(keccak256("OrderLifecycleBook__ExecutionBountyAboveBound(uint256,uint256)")),
+                request.bounds.maxExecutionBountyAssets + 1,
+                request.bounds.maxExecutionBountyAssets
+            )
+        );
         assertEq(router.pendingOrderCounts(ALICE), 0);
     }
 
@@ -399,45 +426,45 @@ contract NativeAALifecycleTest is BasePerpTest {
         _setupAA();
         _seedAuthenticatedTraderClaim(ALICE, 50e6);
         uint256 settled = _settlementBalance(ALICE);
-        uint256 cash = usdc.balanceOf(address(pool));
+        uint256 cash = settlementToken.balanceOf(address(pool));
         _sponsor("claim_flat", address(engine), abi.encodeCall(engine.settleTraderClaim, (ALICE)), true);
-        assertEq(engine.traderClaimBalanceUsdc(ALICE), 0);
-        assertEq(engine.totalTraderClaimBalanceUsdc(), 0);
+        assertEq(engine.traderClaimBalanceAssets(ALICE), 0);
+        assertEq(engine.totalTraderClaimBalanceAssets(), 0);
         assertEq(_settlementBalance(ALICE), settled + 50e6);
-        assertEq(usdc.balanceOf(address(pool)), cash - 50e6);
+        assertEq(settlementToken.balanceOf(address(pool)), cash - 50e6);
         _sponsor("claim_duplicate_rejected", address(engine), abi.encodeCall(engine.settleTraderClaim, (ALICE)), false);
         assertEq(_settlementBalance(ALICE), settled + 50e6);
     }
 
     function test_NativeAA_ClaimWithPosition() public {
         _setupAA();
-        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_USDC, 120_000_000);
+        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_ASSETS, 120_000_000);
         _seedAuthenticatedTraderClaim(ALICE, 50e6);
         uint256 settled = _settlementBalance(ALICE);
-        uint256 cash = usdc.balanceOf(address(pool));
+        uint256 cash = settlementToken.balanceOf(address(pool));
         _sponsor("claim_position", address(engine), abi.encodeCall(engine.settleTraderClaim, (ALICE)), true);
-        assertEq(engine.traderClaimBalanceUsdc(ALICE), 0);
-        assertEq(engine.totalTraderClaimBalanceUsdc(), 0);
+        assertEq(engine.traderClaimBalanceAssets(ALICE), 0);
+        assertEq(engine.totalTraderClaimBalanceAssets(), 0);
         assertEq(_settlementBalance(ALICE), settled + 50e6);
-        assertEq(usdc.balanceOf(address(pool)), cash - 50e6);
+        assertEq(settlementToken.balanceOf(address(pool)), cash - 50e6);
     }
 
     function test_NativeAA_ClaimLiquidityShortfallThenRecovery() public {
         _setupAA();
         _seedAuthenticatedTraderClaim(ALICE, 50e6);
-        usdc.burn(address(pool), usdc.balanceOf(address(pool)) - 20e6);
+        settlementToken.burn(address(pool), settlementToken.balanceOf(address(pool)) - 20e6);
         uint256 settled = _settlementBalance(ALICE);
         _sponsor("claim_shortfall_rejected", address(engine), abi.encodeCall(engine.settleTraderClaim, (ALICE)), false);
-        assertEq(engine.traderClaimBalanceUsdc(ALICE), 50e6);
-        assertEq(engine.totalTraderClaimBalanceUsdc(), 50e6);
+        assertEq(engine.traderClaimBalanceAssets(ALICE), 50e6);
+        assertEq(engine.totalTraderClaimBalanceAssets(), 50e6);
         assertEq(_settlementBalance(ALICE), settled);
-        usdc.mint(address(pool), 30e6);
+        settlementToken.mint(address(pool), 30e6);
         _sponsor(
             "claim_after_liquidity_recovery", address(engine), abi.encodeCall(engine.settleTraderClaim, (ALICE)), true
         );
-        assertEq(engine.traderClaimBalanceUsdc(ALICE), 0);
-        assertEq(engine.totalTraderClaimBalanceUsdc(), 0);
+        assertEq(engine.traderClaimBalanceAssets(ALICE), 0);
+        assertEq(engine.totalTraderClaimBalanceAssets(), 0);
         assertEq(_settlementBalance(ALICE), settled + 50e6);
-        assertEq(usdc.balanceOf(address(pool)), 0);
+        assertEq(settlementToken.balanceOf(address(pool)), 0);
     }
 }

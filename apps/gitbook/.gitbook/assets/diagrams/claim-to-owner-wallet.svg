@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="929" viewBox="0 0 640 929" role="img" aria-labelledby="claim-to-owner-wallet-title claim-to-owner-wallet-desc" focusable="false">
 <title id="claim-to-owner-wallet-title">A claim is not wallet cash</title>
-<desc id="claim-to-owner-wallet-desc">Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free settlement and a separate authorized action. </desc>
+<desc id="claim-to-owner-wallet-desc">Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free USDG and a separate authorized action. </desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}</style>
 <rect width="640" height="929" rx="16" fill="#FFF5F9"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / CLAIM SETTLEMENT</text>
@@ -29,19 +29,19 @@
 <text x="346" y="431" font-size="26" font-weight="700" fill="#250917" data-max-width="246">No open position</text>
 <path d="M346 452 L592 452" stroke="#9A8890" stroke-width="2" fill="none"/>
 <text x="346" y="482" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Credit settlement</text>
-<text x="346" y="521" font-size="24" font-weight="400" fill="#250917" data-max-width="246">USDC enters the</text>
+<text x="346" y="521" font-size="24" font-weight="400" fill="#250917" data-max-width="246">USDG enters the</text>
 <text x="346" y="553" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Margin Account;</text>
 <text x="346" y="585" font-size="24" font-weight="400" fill="#250917" data-max-width="246">withdrawal is a</text>
 <text x="346" y="617" font-size="24" font-weight="400" fill="#250917" data-max-width="246">separate action.</text>
 <circle cx="47" cy="688" r="14" fill="#9A8890"/>
 <circle cx="47" cy="688" r="5" fill="#250917"/>
 <text x="80" y="697" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Review Withdrawable</text>
-<text x="80" y="734" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Only eligible free settlement can leave the</text>
+<text x="80" y="734" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Only eligible free USDG can leave the</text>
 <text x="80" y="766" font-size="24" font-weight="400" fill="#250917" data-max-width="528">account.</text>
 <path d="M47 709 V790 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 <circle cx="47" cy="819" r="14" fill="#00FF99"/>
 <circle cx="47" cy="819" r="5" fill="#250917"/>
 <text x="80" y="828" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Authorize withdrawal</text>
-<text x="80" y="865" font-size="24" font-weight="400" fill="#250917" data-max-width="528">A separate operation sends USDC to the</text>
+<text x="80" y="865" font-size="24" font-weight="400" fill="#250917" data-max-width="528">A separate operation sends USDG to the</text>
 <text x="80" y="897" font-size="24" font-weight="400" fill="#250917" data-max-width="528">owner wallet.</text>
 </svg>

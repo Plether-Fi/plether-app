@@ -3,17 +3,21 @@ module Plether.Insights.DivisionsLive
   , runDivisionsLiveCycle
   , rankDivisions
   , LiveScore (..)
+  , pinDivisionsWeekReleases
+  , divisionsPublicationsQuery
   ) where
 
-import Control.Monad (forM, when)
+import Control.Monad (forM, forM_, unless, when)
 import Data.Aeson (Value, object, (.=), encode, eitherDecodeStrict')
 import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int64)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, query)
+import Database.PostgreSQL.Simple (Connection, Only (..), Query, execute, execute_, query)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (PerpsIndexerStatusRow (..), getPerpsIndexerStatus)
@@ -25,12 +29,12 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
 import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcBlock (..), ethGetBlockByNumber)
 import Plether.Insights.Divisions
+import Plether.Insights.DivisionsFunding (FundingScope (..), ensureDivisionsFundingSchema, loadDivisionsFunding)
 import Plether.Insights.Competition (economicAccountValue)
 import Plether.Insights.SnapshotWorker
   ( accountSnapshotMulticallCalls, chunkInOrder, decodeSnapshotResults
   , findLastBlockBeforeTimestamp, inferPendingCarry, ledgerToEquity
   )
-import Text.Read (readMaybe)
 
 -- Exact integer cross products determine rank. Only the displayed return is
 -- rounded, so a display tie cannot alter the underlying ordering.
@@ -50,6 +54,7 @@ rankDivisions scores = map render (rankScores scores)
 
 ensureDivisionsLiveSchema :: Connection -> IO ()
 ensureDivisionsLiveSchema conn = do
+  ensureDivisionsFundingSchema conn
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS divisions_live_snapshots (\
     \chain_id BIGINT NOT NULL, release_router TEXT NOT NULL, week_start BIGINT NOT NULL,\
@@ -63,11 +68,73 @@ ensureDivisionsLiveSchema conn = do
     \chain_id BIGINT NOT NULL, release_router TEXT NOT NULL, week_start BIGINT NOT NULL,\
     \closing_block BIGINT NOT NULL, publication JSONB NOT NULL,\
     \PRIMARY KEY (chain_id, release_router, week_start))"
-  pure ()
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS divisions_weeks (\
+    \chain_id BIGINT NOT NULL, week_start BIGINT NOT NULL, release_router TEXT NOT NULL,\
+    \release_version TEXT NOT NULL, asset_symbol TEXT NOT NULL CHECK (asset_symbol IN ('USDC','USDG')),\
+    \CHECK (week_start>=1791752400 AND (week_start-1791752400)%604800=0),\
+    \PRIMARY KEY (chain_id,week_start))"
+  now <- floor <$> getPOSIXTime
+  pinDivisionsWeekReleases conn now
+
+pinDivisionsWeekReleases :: Connection -> Integer -> IO ()
+pinDivisionsWeekReleases conn now = do
+  rows <- query conn
+    "SELECT week_start,release_router,release_version,asset_symbol FROM divisions_weeks WHERE chain_id=?"
+    (Only (421614 :: Integer)) :: IO [(Integer,Text,Text,Text)]
+  let existing = Map.fromList [(start,DivisionRelease router version asset) | (start,router,version,asset) <- rows]
+  forM_ [firstWeekStart,firstWeekStart+weekSeconds..divisionWeekStart now] $ \start ->
+    case divisionReleaseForWeek start of
+      Nothing -> fail "Divisions week has no scheduled contract release"
+      Just expected@DivisionRelease {..} -> do
+        stored <- case Map.lookup start existing of
+          Just value -> pure [value]
+          Nothing -> do
+            _ <- execute conn
+              "INSERT INTO divisions_weeks(chain_id,week_start,release_router,release_version,asset_symbol) \
+              \VALUES (421614,?,?,?,?) ON CONFLICT (chain_id,week_start) DO NOTHING"
+              (start,drRouter,drVersion,drAssetSymbol)
+            found <- query conn
+              "SELECT release_router,release_version,asset_symbol FROM divisions_weeks WHERE chain_id=421614 AND week_start=?"
+              (Only start)
+            pure [DivisionRelease router version asset | (router,version,asset) <- found]
+        unless (stored == [expected]) $ fail "Divisions contract release is already fixed for this week"
+
+isPinnedRelease :: Connection -> Integer -> Text -> Integer -> IO Bool
+isPinnedRelease conn chain router start = do
+  rows <- query conn
+    "SELECT EXISTS (SELECT 1 FROM divisions_weeks WHERE chain_id=? AND week_start=? AND release_router=?)"
+    (chain,start,router)
+  pure $ rows == [Only True]
+
+-- One publication per week is authoritative, independently of which contracts
+-- the API currently serves. Alternative-release rows remain untouched for audit.
+divisionsPublicationsQuery :: Query
+divisionsPublicationsQuery =
+  "WITH weeks AS (SELECT p.week_start,p.closing_block,p.publication,p.release_router, \
+  \w.release_version,w.asset_symbol, \
+  \LAG(p.week_start) OVER (ORDER BY p.week_start) AS older_week, \
+  \LEAD(p.week_start) OVER (ORDER BY p.week_start) AS newer_week \
+  \FROM divisions_publications p JOIN divisions_weeks w \
+  \ON w.chain_id=p.chain_id AND w.week_start=p.week_start AND w.release_router=p.release_router \
+  \WHERE p.chain_id=?) \
+  \SELECT p.closing_block,(jsonb_set(p.publication,'{standings}', \
+  \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object( \
+  \'weeklyPnlAssets',COALESCE(e.value->'weeklyPnlAssets',e.value->'weeklyPnlUsdc'), \
+  \'adjustedEquityAssets',COALESCE(e.value->'adjustedEquityAssets',e.value->'adjustedEquityUsdc'), \
+  \'displayName',l.discord_username) ORDER BY e.ordinality),'[]'::jsonb) \
+  \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value,ordinality) \
+  \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address')) \
+  \|| jsonb_build_object('scoringRelease',jsonb_build_object( \
+  \ 'router',p.release_router,'version',p.release_version,'assetSymbol',p.asset_symbol)))::text, \
+  \p.older_week,p.newer_week FROM weeks p \
+  \WHERE (?::BIGINT IS NULL OR p.week_start=?) ORDER BY p.week_start DESC LIMIT 1"
 
 runDivisionsLiveCycle :: EthClient -> DbPool -> Config -> Int -> IO ()
 runDivisionsLiveCycle _ _ cfg _ | cfgPerpsChainId cfg /= 421614 = pure ()
 runDivisionsLiveCycle client pool cfg multicallSize = do
+  now <- floor <$> getPOSIXTime
+  withDb pool $ \conn -> pinDivisionsWeekReleases conn now
   -- Scores need the event-complete history cursor, not the lifecycle cursor.
   -- A newer RPC block can contain account changes whose funding/trades have
   -- not yet reached perps_account_activity.
@@ -93,21 +160,24 @@ captureWeek :: EthClient -> DbPool -> Config -> Int -> PerpsIndexerStatusRow -> 
 captureWeek client pool cfg multicallSize cursor safe
   | rpcBlockTimestamp safe < firstWeekStart = pure ()
   | otherwise = do
-      let weekStart = firstWeekStart + ((rpcBlockTimestamp safe - firstWeekStart) `div` weekSeconds) * weekSeconds
+      let weekStart = divisionWeekStart (rpcBlockTimestamp safe)
           close = weekStart + 5 * 86400
-      eBaseline <- findLastBlockBeforeTimestamp (ethGetBlockByNumber client) (rpcBlockNumber safe) weekStart
-      eCurrent <- if rpcBlockTimestamp safe < close then pure $ Right $ Just safe
-        else findLastBlockBeforeTimestamp (ethGetBlockByNumber client) (rpcBlockNumber safe) close
-      case (eBaseline, eCurrent) of
-        (Right (Just baseline), Right (Just current)) -> do
-          captured <- captureAtBlocks client pool cfg multicallSize cursor baseline current
-          case captured of
-            Nothing -> pure ()
-            Just scores -> storeLiveSnapshot pool cfg cursor weekStart baseline current scores
-        _ -> putStrLn "Divisions live skipped: weekly boundary block unavailable"
+      pinned <- withDb pool $ \conn -> isPinnedRelease conn (cfgPerpsChainId cfg) (pisReleaseRouter cursor) weekStart
+      if not pinned then putStrLn "Divisions live skipped: week is pinned to another release"
+      else do
+        eBaseline <- findLastBlockBeforeTimestamp (ethGetBlockByNumber client) (rpcBlockNumber safe) weekStart
+        eCurrent <- if rpcBlockTimestamp safe < close then pure $ Right $ Just safe
+          else findLastBlockBeforeTimestamp (ethGetBlockByNumber client) (rpcBlockNumber safe) close
+        case (eBaseline, eCurrent) of
+          (Right (Just baseline), Right (Just current)) -> do
+            captured <- captureAtBlocks client pool cfg multicallSize cursor baseline current []
+            case captured of
+              Nothing -> pure ()
+              Just scores -> storeLiveSnapshot pool cfg cursor weekStart baseline current scores
+          _ -> putStrLn "Divisions live skipped: weekly boundary block unavailable"
 
-captureAtBlocks :: EthClient -> DbPool -> Config -> Int -> PerpsIndexerStatusRow -> RpcBlock -> RpcBlock -> IO (Maybe [LiveScore])
-captureAtBlocks client pool cfg multicallSize cursor baseline current = do
+captureAtBlocks :: EthClient -> DbPool -> Config -> Int -> PerpsIndexerStatusRow -> RpcBlock -> RpcBlock -> [Text] -> IO (Maybe [LiveScore])
+captureAtBlocks client pool cfg multicallSize cursor baseline current priorWallets = do
   let chain = cfgPerpsChainId cfg
       router = pisReleaseRouter cursor
       upper = rpcBlockNumber current
@@ -117,34 +187,11 @@ captureAtBlocks client pool cfg multicallSize cursor baseline current = do
     \AND activity_type IN ('Open','Close') AND COALESCE(size_delta,0)<>0 \
     \ORDER BY LOWER(account)"
     (chain, router, upper)
-  let addresses = [wallet | Only wallet <- wallets]
-  -- Every flow is checked against the indexed USDC transfer and the exact
-  -- clearinghouse. Assisted-close deposits are internal and excluded.
-  flowRows <- withDb pool $ \conn -> query conn
-    "SELECT LOWER(a.account), a.activity_type, a.amount_usdc::text, \
-    \LOWER(COALESCE(a.contract_address,'')), LOWER(COALESCE(a.data->>'asset','')), \
-    \(SELECT COUNT(*) FROM perps_usdc_transfers x WHERE x.chain_id=a.chain_id \
-    \AND x.release_router=a.release_router AND x.tx_hash=a.tx_hash \
-    \AND x.block_number=a.block_number AND x.block_hash=a.block_hash \
-    \AND LOWER(x.token_address)=LOWER(?) AND x.amount=a.amount_usdc \
-    \AND LOWER(x.from_address)=CASE WHEN a.activity_type='Deposit' THEN LOWER(a.account) ELSE LOWER(?) END \
-    \AND LOWER(x.to_address)=CASE WHEN a.activity_type='Deposit' THEN LOWER(?) ELSE LOWER(a.account) END), \
-    \EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified \
-    \AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account \
-    \AND g.transaction_hash=a.tx_hash AND g.block_number=a.block_number \
-    \AND g.block_hash=a.block_hash AND g.deposit_log_index=a.log_index \
-    \AND g.amount_usdc=a.amount_usdc) \
-    \FROM perps_account_activity a WHERE a.chain_id=? AND a.release_router=? \
-    \AND a.block_number>? AND a.block_number<=? AND a.activity_type IN ('Deposit','Withdraw')"
-    (cfgPerpsUsdc cfg, cfgPerpsMarginClearinghouse cfg, cfgPerpsMarginClearinghouse cfg,
-     chain, router, rpcBlockNumber baseline, upper)
-  let parseFlow (wallet, kind, amountText, emitter, asset, matches, assisted) = do
-        amount <- readMaybe (T.unpack amountText)
-        if amount <= 0 || emitter /= T.toLower (cfgPerpsMarginClearinghouse cfg)
-            || asset /= T.toLower (cfgPerpsUsdc cfg) || matches /= (1 :: Int64)
-            || (assisted && kind /= ("Deposit" :: Text))
-          then Nothing else Just (wallet, kind, amount, assisted)
-  case traverse parseFlow (flowRows :: [(Text, Text, Text, Text, Text, Int64, Bool)]) of
+  let addresses = Set.toAscList $ Set.fromList $ priorWallets <> [wallet | Only wallet <- wallets]
+  funding <- loadDivisionsFunding client pool
+    (FundingScope chain router (cfgPerpsSettlementToken cfg) (cfgPerpsMarginClearinghouse cfg))
+    (rpcBlockNumber baseline) upper
+  case funding of
     Nothing -> putStrLn "Divisions skipped: funding integrity check failed" >> pure Nothing
     Just flows -> do
       days <- withDb pool $ \conn -> query conn
@@ -201,21 +248,28 @@ storeLiveSnapshot pool cfg cursor weekStart baseline current scores = do
 publishNextWeek :: EthClient -> DbPool -> Config -> Int -> PerpsIndexerStatusRow -> RpcBlock -> IO ()
 publishNextWeek client pool cfg multicallSize cursor safe = do
   previous <- withDb pool $ \conn -> query conn
-    "SELECT week_start, publication::text FROM divisions_publications WHERE chain_id=? AND release_router=? ORDER BY week_start DESC LIMIT 1"
-    (cfgPerpsChainId cfg, pisReleaseRouter cursor)
+    "SELECT p.week_start,p.publication::text FROM divisions_publications p \
+    \JOIN divisions_weeks w ON w.chain_id=p.chain_id AND w.week_start=p.week_start AND w.release_router=p.release_router \
+    \WHERE p.chain_id=? ORDER BY p.week_start DESC LIMIT 1"
+    (Only $ cfgPerpsChainId cfg)
   let decodePrevious = case previous :: [(Integer, Text)] of
-        [] -> Right (firstWeekStart, Nothing)
-        (start, encoded):_ -> (\value -> (start + weekSeconds, Just value)) <$> eitherDecodeStrict' (TE.encodeUtf8 encoded)
+        [] -> Right (firstWeekStart, Nothing, [])
+        (start, encoded):_ -> do
+          value <- eitherDecodeStrict' (TE.encodeUtf8 encoded)
+          wallets <- publishedWallets value
+          pure (start + weekSeconds, Just value, wallets)
   case decodePrevious of
     Left err -> putStrLn $ "Divisions publication skipped: " <> err
-    Right (start, prior) -> do
+    Right (start, prior, priorWallets) -> do
       now <- floor <$> getPOSIXTime
-      when (now >= publicationTime start && rpcBlockTimestamp safe >= start + 5 * 86400) $ do
+      pinned <- withDb pool $ \conn -> isPinnedRelease conn (cfgPerpsChainId cfg) (pisReleaseRouter cursor) start
+      unless pinned $ putStrLn "Divisions publication skipped: week is pinned to another release"
+      when (pinned && now >= publicationTime start && rpcBlockTimestamp safe >= start + 5 * 86400) $ do
         eBaseline <- findLastBlockBeforeTimestamp (ethGetBlockByNumber client) (rpcBlockNumber safe) start
         eClosing <- findLastBlockBeforeTimestamp (ethGetBlockByNumber client) (rpcBlockNumber safe) (start + 5 * 86400)
         case (eBaseline, eClosing) of
           (Right (Just baseline), Right (Just closing)) -> do
-            captured <- captureAtBlocks client pool cfg multicallSize cursor baseline closing
+            captured <- captureAtBlocks client pool cfg multicallSize cursor baseline closing priorWallets
             case captured of
               Nothing -> pure ()
               Just scores -> case publishDivisionWeek start now baseline closing prior scores of

@@ -153,7 +153,7 @@ export interface BasketComponentPrice {
 export interface BasketHistoryPoint {
   timestamp: number;
   basketPrice: string;
-  volumeUsdc?: string;
+  volumeAssets?: string;
   components?: BasketComponentPrice[];
 }
 
@@ -189,11 +189,11 @@ export interface PerpsBasketCandle {
   rawLowPrice: string;
   rawClosePrice: string;
   /** Null means the volume source has not proved coverage for this bucket. */
-  volumeUsdc: string | null;
+  volumeAssets: string | null;
   /** Notional flowing toward long exposure: long opens plus short closes. */
-  longFlowVolumeUsdc: string | null;
+  longFlowVolumeAssets: string | null;
   /** Notional flowing toward short exposure: short opens plus long closes. */
-  shortFlowVolumeUsdc: string | null;
+  shortFlowVolumeAssets: string | null;
   /** Null means trade-count coverage is unknown, which is distinct from zero. */
   tradeCount: number | null;
   sampleCount: number;
@@ -272,7 +272,7 @@ export interface PerpsRevealPayload {
 export interface PerpsMarketStats {
   rangeSeconds: number;
   generatedAt: number;
-  volume24hUsdc: string;
+  volume24hAssets: string;
 }
 
 // =============================================================================
@@ -301,18 +301,43 @@ export interface VaultHistoryPoint {
   blockNumber: string;
   /** Whether this hourly observation used a fresh protocol mark; false values carry the last fresh valuation. */
   markFresh: boolean;
-  /** Fee-free accounting assets per share as a raw 1e18-scaled integer. */
+  /** convertToAssets price (1e18 USDG/share); includes junior maintenance dilution, excludes exit fees. */
   sharePrice: string;
   totalAssets: string;
   totalSupply: string;
 }
 
 export interface VaultHistoryTranche {
+  /** Optional audited attribution for this response's coverage; never infer it from dollar totals. */
+  returnAttribution?: JuniorReturnAttribution | null;
   /** Realized trailing return annualized from the covered share-price window. */
   apy7d: number | null;
   /** Raw return over the covered seven-day share-price window. */
   return7d: number | null;
   points: VaultHistoryPoint[];
+}
+
+export type JuniorReturnComponent =
+  | 'netVpi' | 'liquidationFees' | 'realizedCarry' | 'oracleSpread'
+  | 'settledTraderPnl' | 'openPositionValuation' | 'seniorCoupon' | 'maintenanceDilution';
+
+/** Backend contract for flow-adjusted, diluted junior share-price attribution. */
+export interface JuniorReturnAttribution {
+  method: 'diluted-share-price-v1';
+  startTimestamp: number;
+  endTimestamp: number;
+  startDilutedSharePrice: string;
+  endDilutedSharePrice: string;
+  components: Record<JuniorReturnComponent, {
+    /** Additive percentage points, already adjusted for changes in liquidity. */
+    contributionPp: number;
+    /** Signed raw USDG (6 decimals), from the pool's perspective. */
+    amountUsdg: string;
+  }>;
+  /** Economic gain after coupon and dilution; excludes deposits and withdrawals. */
+  netReturnUsdg: string;
+  /** Explicit accounting limitations explaining any reconciliation difference. */
+  notes?: string[];
 }
 
 export interface VaultHistory {
@@ -411,7 +436,30 @@ export interface TestnetFaucetClaim {
   amount: string;
   token: string;
   txHash: string | null;
-  status: 'submitted' | 'minted' | 'already_claimed' | 'already_funded';
+  status: 'submitted' | 'minted' | 'already_claimed' | 'already_funded' | 'margin_funded';
+  destination?: 'wallet' | 'margin';
+}
+
+export interface MarginFundingProgress {
+  version: 1;
+  destination: 'margin';
+  claimId: string;
+  address: string;
+  token: string;
+  clearinghouse: string;
+  amount: string;
+  phase: 'mint' | 'approval' | 'deposit';
+  status: 'pending' | 'funded' | 'failed' | 'recovery';
+  reason: string | null;
+  depositTxHash: string | null;
+}
+
+export interface LegacyMarginFunding {
+  version: 1;
+  destination: 'wallet';
+  status: 'legacy_wallet';
+  address: string;
+  token: string;
 }
 
 // =============================================================================

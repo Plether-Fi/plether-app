@@ -21,12 +21,12 @@ Use the dollar-oriented plDXY Perp price displayed in the application. The appli
 
 Each trigger has two editable fields:
 
-* **Price**, in USDC: the absolute trigger price.
+* **Price**, in USDG: the absolute trigger price.
 * **Gain** or **Loss**, in percent: gross price PnL from entry as a percentage of position margin. The calculation uses entry price, position quantity and margin, so it accounts for leverage. A negative Loss % locks in a gain; a negative Gain % targets a loss.
 
 Editing either field recalculates the other when position data and a valid current price are available. You can enter one trigger as a price and the other as a percentage. Prices support up to eight decimal places; percentages support up to four. Calculated percentages are truncated to four decimals. If position data is unavailable, including while an attached opening order is waiting to fill, use absolute trigger prices.
 
-For example, a position with entry at 1.00 USDC, quantity of 1,000 and margin of 100 USDC has a 50% gain target of 50 USDC and a 20% loss target of 20 USDC. For a long, those give TP at 1.05 and SL at 0.98. For a short, TP is 0.95 and SL is 1.02. These are illustrative inputs, not recommended settings.
+For example, a position with entry at 1.00 USDG, quantity of 1,000 and margin of 100 USDG has a 50% gain target of 50 USDG and a 20% loss target of 20 USDG. For a long, those give TP at 1.05 and SL at 0.98. For a short, TP is 0.95 and SL is 1.02. These are illustrative inputs, not recommended settings.
 
 **Gain/Loss is gross return on position margin, not net PnL.** It excludes fees, carry and VPI. New orders use the preview's estimated entry, quantity and margin. Read [How PnL is calculated](../how-plether-works/how-pnl-is-calculated.md).
 
@@ -62,11 +62,11 @@ Only one active protection record can control the account at a time. If protecti
 
 ### Execution reserve and sponsorship
 
-Creating TP/SL reserves USDC from free margin for the trigger bounty and close-order execution bounty. Attaching TP/SL to an opening order requires this additional reserve as well as the opening order's normal margin and reward.
+Creating TP/SL reserves USDG from free funds for the trigger reward. The resulting close order has zero keeper execution reward. Attaching TP/SL to an opening order requires the trigger reserve as well as the opening order's normal margin and execution reward.
 
-Use the amount shown in the review: it comes from the deployment's configured bounties, not a fixed fee promised by this guide. For example, if each bounty is 0.2 USDC, the additional reserve is 0.4 USDC.
+Use the trigger amount shown in the review: it comes from the deployment's configuration. For example, a 0.2 USDG trigger reward requires an additional 0.2 USDG reserve; no second reward is reserved for close execution.
 
-Gas sponsorship does not pay this USDC reserve or remove normal trading costs. When available, it pays network gas for an eligible create, edit or remove operation that you authorize. Triggering, retrying and executing a close are separate keeper transactions.
+Gas sponsorship does not pay this USDG reserve or remove normal trading costs. When available, it pays network gas for an eligible create, edit or remove operation that you authorize. Triggering, retrying and executing a close are separate keeper transactions.
 
 **Execution details** shows the remaining reserve, protection reference and latest close-order reference. Removing untriggered protection releases its unpaid reserve. See [Gas-sponsored trading](gas-sponsored-trading-and-your-plether-trading-account.md) and [Trading costs](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
 

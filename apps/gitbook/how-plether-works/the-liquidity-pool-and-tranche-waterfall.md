@@ -1,6 +1,6 @@
 # The liquidity pool and tranche waterfall
 
-The liquidity pool is the USDC[^usdc] capital base behind Plether Perps[^perps].
+The liquidity pool is the USDG[^usdg] capital base behind Plether Perps[^perps].
 
 It does not set the market price. It does not operate an AMM[^amm] or match traders against one another. The oracle[^oracle] determines price.
 
@@ -18,7 +18,7 @@ This page is the canonical reference for pool accounting and the tranche waterfa
 
 ### Capital before yield
 
-Core pool capital remains in USDC. It is not lent into an external yield protocol.
+Core pool capital remains in USDG. It is not lent into an external yield protocol.
 
 This avoids making Plether’s settlement capacity dependent on another protocol’s solvency or withdrawal liquidity precisely when cash may be needed most.
 
@@ -35,9 +35,9 @@ There is no separate yield reserve and no external base yield inside the liquidi
 
 The protocol distinguishes between:
 
-* **Raw assets:** the literal USDC balance held by the liquidity pool.
-* **Accounted assets:** USDC recognized as protocol-owned pool capital.
-* **Excess assets:** unsolicited USDC not yet assigned to protocol economics.
+* **Raw assets:** the literal USDG balance held by the liquidity pool.
+* **Accounted assets:** USDG recognized as protocol-owned pool capital.
+* **Excess assets:** unsolicited USDG not yet assigned to protocol economics.
 * **Physical assets:** the conservative amount treated as actual backing.
 
 ```
@@ -147,7 +147,7 @@ Coupon paid
 = min(coupon due, available Junior principal)
 ```
 
-The coupon is transferred from Junior principal to Senior principal. No new USDC enters the liquidity pool.
+The coupon is transferred from Junior principal to Senior principal. No new USDG enters the liquidity pool.
 
 If Junior cannot fund the full amount:
 
@@ -182,12 +182,12 @@ During impairment, ordinary deposits into both tranches[^tranche] are blocked. R
 Assume:
 
 ```
-Senior principal:          100 USDC
-Senior high-water mark:    100 USDC
-Junior principal:           50 USDC
+Senior principal:          100 USDG
+Senior high-water mark:    100 USDG
+Junior principal:           50 USDG
 ```
 
-Suppose an illustrative `8 USDC` coupon is checkpointed:
+Suppose an illustrative `8 USDG` coupon is checkpointed:
 
 ```
 Senior principal:          108
@@ -195,9 +195,9 @@ Senior high-water mark:    108
 Junior principal:           42
 ```
 
-No new capital entered. Junior transferred `8 USDC` of its claim to Senior.
+No new capital entered. Junior transferred `8 USDG` of its claim to Senior.
 
-The pool then realizes a `60 USDC` loss:
+The pool then realizes a `60 USDG` loss:
 
 ```
 Junior absorbs:             42
@@ -208,9 +208,9 @@ Senior high-water mark:    108
 Junior principal:            0
 ```
 
-Senior is impaired by `18 USDC`.
+Senior is impaired by `18 USDG`.
 
-If the pool later realizes `25 USDC` of revenue:
+If the pool later realizes `25 USDG` of revenue:
 
 ```
 Restore Senior:             18
@@ -252,7 +252,7 @@ For LP reconciliation:
 
 * marked trader gains reduce distributable LP value as liabilities;
 * marked trader losses can increase distributable LP value only up to the amount the protocol can collect from pledged collateral and eligible same-account claims; and
-* that positive marked receivable changes NAV, but it is not physical USDC held by the liquidity pool and does not increase free withdrawal liquidity until collected.
+* that positive marked receivable changes NAV, but it is not physical USDG held by the liquidity pool and does not increase free withdrawal liquidity until collected.
 
 The distinction is deliberate: share price can reflect a collectible marked receivable while the withdrawal firewall still limits exits to physical free cash.
 
@@ -283,7 +283,7 @@ Tranche share value
 = tranche accounting principal ÷ effective tranche share supply
 ```
 
-Coupon, revenue and losses normally change tranche principal without changing holder balances. Junior maintenance fees instead add pending fee shares to effective supply before those shares are minted. Returns therefore appear through the USDC value per effective share rather than as a separate reward distribution.
+Coupon, revenue and losses normally change tranche principal without changing holder balances. Junior maintenance fees instead add pending fee shares to effective supply before those shares are minted. Returns therefore appear through the USDG value per effective share rather than as a separate reward distribution.
 
 Senior and Junior have separate:
 
@@ -295,13 +295,13 @@ Senior and Junior have separate:
 
 The exact share conversion also includes ERC-4626 rounding, the protocol’s virtual-share protections and, for Junior, accrued maintenance-fee shares in effective supply.
 
-A tranche share is a claim on that tranche’s accounting value. It is not an unconditional claim on an equal fraction of the liquidity pool’s raw USDC balance.
+A tranche share is a claim on that tranche’s accounting value. It is not an unconditional claim on an equal fraction of the liquidity pool’s raw USDG balance.
 
 ### How deposit and withdrawal pricing use Terminal NAV
 
 Deposits and withdrawals reconcile against the same exact Terminal NAV snapshot. It combines physical pool assets, trader claims and the signed, collateral-capped terminal price delta for every open position. Marked trader profits reduce tranche NAV; collectible marked trader losses can increase NAV before collection.
 
-That accounting value is distinct from withdrawal liquidity. A marked receivable can affect share price, but only physical USDC left after trader reserves and the settlement buffer can fund an exit. Deposit and withdrawal conversions can also differ because ERC-4626 rounds them in opposite directions, and the frozen-oracle surcharge applies only to withdrawal funding.
+That accounting value is distinct from withdrawal liquidity. A marked receivable can affect share price, but only physical USDG left after trader reserves and the settlement buffer can fund an exit. Deposit and withdrawal conversions can also differ because ERC-4626 rounds them in opposite directions, and the frozen-oracle surcharge applies only to withdrawal funding.
 
 Every deposit is assigned to an hourly processing window so the complete batch can be priced against one reconciled pool state.
 
@@ -309,9 +309,9 @@ Every deposit is assigned to an hourly processing window so the complete batch c
 
 The lifecycle is:
 
-1. The LP enters a USDC amount in the selected Senior or Junior Vault.
-2. If needed, the owner wallet approves that exact USDC amount for the selected tranche vault.
-3. `requestDeposit` moves the USDC into tranche-vault escrow and assigns a request reference and expected processing time.
+1. The LP enters a USDG amount in the selected Senior or Junior Vault.
+2. If needed, the owner wallet approves that exact USDG amount for the selected tranche vault.
+3. `requestDeposit` moves the USDG into tranche-vault escrow and assigns a request reference and expected processing time.
 4. Before processing, the owner may use **Cancel deposit** while the interface offers it.
 5. When LP settlement is enabled, a healthy keeper can process an eligible hourly batch after the protocol's safety checks pass. The processing path is permissionless, but the current interface does not expose a user **Finalize** action.
 6. Processing fixes the batch share conversion, moves the deposit into active accounting, records its activation time, starts its one-hour withdrawal cooldown and makes the depositor's shares claimable in vault escrow.
@@ -329,7 +329,7 @@ LPs interact with the verified Senior or Junior vault. They do not deposit direc
 
 #### Refund and exceptional mature cancellation
 
-If the processed batch's aggregate deposit quote rounds to zero shares, the contract rejects that epoch and marks the deposit refundable. **Refund available** and **Return USDC to wallet** then recover the escrowed amount. Pause, stale pricing, impairment, caps and shortfalls ordinarily defer activation instead of creating this refund state.
+If the processed batch's aggregate deposit quote rounds to zero shares, the contract rejects that epoch and marks the deposit refundable. **Refund available** and **Return USDG to wallet** then recover the escrowed amount. Pause, stale pricing, impairment, caps and shortfalls ordinarily defer activation instead of creating this refund state.
 
 Separately, after the ordinary pre-boundary cancellation window closes, the contract permits narrow mature-deposit cancellation when the epoch was rejected, processing would create a terminal wipe, Senior is impaired or the Senior reservation is invalid. That exceptional path prevents escrowed deposits from becoming permanently trapped behind an unresolved Senior deficit.
 
@@ -359,7 +359,7 @@ A share transfer propagates the relevant cooldown timestamp to the receiver.
 
 Cancelling a queued withdrawal or returning a zero-value withdrawal remainder restarts the cooldown for the wallet's entire position in that tranche. Claiming processed deposit shares does not restart it. Once a claimable source deposit's cooldown has elapsed, its shares can be queued directly for withdrawal, one source request per transaction, without an ERC-20 transfer or approval and without changing controller.
 
-Deposits must meet the live minimum shown by the vault. A partial withdrawal request must also estimate to at least that live minimum, currently `1 USDC`; a complete exit of all remaining requestable shares may use the contract's smaller dust exception.
+Deposits must meet the live minimum shown by the vault. A partial withdrawal request must also estimate to at least that live minimum, currently `1 USDG`; a complete exit of all remaining requestable shares may use the contract's smaller dust exception.
 
 ### The withdrawal firewall
 
@@ -368,7 +368,7 @@ Having positive tranche NAV does not mean all of it can leave immediately.
 Before allocating cash to an LP withdrawal, Plether reserves cash for trader obligations.
 
 ```
-Free USDC
+Free USDG
 = physical pool assets
 − withdrawal reserves
 ```
@@ -382,7 +382,7 @@ Withdrawal reserves include:
 * unassigned assets;
 * any additional explicit protocol reserve.
 
-Only physically free USDC may leave the liquidity pool.
+Only physically free USDG may leave the liquidity pool.
 
 This withdrawal view is intentionally stricter than the check used to admit new trader risk.
 
@@ -392,7 +392,7 @@ Senior's pool-wide capacity is:
 
 ```
 Senior maximum withdrawal
-= min(free USDC, Senior principal)
+= min(free USDG, Senior principal)
 ```
 
 At each hourly settlement, matured Senior requests are funded before Junior work. If matured Senior demand remains backlogged, no Junior request is funded in that cycle. Once the matured Senior queue is clear, Junior does not reserve all dormant Senior principal. Its capacity is independently constrained by remaining free cash, Junior principal and the governed maximum Senior share of protected tranche capital:
@@ -400,7 +400,7 @@ At each hourly settlement, matured Senior requests are funded before Junior work
 ```
 Junior maximum withdrawal
 = min(
-    remaining free USDC,
+    remaining free USDG,
     Junior principal,
     max(Junior principal − required Junior backing for protected Senior exposure, 0)
   )
@@ -414,35 +414,35 @@ Each holder is then further limited by:
 * the holder cooldown;
 * a valid current quote and complete wallet/vault data.
 
-Those checks determine how many shares can enter a request. The later USDC allocation also depends on matured Senior demand, oracle and protocol state, the exit-only pricing fee, hourly-settlement status and available withdrawal liquidity.
+Those checks determine how many shares can enter a request. The later USDG allocation also depends on matured Senior demand, oracle and protocol state, the exit-only pricing fee, hourly-settlement status and available withdrawal liquidity.
 
 ### Withdrawal example
 
 Assume:
 
 ```
-Physical pool assets:  1,000,000 USDC
-Withdrawal reserves:          700,000 USDC
-Free USDC:                    300,000 USDC
+Physical pool assets:  1,000,000 USDG
+Withdrawal reserves:          700,000 USDG
+Free USDG:                    300,000 USDG
 
-Senior principal:             600,000 USDC
-Senior high-water mark:       600,000 USDC
-Junior principal:             400,000 USDC
+Senior principal:             600,000 USDG
+Senior high-water mark:       600,000 USDG
+Junior principal:             400,000 USDG
 Maximum Senior share:                  75%
 ```
 
-Assume no matured Senior request is waiting. The governed Senior-share covenant requires at least `200,000 USDC` of Junior backing, so Junior's ratio cap is `200,000 USDC`:
+Assume no matured Senior request is waiting. The governed Senior-share covenant requires at least `200,000 USDG` of Junior backing, so Junior's ratio cap is `200,000 USDG`:
 
 ```
 Senior cap
 = min(300,000, 600,000)
-= 300,000 USDC
+= 300,000 USDG
 ```
 
 ```
 Junior cap
 = min(300,000 free, 400,000 principal, 200,000 ratio cap)
-= 200,000 USDC
+= 200,000 USDG
 ```
 
 The ratio cap above is:
@@ -450,27 +450,27 @@ The ratio cap above is:
 ```
 Required Junior backing
 = 600,000 × (25% ÷ 75%)
-= 200,000 USDC
+= 200,000 USDG
 
 Junior ratio cap
 = 400,000 − 200,000
-= 200,000 USDC
+= 200,000 USDG
 ```
 
 This example shows why dormant Senior principal is not a cash reserve against Junior. If matured Senior requests are present, they are funded first. Junior receives only the free cash left after those requests, and receives nothing while a matured Senior backlog remains.
 
 ### Hourly withdrawal requests
 
-The current Vaults interface queues withdrawals. The LP enters a target USDC amount, the vault quotes the estimated number of shares required, and the owner submits `requestRedeem` for those shares.
+The current Vaults interface queues withdrawals. The LP enters a target USDG amount, the vault quotes the estimated number of shares required, and the owner submits `requestRedeem` for those shares.
 
 Before processing, **Cancel withdrawal** returns the queued shares and restarts the one-hour cooldown. After processing:
 
-* **USDC ready** means the funded amount can be moved with **Move USDC to wallet**; and
+* **USDG ready** means the funded amount can be moved with **Move USDG to wallet**; and
 * **Shares ready to return** means a remaining share amount quoted to zero assets and entered terminal refund state; it can be recovered with **Return shares to wallet**, which also restarts the cooldown.
 
-A partially funded request can expose both actions when its remaining shares quote to zero. When claimable USDC is nonzero, the interface uses **USDC ready** as the request status even if that remainder is also ready to return. A remainder that merely exceeds current funding stays queued for a later cycle.
+A partially funded request can expose both actions when its remaining shares quote to zero. When claimable USDG is nonzero, the interface uses **USDG ready** as the request status even if that remainder is also ready to return. A remainder that merely exceeds current funding stays queued for a later cycle.
 
-The shares continue gaining or losing value until the request is funded, so the final USDC can differ from the preview. Senior requests are funded before Junior requests at each processing window. A Junior request can therefore show **Waiting for USDC** even while the Junior vault retains positive accounting value.
+The shares continue gaining or losing value until the request is funded, so the final USDG can differ from the preview. Senior requests are funded before Junior requests at each processing window. A Junior request can therefore show **Waiting for USDG** even while the Junior vault retains positive accounting value.
 
 Conditions that can restrict or delay withdrawal funding include:
 
@@ -493,9 +493,9 @@ While the onchain `oracleFrozen` state is active:
 * previously queued deposits remain pending until the entry gates and live pricing recover;
 * eligible withdrawal funding applies the selected tranche's configured frozen-oracle surcharge.
 
-For an asset-denominated withdrawal, delivering the target USDC amount requires more shares.
+For a withdrawal entered in USDG, delivering the target amount requires more shares.
 
-For a share-denominated redemption, the submitted shares return less USDC.
+For a share-denominated redemption, the submitted shares return less USDG.
 
 The retained value:
 
@@ -516,7 +516,7 @@ Degraded mode is different. It indicates that a realized terminal transition exp
 During degraded mode:
 
 * new trader risk and new vault deposits are blocked;
-* the interface may still accept a withdrawal request, but no new withdrawal USDC is allocated while degraded mode remains latched;
+* the interface may still accept a withdrawal request, but no new withdrawal USDG is allocated while degraded mode remains latched;
 * closes and liquidations remain available;
 * recapitalization can move the system back toward solvency.
 
@@ -554,7 +554,7 @@ The visible **Deposit** and **Withdraw** actions on the Perps page still operate
 
 #### What free pool liquidity means for trading
 
-The current trader interface shows **Free pool liquidity**: USDC remaining after backing existing positions and protected reserves. It is not total pool assets, total tranche NAV or the amount every LP can withdraw.
+The current trader interface shows **Free pool liquidity**: USDG remaining after backing existing positions and protected reserves. It is not total pool assets, total tranche NAV or the amount every LP can withdraw.
 
 The expanded panel shows **Total pool assets**, **Reserved pool assets** and the **Share of pool assets reserved**. Reserved pool assets are calculated as total pool assets minus free liquidity and include backing for existing positions and other protocol obligations. A pool can hold substantial assets while very little remains free because existing positions and protected reserves already require that backing.
 
@@ -573,7 +573,7 @@ Senior LPs face:
 * temporary or prolonged withdrawal constraints;
 * Senior impairment below the high-water mark;
 * full wipeout in an extreme loss;
-* oracle, smart-contract, governance and USDC risks.
+* oracle, smart-contract, governance and USDG risks.
 
 “Last loss” describes priority. It does not mean “no loss.”
 
@@ -600,7 +600,7 @@ Solvency is not the same as liquidity. A protocol can remain solvent while tempo
 
 #### 1. Start with effective backing
 
-Plether begins with the physical USDC backing recognized by the liquidity pool.
+Plether begins with the physical USDG backing recognized by the liquidity pool.
 
 Trader claims are then deducted because they are senior obligations already owed to traders:
 
@@ -684,18 +684,18 @@ The same principle explains how accumulated bad debt is treated:
 
 Bad debt is therefore protocol telemetry and a recapitalization target—not an additional withdrawal reserve or NAV deduction.
 
-Clearing bad debt improves live backing only because new USDC is transferred into the liquidity pool. Reducing the counter by itself would not create value.
+Clearing bad debt improves live backing only because new USDG is transferred into the liquidity pool. Reducing the counter by itself would not create value.
 
 ### Example
 
 Assume:
 
 ```
-Physical pool assets:      1,000,000 USDC
-Aggregate trader claims:          100,000 USDC
+Physical pool assets:      1,000,000 USDG
+Aggregate trader claims:          100,000 USDG
 
-Maximum LONG USD payout:          700,000 USDC
-Maximum SHORT USD payout:         500,000 USDC
+Maximum LONG USD payout:          700,000 USDG
+Maximum SHORT USD payout:         500,000 USDG
 Settlement buffer:                    0.25%
 ```
 
@@ -703,21 +703,21 @@ Effective backing is:
 
 ```
 1,000,000 − 100,000
-= 900,000 USDC
+= 900,000 USDG
 ```
 
 Maximum live liability is:
 
 ```
 max(700,000, 500,000)
-= 700,000 USDC
+= 700,000 USDG
 ```
 
-The `700,000 USDC` maximum liability requires a `1,750 USDC` settlement buffer. The liquidity pool therefore has:
+The `700,000 USDG` maximum liability requires a `1,750 USDG` settlement buffer. The liquidity pool therefore has:
 
 ```
 900,000 − 700,000 − 1,750
-= 198,250 USDC
+= 198,250 USDG
 ```
 
 of solvency headroom.
@@ -727,10 +727,10 @@ Before other reserves and tranche-specific restrictions, the same values produce
 ```
 Free LP liquidity
 = 1,000,000 − 700,000 − 1,750 − 100,000
-= 198,250 USDC
+= 198,250 USDG
 ```
 
-If a new order would increase maximum live liability to `950,000 USDC`, its buffer would be `2,375 USDC` and it would be rejected:
+If a new order would increase maximum live liability to `950,000 USDG`, its buffer would be `2,375 USDG` and it would be rejected:
 
 ```
 900,000 effective backing
@@ -747,7 +747,7 @@ While degraded:
 
 * New trader risk is blocked.
 * New LP deposits are blocked.
-* Otherwise-eligible LP withdrawal requests may still be submitted, but no new withdrawal USDC is allocated while degraded mode remains latched.
+* Otherwise-eligible LP withdrawal requests may still be submitted, but no new withdrawal USDG is allocated while degraded mode remains latched.
 * Risk-reducing closes and liquidations remain available.
 * Margin additions and recovery actions remain available.
 * Recapitalization can restore backing; after effective solvency recovers, the protocol owner must explicitly clear degraded mode before withdrawal funding resumes.
@@ -775,7 +775,7 @@ Before depositing:
 * physical pool assets;
 * bounded trader liability;
 * outstanding trader claims;
-* free USDC;
+* free USDG;
 * current and projected withdrawal cap;
 * directional carry utilization;
 * live deposit capacity and the next hourly processing window;
@@ -785,7 +785,7 @@ Before depositing:
 
 After depositing:
 
-* move ready shares or USDC from vault escrow to the owner wallet;
+* move ready shares or USDG from vault escrow to the owner wallet;
 * distinguish tranche NAV from immediately withdrawable cash;
 * monitor the cooldown before planning an exit;
 * track Senior impairment and Junior loss absorption;
@@ -797,7 +797,7 @@ The liquidity pool has three layers of obligation:
 
 1. Protect trader settlement liabilities.
 2. Apply Senior and Junior accounting priority.
-3. Allow LP withdrawals only from physically free USDC.
+3. Allow LP withdrawals only from physically free USDG.
 
 Senior and Junior divide the residual economic claim on the liquidity pool. They do not outrank traders, remove liquidity constraints or convert unrealized trader losses into cash.
 
@@ -805,13 +805,13 @@ Senior receives a Junior-funded target coupon and relative loss priority.
 
 Junior receives residual upside and absorbs first loss.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

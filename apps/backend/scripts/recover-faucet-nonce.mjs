@@ -115,7 +115,7 @@ function sql(query) {
   } catch { throw new Error('DATABASE_OPERATION_FAILED') } // Never print SQL/raw signatures/URLs.
 }
 
-function rpcProvider(url, token) {
+export function rpcProvider(url, token) {
   return async (method, params) => {
     try {
       const response = await fetch(url, {

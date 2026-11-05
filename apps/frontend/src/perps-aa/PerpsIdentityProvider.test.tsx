@@ -1,3 +1,4 @@
+vi.mock('../contracts/perpsAddresses', async () => (await import('../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -35,15 +36,15 @@ function validManifest(): Record<string, unknown> {
     smartAccountVersion: 'permissionless-simple-v0.8',
     smartAccountIndex: '0',
     smartAccountFactory: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
-    usdc: '0x9999999999999999999999999999999999999999',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
+    settlementToken: '0x0000000000000000000000000000000000000001',
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
     marginClearinghouse: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     cfdEngine: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     orderRouter: '0xcccccccccccccccccccccccccccccccccccccccc',
     orderLifecycleBook: '0xdddddddddddddddddddddddddddddddddddddddd',
-    positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
+    positionProtectionBook: '0x0000000000000000000000000000000000000019',
     policyEvaluator: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',

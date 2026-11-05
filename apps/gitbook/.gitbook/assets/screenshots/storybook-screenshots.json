@@ -1,17 +1,17 @@
 {
   "manifest": "STORYBOOK_SCREENSHOT_MAP.md",
-  "mappedReferences": 23,
-  "uniqueStories": 16,
+  "mappedReferences": 28,
+  "uniqueStories": 21,
   "manifestReferencesUpdated": 0,
   "prunedAssets": 0,
-  "replacements": 23,
+  "replacements": 28,
   "retainedSupportInstructions": 0,
   "captures": [
     {
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--deposit-preview.png",
       "storyId": "documentation-vaults--deposit-preview",
       "dimensions": {
-        "height": 723,
+        "height": 728,
         "width": 560
       },
       "storyPath": "/?path=/story/documentation-vaults--deposit-preview"
@@ -20,7 +20,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--junior-overview-section.png",
       "storyId": "documentation-vaults--junior-overview-section",
       "dimensions": {
-        "height": 1705,
+        "height": 1744,
         "width": 1440
       },
       "storyPath": "/?path=/story/documentation-vaults--junior-overview-section"
@@ -29,7 +29,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--overview.png",
       "storyId": "documentation-vaults--overview",
       "dimensions": {
-        "height": 1527,
+        "height": 1562,
         "width": 1440
       },
       "storyPath": "/?path=/story/documentation-vaults--overview"
@@ -38,8 +38,8 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png",
       "storyId": "documentation-vaults--pending-activity",
       "dimensions": {
-        "height": 1357,
-        "width": 1072
+        "height": 1419,
+        "width": 1440
       },
       "storyPath": "/?path=/story/documentation-vaults--pending-activity"
     },
@@ -47,7 +47,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--position.png",
       "storyId": "documentation-vaults--position",
       "dimensions": {
-        "height": 650,
+        "height": 674,
         "width": 1072
       },
       "storyPath": "/?path=/story/documentation-vaults--position"
@@ -56,7 +56,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--senior-overview-section.png",
       "storyId": "documentation-vaults--senior-overview-section",
       "dimensions": {
-        "height": 1836,
+        "height": 1875,
         "width": 1440
       },
       "storyPath": "/?path=/story/documentation-vaults--senior-overview-section"
@@ -65,7 +65,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--withdrawal-preview.png",
       "storyId": "documentation-vaults--withdrawal-preview",
       "dimensions": {
-        "height": 683,
+        "height": 696,
         "width": 560
       },
       "storyPath": "/?path=/story/documentation-vaults--withdrawal-preview"
@@ -83,7 +83,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png",
       "storyId": "perps-account-panel--edit-position-margin",
       "dimensions": {
-        "height": 681,
+        "height": 754,
         "width": 496
       },
       "storyPath": "/?path=/story/perps-account-panel--edit-position-margin"
@@ -101,7 +101,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--armed.png",
       "storyId": "perps-position-protection--armed",
       "dimensions": {
-        "height": 763,
+        "height": 799,
         "width": 816
       },
       "storyPath": "/?path=/story/perps-position-protection--armed"
@@ -110,7 +110,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--close-queued.png",
       "storyId": "perps-position-protection--close-queued",
       "dimensions": {
-        "height": 720,
+        "height": 756,
         "width": 816
       },
       "storyPath": "/?path=/story/perps-position-protection--close-queued"
@@ -119,7 +119,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--closed.png",
       "storyId": "perps-position-protection--closed",
       "dimensions": {
-        "height": 931,
+        "height": 947,
         "width": 816
       },
       "storyPath": "/?path=/story/perps-position-protection--closed"
@@ -128,7 +128,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--latched.png",
       "storyId": "perps-position-protection--latched",
       "dimensions": {
-        "height": 871,
+        "height": 907,
         "width": 816
       },
       "storyPath": "/?path=/story/perps-position-protection--latched"
@@ -137,19 +137,64 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--add-take-profit-stop-loss.png",
       "storyId": "perps-trade-ticket--add-take-profit-stop-loss",
       "dimensions": {
-        "height": 773,
+        "height": 819,
         "width": 448
       },
       "storyPath": "/?path=/story/perps-trade-ticket--add-take-profit-stop-loss"
     },
     {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--deposit-margin.png",
+      "storyId": "perps-trade-ticket--deposit-margin",
+      "dimensions": {
+        "height": 502,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--deposit-margin"
+    },
+    {
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--executed.png",
       "storyId": "perps-trade-ticket--executed",
       "dimensions": {
-        "height": 1400,
+        "height": 863,
         "width": 560
       },
       "storyPath": "/?path=/story/perps-trade-ticket--executed"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png",
+      "storyId": "perps-trade-ticket--margin-account-summary",
+      "dimensions": {
+        "height": 1274,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--margin-account-summary"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--quickstart-order.png",
+      "storyId": "perps-trade-ticket--quickstart-order",
+      "dimensions": {
+        "height": 1214,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--quickstart-order"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--quickstart-preview.png",
+      "storyId": "perps-trade-ticket--quickstart-preview",
+      "dimensions": {
+        "height": 1012,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--quickstart-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png",
+      "storyId": "testnet-welcome-modal--request-funds",
+      "dimensions": {
+        "height": 506,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/testnet-welcome-modal--request-funds"
     }
   ]
 }

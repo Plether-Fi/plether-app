@@ -189,7 +189,12 @@ newNativeGatewayState
   -> Config
   -> EthClient
   -> IO NativeGatewayState
-newNativeGatewayState manager cfg client = do
+newNativeGatewayState manager cfg client
+  | not Manifest.releaseIsDeployed = newNativeGatewayBaseState manager (cfg {cfgNativeAaConfig = Nothing}) client
+  | otherwise = newDeployedNativeGatewayState manager cfg client
+
+newDeployedNativeGatewayState :: Manager -> Config -> EthClient -> IO NativeGatewayState
+newDeployedNativeGatewayState manager cfg client = do
   base <- newNativeGatewayBaseState manager cfg client
   enabled <- lookupEnv "PERPS_CLOSE_ASSISTANCE_ENABLED"
   global <- lookupEnv "PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED"
@@ -2203,7 +2208,7 @@ sponsorshipRequestKey cfg clientKey owner operation =
 assistanceReservation :: Text -> Legacy.CloseAssistanceIntent -> CloseAssistanceReservation
 assistanceReservation sender intent = CloseAssistanceReservation
   Manifest.orderRouterAddress sender (encodeHex $ Legacy.caiClientOrderId intent)
-  (encodeHex $ keccak256 $ Legacy.caiRequest intent) (Legacy.caiLens intent) (Legacy.caiAmountUsdc intent)
+  (encodeHex $ keccak256 $ Legacy.caiRequest intent) (Legacy.caiLens intent) (Legacy.caiAmountAssets intent)
 
 validateCloseAssistanceDual
   :: NativeGatewayState -> Maybe NativeSecurityContext -> Text -> Maybe Legacy.CloseAssistanceIntent

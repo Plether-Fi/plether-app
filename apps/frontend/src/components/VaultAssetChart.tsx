@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { VaultHistory } from '../api'
 import { Spinner } from './ui/Spinner'
@@ -123,7 +124,7 @@ export function VaultAssetChart({ tranche, history, isLoading, isError }: {
                 }}
                 style={{ touchAction: 'pan-y' }}
               >
-                <title>Total assets (TVL) and locked value in USDC over 7 days</title>
+                <title>Total assets (TVL) and locked value in {PERPS_SETTLEMENT_TOKEN_LABEL} over 7 days</title>
                 {[0, maximum / 2, maximum].map((value) => (
                   <g key={value}>
                     <line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke="rgba(255,171,150,0.12)" strokeWidth={1} />
@@ -177,12 +178,12 @@ export function VaultAssetChart({ tranche, history, isLoading, isError }: {
                       <dd className="font-mono font-semibold text-content-primary">{selected.locked === null ? 'Unavailable' : usd.format(selected.locked)}</dd>
                     </div>
                   </dl>
-                  <p className="mt-2 text-[10px] text-content-secondary">Values in USDC</p>
+                  <p className="mt-2 text-[10px] text-content-secondary">Values in {PERPS_SETTLEMENT_TOKEN_LABEL}</p>
                 </div>
               )}
             </div>
             <p id={summaryId} className="sr-only">
-              {selected && `${timestampLabel(selected.timestamp)} · TVL ${usd.format(selected.total)} · Locked ${selected.locked === null ? 'unavailable' : usd.format(selected.locked)}`} · USDC
+              {selected && `${timestampLabel(selected.timestamp)} · TVL ${usd.format(selected.total)} · Locked ${selected.locked === null ? 'unavailable' : usd.format(selected.locked)}`} · {PERPS_SETTLEMENT_TOKEN_LABEL}
             </p>
           </>
         )}

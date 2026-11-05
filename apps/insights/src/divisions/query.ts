@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import type { DivisionPublication } from './types'
-import { isPublication } from './schema'
+import type { DivisionPublication, ScoringRelease } from './types'
+import { isPublication, isScoringRelease } from './schema'
 
 export async function getDivisions(signal?: AbortSignal): Promise<DivisionPublication | null> {
   const response = await fetch('/api/insights/v1/divisions/current', { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
@@ -17,6 +17,25 @@ export function useDivisions() {
   return useQuery({ queryKey: ['insights', 'divisions'], queryFn: ({ signal }) => getDivisions(signal), staleTime: 30_000, refetchInterval: 60_000 })
 }
 
+export interface DivisionsStats {
+  registeredWallets: number
+}
+
+export async function getDivisionsStats(signal?: AbortSignal): Promise<DivisionsStats> {
+  const response = await fetch('/api/insights/v1/divisions/stats', { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
+  if (!response.ok) throw new Error(`Discord registration count is unavailable (${String(response.status)})`)
+  const body: unknown = await response.json().catch(() => { throw new Error('Discord registration count is invalid') })
+  if (typeof body !== 'object' || body === null || !('data' in body)
+    || typeof body.data !== 'object' || body.data === null || !('registeredWallets' in body.data)
+    || typeof body.data.registeredWallets !== 'number' || !Number.isSafeInteger(body.data.registeredWallets)
+    || body.data.registeredWallets < 0) throw new Error('Discord registration count is invalid')
+  return { registeredWallets: body.data.registeredWallets }
+}
+
+export function useDivisionsStats() {
+  return useQuery({ queryKey: ['insights', 'divisions', 'stats'], queryFn: ({ signal }) => getDivisionsStats(signal), staleTime: 30_000, refetchInterval: 60_000 })
+}
+
 export interface DivisionsHistory {
   publication: DivisionPublication | null
   olderCursor: string | null
@@ -29,7 +48,9 @@ function isWeekCursor(value: unknown): value is string {
 
 export async function getDivisionsHistory(week: string | null, signal?: AbortSignal): Promise<DivisionsHistory> {
   if (week !== null && !isWeekCursor(week)) throw new Error('Invalid results week')
-  const response = await fetch(`/api/insights/v1/divisions/history${week === null ? '' : `?week=${encodeURIComponent(week)}`}`, { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
+  const params = new URLSearchParams()
+  if (week !== null) params.set('week', week)
+  const response = await fetch(`/api/insights/v1/divisions/history${params.size ? `?${params.toString()}` : ''}`, { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
   if (response.status === 404) throw new Error('This week has not been published. Choose the latest results to browse available weeks.')
   if (!response.ok) throw new Error(`Weekly results are unavailable (${String(response.status)})`)
   const body: unknown = await response.json().catch(() => { throw new Error('Weekly results are invalid') })
@@ -98,6 +119,7 @@ export interface LiveStanding {
 
 export interface LiveDivisions {
   status: 'pending' | 'ready'
+  scoringRelease?: ScoringRelease
   weekStartsAt: string
   snapshotAt?: string
   snapshotBlock?: string
@@ -115,6 +137,7 @@ export async function getLiveDivisions(signal?: AbortSignal): Promise<LiveDivisi
     || typeof data.weekStartsAt !== 'string' || !Number.isFinite(Date.parse(data.weekStartsAt))) {
     throw new Error('Live Divisions response is invalid')
   }
+  if ('scoringRelease' in data && !isScoringRelease(data.scoringRelease)) throw new Error('Live Divisions response is invalid')
   if (data.status === 'pending') return data as LiveDivisions
   if (data.status !== 'ready' || !('snapshotAt' in data) || typeof data.snapshotAt !== 'string'
     || !Number.isFinite(Date.parse(data.snapshotAt)) || !('snapshotBlock' in data) || typeof data.snapshotBlock !== 'string'

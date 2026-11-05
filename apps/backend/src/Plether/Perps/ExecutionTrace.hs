@@ -31,8 +31,8 @@ data TradeExecutionKind
 
 data TradeExecutionEvidence = TradeExecutionEvidence
   { teeKind :: TradeExecutionKind
-  , teeVpiUsdc :: Integer
-  , teeFrozenCloseSpreadUsdc :: Maybe Integer
+  , teeVpiAssets :: Integer
+  , teeFrozenCloseSpreadAssets :: Maybe Integer
   , teeExecutionOraclePrice :: Integer
   , teeOraclePublishTime :: Integer
   , teeOracleFrozen :: Bool
@@ -159,8 +159,8 @@ traceError label objectValue =
 
 data SettlementEvidence = SettlementEvidence
   { seKind :: TradeExecutionKind
-  , seVpiUsdc :: Integer
-  , seFrozenCloseSpreadUsdc :: Maybe Integer
+  , seVpiAssets :: Integer
+  , seFrozenCloseSpreadAssets :: Maybe Integer
   }
 
 data ProcessTrace = ProcessTrace
@@ -262,9 +262,9 @@ pairTraceEvents = go [] Map.empty
               let evidence =
                     TradeExecutionEvidence
                       { teeKind = seKind settlement
-                      , teeVpiUsdc = seVpiUsdc settlement
-                      , teeFrozenCloseSpreadUsdc =
-                          seFrozenCloseSpreadUsdc settlement
+                      , teeVpiAssets = seVpiAssets settlement
+                      , teeFrozenCloseSpreadAssets =
+                          seFrozenCloseSpreadAssets settlement
                       , teeExecutionOraclePrice = otMarkPrice oracleTrace
                       , teeOraclePublishTime = otPublishTime oracleTrace
                       , teeOracleFrozen = otOracleFrozen oracleTrace
@@ -453,8 +453,8 @@ decodeSidecarEvidence expectedEngine kind expectedWordCount calldata = do
   pure
     SettlementEvidence
       { seKind = kind
-      , seVpiUsdc = decodeInt256 vpiWord
-      , seFrozenCloseSpreadUsdc = frozenCloseSpread
+      , seVpiAssets = decodeInt256 vpiWord
+      , seFrozenCloseSpreadAssets = frozenCloseSpread
       }
 
 decodeOracleFrame :: TraceNode -> Either Text OracleTrace

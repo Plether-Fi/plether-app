@@ -1,33 +1,33 @@
 import type { PerpsOrderReceiptEconomics } from '../hooks/usePerpsHistory'
 
 export interface PerpsCloseReconciliation {
-  executionNotionalUsdc: bigint
-  executionBountyUsdc: bigint
-  realizedPnlUsdc: bigint
-  vpiUsdc: bigint
-  totalPositionVpiUsdc?: bigint
+  executionNotionalAssets: bigint
+  executionBountyAssets: bigint
+  realizedPnlAssets: bigint
+  vpiAssets: bigint
+  totalPositionVpiAssets?: bigint
   lifetime?: {
-    netResultUsdc: bigint
-    previousTradesResultUsdc: bigint
-    betweenTradesAccountChangeUsdc: bigint
+    netResultAssets: bigint
+    previousTradesResultAssets: bigint
+    betweenTradesAccountChangeAssets: bigint
   }
-  carryUsdc: bigint
-  executionFeeUsdc: bigint
-  frozenSpreadAssessedUsdc: bigint
-  frozenSpreadChargedUsdc: bigint
-  frozenSpreadWaivedUsdc: bigint
-  netCloseResultUsdc: bigint
-  actualAccountChangeUsdc: bigint
-  marginAccountChangeUsdc: bigint
-  traderClaimChangeUsdc: bigint
-  settlementAdjustmentUsdc: bigint
+  carryAssets: bigint
+  executionFeeAssets: bigint
+  frozenSpreadAssessedAssets: bigint
+  frozenSpreadChargedAssets: bigint
+  frozenSpreadWaivedAssets: bigint
+  netCloseResultAssets: bigint
+  actualAccountChangeAssets: bigint
+  marginAccountChangeAssets: bigint
+  traderClaimChangeAssets: bigint
+  settlementAdjustmentAssets: bigint
   postPositionSize: bigint
-  postPositionMarginUsdc: bigint
-  releasedPositionMarginUsdc?: bigint
+  postPositionMarginAssets: bigint
+  releasedPositionMarginAssets?: bigint
 }
 
 export interface PerpsCloseReconciliationOptions {
-  preExecutionPositionMarginUsdc?: bigint
+  preExecutionPositionMarginAssets?: bigint
 }
 
 function parseReceiptInteger(value: string | undefined): bigint | undefined {
@@ -55,170 +55,170 @@ export function derivePerpsCloseReconciliation(
 ): PerpsCloseReconciliation | undefined {
   if (receipt === undefined) return undefined
 
-  const executionNotionalUsdc = parseReceiptInteger(receipt.executionNotionalUsdc)
-  const executionBountyUsdc = parseReceiptInteger(receipt.executionBountyUsdc)
-  const realizedPnlUsdc = parseReceiptInteger(receipt.realizedPnlUsdc)
-  const vpiUsdc = parseReceiptInteger(receipt.vpiUsdc)
-  const carryUsdc = parseReceiptInteger(receipt.carryUsdc)
-  const executionFeeUsdc = parseReceiptInteger(receipt.executionFeeUsdc)
-  const frozenSpreadAssessedUsdc = parseReceiptInteger(receipt.frozenSpreadUsdc)
-  const actionChargeAssessedUsdc = parseReceiptInteger(receipt.actionChargeAssessedUsdc)
-  const actionChargeCollectedUsdc = parseReceiptInteger(receipt.actionChargeCollectedUsdc)
-  const grossAccountDebitUsdc = parseReceiptInteger(receipt.grossAccountDebitUsdc)
-  const preSettlementBalanceUsdc = parseReceiptInteger(receipt.preSettlementBalanceUsdc)
-  const postSettlementBalanceUsdc = parseReceiptInteger(receipt.postSettlementBalanceUsdc)
-  const preTraderClaimBalanceUsdc = parseReceiptInteger(receipt.preTraderClaimBalanceUsdc)
-  const postTraderClaimBalanceUsdc = parseReceiptInteger(receipt.postTraderClaimBalanceUsdc)
+  const executionNotionalAssets = parseReceiptInteger(receipt.executionNotionalAssets)
+  const executionBountyAssets = parseReceiptInteger(receipt.executionBountyAssets)
+  const realizedPnlAssets = parseReceiptInteger(receipt.realizedPnlAssets)
+  const vpiAssets = parseReceiptInteger(receipt.vpiAssets)
+  const carryAssets = parseReceiptInteger(receipt.carryAssets)
+  const executionFeeAssets = parseReceiptInteger(receipt.executionFeeAssets)
+  const frozenSpreadAssessedAssets = parseReceiptInteger(receipt.frozenSpreadAssets)
+  const actionChargeAssessedAssets = parseReceiptInteger(receipt.actionChargeAssessedAssets)
+  const actionChargeCollectedAssets = parseReceiptInteger(receipt.actionChargeCollectedAssets)
+  const grossAccountDebitAssets = parseReceiptInteger(receipt.grossAccountDebitAssets)
+  const preSettlementBalanceAssets = parseReceiptInteger(receipt.preSettlementBalanceAssets)
+  const postSettlementBalanceAssets = parseReceiptInteger(receipt.postSettlementBalanceAssets)
+  const preTraderClaimBalanceAssets = parseReceiptInteger(receipt.preTraderClaimBalanceAssets)
+  const postTraderClaimBalanceAssets = parseReceiptInteger(receipt.postTraderClaimBalanceAssets)
   const postPositionSize = parseReceiptInteger(receipt.postPositionSize)
-  const postPositionMarginUsdc = parseReceiptInteger(receipt.postPositionMarginUsdc)
-  const postPositionEquityUsdc = parseReceiptInteger(receipt.postPositionEquityUsdc)
+  const postPositionMarginAssets = parseReceiptInteger(receipt.postPositionMarginAssets)
+  const postPositionEquityAssets = parseReceiptInteger(receipt.postPositionEquityAssets)
   const postLeverageBps = parseReceiptInteger(receipt.postLeverageBps)
 
   if (
-    executionNotionalUsdc === undefined ||
-    executionBountyUsdc === undefined ||
-    realizedPnlUsdc === undefined ||
-    vpiUsdc === undefined ||
-    carryUsdc === undefined ||
-    executionFeeUsdc === undefined ||
-    frozenSpreadAssessedUsdc === undefined ||
-    actionChargeAssessedUsdc === undefined ||
-    actionChargeCollectedUsdc === undefined ||
-    grossAccountDebitUsdc === undefined ||
-    preSettlementBalanceUsdc === undefined ||
-    postSettlementBalanceUsdc === undefined ||
-    preTraderClaimBalanceUsdc === undefined ||
-    postTraderClaimBalanceUsdc === undefined ||
+    executionNotionalAssets === undefined ||
+    executionBountyAssets === undefined ||
+    realizedPnlAssets === undefined ||
+    vpiAssets === undefined ||
+    carryAssets === undefined ||
+    executionFeeAssets === undefined ||
+    frozenSpreadAssessedAssets === undefined ||
+    actionChargeAssessedAssets === undefined ||
+    actionChargeCollectedAssets === undefined ||
+    grossAccountDebitAssets === undefined ||
+    preSettlementBalanceAssets === undefined ||
+    postSettlementBalanceAssets === undefined ||
+    preTraderClaimBalanceAssets === undefined ||
+    postTraderClaimBalanceAssets === undefined ||
     postPositionSize === undefined ||
-    postPositionMarginUsdc === undefined ||
-    postPositionEquityUsdc === undefined ||
+    postPositionMarginAssets === undefined ||
+    postPositionEquityAssets === undefined ||
     postLeverageBps === undefined
   ) {
     return undefined
   }
 
   const unsignedValues = [
-    executionNotionalUsdc,
-    executionBountyUsdc,
-    carryUsdc,
-    executionFeeUsdc,
-    frozenSpreadAssessedUsdc,
-    actionChargeAssessedUsdc,
-    actionChargeCollectedUsdc,
-    grossAccountDebitUsdc,
-    preSettlementBalanceUsdc,
-    postSettlementBalanceUsdc,
-    preTraderClaimBalanceUsdc,
-    postTraderClaimBalanceUsdc,
+    executionNotionalAssets,
+    executionBountyAssets,
+    carryAssets,
+    executionFeeAssets,
+    frozenSpreadAssessedAssets,
+    actionChargeAssessedAssets,
+    actionChargeCollectedAssets,
+    grossAccountDebitAssets,
+    preSettlementBalanceAssets,
+    postSettlementBalanceAssets,
+    preTraderClaimBalanceAssets,
+    postTraderClaimBalanceAssets,
     postPositionSize,
-    postPositionMarginUsdc,
+    postPositionMarginAssets,
     postLeverageBps,
   ]
   if (unsignedValues.some((value) => value < 0n)) return undefined
-  if (executionNotionalUsdc === 0n) return undefined
-  if (executionBountyUsdc > grossAccountDebitUsdc) return undefined
+  if (executionNotionalAssets === 0n) return undefined
+  if (executionBountyAssets > grossAccountDebitAssets) return undefined
   // Core v1.2.3 _buildCloseAssessment reports net charges, not gross spread.
   // Negative VPI can offset spread, fees and carry. Already-realized carry can
   // still be collected even when the remaining action is a rebate.
-  const netActionChargeUsdc = vpiUsdc + carryUsdc + executionFeeUsdc + frozenSpreadAssessedUsdc
-  if (actionChargeAssessedUsdc !== (netActionChargeUsdc > 0n ? netActionChargeUsdc : 0n)) {
+  const netActionChargeAssets = vpiAssets + carryAssets + executionFeeAssets + frozenSpreadAssessedAssets
+  if (actionChargeAssessedAssets !== (netActionChargeAssets > 0n ? netActionChargeAssets : 0n)) {
     return undefined
   }
-  if (actionChargeCollectedUsdc > (
-    actionChargeAssessedUsdc > carryUsdc ? actionChargeAssessedUsdc : carryUsdc
+  if (actionChargeCollectedAssets > (
+    actionChargeAssessedAssets > carryAssets ? actionChargeAssessedAssets : carryAssets
   )) return undefined
   if (
     postPositionSize === 0n &&
-    (postPositionMarginUsdc !== 0n || postPositionEquityUsdc !== 0n || postLeverageBps !== 0n)
+    (postPositionMarginAssets !== 0n || postPositionEquityAssets !== 0n || postLeverageBps !== 0n)
   ) {
     return undefined
   }
-  if (postPositionSize > 0n && postPositionEquityUsdc < 0n) return undefined
+  if (postPositionSize > 0n && postPositionEquityAssets < 0n) return undefined
 
   // Collection excludes charges withheld from positive price PnL. The gap is
   // a waiver only after accounting for that withholding. Realized carry is
   // present in both receipt charge fields and cancels out in this difference.
-  const uncollectedChargeUsdc = actionChargeAssessedUsdc - actionChargeCollectedUsdc
-    - (realizedPnlUsdc > 0n ? realizedPnlUsdc : 0n)
-  const effectiveSpreadUsdc = clamp(
-    frozenSpreadAssessedUsdc + (vpiUsdc < 0n ? vpiUsdc : 0n),
+  const uncollectedChargeAssets = actionChargeAssessedAssets - actionChargeCollectedAssets
+    - (realizedPnlAssets > 0n ? realizedPnlAssets : 0n)
+  const effectiveSpreadAssets = clamp(
+    frozenSpreadAssessedAssets + (vpiAssets < 0n ? vpiAssets : 0n),
     0n,
-    frozenSpreadAssessedUsdc
+    frozenSpreadAssessedAssets
   )
-  const frozenSpreadWaivedUsdc = clamp(uncollectedChargeUsdc, 0n, effectiveSpreadUsdc)
-  // Economic charge, NOT Core's cash-revenue `frozenSpreadPaidUsdc`: VPI is
+  const frozenSpreadWaivedAssets = clamp(uncollectedChargeAssets, 0n, effectiveSpreadAssets)
+  // Economic charge, NOT Core's cash-revenue `frozenSpreadPaidAssets`: VPI is
   // displayed separately below, so subtracting the rebate here would count it twice.
-  const frozenSpreadChargedUsdc = frozenSpreadAssessedUsdc - frozenSpreadWaivedUsdc
-  const netCloseResultUsdc = realizedPnlUsdc
-    - vpiUsdc
-    - carryUsdc
-    - executionFeeUsdc
-    - frozenSpreadChargedUsdc
-    - executionBountyUsdc
-  const marginAccountChangeUsdc = postSettlementBalanceUsdc - preSettlementBalanceUsdc
-  const traderClaimChangeUsdc = postTraderClaimBalanceUsdc - preTraderClaimBalanceUsdc
-  const actualAccountChangeUsdc = marginAccountChangeUsdc + traderClaimChangeUsdc
-  const settlementAdjustmentUsdc = actualAccountChangeUsdc - netCloseResultUsdc
+  const frozenSpreadChargedAssets = frozenSpreadAssessedAssets - frozenSpreadWaivedAssets
+  const netCloseResultAssets = realizedPnlAssets
+    - vpiAssets
+    - carryAssets
+    - executionFeeAssets
+    - frozenSpreadChargedAssets
+    - executionBountyAssets
+  const marginAccountChangeAssets = postSettlementBalanceAssets - preSettlementBalanceAssets
+  const traderClaimChangeAssets = postTraderClaimBalanceAssets - preTraderClaimBalanceAssets
+  const actualAccountChangeAssets = marginAccountChangeAssets + traderClaimChangeAssets
+  const settlementAdjustmentAssets = actualAccountChangeAssets - netCloseResultAssets
 
-  if (netCloseResultUsdc >= 0n) {
+  if (netCloseResultAssets >= 0n) {
     if (
-      actualAccountChangeUsdc !== netCloseResultUsdc ||
-      marginAccountChangeUsdc < 0n ||
-      traderClaimChangeUsdc < 0n ||
-      (marginAccountChangeUsdc > 0n && traderClaimChangeUsdc > 0n)
+      actualAccountChangeAssets !== netCloseResultAssets ||
+      marginAccountChangeAssets < 0n ||
+      traderClaimChangeAssets < 0n ||
+      (marginAccountChangeAssets > 0n && traderClaimChangeAssets > 0n)
     ) {
       return undefined
     }
   } else {
     if (
-      settlementAdjustmentUsdc < 0n ||
-      marginAccountChangeUsdc > 0n ||
-      traderClaimChangeUsdc > 0n ||
-      (settlementAdjustmentUsdc > 0n && postPositionSize !== 0n)
+      settlementAdjustmentAssets < 0n ||
+      marginAccountChangeAssets > 0n ||
+      traderClaimChangeAssets > 0n ||
+      (settlementAdjustmentAssets > 0n && postPositionSize !== 0n)
     ) {
       return undefined
     }
   }
 
-  const lifetimeNet = parseReceiptInteger(receipt.positionLifetimeNetResultUsdc)
-  const lifetimeTrades = parseReceiptInteger(receipt.positionLifetimeTradesResultUsdc)
-  const lifetimeAdjustment = parseReceiptInteger(receipt.positionLifetimeAccountAdjustmentUsdc)
+  const lifetimeNet = parseReceiptInteger(receipt.positionLifetimeNetResultAssets)
+  const lifetimeTrades = parseReceiptInteger(receipt.positionLifetimeTradesResultAssets)
+  const lifetimeAdjustment = parseReceiptInteger(receipt.positionLifetimeAccountAdjustmentAssets)
   const lifetime = lifetimeNet !== undefined && lifetimeTrades !== undefined && lifetimeAdjustment !== undefined
     && lifetimeNet === lifetimeTrades + lifetimeAdjustment
     ? {
-        netResultUsdc: lifetimeNet,
-        previousTradesResultUsdc: lifetimeTrades - actualAccountChangeUsdc,
-        betweenTradesAccountChangeUsdc: lifetimeAdjustment,
+        netResultAssets: lifetimeNet,
+        previousTradesResultAssets: lifetimeTrades - actualAccountChangeAssets,
+        betweenTradesAccountChangeAssets: lifetimeAdjustment,
       }
     : undefined
 
-  const preExecutionPositionMarginUsdc = options.preExecutionPositionMarginUsdc
-  const releasedPositionMarginUsdc =
-    preExecutionPositionMarginUsdc !== undefined &&
-    preExecutionPositionMarginUsdc >= 0n &&
-    preExecutionPositionMarginUsdc >= postPositionMarginUsdc
-      ? preExecutionPositionMarginUsdc - postPositionMarginUsdc
+  const preExecutionPositionMarginAssets = options.preExecutionPositionMarginAssets
+  const releasedPositionMarginAssets =
+    preExecutionPositionMarginAssets !== undefined &&
+    preExecutionPositionMarginAssets >= 0n &&
+    preExecutionPositionMarginAssets >= postPositionMarginAssets
+      ? preExecutionPositionMarginAssets - postPositionMarginAssets
       : undefined
 
   return {
-    executionNotionalUsdc,
-    executionBountyUsdc,
-    realizedPnlUsdc,
-    vpiUsdc,
-    totalPositionVpiUsdc: parseReceiptInteger(receipt.totalPositionVpiUsdc),
+    executionNotionalAssets,
+    executionBountyAssets,
+    realizedPnlAssets,
+    vpiAssets,
+    totalPositionVpiAssets: parseReceiptInteger(receipt.totalPositionVpiAssets),
     lifetime,
-    carryUsdc,
-    executionFeeUsdc,
-    frozenSpreadAssessedUsdc,
-    frozenSpreadChargedUsdc,
-    frozenSpreadWaivedUsdc,
-    netCloseResultUsdc,
-    actualAccountChangeUsdc,
-    marginAccountChangeUsdc,
-    traderClaimChangeUsdc,
-    settlementAdjustmentUsdc,
+    carryAssets,
+    executionFeeAssets,
+    frozenSpreadAssessedAssets,
+    frozenSpreadChargedAssets,
+    frozenSpreadWaivedAssets,
+    netCloseResultAssets,
+    actualAccountChangeAssets,
+    marginAccountChangeAssets,
+    traderClaimChangeAssets,
+    settlementAdjustmentAssets,
     postPositionSize,
-    postPositionMarginUsdc,
-    releasedPositionMarginUsdc,
+    postPositionMarginAssets,
+    releasedPositionMarginAssets,
   }
 }

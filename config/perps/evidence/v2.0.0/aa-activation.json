@@ -1,0 +1,36 @@
+{
+  "chainId": 421614,
+  "block": {
+    "number": 325098147,
+    "hash": "0x80be4e8e1d52bc1dd07a2fb4d7f6e9e191cdfcdfec7efa2318df167c17db3041"
+  },
+  "paymasterAddress": "0x9761091045616A388f5fE1433721B272c78fe31b",
+  "runtimeCodeHash": "0xb8ae276b01850fdbb8d9d7fd32ec7b9b1c7ab7af20f5d62179a76f6b4912c528",
+  "bindings": {
+    "entryPoint": "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+    "policyId": "0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3",
+    "approvedAccountCodeHash": "0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9",
+    "accountFactory": "0x13E9ed32155810FDbd067D4522C492D6f68E5944",
+    "accountFactoryCodeHash": "0xa2e635152a61e180383c7afc045620b7461ef6f43ba27d592262513106b991b7",
+    "accountImplementation": "0x28426d752372D68d34340bd94390950DcE3C9ec3",
+    "accountImplementationCodeHash": "0x689a90eff03926a12aedad2fc6d4fdbcbdd9ffac86e7d0d70ce6355961305c74",
+    "sponsorSigner": "0x714F8C5A4e585c1887eA2CC73b64E1cB75c75779",
+    "maxSponsoredCost": "10000000000000000",
+    "paused": false,
+    "owner": "0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B"
+  },
+  "entryPointDeposit": [
+    "8359754703372603126",
+    true,
+    "1000000000000000",
+    86400,
+    0
+  ],
+  "sourceCompatibility": {
+    "previousProtocolSourceCommit": "cf86189bcca4813f39d6405a338b77176783eb42",
+    "protocolSourceCommit": "1209ca8a5b94a4fb6323c7c4585846ed93db3932",
+    "sourcePath": "packages/perps-aa/src",
+    "unchanged": true,
+    "scope": "Paymaster authenticates the EntryPoint/account profile and signed calldata; market targets are enforced by the backend policy."
+  }
+}

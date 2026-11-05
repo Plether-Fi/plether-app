@@ -61,7 +61,7 @@ This includes:
 
 The value entered in `Order quantity` is the plDXY quantity stored in the order. Typed open, increase and partial-reduction quantities must use whole `100 plDXY` increments. The interface rejects a quantity outside that increment instead of silently changing it.
 
-The corresponding USDC[^usdc] value is derived from the quantity:
+The corresponding USDG[^usdg] value is derived from the quantity:
 
 ```
 Order exposure
@@ -73,17 +73,17 @@ The ticket keeps **Order quantity** visible in the input and the inline **Previe
 * **Order exposure** — the whole-lot order quantity valued at the current displayed price
 * **Order quantity** — the plDXY quantity that will be committed
 
-The fixed Order quantity does not change after commitment, but its displayed USDC exposure can change when that quantity is valued at the final execution price.
+The fixed Order quantity does not change after commitment, but its displayed USDG exposure can change when that quantity is valued at the final execution price.
 
-An explicit full close with no earlier pending orders uses the exact live position quantity. Selecting `Current Position`, `Max` or the Position panel’s close action fills that quantity directly, so the interface does not convert the displayed USDC exposure or leave a rounding residual.
+An explicit full close with no earlier pending orders uses the exact live position quantity. Selecting `Current Position`, `Max` or the Position panel’s close action fills that quantity directly, so the interface does not convert the displayed USDG exposure or leave a rounding residual.
 
 When earlier orders are still pending, `Max` can target only the projected remainder. Because an earlier order may fail, that later order is treated as a conditional reduction rather than a guaranteed full close. Finalize or clean up the earlier orders first if you want the later action to be labelled and protected as a full close.
 
 For a voluntary reduction or close, the onchain preview also exposes:
 
-* `frozenSpreadUsdc` — frozen-close spread assessed
-* `frozenSpreadPaidUsdc` — amount collected for LPs[^lp]
-* `frozenSpreadWaivedUsdc` — uncollectible amount waived
+* **Assessed spread (USDG)** — frozen-close spread assessed
+* **Paid spread (USDG)** — amount collected for LPs[^lp]
+* **Waived spread (USDG)** — uncollectible amount waived
 
 These values are nonzero only when the previewed execution is during `oracleFrozen`.
 
@@ -103,7 +103,7 @@ Some values become fixed when the order is committed. Others are determined only
 | -------------------------------- | ------------------------------------------ |
 | Direction                        | Eligible oracle observation                |
 | Order quantity in 100 plDXY lots | Final execution price                      |
-| Margin to assign                 | Final USDC notional                        |
+| Margin to assign                 | Final USDG notional                        |
 | Open, increase, reduce or close  | Protocol execution fee                     |
 | Acceptable-price boundary        | VPI charge or rebate                       |
 | Reserved execution reward        | Accrued carry and resulting account health |
@@ -127,9 +127,7 @@ The commitment records:
 * Whether the order opens risk or reduces it
 * Commitment time and block
 
-For an opening or increase, Plether reserves the submitted margin immediately.
-
-It also reserves an **execution reward**. This compensates whoever later finalizes or clears the order. The reward is separate from:
+For an opening or increase, Plether reserves the submitted margin and an **execution reward** immediately. This reward compensates whoever later finalizes or clears that opening order. It is separate from:
 
 * Position margin
 * Protocol execution fees
@@ -138,9 +136,9 @@ It also reserves an **execution reward**. This compensates whoever later finaliz
 * Any frozen-close spread
 * Network gas
 
-For a reduction or close, the reward is taken from available account USDC[^usdc] where possible. Within defined safety bounds, it may instead be reserved from the position’s margin.
+Reductions and full closes have zero USDG[^usdg] execution reward, including closes created by TP/SL. They reserve no new opening margin or execution reward. TP/SL triggering can have a separate reward. Commitment still collects carry from active position margin first, then eligible free USDG.
 
-At this point, no position size has been added or removed. The order is pending, but its reserved funds are no longer available for another order or withdrawal.
+At this point, no position size has been added or removed. The order is pending. Any funds reserved for an opening order are unavailable for another order or withdrawal; a pending reduction instead counts against the position quantity available to later close orders.
 
 Commitment does not lock whether the frozen-close spread will apply. When a reduction or close reaches execution, Plether recalculates:
 
@@ -217,7 +215,7 @@ The dedicated frozen-market exception is explained under **Execution during prot
 
 A keeper supplies the historical Pyth data, pays the oracle update fee and submits the finalization transaction.
 
-The reserved USDC execution reward is then credited to the finalizer.
+The reserved USDG execution reward is then credited to the finalizer.
 
 At the protocol level, any address can call the permissionless execution endpoint. Doing so outside the Plether interface requires:
 
@@ -225,7 +223,7 @@ At the protocol level, any address can call the permissionless execution endpoin
 * ETH for network gas
 * ETH for the Pyth update fee
 
-The caller receives the reserved execution reward through its Margin Account. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts. The current Plether interface does not provide this direct owner-wallet path.
+For an open or increase, the caller receives the reserved execution reward through its Margin Account. A reduction or close pays no execution reward. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts. The current Plether interface does not provide this direct owner-wallet path.
 
 ### From index observation to execution price
 
@@ -236,8 +234,8 @@ Plether distinguishes five different quantities.
 | Central index price | The neutral oracle-derived Plether Dollar Index value                                                   |
 | Execution price     | The policy-adjusted oracle price: adverse during live/FAD execution and unshifted for frozen voluntary closes |
 | Execution limit     | The trader’s acceptable-price boundary                                                                  |
-| VPI                 | A separate USDC charge or rebate based on pool imbalance                                           |
-| Frozen-close spread | A separate LP-owned USDC charge on reduced notional for voluntary closes executed during `oracleFrozen` |
+| VPI                 | A separate USDG charge or rebate based on pool imbalance                                           |
+| Frozen-close spread | A separate LP-owned USDG charge on reduced notional for voluntary closes executed during `oracleFrozen` |
 
 The displayed Plether Dollar Index is:
 
@@ -264,12 +262,12 @@ For example, a LONG USD position opens slightly above the central index price an
 
 During an `oracleFrozen` voluntary reduction or close, confidence-width validation remains active but this adverse price shift is waived. The validated unshifted price is used, and the separate frozen-close spread applies instead. Liquidations continue using their liquidation-specific adverse confidence policy.
 
-This adjustment is not a separate USDC fee. It changes the price at which the position enters or exits.
+This adjustment is not a separate USDG fee. It changes the price at which the position enters or exits.
 
 It is also not the frozen-close spread:
 
 * When applicable, the confidence adjustment changes the execution price.
-* The frozen-close spread is a separate USDC settlement charge.
+* The frozen-close spread is a separate USDG settlement charge.
 
 As a result, a position may initially show a small unrealized loss even if the central index has not moved.
 
@@ -349,7 +347,7 @@ For a reduction or close, settlement can include:
 * Accrued carry
 * Frozen-close spread assessed, paid and waived, when applicable
 * Remaining position health
-* Immediate USDC credit or a trader claim
+* Immediate USDG credit or a trader claim
 
 The execution-time regime determines how VPI and the frozen-close spread are handled:
 
@@ -373,9 +371,9 @@ The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps
 
 V2 separates price-loss collection from action-charge funding:
 
-![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/final-collection-priority.svg)
+![Carry consumes active position margin first, then free USDG. Price losses then use claims and remaining collectible pledge; later action charges can use safely released margin, not residual position backing.](../.gitbook/assets/diagrams/final-collection-priority.svg)
 
-A price loss consumes the same account’s nettable claim before collectible PnL pledge. Fees, carry, VPI and frozen spread use separate action funds and cannot consume PnL pledge. A partial reduction cannot waive an uncollectible action charge.
+Before close accounting, carry consumes active position margin first, then eligible free USDG. A price loss then consumes the same account’s nettable claim before the remaining collectible PnL pledge. Fees, VPI, frozen spread and any still-unpaid carry use the separate close action-charge sources, including margin safely released by the close. They do not consume the margin still backing a residual position. A partial reduction cannot waive an uncollectible action charge.
 
 A terminal full close may waive uncollectible action charges, including frozen spread. Excess price loss beyond the collectible cap is recorded separately; it is not a fee shortfall.
 
@@ -423,16 +421,7 @@ For a voluntary frozen close, the onchain result also exposes:
 * Frozen spread paid to LPs
 * Frozen spread waived
 
-A successful close with a nonzero assessment emits:
-
-```
-FrozenCloseSpreadSettled(
-    account,
-    assessedUsdc,
-    paidUsdc,
-    waivedUsdc
-)
-```
+A successful close with a nonzero assessment records the assessed, paid and waived USDG amounts in its onchain result.
 
 The result always satisfies:
 
@@ -601,10 +590,10 @@ Plether does not promise instant execution. It provides rule-bound execution: gl
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^eoa]: Externally owned account, a conventional blockchain account controlled by a private key.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.

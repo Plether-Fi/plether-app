@@ -10,8 +10,6 @@
 
 ## Get started
 
-***
-
 * [Trader quickstart](trader-quickstart.md)
 * [Liquidity provider quickstart](liquidity-provider-quickstart.md)
 

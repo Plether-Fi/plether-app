@@ -15,7 +15,7 @@ const order: PerpsOrderHistoryRow = {
   status: 'Failed',
   terminalReason: 'Slippage',
   executionPriceRaw: 97_936_552n,
-  receiptEconomics: { executionBountyUsdc: '200000', executionFeeUsdc: '0' },
+  receiptEconomics: { executionBountyAssets: '200000', executionFeeAssets: '0' },
 }
 
 describe('order failure context', () => {
@@ -24,8 +24,8 @@ describe('order failure context', () => {
     expect(result.limit).toBe('1.02063000')
     expect(result.attemptedPrice).toBe('1.02063448')
     expect(result.explanation).toContain('execution price of 1.02063448 was above your maximum acceptable price of 1.02063000 by 0.00000448')
-    expect(result.reward).toBe('0.2 USDC')
-    expect(result.executionFee).toBe('0 USDC')
+    expect(result.reward).toBe('0.2 USDG')
+    expect(result.executionFee).toBe('0 USDG')
     expect(result.nextStep).toContain('cannot be retried or finalized manually')
   })
 

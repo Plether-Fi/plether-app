@@ -1,11 +1,13 @@
+vi.mock('../perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Address, type Hex, type PublicClient } from 'viem'
-import rawManifest from '../../../public/perps-aa-manifest.json'
+import rawManifest from './fixtures/perps-canonical-aa.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
-import type { PerpsExecutionAssessment } from '../perpsOrderV3'
+import type { PerpsClosePreview, PerpsExecutionAssessment } from '../perpsOrderV3'
 import { PerpsOrderReviewError, preparePerpsOrderV3, reviewPerpsOrderV3 } from '../preparePerpsOrderV3'
 import { verifyClosePreviewDeployment, verifyPerpsV3DeploymentBindings } from '../verifyPerpsV3Bindings'
 import { getPreparationFailureProperties } from '../../utils/perpsPreparationDiagnostics'
+import { relaxedProtectionCloseLimits } from '../positionProtection'
 
 vi.mock('../verifyPerpsV3Bindings', () => ({
   verifyPerpsV3DeploymentBindings: vi.fn(),
@@ -32,29 +34,39 @@ function assessment(
     : price === 100_050_000n
       ? 1_000_500_000n
       : 1_000_000_000n
-  const postPositionEquityUsdc = 999_500_000n + marginIncrease
+  const postPositionEquityAssets = 999_500_000n + marginIncrease
   return {
     mode: 1,
-    executionNotionalUsdc: 5_000_000_000n,
-    grossAccountDebitUsdc: 10_000n,
-    actionChargeAssessedUsdc: 0n,
-    actionChargeCollectedUsdc: 0n,
-    explicitFeesUsdc: 0n,
-    preSettlementBalanceUsdc: 2_000_000_000n,
-    postSettlementBalanceUsdc: 1_998_490_000n,
-    realizedPnlUsdc: 0n,
-    vpiUsdc: 0n,
-    carryUsdc: 0n,
-    executionFeeUsdc: 0n,
-    frozenSpreadUsdc: 0n,
-    preTraderClaimUsdc: 0n,
-    postTraderClaimUsdc: 0n,
+    executionNotionalAssets: 5_000_000_000n,
+    grossAccountDebitAssets: 10_000n,
+    actionChargeAssessedAssets: 0n,
+    actionChargeCollectedAssets: 0n,
+    explicitFeesAssets: 0n,
+    preSettlementBalanceAssets: 2_000_000_000n,
+    postSettlementBalanceAssets: 1_998_490_000n,
+    realizedPnlAssets: 0n,
+    vpiAssets: 0n,
+    carryAssets: 0n,
+    executionFeeAssets: 0n,
+    frozenSpreadAssets: 0n,
+    preTraderClaimAssets: 0n,
+    postTraderClaimAssets: 0n,
     postPositionSize: 50n * 10n ** 20n,
-    postPositionMarginUsdc: marginDelta,
-    postPositionEquityUsdc,
-    postLeverageBps: postPositionEquityUsdc >= requiredEquity
+    postPositionMarginAssets: marginDelta,
+    postPositionEquityAssets,
+    postLeverageBps: postPositionEquityAssets >= requiredEquity
       ? 50_000n
       : 50_001n,
+  }
+}
+
+function closePreview(result: PerpsExecutionAssessment, carry = 123_456n): PerpsClosePreview {
+  return {
+    replayOrderId: 0n,
+    commitmentCarryAssets: carry,
+    commitment: { carryCollectedAssets: carry, carryOutstandingAssets: 0n, bountyFromFreeAssets: 0n,
+      settlementBeforeAssets: 2_000_000_000n, settlementAfterAssets: 2_000_000_000n, freeSettlementAfterAssets: 2_000_000_000n },
+    assessment: result,
   }
 }
 
@@ -67,28 +79,28 @@ describe('preparePerpsOrderV3 leverage margin', () => {
     })
   })
 
-  it('reviews both protection rewards separately and simulates the exact atomic protected open', async () => {
+  it('reviews the protection trigger reward separately and simulates the exact atomic protected open', async () => {
     let exists = false
     let available = 10_000_000_000n
-    const params = { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n }
+    const params = { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n, closeLimits: relaxedProtectionCloseLimits() }
     const input = { account, direction: 'short' as const, side: 1 as const, sizeDelta: 50n * 10n ** 20n, marginDelta: 1_000_000_000n, slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 50_000, clientOrderId: `0x${'33'.repeat(32)}` as Hex }
     const simulateContract = vi.fn(async () => ({ request: {} }))
-    const values: Record<string, unknown> = { maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash, openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n, maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n, lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n, totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n, activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n, positionProtectionTriggerBountyUsdc: 200_000n }
+    const values: Record<string, unknown> = { maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash, openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyAssets: 10_000n, maxOpenOrderExecutionBountyAssets: 200_000n, closeOrderExecutionBountyAssets: 200_000n, lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n, totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n, activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n, positionProtectionTriggerBountyAssets: 200_000n }
     const client = { getBlock: vi.fn(async () => block), simulateContract, readContract: vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'getPosition') return { exists }
-      if (functionName === 'getFreeBuyingPowerUsdc') return available
+      if (functionName === 'getFreeBuyingPowerAssets') return available
       if (functionName === 'assessOrder') return assessment(args?.[3] as bigint, (args?.[1] as { marginDelta: bigint }).marginDelta)
       if (functionName in values) return values[functionName]
       throw new Error(`Unexpected read ${functionName}`)
     }) } as unknown as PublicClient
     const plain = await reviewPerpsOrderV3(client, manifest, input)
     const protectedReview = await reviewPerpsOrderV3(client, manifest, { ...input, positionProtection: params })
-    expect(protectedReview.reviewSummary.requiredFundingUsdc - plain.reviewSummary.requiredFundingUsdc).toBe(400_000n)
+    expect(protectedReview.reviewSummary.requiredFundingAssets - plain.reviewSummary.requiredFundingAssets).toBe(200_000n)
     expect(protectedReview.preparedOrder.request.bounds).toEqual(plain.preparedOrder.request.bounds)
     const prepared = await preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })
     expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: manifest.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [prepared.request, params], blockNumber: block.number }))
-    available = protectedReview.reviewSummary.requiredFundingUsdc - 1n
-    await expect(preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })).rejects.toMatchObject({ shortfallUsdc: 1n })
+    available = protectedReview.reviewSummary.requiredFundingAssets - 1n
+    await expect(preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })).rejects.toMatchObject({ shortfallAssets: 1n })
     available = 10_000_000_000n
     exists = true
     await expect(preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('no position')
@@ -97,7 +109,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
 
   it('reassesses and submits the exact reviewed margin buffer', async () => {
     const assessedMargins: bigint[] = []
-    let freeBuyingPowerUsdc = 10_000_000_000n
+    let freeBuyingPowerAssets = 10_000_000_000n
     const readContract = vi.fn(async (request: {
       functionName: string
       args?: readonly unknown[]
@@ -106,9 +118,9 @@ describe('preparePerpsOrderV3 leverage margin', () => {
         case 'maxExecutionWindowSeconds': return 60n
         case 'currentExecutionConfigHash': return configHash
         case 'openOrderExecutionBountyBps': return 1n
-        case 'minOpenOrderExecutionBountyUsdc': return 10_000n
-        case 'maxOpenOrderExecutionBountyUsdc': return 200_000n
-        case 'closeOrderExecutionBountyUsdc': return 200_000n
+        case 'minOpenOrderExecutionBountyAssets': return 10_000n
+        case 'maxOpenOrderExecutionBountyAssets': return 200_000n
+        case 'closeOrderExecutionBountyAssets': return 200_000n
         case 'lastMarkPrice': return 100_000_000n
         case 'CAP_PRICE': return 200_000_000n
         case 'totalAssets': return 1_000_000_000_000n
@@ -116,7 +128,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
         case 'activePositionProtectionId': return 0n
         case 'getPendingOrders': return []
         case 'maxPendingOrders': return 8n
-        case 'getFreeBuyingPowerUsdc': return freeBuyingPowerUsdc
+        case 'getFreeBuyingPowerAssets': return freeBuyingPowerAssets
         case 'getPosition': return { exists: false, side: 0 }
         case 'assessOrder': {
           const order = request.args?.[1] as { marginDelta: bigint }
@@ -151,15 +163,20 @@ describe('preparePerpsOrderV3 leverage margin', () => {
     expect(prepared.reviewedBlockHash).toBe(block.hash)
     expect(prepared.protection.submitBy).toBe(block.timestamp + 120n)
     expect(prepared.request.bounds.executionWindowSeconds).toBe(60)
-    expect(prepared.request.bounds.maxExecutionNotionalUsdc).toBe(
+    expect(prepared.request.bounds.maxExecutionNotionalAssets).toBe(
       (1n << 256n) - 1n
     )
-    // Order 12 exceeded its point-in-time assessment by just 0.0001 USDC.
+    // Order 12 exceeded its point-in-time assessment by just 0.0001 settlement token.
     // The normal web request must not convert that movement into a terminal
     // ExecutionNotional constraint failure.
-    expect(prepared.request.bounds.maxExecutionNotionalUsdc).toBeGreaterThan(
+    expect(prepared.request.bounds.maxExecutionNotionalAssets).toBeGreaterThan(
       4_937_517_050n
     )
+    for (const [request] of readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')) {
+      expect(request.args).toHaveLength(7)
+      expect(request.args?.[5]).toMatchObject({ expectedConfigHash: configHash })
+      expect(typeof request.args?.[6]).toBe('bigint')
+    }
     expect(assessedMargins).toEqual([
       1_000_000_000n,
       1_000_000_000n,
@@ -177,7 +194,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
       blockNumber: block.number,
     }))
 
-    freeBuyingPowerUsdc = 1_000_000_000n
+    freeBuyingPowerAssets = 1_000_000_000n
     await expect(preparePerpsOrderV3(client, manifest, {
       account,
       direction: 'short',
@@ -190,7 +207,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
       clientOrderId: `0x${'44'.repeat(32)}`,
     })).rejects.toMatchObject({
       name: 'PerpsOrderFundingShortfallError',
-      shortfallUsdc: 1_702_000n,
+      shortfallAssets: 1_702_000n,
     })
     expect(simulateContract).toHaveBeenCalledTimes(1)
   })
@@ -207,19 +224,19 @@ describe('reviewed leverage validation', () => {
   function reviewClient(overrides: (price: bigint) => Partial<PerpsExecutionAssessment>) {
     const values: Record<string, unknown> = {
       maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash,
-      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n,
-      maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n,
+      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyAssets: 10_000n,
+      maxOpenOrderExecutionBountyAssets: 200_000n, closeOrderExecutionBountyAssets: 200_000n,
       lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
       totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
       activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
-      getFreeBuyingPowerUsdc: 10_000_000_000n,
+      getFreeBuyingPowerAssets: 10_000_000_000n,
       getPosition: { exists: false, side: 0 },
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'assessOrder' || functionName === 'previewClose') {
         const price = args?.[functionName === 'previewClose' ? 4 : 3] as bigint
         const result = { ...assessment(price, 2_000_000_000n), ...overrides(price) }
-        return functionName === 'previewClose' ? { commitmentCarryUsdc: 123_456n, executionBountyUsdc: 200_000n, assessment: result } : result
+        return functionName === 'previewClose' ? closePreview(result) : result
       }
       if (functionName in values) return values[functionName]
       throw new Error(`Unexpected read ${functionName}`)
@@ -267,45 +284,45 @@ describe('reviewed leverage validation', () => {
   })
 
   it('uses request-taking close previews and keeps commitment carry outside execution bounds', async () => {
-    const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityAssets: 0n, postLeverageBps: 0n }))
     const prepared = await preparePerpsOrderV3(client, manifest, input)
     const calls = readContract.mock.calls.map(([request]) => request).filter(request => request.functionName === 'previewClose')
     expect(calls).toHaveLength(6)
     expect(new Set(calls.map(call => call.args?.[4])).size).toBe(3)
     for (const call of calls) {
       expect(call).toMatchObject({ address: '0x4a1d87466d272be9ebb643cd386883d94f0eb59b', blockNumber: block.number })
-      expect(call.args).toHaveLength(6)
+      expect(call.args).toHaveLength(5)
       expect(call.args?.[0]).toBe(manifest.cfdEngine)
       expect(call.args?.[1]).toBe(account)
       expect(call.args?.[2]).toMatchObject({ marginDelta: 0n, isClose: true })
       expect(call.args?.[3]).toBe(manifest.orderRouter)
-      expect(call.args?.[5]).toBe(block.timestamp)
     }
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
-    expect(prepared.reviewSummary).toMatchObject({ commitmentCarryUsdc: 123_456n, executionBountyUsdc: 200_000n, requiredFundingUsdc: 0n })
-    expect(prepared.request.bounds.maxGrossAccountDebitUsdc).toBe((1n << 256n) - 1n)
+    expect(prepared.reviewSummary).toMatchObject({ commitmentCarryAssets: 123_456n, executionBountyAssets: 0n, requiredFundingAssets: 0n })
+    expect(prepared.request.bounds.maxExecutionBountyAssets).toBe(0n)
+    expect(prepared.request.bounds.maxGrossAccountDebitAssets).toBe((1n << 256n) - 1n)
     expect(simulateContract).toHaveBeenCalledOnce()
   })
 
   it('keeps commitment carry out of the free-settlement funding gate', async () => {
-    const { client, readContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const { client, readContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityAssets: 0n, postLeverageBps: 0n }))
     const original = readContract.getMockImplementation()!
     readContract.mockImplementation(async request => {
-      if (request.functionName === 'getFreeBuyingPowerUsdc') return 200_000n
+      if (request.functionName === 'getFreeBuyingPowerAssets') return 200_000n
       const result = await original(request)
-      return request.functionName === 'previewClose' ? { ...(result as object), commitmentCarryUsdc: 1_250_000n } : result
+      return request.functionName === 'previewClose' ? { ...(result as object), commitmentCarryAssets: 1_250_000n } : result
     })
-    // The lens has already paid carry from position margin; remaining free USDC
-    // covers the bounty. Adding carry to the local funding gate would block this.
+    // The lens has already paid carry from position margin. Adding it to the
+    // local funding gate would incorrectly block this zero-bounty close.
     const prepared = await preparePerpsOrderV3(client, manifest, input)
-    expect(prepared.reviewSummary).toMatchObject({ commitmentCarryUsdc: 1_250_000n, availableFundingUsdc: 200_000n, requiredFundingUsdc: 0n })
+    expect(prepared.reviewSummary).toMatchObject({ commitmentCarryAssets: 1_250_000n, availableFundingAssets: 200_000n, requiredFundingAssets: 0n })
   })
 
   it('keeps frozen-mode bits, signed economics and deferred claims in the nested assessment', async () => {
-    const { client } = reviewClient(() => ({ mode: 3, realizedPnlUsdc: -1_000_000n, vpiUsdc: -50_000n, postTraderClaimUsdc: 7_000_000n, postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const { client } = reviewClient(() => ({ mode: 3, realizedPnlAssets: -1_000_000n, vpiAssets: -50_000n, postTraderClaimAssets: 7_000_000n, postPositionSize: 0n, postPositionEquityAssets: 0n, postLeverageBps: 0n }))
     const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.request.bounds.allowedExecutionModes).toBe(4)
-    expect(prepared.reviewSummary?.currentAssessment).toMatchObject({ mode: 3, realizedPnlUsdc: -1_000_000n, vpiUsdc: -50_000n, postTraderClaimUsdc: 7_000_000n })
+    expect(prepared.reviewSummary?.currentAssessment).toMatchObject({ mode: 3, realizedPnlAssets: -1_000_000n, vpiAssets: -50_000n, postTraderClaimAssets: 7_000_000n })
   })
 
   it('does not let a missing close lens block opens', async () => {
@@ -315,13 +332,13 @@ describe('reviewed leverage validation', () => {
     await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Close lens unavailable')
   })
 
-  it.each(['executionBountyUsdc', 'commitmentCarryUsdc'])('rejects inconsistent %s across close samples without fallback', async field => {
+  it('rejects inconsistent commitment carry across close samples without fallback', async () => {
     const { client, readContract, simulateContract } = reviewClient(() => ({}))
     const original = readContract.getMockImplementation()!
     let samples = 0
     readContract.mockImplementation(async request => {
       const result = await original(request)
-      if (request.functionName === 'previewClose' && ++samples === 2) return { ...(result as object), [field]: 1n }
+      if (request.functionName === 'previewClose' && ++samples === 2) return { ...(result as object), commitmentCarryAssets: 1n }
       return result
     })
     await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Close review changed')
@@ -329,13 +346,23 @@ describe('reviewed leverage validation', () => {
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
   })
 
-  it('allows an ordinary full close with zero free settlement and no subsidy batch', async () => {
-    const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+  it('does not interpret an exact replay as a fresh zero-valued close quote', async () => {
+    const { client, readContract, simulateContract } = reviewClient(() => ({}))
     const original = readContract.getMockImplementation()!
-    readContract.mockImplementation(async call => call.functionName === 'getFreeBuyingPowerUsdc' ? 0n : original(call))
+    readContract.mockImplementation(async request => request.functionName === 'previewClose'
+      ? { ...closePreview(assessment(100_000_000n, 2_000_000_000n)), replayOrderId: 42n, assessment: { mode: 0 } }
+      : original(request))
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Close order #42 already exists')
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('allows an ordinary full close with zero free USDG and no subsidy batch', async () => {
+    const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityAssets: 0n, postLeverageBps: 0n }))
+    const original = readContract.getMockImplementation()!
+    readContract.mockImplementation(async call => call.functionName === 'getFreeBuyingPowerAssets' ? 0n : original(call))
     const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.sponsoredClose).toBeUndefined()
-    expect(prepared.reviewSummary.requiredFundingUsdc).toBe(0n)
+    expect(prepared.reviewSummary.requiredFundingAssets).toBe(0n)
     expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'commitOrder', args: [prepared.request] }))
   })
 
@@ -350,7 +377,7 @@ describe('reviewed leverage validation', () => {
   })
 
   it('reviews a full close with no remaining leverage independently of the opening slider', async () => {
-    const { client } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const { client } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityAssets: 0n, postLeverageBps: 0n }))
     const prepared = await preparePerpsOrderV3(client, manifest, { ...input, selectedMaxLeverageBps: 0 })
     expect(prepared.reviewSummary?.currentAssessment.postPositionSize).toBe(0n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBe(0n)
@@ -378,7 +405,7 @@ describe('reviewed leverage validation', () => {
   })
 
   it.each([
-    ['negative position equity', () => ({ postPositionEquityUsdc: -1n })],
+    ['negative position equity', () => ({ postPositionEquityAssets: -1n })],
     ['execution regime changed', (price: bigint) => ({ mode: price === 100_000_000n ? 1 : 2 })],
     ['maximum leverage', () => ({ postLeverageBps: 0x1_0000_0000n })],
   ])('still rejects a reduction with %s', async (message, overrides) => {
@@ -411,13 +438,13 @@ describe('Max opening review', () => {
   } = {}) {
     const values: Record<string, unknown> = {
       maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash,
-      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n,
-      maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n,
+      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyAssets: 10_000n,
+      maxOpenOrderExecutionBountyAssets: 200_000n, closeOrderExecutionBountyAssets: 200_000n,
       lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
       totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
       activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
-      getFreeBuyingPowerUsdc: available,
-      positionProtectionTriggerBountyUsdc: 200_000n, getPosition: position,
+      getFreeBuyingPowerAssets: available,
+      positionProtectionTriggerBountyAssets: 200_000n, getPosition: position,
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'quoteMaxOpen' || functionName === 'previewOpen') {
@@ -425,17 +452,17 @@ describe('Max opening review', () => {
         const previewSize = functionName === 'quoteMaxOpen' ? size : args?.[2] as bigint
         const notionalBps = previewSize * 100_000_000n / 10n ** 20n * 10_000n
         const preview = { valid: quoteValid, invalidReason: quoteValid ? 0 : 9, postSize: previewSize,
-          postEquityUsdc: typeof leverage === 'function' ? 999_000_000n : (notionalBps + leverage - 1n) / leverage }
+          postEquityAssets: typeof leverage === 'function' ? 999_000_000n : (notionalBps + leverage - 1n) / leverage }
         return functionName === 'previewOpen' ? preview : { maxSizeDelta: size, preview, limitingReason: 9 }
       }
-      if (functionName === 'previewClose') return { commitmentCarryUsdc: 0n, executionBountyUsdc: 200_000n, assessment: assessment(args?.[3] as bigint, 2_000_000_000n) }
+      if (functionName === 'previewClose') return closePreview(assessment(args?.[4] as bigint, 2_000_000_000n), 0n)
       if (functionName === 'assessOrder') {
         if (assessmentFailure) throw assessmentFailure
         const { sizeDelta, marginDelta } = args?.[1] as { sizeDelta: bigint; marginDelta: bigint }
         return { ...assessment(args?.[3] as bigint, marginDelta),
           postPositionSize: sizeDelta,
           postLeverageBps: typeof leverage === 'function' ? leverage(sizeDelta, args?.[3] as bigint) : leverage,
-          postPositionEquityUsdc: 999_000_000n,
+          postPositionEquityAssets: 999_000_000n,
         } satisfies PerpsExecutionAssessment
       }
       if (functionName in values) return values[functionName]
@@ -474,12 +501,12 @@ describe('Max opening review', () => {
     const { client, readContract, simulateContract } = maxClient()
     const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.request.sizeDelta).toBe(7_900n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_598_000n)
-    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(999_800_000n)
+    expect(prepared.request.marginDelta).toBe(999_798_000n)
+    expect(prepared.reviewSummary?.requiredFundingAssets).toBe(1_000_000_000n)
     const quotes = readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')
     expect(quotes).toHaveLength(1)
     expect(quotes[0][0]).toMatchObject({
-      args: [account, 1, 999_598_000n, 100_000_000n, block.timestamp], blockNumber: block.number,
+      args: [account, 1, 999_798_000n, 100_000_000n], blockNumber: block.number,
     })
     const assessments = readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')
     expect(assessments).toHaveLength(6)
@@ -488,15 +515,15 @@ describe('Max opening review', () => {
     expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request], blockNumber: block.number }))
   })
 
-  it('refreshes a smaller lens maximum and reserves both attached protection rewards', async () => {
+  it('refreshes a smaller lens maximum and reserves the attached protection trigger reward', async () => {
     const { client, readContract } = maxClient({ size: 200n * quantum })
     const prepared = await preparePerpsOrderV3(client, manifest, {
-      ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n },
+      ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n, closeLimits: relaxedProtectionCloseLimits() },
     })
     expect(prepared.request.sizeDelta).toBe(200n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_198_000n)
-    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(999_800_000n)
-    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_198_000n, 100_000_000n, block.timestamp] }))
+    expect(prepared.request.marginDelta).toBe(999_598_000n)
+    expect(prepared.reviewSummary?.requiredFundingAssets).toBe(1_000_000_000n)
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_598_000n, 100_000_000n] }))
   })
 
   it('does not quote when the account cannot cover the router reward reserve', async () => {
@@ -542,7 +569,7 @@ describe('Max opening review', () => {
     })
     const prepared = await preparePerpsOrderV3(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
     expect(prepared.request.sizeDelta).toBe(97n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_598_000n)
+    expect(prepared.request.marginDelta).toBe(999_798_000n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
     for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
     expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request] }))

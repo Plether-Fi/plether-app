@@ -194,7 +194,7 @@ Foreign currencies have lost 4% against USD on a weighted basis.
 * **LONG USD** profits.
 * **SHORT USD** loses.
 
-For a position of 10,000 index units—approximately 10,000 USDC[^usdc] of market exposure at a 1.00 entry—the directional PnL[^pnl] is approximately **400 USDC** before fees, carry[^carry], virtual price impact and oracle adjustments.
+For a position of 10,000 index units—approximately 10,000 USDG[^usdg] of market exposure at a 1.00 entry—the directional PnL[^pnl] is approximately **400 USDG** before fees, carry[^carry], virtual price impact and oracle adjustments.
 
 #### The dollar weakens
 
@@ -205,7 +205,7 @@ Foreign currencies have gained 3% against USD on a weighted basis.
 * **SHORT USD** profits.
 * **LONG USD** loses.
 
-Using the same 10,000-unit position, the directional PnL is approximately **300 USDC** before costs.
+Using the same 10,000-unit position, the directional PnL is approximately **300 USDG** before costs.
 
 These examples isolate movement in the basket. Actual settlement also reflects execution price, fees, carry and virtual price impact.
 
@@ -245,7 +245,7 @@ During live markets, delayed orders use the first eligible basket update publish
 
 The raw basket mark is the normalized value produced by the oracle.
 
-A trader’s execution and final USDC economics can differ from that reference because of:
+A trader’s execution and final USDG economics can differ from that reference because of:
 
 * The active oracle-confidence policy
 * Virtual price impact
@@ -378,7 +378,7 @@ Users should rely on the active oracle configuration and deployment reference ra
 [^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.

@@ -18,7 +18,7 @@ The same separation holds during stress. Closing a liquidated position does not 
 
 ### The counterparty is a pool with published rules
 
-You do not need an opposing trader to open a position. The USDC liquidity pool is the counterparty to every trade: collected trader losses flow into it, and it funds trader gains. LPs supply that capital through Senior and Junior tranches and are paid for underwriting it — carry accrues on LP-financed exposure over time, and Virtual Price Impact (VPI) charges trades that deepen the pool's directional imbalance while rebating trades that reduce it. Keepers earn explicit execution rewards; the protocol takes explicit fees. Every cost your agent will pay is one of those named items, and each is calculable from onchain state.
+You do not need an opposing trader to open a position. The USDG liquidity pool is the counterparty to every trade: collected trader losses flow into it, and it funds trader gains. LPs supply that capital through Senior and Junior tranches and are paid for underwriting it — carry accrues on LP-financed exposure over time, and Virtual Price Impact (VPI) charges trades that deepen the pool's directional imbalance while rebating trades that reduce it. Opens and increases pay explicit keeper execution rewards; reductions and closes have zero execution reward. TP/SL triggering and liquidation have separate rewards, and the protocol takes explicit trading fees. Every cost your agent will pay is one of those named items, and each is calculable from onchain state.
 
 Carry deserves a direct comparison, because it replaces the cost that is hardest to model everywhere else. On a conventional perps venue, holding a position means paying — or hoping to receive — a funding rate that swings with crowd positioning and premium, flips sign without warning, and can spike exactly when your trade is most crowded. Forecasting it means forecasting other traders. Plether has no trader-to-trader funding at all. Carry is a time-based charge on the portion of your position financed by LP capital, it varies only with pool utilization, and it is always a cost — never a payment your strategy depends on receiving. An agent can read utilization onchain and project its holding cost over any horizon before committing, instead of carrying a funding-rate model as a second source of error.
 
@@ -29,7 +29,7 @@ Two consequences matter for strategy design:
 * **No counterparty auto-deleveraging.** Plether never forcibly trims an unrelated profitable position to cover another trader's loss. A hedge you put on stays on unless your own account fails its margin requirement. That makes PnL modelable in a way venues with ADL cannot offer.
 * **Solvency is one read away.** Because payouts are bounded, the pool's health reduces to a single comparison: effective backing against worst-case directional liability plus the settlement buffer. Your agent can monitor the same O(1) condition the protocol checks before accepting risk — no reconstructing counterparty exposure from thousands of open positions, the way assessing an opaque exchange or a mutualized insurance fund would require.
 
-One cost deserves special attention because agents keep trying to farm it. VPI can rebate a trade that improves the pool's balance, but a lifetime rule clamps every exposure to `charges − rebates ≥ 0`: if a position paid 30 USDC of VPI on the way in, its closing rebate is capped at 30 USDC no matter what the formula would otherwise pay. Reducing imbalance can zero out your VPI costs; it cannot become an income stream. If your agent wants the pool's liquidity economics, it commits capital as an LP. The full cost model is in [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
+One cost deserves special attention because agents keep trying to farm it. VPI can rebate a trade that improves the pool's balance, but a lifetime rule clamps every exposure to `charges − rebates ≥ 0`: if a position paid 30 USDG of VPI on the way in, its closing rebate is capped at 30 USDG no matter what the formula would otherwise pay. Reducing imbalance can zero out your VPI costs; it cannot become an income stream. If your agent wants the pool's liquidity economics, it commits capital as an LP. The full cost model is in [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
 
 ### The protocol enforces the mandate, not the model
 
@@ -51,7 +51,7 @@ Access cannot be taken away, either. Execution is permissionless: there is no AP
 
 ### What to build
 
-The market is deliberately narrow: USDC-margined, USDC-settled exposure to the dollar against a six-currency basket, LONG or SHORT.
+The market is deliberately narrow: USDG-margined, USDG-settled exposure to the dollar against a six-currency basket, LONG or SHORT.
 
 That suits a few shapes well. A systematic macro agent translates a dollar-strength model into sized exposure, pricing carry, VPI and execution costs into its expected result. A hedging agent uses SHORT USD to partially offset weakening-dollar risk in a dollar-heavy portfolio, accepting that a bounded basket index is not a substitute for any specific currency pair. A risk-management agent watches position health, utilization, carry and market-close rules, and adjusts within its mandate.
 

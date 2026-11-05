@@ -43,6 +43,58 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "direct margin funding activation" $ around_ (withEnvironmentVariables
+    [("RPC_URL",Just "http://127.0.0.1:1"),("LP_SETTLEMENT_MODE",Just "off")]) $ do
+    it "defaults to disabled" $
+      withEnvironmentVariables [("TESTNET_MARGIN_FUNDING_ENABLED",Nothing)] $ do
+        result <- loadConfig
+        case result of
+          Right cfg -> cfgTestnetMarginFundingEnabled cfg `shouldBe` False
+          Left err -> expectationFailure err
+    it "enables issuance only with its dedicated signer and request guard" $
+      withEnvironmentVariables
+        [("TESTNET_MARGIN_FUNDING_ENABLED",Just "true"),
+         ("FAUCET_PRIVATE_KEY",Just $ "0x" <> replicate 64 '1'),
+         ("FAUCET_PROXY_ORIGIN_TOKEN",Just $ replicate 64 'a')] $ do
+        result <- loadConfig
+        case result of
+          Right cfg -> cfgTestnetMarginFundingEnabled cfg `shouldBe` True
+          Left err -> expectationFailure err
+    it "rejects malformed activation" $
+      withEnvironmentVariables [("TESTNET_MARGIN_FUNDING_ENABLED",Just "sometimes")] $ do
+        result <- loadConfig
+        case result of
+          Left err -> err `shouldContain` "TESTNET_MARGIN_FUNDING_ENABLED must be a boolean"
+          Right _ -> expectationFailure "Malformed flag was accepted"
+    it "requires a dedicated signer when enabled" $
+      withEnvironmentVariables [("TESTNET_MARGIN_FUNDING_ENABLED",Just "true"),("FAUCET_PRIVATE_KEY",Nothing)] $ do
+        result <- loadConfig
+        case result of
+          Left err -> err `shouldContain` "requires the dedicated FAUCET_PRIVATE_KEY"
+          Right _ -> expectationFailure "Enabled without signer"
+  describe "deployed release configuration" $ do
+    it "rejects retained invalid perps credentials when the deployed release is selected" $
+      withEnvironmentVariables
+        [ ("RPC_URL", Just "http://127.0.0.1:1")
+        , ("CHAIN_ID", Just "11155111")
+        , ("AA_PROXY_ORIGIN_TOKEN", Just "retained-origin")
+        , ("PIMLICO_API_KEY", Just "retained-key")
+        , ("PIMLICO_SPONSORSHIP_POLICY_ID", Just "retained-policy")
+        , ("AA_SPONSORSHIP_ENABLED", Just "false")
+        , ("AA_PAYMASTER_ADDRESS", Just "retained-address")
+        , ("AA_PAYMASTER_KMS_KEY_ID", Just "retained-key")
+        , ("AA_NATIVE_SPONSORSHIP_ENABLED", Just "false")
+        , ("AA_NATIVE_SUBMISSION_ENABLED", Just "false")
+        , ("INSIGHTS_REGISTRATION_PROVISIONED", Just "true")
+        , ("INSIGHTS_DIVISIONS_REGISTRATION_ENABLED", Just "true")
+        , ("LP_SETTLEMENT_MODE", Just "execute")
+        , ("FAUCET_PRIVATE_KEY", Just "retained-key")
+        , ("KEEPER_PRIVATE_KEY", Just "retained-key")
+        ] $ do
+          result <- loadConfig
+          case result of
+            Left failure -> failure `shouldBe` "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
+            Right _ -> expectationFailure "Deployed consumers must validate retained AA configuration"
   describe "keeper polling configuration" $ do
     it "accepts an idle cadence at least as long as the active cadence" $ do
       validateKeeperPollSeconds "1" "5" `shouldBe` Right (1, 5)
@@ -165,7 +217,18 @@ spec = do
           case result of
             Left err -> expectationFailure $ "loadConfig failed: " <> err
             Right cfg -> do
-              let rendered = show cfg
+              let populated = cfg
+                    { cfgFaucetPrivateKey = Just $ T.pack faucetSecret
+                    , cfgKeeperPrivateKey = Just $ T.pack keeperSecret
+                    , cfgLpSettlementPrivateKey = Just $ T.pack lpSettlementSecret
+                    , cfgFaucetGuardConfig = Just $ FaucetGuardConfig (T.pack faucetProxySecret) 20 200
+                    }
+                  rendered = show populated
+              cfgFaucetPrivateKey populated `shouldBe` Just (T.pack faucetSecret)
+              cfgKeeperPrivateKey populated `shouldBe` Just (T.pack keeperSecret)
+              cfgLpSettlementPrivateKey populated `shouldBe` Just (T.pack lpSettlementSecret)
+              fmap fgcProxyOriginToken (cfgFaucetGuardConfig populated)
+                `shouldBe` Just (T.pack faucetProxySecret)
               mapM_
                 (rendered `shouldNotContain`)
                 [ rpcSecret
@@ -542,26 +605,18 @@ spec = do
         )
         `shouldBe` Right ()
 
-    it "pins native action targets to the reviewed Arbitrum Sepolia deployment" $ do
+    it "rejects archived native action targets for the selected release" $ do
       validAaDeploymentAddresses
         "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
         "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
         "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
         "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-        `shouldBe` True
+        `shouldBe` False
       validAaDeploymentAddresses
         "0x1111111111111111111111111111111111111111"
         "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
         "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
         "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-        `shouldBe` False
-
-    it "rejects native action targets from the previous deployment" $ do
-      validAaDeploymentAddresses
-        "0xc3ce8590b7ecde7454f9d5b51a797bbde96fe56b"
-        "0xbd2f286efca5f761e21452673ab9b8c14e17aad7"
-        "0x9611e643ac4691e8fded8a0c2c22c56438b6f352"
-        "0xa863f985eeda8bf5be2320693bb93d109ebb2dbd"
         `shouldBe` False
 
     it "normalizes only HTTPS/default-443 external security RPC endpoints" $ do

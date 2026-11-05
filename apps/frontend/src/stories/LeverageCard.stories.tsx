@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, userEvent, within } from 'storybook/test'
+import { expect, fireEvent, userEvent, within } from 'storybook/test'
 import { LeverageCard } from '../components/LeverageCard'
 
 interface LeverageCardArgs {
@@ -61,9 +61,13 @@ export const OpenBearPosition: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement)
 
-    await step('Verify BEAR side is selected by default', async () => {
+    await step('Select BEAR from the default BULL side', async () => {
+      const bullButton = canvas.getByRole('button', { name: /dxy-bull/i })
+      expect(bullButton).toHaveClass('border-positive')
       const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
+      await userEvent.click(bearButton)
       expect(bearButton).toHaveClass('border-brand-orange')
+      expect(bullButton).not.toHaveClass('border-positive')
     })
 
     await step('Enter collateral amount', async () => {
@@ -75,14 +79,16 @@ export const OpenBearPosition: Story = {
 
     await step('Adjust leverage slider', async () => {
       const slider = canvas.getByRole('slider')
-      await userEvent.click(slider)
-      expect(slider).toBeInTheDocument()
+      fireEvent.change(slider, { target: { value: '3' } })
+      expect(slider).toHaveValue('3')
+      expect(canvas.getByText('3.0x')).toBeVisible()
     })
 
-    await step('Verify position preview is shown', async () => {
-      expect(canvas.getByText(/position preview/i)).toBeInTheDocument()
-      expect(canvas.getByText(/position size/i)).toBeInTheDocument()
-      expect(canvas.getByText(/liquidation price/i)).toBeInTheDocument()
+    await step('Verify position value, equity and debt readouts are visible', async () => {
+      expect(canvas.getByText('PREVIEW')).toBeVisible()
+      expect(canvas.getByText('Position Value')).toBeVisible()
+      expect(canvas.getByText('Your Equity')).toBeVisible()
+      expect(canvas.getByText('Debt', { exact: true })).toBeVisible()
     })
   },
 }
@@ -98,9 +104,13 @@ export const OpenBullPosition: Story = {
     const canvas = within(canvasElement)
 
     await step('Switch to BULL side', async () => {
+      const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
+      await userEvent.click(bearButton)
+      expect(bearButton).toHaveClass('border-brand-orange')
       const bullButton = canvas.getByRole('button', { name: /dxy-bull/i })
       await userEvent.click(bullButton)
       expect(bullButton).toHaveClass('border-positive')
+      expect(bearButton).not.toHaveClass('border-brand-orange')
     })
 
     await step('Enter collateral amount', async () => {
@@ -122,21 +132,23 @@ export const SideToggle: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement)
 
-    await step('Start with BEAR selected', async () => {
-      const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
-      expect(bearButton).toHaveClass('border-brand-orange')
+    await step('Start with BULL selected', async () => {
+      expect(canvas.getByRole('button', { name: /dxy-bull/i })).toHaveClass('border-positive')
+      expect(canvas.getByRole('button', { name: /dxy-bear/i })).not.toHaveClass('border-brand-orange')
     })
 
-    await step('Switch to BULL', async () => {
-      const bullButton = canvas.getByRole('button', { name: /dxy-bull/i })
-      await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-positive')
-    })
-
-    await step('Switch back to BEAR', async () => {
+    await step('Switch to BEAR', async () => {
       const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
       await userEvent.click(bearButton)
       expect(bearButton).toHaveClass('border-brand-orange')
+      expect(canvas.getByRole('button', { name: /dxy-bull/i })).not.toHaveClass('border-positive')
+    })
+
+    await step('Switch back to BULL', async () => {
+      const bullButton = canvas.getByRole('button', { name: /dxy-bull/i })
+      await userEvent.click(bullButton)
+      expect(bullButton).toHaveClass('border-positive')
+      expect(canvas.getByRole('button', { name: /dxy-bear/i })).not.toHaveClass('border-brand-orange')
     })
   },
 }

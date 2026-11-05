@@ -39,29 +39,29 @@ spec = do
       decodeAccountLedgerSnapshot encodedSnapshot
         `shouldBe` Right
           AccountLedgerSnapshot
-            { alsSettlementBalanceUsdc = 101
-            , alsFreeSettlementUsdc = 102
-            , alsActivePositionMarginUsdc = 103
-            , alsOtherLockedMarginUsdc = 104
-            , alsPositionMarginBucketUsdc = 105
-            , alsCommittedOrderMarginBucketUsdc = 106
-            , alsReservedSettlementBucketUsdc = 107
-            , alsExecutionBountyReserveUsdc = 108
-            , alsCommittedMarginUsdc = 109
-            , alsTraderClaimBalanceUsdc = 110
+            { alsSettlementBalanceAssets = 101
+            , alsFreeSettlementAssets = 102
+            , alsActivePositionMarginAssets = 103
+            , alsOtherLockedMarginAssets = 104
+            , alsPositionMarginBucketAssets = 105
+            , alsCommittedOrderMarginBucketAssets = 106
+            , alsReservedSettlementBucketAssets = 107
+            , alsExecutionBountyReserveAssets = 108
+            , alsCommittedMarginAssets = 109
+            , alsTraderClaimBalanceAssets = 110
             , alsPendingOrderCount = 111
-            , alsCloseReachableUsdc = 112
-            , alsLiquidationReachableSettlementUsdc = 113
-            , alsTerminalPriceCollectibleCapUsdc = 114
-            , alsAccountEquityUsdc = 115
-            , alsFreeBuyingPowerUsdc = 116
+            , alsCloseReachableAssets = 112
+            , alsLiquidationReachableSettlementAssets = 113
+            , alsTerminalPriceCollectibleCapAssets = 114
+            , alsAccountEquityAssets = 115
+            , alsFreeBuyingPowerAssets = 116
             , alsHasPosition = True
             , alsSide = 2
             , alsSize = 118
             , alsMargin = 119
             , alsEntryPrice = 120
-            , alsUnrealizedPnlUsdc = -321
-            , alsNetEquityUsdc = -654
+            , alsUnrealizedPnlAssets = -321
+            , alsNetEquityAssets = -654
             , alsLiquidatable = False
             }
 

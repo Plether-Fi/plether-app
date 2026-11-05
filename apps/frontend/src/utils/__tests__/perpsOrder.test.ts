@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseUnits } from 'viem'
-import { notionalUsdcToQuantizedSizeDelta, notionalUsdcToSizeDelta } from '../perps'
+import { notionalAssetsToQuantizedSizeDelta, notionalAssetsToSizeDelta } from '../perps'
 import { PERPS_POSITION_SIZE_QUANTUM } from '../../contracts/perpsConstants'
 import { resolvePerpsSizeDelta } from '../perpsOrder'
 
@@ -14,13 +14,13 @@ describe('resolvePerpsSizeDelta', () => {
     const sizeDelta = resolvePerpsSizeDelta({
       isReducingCurrentPosition: true,
       currentPositionSize: CURRENT_POSITION_SIZE,
-      notionalUsdc: DISPLAY_MAX_NOTIONAL,
-      maxNotionalUsdc: DISPLAY_MAX_NOTIONAL,
+      notionalAssets: DISPLAY_MAX_NOTIONAL,
+      maxNotionalAssets: DISPLAY_MAX_NOTIONAL,
       oraclePrice: PRICE,
     })
 
     expect(sizeDelta).toBe(CURRENT_POSITION_SIZE)
-    expect(sizeDelta).not.toBe(notionalUsdcToSizeDelta(DISPLAY_MAX_NOTIONAL, PRICE))
+    expect(sizeDelta).not.toBe(notionalAssetsToSizeDelta(DISPLAY_MAX_NOTIONAL, PRICE))
   })
 
   it('rounds a partial reduce down to the protocol quantum', () => {
@@ -28,12 +28,12 @@ describe('resolvePerpsSizeDelta', () => {
     const sizeDelta = resolvePerpsSizeDelta({
       isReducingCurrentPosition: true,
       currentPositionSize: CURRENT_POSITION_SIZE,
-      notionalUsdc: partialNotional,
-      maxNotionalUsdc: DISPLAY_MAX_NOTIONAL,
+      notionalAssets: partialNotional,
+      maxNotionalAssets: DISPLAY_MAX_NOTIONAL,
       oraclePrice: PRICE,
     })
 
-    expect(sizeDelta).toBe(notionalUsdcToQuantizedSizeDelta(partialNotional, PRICE))
+    expect(sizeDelta).toBe(notionalAssetsToQuantizedSizeDelta(partialNotional, PRICE))
     expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)
     expect(sizeDelta).toBeLessThan(CURRENT_POSITION_SIZE)
   })
@@ -43,13 +43,13 @@ describe('resolvePerpsSizeDelta', () => {
     const sizeDelta = resolvePerpsSizeDelta({
       isReducingCurrentPosition: false,
       currentPositionSize: CURRENT_POSITION_SIZE,
-      notionalUsdc: openNotional,
-      maxNotionalUsdc: CURRENT_POSITION_NOTIONAL,
+      notionalAssets: openNotional,
+      maxNotionalAssets: CURRENT_POSITION_NOTIONAL,
       oraclePrice: PRICE,
     })
 
-    expect(sizeDelta).toBe(notionalUsdcToQuantizedSizeDelta(openNotional, PRICE))
+    expect(sizeDelta).toBe(notionalAssetsToQuantizedSizeDelta(openNotional, PRICE))
     expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)
-    expect(sizeDelta).toBeLessThanOrEqual(notionalUsdcToSizeDelta(openNotional, PRICE))
+    expect(sizeDelta).toBeLessThanOrEqual(notionalAssetsToSizeDelta(openNotional, PRICE))
   })
 })

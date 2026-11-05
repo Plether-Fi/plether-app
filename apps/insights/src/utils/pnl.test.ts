@@ -16,7 +16,7 @@ function wallet(overrides: Partial<WalletDetails> = {}): WalletDetails {
     liquidations: 0,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
     eligibilityReasons: [],

@@ -1,0 +1,62 @@
+name: Browser test coverage
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: browser-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: ${{ matrix.suite == 'e2e' && 'Frontend E2E' || 'Storybook interactions' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [e2e, storybook]
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            apps/frontend/package-lock.json
+            apps/insights/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+      - name: Pin npm
+        run: npm install -g npm@11.6.2
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dependencies used by Insights stories
+        run: npm ci --no-audit --no-fund
+        working-directory: apps/insights
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run asserted browser coverage
+        run: npm run test:${{ matrix.suite }}
+      - name: Preserve results, traces and assertion failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-${{ matrix.suite }}-${{ github.run_attempt }}
+          path: apps/frontend/.test-results/
+          include-hidden-files: true
+          if-no-files-found: warn

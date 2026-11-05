@@ -14,7 +14,7 @@ spec.loader.exec_module(module)
 
 class ConfigureTest(unittest.TestCase):
     def setUp(self):
-        self.release = dict(chainId=421614, maximumSubsidyUsdc="200000", lens="0x" + "12" * 20, lensCodeHash="0x" + "34" * 32)
+        self.release = dict(schemaVersion=4, network=dict(chainId=421614))
         self.task = dict(family="plether-sepolia", taskRoleArn="preserved", containerDefinitions=[dict(name="plether-api", image="existing", secrets=[dict(name="PRIVATE", valueFrom="unchanged")], environment=[dict(name=k, value=v) for k,v in dict(AA_RPC_MODE="dual-independent", AA_NATIVE_SPONSORSHIP_ENABLED="true", AA_NATIVE_SUBMISSION_ENABLED="true", AA_NATIVE_CANARY_OWNERS="0x" + "56" * 20, AA_NATIVE_GLOBAL_ROLLOUT_ENABLED="true").items()])])
 
     def test_workflow_has_release_files_before_configuration(self):
@@ -29,7 +29,7 @@ class ConfigureTest(unittest.TestCase):
         command = next(line.split("run:", 1)[1].strip() for line in deploy[configure_start:].splitlines() if line.strip().startswith("run:"))
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
-            for source in [".github/scripts", "apps/backend/deployments"]:
+            for source in [".github/scripts", "config/perps"]:
                 self.assertIn(source, checkout)
                 shutil.copytree(root / source, work / checkout_path / source)
             (work / "task-def.json").write_text(json.dumps(self.task))
@@ -41,32 +41,25 @@ class ConfigureTest(unittest.TestCase):
 
     def test_only_assistance_configuration_changes(self):
         before = copy.deepcopy(self.task)
-        result = module.configure(self.task, self.release, "canary")
+        result = module.configure(self.task, self.release, "disabled")
         env = result["containerDefinitions"][0]["environment"]
-        self.assertEqual({e["name"]:e["value"] for e in env}["PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED"], "false")
+        configured = {e["name"]:e["value"] for e in env}
+        self.assertEqual(configured["PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED"], "false")
+        self.assertEqual(configured["PERPS_CLOSE_ASSISTANCE_ENABLED"], "false")
+        self.assertEqual(configured["PERPS_CLOSE_ASSISTANCE_LENS"], "")
+        self.assertEqual(configured["PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH"], "")
         result["containerDefinitions"][0]["environment"] = [e for e in env if not e["name"].startswith("PERPS_CLOSE_ASSISTANCE_")]
         self.assertEqual(before, result)
 
-    def test_disabled_preserves_binding_and_native_submission(self):
-        result = module.configure(self.task, self.release, "disabled")
-        env = {e["name"]:e["value"] for e in result["containerDefinitions"][0]["environment"]}
-        self.assertEqual(env["PERPS_CLOSE_ASSISTANCE_ENABLED"], "false")
-        self.assertEqual(env["PERPS_CLOSE_ASSISTANCE_LENS"], self.release["lens"])
-        self.assertEqual(env["AA_NATIVE_SUBMISSION_ENABLED"], "true")
+    def test_canonical_release_cannot_enable_historical_assistance(self):
+        for mode in ["all", "canary", "unexpected"]:
+            with self.assertRaises(ValueError):
+                module.configure(copy.deepcopy(self.task), self.release, mode)
 
-    def test_single_provider_cannot_enable_assistance(self):
-        self.task["containerDefinitions"][0]["environment"][0]["value"] = "single-provider-sepolia"
-        with self.assertRaises(ValueError):
-            module.configure(self.task, self.release, "all")
-        module.configure(self.task, self.release, "disabled")
-
-    def test_no_canary_owner_or_wrong_chain_rejected(self):
-        self.task["containerDefinitions"][0]["environment"] = [e for e in self.task["containerDefinitions"][0]["environment"] if e["name"] != "AA_NATIVE_CANARY_OWNERS"]
-        with self.assertRaises(ValueError):
-            module.configure(self.task, self.release, "canary")
-        self.release["chainId"] = 42161
-        with self.assertRaises(ValueError):
-            module.configure(self.task, self.release, "disabled")
+    def test_historical_or_wrong_chain_release_rejected(self):
+        for release in [dict(schemaVersion=1, chainId=421614), dict(schemaVersion=4, network=dict(chainId=42161))]:
+            with self.assertRaises(ValueError):
+                module.configure(self.task, release, "disabled")
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,9 +55,9 @@ function rawCandle(
     rawHighPrice: '101000000',
     rawLowPrice: '97000000',
     rawClosePrice: '99000000',
-    volumeUsdc: '1250000',
-    longFlowVolumeUsdc: '750000',
-    shortFlowVolumeUsdc: '250000',
+    volumeAssets: '1250000',
+    longFlowVolumeAssets: '750000',
+    shortFlowVolumeAssets: '250000',
     tradeCount: 2,
     sampleCount: 3,
     quality: 'observed',
@@ -147,8 +147,8 @@ describe('Plether TradingView datafeed', () => {
       [
         rawCandle(64_920),
         rawCandle(64_980, {
-          longFlowVolumeUsdc: null,
-          shortFlowVolumeUsdc: null,
+          longFlowVolumeAssets: null,
+          shortFlowVolumeAssets: null,
         }),
       ],
       60
@@ -202,7 +202,7 @@ describe('Plether TradingView datafeed', () => {
 
   it('preserves unknown rollup volume instead of displaying it as proven zero', () => {
     expect(perpsBasketCandlesToTradingViewBars([
-      rawCandle(64_920, { volumeUsdc: null, tradeCount: null, volumeComplete: false }),
+      rawCandle(64_920, { volumeAssets: null, tradeCount: null, volumeComplete: false }),
     ], 60, CANDLE_IDENTITY.displayPriceCap)).toEqual([{
       time: 64_920_000,
       open: 1.02,
@@ -216,7 +216,7 @@ describe('Plether TradingView datafeed', () => {
     const onVolumeCoverageChange = vi.fn()
     const pages = [
       candlePage(90_000, [rawCandle(64_920, {
-        volumeUsdc: null,
+        volumeAssets: null,
         tradeCount: null,
         volumeComplete: false,
       })], {
@@ -357,7 +357,7 @@ describe('Plether TradingView datafeed', () => {
     const onVolumeCoverageChange = vi.fn()
     const responses = new Map<number, PerpsBasketCandlePage>([
       [90_000, candlePage(90_000, [rawCandle(64_920, {
-        volumeUsdc: null,
+        volumeAssets: null,
         tradeCount: null,
         volumeComplete: false,
       })], {
@@ -498,7 +498,7 @@ describe('Plether TradingView datafeed', () => {
       { hasEarlier: false, previousCursor: null }
     ))
     const getCurrentCandle = vi.fn(async () => currentCandle(60, {
-      candle: rawCandle(64_980, { volumeUsdc: '10750000' }),
+      candle: rawCandle(64_980, { volumeAssets: '10750000' }),
     }))
     const feed = new PletherDxyDatafeed({
       dataSource: dataSource({ getCandlePage, getCurrentCandle }),
@@ -1252,7 +1252,7 @@ describe('Plether TradingView datafeed', () => {
       coverageEnd: 64_800,
       coverageComplete: true,
       finalizedThrough: 64_800,
-      candle: rawCandle(64_800, { volumeUsdc: '10750000' }),
+      candle: rawCandle(64_800, { volumeAssets: '10750000' }),
     }))
     const feed = new PletherDxyDatafeed({
       dataSource: { getCandlePage, getCurrentCandle },

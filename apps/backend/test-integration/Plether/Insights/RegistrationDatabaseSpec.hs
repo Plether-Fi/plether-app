@@ -540,7 +540,7 @@ prepareCompetitionFixture pool targetXUserIdDigest = withDb pool $ \conn -> do
       manifest = fixtureManifest slug
   ensurePerpsHistorySchema conn
   ensureInsightsSchema
-    conn rules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens manifest
+    conn rules fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens manifest
   ensureRegistrationSchema conn
   provisionRegistrationCompetitionConfig conn slug targetXUserIdDigest privacyVersion `shouldReturn` True
   openRegistrationIfConfigured conn slug privacyVersion `shouldReturn` True
@@ -737,7 +737,7 @@ fixtureManifest slug =
   CompetitionReleaseManifest
     { crmReleaseId = slug
     , crmChainId = fixtureChain
-    , crmUsdc = fixtureUsdc
+    , crmSettlementToken = fixtureAssets
     , crmOrderRouter = fixtureRouter
     , crmMarginClearinghouse = fixtureClearinghouse
     , crmAccountLens = fixtureLens
@@ -748,10 +748,10 @@ fixtureManifest slug =
     , crmIndexerStartBlock = 1
     }
 
-fixtureSlug, fixtureRouter, fixtureUsdc, fixtureClearinghouse, fixtureLens :: Text
+fixtureSlug, fixtureRouter, fixtureAssets, fixtureClearinghouse, fixtureLens :: Text
 fixtureSlug = "registration-idempotency-integration"
 fixtureRouter = "0xe100000000000000000000000000000000000001"
-fixtureUsdc = "0xe200000000000000000000000000000000000002"
+fixtureAssets = "0xe200000000000000000000000000000000000002"
 fixtureClearinghouse = "0xe300000000000000000000000000000000000003"
 fixtureLens = "0xe400000000000000000000000000000000000004"
 

@@ -31,7 +31,7 @@ Changing direction requires a complete close. Wait for that close to execute bef
 
 ### Before submitting an order
 
-For a new position, select **Take profit / stop loss** in the trade ticket to attach one or both full-position exit triggers. They become active only after the opening order fills and require an additional USDC execution reserve. For an existing position, manage triggers in the **TP/SL** tab instead. Read [Take profit and stop loss](take-profit-and-stop-loss.md).
+For a new position, select **Take profit / stop loss** in the trade ticket to attach one or both full-position exit triggers. They become active only after the opening order fills and require an additional USDG execution reserve. For an existing position, manage triggers in the **TP/SL** tab instead. Read [Take profit and stop loss](take-profit-and-stop-loss.md).
 
 If the account already has active TP/SL, remove it before submitting a discretionary increase. Once a trigger has queued a close, or that close is delayed and latched, the protection cannot be edited or removed while unresolved.
 
@@ -82,7 +82,7 @@ The application handles this conversion when building the order.
 
 Enter the plDXY amount to add in the `Order quantity` field. Typed quantities must use `100 plDXY` increments; the interface asks you to correct an unsupported quantity instead of rounding it silently.
 
-The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDC at the current displayed price. **Commit Preview** confirms both values before submission:
+The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDG at the current displayed price. **Commit Preview** confirms both values before submission:
 
 ```
 Order exposure
@@ -118,14 +118,14 @@ The trade ticket calculates an estimate using current market data. That commit-t
 
 ### 3. Set leverage and margin
 
-The leverage control determines how much USDC[^usdc] the order assigns as position margin.
+The leverage control determines how much USDG[^usdg] the order assigns as position margin.
 
 For the same contract quantity:
 
 * More assigned margin produces lower displayed position leverage and a smaller LP-backed carry basis.
 * Less assigned margin produces higher displayed position leverage and may fail the position-level initial-margin check.
 
-Assigned margin comes from settlement already in the Margin Account. Moving free USDC into position margin increases price-risk backing. A deposit by itself increases free settlement and carry coverage.
+Assigned margin comes from USDG already in the Margin Account. After accrued carry is collected, moving free USDG into position margin increases price-risk backing. A deposit by itself adds free USDG and a fallback for carry beyond active margin; it does not stop carry from consuming existing position margin.
 
 For an increase, the resulting leverage applies to the complete combined position.
 
@@ -135,7 +135,7 @@ Plether checks both assigned position margin and total account equity. After exe
 * Account equity must also meet the initial margin requirement.
 * The resulting position must remain above its liquidation threshold.
 
-Free USDC elsewhere in the account covers carry and actions. Price health uses assigned position margin, same-account claims and exact PnL; opening also checks the assigned-margin requirement.
+Accrued carry consumes active position margin first, then eligible free USDG. Price health uses the position margin left after carry, same-account claims and exact PnL; opening also checks the assigned-margin requirement. Free USDG and eligible reserves fund other action costs according to their separate rules.
 
 #### How costs affect resulting margin
 
@@ -163,7 +163,7 @@ Before execution changes the position’s size and carry basis, Plether realizes
 
 Carry is collected from:
 
-1. Free account USDC
+1. Free account USDG
 2. Position margin
 
 The increase fails if the account cannot cover all carry due at execution.
@@ -238,7 +238,7 @@ Price, pool depth, market skew[^skew], carry and account balances can all change
 
 Plether merges same-direction exposure into one position.
 
-The new entry price is weighted by contract quantity, not by the displayed USDC exposure at two different prices:
+The new entry price is weighted by contract quantity, not by the displayed USDG exposure at two different prices:
 
 ```
 Resulting entry price
@@ -280,18 +280,18 @@ Resulting entry price
 Now assume:
 
 ```
-Current position margin:  3,000 USDC
-Submitted margin:          1,500 USDC
-Execution fee:              1.80 USDC
-VPI charge:                   25 USDC
+Current position margin:  3,000 USDG
+Submitted margin:          1,500 USDG
+Execution fee:              1.80 USDG
+VPI charge:                   25 USDG
 ```
 
-With accrued carry already paid from free account USDC:
+With accrued carry already collected from active position margin first, then eligible free account USDG:
 
 ```
 Resulting position margin
 = 3,000 + 1,500 − 1.80 − 25
-= 4,473.20 USDC
+= 4,473.20 USDG
 ```
 
 The interface then recalculates displayed exposure, leverage and liquidation price for the complete `15,000` contract-quantity position using the current mark.
@@ -450,11 +450,11 @@ Carry begins on a new position after execution. An increased position starts its
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.

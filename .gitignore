@@ -50,6 +50,7 @@ opensrc/
 
 # Playwright test reports
 playwright-report/
+.test-results/
 
 # Story screenshots
 screenshots/

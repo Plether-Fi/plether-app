@@ -101,7 +101,8 @@ export const BuyBearFlow: Story = {
 
     await step('Verify Buy mode is selected by default', async () => {
       const buyButton = canvas.getByRole('button', { name: /buy/i })
-      expect(buyButton).toHaveClass('bg-brand-peach')
+      expect(buyButton).toBeVisible()
+      expect(canvas.getByLabelText('You pay')).toBeVisible()
     })
 
     await step('Select plDXY-BEAR token', async () => {
@@ -120,7 +121,7 @@ export const BuyBearFlow: Story = {
     await step('Expand swap details', async () => {
       const detailsButton = canvas.getByRole('button', { name: /swap details/i })
       await userEvent.click(detailsButton)
-      expect(canvas.getByText(/route/i)).toBeInTheDocument()
+      expect(canvas.getByText('USDC → Curve → plDXY-BEAR')).toBeVisible()
     })
   },
 }
@@ -144,13 +145,16 @@ export const SellBullFlow: Story = {
     await step('Switch to Sell mode', async () => {
       const sellButton = canvas.getByRole('button', { name: /^sell$/i })
       await userEvent.click(sellButton)
-      expect(sellButton).toHaveClass('bg-surface-panel')
+      expect(canvas.getByLabelText('You sell')).toBeVisible()
+      expect(canvas.queryByLabelText('You pay')).not.toBeInTheDocument()
     })
 
     await step('Select plDXY-BULL token', async () => {
       const bullButton = canvas.getByRole('button', { name: /pldxy-bull/i })
+      await userEvent.click(canvas.getByRole('button', { name: /pldxy-bear/i }))
       await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-positive')
+      await userEvent.click(canvas.getByRole('button', { name: /swap details/i }))
+      expect(canvas.getByText('plDXY-BULL → ZapRouter → USDC')).toBeVisible()
     })
 
     await step('Enter amount to sell', async () => {
@@ -178,21 +182,21 @@ export const TokenToggle: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement)
 
-    await step('Start with BULL selected', async () => {
-      const bullButton = canvas.getByRole('button', { name: /pldxy-bull/i })
-      expect(bullButton).toHaveClass('border-positive')
+    await step('Start with the BULL purchase route', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /swap details/i }))
+      expect(canvas.getByText('USDC → ZapRouter → plDXY-BULL')).toBeVisible()
     })
 
-    await step('Switch to BULL', async () => {
-      const bullButton = canvas.getByRole('button', { name: /pldxy-bull/i })
-      await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-positive')
+    await step('Switch to BEAR', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /pldxy-bear/i }))
+      expect(canvas.getByText('USDC → Curve → plDXY-BEAR')).toBeVisible()
+      expect(canvas.queryByText('USDC → ZapRouter → plDXY-BULL')).not.toBeInTheDocument()
     })
 
-    await step('Switch back to BEAR', async () => {
-      const bearButton = canvas.getByRole('button', { name: /pldxy-bear/i })
-      await userEvent.click(bearButton)
-      expect(bearButton).toHaveClass('border-brand-orange')
+    await step('Switch back to BULL', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /pldxy-bull/i }))
+      expect(canvas.getByText('USDC → ZapRouter → plDXY-BULL')).toBeVisible()
+      expect(canvas.queryByText('USDC → Curve → plDXY-BEAR')).not.toBeInTheDocument()
     })
   },
 }
@@ -214,20 +218,29 @@ export const ModeToggle: Story = {
     const canvas = within(canvasElement)
 
     await step('Start in Buy mode', async () => {
-      const buyButton = canvas.getByRole('button', { name: /^buy$/i })
-      expect(buyButton).toHaveClass('bg-surface-panel')
+      const input = canvas.getByLabelText('You pay')
+      await userEvent.type(input, '100')
+      expect(input).toHaveValue('100')
+      await userEvent.click(canvas.getByRole('button', { name: /swap details/i }))
+      expect(canvas.getByText('USDC → ZapRouter → plDXY-BULL')).toBeVisible()
     })
 
     await step('Switch to Sell mode', async () => {
       const sellButton = canvas.getByRole('button', { name: /^sell$/i })
       await userEvent.click(sellButton)
-      expect(sellButton).toHaveClass('bg-surface-panel')
+      const input = canvas.getByLabelText('You sell')
+      expect(input).toHaveValue('')
+      expect(canvas.queryByLabelText('You pay')).not.toBeInTheDocument()
+      expect(canvas.getByText('plDXY-BULL → ZapRouter → USDC')).toBeVisible()
+      await userEvent.type(input, '50')
     })
 
     await step('Switch back to Buy mode', async () => {
       const buyButton = canvas.getByRole('button', { name: /^buy$/i })
       await userEvent.click(buyButton)
-      expect(buyButton).toHaveClass('bg-surface-panel')
+      expect(canvas.getByLabelText('You pay')).toHaveValue('')
+      expect(canvas.queryByLabelText('You sell')).not.toBeInTheDocument()
+      expect(canvas.getByText('USDC → ZapRouter → plDXY-BULL')).toBeVisible()
     })
   },
 }

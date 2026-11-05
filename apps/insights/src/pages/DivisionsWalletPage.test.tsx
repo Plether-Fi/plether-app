@@ -7,11 +7,13 @@ import { WeeklyResultsPage } from './WeeklyResultsPage'
 import { account, input } from '../test/divisions'
 import { publishWeek } from '../divisions/engine'
 
+const statsQuery = vi.hoisted(() => vi.fn())
 const queries = vi.hoisted(() => ({ live: vi.fn(), publication: vi.fn(), history: vi.fn() }))
-vi.mock('../divisions/query', () => ({ useDivisions: queries.publication, useLiveDivisions: queries.live, useDivisionsHistory: queries.history }))
+vi.mock('../divisions/query', () => ({ useDivisionsStats: statsQuery, useDivisions: queries.publication, useLiveDivisions: queries.live, useDivisionsHistory: queries.history }))
 const address = account(1).address
 
 beforeEach(() => {
+  statsQuery.mockReturnValue({ data: { registeredWallets: 42 }, isError: false })
   queries.publication.mockReturnValue({ data: publishWeek(input(0, [account(1)]), null) })
   queries.history.mockReturnValue({ data: { publication: publishWeek(input(0, [account(1)]), null), olderCursor: null, newerCursor: null } })
   queries.live.mockReturnValue({ data: {
@@ -29,6 +31,17 @@ function show(path = `/divisions/wallets/${address}`) {
 }
 
 describe('Divisions trader navigation', () => {
+  it('keeps the prior contract badge and its original currency beside new live results', () => {
+    const publication = publishWeek(input(0, [account(1)]), null)
+    queries.publication.mockReturnValue({ data: { ...publication,
+      scoringRelease: { router: `0x${'1'.repeat(40)}`, version: 'v1.3.1', assetSymbol: 'USDC' },
+    } })
+    show()
+    expect(screen.getByText('Bronze')).toBeInTheDocument()
+    expect(screen.getByText(/mock USDC$/)).toBeInTheDocument()
+    expect(screen.getByText('-1.00%')).toBeInTheDocument()
+  })
+
   it('places badges before wallets and opens the current trader view from either leaderboard', () => {
     show('/')
     const liveTable = screen.getByRole('table', { name: /Provisional weekly ranks/ })

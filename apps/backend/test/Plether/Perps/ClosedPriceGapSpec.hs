@@ -15,6 +15,26 @@ spec = do
     it "rejects a range whose approved deadline crosses the Sunday reopen" $
       withinWeeklyFxClosure 1_788_088_740 1_788_123_601 `shouldBe` False
 
+    it "matches core boundaries for the November DST transition" $ do
+      withinWeeklyFxClosure 1793394000 1793570400 `shouldBe` True
+      withinWeeklyFxClosure 1793393999 1793570400 `shouldBe` False
+      withinWeeklyFxClosure 1793394000 1793570401 `shouldBe` False
+
+    it "matches core boundaries for the March DST transition" $ do
+      withinWeeklyFxClosure 1772834400 1773003600 `shouldBe` True
+      withinWeeklyFxClosure 1772834399 1773003600 `shouldBe` False
+      withinWeeklyFxClosure 1772834400 1773003601 `shouldBe` False
+
+    it "matches core boundaries for the standard-time weekend" $ do
+      withinWeeklyFxClosure 1794002400 1794175200 `shouldBe` True
+      withinWeeklyFxClosure 1794002399 1794175200 `shouldBe` False
+      withinWeeklyFxClosure 1794002400 1794175201 `shouldBe` False
+
+    it "matches core boundaries for the daylight-time weekend" $ do
+      withinWeeklyFxClosure 1783112400 1783285200 `shouldBe` True
+      withinWeeklyFxClosure 1783112399 1783285200 `shouldBe` False
+      withinWeeklyFxClosure 1783112400 1783285201 `shouldBe` False
+
     it "rejects ordinary weekday downtime" $
       withinWeeklyFxClosure 1_788_300_000 1_788_303_600 `shouldBe` False
 

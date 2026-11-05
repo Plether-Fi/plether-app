@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { TierBadge } from '../divisions/Badge'
-import { useDivisions, useLiveDivisions } from '../divisions/query'
+import { useDivisions, useDivisionsStats, useLiveDivisions } from '../divisions/query'
 import { TIERS, TIER_REQUIREMENTS, tradingWeek } from '../divisions/rules'
 import { CurrentBadge } from '../divisions/CurrentBadge'
 import { useUtcNow } from '../hooks/useUtcNow'
@@ -11,6 +11,7 @@ import { formatCountdown, formatUtc, shortAddress } from '../utils/format'
 export function LeaderboardPage() {
   const query = useDivisions()
   const liveQuery = useLiveDivisions()
+  const statsQuery = useDivisionsStats()
   const now = useUtcNow(10_000)
   const week = tradingWeek(now)
   const [search, setSearch] = useState('')
@@ -30,17 +31,20 @@ export function LeaderboardPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-peach">Testnet · Weekly ranked trading</p>
         <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-6xl">Plether Divisions</h1>
         <p className="mt-5 max-w-2xl text-lg leading-7 text-content-secondary">Trade consistently. Climb the ranks. Earn your place.</p>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">Live weekly returns include every wallet with an executed trade on the current release, whether or not it has linked Discord. Rankings are provisional until the weekly close.</p>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">Live weekly returns include every wallet with an executed trade on the contract version scored this week, whether or not it has linked Discord. Rankings are provisional until the weekly close.</p>
         <div className="mt-6 flex flex-wrap gap-3"><a href="https://app.sepolia.plether.com" className="border border-brand-orange bg-brand-orange px-5 py-3 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">Start trading ↗</a><Link to="/register" className="border border-brand-border/40 px-5 py-3 text-sm font-semibold hover:bg-brand-peach/10">Link Discord and wallet</Link><Link to="/methodology" className="border border-brand-border/40 px-5 py-3 text-sm font-semibold hover:bg-brand-peach/10">How Divisions work</Link></div>
       </div>
-      {publication ? <dl className="relative mt-8 grid gap-5 border-t border-brand-border/20 pt-6 sm:grid-cols-3">
+      <dl className="relative mt-8 grid gap-5 border-t border-brand-border/20 pt-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div><dt className="text-xs text-content-tertiary">Wallets registered with Discord</dt><dd aria-live="polite" className="mt-2 text-2xl font-semibold text-brand-peach">{statsQuery.data?.registeredWallets.toLocaleString() ?? (statsQuery.isError ? 'Unavailable' : '…')}</dd>{statsQuery.isError ? <button type="button" onClick={() => void statsQuery.refetch()} className="mt-1 text-xs text-brand-peach underline" aria-label="Retry Discord registration count">Retry</button> : null}</div>
+        {publication ? <>
         <div><dt className="text-xs text-content-tertiary">Friday snapshot</dt><dd className="mt-2 text-sm font-semibold">{formatUtc(week.closesAt)}</dd></div>
         <div><dt className="text-xs text-content-tertiary">{now < Date.parse(week.closesAt) ? 'Time to close' : 'Monday announcement'}</dt><dd className="mt-2 font-mono text-sm text-brand-peach">{now < Date.parse(week.closesAt) ? formatCountdown(week.closesAt, now) : formatUtc(week.publishesAt)}</dd></div>
         <div><dt className="text-xs text-content-tertiary">Qualifying week</dt><dd className="mt-2 text-sm font-semibold">In profit after fees · 2+ active days</dd></div>
-      </dl> : null}
+        </> : null}
+      </dl>
     </section>
     <section aria-labelledby="live-leaderboard-title" className="space-y-4">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><h2 id="live-leaderboard-title" className="text-2xl font-semibold">Live weekly leaderboard</h2><p className="mt-1 text-sm text-content-secondary">Current release · Ranked by weekly return on cash-flow-adjusted account value · Provisional</p></div><div className="w-full sm:max-w-xs"><label htmlFor="trader-search" className="sr-only">Search traders</label><input id="trader-search" type="search" value={search} onChange={(event) => { setSearch(event.target.value); setLivePage(0) }} placeholder="Search wallet or Discord handle" className="w-full border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm placeholder:text-content-tertiary" /></div></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><h2 id="live-leaderboard-title" className="text-2xl font-semibold">Live weekly leaderboard</h2><p className="mt-1 text-sm text-content-secondary">This week{live?.scoringRelease ? ` · ${live.scoringRelease.version}` : ''} · Ranked by weekly return on cash-flow-adjusted account value · Provisional</p></div><div className="w-full sm:max-w-xs"><label htmlFor="trader-search" className="sr-only">Search traders</label><input id="trader-search" type="search" value={search} onChange={(event) => { setSearch(event.target.value); setLivePage(0) }} placeholder="Search wallet or Discord handle" className="w-full border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm placeholder:text-content-tertiary" /></div></div>
       {liveQuery.isLoading ? <Panel><LoadingState /></Panel> : liveQuery.isError ? <ErrorState title="Live rankings are unavailable" message={liveQuery.error.message} onRetry={() => void liveQuery.refetch()} /> : live ? <>
         <p className="text-xs text-content-tertiary">Snapshot {formatUtc(live.snapshotAt ?? '')} · Block {live.snapshotBlock} · {live.walletCount} wallets</p>
         <p className="text-xs text-content-tertiary">Badges are awarded on Monday after the trading week ends. Live returns do not change your current badge. {publication ? `Last awarded for the week ending ${formatUtc(publication.week.closesAt)}.` : 'New traders await their first published weekly result.'}</p>

@@ -41,12 +41,12 @@ verifyCloseAssistanceReceipt grant operationHash tx blockNumber blockHash eventI
       previous = maximum $ startIndex : [rlIndex l | l <- operationEvents, rlIndex l < eventIndex]
       scoped = filter (\l -> rlIndex l > previous && rlIndex l < eventIndex) logs
       accountTopic = addressTopic $ carAccount grant
-      token = T.toLower Manifest.mockUsdcAddress
+      token = T.toLower Manifest.settlementTokenAddress
       house = T.toLower Manifest.marginClearinghouseAddress
       mints = filter (\l -> rlAddress l == token && rlTopics l == [topic "Transfer(address,address,uint256)", zeroTopic, accountTopic]
-        && word (rlData l) == Just (carAmountUsdc grant)) scoped
+        && word (rlData l) == Just (carAmountAssets grant)) scoped
       deposits = filter (\l -> rlAddress l == house && rlTopics l == [topic "Deposit(address,address,uint256)", accountTopic, addressTopic token]
-        && word (rlData l) == Just (carAmountUsdc grant)) scoped
+        && word (rlData l) == Just (carAmountAssets grant)) scoped
       intents = filter (\l -> rlAddress l == T.toLower Manifest.orderLifecycleBookAddress && length (rlTopics l) == 4
         && take 1 (rlTopics l) == [intentTopic] && drop 2 (rlTopics l) == [accountTopic,T.toLower $ carClientOrderId grant]
         && BS.length (rlData l) == 25 * 32 && hex (keccak256 $ BS.take (19 * 32) $ BS.drop 64 $ rlData l) == T.toLower (carRequestHash grant)) scoped

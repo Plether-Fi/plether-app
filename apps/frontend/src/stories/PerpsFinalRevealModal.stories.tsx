@@ -24,10 +24,10 @@ const STORY_MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
-  usdcSupportsEip3009: false,
-  usdcEip712Name: null,
-  usdcEip712Version: null,
+  settlementToken: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
+  settlementTokenSupportsEip3009: false,
+  settlementTokenEip712Name: null,
+  settlementTokenEip712Version: null,
   marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
   cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
   orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
@@ -92,12 +92,12 @@ export default meta
 type Story = StoryObj<typeof meta>
 type TicketProps = ComponentProps<typeof PerpsTradeTicket>
 
-const USDC = 1_000_000n
-const POSITION_SIZE_TO_USDC_SCALE = 100_000_000_000_000_000_000n
+const ASSETS = 1_000_000n
+const POSITION_SIZE_TO_ASSETS_SCALE = 100_000_000_000_000_000_000n
 const ORDER_ID = 62n
 const FINAL_PRICE_RAW = 102_590_000n
-const TARGET_EXPOSURE_USDC = 2_116n * USDC
-const EXECUTED_SIZE_DELTA = ((TARGET_EXPOSURE_USDC * POSITION_SIZE_TO_USDC_SCALE) + FINAL_PRICE_RAW - 1n) / FINAL_PRICE_RAW
+const TARGET_EXPOSURE_ASSETS = 2_116n * ASSETS
+const EXECUTED_SIZE_DELTA = ((TARGET_EXPOSURE_ASSETS * POSITION_SIZE_TO_ASSETS_SCALE) + FINAL_PRICE_RAW - 1n) / FINAL_PRICE_RAW
 const COMMIT_TX = '0x46cb00000000000000000000000000000000000000000000000000000000001cbb'
 const AUTO_FINALIZE_TX = '0x6c0d00000000000000000000000000000000000000000000000000000000b7d3'
 const SELF_REVEAL_TX = '0x9e1f00000000000000000000000000000000000000000000000000000000cafe'
@@ -108,13 +108,13 @@ const executedPosition = {
   direction: 'long',
   size: EXECUTED_SIZE_DELTA,
   entryPrice: FINAL_PRICE_RAW,
-  marginUsdc: 401_980_000n,
-  unrealizedPnlUsdc: 0n,
-  maintenanceMarginUsdc: 20_100_000n,
+  marginAssets: 401_980_000n,
+  unrealizedPnlAssets: 0n,
+  maintenanceMarginAssets: 20_100_000n,
   liquidatable: false,
-  estimatedNotionalUsdc: 2_009_940_000n,
-  entryNotionalUsdc: 2_009_940_000n,
-  dxyExposureUsdc: 2_116_700_000n,
+  estimatedNotionalAssets: 2_009_940_000n,
+  entryNotionalAssets: 2_009_940_000n,
+  dxyExposureAssets: 2_116_700_000n,
 } satisfies PerpsPosition
 
 const automaticallyFinalizedOrderHistory = [
@@ -153,15 +153,15 @@ const baseModalArgs = {
   oracleFreshness: 'fresh',
   oracleFreshnessTooltip: 'backend updated just now',
   oraclePublishTime: Math.floor(Date.now() / 1_000),
-  availableToTradeRaw: 18_420n * USDC,
-  settlementBalanceUsdcRaw: 12_400n * USDC,
-  withdrawableUsdcRaw: 8_100n * USDC,
-  walletUsdcRaw: 5_000n * USDC,
-  marginAllowanceUsdc: 5_000n * USDC,
-  longOpenCapacityUsdc: 250_000n * USDC,
-  shortOpenCapacityUsdc: 250_000n * USDC,
-  minOpenNotionalUsdc: 10n * USDC,
-  minNewPositionNotionalUsdc: 10n * USDC,
+  availableToTradeRaw: 18_420n * ASSETS,
+  settlementBalanceAssetsRaw: 12_400n * ASSETS,
+  withdrawableAssetsRaw: 8_100n * ASSETS,
+  walletAssetsRaw: 5_000n * ASSETS,
+  marginAllowanceAssets: 5_000n * ASSETS,
+  longOpenCapacityAssets: 250_000n * ASSETS,
+  shortOpenCapacityAssets: 250_000n * ASSETS,
+  minOpenNotionalAssets: 10n * ASSETS,
+  minNewPositionNotionalAssets: 10n * ASSETS,
   maintenanceMarginBps: 100n,
   executionFeeBps: 4n,
 } satisfies Partial<TicketProps>
@@ -415,7 +415,7 @@ export const LiveOracleExactEvidence: Story = {
   render: renderModal({
     initialLifecycleState: 'executed',
     initialFinalExecutionOraclePrice: 102_570_000n,
-    initialFinalVpiUsdc: 182_822_887n,
+    initialFinalVpiAssets: 182_822_887n,
     currentPosition: executedPosition,
     orderHistory: automaticallyFinalizedOrderHistory,
   }),
@@ -426,7 +426,7 @@ export const NegativeVpiExactEvidence: Story = {
   render: renderModal({
     initialLifecycleState: 'executed',
     initialFinalExecutionOraclePrice: 102_570_000n,
-    initialFinalVpiUsdc: -44_872_071n,
+    initialFinalVpiAssets: -44_872_071n,
     currentPosition: executedPosition,
     orderHistory: automaticallyFinalizedOrderHistory,
   }),
@@ -439,9 +439,9 @@ export const FrozenOracleClose: Story = {
     initialDirection: 'short',
     initialReduceOnly: true,
     initialCommittedIsFullClose: true,
-    initialCommittedPositionVpiAccrued: 60n * USDC,
+    initialCommittedPositionVpiAccrued: 60n * ASSETS,
     initialFinalExecutionOracleFrozen: true,
-    initialFinalVpiUsdc: -2_875_000n,
+    initialFinalVpiAssets: -2_875_000n,
     currentPosition: executedPosition,
     currentPositionSide: 'long',
     currentPositionAmount: '2 116',
@@ -453,7 +453,7 @@ export const SelfExecutedSuccess: Story = {
   render: renderModalWithIdentity(OWNER_WALLET_IDENTITY, {
     initialLifecycleState: 'executed',
     initialExecuteTxHash: SELF_REVEAL_TX,
-    initialFinalVpiUsdc: 182_822_887n,
+    initialFinalVpiAssets: 182_822_887n,
     currentPosition: executedPosition,
   }),
 }
@@ -465,8 +465,8 @@ export const AutomaticCloseVpiCredited: Story = {
     initialDirection: 'short',
     initialReduceOnly: true,
     initialCommittedIsFullClose: true,
-    initialCommittedPositionVpiAccrued: 60n * USDC,
-    initialFinalVpiUsdc: -12_300_000n,
+    initialCommittedPositionVpiAccrued: 60n * ASSETS,
+    initialFinalVpiAssets: -12_300_000n,
     currentPosition: undefined,
     currentPositionAmount: '0',
   }),
@@ -479,8 +479,8 @@ export const AutomaticCloseVpiPaid: Story = {
     initialDirection: 'short',
     initialReduceOnly: true,
     initialCommittedIsFullClose: true,
-    initialCommittedPositionVpiAccrued: 60n * USDC,
-    initialFinalVpiUsdc: 4_250_000n,
+    initialCommittedPositionVpiAccrued: 60n * ASSETS,
+    initialFinalVpiAssets: 4_250_000n,
     currentPosition: undefined,
     currentPositionAmount: '0',
   }),

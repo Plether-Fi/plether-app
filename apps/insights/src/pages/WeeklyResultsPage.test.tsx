@@ -81,4 +81,25 @@ describe('published weekly results', () => {
     expect(screen.getByText('No published results yet')).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Results weeks' })).not.toBeInTheDocument()
   })
+
+  it('shows the fixed contract version without a selector and keeps historical wallet links', () => {
+    const publication = { ...latest, scoringRelease: { router: `0x${'1'.repeat(40)}`, version: 'v1.3.1', assetSymbol: 'USDC' } }
+    historyQuery.mockReturnValue({ data: { publication, olderCursor: firstCursor, newerCursor: null } })
+    show()
+    expect(screen.getByText('Contract version v1.3.1 · Fixed for this week')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByText('Bronze')).toHaveLength(2)
+    expect(within(table).getAllByText(/mock USDC$/)).toHaveLength(2)
+    expect(within(table).getAllByRole('link')).toHaveLength(2)
+    expect(screen.getByRole('link', { name: '← Older week' })).toHaveAttribute('href', `/results?week=${firstCursor}`)
+  })
+
+  it('removes a legacy contract selector from bookmarked URLs while retaining the week', () => {
+    show(`/results?week=${latestCursor}&releaseRouter=0x${'2'.repeat(40)}`)
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(`?week=${latestCursor}`)
+    expect(screen.getByLabelText('Current URL')).not.toHaveTextContent('releaseRouter')
+    expect(historyQuery).toHaveBeenLastCalledWith(latestCursor)
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+  })
 })

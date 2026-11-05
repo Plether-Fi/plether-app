@@ -17,16 +17,60 @@ consumes complete account snapshots, includes inactive previously ranked wallets
 and emits tier state, standings, and weekly announcement data. It uses exact
 integer ratios to rank percentage returns, without floating-point rounding.
 
-The home page shows live rankings and current awarded badges. Completed results live
+The home page shows live rankings, current awarded badges, and the total number
+of wallets registered with Discord. `/api/insights/v1/divisions/stats` returns
+`registeredWallets`, counting completed Discord/wallet links across all releases,
+including non-traders. Pending OAuth or wallet-verification sessions do not count.
+The counter refreshes every minute and remains available before weekly rankings. Completed results live
 on `/results` (Last week’s results), with older/newer navigation using stable week-start
 cursors in the URL. `/api/insights/v1/divisions/history?week=<epoch-seconds>` returns
 one saved publication plus `olderCursor` and `newerCursor`; omitting `week` selects
 the latest published week. Empty published weeks remain browsable.
 
+Each week has one persisted contract assignment in `divisions_weeks`, keyed by
+chain and week. October 11, 18 and 25 use Core v1.3.1 (mock USDC); November 1
+onward uses Core v2.0.0 (USDG). Append future cutovers only at week boundaries;
+startup rejects any change to an existing assignment. Results show the assigned
+version as read-only text. The API ignores legacy `releaseRouter` selectors;
+old frontend bookmarks redirect to the same week without the selector.
+
+History and current badges use only publications matching that week's assignment.
+Week navigation crosses contract upgrades, and earned tiers continue for the same
+wallet. Each week's balances, funding and trades come solely from its assigned
+release. Publication captures all prior badge holders as well as the new release's
+traded roster, so inactivity and promotion rules continue without inventing scores.
+Alternative-release publications remain untouched for audit and never count twice.
+The API normalizes historical `weeklyPnlUsdc` / `adjustedEquityUsdc` fields to
+`*Assets` when reading and includes `scoringRelease` metadata for the correct unit.
+Deploy the backend before the Insights frontend; startup creates and seeds the
+weekly assignment table before serving requests.
+
+This exposes existing publications; it does not rebuild missing weeks from a
+retired release. Before switching contracts, verify that its final completed
+week has been published, or arrange a replay with that release's original
+contract manifest, finalized indexed history and archive RPC access. Never copy
+or relabel a new deployment's empty weeks as the previous deployment's results.
+
+To check whether a retired release already has the needed publication, use the
+existing restricted database access with a read-only transaction. This lists
+publication coverage and trader counts without exposing account balances:
+
+```sql
+BEGIN READ ONLY;
+SELECT release_router, publication->'week'->>'startsAt' AS starts_at,
+       publication->'week'->>'closesAt' AS closes_at,
+       jsonb_array_length(publication->'standings') AS traders,
+       publication->>'publishedAt' AS published_at
+FROM divisions_publications
+WHERE chain_id = 421614
+ORDER BY week_start DESC, release_router;
+ROLLBACK;
+```
+
 The UI reads `/api/insights/v1/divisions/current` from the backend. The Insights
 worker captures finalized boundary values for every traded account, checks
-external funding against indexed USDC transfers, and appends each completed
-week to `divisions_publications`. It backfills from the first week in order,
+external funding against indexed settlement-token transfers, and appends each
+completed week to `divisions_publications`. It backfills from the first week in order,
 including empty weeks, one week per cycle. Publication starts Monday at 00:00
 UTC; failed captures leave the previous awards intact and retry next cycle.
 Awards persist across deployments and never expire with live snapshot freshness.
@@ -34,6 +78,17 @@ Every badge, including Iron, is awarded only in a completed week’s publication
 New traders show “Not yet awarded” until included in published results; returning
 traders keep their last awarded tier throughout the active week. Current-week
 returns remain provisional and never grant a badge.
+
+For `depositFor`, the worker verifies the canonical receipt's consecutive
+`Transfer`, `Deposit`, and `DepositFor` logs to identify the actual payer. It
+caches that proof in `divisions_deposit_payers`, scoped to the exact release,
+transaction, block hash, beneficiary, amount, and log positions, and still
+requires the matching indexed token transfer. The beneficiary's deposit counts
+once as external funding; it is not trading profit. Existing indexed deposits
+are repaired lazily, without replaying trade history. Worker/API startup creates
+the additive proof table. Deploy the worker to resume live captures; invalid or
+unavailable evidence continues to block publication.
+
 The API adds current registered Discord handles to published display names.
 The backend and TypeScript engines share multi-week regression fixtures.
 
@@ -123,6 +178,16 @@ ID, secret, and callback are provisioned.
 npm test
 npm run lint
 npm run build
+```
+
+## Deployment
+
+Insights deployment is manual-only. Pushes and merges to `master` do not publish
+the application. Deploy after confirming that the backend supports the API fields
+used by the selected frontend release:
+
+```sh
+gh workflow run deploy-insights.yml --repo Plether-Fi/plether-app --ref master
 ```
 
 Cloudflare Pages serves the SPA through `public/_worker.js`. Configure

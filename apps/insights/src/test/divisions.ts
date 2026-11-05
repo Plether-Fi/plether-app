@@ -4,7 +4,7 @@ import type { WeeklyAccount, WeeklyInput } from '../divisions/types'
 export function account(index = 1, overrides: Partial<WeeklyAccount> = {}): WeeklyAccount {
   return {
     address: `0x${index.toString(16).padStart(40, '0')}`, displayName: `Trader ${String(index)}`, hasTraded: true,
-    startingEquityUsdc: '100000000000', closingEquityUsdc: '110000000000', depositsUsdc: '0', withdrawalsUsdc: '0',
+    startingEquityAssets: '100000000000', closingEquityAssets: '110000000000', depositsAssets: '0', withdrawalsAssets: '0',
     executedTradeTimes: ['2026-10-12T10:00:00Z', '2026-10-13T10:00:00Z'], ...overrides,
   }
 }

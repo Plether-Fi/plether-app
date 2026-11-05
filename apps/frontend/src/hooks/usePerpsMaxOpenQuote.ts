@@ -6,24 +6,24 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { constrainPerpsMaxOpenPreview, perpsMaxOpenMarginBudget } from '../contracts/perpsMaxOpen'
 
 export function usePerpsMaxOpenQuote({
-  enabled, account, side, availableUsdc, oraclePrice, publishTime, protectionRewardsUsdc, selectedMaxLeverageBps,
+  enabled, account, side, availableAssets, oraclePrice, publishTime, protectionRewardsAssets, selectedMaxLeverageBps,
 }: {
   enabled: boolean
   account?: Address
   side: number
-  availableUsdc?: bigint
+  availableAssets?: bigint
   oraclePrice?: bigint
   publishTime?: number
-  protectionRewardsUsdc?: bigint
+  protectionRewardsAssets?: bigint
   selectedMaxLeverageBps: number
 }) {
   const client = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
-  const canRead = enabled && account !== undefined && availableUsdc !== undefined &&
+  const canRead = enabled && account !== undefined && availableAssets !== undefined &&
     oraclePrice !== undefined && oraclePrice > 0n && publishTime !== undefined && publishTime > 0 &&
-    protectionRewardsUsdc !== undefined && Number.isInteger(selectedMaxLeverageBps) && selectedMaxLeverageBps > 0
+    protectionRewardsAssets !== undefined && Number.isInteger(selectedMaxLeverageBps) && selectedMaxLeverageBps > 0
   const result = useQuery({
-    queryKey: ['perps', 'max-open', PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, account, side, availableUsdc?.toString(),
-      oraclePrice?.toString(), publishTime, protectionRewardsUsdc?.toString(), selectedMaxLeverageBps],
+    queryKey: ['perps', 'max-open', PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, account, side, availableAssets?.toString(),
+      oraclePrice?.toString(), publishTime, protectionRewardsAssets?.toString(), selectedMaxLeverageBps],
     enabled: canRead,
     refetchInterval: 15_000,
     retry: false,
@@ -32,16 +32,16 @@ export function usePerpsMaxOpenQuote({
       const blockNumber = await client.getBlockNumber()
       const [maximumBounty, capPrice] = await Promise.all([
         client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.orderRouter, abi: PERPS_ORDER_ROUTER_ABI,
-          functionName: 'maxOpenOrderExecutionBountyUsdc', blockNumber }),
+          functionName: 'maxOpenOrderExecutionBountyAssets', blockNumber }),
         client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.cfdEngine, abi: PERPS_CFD_ENGINE_ABI,
           functionName: 'CAP_PRICE', blockNumber }),
       ])
       signal.throwIfAborted()
-      const marginDelta = perpsMaxOpenMarginBudget(availableUsdc, maximumBounty, protectionRewardsUsdc)
+      const marginDelta = perpsMaxOpenMarginBudget(availableAssets, maximumBounty, protectionRewardsAssets)
       if (marginDelta <= 0n) return { marginDelta, quote: undefined }
       const quote = await client.readContract({
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens, abi: PERPS_CFD_ENGINE_LENS_ABI,
-        functionName: 'quoteMaxOpen', args: [account, side, marginDelta, oraclePrice, BigInt(publishTime)], blockNumber,
+        functionName: 'quoteMaxOpen', args: [account, side, marginDelta, oraclePrice], blockNumber,
       })
       signal.throwIfAborted()
       if (quote.maxSizeDelta === 0n || !quote.preview.valid) return { marginDelta, quote }
@@ -49,7 +49,7 @@ export function usePerpsMaxOpenQuote({
         quote, selectedMaxLeverageBps, oraclePrice, capPrice, signal,
         preview: (sizeDelta) => client.readContract({
           address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens, abi: PERPS_CFD_ENGINE_LENS_ABI,
-          functionName: 'previewOpen', args: [account, side, sizeDelta, marginDelta, oraclePrice, BigInt(publishTime)], blockNumber,
+          functionName: 'previewOpen', args: [account, side, sizeDelta, marginDelta, oraclePrice], blockNumber,
         }),
       })
       return { marginDelta, quote: { ...quote, maxSizeDelta: constrained?.sizeDelta ?? 0n,

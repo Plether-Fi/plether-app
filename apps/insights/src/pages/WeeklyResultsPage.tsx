@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { Announcements, Standings } from '../divisions/PublishedResults'
 import { useDivisionsHistory } from '../divisions/query'
@@ -13,8 +13,11 @@ export function WeeklyResultsPage() {
   const history = query.data
   const publication = history?.publication
   const standings = publication?.standings.filter((row) => `${row.address} ${row.displayName ? `@${row.displayName}` : ''}`.toLowerCase().includes(search.trim().toLowerCase())) ?? []
-  const pageLink = (cursor: string) => `/results?week=${encodeURIComponent(cursor)}`
+  const assetKind = publication?.scoringRelease?.assetSymbol === 'USDC' ? 'mock' : undefined
+  const pageLink = (cursor: string | null) => cursor === null ? '/results' : `/results?week=${cursor}`
   const buttonClass = 'border border-brand-border/40 px-4 py-2 text-sm font-semibold hover:bg-brand-peach/10'
+
+  if (params.has('releaseRouter')) return <Navigate to={pageLink(week)} replace />
 
   return <div className="space-y-6">
     <Link to="/" className="text-sm text-brand-peach hover:underline">← Live leaderboard</Link>
@@ -24,12 +27,12 @@ export function WeeklyResultsPage() {
     </div>
     {query.isLoading ? <Panel><LoadingState /></Panel> : query.isError && !history ? <>
       <ErrorState title="Weekly results are unavailable" message={query.error.message} onRetry={() => void query.refetch()} />
-      {week !== null ? <Link to="/results" className="text-sm text-brand-peach underline">Latest results</Link> : null}
+      {week !== null ? <Link to={pageLink(null)} className="text-sm text-brand-peach underline">Latest results</Link> : null}
     </> : publication ? <>
       <nav aria-label="Results weeks" className="flex flex-wrap items-center justify-between gap-3">
         {history.olderCursor ? <Link to={pageLink(history.olderCursor)} className={buttonClass}>← Older week</Link> : <button type="button" disabled className={`${buttonClass} opacity-40`}>← Older week</button>}
         <div className="flex flex-wrap gap-3">
-          {week !== null ? <Link to="/results" className={buttonClass}>Latest results</Link> : null}
+          {week !== null ? <Link to={pageLink(null)} className={buttonClass}>Latest results</Link> : null}
           {history.newerCursor ? <Link to={pageLink(history.newerCursor)} className={buttonClass}>Newer week →</Link> : <button type="button" disabled className={`${buttonClass} opacity-40`}>Newer week →</button>}
         </div>
       </nav>
@@ -39,8 +42,9 @@ export function WeeklyResultsPage() {
           <div className="w-full sm:max-w-xs"><label htmlFor="results-search" className="sr-only">Search results</label><input id="results-search" type="search" value={search} onChange={(event) => { setSearch(event.target.value) }} placeholder="Search wallet or Discord handle" className="w-full border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm placeholder:text-content-tertiary" /></div>
         </div>
         {query.isError ? <p role="status" className="text-sm text-brand-yellow">Could not refresh results. Showing the saved week. <button type="button" onClick={() => void query.refetch()} className="underline">Retry</button></p> : null}
+        {publication.scoringRelease ? <p className="text-xs text-content-tertiary">Contract version {publication.scoringRelease.version} · Fixed for this week</p> : null}
         <p className="text-sm leading-6 text-content-secondary">Ranked by weekly profit as a percentage of cash-flow-adjusted equity. Badges show the tier awarded for this completed week.</p>
-        <Panel>{publication.standings.length ? <Standings standings={standings} /> : <EmptyState title="No traders this week" message="This week was published with no trading accounts." />}</Panel>
+        <Panel>{publication.standings.length ? <Standings standings={standings} assetKind={assetKind} /> : <EmptyState title="No traders this week" message="No trading accounts were scored for this week." />}</Panel>
       </section>
       <Announcements publication={publication} />
     </> : <Panel><EmptyState title="No published results yet" message="The first completed week’s results will appear after Monday publication." /></Panel>}

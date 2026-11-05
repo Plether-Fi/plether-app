@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,9 +9,18 @@ import { fileURLToPath } from 'node:url'
 // checkout/edit that clone, fetch an RPC, load .env, sign live, or deploy.
 const core = process.argv[2]
 assert.ok(core, 'Usage: node scripts/aa-lifecycle-regression.mjs /path/to/plether-core')
-const source = 'ffe45937b7f38133133ad292c5435828bf99357d'
+const packageRelease = JSON.parse(readFileSync(new URL('../config/perps-aa-client-release.json', import.meta.url)))
+const source = JSON.parse(readFileSync(new URL('../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url))).release.sourceCommit
+assert.equal(packageRelease.version, '0.4.0')
+assert.match(source, /^[0-9a-f]{40}$/)
 const git = (...args) => execFileSync('git', ['-C', resolve(core), ...args], { maxBuffer: 100 * 1024 * 1024 })
 assert.equal(git('rev-parse', `${source}^{commit}`).toString().trim(), source)
+// The SDK artifact retains its original provenance. Its runtime sources must
+// match the deployed protocol source used by this regression.
+const sdkCompatibility = JSON.parse(readFileSync(new URL('../config/perps/evidence/v2.0.0/sdk-compatibility.json', import.meta.url)))
+assert.equal(sdkCompatibility.artifactSourceCommit, packageRelease.sourceCommit)
+assert.equal(sdkCompatibility.protocolSourceCommit, source)
+assert.equal(git('rev-parse', `${source}:${sdkCompatibility.runtimeSourcePath}`).toString().trim(), sdkCompatibility.runtimeSourceTree)
 const directory = mkdtempSync(join(tmpdir(), 'plether-aa-lifecycle-'))
 execFileSync('tar', ['-x', '-C', directory], { input: git('archive', source) })
 for (const name of ['forge-std', 'openzeppelin-contracts']) {
@@ -23,6 +32,8 @@ for (const name of ['forge-std', 'openzeppelin-contracts']) {
 }
 const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const cwd = join(directory, 'packages/perps')
+// Preserve historical EntryPoint/account/paymaster bytecode as test infrastructure;
+// the lifecycle fixture deploys the current canonical Core contracts locally.
 copyFileSync(join(fixtures, 'aa-deposit-gas-20260912.json'), join(cwd, 'aa-fixture.json'))
 copyFileSync(join(fixtures, 'NativeAALifecycle.t.sol'), join(cwd, 'test/perps/NativeAALifecycle.t.sol'))
 copyFileSync(join(fixtures, 'aa-lifecycle-foundry.toml'), join(cwd, 'foundry.toml'))

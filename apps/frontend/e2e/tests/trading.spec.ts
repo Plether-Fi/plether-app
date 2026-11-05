@@ -1,119 +1,97 @@
-import { test, expect, waitForPageLoad, clickConnectWallet } from '../fixtures/wallet'
+import { test, expect, waitForPageLoad } from '../fixtures/wallet'
+
+// These cover the real spot UI and API-client/query integration over a controlled
+// HTTP backend and injected wallet. They do not claim an on-chain swap succeeds.
+test.beforeEach(async ({ page, mockConnectedWallet }) => {
+  await page.goto('/spot')
+  await waitForPageLoad(page)
+  await mockConnectedWallet()
+  await expect(page.getByLabel('You pay', { exact: true })).toBeVisible()
+})
 
 test.describe('Trading Page', () => {
-  test.beforeEach(async ({ page, mockConnectedWallet }) => {
-    await mockConnectedWallet()
-    await page.goto('/')
-    await waitForPageLoad(page)
+  test('displays the required buy/sell controls and trade input', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Buy', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sell', exact: true })).toBeVisible()
+    await expect(page.getByLabel('You pay', { exact: true })).toBeEditable()
   })
 
-  test('displays trade card with buy/sell toggle', async ({ page }) => {
-    const buyButton = page.getByRole('button', { name: /^buy$/i })
-    const sellButton = page.getByRole('button', { name: /^sell$/i })
+  test('buy and sell modes change the input asset, label, and submission action', async ({ page }) => {
+    await page.getByRole('button', { name: 'Sell', exact: true }).click()
+    await expect(page.getByLabel('You sell', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sell plDXY-BULL', exact: true })).toBeDisabled()
+    await expect(page.getByLabel('You pay', { exact: true })).toHaveCount(0)
 
-    if (await buyButton.isVisible()) {
-      await expect(buyButton).toBeVisible()
-      await expect(sellButton).toBeVisible()
-    }
+    await page.getByRole('button', { name: 'Buy', exact: true }).click()
+    await expect(page.getByLabel('You pay', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Buy plDXY-BULL', exact: true })).toBeDisabled()
   })
 
-  test('can toggle between buy and sell modes', async ({ page }) => {
-    const buyButton = page.getByRole('button', { name: /^buy$/i })
-    const sellButton = page.getByRole('button', { name: /^sell$/i })
+  test('selecting BEAR and BULL changes the quoted asset and action', async ({ page }) => {
+    await page.getByRole('button', { name: /plDXY-BEAR Bearish on USD/ }).click()
+    await expect(page.getByRole('button', { name: 'Buy plDXY-BEAR', exact: true })).toBeDisabled()
+    await page.getByLabel('You pay', { exact: true }).fill('100')
+    await expect(page.getByText('200 plDXY-BEAR', { exact: true })).toBeVisible()
 
-    if (await buyButton.isVisible()) {
-      await buyButton.click()
-      await expect(buyButton).toHaveClass(/bg-cyber-surface-dark/)
-
-      await sellButton.click()
-      await expect(sellButton).toHaveClass(/bg-cyber-surface-dark/)
-    }
+    await page.getByRole('button', { name: /plDXY-BULL Bullish on USD/ }).click()
+    await expect(page.getByText('200 plDXY-BULL', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve & Buy', exact: true })).toBeEnabled()
   })
 
-  test('can select between BEAR and BULL tokens', async ({ page }) => {
-    const bearButton = page.getByRole('button', { name: /dxy-bear/i })
-    const bullButton = page.getByRole('button', { name: /dxy-bull/i })
-
-    if (await bearButton.isVisible()) {
-      await bearButton.click()
-      await expect(bearButton).toHaveClass(/border-brand-orange/)
-
-      await bullButton.click()
-      await expect(bullButton).toHaveClass(/border-positive/)
-    }
+  test('the numeric text input accepts a decimal amount', async ({ page }) => {
+    const input = page.getByLabel('You pay', { exact: true })
+    await input.fill('100.25')
+    await expect(input).toHaveValue('100.25')
+    await expect(page.getByText('200.5 plDXY-BULL', { exact: true })).toBeVisible()
   })
 
-  test('input field accepts numeric values', async ({ page }) => {
-    const input = page.getByRole('spinbutton')
-
-    if (await input.isVisible()) {
-      await input.fill('100')
-      await expect(input).toHaveValue('100')
-    }
+  test('swap details expose the selected route and numeric price impact', async ({ page }) => {
+    await page.getByLabel('You pay', { exact: true }).fill('100')
+    await expect(page.getByText('200 plDXY-BULL', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Swap details', exact: false }).click()
+    await expect(page.getByText('USDC → ZapRouter → plDXY-BULL', { exact: true })).toBeVisible()
+    await expect(page.getByText('Price Impact', { exact: true }).locator('..')).toHaveText('Price Impact0.50%')
   })
 
-  test('displays swap details section', async ({ page }) => {
-    const detailsToggle = page.getByRole('button', { name: /swap details/i })
-
-    if (await detailsToggle.isVisible()) {
-      await detailsToggle.click()
-
-      const routeText = page.getByText(/route/i)
-      const priceImpactText = page.getByText(/price impact/i)
-
-      await expect(routeText).toBeVisible()
-      await expect(priceImpactText).toBeVisible()
-    }
+  test('shows the configured slippage value', async ({ page }) => {
+    await expect(page.getByText('0.5% slippage', { exact: true })).toBeVisible()
   })
 
-  test('shows slippage setting', async ({ page }) => {
-    const slippageControl = page.getByRole('button', {
-      name: /^Max slippage\s+\d+(?:\.\d+)?%$/i,
-    })
-
-    if (await slippageControl.isVisible()) {
-      await expect(slippageControl).toBeVisible()
-    }
-  })
-
-  test('swap button shows appropriate state', async ({ page }) => {
-    const swapButton = page.getByRole('button', {
-      name: /buy dxy-|sell dxy-|approve|connect wallet/i,
-    }).first()
-
-    if (await swapButton.isVisible()) {
-      await expect(swapButton).toBeVisible()
-    }
+  test('requires a positive affordable amount and identifies approval before submission', async ({ page }) => {
+    const input = page.getByLabel('You pay', { exact: true })
+    await expect(page.getByRole('button', { name: 'Buy plDXY-BULL', exact: true })).toBeDisabled()
+    await input.fill('0')
+    await expect(page.getByRole('button', { name: 'Buy plDXY-BULL', exact: true })).toBeDisabled()
+    await input.fill('100')
+    await expect(page.getByText('200 plDXY-BULL', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve & Buy', exact: true })).toBeEnabled()
+    await input.fill('1001')
+    await expect(page.getByRole('button', { name: 'Insufficient USDC', exact: true })).toBeDisabled()
+    await input.clear()
+    await expect(page.getByRole('button', { name: 'Buy plDXY-BULL', exact: true })).toBeDisabled()
   })
 })
 
-test.describe('Trading Flow', () => {
-  test('entering amount updates output display', async ({ page, mockConnectedWallet }) => {
-    await mockConnectedWallet()
-    await page.goto('/')
-    await waitForPageLoad(page)
-
-    const input = page.getByRole('spinbutton')
-    const outputDisplay = page.getByText(/you receive/i)
-
-    if (await input.isVisible()) {
-      await input.fill('100')
-
-      if (await outputDisplay.isVisible()) {
-        await expect(outputDisplay).toBeVisible()
-      }
-    }
+test.describe('Trading quote flow', () => {
+  test('changing the input updates the numeric quoted output through the HTTP API', async ({ page }) => {
+    const input = page.getByLabel('You pay', { exact: true })
+    await expect(page.getByText('0 plDXY-BULL', { exact: true })).toBeVisible()
+    const firstRequest = page.waitForRequest(request => {
+      const url = new URL(request.url())
+      return url.pathname.endsWith('/quotes/zap') && url.searchParams.get('amount') === '100000000'
+    })
+    await input.fill('100')
+    await firstRequest
+    await expect(page.getByText('200 plDXY-BULL', { exact: true })).toBeVisible()
+    await input.fill('25')
+    await expect(page.getByText('50 plDXY-BULL', { exact: true })).toBeVisible()
+    await expect(page.getByText('200 plDXY-BULL', { exact: true })).toHaveCount(0)
   })
 
-  test('shows max button on input', async ({ page, mockConnectedWallet }) => {
-    await mockConnectedWallet()
-    await page.goto('/')
-    await waitForPageLoad(page)
-
-    const maxButton = page.getByRole('button', { name: /^Max: .* USDC$/i })
-
-    if (await maxButton.isVisible()) {
-      await expect(maxButton).toBeVisible()
-    }
+  test('MAX fills the loaded USDC balance and refreshes the quote', async ({ page }) => {
+    await page.getByRole('button', { name: 'MAX', exact: true }).click()
+    await expect(page.getByLabel('You pay', { exact: true })).toHaveValue('1000')
+    await expect(page.getByText('2,000 plDXY-BULL', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve & Buy', exact: true })).toBeEnabled()
   })
 })

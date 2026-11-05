@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import deployedManifest from '../../public/perps-aa-manifest.json'
+import deployedManifest from '../contracts/__tests__/fixtures/perps-canonical-aa.json'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { executeSponsoredPerpsAction, resumeSponsoredPerpsAction } from './execution'
 import { SponsorRequestError } from './errors'

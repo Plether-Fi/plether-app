@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="856" viewBox="0 0 640 856" role="img" aria-labelledby="authorization-and-gas-sponsorship-title authorization-and-gas-sponsorship-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="952" viewBox="0 0 640 952" role="img" aria-labelledby="authorization-and-gas-sponsorship-title authorization-and-gas-sponsorship-desc" focusable="false">
 <title id="authorization-and-gas-sponsorship-title">Sponsorship before the signature</title>
-<desc id="authorization-and-gas-sponsorship-desc">Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result. Sponsorship does not pay your margin, execution bounties or trading costs.</desc>
+<desc id="authorization-and-gas-sponsorship-desc">Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result. Sponsorship covers eligible network gas. Openings can reserve an execution reward; TP/SL can reserve a separate trigger reward. Reduce and close orders reserve no execution reward.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="856" rx="16" fill="#FFF5F9"/>
+<rect width="640" height="952" rx="16" fill="#FFF5F9"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / AUTHORIZATION</text>
 <text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Sponsorship before the</text>
 <text x="32" y="155" font-size="36" font-weight="700" fill="#250917" data-max-width="576">signature</text>
@@ -31,7 +31,10 @@
 <text x="80" y="635" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Submit and verify</text>
 <text x="80" y="672" font-size="24" font-weight="400" fill="#250917" data-max-width="528">The sponsor covers eligible network gas.</text>
 <text x="80" y="704" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Check onchain success.</text>
-<rect x="32" y="728" width="576" height="96" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="766" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Sponsorship does not pay your margin,</text>
-<text x="50" y="798" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">execution bounties or trading costs.</text>
+<rect x="32" y="728" width="576" height="192" rx="12" fill="#250917" stroke="none"/>
+<text x="50" y="766" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Sponsorship covers eligible network gas.</text>
+<text x="50" y="798" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Openings can reserve an execution reward;</text>
+<text x="50" y="830" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">TP/SL can reserve a separate trigger</text>
+<text x="50" y="862" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">reward. Reduce and close orders reserve no</text>
+<text x="50" y="894" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">execution reward.</text>
 </svg>

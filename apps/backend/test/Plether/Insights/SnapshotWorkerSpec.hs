@@ -73,14 +73,14 @@ spec = do
       -- The old position-only value was 73,603.094480, omitting 30,425.778922
       -- of free settlement and liquidation reserve from a 100,000 deposit.
       let ledger = sampleSnapshot
-            { alsSettlementBalanceUsdc = 99_155_238_343
-            , alsLiquidationReachableSettlementUsdc = 99_155_238_343
-            , alsFreeSettlementUsdc = 29_051_217_243
-            , alsActivePositionMarginUsdc = 68_729_459_421
-            , alsOtherLockedMarginUsdc = 1_374_561_679
-            , alsTraderClaimBalanceUsdc = 0
-            , alsUnrealizedPnlUsdc = 4_877_449_920
-            , alsNetEquityUsdc = 73_603_094_480
+            { alsSettlementBalanceAssets = 99_155_238_343
+            , alsLiquidationReachableSettlementAssets = 99_155_238_343
+            , alsFreeSettlementAssets = 29_051_217_243
+            , alsActivePositionMarginAssets = 68_729_459_421
+            , alsOtherLockedMarginAssets = 1_374_561_679
+            , alsTraderClaimBalanceAssets = 0
+            , alsUnrealizedPnlAssets = 4_877_449_920
+            , alsNetEquityAssets = 73_603_094_480
             }
           carry = 3_814_861
           equity = ledgerToEquity ledger carry
@@ -88,31 +88,31 @@ spec = do
             (EquitySnapshot False 0 0 0) equity 100_000_000_000 0 0
       inferPendingCarry ledger `shouldBe` Just carry
       economicAccountValue equity `shouldBe` 104_028_873_402
-      sbFinalPnlUsdc score `shouldBe` 4_028_873_402
-      sbFinalPnlUsdc score - alsUnrealizedPnlUsdc ledger `shouldBe` -848_576_518
+      sbFinalPnlAssets score `shouldBe` 4_028_873_402
+      sbFinalPnlAssets score - alsUnrealizedPnlAssets ledger `shouldBe` -848_576_518
 
     it "counts claims once and retains order and liquidation reserves" $ do
       let ledger = sampleSnapshot
-            { alsSettlementBalanceUsdc = 1_000
-            , alsLiquidationReachableSettlementUsdc = 980
-            , alsExecutionBountyReserveUsdc = 20
-            , alsFreeSettlementUsdc = 650
-            , alsActivePositionMarginUsdc = 100
-            , alsOtherLockedMarginUsdc = 250
-            , alsTraderClaimBalanceUsdc = 40
-            , alsUnrealizedPnlUsdc = -25
-            , alsNetEquityUsdc = 105 -- 100 pledge - 10 carry + 40 claims - 25 PnL
+            { alsSettlementBalanceAssets = 1_000
+            , alsLiquidationReachableSettlementAssets = 980
+            , alsExecutionBountyReserveAssets = 20
+            , alsFreeSettlementAssets = 650
+            , alsActivePositionMarginAssets = 100
+            , alsOtherLockedMarginAssets = 250
+            , alsTraderClaimBalanceAssets = 40
+            , alsUnrealizedPnlAssets = -25
+            , alsNetEquityAssets = 105 -- 100 pledge - 10 carry + 40 claims - 25 PnL
             }
       inferPendingCarry ledger `shouldBe` Just 10
       economicAccountValue (ledgerToEquity ledger 10) `shouldBe` 985
 
     it "requires the full carry charge once the projected pledge is exhausted" $ do
       let ledger = sampleSnapshot
-            { alsLiquidationReachableSettlementUsdc = 1_000
-            , alsActivePositionMarginUsdc = 100
-            , alsTraderClaimBalanceUsdc = 40
-            , alsUnrealizedPnlUsdc = -25
-            , alsNetEquityUsdc = 15 -- zero pledge + claims + price PnL
+            { alsLiquidationReachableSettlementAssets = 1_000
+            , alsActivePositionMarginAssets = 100
+            , alsTraderClaimBalanceAssets = 40
+            , alsUnrealizedPnlAssets = -25
+            , alsNetEquityAssets = 15 -- zero pledge + claims + price PnL
             }
       inferPendingCarry ledger `shouldBe` Nothing
       -- Includes the extra 50 consumed from free settlement.
@@ -145,13 +145,13 @@ spec = do
     it "preserves signed monetary fields as lossless decimal strings" $ do
       case snapshotToJson sampleSnapshot of
         Object fields -> do
-          KeyMap.lookup (Key.fromString "unrealizedPnlUsdc") fields
+          KeyMap.lookup (Key.fromString "unrealizedPnlAssets") fields
             `shouldBe` Just (String "-25")
-          KeyMap.lookup (Key.fromString "netEquityUsdc") fields
+          KeyMap.lookup (Key.fromString "netEquityAssets") fields
             `shouldBe` Just (String "975")
-          KeyMap.lookup (Key.fromString "liquidationReachableSettlementUsdc") fields
+          KeyMap.lookup (Key.fromString "liquidationReachableSettlementAssets") fields
             `shouldBe` Just (String "900")
-          KeyMap.lookup (Key.fromString "terminalPriceCollectibleCapUsdc") fields
+          KeyMap.lookup (Key.fromString "terminalPriceCollectibleCapAssets") fields
             `shouldBe` Just (String "900")
         _ -> expectationFailure "expected a JSON object"
 
@@ -195,7 +195,7 @@ spec = do
             [ Multicall.CallResult True (encodedSnapshot 11)
             , Multicall.CallResult True (encodedSnapshot 22)
             ]
-      fmap (map alsSettlementBalanceUsdc) (decodeSnapshotResults 2 results)
+      fmap (map alsSettlementBalanceAssets) (decodeSnapshotResults 2 results)
         `shouldBe` Right [11, 22]
 
     it "rejects a failed allow-failure subcall" $
@@ -234,29 +234,29 @@ block number =
 sampleSnapshot :: AccountLedgerSnapshot
 sampleSnapshot =
   AccountLedgerSnapshot
-    { alsSettlementBalanceUsdc = 1_000
-    , alsFreeSettlementUsdc = 900
-    , alsActivePositionMarginUsdc = 100
-    , alsOtherLockedMarginUsdc = 0
-    , alsPositionMarginBucketUsdc = 100
-    , alsCommittedOrderMarginBucketUsdc = 0
-    , alsReservedSettlementBucketUsdc = 0
-    , alsExecutionBountyReserveUsdc = 0
-    , alsCommittedMarginUsdc = 0
-    , alsTraderClaimBalanceUsdc = 10
+    { alsSettlementBalanceAssets = 1_000
+    , alsFreeSettlementAssets = 900
+    , alsActivePositionMarginAssets = 100
+    , alsOtherLockedMarginAssets = 0
+    , alsPositionMarginBucketAssets = 100
+    , alsCommittedOrderMarginBucketAssets = 0
+    , alsReservedSettlementBucketAssets = 0
+    , alsExecutionBountyReserveAssets = 0
+    , alsCommittedMarginAssets = 0
+    , alsTraderClaimBalanceAssets = 10
     , alsPendingOrderCount = 0
-    , alsCloseReachableUsdc = 900
-    , alsLiquidationReachableSettlementUsdc = 900
-    , alsTerminalPriceCollectibleCapUsdc = 900
-    , alsAccountEquityUsdc = 975
-    , alsFreeBuyingPowerUsdc = 875
+    , alsCloseReachableAssets = 900
+    , alsLiquidationReachableSettlementAssets = 900
+    , alsTerminalPriceCollectibleCapAssets = 900
+    , alsAccountEquityAssets = 975
+    , alsFreeBuyingPowerAssets = 875
     , alsHasPosition = True
     , alsSide = 0
     , alsSize = 1
     , alsMargin = 100
     , alsEntryPrice = 100
-    , alsUnrealizedPnlUsdc = -25
-    , alsNetEquityUsdc = 975
+    , alsUnrealizedPnlAssets = -25
+    , alsNetEquityAssets = 975
     , alsLiquidatable = False
     }
 

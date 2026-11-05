@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, waitFor, within } from 'storybook/test'
@@ -24,7 +25,7 @@ function CostOfCarryTooltip() {
       </p>
       <p>
         This is not a funding rate; both sides can pay carry at the same time. The actual
-        USDC amount depends on borrow base, side utilization, and elapsed time.
+        {PERPS_SETTLEMENT_TOKEN_LABEL} amount depends on borrow base, side utilization, and elapsed time.
       </p>
     </div>
   )
@@ -33,16 +34,16 @@ function CostOfCarryTooltip() {
 const LONG_HEAVY_87: PerpsDirectionalLimitDetails = {
   usagePercent: 87,
   side: 'long',
-  totalExposure: <TokenAmount amount="882.9M" />,
-  netExposure: <TokenAmount amount="307.2M" />,
-  limit: <TokenAmount amount="353.1M" />,
+  totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="882.9M" />,
+  netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="307.2M" />,
+  limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
 }
 
 const HEALTHY_POOL_CAPITAL: PerpsPoolLiquidityDetailsProps = {
-  poolAssetsUsdc: 10_000_000n * 1_000_000n,
-  freeUsdc: 6_300_000n * 1_000_000n,
-  juniorPrincipal: <TokenAmount amount="3.2M" />,
-  seniorPrincipal: <TokenAmount amount="6.8M" />,
+  poolAssets: 10_000_000n * 1_000_000n,
+  freeAssets: 6_300_000n * 1_000_000n,
+  juniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.2M" />,
+  seniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6.8M" />,
   juniorSharePercent: 32,
   seniorSharePercent: 68,
   seniorStatus: 'at-high-water-mark',
@@ -193,11 +194,11 @@ function instrumentStats({
       hoverDetails: priceDetails,
     },
     { label: '24h change', value: priceChange, tone: priceChangeTone },
-    { label: '24h volume', value: <TokenAmount amount={volume} /> },
+    { label: '24h volume', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={volume} /> },
     directionalLimitStat(directionalLimit),
     {
       label: 'Free pool liquidity',
-      value: <TokenAmount amount={liquidity} />,
+      value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={liquidity} />,
       hoverDetailsType: 'pool-liquidity',
       hoverDetailsLabel: 'Free pool liquidity details',
       hoverDetails: <PerpsPoolLiquidityDetails {...poolCapital} />,
@@ -248,9 +249,9 @@ export const WideDesktop: Story = {
       directionalLimit: {
         usagePercent: 98,
         side: 'long',
-        totalExposure: <TokenAmount amount="875.8M" />,
-        netExposure: <TokenAmount amount="346M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="875.8M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="346M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
       price: '1.0153',
       priceChange: '-0.17%',
@@ -430,8 +431,14 @@ export const HoverOverlayOnChart: Story = {
     await userEvent.hover(trigger)
 
     await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(canvas.getByText('Total LONG exposure')).toBeVisible()
-    await expect(canvas.getByText('Net LONG exposure')).toBeVisible()
+    // Expansion animates from zero height/opacity after aria-expanded changes.
+    // Wait for its visible content and final anchor before comparing geometry.
+    await waitFor(() => {
+      expect(canvas.getByText('Total LONG exposure')).toBeVisible()
+      expect(canvas.getByText('Net LONG exposure')).toBeVisible()
+      expect(overlay.getBoundingClientRect().top).toBe(panel.getBoundingClientRect().bottom - 1)
+      expect(getComputedStyle(overlay).opacity).toBe('1')
+    })
     expect(panel.getBoundingClientRect().height).toBe(panelHeight)
     expect(chart.getBoundingClientRect().top).toBe(chartTop)
 
@@ -467,9 +474,9 @@ export const PositiveSession: Story = {
       directionalLimit: {
         usagePercent: 58,
         side: 'long',
-        totalExposure: <TokenAmount amount="734.6M" />,
-        netExposure: <TokenAmount amount="204.8M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="734.6M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="204.8M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
       price: '1.0066',
       priceChange: '+0.21%',
@@ -506,9 +513,9 @@ export const ShortHeavy: Story = {
       directionalLimit: {
         usagePercent: 62,
         side: 'short',
-        totalExposure: <TokenAmount amount="580.8M" />,
-        netExposure: <TokenAmount amount="225.4M" />,
-        limit: <TokenAmount amount="363.3M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="580.8M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="225.4M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="363.3M" />,
       },
     }),
   },
@@ -529,9 +536,9 @@ export const Balanced: Story = {
       directionalLimit: {
         usagePercent: 0,
         side: 'balanced',
-        totalExposure: <TokenAmount amount="529.8M" />,
-        netExposure: <TokenAmount amount="0" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="529.8M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
     }),
   },
@@ -552,9 +559,9 @@ export const NearLimit: Story = {
       directionalLimit: {
         usagePercent: 94,
         side: 'long',
-        totalExposure: <TokenAmount amount="861.7M" />,
-        netExposure: <TokenAmount amount="331.9M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="861.7M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="331.9M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
     }),
   },
@@ -567,9 +574,9 @@ export const LimitReached: Story = {
       directionalLimit: {
         usagePercent: 100,
         side: 'long',
-        totalExposure: <TokenAmount amount="882.9M" />,
-        netExposure: <TokenAmount amount="353.1M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="882.9M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
     }),
   },
@@ -583,9 +590,9 @@ export const LimitReachedDetailsVisible: Story = {
       directionalLimit: {
         usagePercent: 100,
         side: 'long',
-        totalExposure: <TokenAmount amount="882.9M" />,
-        netExposure: <TokenAmount amount="353.1M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="882.9M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
     }),
   },
@@ -598,9 +605,9 @@ export const LimitExceeded: Story = {
       directionalLimit: {
         usagePercent: 108,
         side: 'long',
-        totalExposure: <TokenAmount amount="911.1M" />,
-        netExposure: <TokenAmount amount="381.3M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="911.1M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="381.3M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
     }),
   },
@@ -614,9 +621,9 @@ export const LimitExceededDetailsVisible: Story = {
       directionalLimit: {
         usagePercent: 108,
         side: 'long',
-        totalExposure: <TokenAmount amount="911.1M" />,
-        netExposure: <TokenAmount amount="381.3M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="911.1M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="381.3M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="353.1M" />,
       },
     }),
   },
@@ -647,10 +654,10 @@ export const PoolLiquidityNearlyReserved: Story = {
       liquidity: '1.1K',
       poolCapital: {
         ...HEALTHY_POOL_CAPITAL,
-        poolAssetsUsdc: 590_100_000n * 1_000_000n,
-        freeUsdc: 1_100n * 1_000_000n,
-        juniorPrincipal: <TokenAmount amount="585.1M" />,
-        seniorPrincipal: <TokenAmount amount="5M" />,
+        poolAssets: 590_100_000n * 1_000_000n,
+        freeAssets: 1_100n * 1_000_000n,
+        juniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="585.1M" />,
+        seniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="5M" />,
         juniorSharePercent: 99.2,
         seniorSharePercent: 0.8,
       },
@@ -664,7 +671,13 @@ export const PoolLiquidityNearlyReserved: Story = {
     await userEvent.keyboard('{Enter}')
     await expect(trigger).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => expect(canvas.getByText('>99.9%')).toBeVisible())
-    await expect(canvas.getByText('Total pool assets')).toBeVisible()
+    const total = canvas.getByText('Total pool USDG')
+    const reserved = canvas.getByText('Reserved pool USDG')
+    await expect(total).toBeVisible()
+    await expect(within(total.parentElement!).getByText('590 100 000')).toBeVisible()
+    await expect(within(total.parentElement!).getByText('USDG', { exact: true })).toBeVisible()
+    await expect(within(reserved.parentElement!).getByText('590 098 900')).toBeVisible()
+    await expect(within(reserved.parentElement!).getByText('USDG', { exact: true })).toBeVisible()
     await expect(canvas.getByText('What this means for trading')).toBeVisible()
     await expect(canvas.queryByText(/trading capacity/i)).not.toBeInTheDocument()
   },
@@ -677,9 +690,9 @@ export const PoolLiquidityJuniorExhausted: Story = {
       liquidity: '2.2M',
       poolCapital: {
         ...HEALTHY_POOL_CAPITAL,
-        poolAssetsUsdc: 6_800_000n * 1_000_000n,
-        freeUsdc: 2_200_000n * 1_000_000n,
-        juniorPrincipal: <TokenAmount amount="0" />,
+        poolAssets: 6_800_000n * 1_000_000n,
+        freeAssets: 2_200_000n * 1_000_000n,
+        juniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0" />,
         juniorSharePercent: 0,
         seniorSharePercent: 100,
         isJuniorExhausted: true,
@@ -696,14 +709,14 @@ export const PoolLiquiditySeniorImpaired: Story = {
       liquidity: '1.7M',
       poolCapital: {
         ...HEALTHY_POOL_CAPITAL,
-        poolAssetsUsdc: 5_900_000n * 1_000_000n,
-        freeUsdc: 1_700_000n * 1_000_000n,
-        juniorPrincipal: <TokenAmount amount="0" />,
-        seniorPrincipal: <TokenAmount amount="5.9M" />,
+        poolAssets: 5_900_000n * 1_000_000n,
+        freeAssets: 1_700_000n * 1_000_000n,
+        juniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0" />,
+        seniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="5.9M" />,
         juniorSharePercent: 0,
         seniorSharePercent: 100,
         seniorStatus: 'impaired',
-        seniorImpairment: <TokenAmount amount="900K" />,
+        seniorImpairment: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="900K" />,
         isJuniorExhausted: true,
       },
     }),

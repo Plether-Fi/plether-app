@@ -9,6 +9,7 @@ import type { Address, Hex } from 'viem'
 import { SponsoredOperationHistoryButton } from '../components/SponsoredOperationActivity'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { SPONSORED_OPERATION_STORAGE_NAME } from '../perps-aa/operationStore'
 import { anvil } from '../config/wagmi'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from '../perps-aa/manifest'
@@ -42,10 +43,10 @@ const MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
-  usdcSupportsEip3009: false,
-  usdcEip712Name: null,
-  usdcEip712Version: null,
+  settlementToken: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
+  settlementTokenSupportsEip3009: false,
+  settlementTokenEip712Name: null,
+  settlementTokenEip712Version: null,
   marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
   cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
   orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
@@ -192,6 +193,18 @@ const mixedOperations = [
   ...failedOperations,
 ]
 
+function operationStorageEntries() {
+  return Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+    .filter((key): key is string => key !== null && (
+      key === SPONSORED_OPERATION_STORAGE_NAME || key.startsWith(`${SPONSORED_OPERATION_STORAGE_NAME}:`)
+    ))
+    .map(key => [key, localStorage.getItem(key)!] as const)
+}
+
+function clearOperationStorage() {
+  for (const [key] of operationStorageEntries()) localStorage.removeItem(key)
+}
+
 function WalletHeaderPreview({
   operations,
   confirmOperationId,
@@ -209,6 +222,11 @@ function WalletHeaderPreview({
     const previousActiveLanes =
       useSponsoredOperationStore.getState().activeLanes
     const previousActivityRequest = usePerpsUiStore.getState().activityRequest
+    const previousStorage = operationStorageEntries()
+    // Recovery deliberately rehydrates durable per-operation journals. Give
+    // each preview its own journal as well as its in-memory fixture, otherwise
+    // a saved deposit from an earlier story can reappear during order recovery.
+    clearOperationStorage()
     usePerpsUiStore.setState({ activityRequest: null })
     const activeOperation = operations
       .filter((operation) => !isSponsoredOperationTerminal(operation.status))
@@ -237,10 +255,13 @@ function WalletHeaderPreview({
       if (confirmationTimeoutId !== null) {
         window.clearTimeout(confirmationTimeoutId)
       }
+      clearOperationStorage()
       useSponsoredOperationStore.setState({
         operations: previousOperations,
         activeLanes: previousActiveLanes,
       })
+      clearOperationStorage()
+      for (const [key, value] of previousStorage) localStorage.setItem(key, value)
       usePerpsUiStore.setState({ activityRequest: previousActivityRequest })
     }
   }, [confirmOperationId, operations])
@@ -774,6 +795,9 @@ export const ExpiredOrderFreshReview: Story = {
     expect(canvas.getByLabelText('Order quantity')).toHaveValue('200')
     expect(canvas.getByRole('button', { name: 'Review Short' })).toBeVisible()
     expect(canvas.getByText(/Trade inputs restored/)).toBeVisible()
+    expect(useSponsoredOperationStore.getState().operations.find(operation => operation.id === expiredOrderId))
+      .toMatchObject({ status: 'cancelled', preparationResolved: true })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT_ADDRESS)).toBeUndefined()
     expect(canvas.queryByRole('region', { name: 'Pending Trading Account action' })).not.toBeInTheDocument()
   },
 }

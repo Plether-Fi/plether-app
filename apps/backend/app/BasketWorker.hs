@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
@@ -116,6 +118,7 @@ defaultPollSeconds = 5
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   rawArgs <- getArgs
   case parseWorkerArgs rawArgs of
     Left err -> do

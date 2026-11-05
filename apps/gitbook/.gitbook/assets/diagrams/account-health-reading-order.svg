@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="921" viewBox="0 0 640 921" role="img" aria-labelledby="account-health-reading-order-title account-health-reading-order-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="953" viewBox="0 0 640 953" role="img" aria-labelledby="account-health-reading-order-title account-health-reading-order-desc" focusable="false">
 <title id="account-health-reading-order-title">Read account health in context</title>
 <desc id="account-health-reading-order-desc">Recommended reading order, not a calculation or state transition: market regime, position, equity and margin, liquidation context, pending obligations and spendable balances. </desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="921" rx="16" fill="#FFF5F9"/>
+<rect width="640" height="953" rx="16" fill="#FFF5F9"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / ACCOUNT CHECKLIST</text>
 <text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Read account health in context</text>
 <path d="M32 143 L608 143" stroke="#9A8890" stroke-width="2" fill="none"/>
@@ -21,9 +21,9 @@
 <circle cx="47" cy="418" r="14" fill="#9A8890"/>
 <circle cx="47" cy="418" r="5" fill="#250917"/>
 <text x="80" y="427" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Equity and margin</text>
-<text x="80" y="464" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Compare signed position equity with</text>
-<text x="80" y="496" font-size="24" font-weight="400" fill="#250917" data-max-width="528">maintenance. Settlement balance is</text>
-<text x="80" y="528" font-size="24" font-weight="400" fill="#250917" data-max-width="528">separate.</text>
+<text x="80" y="464" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Compare equity after margin-first carry</text>
+<text x="80" y="496" font-size="24" font-weight="400" fill="#250917" data-max-width="528">projection with maintenance. USDG balance</text>
+<text x="80" y="528" font-size="24" font-weight="400" fill="#250917" data-max-width="528">is separate.</text>
 <path d="M47 439 L47 553" stroke="#9A8890" stroke-width="2" fill="none"/>
 <circle cx="47" cy="581" r="14" fill="#9A8890"/>
 <circle cx="47" cy="581" r="5" fill="#250917"/>
@@ -34,11 +34,12 @@
 <circle cx="47" cy="712" r="14" fill="#9A8890"/>
 <circle cx="47" cy="712" r="5" fill="#250917"/>
 <text x="80" y="721" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Pending obligations</text>
-<text x="80" y="758" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Check orders, TP/SL and reserved funds.</text>
-<path d="M47 733 L47 783" stroke="#9A8890" stroke-width="2" fill="none"/>
-<circle cx="47" cy="811" r="14" fill="#9A8890"/>
-<circle cx="47" cy="811" r="5" fill="#250917"/>
-<text x="80" y="820" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Spendable balances</text>
-<text x="80" y="857" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Available to Trade and Withdrawable have</text>
-<text x="80" y="889" font-size="24" font-weight="400" fill="#250917" data-max-width="528">different checks.</text>
+<text x="80" y="758" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Check any uncovered carry, orders, TP/SL</text>
+<text x="80" y="790" font-size="24" font-weight="400" fill="#250917" data-max-width="528">and reserved funds.</text>
+<path d="M47 733 L47 815" stroke="#9A8890" stroke-width="2" fill="none"/>
+<circle cx="47" cy="843" r="14" fill="#9A8890"/>
+<circle cx="47" cy="843" r="5" fill="#250917"/>
+<text x="80" y="852" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Spendable balances</text>
+<text x="80" y="889" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Available to Trade and Withdrawable have</text>
+<text x="80" y="921" font-size="24" font-weight="400" fill="#250917" data-max-width="528">different checks.</text>
 </svg>

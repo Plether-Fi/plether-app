@@ -1,4 +1,4 @@
-import type { DivisionPublication, WeeklyInput } from './types.ts'
+import type { DivisionPublication, ScoringRelease, WeeklyInput } from './types.ts'
 import { TIERS, tradingWeek } from './rules.ts'
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -10,12 +10,18 @@ function boundary(value: unknown): boolean {
     && typeof value.hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value.hash)
 }
 
+export function isScoringRelease(value: unknown): value is ScoringRelease {
+  return record(value) && typeof value.router === 'string' && /^0x[0-9a-f]{40}$/.test(value.router)
+    && typeof value.version === 'string' && /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.version)
+    && (value.assetSymbol === 'USDC' || value.assetSymbol === 'USDG')
+}
+
 export function isWeeklyInput(value: unknown): value is WeeklyInput {
   return record(value) && typeof value.startsAt === 'string' && typeof value.publishedAt === 'string'
     && boundary(value.baselineBlock) && boundary(value.closingBlock) && Array.isArray(value.accounts)
     && value.accounts.every((row) => record(row) && typeof row.address === 'string'
       && (row.displayName === null || typeof row.displayName === 'string') && typeof row.hasTraded === 'boolean'
-      && ['startingEquityUsdc', 'closingEquityUsdc', 'depositsUsdc', 'withdrawalsUsdc'].every((key) => typeof row[key] === 'string' && /^\d+$/.test(row[key]))
+      && ['startingEquityAssets', 'closingEquityAssets', 'depositsAssets', 'withdrawalsAssets'].every((key) => typeof row[key] === 'string' && /^\d+$/.test(row[key]))
       && Array.isArray(row.executedTradeTimes) && row.executedTradeTimes.every((time) => typeof time === 'string'))
 }
 
@@ -24,6 +30,7 @@ export function isWeeklyInput(value: unknown): value is WeeklyInput {
 export function isPublication(value: unknown): value is DivisionPublication {
   if (!record(value) || value.version !== 1 || !record(value.source) || !boundary(value.source.baselineBlock) || !boundary(value.source.closingBlock)
     || !record(value.week) || !Array.isArray(value.standings) || !record(value.announcement)) return false
+  if ('scoringRelease' in value && !isScoringRelease(value.scoringRelease)) return false
   const { startsAt, closesAt, publishesAt } = value.week
   if (typeof startsAt !== 'string' || typeof closesAt !== 'string' || typeof publishesAt !== 'string' || typeof value.publishedAt !== 'string') return false
   if (!Number.isFinite(Date.parse(startsAt))) return false
@@ -39,8 +46,8 @@ export function isPublication(value: unknown): value is DivisionPublication {
       || typeof row.qualifying !== 'boolean' || !Number.isInteger(row.activeDays) || Number(row.activeDays) < 0 || Number(row.activeDays) > 5
       || !Number.isInteger(row.nonQualifyingWeeks) || Number(row.nonQualifyingWeeks) < 0 || Number(row.nonQualifyingWeeks) > 1
       || !(row.rank === null || (Number.isInteger(row.rank) && Number(row.rank) > 0))
-      || typeof row.weeklyPnlUsdc !== 'string' || !/^-?\d+$/.test(row.weeklyPnlUsdc)
-      || typeof row.adjustedEquityUsdc !== 'string' || !/^-?\d+$/.test(row.adjustedEquityUsdc)) return false
+      || typeof row.weeklyPnlAssets !== 'string' || !/^-?\d+$/.test(row.weeklyPnlAssets)
+      || typeof row.adjustedEquityAssets !== 'string' || !/^-?\d+$/.test(row.adjustedEquityAssets)) return false
   }
   const { tradersOfTheWeek, promotions, diamondRoster } = value.announcement
   return Array.isArray(tradersOfTheWeek) && tradersOfTheWeek.length <= 3 && tradersOfTheWeek.every((address) => typeof address === 'string' && addresses.has(address))

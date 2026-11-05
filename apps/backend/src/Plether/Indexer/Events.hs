@@ -62,7 +62,7 @@ parseByTopic topic log bearContracts bullContracts morphoMarkets
 parseMintBurnEvent :: EventLog -> Text -> Maybe Text -> Maybe ParsedEvent
 parseMintBurnEvent log txType side = do
   userAddr <- getIndexedAddress (elTopics log) 1
-  let amount = decodeUint256Single (elData log)
+  amount <- decodeUint256Single (elData log)
   Just $ ParsedEvent
     { peUserAddress = userAddr
     , peTxType = txType
@@ -75,7 +75,7 @@ parseMintBurnEvent log txType side = do
 parseTokenExchangeEvent :: EventLog -> Maybe ParsedEvent
 parseTokenExchangeEvent log = do
   buyer <- getIndexedAddress (elTopics log) 1
-  let (soldId, tokensSold, boughtId, tokensBought, fee, packedPriceScale) = decodeUint256Sextuple (elData log)
+  (soldId, tokensSold, boughtId, tokensBought, fee, packedPriceScale) <- decodeUint256Sextuple (elData log)
   Just $ ParsedEvent
     { peUserAddress = buyer
     , peTxType = "swap"
@@ -93,7 +93,7 @@ parseTokenExchangeEvent log = do
 parseZapMintEvent :: EventLog -> Maybe ParsedEvent
 parseZapMintEvent log = do
   userAddr <- getIndexedAddress (elTopics log) 1
-  let (usdcIn, tokensOut, maxSlippageBps, actualSwapOut) = decodeUint256Quad (elData log)
+  (usdcIn, tokensOut, maxSlippageBps, actualSwapOut) <- decodeUint256Quad (elData log)
   Just $ ParsedEvent
     { peUserAddress = userAddr
     , peTxType = "zap_buy"
@@ -109,7 +109,7 @@ parseZapMintEvent log = do
 parseZapBurnEvent :: EventLog -> Maybe ParsedEvent
 parseZapBurnEvent log = do
   userAddr <- getIndexedAddress (elTopics log) 1
-  let (amountIn, amountOut) = decodeUint256Pair (elData log)
+  (amountIn, amountOut) <- decodeUint256Pair (elData log)
   Just $ ParsedEvent
     { peUserAddress = userAddr
     , peTxType = "zap_sell"
@@ -123,8 +123,8 @@ parseZapBurnEvent log = do
 parseStakingEvent :: EventLog -> Text -> [Text] -> [Text] -> Maybe ParsedEvent
 parseStakingEvent log txType bearContracts bullContracts = do
   ownerAddr <- getIndexedAddress (elTopics log) 2
-  let (assets, shares) = decodeUint256Pair (elData log)
-      side = determineSide (elAddress log) bearContracts bullContracts
+  (assets, shares) <- decodeUint256Pair (elData log)
+  let side = determineSide (elAddress log) bearContracts bullContracts
   Just $ ParsedEvent
     { peUserAddress = ownerAddr
     , peTxType = txType
@@ -138,8 +138,8 @@ parseStakingEvent log txType bearContracts bullContracts = do
 parseUnstakeEvent :: EventLog -> [Text] -> [Text] -> Maybe ParsedEvent
 parseUnstakeEvent log bearContracts bullContracts = do
   ownerAddr <- getIndexedAddress (elTopics log) 3
-  let (assets, shares) = decodeUint256Pair (elData log)
-      side = determineSide (elAddress log) bearContracts bullContracts
+  (assets, shares) <- decodeUint256Pair (elData log)
+  let side = determineSide (elAddress log) bearContracts bullContracts
   Just $ ParsedEvent
     { peUserAddress = ownerAddr
     , peTxType = "unstake"
@@ -153,8 +153,8 @@ parseUnstakeEvent log bearContracts bullContracts = do
 parseLeverageOpenEvent :: EventLog -> [Text] -> [Text] -> Maybe ParsedEvent
 parseLeverageOpenEvent log bearContracts bullContracts = do
   userAddr <- getIndexedAddress (elTopics log) 1
-  let (principal, leverage, loanAmount, tokensReceived, debtIncurred, maxSlippageBps) = decodeUint256Sextuple (elData log)
-      side = determineSide (elAddress log) bearContracts bullContracts
+  (principal, leverage, loanAmount, tokensReceived, debtIncurred, maxSlippageBps) <- decodeUint256Sextuple (elData log)
+  let side = determineSide (elAddress log) bearContracts bullContracts
   Just $ ParsedEvent
     { peUserAddress = userAddr
     , peTxType = "leverage_open"
@@ -172,8 +172,8 @@ parseLeverageOpenEvent log bearContracts bullContracts = do
 parseLeverageCloseEvent :: EventLog -> [Text] -> [Text] -> Maybe ParsedEvent
 parseLeverageCloseEvent log bearContracts bullContracts = do
   userAddr <- getIndexedAddress (elTopics log) 1
-  let (debtRepaid, collateralWithdrawn, usdcReturned, maxSlippageBps) = decodeUint256Quad (elData log)
-      side = determineSide (elAddress log) bearContracts bullContracts
+  (debtRepaid, collateralWithdrawn, usdcReturned, maxSlippageBps) <- decodeUint256Quad (elData log)
+  let side = determineSide (elAddress log) bearContracts bullContracts
   Just $ ParsedEvent
     { peUserAddress = userAddr
     , peTxType = "leverage_close"
@@ -189,8 +189,8 @@ parseLeverageCloseEvent log bearContracts bullContracts = do
 parseMorphoSupplyRepayEvent :: EventLog -> Text -> MorphoMarkets -> Maybe ParsedEvent
 parseMorphoSupplyRepayEvent log txType morphoMarkets = do
   onBehalf <- getIndexedAddress (elTopics log) 3
-  let (assets, shares) = decodeUint256Pair (elData log)
-      side = determineSideByMarketId (elTopics log) morphoMarkets
+  (assets, shares) <- decodeUint256Pair (elData log)
+  let side = determineSideByMarketId (elTopics log) morphoMarkets
   Just $ ParsedEvent
     { peUserAddress = onBehalf
     , peTxType = txType
@@ -204,8 +204,8 @@ parseMorphoSupplyRepayEvent log txType morphoMarkets = do
 parseMorphoWithdrawBorrowEvent :: EventLog -> Text -> MorphoMarkets -> Maybe ParsedEvent
 parseMorphoWithdrawBorrowEvent log txType morphoMarkets = do
   onBehalf <- getIndexedAddress (elTopics log) 3
-  let (assets, shares) = decodeUint256PairSkip1 (elData log)
-      side = determineSideByMarketId (elTopics log) morphoMarkets
+  (assets, shares) <- decodeUint256PairSkip1 (elData log)
+  let side = determineSideByMarketId (elTopics log) morphoMarkets
   Just $ ParsedEvent
     { peUserAddress = onBehalf
     , peTxType = txType
@@ -239,38 +239,39 @@ getIndexedAddress topics idx
   | idx < length topics = Just $ "0x" <> T.drop 24 (bytesToHex (topics !! idx))
   | otherwise = Nothing
 
-decodeUint256Single :: ByteString -> Integer
-decodeUint256Single bs = bytesToInteger (BS.take 32 bs)
+-- These events contain only fixed-width ABI fields. Reject missing or extra
+-- bytes before decoding so an absent/truncated word cannot become a zero or a
+-- smaller amount. Morpho Withdraw/Borrow also include a receiver address word.
+decodeUint256Words :: Int -> ByteString -> Maybe [Integer]
+decodeUint256Words count bytes
+  | BS.length bytes /= count * 32 = Nothing
+  | otherwise = Just
+      [bytesToInteger $ BS.take 32 $ BS.drop (index * 32) bytes | index <- [0 .. count - 1]]
 
-decodeUint256Pair :: ByteString -> (Integer, Integer)
-decodeUint256Pair bs =
-  ( bytesToInteger (BS.take 32 bs)
-  , bytesToInteger (BS.take 32 (BS.drop 32 bs))
-  )
+decodeUint256Single :: ByteString -> Maybe Integer
+decodeUint256Single bytes = do
+  [amount] <- decodeUint256Words 1 bytes
+  pure amount
 
-decodeUint256PairSkip1 :: ByteString -> (Integer, Integer)
-decodeUint256PairSkip1 bs =
-  ( bytesToInteger (BS.take 32 (BS.drop 32 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 64 bs))
-  )
+decodeUint256Pair :: ByteString -> Maybe (Integer, Integer)
+decodeUint256Pair bytes = do
+  [first, second] <- decodeUint256Words 2 bytes
+  pure (first, second)
 
-decodeUint256Quad :: ByteString -> (Integer, Integer, Integer, Integer)
-decodeUint256Quad bs =
-  ( bytesToInteger (BS.take 32 bs)
-  , bytesToInteger (BS.take 32 (BS.drop 32 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 64 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 96 bs))
-  )
+decodeUint256PairSkip1 :: ByteString -> Maybe (Integer, Integer)
+decodeUint256PairSkip1 bytes = do
+  [_receiver, assets, shares] <- decodeUint256Words 3 bytes
+  pure (assets, shares)
 
-decodeUint256Sextuple :: ByteString -> (Integer, Integer, Integer, Integer, Integer, Integer)
-decodeUint256Sextuple bs =
-  ( bytesToInteger (BS.take 32 bs)
-  , bytesToInteger (BS.take 32 (BS.drop 32 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 64 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 96 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 128 bs))
-  , bytesToInteger (BS.take 32 (BS.drop 160 bs))
-  )
+decodeUint256Quad :: ByteString -> Maybe (Integer, Integer, Integer, Integer)
+decodeUint256Quad bytes = do
+  [first, second, third, fourth] <- decodeUint256Words 4 bytes
+  pure (first, second, third, fourth)
+
+decodeUint256Sextuple :: ByteString -> Maybe (Integer, Integer, Integer, Integer, Integer, Integer)
+decodeUint256Sextuple bytes = do
+  [first, second, third, fourth, fifth, sixth] <- decodeUint256Words 6 bytes
+  pure (first, second, third, fourth, fifth, sixth)
 
 bytesToInteger :: ByteString -> Integer
 bytesToInteger = BS.foldl' (\acc byte -> acc * 256 + fromIntegral byte) 0

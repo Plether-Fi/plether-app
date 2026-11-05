@@ -1,5 +1,6 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { PerpsOrderHistoryRow } from '../hooks/usePerpsHistory'
-import { formatDisplayDxyPrice, formatPerpsUsdc, oraclePriceToDisplayDxyPrice, type PerpsDirection } from './perps'
+import { formatDisplayDxyPrice, formatPerpsAssets, oraclePriceToDisplayDxyPrice, type PerpsDirection } from './perps'
 
 const FAILURE_GUIDANCE: Partial<Record<string, [string, string]>> = {
   Expired: ['The order expired before execution.', 'Request a fresh preview before submitting a new order.'],
@@ -60,10 +61,10 @@ export function getPerpsOrderFailureContext(
   } else if (reason === 'Slippage' && hasLimit) {
     explanation = `Your price protection prevented the trade from executing. Your ${limitLabel.toLowerCase()} was ${limitDisplay}; the attempted execution price is not available yet.`
   }
-  const bounty = order.receiptEconomics?.executionBountyUsdc
-  const fee = order.receiptEconomics?.executionFeeUsdc
+  const bounty = order.receiptEconomics?.executionBountyAssets
+  const fee = order.receiptEconomics?.executionFeeAssets
   const formatCharge = (value: string | undefined) => value !== undefined && /^\d+$/.test(value)
-    ? `${formatPerpsUsdc(BigInt(value), 6)} USDC`
+    ? `${formatPerpsAssets(BigInt(value), 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL}`
     : 'Not yet available'
 
   return {

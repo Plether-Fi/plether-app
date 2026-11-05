@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { concatHex, keccak256, encodeFunctionData, numberToHex, parseAbiItem, parseEventLogs, type Address, type Hex } from 'viem'
 import { getUserOperationHash, toPackedUserOperation } from 'viem/account-abstraction'
 import { buildPlaceOrderV3Action, buildProtectedOpenAction } from '@plether-fi/perps-aa-client'
+import { relaxedProtectionCloseLimits } from '../../src/contracts/positionProtection'
 import { preparePerpsOrderV3 } from '../../src/contracts/preparePerpsOrderV3'
 import { persistPerpsOrderRequestV3, type PerpsOrderRequestV3 } from '../../src/contracts/perpsOrderV3'
 import { executeSponsoredPerpsAction } from '../../src/perps-aa/execution'
@@ -15,9 +16,16 @@ import { client, createStack, read, write, rpc, warp, now, owner, sponsor, keepe
 
 // Substitute local addresses and browser/telemetry transport only. The review,
 // encoders, journal, signatures, paymaster, EntryPoint, router and recovery are real.
-const registry = vi.hoisted(() => ({ addresses: {} as Record<string, Address>, closePin: { network: { chainId: 421614 }, existingProtocol: { engine: '', router: '', policyEvaluator: '' }, contracts: { cfdClosePreview: { address: '', runtimeCodeHash: '' } } } }))
-vi.mock('../../../../config/perps/close-preview/arbitrum-sepolia.json', () => ({ default: registry.closePin }))
-vi.mock('../../src/contracts/perpsAddresses', () => ({ PERPS_ARBITRUM_SEPOLIA: registry.addresses }))
+const registry = vi.hoisted(() => ({
+  addresses: {} as Record<string, Address>,
+  release: { network: { chainId: 421614 }, release: { version: 'local-test' },
+    contracts: {} as Record<string, { address: Address; runtimeCodeHash: Hex }> },
+}))
+vi.mock('../../src/contracts/perpsAddresses', () => ({
+  PERPS_ARBITRUM_SEPOLIA: registry.addresses,
+  PERPS_RELEASE: registry.release,
+  PERPS_RELEASE_IS_DEPLOYED: true,
+}))
 vi.mock('../../src/analytics/perps', () => ({ trackPerpsSponsoredOperation: vi.fn() }))
 vi.mock('../../src/perps-aa/attemptDiagnostics', () => ({ reportAttemptStage: vi.fn() }))
 vi.mock('../../src/perps-aa/recoveryDiagnostics', () => ({ reportRecoveryDiagnostic: vi.fn() }))
@@ -33,14 +41,18 @@ beforeAll(async () => {
   Object.assign(registry.addresses, { housePool: stack.pool.address, perpsPublicLens: stack.lens.address,
     cfdEngineLens: stack.engineLens.address, cfdEngineAccountLens: stack.accountLens.address,
     pletherOracle: stack.oracle.address, cfdEngine: stack.engine.address, orderRouter: stack.router.address,
-    marginClearinghouse: stack.clearinghouse.address, positionProtectionBook: stack.protection.address })
-  registry.closePin.existingProtocol = { engine: stack.engine.address, router: stack.router.address, policyEvaluator: stack.evaluator.address }
-  registry.closePin.contracts.cfdClosePreview = { address: stack.closePreview.address, runtimeCodeHash: keccak256((await client.getCode({ address: stack.closePreview.address }))!) }
+    marginClearinghouse: stack.clearinghouse.address, positionProtectionBook: stack.protection.address,
+    policyEvaluator: stack.evaluator.address })
+  for (const [name, contract] of Object.entries({ cfdClosePreview: stack.closePreview,
+    positionProtectionBook: stack.protection, orderRouter: stack.router, orderLifecycleBook: stack.book })) {
+    registry.release.contracts[name] = { address: contract.address,
+      runtimeCodeHash: keccak256((await client.getCode({ address: contract.address }))!) }
+  }
   manifest = { version: 'perps-aa-arbitrum-sepolia-v2', orderInterfaceVersion: 3, chainId: 421614,
     smartAccountMode: 'simple', entryPoint: stack.entryPoint.address, entryPointVersion: '0.8',
     smartAccountFactory: stack.factory.address, smartAccountVersion: 'permissionless-simple-v0.8', smartAccountIndex: '0',
     bundlerRpcUrl: '/local-aa', paymasterRpcUrl: '/local-aa', paymasterAddress: stack.paymaster.address, paymasterVersion: 'plether-verifying-v1', preparationRpcVersion: 1,
-    usdc: stack.token.address, usdcSupportsEip3009: false, usdcEip712Name: null, usdcEip712Version: null, marginClearinghouse: stack.clearinghouse.address, cfdEngine: stack.engine.address,
+    settlementToken: stack.token.address, settlementTokenSupportsEip3009: false, settlementTokenEip712Name: null, settlementTokenEip712Version: null, marginClearinghouse: stack.clearinghouse.address, cfdEngine: stack.engine.address,
     orderRouter: stack.router.address, orderLifecycleBook: stack.book.address, policyEvaluator: stack.evaluator.address,
     positionProtectionBook: stack.protection.address, testnetFaucet: null, sponsorshipEnabled: true,
     userOperationExplorerUrlTemplate: 'http://localhost/{userOperationHash}', transactionExplorerUrlTemplate: 'http://localhost/{transactionHash}',
@@ -143,13 +155,13 @@ describe('local V3 signed approval → sponsorship → commitment → execution 
     await run(open, runtime(open))
     await stack.execute(1n, (await timing()).commitTimestamp + 1n)
     await stack.mark()
-    const free = await read(stack.clearinghouse, 'getFreeBuyingPowerUsdc', [stack.account.address]) as bigint
+    const free = await read(stack.clearinghouse, 'getFreeBuyingPowerAssets', [stack.account.address]) as bigint
     await write(stack.account, 'execute', [stack.clearinghouse.address, 0n, encodeFunctionData({ abi: stack.clearinghouse.abi, functionName: 'withdrawMargin', args: [free] })], owner)
-    expect(await read(stack.clearinghouse, 'getFreeBuyingPowerUsdc', [stack.account.address])).toBe(0n)
+    expect(await read(stack.clearinghouse, 'getFreeBuyingPowerAssets', [stack.account.address])).toBe(0n)
     const prepared = await preparePerpsOrderV3(client, manifest, { account: stack.account.address, direction: 'long', side: 0,
       sizeDelta: units * 10n ** 18n, marginDelta: 0n, slippagePercent: 1, isClose: true, selectedMaxLeverageBps: 60_000 })
     expect(prepared.reviewSummary).toBeDefined()
-    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(0n)
+    expect(prepared.reviewSummary?.requiredFundingAssets).toBe(0n)
     expect(prepared.sponsoredClose).toBeUndefined()
     expect(actionFor(prepared.request).calls).toHaveLength(1)
     await run(prepared.request, runtime(prepared.request))
@@ -243,7 +255,8 @@ describe('local V3 signed approval → sponsorship → commitment → execution 
     await run(request, managed)
     const committed = await timing()
     await warp(committed.commitTimestamp + 5n)
-    await expect(stack.execute(1n, committed.commitTimestamp - 1n)).rejects.toThrow()
+    // Invalid oracle evidence now leaves the order pending without reverting the transaction.
+    expect((await stack.execute(1n, committed.commitTimestamp - 1n)).status).toBe('success')
     expect(await outcome()).toMatchObject({ status: 0 })
     expect(await read(stack.router, 'accountHeadOrderId', [stack.account.address])).toBe(1n)
     await stack.execute(1n, committed.commitTimestamp + 1n)
@@ -252,7 +265,7 @@ describe('local V3 signed approval → sponsorship → commitment → execution 
   it('uses the same clocks for protected opens through the shared SDK and backend parser', async () => {
     const request = await review()
     const action = buildProtectedOpenAction({ account: stack.account.address, book: stack.protection.address, request,
-      params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n } })
+      params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() } })
     const managed = runtime(request)
     await run(request, managed, action)
     const committed = await timing()

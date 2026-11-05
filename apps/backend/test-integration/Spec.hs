@@ -4,6 +4,9 @@ import qualified Data.Text as T
 import Plether.Keeper.BroadcastSpec (broadcastSpec)
 import Plether.Keeper.ReliabilitySpec (reliabilitySpec)
 import Plether.DatabaseDiagnosticsSpec (databaseDiagnosticsSpec)
+import Plether.MarginFundingForkSpec (marginFundingForkSpec)
+import Plether.BackendUnitRepairSpec (backendUnitRepairSpec)
+import Plether.LiquidationWorkerIntegrationSpec (liquidationWorkerSpec)
 import Plether.Insights.DatabaseSpec (insightsDatabaseSpec)
 import Plether.Insights.RegistrationDatabaseSpec (registrationDatabaseSpec)
 import Plether.Keeper.LiquidationMonitoringSpec (liquidationMonitoringSpec)
@@ -29,6 +32,9 @@ main = do
         broadcastSpec $ T.pack value
         reliabilitySpec $ T.pack value
         databaseDiagnosticsSpec $ T.pack value
+        backendUnitRepairSpec $ T.pack value
+        marginFundingForkSpec $ T.pack value
+        liquidationWorkerSpec $ T.pack value
         criticalPathSpec $ T.pack value
         protectionExecutionSpec $ T.pack value
         liquidationMonitoringSpec $ T.pack value

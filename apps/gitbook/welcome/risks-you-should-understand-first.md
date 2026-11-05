@@ -2,7 +2,7 @@
 
 > **Plether can bound a modeled obligation. It cannot remove risk.**
 >
-> Traders can lose their collateral. Liquidity providers can lose principal. Either may be unable to access USDC[^usdc] when expected.
+> Traders can lose their collateral. Liquidity providers can lose principal. Either may be unable to access USDG[^usdg] when expected.
 
 Plether is designed to measure counterparty liabilities before accepting them. That is different from making capital safe.
 
@@ -41,7 +41,7 @@ This is an admission rule. It does not guarantee that:
 * Every trader profit will be immediately withdrawable
 * LP[^lp] principal cannot be impaired
 * Bad debt cannot occur
-* USDC will remain worth one dollar
+* USDG will remain worth one dollar
 * Pyth prices will always be correct or available
 * Keepers[^keeper] will always execute promptly
 * The contracts contain no defects
@@ -59,7 +59,7 @@ Plether does not reduce or close an unrelated profitable position to cover anoth
 
 There is no counterparty auto-deleveraging between traders.
 
-Your position can be fully liquidated if position margin plus same-account claims and exact price PnL falls to or below maintenance. Uncovered carry or insufficient VPI reserve backing can independently make it liquidatable.
+Your position can be fully liquidated if position margin after accrued carry plus same-account claims and exact price PnL falls to or below maintenance. Uncovered carry or insufficient VPI reserve backing can independently make it liquidatable.
 
 That requirement rises around FX-market[^fx] closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
 
@@ -72,11 +72,11 @@ The distinction is simple:
 
 | Event                                    | First affected                         | What happens next                                                                      |
 | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
-| A trader loses                           | The trader’s reachable USDC collateral | An existing same-account trader claim can be netted next; any remaining deficit becomes bad debt absorbed by pool capital |
+| A trader loses                           | The trader’s reachable USDG collateral | An existing same-account trader claim can be netted next; any remaining deficit becomes bad debt absorbed by pool capital |
 | A trader profits                         | Available pool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
 | The liquidity pool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
 | Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
-| A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new trader risk and new LP deposits; eligible LP withdrawal requests may still queue, but no new withdrawal USDC is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. |
+| A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new trader risk and new LP deposits; eligible LP withdrawal requests may still queue, but no new withdrawal USDG is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. |
 
 This waterfall determines who bears economic losses. It does not guarantee when sufficient cash will be available.
 
@@ -109,9 +109,9 @@ There is no partial-liquidation process that reduces an oversized position and l
 
 ### Account-collateral risk
 
-Do not assume that the margin figure displayed beside a position is always the maximum USDC that can be reached during terminal settlement.
+Do not assume that the margin figure displayed beside a position is always the maximum USDG that can be reached during terminal settlement.
 
-Plether separates price risk from action obligations. Price equity is assigned position margin plus same-account claims and exact PnL. Free USDC covers carry, and reserves have dedicated purposes. Committed-order funds do not back price losses. Withdrawals check carry coverage, reserve backing, position equity and eligible mark data.
+Plether separates price risk from action obligations. Price equity is assigned position margin after accrued carry plus same-account claims and exact PnL. Carry consumes active position margin first, then eligible free USDG; it cannot consume trader claims or reserved funds. Reserves have dedicated purposes, and committed-order funds do not back price losses. Withdrawals check carry coverage, reserve backing, position equity and eligible mark data.
 
 A same-account trader claim supports price equity and can offset price losses. It is not cash available for carry, fees or withdrawal.
 
@@ -132,7 +132,7 @@ Carry can:
 
 Carry is not trader-to-trader funding. It is the cost of using LP-backed capital.
 
-A position can become liquidatable without an adverse price move if free settlement cannot cover carry, even while price equity remains positive.
+Carry reduces position margin and price equity before it reaches free USDG. A position can therefore become liquidatable without an adverse price move even when free funds remain. If position margin and eligible free USDG together cannot cover carry, the uncovered amount independently makes the position liquidatable, even if claims and price PnL keep price equity above maintenance.
 
 ### Binding-order risk
 
@@ -164,7 +164,7 @@ Execution and final trade economics depend on:
 * The protocol execution fee
 * The execution reward
 
-Virtual price impact depends on pool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
+Virtual price impact depends on pool depth and directional imbalance. It can add a USDG charge or a bounded rebate without changing the oracle execution price.
 
 During an oracle-frozen voluntary close, normal signed VPI[^vpi] remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies. A partial close must settle the full spread; any uncollectible portion on a terminal full close is waived rather than converted into bad debt.
 
@@ -200,7 +200,7 @@ Traders are responsible for reducing exposure or adding collateral before the st
 
 ### Delayed-profit risk
 
-A profitable close does not always produce immediately withdrawable USDC.
+A profitable close does not always produce immediately withdrawable USDG.
 
 Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or, if sufficient free cash is unavailable, recorded in full as a trader claim. Plether does not split it between an immediate credit and a new claim.
 
@@ -213,7 +213,7 @@ A trader claim is:
 
 It is not:
 
-* USDC already held in the trader’s wallet
+* USDG already held in the trader’s wallet
 * Freely reusable position collateral
 * A payment with a guaranteed date
 * A first-in, first-out claim on incoming cash
@@ -308,7 +308,7 @@ Drift in the Plether basket’s effective currency weights can also change which
 
 ### Withdrawal-liquidity risk
 
-An LP share is not the same as immediately withdrawable USDC.
+An LP share is not the same as immediately withdrawable USDG.
 
 Withdrawals depend on:
 
@@ -329,16 +329,16 @@ Capital already required to support trader obligations cannot leave the pool.
 
 ### Hourly vault-request risk
 
-All LP deposits and withdrawals enter an hourly request queue. A deposit moves USDC into vault escrow before shares are ready; a withdrawal moves the quoted shares into escrow before USDC is funded.
+All LP deposits and withdrawals enter an hourly request queue. A deposit moves USDG into vault escrow before shares are ready; a withdrawal moves the quoted shares into escrow before USDG is funded.
 
 A request can normally be cancelled only while the interface still offers **Cancel deposit** or **Cancel withdrawal**. At the request's expected processing boundary, that cancellation window closes even if no settlement transaction has begun. The LP then waits for the outcomes shown under **Your position**:
 
 * **Shares ready** or **Refund available** for a deposit;
-* **USDC ready** and/or **Shares ready to return** for a withdrawal.
+* **USDG ready** and/or **Shares ready to return** for a withdrawal.
 
-A partly funded withdrawal can expose both actions only when the remaining shares quote to zero assets and enter terminal refund state. An ordinary insufficient-liquidity remainder stays queued. If any USDC is claimable, the interface shows **USDC ready** as the status even when a zero-value share remainder can also be returned.
+A partly funded withdrawal can expose both actions only when the remaining shares quote to zero assets and enter terminal refund state. An ordinary insufficient-liquidity remainder stays queued. If any USDG is claimable, the interface shows **USDG ready** as the status even when a zero-value share remainder can also be returned.
 
-The final conversion is set during processing, not when the preview is opened. A deposit can therefore produce a different share count from its estimate, and queued withdrawal shares continue gaining or losing value until USDC is allocated. Senior withdrawals receive funding priority over Junior withdrawals.
+The final conversion is set during processing, not when the preview is opened. A deposit can therefore produce a different share count from its estimate, and queued withdrawal shares continue gaining or losing value until USDG is allocated. Senior withdrawals receive funding priority over Junior withdrawals.
 
 The settlement path is permissionless, and an enabled, healthy keeper can submit eligible hourly processing. The current interface exposes no user finalization action. An expected time is not a guarantee: a disabled or unavailable keeper, oracle, liquidity, health or governance gate can delay processing, and **Hourly processing paused** can leave otherwise valid requests waiting. Pending does not mean risk-free, immediately cancellable or fixed-price.
 
@@ -415,7 +415,7 @@ It has not completed a formal production audit.
 
 The pre-audit reviewed an earlier code snapshot. It should not be presented as formal coverage of every later change or of the complete current deployment.
 
-The active release is an Arbitrum Sepolia testnet deployment using MockUSDC. Testnet operation does not demonstrate mainnet safety, economic durability or production readiness.
+The active release is an Arbitrum Sepolia testnet deployment using MockUSDG. Testnet operation does not demonstrate mainnet safety, economic durability or production readiness.
 
 Every release should be assessed against its exact:
 
@@ -458,9 +458,9 @@ If keeper infrastructure is unavailable:
 
 Permissionless execution removes an exclusive operator. It does not guarantee timely execution.
 
-### USDC risk
+### USDG risk
 
-The protocol accounts and settles in USDC.
+The protocol accounts and settles in USDG.
 
 Users remain exposed to:
 
@@ -470,9 +470,9 @@ Users remain exposed to:
 * Collateral centralization
 * Disruption to transfers or redemptions
 
-Plether has no internal mechanism that converts impaired USDC into an unimpaired dollar.
+Plether has no internal mechanism that converts impaired USDG into an unimpaired dollar.
 
-The current testnet uses MockUSDC, which has no claim on real dollars.
+The current testnet uses MockUSDG, which has no claim on real dollars.
 
 ### Chain and interface risk
 
@@ -535,7 +535,7 @@ Code can enforce a model exactly and the model can still be wrong.
 Do not open a position unless you can answer yes to each question:
 
 * Do I understand that LONG and SHORT refer to USD while the raw basket moves in the opposite direction?
-* Do I understand which same-account USDC balances can become reachable during settlement?
+* Do I understand which same-account USDG balances can become reachable during settlement?
 * Can I afford to lose that collateral?
 * Can the position survive carry, fees and the higher market-close margin requirement?
 * Am I willing to submit a delayed order that cannot be cancelled?
@@ -543,7 +543,7 @@ Do not open a position unless you can answer yes to each question:
 * Have I verified the active Trading Account and the action covered by sponsorship?
 * Can I tolerate sponsor or bundler unavailability while my position remains active?
 * Can I tolerate delayed execution during an oracle, keeper or chain outage?
-* Can I tolerate profitable settlement becoming a trader claim rather than immediate USDC?
+* Can I tolerate profitable settlement becoming a trader claim rather than immediate USDG?
 * Does Plether’s arithmetic basket actually hedge the exposure I intend to hedge?
 * Have I verified the network, contracts, current parameters and protocol state?
 
@@ -568,7 +568,7 @@ Before interacting:
 * Confirm that you are using the intended network and verified contracts.
 * Read the current deployment and audit disclosures.
 * Review live parameters rather than relying on examples in documentation.
-* Understand the dependencies on Pyth, USDC, smart accounts, sponsors, bundlers, keepers, the deployment chain and governance.
+* Understand the dependencies on Pyth, USDG, smart accounts, sponsors, bundlers, keepers, the deployment chain and governance.
 * Use only capital you can afford to lose or have temporarily unavailable.
 
 ## The short version
@@ -583,13 +583,13 @@ Before interacting:
 8. Testnet operation and a pre-audit consultation are not substitutes for a formal production audit.
 9. Gas sponsorship can fail or be delayed, but it never gives Plether authority to act without the owner wallet’s authorization.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^fx]: Foreign exchange, the market for trading one currency against another.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^mev]: Maximal extractable value, value obtained by controlling transaction inclusion or ordering.
 [^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
 [^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.

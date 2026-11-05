@@ -53,9 +53,9 @@ resource "terraform_data" "perps_candle_rollout_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == lower(local.sepolia_core.contracts.orderLifecycleBook.address)
+        || lower(var.perps_order_lifecycle_book) == try(lower(local.sepolia_core.contracts.orderLifecycleBook.address), "")
       )
-      error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+      error_message = "Sepolia perps_order_lifecycle_book must be empty or the configured LifecycleBook."
     }
 
     precondition {
@@ -142,9 +142,9 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == "0x519f57a34fb440c42bfd2d8328d2f80349af3872"
+        || lower(var.perps_order_lifecycle_book) == try(lower(local.sepolia_core.contracts.orderLifecycleBook.address), "")
       )
-      error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+      error_message = "Sepolia perps_order_lifecycle_book must be empty or the configured canonical LifecycleBook."
     }
 
     precondition {

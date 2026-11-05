@@ -496,11 +496,11 @@ decodeSnapshotResults expectedCount results
 inferPendingCarry :: AccountLedgerSnapshot -> Maybe Integer
 inferPendingCarry AccountLedgerSnapshot {..}
   | not alsHasPosition = Just 0
-  | projectedPledge > 0 && projectedPledge <= alsActivePositionMarginUsdc =
-      Just $ alsActivePositionMarginUsdc - projectedPledge
+  | projectedPledge > 0 && projectedPledge <= alsActivePositionMarginAssets =
+      Just $ alsActivePositionMarginAssets - projectedPledge
   | otherwise = Nothing
   where
-    projectedPledge = alsNetEquityUsdc - alsTraderClaimBalanceUsdc - alsUnrealizedPnlUsdc
+    projectedPledge = alsNetEquityAssets - alsTraderClaimBalanceAssets - alsUnrealizedPnlAssets
 
 -- | Mark the entire settlement balance to market, retaining free collateral
 -- and locked reserves. Claims are excluded here because economicAccountValue
@@ -509,50 +509,50 @@ inferPendingCarry AccountLedgerSnapshot {..}
 ledgerToEquity :: AccountLedgerSnapshot -> Integer -> EquitySnapshot
 ledgerToEquity ledger@AccountLedgerSnapshot {..} pendingCarry =
   (legacyLedgerToEquity ledger)
-    { esSignedNetEquityUsdc = alsLiquidationReachableSettlementUsdc + alsUnrealizedPnlUsdc - pendingCarry
+    { esSignedNetEquityAssets = alsLiquidationReachableSettlementAssets + alsUnrealizedPnlAssets - pendingCarry
     }
 
 legacyLedgerToEquity :: AccountLedgerSnapshot -> EquitySnapshot
 legacyLedgerToEquity AccountLedgerSnapshot {..} =
   EquitySnapshot
     { esHasOpenPosition = alsHasPosition
-    , esSignedNetEquityUsdc = alsNetEquityUsdc
-    , esTerminalReachableUsdc = alsLiquidationReachableSettlementUsdc
-    , esTraderClaimsUsdc = alsTraderClaimBalanceUsdc
+    , esSignedNetEquityAssets = alsNetEquityAssets
+    , esTerminalReachableAssets = alsLiquidationReachableSettlementAssets
+    , esTraderClaimsAssets = alsTraderClaimBalanceAssets
     }
 
 valuedSnapshotToJson :: AccountLedgerSnapshot -> Integer -> Value
 valuedSnapshotToJson ledger pendingCarry = case snapshotToJson ledger of
   Object fields -> Object $ KeyMap.insert "accountValuationVersion" (String "full-account-v2") $
-    KeyMap.insert "pendingCarryUsdc" (String $ T.pack $ show pendingCarry) fields
+    KeyMap.insert "pendingCarryAssets" (String $ T.pack $ show pendingCarry) fields
   value -> value
 
 snapshotToJson :: AccountLedgerSnapshot -> Value
 snapshotToJson AccountLedgerSnapshot {..} =
   object
-    [ "settlementBalanceUsdc" .= show alsSettlementBalanceUsdc
-    , "freeSettlementUsdc" .= show alsFreeSettlementUsdc
-    , "activePositionMarginUsdc" .= show alsActivePositionMarginUsdc
-    , "otherLockedMarginUsdc" .= show alsOtherLockedMarginUsdc
-    , "positionMarginBucketUsdc" .= show alsPositionMarginBucketUsdc
-    , "committedOrderMarginBucketUsdc" .= show alsCommittedOrderMarginBucketUsdc
-    , "reservedSettlementBucketUsdc" .= show alsReservedSettlementBucketUsdc
-    , "executionBountyReserveUsdc" .= show alsExecutionBountyReserveUsdc
-    , "committedMarginUsdc" .= show alsCommittedMarginUsdc
-    , "traderClaimBalanceUsdc" .= show alsTraderClaimBalanceUsdc
+    [ "settlementBalanceAssets" .= show alsSettlementBalanceAssets
+    , "freeSettlementAssets" .= show alsFreeSettlementAssets
+    , "activePositionMarginAssets" .= show alsActivePositionMarginAssets
+    , "otherLockedMarginAssets" .= show alsOtherLockedMarginAssets
+    , "positionMarginBucketAssets" .= show alsPositionMarginBucketAssets
+    , "committedOrderMarginBucketAssets" .= show alsCommittedOrderMarginBucketAssets
+    , "reservedSettlementBucketAssets" .= show alsReservedSettlementBucketAssets
+    , "executionBountyReserveAssets" .= show alsExecutionBountyReserveAssets
+    , "committedMarginAssets" .= show alsCommittedMarginAssets
+    , "traderClaimBalanceAssets" .= show alsTraderClaimBalanceAssets
     , "pendingOrderCount" .= show alsPendingOrderCount
-    , "closeReachableUsdc" .= show alsCloseReachableUsdc
-    , "liquidationReachableSettlementUsdc" .= show alsLiquidationReachableSettlementUsdc
-    , "terminalPriceCollectibleCapUsdc" .= show alsTerminalPriceCollectibleCapUsdc
-    , "accountEquityUsdc" .= show alsAccountEquityUsdc
-    , "freeBuyingPowerUsdc" .= show alsFreeBuyingPowerUsdc
+    , "closeReachableAssets" .= show alsCloseReachableAssets
+    , "liquidationReachableSettlementAssets" .= show alsLiquidationReachableSettlementAssets
+    , "terminalPriceCollectibleCapAssets" .= show alsTerminalPriceCollectibleCapAssets
+    , "accountEquityAssets" .= show alsAccountEquityAssets
+    , "freeBuyingPowerAssets" .= show alsFreeBuyingPowerAssets
     , "hasPosition" .= alsHasPosition
     , "side" .= show alsSide
     , "size" .= show alsSize
     , "margin" .= show alsMargin
     , "entryPrice" .= show alsEntryPrice
-    , "unrealizedPnlUsdc" .= show alsUnrealizedPnlUsdc
-    , "netEquityUsdc" .= show alsNetEquityUsdc
+    , "unrealizedPnlAssets" .= show alsUnrealizedPnlAssets
+    , "netEquityAssets" .= show alsNetEquityAssets
     , "liquidatable" .= alsLiquidatable
     ]
 

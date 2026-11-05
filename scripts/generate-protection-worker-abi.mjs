@@ -1,14 +1,3 @@
-import fs from 'node:fs'
-import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
-
-const bundle = process.argv[2]
-if (!bundle) throw new Error('Usage: node scripts/generate-protection-worker-abi.mjs <release-bundle.tar.gz>')
-const { release } = JSON.parse(fs.readFileSync('config/perps/arbitrum-sepolia-v3.json'))
-const digest = createHash('sha256').update(fs.readFileSync(bundle)).digest('hex')
-if (digest !== release.bundleSha256) throw new Error(`Expected the pinned ${release.version} ABI bundle`)
-const artifacts = { PositionProtectionBook: 'PositionProtectionBook', OrderRouter: 'ArbitrumSepoliaReleaseRouter', OrderLifecycleBook: 'OrderLifecycleBook', PletherOracle: 'ArbitrumSepoliaReleaseOracle' }
-const contracts = Object.fromEntries(Object.entries(artifacts).map(([name, artifact]) => [name,
-  JSON.parse(execFileSync('tar', ['-xOzf', bundle, `build/abi/${artifact}.json`], { encoding: 'utf8' })),
-]))
-fs.writeFileSync('apps/backend/protection-worker/abi.mjs', `// Generated from perps ${release.version} ${release.sourceCommit}, checksum-verified release bundle. Do not edit.\nexport default ${JSON.stringify(contracts)}\n`)
+// The historical deployment-bundle generator is intentionally unavailable.
+// Current ABIs are generated together from the reviewed canonical Core build.
+throw new Error('Use scripts/generate-perps-consumer-abis.mjs --artifacts-dir <compiled-core-out> --source-root <core-packages/perps>; add --check to verify. Historical release bundles cannot generate current consumers.')

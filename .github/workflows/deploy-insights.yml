@@ -1,11 +1,6 @@
 name: Deploy Insights
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - apps/insights/**
-      - .github/workflows/deploy-insights.yml
   workflow_dispatch:
 
 concurrency:

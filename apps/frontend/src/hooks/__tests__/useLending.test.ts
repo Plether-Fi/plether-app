@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
+import { encodeAbiParameters, keccak256, type Address } from 'viem'
 import { useTransactionStore } from '../../stores/transactionStore'
+import { getAddresses } from '../../contracts/addresses'
 
 const mockWriteContract = vi.fn()
 const mockReset = vi.fn()
@@ -12,7 +14,7 @@ const mockUseWaitForTransactionReceipt = vi.fn()
 
 vi.mock('wagmi', () => ({
   useAccount: () => mockUseAccount(),
-  useReadContract: () => mockUseReadContract(),
+  useReadContract: (parameters: unknown) => mockUseReadContract(parameters),
   useWriteContract: () => mockUseWriteContract(),
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
 }))
@@ -30,7 +32,8 @@ import {
 
 const MOCK_CHAIN_ID = 11155111
 const MOCK_ADDRESS = '0x1234567890123456789012345678901234567890' as const
-const MOCK_MORPHO_ADDRESS = '0xMorphoAddress0000000000000000000000000000' as const
+const MOCK_MORPHO_ADDRESS = '0x5555555555555555555555555555555555555555' as const
+type MockMarketParams = readonly [Address, Address, Address, Address, bigint]
 const MOCK_MARKET_PARAMS = [
   '0x1111111111111111111111111111111111111111',
   '0x2222222222222222222222222222222222222222',
@@ -38,6 +41,33 @@ const MOCK_MARKET_PARAMS = [
   '0x4444444444444444444444444444444444444444',
   915000000000000000n,
 ] as const
+
+function mockLendingMarketReads(markets: {
+  router: Address
+  params: MockMarketParams
+  position: readonly [bigint, bigint, bigint]
+  market: readonly [bigint, bigint, bigint, bigint, bigint, bigint]
+  oraclePrice?: bigint
+}[]) {
+  const byId = new Map(markets.map((market) => [keccak256(encodeAbiParameters(
+    [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+    market.params,
+  )), market]))
+  mockUseReadContract.mockImplementation(({ address, functionName, args }: {
+    address?: Address; functionName: string; args?: readonly unknown[]
+  }) => {
+    const configured = markets.find(({ router }) => router === address)
+    const indexed = byId.get(args?.[0] as `0x${string}`)
+    let data: unknown
+    if (functionName === 'MORPHO' && configured) data = MOCK_MORPHO_ADDRESS
+    if (functionName === 'marketParams' && configured) data = configured.params
+    if (address === MOCK_MORPHO_ADDRESS && functionName === 'position' && args?.[1] === MOCK_ADDRESS) data = indexed?.position
+    if (address === MOCK_MORPHO_ADDRESS && functionName === 'market') data = indexed?.market
+    if (functionName === 'price') data = markets.find(({ params }) => params[2] === address)?.oraclePrice
+    if (data === undefined) throw new Error(`Unexpected lending read: ${address} ${functionName}`)
+    return { data, isLoading: false, error: null, refetch: vi.fn() }
+  })
+}
 
 describe('useLendingPosition', () => {
   beforeEach(() => {
@@ -197,30 +227,29 @@ describe('useAvailableToBorrow', () => {
     })
   })
 
-  it('calculates available to borrow correctly', () => {
-    const collateral = 1000000000n
-    const borrowShares = 100000000000000000000n
-    const totalBorrowAssets = 500000000n
-    const totalBorrowShares = 1000000000000000000000n
-    const lltv = 915000000000000000n
-
-    let readCallCount = 0
-    mockUseReadContract.mockImplementation(() => {
-      readCallCount++
-      if (readCallCount === 1) return { data: MOCK_MORPHO_ADDRESS }
-      if (readCallCount === 2) return { data: MOCK_MARKET_PARAMS }
-      if (readCallCount === 3) return { data: [0n, borrowShares, collateral] }
-      if (readCallCount === 4) return { data: [10000000000n, 10000n, totalBorrowAssets, totalBorrowShares, 0n, 0n] }
-      return { data: undefined }
-    })
+  it.each([
+    { borrowShares: 500n * 10n ** 18n, debt: 250_000_000n, available: 665_000_000n },
+    { borrowShares: 1_830n * 10n ** 18n, debt: 915_000_000n, available: 0n },
+    { borrowShares: 2_000n * 10n ** 18n, debt: 1_000_000_000n, available: 0n },
+  ])('values collateral and clamps borrowing capacity for $debt debt', ({ borrowShares, debt, available }) => {
+    // 800 collateral tokens at $1.25 back $915 at 91.5% LLTV.
+    const collateral = 800n * 10n ** 21n
+    mockLendingMarketReads([{
+      router: getAddresses(MOCK_CHAIN_ID).LEVERAGE_ROUTER,
+      params: MOCK_MARKET_PARAMS,
+      position: [0n, borrowShares, collateral],
+      market: [4_000_000_000n, 1_000n * 10n ** 18n, 2_000_000_000n, 4_000n * 10n ** 18n, 0n, 0n],
+      oraclePrice: 1_250_000_000_000_000_000_000_000n,
+    }])
 
     const { result } = renderHook(() => useAvailableToBorrow('BEAR'))
 
     expect(result.current.collateral).toBe(collateral)
-    expect(result.current.lltv).toBe(lltv)
-    expect(result.current.currentDebt).toBe(50000000n)
-    // maxBorrow and availableToBorrow depend on oracle price which requires
-    // async re-renders that are difficult to test with synchronous mocks
+    expect(result.current.collateralUsd).toBe(1_000_000_000n)
+    expect(result.current.lltv).toBe(915_000_000_000_000_000n)
+    expect(result.current.maxBorrow).toBe(915_000_000n)
+    expect(result.current.currentDebt).toBe(debt)
+    expect(result.current.availableToBorrow).toBe(available)
   })
 
   it('returns zero when no collateral', () => {
@@ -460,10 +489,30 @@ describe('useCombinedLendingPosition', () => {
   })
 
   it('aggregates positions from both markets', () => {
+    const addresses = getAddresses(MOCK_CHAIN_ID)
+    mockLendingMarketReads([
+      {
+        router: addresses.LEVERAGE_ROUTER,
+        params: MOCK_MARKET_PARAMS,
+        position: [200n * 10n ** 18n, 50n * 10n ** 18n, 300n * 10n ** 21n],
+        market: [2_000_000_000n, 1_000n * 10n ** 18n, 1_000_000_000n, 500n * 10n ** 18n, 0n, 0n],
+      },
+      {
+        router: addresses.BULL_LEVERAGE_ROUTER,
+        params: [MOCK_MARKET_PARAMS[0], '0x6666666666666666666666666666666666666666',
+          MOCK_MARKET_PARAMS[2], MOCK_MARKET_PARAMS[3], MOCK_MARKET_PARAMS[4]],
+        position: [150n * 10n ** 18n, 125n * 10n ** 18n, 500n * 10n ** 21n],
+        market: [3_000_000_000n, 1_000n * 10n ** 18n, 1_200_000_000n, 1_000n * 10n ** 18n, 0n, 0n],
+      },
+    ])
     const { result } = renderHook(() => useCombinedLendingPosition())
 
-    expect(result.current.totalSupplied).toBe(0n)
-    expect(result.current.totalBorrowed).toBe(0n)
+    expect(result.current.bearPosition.suppliedAssets).toBe(400_000_000n)
+    expect(result.current.bearPosition.borrowedAssets).toBe(100_000_000n)
+    expect(result.current.bullPosition.suppliedAssets).toBe(450_000_000n)
+    expect(result.current.bullPosition.borrowedAssets).toBe(150_000_000n)
+    expect(result.current.totalSupplied).toBe(850_000_000n)
+    expect(result.current.totalBorrowed).toBe(250_000_000n)
     expect(result.current.isLoading).toBe(false)
   })
 

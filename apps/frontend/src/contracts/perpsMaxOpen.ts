@@ -1,14 +1,14 @@
 import { getPerpsOpenRevertMessage } from '../utils/perpsErrors'
-import { PERPS_POSITION_SIZE_QUANTUM, PERPS_POSITION_SIZE_TO_USDC_SCALE } from './perpsConstants'
+import { PERPS_POSITION_SIZE_QUANTUM, PERPS_POSITION_SIZE_TO_ASSETS_SCALE } from './perpsConstants'
 
 /** Keep router rewards outside the margin budget supplied to the engine lens. */
 export function perpsMaxOpenMarginBudget(
-  availableUsdc: bigint,
-  maximumOpenBountyUsdc: bigint,
-  protectionRewardsUsdc = 0n
+  availableAssets: bigint,
+  maximumOpenBountyAssets: bigint,
+  protectionRewardsAssets = 0n
 ): bigint {
-  const rewards = maximumOpenBountyUsdc + protectionRewardsUsdc
-  return availableUsdc > rewards ? availableUsdc - rewards : 0n
+  const rewards = maximumOpenBountyAssets + protectionRewardsAssets
+  return availableAssets > rewards ? availableAssets - rewards : 0n
 }
 
 /** Search leverage only. A planner/RPC failure must propagate: planner validity
@@ -52,7 +52,7 @@ export async function constrainPerpsMaxOpen<T>(input: {
 }
 
 export function constrainPerpsMaxOpenPreview<T extends {
-  valid: boolean; invalidReason: number; postSize: bigint; postEquityUsdc: bigint
+  valid: boolean; invalidReason: number; postSize: bigint; postEquityAssets: bigint
 }>(input: {
   quote: { maxSizeDelta: bigint; preview: T }
   selectedMaxLeverageBps: number
@@ -69,9 +69,9 @@ export function constrainPerpsMaxOpenPreview<T extends {
     assess: async (sizeDelta) => {
       const preview = sizeDelta === input.quote.maxSizeDelta ? input.quote.preview : await input.preview(sizeDelta)
       if (!preview.valid) throw new Error(getPerpsOpenRevertMessage(preview.invalidReason))
-      if (preview.postEquityUsdc <= 0n) throw new Error('Maximum size preview has no positive position equity')
-      const notional = preview.postSize * price / PERPS_POSITION_SIZE_TO_USDC_SCALE
-      return { leverageBps: (notional * 10_000n + preview.postEquityUsdc - 1n) / preview.postEquityUsdc, value: preview }
+      if (preview.postEquityAssets <= 0n) throw new Error('Maximum size preview has no positive position equity')
+      const notional = preview.postSize * price / PERPS_POSITION_SIZE_TO_ASSETS_SCALE
+      return { leverageBps: (notional * 10_000n + preview.postEquityAssets - 1n) / preview.postEquityAssets, value: preview }
     },
   })
 }

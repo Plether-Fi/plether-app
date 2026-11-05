@@ -6,6 +6,7 @@ module Plether.Handlers.TestnetFaucetGuard
   , FaucetQuotaScope (..)
   , authenticateFaucetRequest
   , checkFaucetRequest
+  , checkFaucetStatusRequest
   , faucetGuardFailureReasonText
   , faucetQuotaScopeText
   , newFaucetGuardState
@@ -70,6 +71,7 @@ data FaucetQuotaState = FaucetQuotaState
 data FaucetGuardState = FaucetGuardState
   { fgsClock :: !(IO POSIXTime)
   , fgsQuotaState :: !(TVar FaucetQuotaState)
+  , fgsStatusQuotaState :: !(TVar FaucetQuotaState)
   }
 
 faucetWindowSeconds :: POSIXTime
@@ -86,6 +88,7 @@ newFaucetGuardStateWithClock clock =
         { fqsGlobalAcceptedAt = Seq.empty
         , fqsClientAcceptedAt = Map.empty
         }
+    <*> newTVarIO (FaucetQuotaState Seq.empty Map.empty)
 
 -- The edge credential is verified before the Cloudflare-provided client IP is
 -- parsed or used. A caller that reaches the public ALB directly therefore
@@ -135,62 +138,70 @@ checkFaucetRequest state config clientId acceptsAsync
             , fgfQuotaScope = FaucetQuotaNone
             , fgfRetryAfterSeconds = Nothing
             }
-  | otherwise = do
-      now <- fgsClock state
-      atomically $ do
-        current <- readTVar $ fgsQuotaState state
-        let active = expireOldEntries now current
-            clientAccepted =
-              Map.findWithDefault Seq.empty clientId $ fqsClientAcceptedAt active
-        writeTVar (fgsQuotaState state) active
-        if Seq.length clientAccepted >= fgcClientRequestsPerHour config
-          then
-            pure $
-              Left $
-                quotaFailure
-                  FaucetClientQuotaExceeded
-                  FaucetQuotaClient
-                  clientId
-                  (retryAfterSeconds now clientAccepted)
-          else if Seq.length (fqsGlobalAcceptedAt active) >= fgcGlobalRequestsPerHour config
-            then
-              pure $
-                Left $
-                  quotaFailure
-                    FaucetGlobalQuotaExceeded
-                    FaucetQuotaGlobal
-                    clientId
-                    (retryAfterSeconds now $ fqsGlobalAcceptedAt active)
-            else do
-              let accepted =
-                    active
-                      { fqsGlobalAcceptedAt = fqsGlobalAcceptedAt active |> now
-                      , fqsClientAcceptedAt =
-                          Map.insert clientId (clientAccepted |> now) $
-                            fqsClientAcceptedAt active
-                      }
-              writeTVar (fgsQuotaState state) accepted
-              pure $ Right ()
+  | otherwise = checkQuota state (fgsQuotaState state) faucetWindowSeconds
+      (fgcClientRequestsPerHour config) (fgcGlobalRequestsPerHour config) clientId
 
-expireOldEntries :: POSIXTime -> FaucetQuotaState -> FaucetQuotaState
-expireOldEntries now state =
+-- Reads have their own 60/minute client budget and cannot consume mint quota.
+checkFaucetStatusRequest :: FaucetGuardState -> FaucetClientId -> IO (Either FaucetGuardFailure ())
+checkFaucetStatusRequest state = checkQuota state (fgsStatusQuotaState state) 60 60 6000
+
+checkQuota :: FaucetGuardState -> TVar FaucetQuotaState -> POSIXTime -> Int -> Int -> FaucetClientId -> IO (Either FaucetGuardFailure ())
+checkQuota state quota window clientLimit globalLimit clientId = do
+  now <- fgsClock state
+  atomically $ do
+    current <- readTVar quota
+    let active = expireOldEntries window now current
+        clientAccepted =
+          Map.findWithDefault Seq.empty clientId $ fqsClientAcceptedAt active
+    writeTVar quota active
+    if Seq.length clientAccepted >= clientLimit
+      then
+        pure $
+          Left $
+            quotaFailure
+              FaucetClientQuotaExceeded
+              FaucetQuotaClient
+              clientId
+              (retryAfterSeconds window now clientAccepted)
+      else if Seq.length (fqsGlobalAcceptedAt active) >= globalLimit
+        then
+          pure $
+            Left $
+              quotaFailure
+                FaucetGlobalQuotaExceeded
+                FaucetQuotaGlobal
+                clientId
+                (retryAfterSeconds window now $ fqsGlobalAcceptedAt active)
+        else do
+          let accepted =
+                active
+                  { fqsGlobalAcceptedAt = fqsGlobalAcceptedAt active |> now
+                  , fqsClientAcceptedAt =
+                      Map.insert clientId (clientAccepted |> now) $
+                        fqsClientAcceptedAt active
+                  }
+          writeTVar quota accepted
+          pure $ Right ()
+
+expireOldEntries :: POSIXTime -> POSIXTime -> FaucetQuotaState -> FaucetQuotaState
+expireOldEntries window now state =
   FaucetQuotaState
     { fqsGlobalAcceptedAt = activeEntries $ fqsGlobalAcceptedAt state
     , fqsClientAcceptedAt = Map.mapMaybe nonEmptyActive $ fqsClientAcceptedAt state
     }
   where
-    cutoff = now - faucetWindowSeconds
+    cutoff = now - window
     activeEntries = Seq.dropWhileL (<= cutoff)
     nonEmptyActive entries =
       case activeEntries entries of
         active | Seq.null active -> Nothing
         active -> Just active
 
-retryAfterSeconds :: POSIXTime -> Seq POSIXTime -> Int
-retryAfterSeconds now entries =
+retryAfterSeconds :: POSIXTime -> POSIXTime -> Seq POSIXTime -> Int
+retryAfterSeconds window now entries =
   case Seq.lookup 0 entries of
     Nothing -> 1
-    Just oldest -> max 1 $ ceiling $ oldest + faucetWindowSeconds - now
+    Just oldest -> max 1 $ ceiling $ oldest + window - now
 
 forbiddenFailure :: FaucetGuardFailureReason -> FaucetGuardFailure
 forbiddenFailure reason =

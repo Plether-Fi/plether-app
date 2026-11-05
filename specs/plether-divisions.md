@@ -122,10 +122,10 @@ complete finalized `WeeklyInput`, retains source boundary block identifiers in
 the publication, and writes `weeks/YYYY-MM-DD.json` plus `current.json`.
 
 The live `/api/insights/v1/divisions/traders` roster lists every account with
-an indexed nonzero executed position change on the currently configured perps
-release, including accounts with no Discord link. The backend Insights worker
+an indexed nonzero executed position change on the contract assigned to this
+week, including accounts with no Discord link. The backend Insights worker
 captures complete current-week account values at finalized, indexed blocks,
-checks external funding against USDC transfers, and stores a provisional ranked
+checks external funding against settlement-token transfers, and stores a provisional ranked
 snapshot in its database. `/api/insights/v1/divisions/live` serves wallet ranks,
 rounded weekly returns, active-day counts, and snapshot timing without exposing
 balances or exact P&L. Insights refreshes this view every minute. A new release
@@ -138,6 +138,19 @@ weeks, using the same complete account and verified funding calculations as the
 live feed. Awards are append-only in `divisions_publications`, scoped by chain
 and release, and remain available across worker restarts and frontend deployments.
 Failed capture or missing prior wallets prevents advancement and retries next cycle.
+
+Each week has exactly one persisted scoring contract, keyed by chain and week in
+`divisions_weeks`. October 11, 18 and 25 use Core v1.3.1 (USDC), and November 1
+onward uses Core v2.0.0 (USDG). Existing assignments cannot be silently changed;
+future cutovers must align with a week boundary. History accepts only a `week`
+selector and shows the assigned contract version as read-only text. Alternative
+release publications stay in the audit store but cannot count for that week.
+Navigation and current badge lookup follow this single history across upgrades.
+Earned tiers carry forward for the same wallet; balances and weekly returns are
+calculated solely on that week's assigned release. Future publications capture
+all prior badge holders, including inactive wallets, on the assigned release.
+Missing account data still blocks publication rather than supplying zero scores.
+Missing historical publications require replay against their assigned release.
 
 `/api/insights/v1/divisions/current` serves the latest publication (or explicit
 null before the first publication), enriched with registered Discord handles.

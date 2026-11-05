@@ -46,6 +46,8 @@ import type {
   VaultActivityTrancheName,
   VaultRequestIdsPage,
   TestnetFaucetClaim,
+  MarginFundingProgress,
+  LegacyMarginFunding,
 } from './types';
 
 // =============================================================================
@@ -455,6 +457,17 @@ export class PlethApiClient {
       timeoutMs: TESTNET_FAUCET_TIMEOUT_MS,
       timeoutMessage: TESTNET_FAUCET_TIMEOUT_MESSAGE,
     });
+  }
+
+  async claimMarginFunding(owner: string, address: string): Promise<Result<ApiResponse<MarginFundingProgress | LegacyMarginFunding>, PlethApiError>> {
+    return fetchApi(this.config, '/testnet/margin-funding', {
+      method: 'POST',
+      body: JSON.stringify({ version: 1, owner, address }),
+    }, { operation: 'claim_margin_funding', timeoutMs: TESTNET_FAUCET_TIMEOUT_MS, timeoutMessage: TESTNET_FAUCET_TIMEOUT_MESSAGE });
+  }
+
+  async getMarginFunding(claimId: string): Promise<Result<ApiResponse<MarginFundingProgress>, PlethApiError>> {
+    return fetchApi(this.config, `/testnet/margin-funding/${encodeURIComponent(claimId)}`, undefined, { operation: 'margin_funding_status' });
   }
 
   // ===========================================================================

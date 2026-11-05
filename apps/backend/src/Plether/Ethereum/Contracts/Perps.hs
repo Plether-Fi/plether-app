@@ -36,7 +36,6 @@ module Plether.Ethereum.Contracts.Perps
   , orderTerminalOutcome
   , orderTerminalOutcomeAtBlock
   , decodeOrderExecutionDeadline
-  , decodeOrderTerminalOutcome
   , decodeOrderTerminalSummary
   , getPositionSize
   , getPositionSizeAtBlock
@@ -208,7 +207,7 @@ data LiquidationBatchItem = LiquidationBatchItem
   { lbiIndex :: Integer
   , lbiAccount :: Text
   , lbiResult :: LiquidationBatchResult
-  , lbiKeeperBountyUsdc :: Integer
+  , lbiKeeperBountyAssets :: Integer
   , lbiErrorSelector :: ByteString
   }
   deriving stock (Show, Eq)
@@ -222,8 +221,8 @@ data PendingOrderView = PendingOrderView
   , povTargetPrice :: Integer
   , povCommitTime :: Integer
   , povCommitBlock :: Integer
-  , povCommittedMarginUsdc :: Integer
-  , povExecutionBountyUsdc :: Integer
+  , povCommittedMarginAssets :: Integer
+  , povExecutionBountyAssets :: Integer
   , povNextAccountOrderId :: Integer
   }
   deriving stock (Show, Eq)
@@ -255,7 +254,7 @@ intentRegisteredTopic =
 orderFinalizedTopic :: ByteString
 orderFinalizedTopic =
   keccak256 $ TE.encodeUtf8
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
 
 perpsOrderTopics :: [ByteString]
 perpsOrderTopics =
@@ -432,7 +431,7 @@ decodePerpsOrderEvent RpcLog {..} =
               , poeBlockNumber = rpcLogBlockNumber
               }
       | topic == orderFinalizedTopic
-          && BS.length rpcLogData == 73 * 32 ->
+          && BS.length rpcLogData == 71 * 32 ->
           Just $
             OrderFinalized
               { poeOrderId = decodeUint256 orderTopic
@@ -473,7 +472,7 @@ decodeLiquidationBatchItem RpcLog {rpcLogTopics = topic : indexTopic : accountTo
           { lbiIndex = decodeUint256 indexTopic
           , lbiAccount = decodeAddress accountTopic
           , lbiResult = result
-          , lbiKeeperBountyUsdc = wordAt 1 rpcLogData
+          , lbiKeeperBountyAssets = wordAt 1 rpcLogData
           , lbiErrorSelector = BS.take 4 $ wordBytesAt 2 rpcLogData
           }
 decodeLiquidationBatchItem _ = Nothing
@@ -924,9 +923,9 @@ decodeOrderExecutionResult bytes
       Left $ RpcJsonError "executeOrder returned an out-of-range order ID"
   | resultStatus > 3 =
       Left $ RpcJsonError "executeOrder returned an invalid lifecycle status"
-  | terminalReason > 9 =
+  | terminalReason > 10 =
       Left $ RpcJsonError "executeOrder returned an invalid terminal reason"
-  | pendingReason > 9 =
+  | pendingReason > 10 =
       Left $ RpcJsonError "executeOrder returned an invalid pending reason"
   | otherwise =
       Right
@@ -951,7 +950,7 @@ decodeOrderBatchResult bytes
       Left $ RpcJsonError "executeOrderBatch returned an out-of-range next order ID"
   | terminalCount > maxUint32 =
       Left $ RpcJsonError "executeOrderBatch returned an out-of-range terminal count"
-  | stopReason > 9 =
+  | stopReason > 10 =
       Left $ RpcJsonError "executeOrderBatch returned an invalid pending reason"
   | otherwise =
       Right
@@ -1015,8 +1014,8 @@ decodePendingOrderView bytes =
     , povTargetPrice = wordAt 5 bytes
     , povCommitTime = wordAt 6 bytes
     , povCommitBlock = wordAt 7 bytes
-    , povCommittedMarginUsdc = wordAt 8 bytes
-    , povExecutionBountyUsdc = wordAt 9 bytes
+    , povCommittedMarginAssets = wordAt 8 bytes
+    , povExecutionBountyAssets = wordAt 9 bytes
     , povNextAccountOrderId = wordAt 10 bytes
     }
 
@@ -1047,7 +1046,7 @@ decodeLifecycleStatus bytes
 decodeOrderTerminalSummary :: ByteString -> Either RpcError OrderTerminalOutcome
 decodeOrderTerminalSummary bytes
   | BS.length bytes /= 5 * 32 = Left $ RpcJsonError "terminalOutcome(uint64) returned an invalid tuple"
-  | status < 2 || status > 3 || reason == 0 || reason > 9 = Left $ RpcJsonError "terminalOutcome(uint64) did not return a terminal status/reason"
+  | status < 2 || status > 3 || reason == 0 || reason > 10 = Left $ RpcJsonError "terminalOutcome(uint64) did not return a terminal status/reason"
   | terminalBlock == 0 || terminalBlock > maxUint64 = Left $ RpcJsonError "terminalOutcome(uint64) returned an invalid block"
   | (status == 2) /= (reason == 1) = Left $ RpcJsonError "terminalOutcome(uint64) returned an inconsistent status/reason"
   | otherwise = Right $ OrderTerminalOutcome status reason Nothing terminalBlock Nothing Nothing (wordBytesAt 4 bytes)
@@ -1055,42 +1054,6 @@ decodeOrderTerminalSummary bytes
     terminalBlock = wordAt 1 bytes
     status = wordAt 2 bytes
     reason = wordAt 3 bytes
-
-decodeOrderTerminalOutcome :: ByteString -> Either RpcError OrderTerminalOutcome
-decodeOrderTerminalOutcome bytes
-  | BS.length bytes /= 27 * 32 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal outcome length"
-  | lifecycleStatus' < 2 || lifecycleStatus' > 3 =
-      Left $ RpcJsonError "outcome(uint64) did not return a terminal lifecycle status"
-  | terminalReason == 0 || terminalReason > 9 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal reason"
-  | executionMode > 3 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid execution mode"
-  | terminalBlock == 0 || terminalBlock > maxUint64 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal block"
-  | failedConstraint > 9 =
-      Left $ RpcJsonError "outcome(uint64) returned an invalid failed constraint"
-  | lifecycleStatus' == 2 && terminalReason /= 1 =
-      Left $ RpcJsonError "outcome(uint64) returned an executed status without an executed reason"
-  | lifecycleStatus' == 3 && terminalReason == 1 =
-      Left $ RpcJsonError "outcome(uint64) returned a failed status with an executed reason"
-  | otherwise =
-      Right
-        OrderTerminalOutcome
-          { otoLifecycleStatus = lifecycleStatus'
-          , otoTerminalReason = terminalReason
-          , otoExecutionMode = Just executionMode
-          , otoTerminalBlock = terminalBlock
-          , otoExecutionPrice = Just $ wordAt 15 bytes
-          , otoFailedConstraint = Just failedConstraint
-          , otoReceiptHash = wordBytesAt 22 bytes
-          }
-  where
-    lifecycleStatus' = wordAt 5 bytes
-    terminalReason = wordAt 6 bytes
-    executionMode = wordAt 7 bytes
-    terminalBlock = wordAt 10 bytes
-    failedConstraint = wordAt 20 bytes
 
 decodeOrderExecutionPolicy :: ByteString -> OrderExecutionPolicy
 decodeOrderExecutionPolicy bytes =

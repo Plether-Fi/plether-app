@@ -1,3 +1,4 @@
+vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { Result } from 'better-result'
@@ -19,7 +20,7 @@ const response: ApiResponse<VaultActivity> = {
       housePool: PERPS_ARBITRUM_SEPOLIA.housePool,
       seniorVault: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       juniorVault: PERPS_ARBITRUM_SEPOLIA.juniorVault,
-      deploymentBlock: 318_398_363,
+      deploymentBlock: 123,
     },
     coverage: {
       confirmedThroughBlock: 318_500_000,
@@ -149,18 +150,18 @@ describe('useVaultActivity', () => {
     await waitFor(() => expect(result.current.holders).toHaveLength(1))
     expect(result.current.holders[0]).toMatchObject({
       address: HOLDER,
-      seniorNavUsdc: 200n,
-      juniorNavUsdc: 100n,
-      currentNavUsdc: 300n,
+      seniorNavAssets: 200n,
+      juniorNavAssets: 100n,
+      currentNavAssets: 300n,
       seniorShareOfAttributedValue: 100,
       juniorShareOfAttributedValue: 100,
     })
-    expect(result.current.activity.map(({ amountUsdc, amountIsEstimate }) => ({
-      amountUsdc,
+    expect(result.current.activity.map(({ amountAssets, amountIsEstimate }) => ({
+      amountAssets,
       amountIsEstimate,
     }))).toEqual([
-      { amountUsdc: 50n, amountIsEstimate: true },
-      { amountUsdc: 50n, amountIsEstimate: false },
+      { amountAssets: 50n, amountIsEstimate: true },
+      { amountAssets: 50n, amountIsEstimate: false },
     ])
 
     await act(async () => {
@@ -168,7 +169,7 @@ describe('useVaultActivity', () => {
     })
     await waitFor(() => expect(result.current.isStale).toBe(true))
     expect(result.current.isError).toBe(false)
-    expect(result.current.holders[0]?.currentNavUsdc).toBe(300n)
+    expect(result.current.holders[0]?.currentNavAssets).toBe(300n)
     expect(getActivity).toHaveBeenCalledTimes(3)
     client.clear()
   })
@@ -212,7 +213,7 @@ describe('useVaultActivity', () => {
     }), { wrapper: wrapper(legacyClient) })
 
     await waitFor(() => expect(legacyResult.result.current.holders).toHaveLength(1))
-    expect(legacyResult.result.current.holders[0]?.currentNavUsdc).toBe(200n)
+    expect(legacyResult.result.current.holders[0]?.currentNavAssets).toBe(200n)
     legacyClient.clear()
   })
 })

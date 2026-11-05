@@ -41,7 +41,7 @@ export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = [
 export const TRADINGVIEW_FAVORITE_RESOLUTIONS: TradingViewResolution[] = ['5', '60', '1D']
 export const PERPS_CANDLE_MAX_HISTORY_PAGES = 24
 
-const MICRO_USDC_PER_USDC = 1_000_000n
+const ASSET_ATOMS_PER_ASSET = 1_000_000n
 const INITIAL_CURRENT_CANDLE_WAIT_MS = 250
 
 const SYMBOL_INFO: TradingViewSymbolInfo = {
@@ -448,16 +448,16 @@ export function perpsBasketCandlesToTradingViewBars(
     const chartCandle = perpsBasketCandleToChartCandle(candle, displayPriceCap)
     if (!chartCandle) continue
 
-    const volumeUsdc = parseOptionalMicroUsdc(candle.volumeUsdc)
+    const volumeAssets = parseOptionalMicroAssets(candle.volumeAssets)
     const bar: TradingViewBar = {
       time: chartCandle.timestamp * 1000,
       open: chartCandle.open,
       high: chartCandle.high,
       low: chartCandle.low,
       close: chartCandle.close,
-      ...(volumeUsdc === undefined
+      ...(volumeAssets === undefined
         ? {}
-        : { volume: microUsdcToHumanUsdc(volumeUsdc) }),
+        : { volume: microAssetsToHumanAssets(volumeAssets) }),
     }
     barsByTime.set(bar.time, bar)
   }
@@ -473,19 +473,19 @@ export function perpsBasketCandlesToDirectionalVolumeBars(
 
   for (const candle of candles) {
     if (candle.timestamp % intervalSeconds !== 0) continue
-    const longFlow = parseOptionalMicroUsdc(candle.longFlowVolumeUsdc)
-    const shortFlow = parseOptionalMicroUsdc(candle.shortFlowVolumeUsdc)
+    const longFlow = parseOptionalMicroAssets(candle.longFlowVolumeAssets)
+    const shortFlow = parseOptionalMicroAssets(candle.shortFlowVolumeAssets)
     if (longFlow === undefined || shortFlow === undefined) continue
 
-    const longFlowUsdc = microUsdcToHumanUsdc(longFlow)
-    const shortFlowUsdc = microUsdcToHumanUsdc(shortFlow)
+    const longFlowAssets = microAssetsToHumanAssets(longFlow)
+    const shortFlowAssets = microAssetsToHumanAssets(shortFlow)
     const bar: TradingViewBar = {
       time: candle.timestamp * 1000,
-      open: longFlowUsdc,
-      high: longFlowUsdc,
-      low: longFlowUsdc,
-      close: longFlowUsdc,
-      volume: shortFlowUsdc,
+      open: longFlowAssets,
+      high: longFlowAssets,
+      low: longFlowAssets,
+      close: longFlowAssets,
+      volume: shortFlowAssets,
     }
     barsByTime.set(bar.time, bar)
   }
@@ -493,7 +493,7 @@ export function perpsBasketCandlesToDirectionalVolumeBars(
   return [...barsByTime.values()].sort((left, right) => left.time - right.time)
 }
 
-function parseOptionalMicroUsdc(value: string | null | undefined): bigint | undefined {
+function parseOptionalMicroAssets(value: string | null | undefined): bigint | undefined {
   const normalized = value?.trim()
   if (!normalized || !/^\d+$/.test(normalized)) return undefined
 
@@ -504,9 +504,9 @@ function parseOptionalMicroUsdc(value: string | null | undefined): bigint | unde
   }
 }
 
-function microUsdcToHumanUsdc(value: bigint): number {
-  const whole = Number(value / MICRO_USDC_PER_USDC)
-  const fraction = Number(value % MICRO_USDC_PER_USDC) / Number(MICRO_USDC_PER_USDC)
+function microAssetsToHumanAssets(value: bigint): number {
+  const whole = Number(value / ASSET_ATOMS_PER_ASSET)
+  const fraction = Number(value % ASSET_ATOMS_PER_ASSET) / Number(ASSET_ATOMS_PER_ASSET)
   const volume = whole + fraction
   return Number.isFinite(volume) ? volume : 0
 }

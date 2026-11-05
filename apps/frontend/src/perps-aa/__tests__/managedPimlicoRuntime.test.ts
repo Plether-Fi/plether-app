@@ -60,10 +60,10 @@ const manifest: PerpsAaDeploymentManifestV1 = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f' as Address,
-  usdcSupportsEip3009: false,
-  usdcEip712Name: null,
-  usdcEip712Version: null,
+  settlementToken: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f' as Address,
+  settlementTokenSupportsEip3009: false,
+  settlementTokenEip712Name: null,
+  settlementTokenEip712Version: null,
   marginClearinghouse:
     '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7' as Address,
   cfdEngine:

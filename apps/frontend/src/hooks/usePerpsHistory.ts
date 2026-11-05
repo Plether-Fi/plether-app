@@ -4,7 +4,7 @@ import type { Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
 import { executionModeOracleFrozen } from '../contracts/perpsOrderV3'
 import { usePerpsIdentity } from '../perps-aa'
-import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsAssets, formatSignedPerpsAssets, perpsSideLabel, sizeDeltaToNotionalAssets } from '../utils/perps'
 
 export interface PerpsOrderHistoryRow {
   orderId: bigint
@@ -33,12 +33,12 @@ export interface PerpsOrderHistoryRow {
   oracleMinPublishTimeRaw?: bigint
   oracleMaxPublishTimeRaw?: bigint
   oracleDerivationVersion?: number
-  vpiUsdcRaw?: bigint
-  frozenCloseSpreadUsdcRaw?: bigint
+  vpiAssetsRaw?: bigint
+  frozenCloseSpreadAssetsRaw?: bigint
   executionEconomicsVersion?: number
   activitySizeDeltaRaw?: bigint
   activityPriceRaw?: bigint
-  activityVpiUsdcRaw?: bigint
+  activityVpiAssetsRaw?: bigint
 }
 
 export interface PerpsTradeHistoryRow {
@@ -139,40 +139,40 @@ interface BackendOrderRow {
   oracleMinPublishTime?: string
   oracleMaxPublishTime?: string
   oracleDerivationVersion?: number
-  vpiUsdc?: string
-  frozenCloseSpreadUsdc?: string
+  vpiAssets?: string
+  frozenCloseSpreadAssets?: string
   executionEconomicsVersion?: number
   cleanupActor?: string
   activityType?: string
   activitySizeDelta?: string
   activityPrice?: string
-  activityVpiUsdc?: string
-  activityPnlUsdc?: string
+  activityVpiAssets?: string
+  activityPnlAssets?: string
 }
 
 export interface PerpsOrderReceiptEconomics {
   /** Signed lifetime VPI through this execution; positive means net paid. */
-  totalPositionVpiUsdc?: string
-  positionLifetimeNetResultUsdc?: string
-  positionLifetimeTradesResultUsdc?: string
-  positionLifetimeAccountAdjustmentUsdc?: string
-  executionNotionalUsdc?: string
-  executionBountyUsdc?: string
-  realizedPnlUsdc?: string
-  vpiUsdc?: string
-  carryUsdc?: string
-  executionFeeUsdc?: string
-  frozenSpreadUsdc?: string
-  actionChargeAssessedUsdc?: string
-  actionChargeCollectedUsdc?: string
-  grossAccountDebitUsdc?: string
-  preSettlementBalanceUsdc?: string
-  postSettlementBalanceUsdc?: string
-  preTraderClaimBalanceUsdc?: string
-  postTraderClaimBalanceUsdc?: string
+  totalPositionVpiAssets?: string
+  positionLifetimeNetResultAssets?: string
+  positionLifetimeTradesResultAssets?: string
+  positionLifetimeAccountAdjustmentAssets?: string
+  executionNotionalAssets?: string
+  executionBountyAssets?: string
+  realizedPnlAssets?: string
+  vpiAssets?: string
+  carryAssets?: string
+  executionFeeAssets?: string
+  frozenSpreadAssets?: string
+  actionChargeAssessedAssets?: string
+  actionChargeCollectedAssets?: string
+  grossAccountDebitAssets?: string
+  preSettlementBalanceAssets?: string
+  postSettlementBalanceAssets?: string
+  preTraderClaimBalanceAssets?: string
+  postTraderClaimBalanceAssets?: string
   postPositionSize?: string
-  postPositionMarginUsdc?: string
-  postPositionEquityUsdc?: string
+  postPositionMarginAssets?: string
+  postPositionEquityAssets?: string
   postLeverageBps?: string
 }
 
@@ -184,8 +184,8 @@ interface BackendActivityRow {
   side?: number
   price?: string
   sizeDelta?: string
-  amountUsdc?: string
-  pnlUsdc?: string
+  amountAssets?: string
+  pnlAssets?: string
   txHash?: string
   blockNumber?: string
   timestamp?: number
@@ -264,8 +264,8 @@ function isUnexecutedTerminalOrder(row: BackendOrderRow): boolean {
 function orderSize(row: BackendOrderRow): string {
   const sizeDelta = parseBigInt(row.activitySizeDelta)
   const price = parseBigInt(row.activityPrice ?? row.executionPrice)
-  const notional = sizeDeltaToNotionalUsdc(sizeDelta, price)
-  if (notional !== undefined) return formatPerpsUsdc(notional)
+  const notional = sizeDeltaToNotionalAssets(sizeDelta, price)
+  if (notional !== undefined) return formatPerpsAssets(notional)
   return isUnexecutedTerminalOrder(row) ? 'Not executed' : '--'
 }
 
@@ -289,13 +289,13 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const executionOraclePriceRaw = parseBigInt(row.executionOraclePrice)
   const oracleMinPublishTimeRaw = parseBigInt(row.oracleMinPublishTime)
   const oracleMaxPublishTimeRaw = parseBigInt(row.oracleMaxPublishTime)
-  const vpiUsdcRaw = parseBigInt(row.receiptEconomics?.vpiUsdc)
-  const frozenCloseSpreadUsdcRaw = parseBigInt(
-    row.receiptEconomics?.frozenSpreadUsdc
+  const vpiAssetsRaw = parseBigInt(row.receiptEconomics?.vpiAssets)
+  const frozenCloseSpreadAssetsRaw = parseBigInt(
+    row.receiptEconomics?.frozenSpreadAssets
   )
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
-  const activityVpiUsdcRaw = parseBigInt(row.activityVpiUsdc)
+  const activityVpiAssetsRaw = parseBigInt(row.activityVpiAssets)
 
   return {
     orderId,
@@ -326,12 +326,12 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     oracleMinPublishTimeRaw,
     oracleMaxPublishTimeRaw,
     oracleDerivationVersion: row.oracleDerivationVersion,
-    vpiUsdcRaw,
-    frozenCloseSpreadUsdcRaw,
+    vpiAssetsRaw,
+    frozenCloseSpreadAssetsRaw,
     executionEconomicsVersion: row.executionEconomicsVersion,
     activitySizeDeltaRaw,
     activityPriceRaw,
-    activityVpiUsdcRaw,
+    activityVpiAssetsRaw,
   }
 }
 
@@ -370,24 +370,24 @@ function activityPrice(row: BackendActivityRow): string {
 function activitySize(row: BackendActivityRow): string {
   if (row.activityType === 'Cleaned up expired order') return '--'
 
-  const amountUsdc = parseBigInt(row.amountUsdc)
-  if (amountUsdc !== undefined) return formatPerpsUsdc(amountUsdc)
+  const amountAssets = parseBigInt(row.amountAssets)
+  if (amountAssets !== undefined) return formatPerpsAssets(amountAssets)
 
   const sizeDelta = parseBigInt(row.sizeDelta)
   const price = parseBigInt(row.price)
-  const notional = sizeDeltaToNotionalUsdc(sizeDelta, price)
-  return notional === undefined ? '--' : formatPerpsUsdc(notional)
+  const notional = sizeDeltaToNotionalAssets(sizeDelta, price)
+  return notional === undefined ? '--' : formatPerpsAssets(notional)
 }
 
 function activityResult(row: BackendActivityRow): string | undefined {
   if (row.activityType === 'Cleaned up expired order' && row.orderId) return `Order ${row.orderId}`
   if (row.activityType === 'Liquidated') {
-    const keeperBounty = parseBigInt(row.amountUsdc)
-    return keeperBounty === undefined ? undefined : `Liquidation reward ${formatPerpsUsdc(keeperBounty)}`
+    const keeperBounty = parseBigInt(row.amountAssets)
+    return keeperBounty === undefined ? undefined : `Liquidation reward ${formatPerpsAssets(keeperBounty)}`
   }
 
-  const pnl = parseBigInt(row.pnlUsdc)
-  return pnl === undefined ? undefined : formatSignedPerpsUsdc(pnl)
+  const pnl = parseBigInt(row.pnlAssets)
+  return pnl === undefined ? undefined : formatSignedPerpsAssets(pnl)
 }
 
 function mapActivityRow(row: BackendActivityRow): PerpsTradeHistoryRow | undefined {

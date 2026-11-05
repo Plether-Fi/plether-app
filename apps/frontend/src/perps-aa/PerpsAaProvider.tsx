@@ -16,6 +16,7 @@ import { assertEmbeddedPerpsOwner } from './embeddedOwner'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+  PERPS_RELEASE_IS_DEPLOYED,
 } from '../contracts/perpsAddresses'
 import { isSepoliaDeployment } from '../utils/deployment'
 import {
@@ -39,6 +40,7 @@ const SponsoredOperationRecovery = lazy(async () => {
 })
 
 function configuredManifestUrl(): string | null {
+  if (!PERPS_RELEASE_IS_DEPLOYED) return null
   const value: unknown = import.meta.env.VITE_PERPS_AA_MANIFEST_URL
   return resolvePerpsAaManifestUrl(value, isSepoliaDeployment())
 }
@@ -172,7 +174,7 @@ export function PerpsAaProvider({
         ) ||
         nextRuntime.accountVersion !== manifest.smartAccountVersion ||
         nextRuntime.accountIndex !== manifest.smartAccountIndex ||
-        !isAddressEqual(manifest.usdc, PERPS_ARBITRUM_SEPOLIA.usdc) ||
+        !isAddressEqual(manifest.settlementToken, PERPS_ARBITRUM_SEPOLIA.settlementToken) ||
         !isAddressEqual(
           manifest.marginClearinghouse,
           PERPS_ARBITRUM_SEPOLIA.marginClearinghouse
@@ -212,7 +214,7 @@ export function PerpsAaProvider({
         accountAddressResolver={accountAddressResolver}
       >
         <Suspense fallback={null}>
-          <SponsoredOperationRecovery />
+          {PERPS_RELEASE_IS_DEPLOYED && <SponsoredOperationRecovery />}
         </Suspense>
         {children}
       </WagmiPerpsIdentityProvider>

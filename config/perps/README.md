@@ -1,60 +1,43 @@
-# Arbitrum Sepolia perps release
+# Arbitrum Sepolia perps release configuration
 
-`arbitrum-sepolia-v3.json` selects the replacement plether-core v1.3.1 deployment
-from [Core PR #112](https://github.com/Plether-Fi/plether-core/pull/112). The active
-frontend registry, public AA manifest, backend embedded manifest, worker runtime
-hashes, Docker build inputs, Terraform bindings, and deployment guards all target
-this graph. All 29 contract addresses and runtime hashes come from source commit
-`cf86189bcca4813f39d6405a338b77176783eb42` at L2 blocks 318398363–318398657.
+`arbitrum-sepolia-v2.0.0.json` is the current perps consumer configuration. It
+selects Core v2.0.0 on Arbitrum Sepolia (421614), canonical schema 4 and order
+interface 3, using six-decimal MockUSDG. All 30 addresses and runtime hashes come
+from the published release manifest, including the new `cfdEnginePlanningReader`.
 
-The exact upstream manifest is retained under `evidence/v1.3.1/manifest.json`.
-`arbitrum-sepolia-v3.provenance.json` records its SHA-256 and the immutable build
-archive checksum, pinned to release-record commit
-`22f4b70ba97ebed98a2c821958caf25313771faf`. The application manifest adds source
-provenance and indexing metadata without altering the upstream deployment state.
-The first full volume-history minute is 1791804360, derived from deployment block
-timestamp 1791804328 and hash
-`0x6f47679ab4d34b543ce1099a6a67cdcf2fea90f79daf01f69e15e25218af9d9e`.
+The frontend registry, backend embedded manifest, workers, Docker and deployment
+guards select this file. `infra/terraform/sepolia-core-v2.0.0.tfvars.json` contains
+the matching backend/vault bindings and deployment block 323658447. Volume starts
+at the first whole minute after that block: 1793185200 (2026-10-28 11:00 UTC).
+Terraform defaults remain unbound; applying the overlay is an operator step.
 
-This source update replaces the app's protocol target. It does not deploy app
-services or broadcast bootstrap/activation transactions. At the recorded release
-checkpoint, contracts are trading active, Senior is permanently seeded with
-10M mock USDC, Junior with 500M, and the guardian is unset.
-Old positions, orders, balances, claims, and vault obligations do not migrate
-automatically; preserve the old deployment's servicing and signed-operation
-reconciliation. Never mix deployment identities in an existing competition.
-The v1.2.3 and v1.3.0 manifests remain historical records.
+The original release asset is preserved byte-for-byte in
+`evidence/v2.0.0/manifest.json`; its SHA-256 matches GitHub's release digest.
+`consumer-bundle.json` hashes the app's ABI, SDK and deployment evidence. Its
+checksum is the app release's `bundleSha256`; it is an app evidence inventory,
+not an upstream compiler archive. The runtime verification records read-only
+checks of all 30 contracts at one safe block. ABI provenance separately identifies
+compiled source and does not claim bytecode reproduction.
 
-## Consumer interfaces
+The public AA manifest binds this market with a fresh version and the reviewed
+existing paymaster. `evidence/v2.0.0/aa-activation.json` records its runtime hash,
+EntryPoint/account policy, signer, pause state, deposit and stake. The paymaster
+source is unchanged between the prior protocol and v2.0.0 and contains no market
+target bindings. Sponsorship is enabled in the public manifest; the backend must
+independently verify the v2 graph and its native-AA readiness before issuance. See [the integration runbook](../../docs/runbooks/perps-mock-usdg.md)
+for the remaining database, worker and AA rollout steps. This source update does
+not by itself deploy services, apply Terraform or migrate databases.
 
-The app consumes V3 requests with a submission deadline and a separate execution
-window. AA manifest transport identity retains its `-v2` suffix, with the fresh
-20261012 date, `v131` deployment marker and explicit `orderInterfaceVersion: 3`. The backend calldata
-policy is `bounded-v3`. The pinned SDK is built from the deployed Core revision;
-registry publication is independent of this checked-in artifact.
+Current token metadata is `settlementToken`; the token pin is
+`contracts.settlementToken`. Quantities use `Assets` and `AssetAtoms`, AA metadata
+uses `settlementToken*`, and environment/Terraform use `PERPS_SETTLEMENT_TOKEN` /
+`perps_settlement_token`. MockUSDG supports mint/approve/transfer/deposit without
+signed-token authorization or bridge funding. Rewards are not applicable.
 
-Frontend ABI subsets and protection-worker ABIs come from the checksum-verified
-v1.3.0 `build.tar.gz`, reused unchanged by v1.3.1. Lifecycle receipts include close economics, commitment,
-bounty disposition, and timing. The V5 book's `terminalOutcome` stores a compact
-summary; full UI execution evidence comes from the canonical `OrderFinalized`
-event. Canonical indexing supplies economics omitted by the compact summary.
-Historical order execution quotes `getOrderExecutionFee(bytes[])`, while mark
-refreshes retain `getUpdateFee(bytes[])`.
+## Historical evidence
 
-The close preview is deployed with this graph and uses the request-taking
-`previewClose` overload. A successful prospective preview validates bounty
-backing from free settlement and eligible position pledge. Closes do not require
-an additional free-settlement deposit or a subsidy batch. New subsidy issuance
-is disabled; the September sponsored-close lens remains archived with its old
-engine/router bindings. Bridge funding remains independently gated.
-
-Regenerate protection-worker ABIs with:
-
-```sh
-node scripts/generate-protection-worker-abi.mjs /path/to/build.tar.gz
-```
-
-The backend embeds `arbitrum-sepolia-v3.json` at compile time. Cabal tracks it as a
-build dependency, and Docker copies the same file. Runtime environment bindings
-must match the embedded release and deployment anchor. Rebuild consumers after
-changing the release file; do not duplicate deployed addresses in Haskell code.
+`mock-usdg-prepared.json` is retained as an inactive parser/safety fixture.
+`arbitrum-sepolia-v1.json`, `arbitrum-sepolia-v2.json`,
+`arbitrum-sepolia-v3.json` and `evidence/v1.3.1` retain their original deployments.
+Historical Terraform overlays, SDK provenance and signed-operation evidence are
+not fallback configurations for current consumers.

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerpsProtectionPanel, ProtectionHistoryRow } from '../PerpsProtectionPanel'
 import type { ProtectionHistoryRecord } from '../../hooks/useProtectionHistory'
-import type { PositionProtection } from '../../contracts/positionProtection'
+import { relaxedProtectionCloseLimits, type PositionProtection } from '../../contracts/positionProtection'
 import type { PerpsPosition } from '../../hooks/usePerpsAccount'
 
 const mocks = vi.hoisted(() => ({ manage: vi.fn(), refetch: vi.fn(), history: [] as ProtectionHistoryRecord[] }))
@@ -15,11 +15,11 @@ vi.mock('../../hooks/useProtectionHistory', () => ({
 }))
 const protection: PositionProtection = {
   protectionId: 7n, parentOrderId: 12n, linkedOrderId: 0n, account: '0x1111111111111111111111111111111111111111', side: 0, size: 10n ** 18n,
-  takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n,
+  takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, triggerBountyAssets: 200_000n,
   armedAt: 0n, armedBlock: 0n, triggerMarkPrice: 0n, triggerPublishTime: 0n, triggeredLeg: 0, status: 1,
 }
-const position: PerpsPosition = { exists: true, side: 0, direction: 'long', size: 10n ** 18n, entryPrice: 100_000_000n, marginUsdc: 100_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 1_000n, liquidatable: false, liquidationPrice: 120_000_000n }
-const props = { protection, position, rawMark: 100_000_000n, cap: 200_000_000n, configuration: { enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }, pendingOrders: 1, availableFreeSettlementUsdc: 400_000n, onRefresh: vi.fn() }
+const position: PerpsPosition = { exists: true, side: 0, direction: 'long', size: 10n ** 18n, entryPrice: 100_000_000n, marginAssets: 100_000n, unrealizedPnlAssets: 0n, maintenanceMarginAssets: 1_000n, liquidatable: false, liquidationPrice: 120_000_000n }
+const props = { protection, position, rawMark: 100_000_000n, cap: 200_000_000n, configuration: { enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }, pendingOrders: 1, availableFreeSettlementAssets: 400_000n, onRefresh: vi.fn() }
 describe('position protection management', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.history = []; mocks.manage.mockResolvedValue({ protectionId: 7n }) })
   it('cancels only protection and discloses that the parent opening order survives', async () => {
@@ -33,12 +33,12 @@ describe('position protection management', () => {
   it('converts displayed edits to raw prices and preserves the reviewed ID', async () => {
     render(<PerpsProtectionPanel {...props} />)
     fireEvent.click(screen.getByRole('button', { name: 'Edit TP/SL' }))
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.2' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     expect(mocks.manage).not.toHaveBeenCalled()
     expect(screen.getByRole('heading', { name: 'Review your TP/SL' })).toHaveFocus()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 80_000_000n, stopLossTriggerPrice: 110_000_000n } }) })
+    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 80_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() } }) })
   })
   it('blocks stale confirmation when the active protection changes', () => {
     const view = render(<PerpsProtectionPanel {...props} />)
@@ -101,18 +101,18 @@ describe('position protection management', () => {
     view.rerender(<PerpsProtectionPanel {...activeProps} rawMark={99_000_000n} />)
     expect(screen.getByText('1.0200')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 98_000_000n, stopLossTriggerPrice: 110_000_000n } }) })
+    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 98_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() } }) })
   })
   it('uses the position basis for a 90% short loss and submits a stop before liquidation', async () => {
-    const short = { ...position, direction: 'short' as const, side: 1, entryPrice: 99_500_000n, size: 10_000n * 10n ** 18n, marginUsdc: 250_000_000n, liquidationPrice: 97_000_000n }
+    const short = { ...position, direction: 'short' as const, side: 1, entryPrice: 99_500_000n, size: 10_000n * 10n ** 18n, marginAssets: 250_000_000n, liquidationPrice: 97_000_000n }
     render(<PerpsProtectionPanel {...props} protection={undefined} pendingOrders={0} position={short} rawMark={99_500_000n} />)
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
-    expect(screen.getByLabelText('Stop loss (USDC)')).toHaveValue('1.0275')
+    expect(screen.getByLabelText('Stop loss (USDG)')).toHaveValue('1.0275')
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     expect(screen.getByText('-90% return on margin')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 97_250_000n } }) })
+    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 97_250_000n, closeLimits: relaxedProtectionCloseLimits() } }) })
   })
   it('blocks review of a stop beyond liquidation', () => {
     render(<PerpsProtectionPanel {...props} protection={undefined} pendingOrders={0} position={{ ...position, liquidationPrice: 108_000_000n }} />)
@@ -128,7 +128,7 @@ describe('position protection management', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
-    const changedPosition = change === 'margin' ? { ...createProps.position, marginUsdc: 200_000n } : { ...createProps.position, liquidationPrice: 108_000_000n }
+    const changedPosition = change === 'margin' ? { ...createProps.position, marginAssets: 200_000n } : { ...createProps.position, liquidationPrice: 108_000_000n }
     view.rerender(<PerpsProtectionPanel {...createProps} position={changedPosition} />)
     expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent(change === 'margin' ? 'changed' : 'liquidation price')
@@ -137,21 +137,21 @@ describe('position protection management', () => {
   it('keeps invalid inputs editable and blocks review', () => {
     render(<PerpsProtectionPanel {...props} />)
     fireEvent.click(screen.getByRole('button', { name: 'Edit TP/SL' }))
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '0.5' } })
-    expect(screen.getByLabelText('Take profit (USDC)')).toHaveAttribute('aria-invalid', 'true')
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '0.5' } })
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveAttribute('aria-invalid', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     expect(screen.getByRole('alert')).toHaveTextContent('Take profit must be above')
     expect(screen.queryByRole('button', { name: 'Confirm TP/SL' })).not.toBeInTheDocument()
     expect(mocks.manage).not.toHaveBeenCalled()
   })
   it('blocks creation if the execution reserve changes after review', () => {
-    const createProps = { ...props, protection: undefined, position, pendingOrders: 0, availableFreeSettlementUsdc: 1_000_000n }
+    const createProps = { ...props, protection: undefined, position, pendingOrders: 0, availableFreeSettlementAssets: 1_000_000n }
     const view = render(<PerpsProtectionPanel {...createProps} />)
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
-    fireEvent.change(screen.getByLabelText('Stop loss (USDC)'), { target: { value: '0.9' } })
+    fireEvent.change(screen.getByLabelText('Stop loss (USDG)'), { target: { value: '0.9' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
-    expect(screen.getByText(/from free margin/)).toHaveTextContent(/0\.4\s*USDC/)
-    view.rerender(<PerpsProtectionPanel {...createProps} configuration={{ ...props.configuration, triggerBountyUsdc: 300_000n }} />)
+    expect(screen.getByText(/from free margin/)).toHaveTextContent(/0\.4\s*USDG/)
+    view.rerender(<PerpsProtectionPanel {...createProps} configuration={{ ...props.configuration, triggerBountyAssets: 300_000n }} />)
     expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent('changed')
     expect(mocks.manage).not.toHaveBeenCalled()
@@ -160,24 +160,24 @@ describe('position protection management', () => {
     render(<PerpsProtectionPanel {...props} protection={undefined} position={position} pendingOrders={0} />)
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
     expect(screen.getByRole('button', { name: 'Review TP/SL' })).toBeDisabled()
-    fireEvent.change(screen.getByLabelText('Stop loss (USDC)'), { target: { value: '0.9' } })
+    fireEvent.change(screen.getByLabelText('Stop loss (USDG)'), { target: { value: '0.9' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     expect(screen.getByText('No take profit trigger')).toBeInTheDocument()
     expect(mocks.manage).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 110_000_000n } }) })
+    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() } }) })
     expect(screen.getByRole('heading', { name: 'Take profit & stop loss' })).toHaveFocus()
   })
   it.each([
     { available: 2_000n, shortfall: '0.398' },
     { available: 399_999n, shortfall: '0.000001' },
-  ])('blocks creation and shows the exact $shortfall USDC funding shortfall', ({ available, shortfall }) => {
-    render(<PerpsProtectionPanel {...props} protection={undefined} pendingOrders={0} availableFreeSettlementUsdc={available} />)
-    expect(screen.getByText('Execution reserve required').parentElement).toHaveTextContent(/0\.4\s*USDC/)
-    expect(screen.getByRole('alert')).toHaveTextContent(`Deposit at least ${shortfall} USDC into your perps account`)
+  ])('blocks creation and shows the exact $shortfall USDG funding shortfall', ({ available, shortfall }) => {
+    render(<PerpsProtectionPanel {...props} protection={undefined} pendingOrders={0} availableFreeSettlementAssets={available} />)
+    expect(screen.getByText('Execution reserve required').parentElement).toHaveTextContent(/0\.4\s*USDG/)
+    expect(screen.getByRole('alert')).toHaveTextContent(`Deposit at least ${shortfall} USDG into your perps account`)
     expect(screen.getByRole('alert')).toHaveTextContent('Adding position margin does not fund this reserve')
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     expect(screen.getByRole('button', { name: 'Review TP/SL' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     expect(screen.queryByRole('button', { name: 'Confirm TP/SL' })).not.toBeInTheDocument()
@@ -185,41 +185,41 @@ describe('position protection management', () => {
   })
   it.each([undefined, 2_000n])('keeps the draft while unavailable or insufficient funds recover (%s)', async available => {
     const createProps = { ...props, protection: undefined, pendingOrders: 0 }
-    const view = render(<PerpsProtectionPanel {...createProps} availableFreeSettlementUsdc={available} />)
+    const view = render(<PerpsProtectionPanel {...createProps} availableFreeSettlementAssets={available} />)
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     expect(screen.getByRole('button', { name: 'Review TP/SL' })).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent(available === undefined ? 'Waiting for your available free margin' : 'Deposit at least 0.398 USDC')
+    expect(screen.getByRole('alert')).toHaveTextContent(available === undefined ? 'Waiting for your available free margin' : 'Deposit at least 0.398 USDG')
     view.rerender(<PerpsProtectionPanel {...createProps} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
     expect(screen.getByRole('button', { name: 'Review TP/SL' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n } }))
+    await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() } }))
   })
   it.each([undefined, 2_000n])('blocks confirmation when available funds become %s after review', available => {
     const createProps = { ...props, protection: undefined, pendingOrders: 0 }
     const view = render(<PerpsProtectionPanel {...createProps} />)
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
-    view.rerender(<PerpsProtectionPanel {...createProps} availableFreeSettlementUsdc={available} />)
+    view.rerender(<PerpsProtectionPanel {...createProps} availableFreeSettlementAssets={available} />)
     expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent(available === undefined ? 'Waiting for your available free margin' : 'Deposit at least 0.398 USDC')
+    expect(screen.getByRole('alert')).toHaveTextContent(available === undefined ? 'Waiting for your available free margin' : 'Deposit at least 0.398 USDG')
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
     expect(mocks.manage).not.toHaveBeenCalled()
     view.rerender(<PerpsProtectionPanel {...createProps} />)
     expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeEnabled()
   })
   it.each([undefined, 0n])('allows editing already funded TP/SL with %s free margin', async available => {
-    render(<PerpsProtectionPanel {...props} availableFreeSettlementUsdc={available} />)
+    render(<PerpsProtectionPanel {...props} availableFreeSettlementAssets={available} />)
     fireEvent.click(screen.getByRole('button', { name: 'Edit TP/SL' }))
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
     expect(screen.getByText(/already reserved/)).toBeVisible()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n } }))
+    await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() } }))
   })
   it('shows confirmation failure without losing the reviewed prices', async () => {
     mocks.manage.mockRejectedValue(new Error('Wallet request rejected'))
@@ -241,7 +241,7 @@ describe('position protection management', () => {
     expect(mocks.manage).not.toHaveBeenCalled()
   })
   it('keeps cancellation available when the risk snapshot is missing', async () => {
-    render(<PerpsProtectionPanel {...props} position={undefined} availableFreeSettlementUsdc={undefined} />)
+    render(<PerpsProtectionPanel {...props} position={undefined} availableFreeSettlementAssets={undefined} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove TP/SL' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }))
     await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'cancel', protectionId: 7n }))

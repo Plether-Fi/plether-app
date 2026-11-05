@@ -26,14 +26,14 @@ test('V3 address manifest matches the checksum published in Core PR 112', () => 
   }
 })
 
-test('active consumers all select the replacement V3 deployment', () => {
+test('historical consumer evidence retains the V3 deployment identity', () => {
   assert.equal(provenance.consumerCutover, 'v1.3.1')
   assert.equal(manifest.verification.seededPhase.passed, true)
   assert.equal(manifest.verification.activePhase.passed, true)
   assert.equal(manifest.release.guardian, '0x0000000000000000000000000000000000000000')
 
   const active = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
-  const aa = JSON.parse(read('apps/frontend/public/perps-aa-manifest.json'))
+  const aa = JSON.parse(read('config/perps/evidence/v1.3.1/perps-aa-manifest.json'))
   const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.3.1.tfvars.json'))
   assert.equal(aa.orderRouter, active.contracts.orderRouter.address)
   assert.equal(overlay.perps_order_router, active.contracts.orderRouter.address)

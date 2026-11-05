@@ -1,5 +1,5 @@
 import { getAddress, isAddress, type Address } from 'viem'
-import { PERPS_ARBITRUM_SEPOLIA } from '../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_SETTLEMENT_TOKEN } from '../contracts/perpsAddresses'
 
 export const PERPS_AA_MANIFEST_V1_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
@@ -34,10 +34,10 @@ interface PerpsAaDeploymentManifestBase {
   smartAccountVersion: PerpsSmartAccountVersion
   smartAccountIndex: string
   smartAccountFactory: Address
-  usdc: Address
-  usdcSupportsEip3009: boolean
-  usdcEip712Name: string | null
-  usdcEip712Version: string | null
+  settlementToken: Address
+  settlementTokenSupportsEip3009: boolean
+  settlementTokenEip712Name: string | null
+  settlementTokenEip712Version: string | null
   marginClearinghouse: Address
   cfdEngine: Address
   orderRouter: Address
@@ -83,10 +83,10 @@ const COMMON_MANIFEST_KEYS = [
   'smartAccountVersion',
   'smartAccountIndex',
   'smartAccountFactory',
-  'usdc',
-  'usdcSupportsEip3009',
-  'usdcEip712Name',
-  'usdcEip712Version',
+  'settlementToken',
+  'settlementTokenSupportsEip3009',
+  'settlementTokenEip712Name',
+  'settlementTokenEip712Version',
   'marginClearinghouse',
   'cfdEngine',
   'orderRouter',
@@ -393,35 +393,42 @@ export function parsePerpsAaManifest(
 
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
 
-  const usdcSupportsEip3009 = parseBoolean(
-    value.usdcSupportsEip3009,
-    'usdcSupportsEip3009'
+  const settlementTokenSupportsEip3009 = parseBoolean(
+    value.settlementTokenSupportsEip3009,
+    'settlementTokenSupportsEip3009'
   )
-  const usdcEip712Name = parseNullableNonEmptyString(
-    value.usdcEip712Name,
-    'usdcEip712Name'
+  const settlementTokenEip712Name = parseNullableNonEmptyString(
+    value.settlementTokenEip712Name,
+    'settlementTokenEip712Name'
   )
-  const usdcEip712Version = parseNullableNonEmptyString(
-    value.usdcEip712Version,
-    'usdcEip712Version'
+  const settlementTokenEip712Version = parseNullableNonEmptyString(
+    value.settlementTokenEip712Version,
+    'settlementTokenEip712Version'
   )
   if (
-    usdcSupportsEip3009 &&
-    (usdcEip712Name === null || usdcEip712Version === null)
+    settlementTokenSupportsEip3009 &&
+    (settlementTokenEip712Name === null || settlementTokenEip712Version === null)
   ) {
     invalid(
-      'usdcSupportsEip3009',
-      'requires both USDC EIP-712 name and version'
+      'settlementTokenSupportsEip3009',
+      'requires both USDG token EIP-712 name and version'
     )
   }
   if (
-    !usdcSupportsEip3009 &&
-    (usdcEip712Name !== null || usdcEip712Version !== null)
+    !settlementTokenSupportsEip3009 &&
+    (settlementTokenEip712Name !== null || settlementTokenEip712Version !== null)
   ) {
     invalid(
-      'usdcSupportsEip3009',
-      'requires both USDC EIP-712 fields to be null when disabled'
+      'settlementTokenSupportsEip3009',
+      'requires both USDG token EIP-712 fields to be null when disabled'
     )
+  }
+
+  {
+    parsePinnedAddress(value.settlementToken, 'settlementToken', PERPS_ARBITRUM_SEPOLIA.settlementToken)
+    if (settlementTokenSupportsEip3009 !== PERPS_SETTLEMENT_TOKEN.supportsReceiveWithAuthorization) {
+      invalid('settlementTokenSupportsEip3009', 'must match the configured USDG token capabilities')
+    }
   }
 
   const commonManifest: PerpsAaDeploymentManifestBase = {
@@ -451,10 +458,10 @@ export function parsePerpsAaManifest(
       'smartAccountFactory',
       PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY
     ),
-    usdc: parseAddress(value.usdc, 'usdc'),
-    usdcSupportsEip3009,
-    usdcEip712Name,
-    usdcEip712Version,
+    settlementToken: parseAddress(value.settlementToken, 'settlementToken'),
+    settlementTokenSupportsEip3009,
+    settlementTokenEip712Name,
+    settlementTokenEip712Version,
     marginClearinghouse: parseAddress(
       value.marginClearinghouse,
       'marginClearinghouse'

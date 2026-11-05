@@ -30,4 +30,4 @@ jobs:
       - name: Validate and exercise mocked AWS plans
         run: |
           terraform -chdir=infra/terraform validate -no-color
-          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-aa-canary-preparation.tfvars -var-file=sepolia-core-v1.3.1.tfvars.json -no-color
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-aa-canary-preparation.tfvars -no-color

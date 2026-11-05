@@ -10,7 +10,6 @@ const registration = readFileSync(new URL('../apps/backend/src/Plether/Handlers/
 const query = handlers.split('getDivisionsLiveResponse pool cfg = do')[1]
   .match(/"SELECT[\s\S]*?LIMIT 1"/)[0].slice(1, -1).replace(/\\\s*\n\s*\\/g, '')
   .replace('s.chain_id=?', 's.chain_id=421614')
-  .replace('s.release_router=?', "s.release_router='router'")
   .replace('s.week_start=?', 's.week_start=100')
 const createLinks = registration.match(/"CREATE TABLE IF NOT EXISTS insights_divisions_links .*"/)[0]
   .slice(1, -1).replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
@@ -28,6 +27,8 @@ for (const legacySchema of [false, true]) test(`completed registrations show han
     -- Simulate legacy records from the previous deployment. The old flag must
     -- not hide a completed registration or require a data backfill.
     ${legacySchema ? 'ALTER TABLE insights_divisions_links ADD COLUMN show_discord_handle BOOLEAN NOT NULL DEFAULT FALSE;' : ''}
+    CREATE TEMP TABLE divisions_weeks (chain_id bigint, week_start bigint, release_router text, release_version text, asset_symbol text);
+    INSERT INTO divisions_weeks VALUES (421614,100,'router','v2.0.0','USDG');
     CREATE TEMP TABLE divisions_live_snapshots (
       chain_id bigint, release_router text, week_start bigint, snapshot_block bigint,
       snapshot_hash text, snapshot_timestamp bigint, wallet_count int, standings jsonb, captured_at timestamptz);
@@ -48,4 +49,25 @@ for (const legacySchema of [false, true]) test(`completed registrations show han
   assert.deepEqual(snapshots[0], standings.map(row => ({ ...row, discordUsername: row.address === address(1) ? 'existing-trader' : row.address === address(2) ? 'new-trader' : null })))
   assert.equal(snapshots[1][1].discordUsername, 'renamed')
   assert.deepEqual(snapshots[2], [])
+})
+
+
+test('Discord registration stats count completed unique wallet links, including non-traders, and exclude pending sessions', () => {
+  const count = handlers.split('getDivisionsStatsResponse pool cfg = do')[1].match(/"SELECT COUNT\(\*\) FROM insights_divisions_links"/)[0].slice(1, -1)
+  const sessions = registration.match(/"CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions .*"/)[0]
+    .slice(1, -1).replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
+  const sql = `BEGIN; ${createLinks}; ${sessions};
+    INSERT INTO insights_divisions_link_sessions (session_digest,expires_at,discord_id,discord_username)
+      VALUES (decode(repeat('ab',32),'hex'),NOW()+INTERVAL '1 hour','10000000000000004','pending-wallet-verification');
+    ${count};
+    INSERT INTO insights_divisions_links (discord_id,discord_username,owner_wallet,trading_account,rules_version,privacy_version)
+      VALUES ('10000000000000001','trader','${address(11)}','${address(1)}','v1','v1'),
+             ('10000000000000002','never-traded','${address(12)}','${address(2)}','v1','v1');
+    ${count};
+    INSERT INTO insights_divisions_links (discord_id,discord_username,owner_wallet,trading_account,rules_version,privacy_version)
+      VALUES ('10000000000000001','trader','${address(11)}','${address(1)}','v1','v1') ON CONFLICT DO NOTHING;
+    ${count}; ROLLBACK;`
+  const result = spawnSync(process.env.PSQL_BIN ?? 'psql', ['-X','-qAt','-v','ON_ERROR_STOP=1','-d',process.env.PGDATABASE ?? 'postgres'], { input: sql, encoding: 'utf8' })
+  assert.equal(result.status,0,result.stderr)
+  assert.deepEqual(result.stdout.trim().split('\n').map(Number),[0,2,2])
 })

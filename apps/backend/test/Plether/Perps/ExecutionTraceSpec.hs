@@ -498,8 +498,8 @@ evidenceFor
 evidenceFor oracleFixture kind vpi frozenCloseSpread =
   TradeExecutionEvidence
     { teeKind = kind
-    , teeVpiUsdc = vpi
-    , teeFrozenCloseSpreadUsdc = frozenCloseSpread
+    , teeVpiAssets = vpi
+    , teeFrozenCloseSpreadAssets = frozenCloseSpread
     , teeExecutionOraclePrice = ofMarkPrice oracleFixture
     , teeOraclePublishTime = ofPublishTime oracleFixture
     , teeOracleFrozen = ofFrozen oracleFixture

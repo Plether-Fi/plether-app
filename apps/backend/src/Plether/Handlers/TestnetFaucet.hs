@@ -11,6 +11,9 @@ module Plether.Handlers.TestnetFaucet
   , testnetFaucetAmount
   , testnetFaucetEnabled
   , faucetMintCall
+  , withFaucetSignerLock
+  , withFaucetDb
+  , resumeSubmittedClaim
   ) where
 
 import Control.Exception
@@ -34,6 +37,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Generics (Generic)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb, withDbAdvisoryLock)
+import qualified Plether.Database.TestnetFunding as MarginFunding
 import Plether.Database.Schema
   ( TestnetFaucetClaimRow (..)
   , beginTestnetFaucetClaim
@@ -110,6 +114,7 @@ instance ToJSON TestnetFaucetResponse where
 
 data FaucetClaimDisposition
   = FaucetAlreadyClaimed
+  | FaucetDirectMargin
   | FaucetReconcileLegacy
   | FaucetResumeSubmitted
   | FaucetBeginOrWait
@@ -139,6 +144,8 @@ classifyTestnetFaucetClaim = \case
   Just claim ->
     case tfcStatus claim of
       "success" -> FaucetAlreadyClaimed
+      "margin_reserved" -> FaucetDirectMargin
+      "margin_funded" -> FaucetDirectMargin
       "pending" -> FaucetReconcileLegacy
       "submitted"
         | Just _ <- tfcTxHash claim
@@ -195,7 +202,7 @@ claimTestnetFaucetWithin pool client cfg rawAddress =
       pure $ Left $ E.internalError "FAUCET_PRIVATE_KEY is not configured"
     Just privateKey -> do
       let address = T.toLower rawAddress
-          token = T.toLower $ cfgPerpsUsdc cfg
+          token = T.toLower $ cfgPerpsSettlementToken cfg
       existingResult <-
         runFaucetStage "claim_lookup" eitherOutcome $
           withFaucetDb pool $ \conn -> getTestnetFaucetClaim conn address token
@@ -217,6 +224,8 @@ handlePersistedClaim
   -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
 handlePersistedClaim pool client cfg privateKey address token claim =
   case classifyTestnetFaucetClaim $ Just claim of
+    FaucetDirectMargin ->
+      pure $ Left $ E.upgradeRequired "Refresh the app to check your direct Margin Account funding."
     FaucetAlreadyClaimed ->
       alreadyClaimedResponse client (cfgPerpsChainId cfg) address token claim
     FaucetReconcileLegacy ->
@@ -255,6 +264,8 @@ beginOrObserveClaim pool client cfg privateKey address token = do
           pure $ Left $ E.mkError E.RateLimited "Faucet claim is already in progress for this address"
         Right (Just observed) ->
           case classifyTestnetFaucetClaim $ Just observed of
+            FaucetDirectMargin ->
+              pure $ Left $ E.upgradeRequired "Refresh the app to check your direct Margin Account funding."
             FaucetAlreadyClaimed ->
               alreadyClaimedResponse client (cfgPerpsChainId cfg) address token observed
             FaucetReconcileLegacy ->
@@ -278,9 +289,12 @@ prepareAndSubmitClaim pool client cfg privateKey address token = do
   attemptResult <-
     runFaucetStage "prepare_and_submit" submissionAttemptOutcome $
       withFaucetSignerLock pool $ \conn -> do
+        marginSubmitted <- MarginFunding.hasSubmittedFundingTransaction conn
         prepareResult <-
           runFaucetStage "prepare_transaction" eitherOutcome $
-            prepareFaucetMint cfg client privateKey token address
+            if marginSubmitted
+              then pure $ Left "The faucet signer has another durably submitted transaction. Try again shortly."
+              else prepareFaucetMint cfg client privateKey token address
         case prepareResult of
           Left err -> do
             _ <-

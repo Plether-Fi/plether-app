@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Exception
   ( SomeException
   , displayException
@@ -28,6 +30,7 @@ main = runMain `catchUnexpected` handleUnexpectedFailure
 
 runMain :: IO ()
 runMain = do
+  Manifest.requireDeployedRelease
   configResult <- loadAaReconcilerConfig
   cfg <- case configResult of
     Left err -> fatal "aa_reconciler_configuration_invalid" err

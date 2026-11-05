@@ -36,7 +36,7 @@ import { PROTECTION_CONFIG_ABI, validateProtectionParams, type PositionProtectio
 import { getPerpsOpenRevertMessage } from '../utils/perpsErrors'
 import { preparationFailure, withPreparationStep } from '../utils/perpsPreparationDiagnostics'
 
-const POSITION_SIZE_TO_USDC_SCALE = 10n ** 20n
+const POSITION_SIZE_TO_ASSETS_SCALE = 10n ** 20n
 const ZERO_HASH = `0x${'0'.repeat(64)}`
 
 export interface PreparePerpsOrderV3Input {
@@ -70,13 +70,13 @@ export class PerpsOrderPositionConflictError extends Error {
 
 export class PerpsOrderFundingShortfallError extends Error {
   readonly reviewedOrder: ReviewedPerpsOrderV3
-  readonly shortfallUsdc: bigint
+  readonly shortfallAssets: bigint
 
-  constructor(reviewedOrder: ReviewedPerpsOrderV3, shortfallUsdc: bigint) {
+  constructor(reviewedOrder: ReviewedPerpsOrderV3, shortfallAssets: bigint) {
     super('The reviewed order needs more free margin than the account currently has.')
     this.name = 'PerpsOrderFundingShortfallError'
     this.reviewedOrder = reviewedOrder
-    this.shortfallUsdc = shortfallUsdc
+    this.shortfallAssets = shortfallAssets
   }
 }
 
@@ -109,9 +109,9 @@ interface PerpsOrderReviewContext {
   closeBounty: bigint
   lastMarkPrice: bigint
   capPrice: bigint
-  poolDepthUsdc: bigint
+  poolDepthAssets: bigint
   currentPrice: bigint
-  freeBuyingPowerUsdc: bigint
+  freeBuyingPowerAssets: bigint
 }
 
 function exactExecutionBounty(input: {
@@ -124,10 +124,10 @@ function exactExecutionBounty(input: {
   closeBounty: bigint
 }): bigint {
   if (input.isClose) return input.closeBounty
-  const notionalUsdc =
+  const notionalAssets =
     input.sizeDelta * input.commitReferencePrice /
-    POSITION_SIZE_TO_USDC_SCALE
-  const proportional = notionalUsdc * input.openBountyBps / 10_000n
+    POSITION_SIZE_TO_ASSETS_SCALE
+  const proportional = notionalAssets * input.openBountyBps / 10_000n
   if (proportional < input.minimumOpenBounty) {
     return input.minimumOpenBounty
   }
@@ -149,6 +149,9 @@ function asAssessment(value: unknown): PerpsExecutionAssessment {
 
 function asClosePreview(value: unknown): PerpsClosePreview {
   const preview = value as PerpsClosePreview
+  if (preview.replayOrderId !== 0n) {
+    throw new Error(`Close order #${preview.replayOrderId.toString()} already exists. Follow its status before preparing another close.`)
+  }
   if (![1, 2, 3].includes(preview.assessment.mode)) throw new Error('Close review returned an invalid execution mode.')
   return preview
 }
@@ -197,12 +200,12 @@ async function loadPerpsOrderReviewContext(
     closeBounty,
     lastMarkPrice,
     capPrice,
-    poolDepthUsdc,
+    poolDepthAssets,
     currentPrice,
     activeProtectionId,
     pendingOrders,
     maxPendingOrders,
-    freeBuyingPowerUsdc,
+    freeBuyingPowerAssets,
   ] = await Promise.all([
     withPreparationStep('context_read', 'maxExecutionWindowSeconds', () => client.readContract({
       address: manifest.orderRouter,
@@ -222,24 +225,20 @@ async function loadPerpsOrderReviewContext(
       functionName: 'openOrderExecutionBountyBps',
       blockNumber,
     })),
-    withPreparationStep('context_read', 'minOpenOrderExecutionBountyUsdc', () => client.readContract({
+    withPreparationStep('context_read', 'minOpenOrderExecutionBountyAssets', () => client.readContract({
       address: manifest.orderRouter,
       abi: PERPS_ORDER_ROUTER_ABI,
-      functionName: 'minOpenOrderExecutionBountyUsdc',
+      functionName: 'minOpenOrderExecutionBountyAssets',
       blockNumber,
     })),
-    withPreparationStep('context_read', 'maxOpenOrderExecutionBountyUsdc', () => client.readContract({
+    withPreparationStep('context_read', 'maxOpenOrderExecutionBountyAssets', () => client.readContract({
       address: manifest.orderRouter,
       abi: PERPS_ORDER_ROUTER_ABI,
-      functionName: 'maxOpenOrderExecutionBountyUsdc',
+      functionName: 'maxOpenOrderExecutionBountyAssets',
       blockNumber,
     })),
-    withPreparationStep('context_read', 'closeOrderExecutionBountyUsdc', () => client.readContract({
-      address: manifest.orderRouter,
-      abi: PERPS_ORDER_ROUTER_ABI,
-      functionName: 'closeOrderExecutionBountyUsdc',
-      blockNumber,
-    })),
+    // Ordinary and protected closes have no execution bounty in this release.
+    Promise.resolve(0n),
     withPreparationStep('context_read', 'lastMarkPrice', () => client.readContract({
       address: manifest.cfdEngine,
       abi: PERPS_CFD_ENGINE_ABI,
@@ -285,10 +284,10 @@ async function loadPerpsOrderReviewContext(
       functionName: 'maxPendingOrders',
       blockNumber,
     })),
-    withPreparationStep('context_read', 'getFreeBuyingPowerUsdc', () => client.readContract({
+    withPreparationStep('context_read', 'getFreeBuyingPowerAssets', () => client.readContract({
       address: manifest.marginClearinghouse,
       abi: PERPS_MARGIN_CLEARINGHOUSE_ABI,
-      functionName: 'getFreeBuyingPowerUsdc',
+      functionName: 'getFreeBuyingPowerAssets',
       args: [account],
       blockNumber,
     })),
@@ -325,9 +324,9 @@ async function loadPerpsOrderReviewContext(
     closeBounty,
     lastMarkPrice,
     capPrice,
-    poolDepthUsdc,
+    poolDepthAssets,
     currentPrice,
-    freeBuyingPowerUsdc,
+    freeBuyingPowerAssets,
   }
 }
 
@@ -359,7 +358,7 @@ async function reviewPerpsOrderWithContext(
     : context.lastMarkPrice === 0n
       ? 100_000_000n
       : context.lastMarkPrice
-  let executionBountyUsdc = exactExecutionBounty({
+  let executionBountyAssets = exactExecutionBounty({
     isClose: input.isClose,
     sizeDelta: input.sizeDelta,
     commitReferencePrice,
@@ -372,7 +371,7 @@ async function reviewPerpsOrderWithContext(
     submitBy,
     executionWindowSeconds,
     expectedConfigHash: context.expectedConfigHash,
-    executionBountyUsdc,
+    executionBountyAssets,
   })
   let reviewedMarginDelta = input.marginDelta
   let order = {
@@ -389,7 +388,7 @@ async function reviewPerpsOrderWithContext(
   const clientOrderId = input.clientOrderId ?? generatePerpsClientOrderId()
   let sponsoredClose: SponsoredCloseFunding | undefined
   const prices = assessmentPrices(context.currentPrice, targetPrice)
-  let commitmentCarryUsdc: bigint | undefined
+  let commitmentCarryAssets: bigint | undefined
   const assessAtReviewedPrices = async (bounds = permissiveBounds) => {
     input.signal?.throwIfAborted()
     if (input.isClose) {
@@ -400,22 +399,21 @@ async function reviewPerpsOrderWithContext(
             address: closePreviewAddress, abi: PERPS_CFD_CLOSE_PREVIEW_ABI, functionName: 'previewClose',
             args: [manifest.cfdEngine, input.account,
               { clientOrderId, side: input.side, sizeDelta: input.sizeDelta, marginDelta: 0n, targetPrice, isClose: true, bounds },
-              manifest.orderRouter, price, blockTimestamp], blockNumber,
+              manifest.orderRouter, price], blockNumber,
           }), { chainId: manifest.chainId, address: closePreviewAddress, account: input.account, blockNumber, blockHash, samplePrice: price,
             assessmentPoint: price === context.currentPrice ? 'current' : price === targetPrice ? 'limit' : 'midpoint' }))
           return { ...preview, funding: undefined as SponsoredCloseFunding | undefined }
       }))
       input.signal?.throwIfAborted()
       const current = previews[0]
-      if (previews.some(preview => preview.executionBountyUsdc !== context.closeBounty ||
-        preview.commitmentCarryUsdc !== current.commitmentCarryUsdc ||
-        preview.funding?.amountUsdc !== current.funding?.amountUsdc || preview.funding?.depositCarryUsdc !== current.funding?.depositCarryUsdc) ||
-        (commitmentCarryUsdc !== undefined && commitmentCarryUsdc !== current.commitmentCarryUsdc)) {
+      if (previews.some(preview => preview.commitmentCarryAssets !== current.commitmentCarryAssets ||
+        preview.funding?.amountAssets !== current.funding?.amountAssets || preview.funding?.depositCarryAssets !== current.funding?.depositCarryAssets) ||
+        (commitmentCarryAssets !== undefined && commitmentCarryAssets !== current.commitmentCarryAssets)) {
         throw preparationFailure(new Error('Close review changed at the reviewed block. Refresh and try again.'), 'order_assessment', 'previewClose')
       }
       sponsoredClose = current.funding
-      executionBountyUsdc = current.executionBountyUsdc
-      commitmentCarryUsdc = current.commitmentCarryUsdc
+      executionBountyAssets = 0n
+      commitmentCarryAssets = current.commitmentCarryAssets
       return previews.map(preview => preview.assessment)
     }
     const assessments = await Promise.all(prices.map(async (price) => asAssessment(await withPreparationStep('order_assessment', 'assessOrder', () => client.readContract({
@@ -427,10 +425,9 @@ async function reviewPerpsOrderWithContext(
         order,
         manifest.orderRouter,
         price,
-        context.poolDepthUsdc,
-        blockTimestamp,
+        context.poolDepthAssets,
         bounds,
-        executionBountyUsdc,
+        executionBountyAssets,
       ],
       blockNumber,
     })))))
@@ -451,11 +448,11 @@ async function reviewPerpsOrderWithContext(
       capPrice: context.capPrice,
     })
     if (additionalMargin === 0n) break
-    const previousEquities = assessments.map((assessment) => assessment.postPositionEquityUsdc)
+    const previousEquities = assessments.map((assessment) => assessment.postPositionEquityAssets)
     reviewedMarginDelta += additionalMargin
     order = { ...order, marginDelta: reviewedMarginDelta }
     assessments = await assessAtReviewedPrices()
-    if (assessments.every((assessment, index) => assessment.postPositionEquityUsdc <= previousEquities[index])) break
+    if (assessments.every((assessment, index) => assessment.postPositionEquityAssets <= previousEquities[index])) break
   }
 
   const executionMode = assessments[0].mode
@@ -463,7 +460,7 @@ async function reviewPerpsOrderWithContext(
     submitBy,
     executionWindowSeconds,
     expectedConfigHash: context.expectedConfigHash,
-    executionBountyUsdc,
+    executionBountyAssets,
     executionMode,
   })
   const request: PerpsOrderRequestV3 = {
@@ -479,13 +476,13 @@ async function reviewPerpsOrderWithContext(
   const finalAssessments = await assessAtReviewedPrices(bounds)
   const reviewSummary: PerpsOrderReviewSummary = {
     sponsoredClose,
-    ...(input.isClose ? { commitmentCarryUsdc } : {}),
-    requiredMarginUsdc: reviewedMarginDelta,
-    executionBountyUsdc,
+    ...(input.isClose ? { commitmentCarryAssets } : {}),
+    requiredMarginAssets: reviewedMarginDelta,
+    executionBountyAssets,
     // Reserve for the reviewed maximum, while displaying the current quote
     // separately. Never apply tolerance again to persisted/signed requests.
-    requiredFundingUsdc: input.isClose ? 0n : reviewedMarginDelta + bounds.maxExecutionBountyUsdc,
-    availableFundingUsdc: context.freeBuyingPowerUsdc,
+    requiredFundingAssets: input.isClose ? 0n : reviewedMarginDelta + bounds.maxExecutionBountyAssets,
+    availableFundingAssets: context.freeBuyingPowerAssets,
     worstPostLeverageBps: maximum(
       finalAssessments.map((assessment) => assessment.postLeverageBps)
     ),
@@ -501,7 +498,7 @@ async function reviewPerpsOrderWithContext(
       submitBy,
     executionWindowSeconds,
       expectedConfigHash: context.expectedConfigHash,
-      executionBountyUsdc,
+      executionBountyAssets,
       selectedMaxLeverageBps: permissiveBounds.maxPostLeverageBps,
       assessments: finalAssessments,
     })
@@ -520,7 +517,7 @@ async function reviewPerpsOrderWithContext(
     orderRouter: manifest.orderRouter,
     orderLifecycleBook,
     request,
-    executionBountyUsdc,
+    executionBountyAssets,
     reviewedBlockNumber: blockNumber,
     reviewedBlockHash: blockHash,
     reviewedPrice: context.currentPrice,
@@ -528,7 +525,7 @@ async function reviewPerpsOrderWithContext(
       submitBy,
     executionWindowSeconds,
       executionMode,
-      executionBountyUsdc,
+      executionBountyAssets,
     },
     reviewSummary,
   }
@@ -568,24 +565,24 @@ export async function reviewPerpsOrderV3(
     await withPreparationStep('deployment_verification', undefined, () => verifyProtectionDeployment(client, manifest, context.blockNumber))
     if (input.isClose) throw new Error('Protection can only be attached to a fresh open')
     validateProtectionParams(input.positionProtection, input.direction, context.lastMarkPrice, context.capPrice)
-    const triggerBountyUsdc = await withPreparationStep('context_read', 'positionProtectionTriggerBountyUsdc', () => client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyUsdc', blockNumber: context.blockNumber }))
-    protection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyUsdc, executionBountyUsdc: context.closeBounty }
+    const triggerBountyAssets = await withPreparationStep('context_read', 'positionProtectionTriggerBountyAssets', () => client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyAssets', blockNumber: context.blockNumber }))
+    protection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyAssets, executionBountyAssets: context.closeBounty }
   }
   const review = async (candidate: PreparePerpsOrderV3Input) => {
     input.signal?.throwIfAborted()
     const reviewed = await reviewPerpsOrderWithContext(context, candidate)
     if (protection) {
       reviewed.preparedOrder.positionProtection = protection
-      reviewed.reviewSummary.requiredFundingUsdc += protection.triggerBountyUsdc + protection.executionBountyUsdc
+      reviewed.reviewSummary.requiredFundingAssets += protection.triggerBountyAssets + protection.executionBountyAssets
     }
     return reviewed
   }
   if (!input.maxSize || input.isClose) return review(input)
 
   const marginDelta = perpsMaxOpenMarginBudget(
-    context.freeBuyingPowerUsdc > context.closeBounty ? context.freeBuyingPowerUsdc - context.closeBounty : 0n,
+    context.freeBuyingPowerAssets > context.closeBounty ? context.freeBuyingPowerAssets - context.closeBounty : 0n,
     reviewedExecutionBountyMaximum(context.maximumOpenBounty),
-    protection ? protection.triggerBountyUsdc + protection.executionBountyUsdc : 0n
+    protection ? protection.triggerBountyAssets + protection.executionBountyAssets : 0n
   )
   if (marginDelta <= 0n) {
     throw new Error('Available margin cannot fund an opening order after execution rewards.')
@@ -595,7 +592,7 @@ export async function reviewPerpsOrderV3(
     address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
     abi: PERPS_CFD_ENGINE_LENS_ABI,
     functionName: 'quoteMaxOpen',
-    args: [input.account, input.side, marginDelta, context.currentPrice, context.blockTimestamp],
+    args: [input.account, input.side, marginDelta, context.currentPrice],
     blockNumber: context.blockNumber,
   }))
   input.signal?.throwIfAborted()
@@ -614,7 +611,7 @@ export async function reviewPerpsOrderV3(
       address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
       abi: PERPS_CFD_ENGINE_LENS_ABI,
       functionName: 'previewOpen',
-      args: [input.account, input.side, sizeDelta, marginDelta, context.currentPrice, context.blockTimestamp],
+      args: [input.account, input.side, sizeDelta, marginDelta, context.currentPrice],
       blockNumber: context.blockNumber,
     })),
   })
@@ -684,13 +681,13 @@ export async function preparePerpsOrderV3(
   const reviewedOrder = await withPreparationStep('review_validation', undefined, () => reviewPerpsOrderV3(client, manifest, input))
   if (
     !input.isClose &&
-    reviewedOrder.reviewSummary.requiredFundingUsdc >
-      reviewedOrder.reviewSummary.availableFundingUsdc
+    reviewedOrder.reviewSummary.requiredFundingAssets >
+      reviewedOrder.reviewSummary.availableFundingAssets
   ) {
     throw preparationFailure(new PerpsOrderFundingShortfallError(
       reviewedOrder,
-      reviewedOrder.reviewSummary.requiredFundingUsdc -
-        reviewedOrder.reviewSummary.availableFundingUsdc
+      reviewedOrder.reviewSummary.requiredFundingAssets -
+        reviewedOrder.reviewSummary.availableFundingAssets
     ), 'funding_check')
   }
   input.signal?.throwIfAborted()

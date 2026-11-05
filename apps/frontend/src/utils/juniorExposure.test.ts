@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { calculateJuniorExposure } from './juniorExposure'
 
-const usdc = (value: number) => BigInt(value) * 10n ** 6n
+const assets = (value: number) => BigInt(value) * 10n ** 6n
 const size = (value: number) => BigInt(value) * 10n ** 18n
 const pool = {
-  totalAssetsUsdc: usdc(1000), freeUsdc: usdc(400),
-  seniorPrincipalUsdc: usdc(800), juniorPrincipalUsdc: usdc(200),
+  totalAssets: assets(1000), freeAssets: assets(400),
+  seniorPrincipalAssets: assets(800), juniorPrincipalAssets: assets(200),
   seniorRateBps: 800n, markPrice: 80_000_000n,
   longOpenInterest: size(600), shortOpenInterest: size(100),
 }
@@ -13,7 +13,7 @@ const pool = {
 describe('calculateJuniorExposure', () => {
   it('uses the displayed index and isolates directional sensitivity from capital concentration', () => {
     expect(calculateJuniorExposure(pool)).toMatchObject({
-      long: usdc(720), short: usdc(120), net: usdc(600),
+      long: assets(720), short: assets(120), net: assets(600),
       juniorShare: 0.2, capitalMultiple: 5, grossExposureMultiple: 0.84,
       juniorLossPercentForOnePercentRise: 3, unavailableCashShare: 0.6,
       couponDragPercent: 32,
@@ -28,7 +28,7 @@ describe('calculateJuniorExposure', () => {
   })
 
   it('increases sensitivity and coupon cost when the same pool has less Junior backing', () => {
-    expect(calculateJuniorExposure({ ...pool, juniorPrincipalUsdc: usdc(100), seniorPrincipalUsdc: usdc(900) }))
+    expect(calculateJuniorExposure({ ...pool, juniorPrincipalAssets: assets(100), seniorPrincipalAssets: assets(900) }))
       .toMatchObject({ capitalMultiple: 10, juniorLossPercentForOnePercentRise: 6, couponDragPercent: 72 })
   })
 
@@ -37,11 +37,11 @@ describe('calculateJuniorExposure', () => {
       net: undefined, capitalMultiple: undefined, couponDragPercent: undefined,
       unavailableCashShare: undefined, juniorLossPercentForOnePercentRise: undefined,
     })
-    expect(calculateJuniorExposure({ ...pool, juniorPrincipalUsdc: 0n })).toMatchObject({
+    expect(calculateJuniorExposure({ ...pool, juniorPrincipalAssets: 0n })).toMatchObject({
       juniorShare: 0, capitalMultiple: undefined, couponDragPercent: undefined,
       juniorLossPercentForOnePercentRise: undefined,
     })
-    expect(calculateJuniorExposure({ ...pool, totalAssetsUsdc: 0n }).unavailableCashShare).toBeUndefined()
+    expect(calculateJuniorExposure({ ...pool, totalAssets: 0n }).unavailableCashShare).toBeUndefined()
     expect(calculateJuniorExposure({ ...pool, markPrice: 200_000_000n })).toMatchObject({
       netPositionSize: size(500), juniorLossPercentForOnePercentRise: undefined,
     })

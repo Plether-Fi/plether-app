@@ -1,16 +1,15 @@
 import { useReadContracts } from 'wagmi'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_RELEASE_IS_DEPLOYED } from '../contracts/perpsAddresses'
 import { PROTECTION_CONFIG_ABI, PROTECTION_RELEASE_ENABLED } from '../contracts/positionProtection'
 
-export interface ProtectionConfiguration { enabled: boolean; triggerBountyUsdc?: bigint; executionBountyUsdc?: bigint }
+export interface ProtectionConfiguration { enabled: boolean; triggerBountyAssets?: bigint; executionBountyAssets?: bigint }
 export function useProtectionConfiguration(): ProtectionConfiguration {
   const { data } = useReadContracts({
-    contracts: (['positionProtectionTriggerBountyUsdc', 'closeOrderExecutionBountyUsdc'] as const).map(functionName => ({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, address: PERPS_ARBITRUM_SEPOLIA.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName } as const)),
-    query: { enabled: PROTECTION_RELEASE_ENABLED, refetchInterval: 15_000 },
+    contracts: (['positionProtectionTriggerBountyAssets'] as const).map(functionName => ({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, address: PERPS_ARBITRUM_SEPOLIA.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName } as const)),
+    query: { enabled: PROTECTION_RELEASE_ENABLED && PERPS_RELEASE_IS_DEPLOYED, refetchInterval: 15_000 },
   })
-  const triggerBountyUsdc = data?.[0]?.result
-  const executionBountyUsdc = data?.[1]?.result
-  // v1.2.2 removed the on-chain commits flag. Wait for both live reserves;
-  // the frontend release flag still controls whether this UI is exposed.
-  return { enabled: PROTECTION_RELEASE_ENABLED && typeof triggerBountyUsdc === 'bigint' && typeof executionBountyUsdc === 'bigint', triggerBountyUsdc, executionBountyUsdc }
+  const triggerBountyAssets = data?.[0]?.result
+  const executionBountyAssets = 0n
+  // Current closes require no execution bounty; only the trigger reward is reserved.
+  return { enabled: PROTECTION_RELEASE_ENABLED && PERPS_RELEASE_IS_DEPLOYED && typeof triggerBountyAssets === 'bigint' && typeof executionBountyAssets === 'bigint', triggerBountyAssets, executionBountyAssets }
 }

@@ -4,13 +4,13 @@ import type { DivisionPublication, DivisionStanding, WeeklyInput } from './types
 import { isPublication, isWeeklyInput } from './schema.ts'
 
 function units(value: string): bigint {
-  if (!/^\d+$/.test(value)) throw new Error('Snapshot and cash-flow amounts must be nonnegative integer USDC units')
+  if (!/^\d+$/.test(value)) throw new Error('Snapshot and cash-flow amounts must be nonnegative integer settlement-token units')
   return BigInt(value)
 }
 
 function compareReturn(a: DivisionStanding, b: DivisionStanding): number {
-  const left = BigInt(a.weeklyPnlUsdc) * BigInt(b.adjustedEquityUsdc)
-  const right = BigInt(b.weeklyPnlUsdc) * BigInt(a.adjustedEquityUsdc)
+  const left = BigInt(a.weeklyPnlAssets) * BigInt(b.adjustedEquityAssets)
+  const right = BigInt(b.weeklyPnlAssets) * BigInt(a.adjustedEquityAssets)
   return left > right ? -1 : left < right ? 1 : 0
 }
 
@@ -45,8 +45,8 @@ export function publishWeek(input: WeeklyInput, previous: DivisionPublication | 
     seen.add(address)
     const old = prior.get(address)
     if (!account.hasTraded && (old || account.executedTradeTimes.length)) throw new Error('Trading history cannot be removed')
-    const adjusted = units(account.startingEquityUsdc) + units(account.depositsUsdc) - units(account.withdrawalsUsdc)
-    const pnl = units(account.closingEquityUsdc) - adjusted
+    const adjusted = units(account.startingEquityAssets) + units(account.depositsAssets) - units(account.withdrawalsAssets)
+    const pnl = units(account.closingEquityAssets) - adjusted
     const days = new Set<string>()
     for (const timestamp of account.executedTradeTimes) {
       const day = activeSessionDay(timestamp, week.startsAt, week.closesAt)
@@ -58,7 +58,7 @@ export function publishWeek(input: WeeklyInput, previous: DivisionPublication | 
       address, displayName: account.displayName,
       tier: old?.tier ?? 'Iron', previousTier: old?.tier ?? 'Iron',
       nonQualifyingWeeks: old?.nonQualifyingWeeks ?? 0,
-      weeklyPnlUsdc: pnl.toString(), adjustedEquityUsdc: adjusted.toString(),
+      weeklyPnlAssets: pnl.toString(), adjustedEquityAssets: adjusted.toString(),
       activeDays: days.size, qualifying: adjusted > 0n && pnl > 0n && days.size >= 2,
       rank: null, movement: 'unchanged',
     })
@@ -66,12 +66,12 @@ export function publishWeek(input: WeeklyInput, previous: DivisionPublication | 
   for (const address of prior.keys()) {
     if (!seen.has(address)) throw new Error(`Missing weekly snapshot for ${address}; missing data is not inactivity`)
   }
-  const ranked = standings.filter((row) => BigInt(row.adjustedEquityUsdc) > 0n)
+  const ranked = standings.filter((row) => BigInt(row.adjustedEquityAssets) > 0n)
     .sort((a, b) => compareReturn(a, b) || a.address.localeCompare(b.address))
   ranked.forEach((row, index) => {
     row.rank = index > 0 && compareReturn(row, ranked[index - 1]) === 0 ? ranked[index - 1].rank : index + 1
   })
-  const profitableCount = ranked.filter((row) => BigInt(row.weeklyPnlUsdc) > 0n).length
+  const profitableCount = ranked.filter((row) => BigInt(row.weeklyPnlAssets) > 0n).length
   for (const row of standings) {
     const currentIndex = TIERS.indexOf(row.tier)
     if (row.qualifying && row.rank !== null) {
@@ -96,7 +96,7 @@ export function publishWeek(input: WeeklyInput, previous: DivisionPublication | 
   return {
     version: 1, source: { baselineBlock: input.baselineBlock, closingBlock: input.closingBlock }, week, publishedAt: input.publishedAt, standings,
     announcement: {
-      tradersOfTheWeek: ranked.filter((row) => BigInt(row.weeklyPnlUsdc) > 0n).slice(0, 3).map((row) => row.address),
+      tradersOfTheWeek: ranked.filter((row) => BigInt(row.weeklyPnlAssets) > 0n).slice(0, 3).map((row) => row.address),
       promotions: standings.filter((row) => row.movement === 'promoted' && TIERS.indexOf(row.tier) >= TIERS.indexOf('Gold'))
         .map((row) => ({ address: row.address, tier: row.tier })),
       diamondRoster: standings.filter((row) => row.tier === 'Diamond').map((row) => row.address),
