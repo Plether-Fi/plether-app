@@ -34,6 +34,9 @@
     "test:storybook": "vitest run --project storybook --reporter=default --reporter=junit --outputFile.junit=.test-results/storybook.xml",
     "tradingview:install": "node scripts/install-tradingview-charting-library.mjs",
     "test:order-v3-local": "node ../../scripts/test-order-v3-local.mjs",
+    "verify:max-open-quoter": "node ../../scripts/generate-perps-max-open-quoter.mjs --check",
+    "test:max-open-quoter": "forge test --root contracts/max-open",
+    "test:max-open-quote-live": "node scripts/test-max-open-quote.mjs",
     "verify:perps-sdk": "node ../../scripts/verify-vendored-perps-aa-client.mjs"
   },
   "dependencies": {

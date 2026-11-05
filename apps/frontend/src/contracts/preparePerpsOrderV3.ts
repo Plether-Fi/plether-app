@@ -4,7 +4,6 @@ import { buildSponsoredCloseAction, verifyCloseAssistanceLens, SIMPLE_ACCOUNT_BA
 import {
   PERPS_CFD_CLOSE_PREVIEW_ABI,
   PERPS_CFD_ENGINE_ABI,
-  PERPS_CFD_ENGINE_LENS_ABI,
   PERPS_HOUSE_POOL_ABI,
   PERPS_MARGIN_CLEARINGHOUSE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
@@ -15,7 +14,8 @@ import {
   PERPS_PUBLIC_LENS_ABI,
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
-import { constrainPerpsMaxOpen, constrainPerpsMaxOpenPreview, perpsMaxOpenMarginBudget } from './perpsMaxOpen'
+import { constrainPerpsMaxOpen, perpsMaxOpenMarginBudget } from './perpsMaxOpen'
+import { quotePerpsMaxOpenWithMargin } from './perpsMaxOpenQuote'
 import {
   deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
@@ -588,35 +588,26 @@ export async function reviewPerpsOrderV3(
     throw new Error('Available margin cannot fund an opening order after execution rewards.')
   }
   input.signal?.throwIfAborted()
-  const quote = await withPreparationStep('max_size_quote', 'quoteMaxOpen', () => client.readContract({
-    address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-    abi: PERPS_CFD_ENGINE_LENS_ABI,
-    functionName: 'quoteMaxOpen',
-    args: [input.account, input.side, marginDelta, context.currentPrice],
+  // The deployless helper applies selected leverage inside the same eth_call
+  // as the canonical lens quote. Adverse-price router review still follows.
+  const quote = await withPreparationStep('max_size_quote', 'quoteWithMargin', () => quotePerpsMaxOpenWithMargin(client, {
+    account: input.account,
+    side: input.side,
+    marginDelta,
+    oraclePrice: context.currentPrice,
+    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
     blockNumber: context.blockNumber,
+    signal: input.signal,
   }))
   input.signal?.throwIfAborted()
-  if (quote.maxSizeDelta === 0n || !quote.preview.valid) {
+  if (!quote.preview.valid) {
     throw new Error(getPerpsOpenRevertMessage(quote.preview.invalidReason || quote.limitingReason))
   }
-  // Apply selected leverage before reviewing adverse execution prices: the
-  // unrestricted protocol maximum may already fail entry margin at those prices.
-  const opening = await constrainPerpsMaxOpenPreview({
-    quote,
-    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
-    oraclePrice: context.currentPrice,
-    capPrice: context.capPrice,
-    signal: input.signal,
-    preview: (sizeDelta) => withPreparationStep('max_size_quote', 'previewOpen', () => client.readContract({
-      address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-      abi: PERPS_CFD_ENGINE_LENS_ABI,
-      functionName: 'previewOpen',
-      args: [input.account, input.side, sizeDelta, marginDelta, context.currentPrice],
-      blockNumber: context.blockNumber,
-    })),
-  })
+  if (quote.maxSizeDelta === 0n) {
+    throw new Error('Available margin cannot fund an opening order at the selected leverage.')
+  }
   const constrained = await constrainPerpsMaxOpen({
-    maxSizeDelta: opening?.sizeDelta ?? 0n,
+    maxSizeDelta: quote.maxSizeDelta,
     selectedMaxLeverageBps: input.selectedMaxLeverageBps,
     signal: input.signal,
     assess: async (sizeDelta) => {

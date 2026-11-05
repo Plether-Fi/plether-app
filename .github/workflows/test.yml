@@ -148,6 +148,11 @@ jobs:
         working-directory: .ci-core/packages/perps
         run: forge build --skip test --skip script
 
+      - name: Verify and test the deployless maximum-size quoter (no RPC)
+        run: |
+          npm run verify:max-open-quoter
+          npm run test:max-open-quoter
+
       - name: Verify generated v2 consumer ABIs
         working-directory: .
         run: node scripts/generate-perps-consumer-abis.mjs --artifacts-dir .ci-core/packages/perps/out --source-root .ci-core/packages/perps --check
