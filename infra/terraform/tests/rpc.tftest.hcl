@@ -14,7 +14,7 @@ mock_provider "aws" {
   }
   mock_resource "aws_security_group" {
     override_during = plan
-    defaults        = { id = "sg-0123456789abcdef0" }
+    defaults        = { id = "sg-0123456789abcdef0", egress = [] }
   }
   mock_resource "aws_ecr_repository" {
     override_during = plan
@@ -79,6 +79,10 @@ run "isolated_sepolia_pilot" {
   assert {
     condition     = aws_lb.rpc[0].internal && aws_lb_listener.rpc[0].port == 443 && length(aws_security_group.rpc_node[0].ingress) == 0
     error_message = "RPC must remain private and TLS must terminate on port 443."
+  }
+  assert {
+    condition     = length(aws_security_group.rpc_gateway[0].egress) == 0 && aws_vpc_security_group_egress_rule.rpc_gateway_https[0].to_port == 443 && aws_vpc_security_group_egress_rule.rpc_gateway_to_node[0].to_port == 8547
+    error_message = "Gateway HTTPS and node egress must both have standalone ownership so subsequent plans cannot remove the node rule."
   }
   assert {
     condition     = aws_ecs_service.rpc_gateway[0].desired_count == 2 && aws_ecs_task_definition.rpc_gateway[0].runtime_platform[0].cpu_architecture == "ARM64"

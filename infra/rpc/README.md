@@ -170,6 +170,12 @@ process after changing its parent credentials or runtime configuration.
 Treat restricted Nitro logs as potentially sensitive provider diagnostics;
 gateway logs contain only readiness flags, routing role and duration.
 
+The initial deployed identifiers and reviewed pins are recorded in
+`infra/terraform-rpc/sepolia.tfvars.json`; it contains only non-secret context
+and parameter names. Use it with the standalone backend, never the application
+entry point. After staging removal, its `staging_volume_gib` must be zero so a
+future plan does not recreate a temporary import volume.
+
 The gateway caps requests at 512 KiB, responses at 8 MiB, batches at 20 calls,
 and each task at 16 concurrent requests / two trace simulations. Log scans
 require an explicit block hash or numeric range of at most 2,001 blocks. Only
@@ -263,6 +269,9 @@ charges until deleted. Inspect data-volume IDs carefully before cleanup.
 
 Never stop/start the **EC2 host** as an upgrade or restart procedure: local
 instance-store data is lost on stop/termination. Restart the Nitro process.
+Bootstrap user data is create-only and ignored for existing hosts; reviewed
+helper/service repairs are applied through SSM, preserving the existing disk
+guards. AMI/instance replacement is still blocked by `prevent_destroy`.
 On host loss, keep live traffic on the qualified backup and perform an explicit
 snapshot re-seed on a replacement. Do not treat image rollback as database
 rollback. This pilot includes no automatic host replacement or data deletion.
@@ -274,6 +283,32 @@ means SSM accepted the process restart; inspect readiness afterwards. It refuses
 to interrupt a service still importing its snapshot.
 
 ## Qualification and follow-up
+
+The bounded operator helper `infra/rpc/ops/finish_bootstrap.py` waits for a
+completed import and head catch-up, then runs `qualify.mjs` as a short-lived VPC
+task using the gateway execution role's existing secret injection. It verifies
+the direct primary chain, syncing status, fresh latest head, common canonical
+latest/safe/finalized hashes and safe-state reads against Alchemy. Trace
+capabilities are recorded separately and do not authorize an AA cutover.
+
+With explicit `--cleanup-staging`, the helper saves and checks a cleanup plan
+before unmounting anything. The only permitted mutations are deleting this
+deployment's named staging attachment/volume and clearing that volume ID in the
+RPC config parameter. It checks the volume serial and import marker on the
+host, unmounts staging, removes only its fstab entry, applies the checked plan
+and repeats qualification after a process restart. Any unexpected plan change
+or failed check stops completion with staging preserved whenever still mounted.
+The data disk and EC2 host are never deletion targets. Completion status and
+canary results are written as credential-free JSON in the operator directory.
+If the deployed config still matches its checked-in copy, staging cleanup sets
+that copy to zero; commit this small configuration update after completion.
+
+The helper is specific to this pilot's node/volume IDs; review them before
+using it for a different deployment. Run it from an authenticated operator
+session with the pinned SDK in `ops/requirements.txt`, a protected directory
+containing the prepared RPC inputs and bounded canary/progress requests, and
+Terraform 1.16.x. It has a bounded wait and does not recover an interrupted
+database by deleting it.
 
 Offline CI covers gateway behavior, bootstrap policy and Terraform mock plans.
 These checks do not prove a multi-terabyte restore or Nitro RPC compatibility.

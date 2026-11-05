@@ -82,12 +82,17 @@ resource "aws_security_group" "rpc_gateway" {
   count       = local.rpc_count
   name_prefix = "plether-sepolia-rpc-gateway-"
   vpc_id      = local.rpc_vpc_id
-  egress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+}
+
+# All rules on this group have standalone ownership. Mixing an inline HTTPS
+# rule with the standalone node rule would remove port 8547 on the next apply.
+resource "aws_vpc_security_group_egress_rule" "rpc_gateway_https" {
+  count             = local.rpc_count
+  security_group_id = aws_security_group.rpc_gateway[0].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
 }
 
 resource "aws_security_group" "rpc_alb" {
@@ -222,6 +227,9 @@ resource "aws_instance" "rpc_node" {
     # Stop/start or replacement loses instance-store state. An operator must
     # explicitly remove this guard in a reviewed replacement/recovery change.
     prevent_destroy = true
+    # Bootstrap is create-only. Apply reviewed helper/service repairs via SSM;
+    # a source edit must never force replacement of a stateful NVMe host.
+    ignore_changes = [user_data]
     precondition {
       condition     = length(local.rpc_user_data) <= 16384
       error_message = "EC2 user data exceeds its 16 KiB limit."
