@@ -310,6 +310,19 @@ containing the prepared non-secret `rpc-only.tfvars.json` inputs, and
 Terraform 1.16.x. It has a bounded wait and does not recover an interrupted
 database by deleting it.
 
+```bash
+python infra/rpc/ops/finish_bootstrap.py \
+  --directory /absolute/protected/path \
+  --terraform /absolute/path/to/terraform \
+  --hours 12 --cleanup-staging
+```
+
+During the first launch, cloud-init recorded the original invalid XFS-label
+failure. The corrected helper and unit were installed through SSM on the same
+host, and the existing cloud-init result remains as an audit record. Use the
+current systemd state, import marker, gateway probes and completion report to
+assess the repaired service; do not restart cloud-init with the old user data.
+
 Offline CI covers gateway behavior, bootstrap policy and Terraform mock plans.
 These checks do not prove a multi-terabyte restore or Nitro RPC compatibility.
 

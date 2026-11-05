@@ -70,7 +70,7 @@ def main():
     os.umask(0o077)
     lock = (work / 'completion.lock').open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    state = {'instance_id': INSTANCE, 'staging_volume_id': STAGING, 'status': 'waiting_for_import'}
+    state = {'instance_id': INSTANCE, 'staging_volume_id': STAGING, 'status': 'waiting_for_import', 'pid': os.getpid(), 'wait_bound_hours': args.hours}
     def emit(status, **fields):
         state.update(status=status, updated_at_utc=datetime.now(timezone.utc).isoformat(), **fields)
         (work / 'completion-status.json').write_text(json.dumps(state, indent=2) + '\n')
