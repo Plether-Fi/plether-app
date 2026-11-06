@@ -311,6 +311,16 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
   lifecycle {
     precondition {
+      condition = length(var.aa_preparation_recovery_extra_origins) == 0 || (
+        var.aa_preparation_recovery_origin != ""
+        && alltrue([for origin in var.aa_preparation_recovery_extra_origins :
+          !startswith(origin, "http://") || (var.environment == "sepolia" && var.perps_chain_id == "421614")
+        ])
+      )
+      error_message = "Additional recovery origins require a canonical HTTPS origin; HTTP loopback recovery is restricted to Arbitrum Sepolia."
+    }
+
+    precondition {
       condition     = !var.provision_self_hosted_aa || var.aws_region == "ap-southeast-1"
       error_message = "Self-hosted AA requires Singapore."
     }

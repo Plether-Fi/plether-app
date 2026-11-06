@@ -49,6 +49,10 @@ describe('wallet preparation recovery', () => {
     expect(recoveryMessage(recoveryReason(cause))).toContain(message)
     expect(recoveryMessage(recoveryReason(cause))).not.toContain('private transport details')
   })
+  it('explains an unconfigured app origin without blaming the connected owner', () => {
+    expect(recoveryMessage('RECOVERY_ORIGIN_NOT_ALLOWED')).toContain('not configured for this app address')
+    expect(recoveryMessage('RECOVERY_ORIGIN_NOT_ALLOWED')).not.toContain('original owner wallet')
+  })
   it('does not report an arbitrary error reason as a support code', () => {
     expect(recoveryReason({ reason: 'secret wallet contents', cause: { code: 4001 } })).toBe('WALLET_SIGNATURE_DECLINED')
   })

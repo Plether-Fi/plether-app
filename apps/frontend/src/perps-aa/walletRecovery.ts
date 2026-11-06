@@ -57,6 +57,7 @@ export function recoveryMessage(reason?: string): string {
     case 'RECOVERY_VERIFICATION_REQUIRED':
     case 'PREPARATION_NOT_AUTHORIZED': return 'Verify your owner wallet to recover this saved attempt.'
     case 'RECOVERY_DISABLED': return 'Wallet recovery is not enabled on this deployment yet. Your saved attempt is retained.'
+    case 'RECOVERY_ORIGIN_NOT_ALLOWED': return 'Wallet recovery is not configured for this app address. Contact support with the support reference; your saved attempt is retained.'
     case 'RECOVERY_RETIREMENT_DISABLED': return 'Verified discard is not enabled on this deployment yet. Your saved attempt is retained.'
     case 'RECOVERY_MULTIPLE_PREPARATIONS': return 'More than one preparation matches this attempt. Check their existing outcomes before continuing.'
     case 'RECOVERY_BINDING_UNRESOLVED': return 'The original deployment could not be verified. The saved attempt is retained.'

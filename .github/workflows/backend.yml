@@ -74,11 +74,11 @@ jobs:
           terraform -chdir=infra/terraform init -backend=false -input=false
           terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -no-color
 
-      - name: Test AA RPC deployment mode guards
+      - name: Test AA RPC mode and recovery origin guards
         env:
           AA_TERRAFORM_TEST_REQUIRED: '1'
         working-directory: .
-        run: node --test scripts/aa-rpc-mode.test.mjs
+        run: node --test scripts/aa-rpc-mode.test.mjs scripts/aa-recovery-origins.test.mjs
 
       - name: Test deployed release bindings with independent positive controls
         working-directory: .

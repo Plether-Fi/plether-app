@@ -1944,6 +1944,22 @@ variable "aa_preparation_recovery_origin" {
   }
 }
 
+variable "aa_preparation_recovery_extra_origins" {
+  type        = list(string)
+  default     = []
+  description = "Additional exact recovery origins. HTTP loopback origins are restricted to Arbitrum Sepolia; the canonical hosted origin remains HTTPS."
+  validation {
+    condition = (
+      length(var.aa_preparation_recovery_extra_origins) <= 8
+      && length(distinct(var.aa_preparation_recovery_extra_origins)) == length(var.aa_preparation_recovery_extra_origins)
+      && alltrue([for origin in var.aa_preparation_recovery_extra_origins :
+        can(regex("^(https://[a-z0-9.-]+|http://(127\\.0\\.0\\.1|localhost|\\[::1\\]))(:[0-9]+)?$", origin))
+      ])
+    )
+    error_message = "Recovery requires a canonical HTTPS origin and at most eight distinct exact extra origins. HTTP loopback is supported only on Arbitrum Sepolia."
+  }
+}
+
 variable "aa_preparation_retirement_enabled" {
   type        = bool
   default     = false
