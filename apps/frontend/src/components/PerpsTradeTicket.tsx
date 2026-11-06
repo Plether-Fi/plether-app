@@ -41,6 +41,8 @@ import type {
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { isSepoliaDeployment } from '../utils/deployment'
 import {
   findBundlerRequestError,
   usePerpsIdentity,
@@ -1809,6 +1811,7 @@ export function PerpsTradeTicket({
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
   const { connect, ready: walletReady, configured: walletConfigured, modalOpen: walletModalOpen } = useWalletActions()
+  const openSepoliaWelcome = useSettingsStore(state => state.openSepoliaWelcome)
   const deploymentConfirmation = useAccountDeploymentConfirmation()
   const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
   const identity = usePerpsIdentity()
@@ -5591,6 +5594,24 @@ export function PerpsTradeTicket({
         }
       >
         <div className="space-y-5">
+          {marginAction === 'deposit' && isSepoliaDeployment() ? (
+            <aside aria-label="Sepolia test funds" className="space-y-3 border border-brand-yellow/40 bg-brand-yellow/10 p-4 text-sm text-brand-yellow">
+              <p>You are on Arbitrum Sepolia. Get mock {PERPS_SETTLEMENT_TOKEN_LABEL} to try trading. Test funds have no real value.</p>
+              <button
+                type="button"
+                disabled={isMarginActionPending}
+                className="min-h-11 border border-brand-yellow px-4 py-2 font-semibold transition-colors enabled:hover:bg-brand-yellow enabled:hover:text-app-bg disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  trackPerpsButtonClicked('get_mock_usdg', commonAnalyticsProperties)
+                  setMarginAction(null)
+                  setLocallyConfirmedFundingBalances(null)
+                  openSepoliaWelcome()
+                }}
+              >
+                Get mock {PERPS_SETTLEMENT_TOKEN_LABEL}
+              </button>
+            </aside>
+          ) : null}
           {sponsorshipPauseMessage && (
             <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
               {sponsorshipPauseMessage}

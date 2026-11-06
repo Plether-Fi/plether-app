@@ -21,6 +21,8 @@ const wagmiMocks = vi.hoisted(() => ({
 }))
 
 const walletMocks = vi.hoisted(() => ({ modalOpen: false }))
+const deploymentMocks = vi.hoisted(() => ({ sepolia: true }))
+vi.mock('../../utils/deployment', () => ({ isSepoliaDeployment: () => deploymentMocks.sepolia }))
 
 vi.mock('../../perps-aa', async () => {
   const { useSponsoredOperationStore } = await import('../../perps-aa/operationStore')
@@ -71,6 +73,7 @@ import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 import { SponsorRequestError } from '../../perps-aa/errors'
 import { usePerpsUiStore } from '../../stores/perpsUiStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 
 const confirmationMocks = vi.hoisted(() => ({ status: 'idle' }))
 vi.mock('../../perps-aa/useAccountDeploymentConfirmation', async (importOriginal) => ({
@@ -197,6 +200,7 @@ describe('perps lifecycle labels', () => {
   beforeEach(() => {
     confirmationMocks.status = 'idle'
     walletMocks.modalOpen = false
+    deploymentMocks.sepolia = true
     maxQuoteMocks.value = {
       quote: { maxSizeDelta: 400n * 10n ** 18n, preview: { valid: true } },
       marginDelta: 99_800_000n,
@@ -1781,6 +1785,33 @@ describe('perps lifecycle labels', () => {
     render(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect
       availableToTradeRaw={0n} settlementBalanceAssetsRaw={1n} />)
     expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()
+  })
+
+  it('offers mock USDG from the Sepolia deposit modal and switches to the existing funding flow', () => {
+    useSettingsStore.setState({ sepoliaWelcomeDismissed: true })
+    render(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect settlementBalanceAssetsRaw={0n} />)
+    const notice = screen.getByRole('complementary', { name: 'Sepolia test funds' })
+    expect(notice).toHaveClass('text-brand-yellow', 'bg-brand-yellow/10')
+    expect(notice).toHaveTextContent('Test funds have no real value.')
+    fireEvent.click(within(notice).getByRole('button', { name: 'Get mock USDG' }))
+    expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()
+    expect(useSettingsStore.getState().sepoliaWelcomeDismissed).toBe(false)
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
+  })
+
+  it('does not offer mock USDG in the mainnet deposit modal', () => {
+    deploymentMocks.sepolia = false
+    render(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect settlementBalanceAssetsRaw={0n} />)
+    expect(screen.getByText('Deposit Margin')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Get mock USDG' })).not.toBeInTheDocument()
+  })
+
+  it('does not offer mock USDG in the withdraw modal', () => {
+    render(<PerpsTradeTicket enableLiveTrading withdrawableAssetsRaw={1_000_000n} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }))
+    expect(screen.getByText('Withdraw Margin')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Get mock USDG' })).not.toBeInTheDocument()
   })
 
   it('keeps free-margin deposits separate from live position margin and leverage', () => {
