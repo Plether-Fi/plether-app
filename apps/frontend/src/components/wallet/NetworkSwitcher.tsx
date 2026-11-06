@@ -13,6 +13,7 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
   const chainId = useChainId()
   const { switchChainAsync } = useSwitchChain()
   const [isPending, setIsPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   type SupportedChainId = typeof mainnet.id | typeof sepolia.id | typeof arbitrumSepolia.id | typeof anvil.id
 
@@ -25,9 +26,12 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
 
   const handleSwitch = async (targetChainId: SupportedChainId) => {
     setIsPending(true)
+    setError(null)
     try {
       await switchChainAsync({ chainId: targetChainId })
       onClose()
+    } catch {
+      setError('Could not switch networks. Confirm the request in your wallet or select the network there.')
     } finally {
       setIsPending(false)
     }
@@ -36,6 +40,7 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Select Network" size="sm">
       <div className="space-y-2">
+        {error ? <p role="alert" className="text-sm text-brand-orange">{error}</p> : null}
         {networks.map(({ chain, name, icon }) => {
           const isActive = chainId === chain.id
           return (

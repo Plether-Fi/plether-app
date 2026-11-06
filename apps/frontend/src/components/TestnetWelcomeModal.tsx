@@ -4,7 +4,7 @@ import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
 import type { TestnetFaucetClaim } from '../api/types'
-import { openAppKit } from '../config/wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePerpsIdentity } from '../perps-aa'
@@ -16,6 +16,8 @@ const MOCK_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN_LABEL
 interface TestnetWelcomeModalViewProps {
   isOpen: boolean
   isWalletConnected: boolean
+  isWalletConnectionReady?: boolean
+  walletConnectionStatus?: string
   walletAddress: string
   fieldError?: string
   submitError?: string
@@ -34,6 +36,8 @@ interface TestnetWelcomeModalViewProps {
 export function TestnetWelcomeModalView({
   isOpen,
   isWalletConnected,
+  isWalletConnectionReady = true,
+  walletConnectionStatus,
   walletAddress,
   fieldError,
   submitError,
@@ -81,8 +85,8 @@ export function TestnetWelcomeModalView({
             onClick={isWalletConnected ? onRequestFunds : onConnectWallet}
             isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
             disabled={
-              isWalletConnected &&
-              (!isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError))
+              !isWalletConnected ? !isWalletConnectionReady :
+              !isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError)
             }
             className="w-full"
           >
@@ -114,6 +118,7 @@ export function TestnetWelcomeModalView({
       }
     >
       <div className="space-y-5 panel-padding text-sm text-content-secondary">
+        {!isWalletConnected && walletConnectionStatus ? <p role="status">{walletConnectionStatus}</p> : null}
         <p>Try deposits and trades on Arbitrum Sepolia with test USDG.</p>
         <p>
           {!isWalletConnected
@@ -164,7 +169,7 @@ export function TestnetWelcomeModalView({
           <div
             className={`space-y-2 border px-4 py-3 text-sm text-content-primary ${
               isPendingClaim
-                ? 'border-brand-orange/40 bg-brand-orange/10'
+                ? 'border-brand-border/25 bg-app-bg/30'
                 : 'border-positive/40 bg-positive/10'
             }`}
           >
@@ -214,7 +219,7 @@ export function TestnetWelcomeModalView({
                 href={`https://sepolia.arbiscan.io/tx/${activeClaim.txHash}`}
                 target="_blank"
                 rel="noreferrer"
-                className={`break-all hover:underline ${isPendingClaim ? 'text-brand-orange' : 'text-positive'}`}
+                className={`break-all hover:underline ${isPendingClaim ? 'text-content-secondary hover:text-content-primary' : 'text-positive'}`}
               >
                 {activeClaim.txHash}
               </a>
@@ -232,6 +237,7 @@ export function TestnetWelcomeModal() {
 }
 
 function LiveTestnetWelcomeModal() {
+  const { connect, ready: walletReady, configured: walletConfigured } = useWalletActions()
   const { address: connectedAddress, isConnected } = useAccount()
   const perpsIdentity = usePerpsIdentity()
   const faucetRecipient = perpsIdentity.isAaManifestConfigured
@@ -291,10 +297,12 @@ function LiveTestnetWelcomeModal() {
     <TestnetWelcomeModalView
       isOpen={!dismissed}
       isWalletConnected={isConnected}
+      isWalletConnectionReady={walletReady && walletConfigured}
+      walletConnectionStatus={!walletConfigured ? 'Wallet connection is not configured for this deployment.' : !walletReady ? 'Preparing wallet connection…' : undefined}
       onClose={dismiss}
       onConnectWallet={() => {
         setFieldError(null)
-        void openAppKit()
+        connect()
       }}
       walletAddress={displayedWalletAddress}
       fieldError={fieldError ?? undefined}

@@ -1,6 +1,7 @@
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
+import { useDepositOnConnect } from '../hooks/useDepositOnConnect'
 import { readinessBlocker, readinessMessage, useTradingReadiness } from '../perps-aa/readiness'
 import { restoredOrderDraft } from '../perps-aa/orderDraft'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -8,8 +9,10 @@ import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { formatUnits, zeroAddress } from 'viem'
 import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
-import { openAppKit } from '../config/wagmi'
+import { findSponsorRequestError } from '../perps-aa/errors'
+import { useWalletActions } from '../wallet/useWalletActions'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
+import { PERPS_DECIMALS } from '../contracts/perpsConstants'
 import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   executionModeOracleFrozen,
@@ -38,6 +41,8 @@ import type {
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { isSepoliaDeployment } from '../utils/deployment'
 import {
   findBundlerRequestError,
   usePerpsIdentity,
@@ -101,6 +106,7 @@ type Direction = PerpsDirection
 export type TradeLifecycleState =
   | 'preview'
   | 'commitPreparing'
+  | 'accountConfirmation'
   | 'commitPending'
   | 'commitConfirmed'
   | 'revealPending'
@@ -216,6 +222,7 @@ interface ClosePreviewView {
 }
 
 interface PerpsTradeTicketProps {
+  autoDepositOnConnect?: boolean
   initialLifecycleState?: TradeLifecycleState
   initialReviewOpen?: boolean
   initialDirection?: Direction
@@ -1213,7 +1220,7 @@ function PreviewRows({
 
 function lifecycleStep(state: TradeLifecycleState): OrderLifecycleStep {
   if (state === 'preview') return 'preview'
-  if (state === 'commitPreparing' || state === 'commitPending' || state === 'commitConfirmed' || state === 'failed') return 'commit'
+  if (state === 'commitPreparing' || state === 'accountConfirmation' || state === 'commitPending' || state === 'commitConfirmed' || state === 'failed') return 'commit'
   return 'reveal'
 }
 
@@ -1725,6 +1732,7 @@ function validationReasonCategory(message: string): string {
 }
 
 export function PerpsTradeTicket({
+  autoDepositOnConnect = false,
   initialLifecycleState = 'preview',
   initialReviewOpen = false,
   initialDirection = 'long',
@@ -1803,6 +1811,8 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
+  const { connect, ready: walletReady, configured: walletConfigured, modalOpen: walletModalOpen } = useWalletActions()
+  const openSepoliaWelcome = useSettingsStore(state => state.openSepoliaWelcome)
   const deploymentConfirmation = useAccountDeploymentConfirmation()
   const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
   const identity = usePerpsIdentity()
@@ -3568,7 +3578,7 @@ export function PerpsTradeTicket({
       : direction === 'long' ? 'Review Long' : 'Review Short'
   const isConnectWalletCta = enableLiveTrading && !isConnected
   const isSwitchNetworkCta = enableLiveTrading && isConnected && !isCorrectChain
-  const isReviewButtonDisabled = isAwaitingAccountConfirmation || (
+  const isReviewButtonDisabled = (isConnectWalletCta && (!walletReady || !walletConfigured)) || isAwaitingAccountConfirmation || (
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
@@ -3642,6 +3652,7 @@ export function PerpsTradeTicket({
   const shouldShowMarginActionPositionContext = currentPosition?.exists && marginActionCurrentCollateral !== undefined
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isAwaitingAccountConfirmation || isMarginActionPending
+    || (enableLiveTrading && !isConnected && (!walletReady || !walletConfigured))
     || Boolean(sponsorshipPauseMessage)
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
   const orderDxyExposureNumber = assetsRawToNumber(orderDxyExposureAssets)
@@ -3694,6 +3705,19 @@ export function PerpsTradeTicket({
     setLocallyConfirmedFundingBalances(null)
   }, [commonAnalyticsProperties])
 
+  const openDeposit = useCallback(() => { openMarginAction('deposit') }, [openMarginAction])
+  useDepositOnConnect({
+    connected: enableLiveTrading && identity.status !== 'disconnected',
+    identityKey: identity.chainId !== undefined && identity.ownerAddress && address
+      ? `${String(identity.chainId)}:${identity.ownerAddress.toLowerCase()}:${address.toLowerCase()}` : undefined,
+    enabled: autoDepositOnConnect,
+    balance: settlementBalanceAssetsRaw,
+    depositOpen: marginAction === 'deposit',
+    canOpen: !walletModalOpen && marginAction === null && !isReviewOpen
+      && !activeAccountOperation && !isAwaitingAccountConfirmation,
+    onOpen: openDeposit,
+  })
+
   useEffect(() => {
     if (!marginActionRequest) return
     if (handledMarginActionRequestRef.current === marginActionRequest.id) return
@@ -3707,7 +3731,7 @@ export function PerpsTradeTicket({
     if (!marginAction) return
     if (sponsorshipPauseMessage) return
     if (enableLiveTrading && !isConnected) {
-      void openAppKit()
+      connect()
       return
     }
     if (enableLiveTrading && !isCorrectChain) {
@@ -3968,6 +3992,11 @@ export function PerpsTradeTicket({
         debugPerpsCommit('ticket:commit-error-after-inclusion', {
           message: error instanceof Error ? error.message : String(error),
         })
+        return
+      }
+      if (!inclusionWasReported() && findSponsorRequestError(error)?.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
+        setFlowError(undefined)
+        setLifecycleState('accountConfirmation')
         return
       }
       const includedIdentity = readMutableRef(includedCommitIdentityRef)
@@ -4591,7 +4620,7 @@ export function PerpsTradeTicket({
           analyticsProperties={commonAnalyticsProperties}
           onClick={() => {
             if (enableLiveTrading && !isConnected) {
-              void openAppKit()
+              connect()
               return
             }
             if (enableLiveTrading && !isCorrectChain) {
@@ -4611,6 +4640,11 @@ export function PerpsTradeTicket({
           {isConnectWalletCta ? <span className="material-symbols-outlined text-xl">account_balance_wallet</span> : null}
           {reviewCtaLabel}
         </Button>
+        {isConnectWalletCta && (!walletConfigured || !walletReady) ? (
+          <p role="status" className="text-xs leading-4 text-content-secondary">
+            {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : 'Preparing wallet connection…'}
+          </p>
+        ) : null}
         {isSwitchNetworkCta && networkSwitchError ? (
           <div className="text-xs leading-4 text-[#FFAB96]">
             {networkSwitchError}
@@ -4693,7 +4727,6 @@ export function PerpsTradeTicket({
             <PerpsReviewFooter
               sponsoredCloseAssets={displayedExecutionProtections?.sponsoredClose ? formatPerpsAssets(displayedExecutionProtections.sponsoredClose.amountAssets, 6) : undefined}
               depositCarryAssets={displayedExecutionProtections?.sponsoredClose ? formatPerpsAssets(displayedExecutionProtections.sponsoredClose.depositCarryAssets, 6) : undefined}
-              commitmentCarryAssets={displayedExecutionProtections?.reviewSummary?.commitmentCarryAssets ? formatPerpsAssets(displayedExecutionProtections.reviewSummary.commitmentCarryAssets, 6) : undefined}
               preparing={isExecutionProtectionsLoading}
               recoveringOracle={preparation.recoveringOracle}
               refreshing={preparation.refreshing}
@@ -4867,6 +4900,23 @@ export function PerpsTradeTicket({
             >
               Done
             </Button>
+          ) : lifecycleState === 'accountConfirmation' ? (
+            <div className="flex gap-3">
+              <Button
+                className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                variant="secondary"
+                onClick={closeReviewModal}
+              >
+                Close
+              </Button>
+              <Button
+                className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                disabled={!activeAccountOperation && deploymentConfirmation !== 'ready'}
+                onClick={activeAccountOperation ? openRecoveryActivity : resetReviewLifecycle}
+              >
+                {activeAccountOperation ? 'View account activity' : 'Review again'}
+              </Button>
+            </div>
           ) : lifecycleState === 'failed' ? (
             <div className="flex gap-3">
               <Button
@@ -5029,6 +5079,24 @@ export function PerpsTradeTicket({
               ) : null}
 
             </>
+          ) : null}
+
+          {lifecycleState === 'accountConfirmation' ? (
+            deploymentConfirmation === 'ready' ? (
+              <SuccessStateCard
+                title="Trading Account confirmed"
+                description={activeAccountOperation
+                  ? 'Open account activity to resolve your saved attempt before reviewing the trade again. No trade has been sent.'
+                  : 'You can now review your trade again. No trade has been sent.'}
+              />
+            ) : (
+              <PendingStateCard
+                title="Waiting for Trading Account confirmation"
+                description={deploymentConfirmation === 'check-unavailable'
+                  ? 'We cannot check network confirmation right now. We’ll keep checking automatically. No trade has been sent.'
+                  : 'Your account has been deployed. Arbitrum Sepolia needs to confirm it before you can trade. This can take several minutes. We’re checking automatically; no trade will be sent automatically.'}
+              />
+            )
           ) : null}
 
           {lifecycleState === 'commitPreparing' ? (
@@ -5528,6 +5596,24 @@ export function PerpsTradeTicket({
         }
       >
         <div className="space-y-5">
+          {marginAction === 'deposit' && isSepoliaDeployment() ? (
+            <aside aria-label="Sepolia test funds" className="space-y-3 border border-brand-yellow bg-brand-yellow p-4 text-sm text-app-bg">
+              <p>You are on Arbitrum Sepolia. Get mock {PERPS_SETTLEMENT_TOKEN_LABEL} to try trading. Test funds have no real value.</p>
+              <button
+                type="button"
+                disabled={isMarginActionPending}
+                className="mx-auto block min-h-11 border border-app-bg px-4 py-2 font-semibold text-app-bg transition-colors enabled:hover:bg-app-bg enabled:hover:text-brand-yellow disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  trackPerpsButtonClicked('get_mock_usdg', commonAnalyticsProperties)
+                  setMarginAction(null)
+                  setLocallyConfirmedFundingBalances(null)
+                  openSepoliaWelcome()
+                }}
+              >
+                Get mock {PERPS_SETTLEMENT_TOKEN_LABEL}
+              </button>
+            </aside>
+          ) : null}
           {sponsorshipPauseMessage && (
             <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
               {sponsorshipPauseMessage}
@@ -5578,7 +5664,7 @@ export function PerpsTradeTicket({
                 onClick={() => {
                   if (!canUseMarginActionMax) return
                   trackPerpsButtonClicked(`${marginAction ?? 'margin'}_max`, commonAnalyticsProperties)
-                  setMarginActionAmount(marginActionLimitDisplay)
+                  setMarginActionAmount(formatUnits(marginActionLimit, PERPS_DECIMALS.ASSETS))
                   setMarginActionStatus('idle')
                   setMarginActionError(undefined)
                 }}

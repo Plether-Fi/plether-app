@@ -250,9 +250,24 @@ export function createAnalyticsConfig(
     session_recording: {
       maskAllInputs: true,
       maskTextSelector: '*',
+      blockSelector: '.ph-no-record, #privy-dialog, #privy-modal-content, [id^="headlessui-dialog-"]',
       sampleRate: replaySampleRate,
       maskCapturedNetworkRequestFn: (request) => {
-        if (request.name) request.name = request.name.split('?')[0]
+        if (request.name) {
+          // Auth and wallet endpoints may contain user IDs in the path. Do not
+          // include these requests in replay, even after removing their bodies.
+          try {
+            const url = new URL(request.name, window.location.origin)
+            if (
+              url.hostname === 'privy.io' || url.hostname.endsWith('.privy.io') ||
+              url.hostname.endsWith('.privy.systems') ||
+              /\/(?:oauth|auth|login|logout|callback)(?:\/|$)/i.test(url.pathname)
+            ) return null
+            request.name = request.name.split(/[?#]/)[0]
+          } catch {
+            return null
+          }
+        }
         // Never record signed operations or the read-only recovery credential.
         delete request.requestHeaders
         delete request.responseHeaders

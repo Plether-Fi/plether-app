@@ -193,11 +193,24 @@ export default defineConfig(({ mode }) => {
           exclude: [
             'src/**/*.stories.tsx',
             'src/**/*.integration.test.{ts,tsx}',
+            'src/**/*.wallet-integration.test.{ts,tsx}',
             'src/**/*.perps-integration.test.{ts,tsx}',
             'src/**/*.perps-fork.test.{ts,tsx}',
           ],
           setupFiles: ['./src/test/setup.ts'],
           globals: true,
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'wallet-integration',
+          environment: 'happy-dom',
+          include: ['src/**/*.wallet-integration.test.{ts,tsx}'],
+          setupFiles: ['./src/test/setup.ts'],
+          server: { deps: { inline: ['@privy-io/wagmi'] } },
+          globals: true,
+          testTimeout: 10000,
         }
       },
       {

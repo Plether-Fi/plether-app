@@ -52,6 +52,9 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run asserted browser coverage
         run: npm run test:${{ matrix.suite }}
+      - name: Run actual Privy SDK wallet lifecycle coverage
+        if: matrix.suite == 'e2e'
+        run: npm run test:e2e:privy-sdk
       - name: Preserve results, traces and assertion failures
         if: always()
         uses: actions/upload-artifact@v4

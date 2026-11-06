@@ -2,10 +2,21 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { PerpsCloseReconciliationDisclosure } from '../PerpsCloseReconciliationDetails'
 import { derivePerpsCloseReconciliation } from '../../utils/perpsCloseReconciliation'
+import { closeOrder180Receipt } from '../../utils/__fixtures__/closeOrder180'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 
 describe('PerpsCloseReconciliationDisclosure', () => {
+  it('keeps commitment carry separate from the executed-close result for order 180', () => {
+    const reconciliation = derivePerpsCloseReconciliation(closeOrder180Receipt)!
+    render(<PerpsCloseReconciliationDisclosure reconciliation={reconciliation} />)
+    expect(screen.getByText('Position partially closed')).toBeInTheDocument()
+    expect(screen.getByText('Carry at execution').closest('div')?.querySelector('dd')).toHaveTextContent('-0.00066')
+    expect(screen.getByText(/Carry paid at commitment:/)).toHaveTextContent('0.070278')
+    expect(screen.queryByText('Settlement adjustment')).not.toBeInTheDocument()
+    const close = within(screen.getByRole('region', { name: 'This close' }))
+    expect(close.getByText('Net result of this close').closest('div')?.querySelector('dd')).toHaveTextContent('-5 102.52')
+  })
   it('explains the adjustment without classifying it as debt or profit', () => {
     render(<PerpsCloseReconciliationDisclosure
       reconciliation={derivePerpsCloseReconciliation(closeSettlementAdjustmentReceipt)!}

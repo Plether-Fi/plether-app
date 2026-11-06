@@ -11,7 +11,9 @@ export interface PerpsCloseReconciliation {
     previousTradesResultAssets: bigint
     betweenTradesAccountChangeAssets: bigint
   }
+  /** Carry assessed during execution, excluding the earlier commitment debit. */
   carryAssets: bigint
+  commitmentCarryAssets: bigint
   executionFeeAssets: bigint
   frozenSpreadAssessedAssets: bigint
   frozenSpreadChargedAssets: bigint
@@ -59,7 +61,9 @@ export function derivePerpsCloseReconciliation(
   const executionBountyAssets = parseReceiptInteger(receipt.executionBountyAssets)
   const realizedPnlAssets = parseReceiptInteger(receipt.realizedPnlAssets)
   const vpiAssets = parseReceiptInteger(receipt.vpiAssets)
-  const carryAssets = parseReceiptInteger(receipt.carryAssets)
+  const assessedCarryAssets = parseReceiptInteger(receipt.carryAssets)
+  const commitmentCarryAssets = receipt.commitmentCarryAssets === undefined
+    ? 0n : parseReceiptInteger(receipt.commitmentCarryAssets)
   const executionFeeAssets = parseReceiptInteger(receipt.executionFeeAssets)
   const frozenSpreadAssessedAssets = parseReceiptInteger(receipt.frozenSpreadAssets)
   const actionChargeAssessedAssets = parseReceiptInteger(receipt.actionChargeAssessedAssets)
@@ -79,7 +83,8 @@ export function derivePerpsCloseReconciliation(
     executionBountyAssets === undefined ||
     realizedPnlAssets === undefined ||
     vpiAssets === undefined ||
-    carryAssets === undefined ||
+    assessedCarryAssets === undefined ||
+    commitmentCarryAssets === undefined ||
     executionFeeAssets === undefined ||
     frozenSpreadAssessedAssets === undefined ||
     actionChargeAssessedAssets === undefined ||
@@ -100,7 +105,8 @@ export function derivePerpsCloseReconciliation(
   const unsignedValues = [
     executionNotionalAssets,
     executionBountyAssets,
-    carryAssets,
+    assessedCarryAssets,
+    commitmentCarryAssets,
     executionFeeAssets,
     frozenSpreadAssessedAssets,
     actionChargeAssessedAssets,
@@ -117,15 +123,20 @@ export function derivePerpsCloseReconciliation(
   if (unsignedValues.some((value) => value < 0n)) return undefined
   if (executionNotionalAssets === 0n) return undefined
   if (executionBountyAssets > grossAccountDebitAssets) return undefined
-  // Core v1.2.3 _buildCloseAssessment reports net charges, not gross spread.
+  if (commitmentCarryAssets > assessedCarryAssets
+    || commitmentCarryAssets > actionChargeCollectedAssets
+    || commitmentCarryAssets > grossAccountDebitAssets) return undefined
+  // Core adds commitment carry after netting the execution action. That carry
+  // has already left the account before the receipt's execution snapshots.
+  const carryAssets = assessedCarryAssets - commitmentCarryAssets
   // Negative VPI can offset spread, fees and carry. Already-realized carry can
   // still be collected even when the remaining action is a rebate.
   const netActionChargeAssets = vpiAssets + carryAssets + executionFeeAssets + frozenSpreadAssessedAssets
-  if (actionChargeAssessedAssets !== (netActionChargeAssets > 0n ? netActionChargeAssets : 0n)) {
+  if (actionChargeAssessedAssets !== commitmentCarryAssets + (netActionChargeAssets > 0n ? netActionChargeAssets : 0n)) {
     return undefined
   }
   if (actionChargeCollectedAssets > (
-    actionChargeAssessedAssets > carryAssets ? actionChargeAssessedAssets : carryAssets
+    actionChargeAssessedAssets > assessedCarryAssets ? actionChargeAssessedAssets : assessedCarryAssets
   )) return undefined
   if (
     postPositionSize === 0n &&
@@ -208,6 +219,7 @@ export function derivePerpsCloseReconciliation(
     totalPositionVpiAssets: parseReceiptInteger(receipt.totalPositionVpiAssets),
     lifetime,
     carryAssets,
+    commitmentCarryAssets,
     executionFeeAssets,
     frozenSpreadAssessedAssets,
     frozenSpreadChargedAssets,

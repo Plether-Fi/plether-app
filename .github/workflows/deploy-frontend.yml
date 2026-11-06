@@ -102,10 +102,22 @@ jobs:
             exit 1
           fi
 
+      - name: Validate wallet frontend configuration
+        if: env.TARGET_ENV == 'sepolia'
+        env:
+          VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
+        run: |
+          if [[ ! "$VITE_PRIVY_APP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error title=Missing or invalid Privy app ID::Configure the public PRIVY_APP_ID GitHub Actions variable shared with Insights."
+            exit 1
+          fi
+
       - name: Build
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:
+          VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
+          VITE_PRIVY_CLIENT_ID: ${{ vars.PRIVY_TRADING_CLIENT_ID }}
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
           VITE_PERPS_AA_MANIFEST_URL: ${{ steps.target.outputs.perps_aa_manifest_url }}
           VITE_PERPS_POSITION_PROTECTION_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_POSITION_PROTECTION_ENABLED_SEPOLIA || 'false') || 'false' }}

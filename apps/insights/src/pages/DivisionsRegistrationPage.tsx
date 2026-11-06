@@ -1,4 +1,3 @@
-import { useAppKit } from '@reown/appkit/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useConnection, useSignMessage, useSwitchChain } from 'wagmi'
@@ -6,7 +5,7 @@ import { arbitrumSepolia } from 'wagmi/chains'
 import { InsightsApiError } from '../api'
 import { TurnstileWidget } from '../components/TurnstileWidget'
 import { ErrorState, LoadingState, Panel } from '../components/ui'
-import { walletConnectionConfigured } from '../config/wagmi'
+import { useRegistrationWallet } from '../wallet/useRegistrationWallet'
 import {
   completeDivisionsRegistration, createDiscordAuthorization,
   createDivisionsRegistrationSession, createDivisionsWalletChallenge,
@@ -43,17 +42,17 @@ function StepRail({ completed }: { completed: number }) {
 
 function WalletStep({ session, onVerified }: { session: DivisionsRegistrationSession; onVerified: (value: DivisionsRegistrationSession) => void }) {
   const { address, chainId, isConnected } = useConnection()
-  const { open } = useAppKit()
+  const wallet = useRegistrationWallet()
   const { mutateAsync: switchChain } = useSwitchChain()
   const { mutateAsync: signMessage } = useSignMessage()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const currentWallet = useRef({ address, chainId })
+  const currentWallet = useRef({ address, chainId, isConnected, ready: wallet.ready, isSelecting: wallet.isSelecting })
 
-  useEffect(() => { currentWallet.current = { address, chainId } }, [address, chainId])
+  useEffect(() => { currentWallet.current = { address, chainId, isConnected, ready: wallet.ready, isSelecting: wallet.isSelecting } }, [address, chainId, isConnected, wallet.ready, wallet.isSelecting])
 
   async function verify() {
-    if (!address) return
+    if (!address || !isConnected || !wallet.ready || wallet.isSelecting) return
     setPending(true)
     setError(null)
     try {
@@ -63,10 +62,15 @@ function WalletStep({ session, onVerified }: { session: DivisionsRegistrationSes
       }
       const owner = address.toLowerCase()
       const challenge = await createDivisionsWalletChallenge(session.csrfToken, owner)
-      const signature = await signMessage({ message: challenge.message })
-      if (currentWallet.current.address?.toLowerCase() !== owner || currentWallet.current.chainId !== arbitrumSepolia.id) {
-        throw new Error('The connected wallet or network changed. Start wallet verification again.')
+      const assertCurrentWallet = () => {
+        const current = currentWallet.current
+        if (!current.isConnected || !current.ready || current.isSelecting || current.address?.toLowerCase() !== owner || current.chainId !== arbitrumSepolia.id) {
+          throw new Error('The connected wallet or network changed. Start wallet verification again.')
+        }
       }
+      assertCurrentWallet()
+      const signature = await signMessage({ account: address, message: challenge.message })
+      assertCurrentWallet()
       onVerified(await verifyDivisionsWallet(session.csrfToken, owner, signature))
     } catch (caught) {
       setError(registrationErrorMessage(caught))
@@ -78,17 +82,17 @@ function WalletStep({ session, onVerified }: { session: DivisionsRegistrationSes
     }
   }
 
-  if (!walletConnectionConfigured) return <p role="alert" className="text-brand-peach">Wallet connection is not configured for this deployment.</p>
+  if (!wallet.configured) return <p role="alert" className="text-brand-peach">Wallet connection is not configured for this deployment.</p>
 
   return <div className="space-y-4">
     <p className="text-sm leading-6 text-content-secondary">Connect the owner wallet you use for Plether. You will sign a one-time message; no transaction or funds are involved.</p>
     {isConnected && address ? <div className="flex flex-wrap items-center justify-between gap-4 border border-brand-border/25 bg-app-bg/50 p-4">
       <div><p className="text-xs text-content-tertiary">Connected owner wallet</p><p className="mt-1 font-mono text-sm" title={address}>{shortAddress(address)}</p>
         <p className="mt-1 text-xs text-content-tertiary">{chainId === arbitrumSepolia.id ? 'Arbitrum Sepolia' : 'Network switch required'}</p></div>
-      <button type="button" className={PRIMARY_BUTTON} disabled={pending} onClick={() => { void verify() }}>
+      <button type="button" className={PRIMARY_BUTTON} disabled={pending || !wallet.ready || wallet.isSelecting} onClick={() => { void verify() }}>
         {pending ? 'Checking wallet…' : chainId === arbitrumSepolia.id ? 'Sign and verify wallet' : 'Switch to Arbitrum Sepolia'}
       </button>
-    </div> : <button type="button" className={PRIMARY_BUTTON} onClick={() => { void open({ view: 'Connect' }) }}>Connect wallet</button>}
+    </div> : <button type="button" className={PRIMARY_BUTTON} disabled={!wallet.ready} onClick={wallet.connect}>Connect wallet</button>}
     {error && <p role="alert" className="border border-brand-orange/40 bg-brand-orange/10 p-3 text-sm text-brand-peach">{error}</p>}
   </div>
 }

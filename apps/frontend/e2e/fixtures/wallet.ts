@@ -56,23 +56,14 @@ export const test = base.extend<WalletFixtures>({
   }, { auto: true }],
   mockConnectedWallet: async ({ page }, use) => {
     await use(async () => {
-      // The adapter registers its browser connectors during asynchronous AppKit
-      // initialization. Await that real setup rather than assuming navigation
-      // itself established an account or manufacturing a connected store.
-      await expect.poll(async () => page.evaluate(async () => {
-        const configPath = '/src/config/wagmi.ts'
-        const { config } = await import(configPath)
-        const connector = config.connectors.find((candidate: { id: string }) => candidate.id === 'injected')
-        return connector !== undefined && await connector.getProvider() !== undefined
-      }), { message: 'the real injected connector must register with its provider' }).toBe(true)
       await page.evaluate(async () => {
-        // Vite serves the installed real action and the application's existing
-        // config. No hook replacement, store injection or alternate app is used.
         const configPath = '/src/config/wagmi.ts'
         const actionPath = '/node_modules/@wagmi/core/dist/esm/actions/connect.js'
-        const [{ config }, { connect }] = await Promise.all([import(configPath), import(actionPath)])
-        const connector = config.connectors.find((candidate: { id: string }) => candidate.id === 'injected')
-        if (!connector) throw new Error('The application did not register its injected wallet connector')
+        const injectedPath = '/node_modules/@wagmi/core/dist/esm/connectors/injected.js'
+        const [{ config }, { connect }, { injected }] = await Promise.all([
+          import(configPath), import(actionPath), import(injectedPath),
+        ])
+        const connector = config._internal.connectors.setup(injected())
         await connect(config, { connector, chainId: 1 })
       })
       await expect(page.getByRole('button', { name: 'Open wallet account 0x1234...7890', exact: true })).toBeVisible()

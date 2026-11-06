@@ -49,6 +49,20 @@ describe('analytics client', () => {
     const result = mask?.(input)
     expect(result).toEqual({ name: '/api/aa/rpc', entryType: 'resource', startTime: 0, duration: 1 })
   })
+  it.each([
+    'https://auth.privy.io/api/v1/users/did:privy:private/wallets',
+    'https://api.privy.io/v1/wallets/private-wallet-id',
+    'https://ethereum.rpc.privy.systems/private-app-id',
+    '/oauth/callback?code=private-code#private-token',
+    '/api/auth/session',
+  ])('excludes authentication and Privy requests from replay: %s', (name) => {
+    const mask = createAnalyticsConfig(0.05, 'sepolia').session_recording?.maskCapturedNetworkRequestFn
+    expect(mask?.({ name, entryType: 'resource', startTime: 0, duration: 1 })).toBeNull()
+  })
+  it('blocks Privy and app-owned wallet dialogs from session replay', () => {
+    const config = createAnalyticsConfig(0.05, 'sepolia')
+    expect(config.session_recording?.blockSelector).toBe('.ph-no-record, #privy-dialog, #privy-modal-content, [id^="headlessui-dialog-"]')
+  })
   it('keeps exception metadata but drops SDK URL and arbitrary context properties', () => {
     const before = createAnalyticsConfig(0.05, 'sepolia').before_send
     if (typeof before !== 'function') throw new Error('missing exception privacy filter')

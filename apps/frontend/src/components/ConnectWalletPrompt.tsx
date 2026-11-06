@@ -1,23 +1,30 @@
-import { openAppKit } from '../config/wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 
 export interface ConnectWalletPromptProps {
   description?: string
 }
 
 export function ConnectWalletPrompt({ description }: ConnectWalletPromptProps) {
+  const { connect, ready, configured } = useWalletActions()
+
   return (
     <div className="border border-brand-border/30 bg-surface-panel p-6 text-center sm:p-12">
       <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-surface-muted flex items-center justify-center">
         <span className="material-symbols-outlined text-3xl text-content-secondary">lock</span>
       </div>
       <button
-        onClick={() => {
-          void openAppKit()
-        }}
+        type="button"
+        onClick={connect}
+        disabled={!ready || !configured}
         className="mb-2 inline-flex min-h-11 w-full items-center justify-center border border-[#FF572D] bg-[#FF572D] px-5 py-2 text-base font-semibold text-[#FFF5F9] transition-colors hover:border-[#FFF5F9] hover:bg-[#FFF5F9] hover:text-[#250917] hover:underline hover:underline-offset-4 sm:w-auto sm:text-xl"
       >
         Connect Your Wallet
       </button>
+      {!configured || !ready ? (
+        <p role="status" className="mb-2 text-sm text-content-secondary">
+          {!configured ? 'Wallet connection is not configured for this deployment.' : 'Preparing wallet connection…'}
+        </p>
+      ) : null}
       {description ? (
         <p className="text-content-secondary">{description}</p>
       ) : (

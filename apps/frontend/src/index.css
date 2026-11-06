@@ -398,3 +398,66 @@ select:not(:disabled) {
 :is(a, button, [role='button']):has(.material-symbols-outlined) {
   text-decoration: none !important;
 }
+
+/* Keep Privy portals on Plether's palette, including the native wallet UI. */
+body {
+  --privy-border-radius-sm: 0px;
+  --privy-border-radius-md: 0px;
+  --privy-border-radius-mdlg: 0px;
+  --privy-border-radius-lg: 0px;
+  --privy-border-radius-full: 0px;
+  --privy-color-background: var(--color-surface-panel);
+  --privy-color-background-2: #432936;
+  --privy-color-background-3: #523744;
+  --privy-color-foreground: #fff5f9;
+  --privy-color-foreground-2: #d8cbd0;
+  --privy-color-foreground-3: #baa5af;
+  --privy-color-foreground-4: rgba(255, 171, 150, 0.22);
+  --privy-color-foreground-accent: #250917;
+  --privy-color-accent: #ff572d;
+  --privy-color-accent-light: #ffab96;
+  --privy-color-accent-lightest: #61313b;
+  --privy-color-accent-dark: #e84a24;
+  --privy-color-accent-darkest: #ad371b;
+  --privy-color-icon-default: #d8cbd0;
+  --privy-color-icon-muted: #baa5af;
+  --privy-color-icon-success: #00cc77;
+  --privy-color-success: #00cc77;
+  --privy-color-error: #ffab96;
+  --privy-color-error-light: #61313b;
+}
+
+/* The native close SVG uses a hard-coded black stroke. Inherit its button's
+   foreground instead, and keep utility actions quieter than primary actions. */
+[id^="headlessui-dialog-"] button:has(> svg path[stroke="black"]),
+[id^="headlessui-dialog-"] button:has(svg.lucide-copy),
+[id^="headlessui-dialog-"] button:has(svg.lucide-check) {
+  color: var(--privy-color-foreground-2);
+  background: transparent;
+  border-radius: 0;
+  border: 1px solid var(--privy-color-foreground-4);
+}
+
+[id^="headlessui-dialog-"] button:has(> svg path[stroke="black"]):hover,
+[id^="headlessui-dialog-"] button:has(svg.lucide-copy):hover,
+[id^="headlessui-dialog-"] button:has(svg.lucide-check):hover {
+  color: var(--privy-color-foreground);
+  background: var(--privy-color-background-3);
+}
+
+[id^="headlessui-dialog-"] svg path[stroke="black"] {
+  stroke: currentColor;
+  stroke-opacity: 1;
+}
+
+[id^="headlessui-dialog-panel-"] {
+  border: 1px solid var(--privy-color-foreground-4);
+}
+
+/* Match the shared Modal's bg-app-bg/85 and backdrop-blur-sm scrim. */
+[id^="headlessui-dialog-"][role="dialog"] > [aria-hidden="true"],
+#privy-dialog-backdrop {
+  background: color-mix(in oklab, var(--color-app-bg) 85%, transparent);
+  -webkit-backdrop-filter: blur(var(--blur-sm, 8px));
+  backdrop-filter: blur(var(--blur-sm, 8px));
+}

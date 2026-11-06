@@ -1,21 +1,18 @@
 import { act, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 
-vi.mock('@reown/appkit/react', () => ({
-  useAppKit: () => ({ open: vi.fn() }),
+vi.mock('./wallet/WalletProvider', () => ({
+  WalletProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
-
-vi.mock('./config/wagmi', async () => {
-  const { createConfig, http } = await import('wagmi')
-  const { arbitrumSepolia } = await import('wagmi/chains')
-  return {
-    walletConnectionConfigured: true,
-    wagmiConfig: createConfig({
-      chains: [arbitrumSepolia],
-      transports: { [arbitrumSepolia.id]: http() },
-    }),
-  }
-})
+vi.mock('./wallet/useRegistrationWallet', () => ({
+  useRegistrationWallet: () => ({ configured: true, ready: true, isSelecting: false, connect: vi.fn() }),
+}))
+vi.mock('wagmi', async (importOriginal) => ({
+  ...await importOriginal<typeof import('wagmi')>(),
+  useConnection: () => ({ address: undefined, chainId: 421614, isConnected: false }),
+  useSignMessage: () => ({ mutateAsync: vi.fn() }),
+  useSwitchChain: () => ({ mutateAsync: vi.fn() }),
+}))
 
 vi.mock('./divisions/registration', async (importOriginal) => ({
   ...await importOriginal<typeof import('./divisions/registration')>(),

@@ -161,6 +161,8 @@ export interface PerpsOrderReceiptEconomics {
   realizedPnlAssets?: string
   vpiAssets?: string
   carryAssets?: string
+  /** Already collected before the execution balance snapshots; included in carryAssets. */
+  commitmentCarryAssets?: string
   executionFeeAssets?: string
   frozenSpreadAssets?: string
   actionChargeAssessedAssets?: string

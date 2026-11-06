@@ -6,7 +6,6 @@ import { Button } from './ui'
 interface PerpsReviewFooterProps {
   sponsoredCloseAssets?: string
   depositCarryAssets?: string
-  commitmentCarryAssets?: string
   recoveringOracle?: boolean
   preparing: boolean
   refreshing: boolean
@@ -21,7 +20,7 @@ interface PerpsReviewFooterProps {
   analyticsProperties?: PerpsAnalyticsProperties
 }
 
-export function PerpsReviewFooter({ sponsoredCloseAssets, depositCarryAssets, commitmentCarryAssets, recoveringOracle = false, preparing, refreshing, slow, error, changes, canConfirm, direction,
+export function PerpsReviewFooter({ sponsoredCloseAssets, depositCarryAssets, recoveringOracle = false, preparing, refreshing, slow, error, changes, canConfirm, direction,
   onConfirm, onCancel, onRetry, analyticsProperties }: PerpsReviewFooterProps) {
   return (
     <div className="space-y-3">
@@ -41,7 +40,6 @@ export function PerpsReviewFooter({ sponsoredCloseAssets, depositCarryAssets, co
       </div>
       {sponsoredCloseAssets && <p className="text-sm text-content-secondary">Plether covers {sponsoredCloseAssets} {PERPS_SETTLEMENT_TOKEN_LABEL} of your keeper bounty and transaction gas. The bounty remains a trading cost in competition PnL.</p>}
       {depositCarryAssets && <p className="text-sm text-content-secondary">Carry collected with assistance funding: {depositCarryAssets} {PERPS_SETTLEMENT_TOKEN_LABEL}.</p>}
-      {commitmentCarryAssets && <p className="text-sm text-content-secondary">Carry collected when the order is committed: {commitmentCarryAssets} {PERPS_SETTLEMENT_TOKEN_LABEL}.</p>}
       {!preparing && error && onRetry ? <Button size="sm" variant="secondary" onClick={onRetry}>Retry review</Button> : null}
       <div className="flex gap-3">
         <Button className="flex-1 !border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D]"

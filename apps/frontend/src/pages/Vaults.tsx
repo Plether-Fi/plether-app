@@ -25,7 +25,7 @@ import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
 import { TrancheMark } from '../components/TrancheMark'
 import { Alert, Badge, Button, DocsLink, InfoTooltip, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
-import { openAppKit } from '../config/wagmi'
+import { useWalletActions } from '../wallet/useWalletActions'
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_ABI,
@@ -4639,6 +4639,7 @@ function VaultActionPanel({
   onRefreshRequests: () => void
   onViewRequests: () => void
 }) {
+  const { ready: walletReady, configured: walletConfigured } = useWalletActions()
   const [mode, setMode] = useState<ActionMode>('deposit')
   const [amount, setAmount] = useState('')
   const [showPreview, setShowPreview] = useState(false)
@@ -5042,9 +5043,10 @@ function VaultActionPanel({
               || (isConnected && !isWrongNetwork && (isQuotePending || isRefreshingQuote))
             }
             disabled={
-              isConnected &&
+              (!isConnected && (!walletReady || !walletConfigured)) ||
+              (isConnected &&
               !isWrongNetwork &&
-              formInvalid
+              formInvalid)
             }
             analyticsId={`vault_${mode}_reviewed`}
             analyticsSurface="vaults"
@@ -5056,6 +5058,11 @@ function VaultActionPanel({
           {actionDataUnavailable && mode !== 'deposit' ? (
             <p className="text-xs leading-5 text-brand-orange">
               Some live pool, vault, or wallet data is unavailable, so the preview is disabled.
+            </p>
+          ) : null}
+          {!isConnected && (!walletConfigured || !walletReady) ? (
+            <p role="status" className="text-xs leading-5 text-content-secondary">
+              {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : 'Preparing wallet connection…'}
             </p>
           ) : null}
           {switchError ? <p className="text-xs leading-5 text-brand-orange">{switchError}</p> : null}
@@ -5580,6 +5587,7 @@ export function Vaults() {
 }
 
 function LiveVaults() {
+  const { connect, ready: walletReady, configured: walletConfigured } = useWalletActions()
   const { trancheId } = useParams()
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
@@ -5599,7 +5607,7 @@ function LiveVaults() {
 
   function openWallet() {
     clearSwitchError()
-    void openAppKit()
+    if (walletReady && walletConfigured) connect()
   }
 
   if (trancheId && !selectedTranche) {

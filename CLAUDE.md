@@ -71,7 +71,7 @@ Plether is a DeFi frontend for trading plDXY-BEAR and plDXY-BULL tokens on Ether
 
 ### Tech Stack
 - **Framework**: Vite + React 19 + TypeScript
-- **Web3**: wagmi + viem + Web3Modal (WalletConnect)
+- **Web3**: Privy + wagmi + viem (external and embedded EVM wallets)
 - **Styling**: Tailwind CSS v4 (CSS-first config in `apps/frontend/src/index.css`)
 - **State**: Zustand for local state, TanStack Query for server state
 - **Error Handling**: better-result for typed Result-based error handling
@@ -320,95 +320,49 @@ When implementing UI features, verify:
 - [ ] **Error Handling**: Clear error states, helpful messages
 - [ ] **Polish**: Micro-interactions, loading states, empty states
 
-### Mock Wallet for MCP Testing
+### Wallet Tests and Screenshots
 
-To test with a connected wallet state, inject the mock wallet before navigating. The mock uses EIP-6963 for auto-connection.
+The canonical Playwright wallet fixture is
+`apps/frontend/e2e/fixtures/wallet.ts`. Import its `test` and `expect`, request
+`mockConnectedWallet`, and await it before the first navigation:
 
-```javascript
-// Step 1: Inject mock wallet with EIP-6963 (run ONCE per browser session)
-mcp__playwright__browser_run_code({
-  code: `async (page) => {
-    await page.addInitScript(() => {
-      const MOCK_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
-      const CHAIN_ID = '0xaa36a7';
-      const mockProvider = {
-        isMetaMask: true,
-        selectedAddress: MOCK_ADDRESS,
-        chainId: CHAIN_ID,
-        networkVersion: '11155111',
-        _metamask: { isUnlocked: () => Promise.resolve(true) },
-        request: async ({ method }) => {
-          if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [MOCK_ADDRESS];
-          if (method === 'eth_chainId') return CHAIN_ID;
-          if (method === 'eth_getBalance') return '0x8ac7230489e80000';
-          if (method === 'eth_call') return '0x' + '0'.repeat(64);
-          return null;
-        },
-        on: (event, cb) => {
-          if (event === 'accountsChanged') setTimeout(() => cb([MOCK_ADDRESS]), 100);
-          if (event === 'chainChanged') setTimeout(() => cb(CHAIN_ID), 100);
-        },
-        removeListener: () => {},
-      };
-      Object.defineProperty(window, 'ethereum', { value: mockProvider, writable: false });
-      // EIP-6963: Auto-announce as MetaMask
-      const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {
-        detail: Object.freeze({
-          info: { uuid: 'mock', name: 'MetaMask', icon: '', rdns: 'io.metamask' },
-          provider: mockProvider
-        })
-      }));
-      window.addEventListener('eip6963:requestProvider', announce);
-      announce();
-      setTimeout(announce, 100);
-    });
-    return 'Mock wallet ready';
-  }`
-});
+```typescript
+import { test, expect } from '../fixtures/wallet'
 
-// Step 2: Navigate to page (wallet will auto-connect via EIP-6963)
-mcp__playwright__browser_navigate({ url: "http://localhost:5173" });
+test('wallet network changes', async ({ page, mockConnectedWallet }) => {
+  const wallet = await mockConnectedWallet()
+  await page.goto('/')
+  await wallet.setChain(421614)
+  await expect.poll(() => page.evaluate(async () => {
+    const provider = (window as unknown as {
+      ethereum: { request(input: { method: string }): Promise<string> }
+    }).ethereum
+    return provider.request({ method: 'eth_chainId' })
+  })).toBe('0x66eee')
+})
 ```
 
-Full implementation: `apps/frontend/e2e/fixtures/mockWallet.ts`
+For a standalone Playwright setup, call `installTestWallet(page)` before
+navigation. The injected provider is discoverable as **Plether Test Wallet**
+through EIP-6963; injection does not complete Privy login or automatically select
+the wallet in the application. UI connection tests need a configured development
+Privy app and must select the detected wallet through the connection flow.
 
-### Documentation Screenshots
+The fixture produces real `personal_sign` and `eth_signTypedData_v4` signatures
+from public Anvil test accounts. Its returned controller supports
+`setAccount(0 | 1)`, `setChain(chainId)`, `disconnect()`, and
+`rejectNextRequest(method)`. Account and network changes emit the corresponding
+provider events, and rejected requests return wallet error codes. It does not
+submit transactions or contact a live RPC; unsupported methods reject with code
+4200. Use the local Perps/Anvil integration tooling for on-chain operations and
+real Privy development accounts for social login and embedded-wallet checks.
 
-Screenshots for documentation live in `screenshots/`. Use consistent settings:
-
-**Resolution:** 1024x1000 pixels (set with `mcp__playwright__browser_resize`)
-
-**Setup for Real Transactions:**
-1. Move `apps/frontend/src/contracts/addresses.local.json` to `.bak` so app uses Sepolia addresses
-2. Change wagmi config to use port 8546 (`http://127.0.0.1:8546`)
-3. Use `MOCK_WALLET_ANVIL_SCRIPT` from `apps/frontend/e2e/fixtures/mockWallet.ts` which proxies to Anvil
-4. Start Anvil fork: `cd apps/frontend && npm run anvil` (uses port 8546 with Sepolia fork)
-
-**Key Lessons:**
-- `addInitScript` only runs on NEW page loads - close browser and reopen to apply changes
-- Hide TanStack devtools before screenshots: `document.querySelector('.tsqd-open-btn-container').style.display = 'none'`
-- Mock wallet needs `eth_sendTransaction` handler to proxy transactions to Anvil
-- Anvil test account `0xf39F...2266` is pre-funded and unlocked for direct tx sending
-- Screenshots save to `.playwright-mcp/` - copy to `screenshots/` directory
-- Always verify dimensions with `file screenshots/*.png` for consistency
-
-**Workflow:**
-```bash
-# 1. Setup
-mv apps/frontend/src/contracts/addresses.local.json apps/frontend/src/contracts/addresses.local.json.bak
-# Edit wagmi.ts: change anvil port to 8546
-
-# 2. Take screenshots with Playwright MCP
-mcp__playwright__browser_resize(1024, 1000)
-mcp__playwright__browser_run_code(MOCK_WALLET_ANVIL_SCRIPT)
-mcp__playwright__browser_navigate("http://localhost:5173/mint")
-# ... interact and screenshot ...
-
-# 3. Cleanup
-cp .playwright-mcp/*.png screenshots/
-mv apps/frontend/src/contracts/addresses.local.json.bak apps/frontend/src/contracts/addresses.local.json
-# Revert wagmi.ts port change
-```
+Documentation screenshots live in `screenshots/`. Set a 1024 × 1000 viewport,
+wait for the intended connection and loading states, hide development controls,
+and capture with `page.screenshot({ path: 'screenshots/example.png' })`. Verify
+the saved image dimensions and inspect it before adding it to documentation.
+Do not change contract-address files or production RPC configuration just to
+stage a screenshot.
 
 ### Source Code Reference
 

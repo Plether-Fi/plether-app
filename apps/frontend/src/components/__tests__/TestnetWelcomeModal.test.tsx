@@ -1,12 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@reown/appkit/react', () => ({
-  useAppKit: () => ({ open: vi.fn() }),
-}))
-
-vi.mock('../../config/wagmi', () => ({
-  syncAppKitModalStyleOverrides: vi.fn(),
+vi.mock('../../wallet/useWalletActions', () => ({
+  useWalletActions: () => ({ connect: vi.fn(), ready: true, configured: true }),
 }))
 
 import { TestnetWelcomeModalView } from '../TestnetWelcomeModal'
@@ -16,6 +12,31 @@ import { replaceTextNodes } from '../../test/replaceTextNodes'
 const walletAddress = '0x6b72fE6CC52201a1eb7892A813C6C10cCe62745c'
 
 describe('TestnetWelcomeModalView wallet connection states', () => {
+  it('keeps the faucet unavailable until wallet connection is ready', () => {
+    const onConnectWallet = vi.fn()
+    const onRequestFunds = vi.fn()
+    render(
+      <TestnetWelcomeModalView
+        isOpen
+        isWalletConnected={false}
+        isWalletConnectionReady={false}
+        walletConnectionStatus="Preparing wallet connection…"
+        walletAddress=""
+        onClose={vi.fn()}
+        onWalletAddressChange={vi.fn()}
+        onConnectWallet={onConnectWallet}
+        onRequestFunds={onRequestFunds}
+      />
+    )
+
+    const connectButton = screen.getByRole('button', { name: 'Connect Wallet' })
+    expect(connectButton).toBeDisabled()
+    fireEvent.click(connectButton)
+    expect(onConnectWallet).not.toHaveBeenCalled()
+    expect(onRequestFunds).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('Preparing wallet connection…')
+  })
+
   it('keeps translated button labels safe through wallet and funding transitions', () => {
     const props = { isOpen: true, isWalletConnected: false, isTradingAccountRecipient: true,
       walletAddress: '', onClose: vi.fn(), onWalletAddressChange: vi.fn(),

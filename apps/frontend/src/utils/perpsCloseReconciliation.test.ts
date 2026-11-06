@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PerpsOrderReceiptEconomics } from '../hooks/usePerpsHistory'
 import { derivePerpsCloseReconciliation } from './perpsCloseReconciliation'
 import { closeOrder14Receipt } from './__fixtures__/closeOrder14'
+import { closeOrder180Receipt } from './__fixtures__/closeOrder180'
 import { closeSettlementAdjustmentReceipt } from './__fixtures__/closeSettlementAdjustment'
 
 const ASSETS = 1_000_000n
@@ -33,6 +34,54 @@ function receipt(
 }
 
 describe('derivePerpsCloseReconciliation', () => {
+  it('reconciles order 180 without charging commitment carry twice', () => {
+    const result = derivePerpsCloseReconciliation(closeOrder180Receipt)!
+    expect(result).toMatchObject({
+      commitmentCarryAssets: 70_278n,
+      carryAssets: 660n,
+      netCloseResultAssets: -5_102_516_914n,
+      actualAccountChangeAssets: -5_102_516_914n,
+      settlementAdjustmentAssets: 0n,
+      lifetime: { netResultAssets: 3_205_091_075n, betweenTradesAccountChangeAssets: -70_278n },
+    })
+    expect(result.netCloseResultAssets + result.settlementAdjustmentAssets).toBe(result.actualAccountChangeAssets)
+  })
+
+  it('nets execution charges before adding already-collected commitment carry', () => {
+    expect(derivePerpsCloseReconciliation(receipt({
+      commitmentCarryAssets: (1n * ASSETS).toString(),
+      vpiAssets: (-12n * ASSETS).toString(),
+      frozenSpreadAssets: (5n * ASSETS).toString(),
+      actionChargeAssessedAssets: (1n * ASSETS).toString(),
+      actionChargeCollectedAssets: (4n * ASSETS).toString(),
+      grossAccountDebitAssets: (4n * ASSETS).toString(),
+      postSettlementBalanceAssets: (133n * ASSETS).toString(),
+    }))).toMatchObject({
+      carryAssets: 3n * ASSETS, commitmentCarryAssets: 1n * ASSETS,
+      netCloseResultAssets: 33n * ASSETS, actualAccountChangeAssets: 33n * ASSETS,
+      settlementAdjustmentAssets: 0n,
+    })
+  })
+
+  it('excludes commitment carry from a profitable full close execution balance change', () => {
+    expect(derivePerpsCloseReconciliation(receipt({
+      commitmentCarryAssets: (1n * ASSETS).toString(),
+      actionChargeCollectedAssets: (1n * ASSETS).toString(),
+      grossAccountDebitAssets: (1n * ASSETS).toString(),
+      postSettlementBalanceAssets: (124n * ASSETS).toString(),
+    }))).toMatchObject({
+      carryAssets: 3n * ASSETS, commitmentCarryAssets: 1n * ASSETS,
+      netCloseResultAssets: 24n * ASSETS, actualAccountChangeAssets: 24n * ASSETS,
+      settlementAdjustmentAssets: 0n, postPositionSize: 0n,
+    })
+  })
+
+  it.each(['-1', 'not-a-number', '70939', '5102587193'])(
+    'rejects invalid commitment carry (%s) instead of concealing a balance mismatch', commitmentCarryAssets => {
+      expect(derivePerpsCloseReconciliation({ ...closeOrder180Receipt, commitmentCarryAssets })).toBeUndefined()
+    }
+  )
+
   it('keeps a screenshot-sized settlement difference unclassified and reports the actual account change', () => {
     const result = derivePerpsCloseReconciliation(closeSettlementAdjustmentReceipt)!
     expect(result).toMatchObject({

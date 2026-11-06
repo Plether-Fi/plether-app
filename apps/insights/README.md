@@ -151,14 +151,47 @@ an HttpOnly session with CSRF protection and verifies the connected wallet's
 signed challenge. It is not used by production builds or the Pages Worker.
 
 Registration also requires the public `VITE_TURNSTILE_SITE_KEY` and
-`VITE_WALLETCONNECT_PROJECT_ID` build variables. The optional
+`VITE_PRIVY_APP_ID` build variables. The optional `VITE_PRIVY_CLIENT_ID`
+selects the Insights app client. The optional
 `VITE_ARBITRUM_SEPOLIA_RPC_URL` defaults to the public Arbitrum Sepolia RPC.
 These values are browser-visible identifiers and URLs; backend Turnstile, X,
-encryption, and edge-origin credentials must never use a `VITE_` prefix.
+encryption, edge-origin, Privy app, and OAuth provider secrets must never use a
+`VITE_` prefix.
 Local Vite development uses Cloudflare's documented always-pass Turnstile test
-site key and the trading frontend's public WalletConnect project ID when those
-variables are absent. Production builds do not use the Turnstile fallback, and
-the deployment workflow requires both variables explicitly.
+site key when that variable is absent. There is no fallback Privy app ID: wallet
+connection is disabled until a real app ID is configured, while public pages
+remain available. Production builds do not use the Turnstile fallback, and the
+deployment workflow requires both public identifiers explicitly.
+
+Use the same Privy application as the Arbitrum Sepolia trading frontend, even
+though this site is deployed as production. Configure the exact
+`https://insights.plether.com` and `https://app.sepolia.plether.com` origins in
+Privy, enable the displayed login methods, and configure their OAuth callbacks.
+The same email login must resolve the same embedded owner address in both apps;
+the browser may require login on each origin. Separate app client IDs can scope
+each origin. Use a separate shared development application for local tests.
+External wallets retain connection-only access; the registration wallet step
+still verifies its one-time owner signature. Privy login does not replace the
+competition's X verification, eligibility checks, HttpOnly session, or CSRF rules.
+Reown sessions and embedded-wallet keys are not migrated.
+
+`npm test` includes wallet integration tests using the installed Privy/Wagmi
+bridge, actual Wagmi connectors, and recoverable test signatures. They cover
+same-extension owner changes, session restoration, email completion/cancellation,
+unavailable owners, and the registration challenge/signature handoff. Remote
+Privy authentication and registration API responses are fixtures; the suite
+does not deliver live email OTPs or submit a production registration.
+
+The connection picker always offers **Log in with Email** or, when already
+authenticated, **Use email wallet**. Its close action uses the pinned UI-only
+Privy extension installed by `scripts/patch-privy-wallet-dialog.mjs`; the script
+verifies SDK version/file checksums and must be reviewed with any Privy upgrade.
+
+**Deploy Insights** reads GitHub Actions variables `PRIVY_APP_ID` (shared with
+the trading app) and optional `PRIVY_INSIGHTS_CLIENT_ID`. It publishes on pushes
+to `master` affecting this app, so verify social/external wallet registration
+locally or against an isolated preview backend before merging. A normal Pages
+preview is not an authorized registration origin for the production backend.
 
 The legacy registration components and their tests remain for historical
 maintenance; the public app no longer mounts the September application flow.

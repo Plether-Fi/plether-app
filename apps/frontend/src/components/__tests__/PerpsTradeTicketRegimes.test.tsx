@@ -84,14 +84,8 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   }
 })
 
-vi.mock('@reown/appkit/react', () => ({
-  createAppKit: vi.fn(),
-  useAppKit: () => ({
-    open: vi.fn(),
-  }),
-  useAppKitNetwork: () => ({
-    switchNetwork: vi.fn(),
-  }),
+vi.mock('../../wallet/useWalletActions', () => ({
+  useWalletActions: () => ({ connect: vi.fn(), ready: true, configured: true }),
 }))
 
 vi.mock('wagmi', () => ({

@@ -70,16 +70,16 @@ jobs:
       - name: Validate registration frontend configuration
         env:
           VITE_TURNSTILE_SITE_KEY: ${{ vars.INSIGHTS_TURNSTILE_SITE_KEY }}
-          VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.WALLETCONNECT_PROJECT_ID }}
+          VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
         run: |
           test -n "$VITE_TURNSTILE_SITE_KEY" || {
             echo "::error title=Missing Turnstile site key::Configure the INSIGHTS_TURNSTILE_SITE_KEY GitHub Actions variable."
             exit 1
           }
-          test -n "$VITE_WALLETCONNECT_PROJECT_ID" || {
-            echo "::error title=Missing WalletConnect project ID::Configure the WALLETCONNECT_PROJECT_ID GitHub Actions variable."
+          if [[ ! "$VITE_PRIVY_APP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error title=Missing or invalid Privy app ID::Configure the public PRIVY_APP_ID GitHub Actions variable shared with the trading frontend."
             exit 1
-          }
+          fi
 
       - name: Install dependencies
         working-directory: apps/insights
@@ -97,7 +97,8 @@ jobs:
         working-directory: apps/insights
         env:
           VITE_TURNSTILE_SITE_KEY: ${{ vars.INSIGHTS_TURNSTILE_SITE_KEY }}
-          VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.WALLETCONNECT_PROJECT_ID }}
+          VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
+          VITE_PRIVY_CLIENT_ID: ${{ vars.PRIVY_INSIGHTS_CLIENT_ID }}
           # Keep this origin aligned with the exact connect-src entry in the
           # Pages Worker CSP. Do not substitute a credential-bearing RPC URL.
           VITE_ARBITRUM_SEPOLIA_RPC_URL: https://sepolia-rollup.arbitrum.io/rpc

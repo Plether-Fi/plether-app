@@ -4,11 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DivisionsRegistrationPage } from './DivisionsRegistrationPage'
 import type { DivisionsRegistrationSession } from '../divisions/registration'
 
-const api = vi.hoisted(() => ({ getDivisionsRegistrationSession: vi.fn(), completeDivisionsRegistration: vi.fn() }))
+const api = vi.hoisted(() => ({ getDivisionsRegistrationSession: vi.fn(), completeDivisionsRegistration: vi.fn(), createDivisionsWalletChallenge: vi.fn(), verifyDivisionsWallet: vi.fn() }))
+const walletMocks = vi.hoisted(() => ({
+  address: `0x${'1'.repeat(40)}`, ready: true, isSelecting: false,
+  connect: vi.fn(), signMessage: vi.fn(), switchChain: vi.fn(),
+}))
 vi.mock('../divisions/registration', () => api)
-vi.mock('../config/wagmi', () => ({ walletConnectionConfigured: true }))
-vi.mock('@reown/appkit/react', () => ({ useAppKit: vi.fn() }))
-vi.mock('wagmi', () => ({ useConnection: vi.fn(), useSignMessage: vi.fn(), useSwitchChain: vi.fn() }))
+vi.mock('../wallet/useRegistrationWallet', () => ({ useRegistrationWallet: () => ({ configured: true, ready: walletMocks.ready, isSelecting: walletMocks.isSelecting, connect: walletMocks.connect }) }))
+vi.mock('wagmi', () => ({
+  useConnection: () => ({ address: walletMocks.address, chainId: 421614, isConnected: true }),
+  useSignMessage: () => ({ mutateAsync: walletMocks.signMessage }),
+  useSwitchChain: () => ({ mutateAsync: walletMocks.switchChain }),
+}))
 vi.mock('../components/TurnstileWidget', () => ({ TurnstileWidget: () => <div>Spam protection widget</div> }))
 
 const session: DivisionsRegistrationSession = {
@@ -20,7 +27,13 @@ const session: DivisionsRegistrationSession = {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
+  walletMocks.address = `0x${'1'.repeat(40)}`
+  walletMocks.ready = true
+  walletMocks.isSelecting = false
+  api.createDivisionsWalletChallenge.mockResolvedValue({ message: 'Verify wallet ownership' })
+  walletMocks.signMessage.mockResolvedValue('0xsigned')
+  api.verifyDivisionsWallet.mockResolvedValue(session)
   api.getDivisionsRegistrationSession.mockResolvedValue(session)
   api.completeDivisionsRegistration.mockResolvedValue({ ...session, status: 'completed' })
 })
@@ -47,4 +60,33 @@ describe('Discord registration', () => {
     expect(screen.queryByRole('button', { name: 'Update leaderboard visibility' })).not.toBeInTheDocument()
     expect(api.completeDivisionsRegistration).not.toHaveBeenCalled()
   })
+  it('signs the Discord challenge with the selected Privy owner', async () => {
+    api.getDivisionsRegistrationSession.mockResolvedValue({ ...session, steps: { ...session.steps, wallet: 'pending' } })
+    render(<MemoryRouter><DivisionsRegistrationPage /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign and verify wallet' }))
+    await waitFor(() => expect(api.verifyDivisionsWallet).toHaveBeenCalledWith('csrf', walletMocks.address, '0xsigned'))
+    expect(walletMocks.signMessage).toHaveBeenCalledWith({ account: walletMocks.address, message: 'Verify wallet ownership' })
+  })
+
+  it('does not sign a challenge if the owner changes while it loads', async () => {
+    api.getDivisionsRegistrationSession.mockResolvedValue({ ...session, steps: { ...session.steps, wallet: 'pending' } })
+    let resolveChallenge!: (value: { message: string }) => void
+    api.createDivisionsWalletChallenge.mockReturnValue(new Promise(resolve => { resolveChallenge = resolve }))
+    const view = render(<MemoryRouter><DivisionsRegistrationPage /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign and verify wallet' }))
+    walletMocks.address = `0x${'3'.repeat(40)}`
+    view.rerender(<MemoryRouter><DivisionsRegistrationPage /></MemoryRouter>)
+    resolveChallenge({ message: 'Old owner challenge' })
+    expect(await screen.findByRole('alert')).toHaveTextContent('The connected wallet or network changed')
+    expect(walletMocks.signMessage).not.toHaveBeenCalled()
+    expect(api.verifyDivisionsWallet).not.toHaveBeenCalled()
+  })
+
+  it('keeps verification disabled while the selected wallet reconnects', async () => {
+    walletMocks.isSelecting = true
+    api.getDivisionsRegistrationSession.mockResolvedValue({ ...session, steps: { ...session.steps, wallet: 'pending' } })
+    render(<MemoryRouter><DivisionsRegistrationPage /></MemoryRouter>)
+    expect(await screen.findByRole('button', { name: 'Sign and verify wallet' })).toBeDisabled()
+  })
+
 })

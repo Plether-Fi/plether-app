@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useSwitchChain } from 'wagmi'
 import { arbitrumSepolia } from 'wagmi/chains'
-import { openAppKit, switchAppKitToArbitrumSepolia } from '../config/wagmi'
 
 function getErrorText(error: unknown): string {
   if (!error) return ''
@@ -39,39 +38,20 @@ function getSwitchHelpMessage(error: unknown): string {
 
 export function useSwitchToArbitrumSepolia() {
   const { switchChainAsync, isPending } = useSwitchChain()
-  const [isOpeningFallback, setIsOpeningFallback] = useState(false)
+  const [isSwitching, setIsSwitching] = useState(false)
   const [switchError, setSwitchError] = useState<string | null>(null)
 
   const switchToArbitrumSepolia = useCallback(async () => {
-    let lastError: unknown
-
     setSwitchError(null)
-    setIsOpeningFallback(true)
+    setIsSwitching(true)
 
     try {
       await switchChainAsync({ chainId: arbitrumSepolia.id })
       return true
     } catch (switchChainError) {
-      lastError = switchChainError
-      console.warn('Failed to switch wallet network through Wagmi. Trying AppKit.', switchChainError)
-    }
-
-    try {
-      await switchAppKitToArbitrumSepolia()
-      return true
-    } catch (appKitError) {
-      lastError = appKitError
-      console.warn('Failed to switch wallet network through AppKit. Opening network selector.', appKitError)
-    }
-
-    try {
-      await openAppKit({ view: 'Networks' })
-    } catch (networkSelectorError) {
-      lastError = networkSelectorError
-      console.warn('Failed to open AppKit network selector.', networkSelectorError)
+      setSwitchError(getSwitchHelpMessage(switchChainError))
     } finally {
-      setSwitchError(getSwitchHelpMessage(lastError))
-      setIsOpeningFallback(false)
+      setIsSwitching(false)
     }
     return false
   }, [switchChainAsync])
@@ -82,7 +62,7 @@ export function useSwitchToArbitrumSepolia() {
 
   return {
     switchToArbitrumSepolia,
-    isSwitching: isPending || isOpeningFallback,
+    isSwitching: isPending || isSwitching,
     switchError,
     clearSwitchError,
   }

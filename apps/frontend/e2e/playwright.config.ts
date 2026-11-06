@@ -5,6 +5,7 @@ const baseURL = `http://127.0.0.1:${port}`
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: ['**/privy-unconfigured.spec.ts', '**/privy-sdk.spec.ts', '**/wallet-provider.spec.ts'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -29,6 +30,7 @@ export default defineConfig({
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
+    env: { VITE_PRIVY_APP_ID: '', VITE_PRIVY_CLIENT_ID: '', VITE_POSTHOG_KEY: '' },
     reuseExistingServer: false,
     timeout: 120 * 1000,
   },

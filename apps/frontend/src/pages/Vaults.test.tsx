@@ -26,7 +26,9 @@ const mocks = vi.hoisted(() => ({
     address: undefined as `0x${string}` | undefined,
     isConnected: false,
   },
-  appKitOpen: vi.fn(),
+  connectWallet: vi.fn(),
+  walletReady: true,
+  walletConfigured: true,
   chainId: 421614,
   clearSwitchError: vi.fn(),
   quoteContractsData: undefined as readonly {
@@ -154,8 +156,12 @@ vi.mock('wagmi', () => ({
   },
 }))
 
-vi.mock('../config/wagmi', () => ({
-  openAppKit: mocks.appKitOpen,
+vi.mock('../wallet/useWalletActions', () => ({
+  useWalletActions: () => ({
+    connect: mocks.connectWallet,
+    ready: mocks.walletReady,
+    configured: mocks.walletConfigured,
+  }),
 }))
 
 vi.mock('../api', () => ({
@@ -417,6 +423,8 @@ function completeHistoryFixture() {
 describe('Vaults page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.walletReady = true
+    mocks.walletConfigured = true
     window.history.replaceState(null, '', '/')
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
@@ -558,6 +566,19 @@ describe('Vaults page', () => {
     expect(screen.getAllByLabelText('10,000,000 psLP').length).toBeGreaterThan(0)
   })
 
+  it.each(['walletReady', 'walletConfigured'] as const)('waits for %s before connecting a wallet', (field) => {
+    mocks[field] = false
+    renderVaults('/vaults/junior')
+
+    const connectButton = screen.getByRole('button', { name: 'Connect wallet' })
+    expect(connectButton).toBeDisabled()
+    fireEvent.click(connectButton)
+    expect(mocks.connectWallet).not.toHaveBeenCalled()
+    expect(screen.getByText(field === 'walletReady'
+      ? 'Preparing wallet connection…'
+      : 'Wallet connection is not configured for this deployment.')).toBeInTheDocument()
+  })
+
   it('exposes detail sections, deposit and withdrawal modes, and wallet connection', () => {
     const juniorDetail = renderVaults('/vaults/junior')
 
@@ -587,7 +608,7 @@ describe('Vaults page', () => {
     expect(screen.getByRole('heading', { name: 'Withdraw USDG' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }))
-    expect(mocks.appKitOpen).toHaveBeenCalledTimes(1)
+    expect(mocks.connectWallet).toHaveBeenCalledTimes(1)
     expect(mocks.clearSwitchError).toHaveBeenCalledTimes(1)
 
     juniorDetail.unmount()
@@ -1416,7 +1437,7 @@ describe('Vaults page', () => {
     renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Switch to Arbitrum Sepolia' }))
     expect(mocks.switchToArbitrumSepolia).toHaveBeenCalledTimes(1)
-    expect(mocks.appKitOpen).not.toHaveBeenCalled()
+    expect(mocks.connectWallet).not.toHaveBeenCalled()
   })
 
   it('blocks excess deposits but still permits withdrawal requests in degraded mode', () => {

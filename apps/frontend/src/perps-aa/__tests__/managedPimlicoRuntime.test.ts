@@ -25,17 +25,17 @@ const mocks = vi.hoisted(() => ({
   getUserOperationHash: vi.fn(),
 }))
 
-vi.mock('permissionless', () => ({
+vi.mock('permissionless-v03', () => ({
   createSmartAccountClient: mocks.createSmartAccountClient,
 }))
 
-vi.mock('permissionless/accounts/simple', () => ({
+vi.mock('permissionless-v03/accounts/simple', () => ({
   SimpleSmartAccount: {
     toSimpleSmartAccount: mocks.toSimpleSmartAccount,
   },
 }))
 
-vi.mock('permissionless/clients/pimlico', () => ({
+vi.mock('permissionless-v03/clients/pimlico', () => ({
   createPimlicoClient: mocks.createPimlicoClient,
 }))
 
@@ -164,7 +164,7 @@ describe('createManagedPimlicoRuntime', () => {
   })
 
   it.each([manifest, v2Manifest])('resolves and signs with an embedded wallet without rediscovering accounts ($version)', async (deployment) => {
-    const actual = await vi.importActual<typeof import('permissionless/accounts/simple')>('permissionless/accounts/simple')
+    const actual = await vi.importActual<typeof import('permissionless-v03/accounts/simple')>('permissionless-v03/accounts/simple')
     mocks.toSimpleSmartAccount.mockImplementation(actual.SimpleSmartAccount.toSimpleSmartAccount)
     const request = vi.fn().mockRejectedValue(new Error('Requested RPC call is not allowed'))
     const signature = `0x${'ab'.repeat(65)}` as Hex

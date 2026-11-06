@@ -55,7 +55,7 @@ describe('single-RPC Max quote', () => {
     }))
     expect(await quotePerpsMaxOpenWithMargin(client, { ...input, marginDelta: 99_400_000n, blockNumber: 42n })).toEqual(quote)
     expect(request).toHaveBeenCalledOnce()
-    expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: 'eth_call', params: [expect.objectContaining({ data: expect.any(String) }), '0x2a'] }))
+    expect(request.mock.lastCall).toEqual(expect.arrayContaining([expect.objectContaining({ method: 'eth_call', params: [expect.objectContaining({ data: expect.any(String) }), '0x2a'] })]))
   })
 
   it('returns no quote when execution and protection rewards exhaust the budget', async () => {
