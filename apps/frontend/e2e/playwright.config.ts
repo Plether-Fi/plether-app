@@ -5,7 +5,7 @@ const baseURL = `http://127.0.0.1:${port}`
 
 export default defineConfig({
   testDir: './tests',
-  testIgnore: ['**/privy-unconfigured.spec.ts', '**/wallet-provider.spec.ts'],
+  testIgnore: ['**/privy-unconfigured.spec.ts', '**/privy-sdk.spec.ts', '**/wallet-provider.spec.ts'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

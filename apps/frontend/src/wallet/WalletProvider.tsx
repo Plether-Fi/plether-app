@@ -110,6 +110,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   const [bridgeRevision, setBridgeRevision] = useState(0)
   const connectionIntent = useRef<number | undefined>(undefined)
   const emailIntent = useRef<number | undefined>(undefined)
+  const accountIntent = useRef<{ revision: number } | undefined>(undefined)
   const emailVerified = useRef(false)
   const bridgeSelection = useMemo(() => ({ owner: selection, retry: bridgeRevision }), [selection, bridgeRevision])
   const [error, setError] = useState<string | null>(null)
@@ -138,9 +139,16 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     updateSelection(address)
   }, [ready, wallets, updateSelection])
 
+  const chooseNativeWallet = useCallback((address: string) => {
+    const intent = accountIntent.current
+    if (intent?.revision !== signingGuard.revision) return
+    chooseWallet(address)
+    intent.revision = signingGuard.revision
+  }, [chooseWallet, signingGuard])
+
   useEffect(() => {
-    if (accountOpen && nativeWallet?.type === 'ethereum') chooseWallet(nativeWallet.address)
-  }, [accountOpen, nativeWallet, chooseWallet])
+    if (accountOpen && nativeWallet?.type === 'ethereum') chooseNativeWallet(nativeWallet.address)
+  }, [accountOpen, nativeWallet, chooseNativeWallet])
 
   const selectConnectedOwner = (address: string) => {
     const owner = signingGuard.selection
@@ -216,6 +224,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     error,
     connect: () => {
       if (!ready) return
+      accountIntent.current = undefined
+      setAccountOpen(false)
       setError(null)
       emailIntent.current = undefined
       emailVerified.current = false
@@ -225,7 +235,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
           connectionIntent.current = undefined
           // Prevent a wallet appearing during login/cancellation from being
           // automatically restored by the bridge, including after a reload.
-          if (signingGuard.selection === undefined) updateSelection(null)
+          if (signingGuard.selection === undefined || !selectedWallet(wallets, signingGuard.selection)) updateSelection(null)
           emailIntent.current = signingGuard.revision
           emailVerified.current = false
           login({ loginMethods: ['email'] })
@@ -233,19 +243,24 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       })
     },
     openAccount: async () => {
-      if (!ready || accountOpen) return
+      if (!ready || accountIntent.current) return
       setError(null)
+      const intent = { revision: signingGuard.revision }
+      accountIntent.current = intent
       const owner = selectedWallet(wallets, signingGuard.selection)
       if (owner) setNativeWallet(owner)
       setAccountOpen(true)
       try {
         const result = await openNativeWallets()
         const chosen = result.wallet ?? nativeWalletRef.current
-        if (chosen?.type === 'ethereum') chooseWallet(chosen.address)
+        if (accountIntent.current === intent && chosen?.type === 'ethereum') chooseNativeWallet(chosen.address)
       } catch {
-        setError('Could not open wallet details. Try again.')
+        if (accountIntent.current === intent) setError('Could not open wallet details. Try again.')
       } finally {
-        setAccountOpen(false)
+        if (accountIntent.current === intent) {
+          accountIntent.current = undefined
+          setAccountOpen(false)
+        }
       }
     },
     selectWallet: chooseWallet,
@@ -254,6 +269,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       setError(null)
       connectionIntent.current = undefined
       emailIntent.current = undefined
+      accountIntent.current = undefined
+      setAccountOpen(false)
       emailVerified.current = false
       // Clear the active signer even when an injected wallet cannot revoke
       // its site permission programmatically. Persist that choice on reload.

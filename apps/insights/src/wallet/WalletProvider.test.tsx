@@ -163,7 +163,7 @@ describe('Insights Privy wallet provider', () => {
     act(() => { mocks.emailCallbacks?.onComplete({ user, loginMethod: 'email' }) })
     mocks.wallets = [other, owner]
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toMatchObject({ address: owner.address })
   })
 
   it('accepts delayed embedded-wallet creation only after email verification', () => {
@@ -179,7 +179,7 @@ describe('Insights Privy wallet provider', () => {
     })
     mocks.wallets = [other, owner]
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toMatchObject({ address: owner.address })
   })
 
   it.each(['generic_connect_wallet_error', 'exited_auth_flow', 'exited_link_flow'])('keeps popup dismissal silent (%s)', (code) => {
@@ -207,23 +207,23 @@ describe('Insights Privy wallet provider', () => {
     mocks.authenticated = true
     mocks.wallets = [owner]
     const view = render(<Provider />)
-    expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    expect(mocks.selector?.({ wallets: [owner] })).toMatchObject({ address: owner.address })
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
     expect(mocks.connectExternal).toHaveBeenCalledTimes(1)
     expect(mocks.connect).not.toHaveBeenCalled()
     mocks.wallets = [owner, other]
     view.rerender(<Provider />)
     act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
-    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toMatchObject({ address: owner.address })
   })
 
   it('remembers the first sole owner when another wallet connects', () => {
     mocks.wallets = [owner]
     const view = render(<Provider />)
-    expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    expect(mocks.selector?.({ wallets: [owner] })).toMatchObject({ address: owner.address })
     mocks.wallets = [other, owner]
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: [other, owner] })).toBe(owner)
+    expect(mocks.selector?.({ wallets: [other, owner] })).toMatchObject({ address: owner.address })
     expect(mocks.selector?.({ wallets: [other] })).toBeUndefined()
   })
 
@@ -232,7 +232,7 @@ describe('Insights Privy wallet provider', () => {
     render(<Provider />)
     expect(mocks.selector?.({ wallets: mocks.wallets })).toBeUndefined()
     fireEvent.click(screen.getByRole('button', { name: 'Choose other' }))
-    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(other)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toMatchObject({ address: other.address })
     expect(screen.getByTestId('state')).toHaveTextContent('"isSelecting":true')
   })
 
@@ -242,7 +242,7 @@ describe('Insights Privy wallet provider', () => {
     act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
     mocks.wallets = [other]
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(other)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toMatchObject({ address: other.address })
     expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(other.address)
   })
 
@@ -250,7 +250,7 @@ describe('Insights Privy wallet provider', () => {
     if (origin === 'stored') window.sessionStorage.setItem('plether:privy:insights:owner:test-privy-app', owner.address)
     else mocks.wallets = [owner]
     const view = render(<Provider />)
-    if (origin === 'remembered') expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    if (origin === 'remembered') expect(mocks.selector?.({ wallets: [owner] })).toMatchObject({ address: owner.address })
     mocks.wallets = []
     view.rerender(<Provider />)
     expect(mocks.selector?.({ wallets: [] })).toBeUndefined()
@@ -258,7 +258,7 @@ describe('Insights Privy wallet provider', () => {
     act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
     mocks.wallets = [other]
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: [other] })).toBe(other)
+    expect(mocks.selector?.({ wallets: [other] })).toMatchObject({ address: other.address })
     expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(other.address)
   })
 
@@ -274,19 +274,19 @@ describe('Insights Privy wallet provider', () => {
     ] }, loginMethod: 'email' }) })
     mocks.wallets = [owner]
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    expect(mocks.selector?.({ wallets: [owner] })).toMatchObject({ address: owner.address })
     expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(owner.address)
   })
 
   it('does not switch an established owner after connecting another wallet', () => {
     mocks.wallets = [owner]
     const view = render(<Provider />)
-    expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    expect(mocks.selector?.({ wallets: [owner] })).toMatchObject({ address: owner.address })
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
     mocks.wallets = [owner, other]
     view.rerender(<Provider />)
     act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
-    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toMatchObject({ address: owner.address })
   })
 
   it('keeps the bridge disconnected until Privy and its wallets are ready', () => {
@@ -300,7 +300,7 @@ describe('Insights Privy wallet provider', () => {
     expect(mocks.selector?.({ wallets: [owner] })).toBeUndefined()
     mocks.walletsReady = true
     view.rerender(<Provider />)
-    expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    expect(mocks.selector?.({ wallets: [owner] })).toMatchObject({ address: owner.address })
   })
 
   it('gates signing during bridge reconnection while connection controls stay usable', () => {

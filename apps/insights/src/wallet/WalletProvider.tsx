@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   PrivyProvider,
   useConnectWallet,
@@ -13,18 +13,24 @@ import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { WagmiProvider, useConnection } from 'wagmi'
 import { privyAppId, privyClientId, privyConfig, wagmiConfig } from '../config/wagmi'
 import { RegistrationWalletContext, type RegistrationWalletActions } from './context'
-import { readSelectedWallet, saveSelectedWallet, selectedWallet, type WalletSelection } from './selection'
+import { readSelectedWallet, saveSelectedWallet, selectedWallet } from './selection'
 import { EmailLoginOption } from './EmailLoginOption'
+import { createSigningGuard } from './signingGuard'
 
-function WalletControls({ children, actions, selectedAddress }: {
+function WalletControls({ children, actions, expectedAddress, onStaleConnection }: {
   children: ReactNode
   actions: Omit<RegistrationWalletActions, 'isSelecting'>
-  selectedAddress: WalletSelection
+  expectedAddress: string | undefined
+  onStaleConnection: () => void
 }) {
   const { address, isConnecting, isReconnecting } = useConnection()
-  const isSelecting = Boolean(isConnecting || isReconnecting || (selectedAddress && actions.wallets.some((wallet) =>
-    wallet.address.toLowerCase() === selectedAddress.toLowerCase(),
-  ) && address?.toLowerCase() !== selectedAddress.toLowerCase()))
+  useEffect(() => {
+    if (actions.ready && address && address.toLowerCase() !== expectedAddress?.toLowerCase()) {
+      onStaleConnection()
+    }
+  }, [actions.ready, address, expectedAddress, onStaleConnection])
+  const isSelecting = Boolean(isConnecting || isReconnecting || (
+    expectedAddress && address?.toLowerCase() !== expectedAddress.toLowerCase()))
 
   return (
     <RegistrationWalletContext.Provider value={{ ...actions, isSelecting }}>
@@ -38,18 +44,32 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
   const { ready: walletsReady, wallets } = useWallets()
   const storageKey = `plether:privy:insights:owner:${appId}`
   const [selectedAddress, setSelectedAddress] = useState(() => readSelectedWallet(storageKey))
+  const [signingGuard] = useState(() => createSigningGuard(selectedAddress))
+  const [bridgeRevision, setBridgeRevision] = useState(0)
+  const bridgeSelection = useMemo(() => ({ owner: selectedAddress, retry: bridgeRevision }), [selectedAddress, bridgeRevision])
   const initialOwner = useRef<string | null>(null)
   const emailIntent = useRef(false)
   const emailVerified = useRef(false)
   const connectionIntent = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  const expectedAddress = selectedWallet(wallets, selectedAddress === undefined ? signingGuard.selection : selectedAddress)?.address
+  useLayoutEffect(() => {
+    const availableOwner = selectedWallet(wallets, selectedAddress === null ? null : selectedAddress ?? initialOwner.current ?? undefined)
+    signingGuard.setReady(ready && walletsReady && availableOwner !== undefined)
+  }, [ready, walletsReady, wallets, selectedAddress, signingGuard])
+  const resetStaleConnection = useCallback(() => {
+    wagmiConfig.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
+    setBridgeRevision(revision => revision + 1)
+  }, [])
   const selectWallet = useCallback((address: string) => {
+    signingGuard.select(address)
+    connectionIntent.current = false
     emailIntent.current = false
     emailVerified.current = false
     setSelectedAddress(address.toLowerCase())
     saveSelectedWallet(storageKey, address)
     setError(null)
-  }, [storageKey])
+  }, [storageKey, signingGuard])
   const selectConnectedOwner = useCallback((address: string) => {
     const owner = selectedAddress === null ? null : selectedAddress ?? initialOwner.current
     if (!owner || !wallets.some(wallet => wallet.address.toLowerCase() === owner.toLowerCase())) {
@@ -97,16 +117,17 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
   const { connectWallet } = useConnectWallet({ onSuccess: onConnected, onError: onConnectError })
   const resolveActiveWallet = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
     if (!ready || !walletsReady) return undefined
-    const selection = selectedAddress === null ? null : selectedAddress ?? initialOwner.current ?? undefined
+    const selection = bridgeSelection.owner === null ? null : bridgeSelection.owner ?? initialOwner.current ?? undefined
     const owner = selectedWallet(connectedWallets, selection)
     // The bridge calls this when its connection state changes. Remember the sole
     // initial wallet so another connection can never replace it automatically.
-    if (owner && selectedAddress === undefined && !initialOwner.current) {
+    if (owner && bridgeSelection.owner === undefined && !initialOwner.current) {
       initialOwner.current = owner.address
+      signingGuard.select(owner.address)
       saveSelectedWallet(storageKey, owner.address)
     }
-    return owner
-  }, [ready, walletsReady, selectedAddress, storageKey])
+    return owner ? signingGuard.wrapWallet(owner) : undefined
+  }, [ready, walletsReady, bridgeSelection, storageKey, signingGuard])
 
   const actions = {
     configured: true,
@@ -120,7 +141,9 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
       connectWallet({
         description: authenticated ? '' : <EmailLoginOption onClick={() => {
           connectionIntent.current = false
-          if (selectedAddress === undefined && !initialOwner.current) {
+          const owner = selectedAddress === null ? null : selectedAddress ?? initialOwner.current
+          if (!owner || !wallets.some(wallet => wallet.address.toLowerCase() === owner.toLowerCase())) {
+            signingGuard.select(null)
             saveSelectedWallet(storageKey, null)
             setSelectedAddress(null)
           }
@@ -142,7 +165,7 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
 
   return (
     <PrivyWagmiProvider config={wagmiConfig} setActiveWalletForWagmi={resolveActiveWallet}>
-      <WalletControls actions={actions} selectedAddress={selectedAddress}>{children}</WalletControls>
+      <WalletControls actions={actions} expectedAddress={expectedAddress} onStaleConnection={resetStaleConnection}>{children}</WalletControls>
     </PrivyWagmiProvider>
   )
 }

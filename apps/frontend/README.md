@@ -39,11 +39,13 @@ npm install
 npm run dev        # Dev server at http://localhost:5173
 npm run build      # TypeScript check + production build
 npm run lint       # ESLint
-npm test           # Unit tests
+npm test           # Unit, wallet integration, worker, and diagnostic tests
+npm run test:wallet-integration # Actual Privy/Wagmi bridge and recoverable owner signatures
 npm run anvil      # Start Anvil fork (port 8546, requires SEPOLIA_RPC_URL)
 npm run test:integration  # Integration tests (requires Anvil)
 npm run test:e2e:wallet  # Offline signing and wallet-event browser checks
 npm run test:e2e:privy   # Read-only browsing with Privy deliberately unconfigured
+npm run test:e2e:privy-sdk # Actual Privy modal and Wagmi lifecycle with offline service fixtures
 npm run storybook  # Component explorer at http://localhost:6006
 npm run perps:oracle-worker -- --once  # Update the perps mark from backend-cached Pyth data
 npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backend cache
@@ -95,6 +97,23 @@ Check CSP enforcement in a browser; the checked-in policies follow
 [Privy's EVM CSP guidance](https://docs.privy.io/security/implementation-guide/content-security-policy).
 Do not record login credentials, OAuth callbacks, signatures, or wallet export UI
 in analytics or session replay.
+
+`npm test` requires the deterministic wallet integration suite. It runs the
+installed Privy/Wagmi bridge, Wagmi connectors/actions, and viem signature
+verification; only remote authentication/modal callbacks are controlled by the
+fixture. Browser CI also requires `test:e2e:privy-sdk`, which runs the actual
+Privy modal and application with injected public test wallets and synthetic
+public app configuration. External HTTP/WebSocket requests are blocked. These suites
+cover connection timing, saved owners, cancellation, reconnection, owner/network
+switching, email-wallet creation callbacks, and stale signer revocation. They
+do not send email OTPs, create/recover a wallet through the live embedded-key
+service, exercise real extension UI, or pair a physical mobile wallet; those
+remain hosted-service/device smoke checks for deployment.
+
+Privy's native wallet dialog omits embedded wallets from its external-wallet
+switcher. When an authenticated email wallet is available and another owner is
+selected, the header's **Use email wallet** action restores that owner through
+the same guarded signer selection.
 
 The trading app emits bounded `wallet_provider_ready` (including initialization
 duration), `wallet_connection_state_changed`, and `wallet_action_failed` events.

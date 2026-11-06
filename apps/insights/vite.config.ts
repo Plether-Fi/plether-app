@@ -27,6 +27,9 @@ export default defineConfig({
     port: 4174,
   },
   test: {
+    // Transform the real bridge so integration tests can replace only Privy's
+    // authentication boundary while exercising its Wagmi synchronization.
+    server: { deps: { inline: ['@privy-io/wagmi'] } },
     environment: 'happy-dom',
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./src/test/setup.ts'],

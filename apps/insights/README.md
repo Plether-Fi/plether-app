@@ -175,6 +175,13 @@ still verifies its one-time owner signature. Privy login does not replace the
 competition's X verification, eligibility checks, HttpOnly session, or CSRF rules.
 Reown sessions and embedded-wallet keys are not migrated.
 
+`npm test` includes wallet integration tests using the installed Privy/Wagmi
+bridge, actual Wagmi connectors, and recoverable test signatures. They cover
+same-extension owner changes, session restoration, email completion/cancellation,
+unavailable owners, and the registration challenge/signature handoff. Remote
+Privy authentication and registration API responses are fixtures; the suite
+does not deliver live email OTPs or submit a production registration.
+
 **Deploy Insights** reads GitHub Actions variables `PRIVY_APP_ID` (shared with
 the trading app) and optional `PRIVY_INSIGHTS_CLIENT_ID`. It publishes on pushes
 to `master` affecting this app, so verify social/external wallet registration
