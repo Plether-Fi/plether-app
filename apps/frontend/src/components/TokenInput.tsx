@@ -1,6 +1,8 @@
 import { type ChangeEvent, useId } from 'react'
-import { formatAmount, formatUsd } from '../utils/formatters'
+import { formatUnits } from 'viem'
+import { formatAmount, formatUsd, parseAmount } from '../utils/formatters'
 import { TokenLabel } from './ui'
+import { PRESET_BUTTON_CLASS, PRESET_BUTTON_SELECTED_CLASS, PRESET_BUTTON_UNSELECTED_CLASS } from './ui/presetButtonStyles'
 
 interface TokenInputProps {
   value: string
@@ -15,6 +17,7 @@ interface TokenInputProps {
   disabled?: boolean
   error?: string
   compact?: boolean
+  showAmountShortcuts?: boolean
 }
 
 export function TokenInput({
@@ -27,6 +30,7 @@ export function TokenInput({
   disabled,
   error,
   compact = false,
+  showAmountShortcuts = false,
 }: TokenInputProps) {
   const inputId = useId()
   const errorId = `${inputId}-error`
@@ -79,7 +83,7 @@ export function TokenInput({
           `}
         />
         <div className="flex shrink-0 items-center gap-1.5 pr-3 sm:gap-2">
-          {balance !== undefined && (
+          {!showAmountShortcuts && balance !== undefined && (
             <button
               type="button"
               onClick={handleMax}
@@ -92,6 +96,30 @@ export function TokenInput({
           <TokenLabel token={token.symbol} />
         </div>
       </div>
+
+      {showAmountShortcuts && (
+        <div role="group" aria-label={`${label ?? token.symbol} shortcuts`} className="mt-2 grid grid-cols-4 gap-1.5 whitespace-nowrap text-xs font-medium text-content-secondary">
+          {[25, 50, 75, 100].map((percentage) => {
+            const presetAmount = (balance ?? 0n) * BigInt(percentage) / 100n
+            const isMax = percentage === 100
+            const isSelected = isMax && presetAmount > 0n && parseAmount(value, token.decimals) === presetAmount
+
+            return (
+              <button
+                key={percentage}
+                type="button"
+                title={isMax ? 'Use the maximum available amount' : `Use ${percentage.toString()}% of the available amount`}
+                aria-pressed={isMax ? isSelected : undefined}
+                disabled={disabled === true || presetAmount <= 0n}
+                className={`${PRESET_BUTTON_CLASS} cursor-pointer ${isSelected ? PRESET_BUTTON_SELECTED_CLASS : PRESET_BUTTON_UNSELECTED_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+                onClick={() => { onChange(formatUnits(presetAmount, token.decimals)) }}
+              >
+                {isMax ? 'Max' : `${percentage.toString()}%`}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {balance !== undefined && (
         <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 text-sm">
