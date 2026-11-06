@@ -55,3 +55,23 @@ or `aa_diagnostic_export_dropped`; it must not block trades. Keep the additive t
 on rollback. Maintenance should delete event rows for diagnostics whose `terminal_at`
 is more than seven days old, before deleting those diagnostic mappings. Unresolved
 attempts must not be purged. Do not grant runtime DELETE or UPDATE access.
+
+## Local development origins
+
+Recovery challenges bind the exact application origin into the wallet message.
+A local frontend proxying the hosted Sepolia API still sends its local origin;
+it must not rewrite that origin to impersonate the hosted application.
+
+Keep `PERPS_AA_RECOVERY_ORIGIN=https://app.sepolia.plether.com` for the hosted
+application. A Sepolia operator can explicitly add local origins with
+`PERPS_AA_RECOVERY_EXTRA_ORIGINS=http://127.0.0.1:5192`, or the matching
+`aa_preparation_recovery_extra_origins` Terraform list. The
+`infra/terraform/sepolia-local-recovery.tfvars` overlay enables that exact local
+address. Different ports and hostnames require their own entries.
+
+Additional origins default to disabled. HTTP is accepted only for explicitly
+listed loopback hosts on chain 421614; other chains require HTTPS. Origins with
+paths, queries, fragments, credentials, or wildcards are rejected. Ownership,
+challenge expiry, session scoping, liability checks, and verified retirement
+remain enforced. An unlisted frontend receives `RECOVERY_ORIGIN_NOT_ALLOWED`;
+it is a deployment configuration error, not proof that the owner wallet changed.
