@@ -69,7 +69,7 @@ resource "aws_security_group" "rpc_node" {
   count       = local.rpc_count
   name_prefix = "plether-sepolia-rpc-node-"
   description = "Nitro RPC only from the private gateway; no public RPC or SSH."
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = local.rpc_vpc_id
   egress {
     from_port   = 0
     to_port     = 0
@@ -81,19 +81,24 @@ resource "aws_security_group" "rpc_node" {
 resource "aws_security_group" "rpc_gateway" {
   count       = local.rpc_count
   name_prefix = "plether-sepolia-rpc-gateway-"
-  vpc_id      = aws_vpc.main.id
-  egress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  vpc_id      = local.rpc_vpc_id
+}
+
+# All rules on this group have standalone ownership. Mixing an inline HTTPS
+# rule with the standalone node rule would remove port 8547 on the next apply.
+resource "aws_vpc_security_group_egress_rule" "rpc_gateway_https" {
+  count             = local.rpc_count
+  security_group_id = aws_security_group.rpc_gateway[0].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
 }
 
 resource "aws_security_group" "rpc_alb" {
   count       = local.rpc_count
   name_prefix = "plether-sepolia-rpc-alb-"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = local.rpc_vpc_id
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rpc_node_from_gateway" {
@@ -135,7 +140,7 @@ resource "aws_vpc_security_group_egress_rule" "rpc_alb_to_gateway" {
 resource "aws_vpc_security_group_ingress_rule" "rpc_alb_from_ecs" {
   count                        = local.rpc_count
   security_group_id            = aws_security_group.rpc_alb[0].id
-  referenced_security_group_id = aws_security_group.ecs.id
+  referenced_security_group_id = local.rpc_ecs_security_group_id
   ip_protocol                  = "tcp"
   from_port                    = 443
   to_port                      = 443
@@ -173,9 +178,10 @@ resource "aws_iam_instance_profile" "rpc_node" {
 
 resource "aws_ebs_volume" "rpc_staging" {
   count             = local.rpc_enabled && local.rpc.staging_volume_gib > 0 ? 1 : 0
-  availability_zone = aws_subnet.public[0].availability_zone
+  availability_zone = local.rpc_public_subnets[0].availability_zone
   type              = "gp3"
   size              = local.rpc.staging_volume_gib
+  throughput        = 500 # Multi-terabyte parts, concatenation and extraction.
   encrypted         = true
   tags              = { Name = "plether-sepolia-rpc-import-staging" }
 }
@@ -199,7 +205,7 @@ resource "aws_instance" "rpc_node" {
   count                       = local.rpc_count
   ami                         = data.aws_ami.rpc[0].id
   instance_type               = "i4i.4xlarge"
-  subnet_id                   = aws_subnet.public[0].id
+  subnet_id                   = local.rpc_public_subnets[0].id
   associate_public_ip_address = true # Egress without NAT; inbound restricted by SG.
   vpc_security_group_ids      = [aws_security_group.rpc_node[0].id]
   iam_instance_profile        = aws_iam_instance_profile.rpc_node[0].name
@@ -222,6 +228,9 @@ resource "aws_instance" "rpc_node" {
     # Stop/start or replacement loses instance-store state. An operator must
     # explicitly remove this guard in a reviewed replacement/recovery change.
     prevent_destroy = true
+    # Bootstrap is create-only. Apply reviewed helper/service repairs via SSM;
+    # a source edit must never force replacement of a stateful NVMe host.
+    ignore_changes = [user_data]
     precondition {
       condition     = length(local.rpc_user_data) <= 16384
       error_message = "EC2 user data exceeds its 16 KiB limit."
@@ -261,7 +270,7 @@ resource "aws_lb" "rpc" {
   internal           = true
   load_balancer_type = "application"
   security_groups    = [aws_security_group.rpc_alb[0].id]
-  subnets            = aws_subnet.public[*].id
+  subnets            = local.rpc_public_subnets[*].id
   idle_timeout       = 20
 }
 
@@ -270,7 +279,7 @@ resource "aws_lb_target_group" "rpc" {
   name        = "plether-sepolia-rpc"
   port        = 3000
   protocol    = "HTTP"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = local.rpc_vpc_id
   target_type = "ip"
   health_check {
     path                = "/healthz"
@@ -297,7 +306,7 @@ resource "aws_lb_listener" "rpc" {
 resource "aws_route53_zone" "rpc" {
   count = local.rpc_count
   name  = local.rpc.hostname
-  vpc { vpc_id = aws_vpc.main.id }
+  vpc { vpc_id = local.rpc_vpc_id }
 }
 
 resource "aws_route53_record" "rpc" {
@@ -363,7 +372,7 @@ resource "aws_ecs_task_definition" "rpc_gateway" {
 resource "aws_ecs_service" "rpc_gateway" {
   count                              = local.rpc_gateway_count
   name                               = "plether-sepolia-rpc-gateway"
-  cluster                            = aws_ecs_cluster.main.id
+  cluster                            = local.rpc_ecs_cluster_id
   task_definition                    = aws_ecs_task_definition.rpc_gateway[0].arn
   desired_count                      = 2
   launch_type                        = "FARGATE"
@@ -376,7 +385,7 @@ resource "aws_ecs_service" "rpc_gateway" {
     rollback = true
   }
   network_configuration {
-    subnets          = aws_subnet.public[*].id
+    subnets          = local.rpc_public_subnets[*].id
     security_groups  = [aws_security_group.rpc_gateway[0].id]
     assign_public_ip = true
   }

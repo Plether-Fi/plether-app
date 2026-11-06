@@ -1,0 +1,81 @@
+{
+  "recorded_at_utc": "2026-11-05T18:17:55.563301+00:00",
+  "status": "snapshot_import_in_progress",
+  "account": "932542905614",
+  "region": "ap-southeast-1",
+  "terraform_backend_key": "plether/sepolia/rpc/terraform.tfstate",
+  "entry_point": "infra/terraform-rpc",
+  "instance_id": "i-04a6af37b4583a4ee",
+  "instance_type": "i4i.4xlarge",
+  "ami_id": "ami-01127915c7b29e7ca",
+  "private_ip": "10.0.1.76",
+  "certificate_arn": "arn:aws:acm:ap-southeast-1:932542905614:certificate/1b48b399-427c-443b-8c93-5b859992735d",
+  "certificate_status": "ISSUED",
+  "gateway_hostname": "rpc-internal.sepolia.plether.com",
+  "gateway_running_tasks": 2,
+  "gateway_image": "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-rpc-gateway-sepolia@sha256:f874baa9cace6344e353efffd70c8601229319f32638b2dc528003b663d12e96",
+  "gateway_publication_run": "https://github.com/Plether-Fi/plether-app/actions/runs/42069712078",
+  "gateway_source_revision": "3ccddc041e23dda16a0fe031fe9edf5e6c3a98d4",
+  "bootstrap_helper_sha256": "57b7964c6679507d7547020bc9ccd847824514e2895f6a0ddeda2f83da5fe5aa",
+  "completion_helper_sha256": "e95e073211c1c66f840210b9ea866fdebc31088903c4ba631fd2d5ee496c343f",
+  "staging_volume_id": "vol-0d2eb64dc29721085",
+  "staging_gib": 4096,
+  "staging_throughput_mib_s": 500,
+  "staging_pricing": {
+    "checked_date": "2026-11-05",
+    "capacity_usd_per_month": 393.216,
+    "additional_throughput_usd_per_month": 18.0,
+    "total_approx_usd_per_hour": 0.563
+  },
+  "smoke_canary": [
+    {
+      "event": "rpc_canary",
+      "test": "private_tls_health",
+      "pass": true,
+      "status": 200
+    },
+    {
+      "event": "rpc_canary",
+      "test": "missing_auth_rejected",
+      "pass": true,
+      "status": 401,
+      "correctChain": false
+    },
+    {
+      "event": "rpc_canary",
+      "test": "invalid_auth_rejected",
+      "pass": true,
+      "status": 401,
+      "correctChain": false
+    },
+    {
+      "event": "rpc_canary",
+      "test": "ordinary_sepolia_rpc",
+      "pass": true,
+      "status": 200,
+      "correctChain": true
+    },
+    {
+      "event": "rpc_canary",
+      "test": "primary_never_falls_back",
+      "pass": true,
+      "status": 503,
+      "correctChain": false
+    }
+  ],
+  "repairs": [
+    "XFS labels shortened to valid lengths before any disk formatting.",
+    "Gateway HTTPS rule adopted into standalone ownership; node-port egress preserved.",
+    "Existing host bootstrap repaired through SSM; original cloud-init error retained for audit.",
+    "Bootstrap user-data changes cannot replace the stateful instance."
+  ],
+  "application_traffic_cutover": false,
+  "new_rpc_provider_subscription": false,
+  "reservation_purchased": false,
+  "remaining": [
+    "Complete snapshot download, checksum verification and extraction.",
+    "Catch up and pass direct-primary canonical and safe-state checks.",
+    "Review exact-volume cleanup plan, unmount/delete temporary staging, qualify process restart.",
+    "Start the soak before separately migrating application consumers and polling intervals."
+  ]
+}
