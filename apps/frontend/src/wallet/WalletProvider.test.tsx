@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     ready: true,
     walletsReady: true,
     authenticated: false,
+    modalOpen: false,
     activeAddress: undefined as string | undefined,
     wallets: [] as MockWallet[],
     connect: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('@privy-io/react-auth', () => ({
   PrivyProvider: ({ children }: { children: ReactNode }) => children,
   useActiveWallet: () => ({ wallet: mocks.nativeWallet, connect: mocks.openNative, setActiveWallet: mocks.setNative }),
   usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated, logout: mocks.logout }),
+  useModalStatus: () => ({ isOpen: mocks.modalOpen }),
   useWallets: () => ({ ready: mocks.walletsReady, wallets: mocks.wallets }),
   useLogin: (callbacks: typeof mocks.emailCallbacks) => {
     mocks.emailCallbacks = callbacks
@@ -98,6 +100,7 @@ describe('Privy wallet actions', () => {
     mocks.ready = true
     mocks.walletsReady = true
     mocks.authenticated = false
+    mocks.modalOpen = false
     mocks.activeAddress = undefined
     mocks.wallets = []
     mocks.nativeWallet = undefined
@@ -124,6 +127,17 @@ describe('Privy wallet actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
     expect(mocks.connect).toHaveBeenCalledOnce()
     expect(mocks.connect).toHaveBeenCalledWith({ loginMethods: ['email'] })
+  })
+
+  it('exposes whether Privy authentication is still open', () => {
+    const view = render(tree())
+    expect(actions.modalOpen).toBe(false)
+    mocks.modalOpen = true
+    view.rerender(tree())
+    expect(actions.modalOpen).toBe(true)
+    mocks.modalOpen = false
+    view.rerender(tree())
+    expect(actions.modalOpen).toBe(false)
   })
 
   it.each([false, true])('stays disconnected after email dismissal and late wallet callbacks (previously disconnected: %s)', (disconnected) => {
@@ -229,11 +243,13 @@ describe('Privy wallet actions', () => {
     const view = render(tree())
     let pending: Promise<void> | undefined
     act(() => { pending = actions.openAccount() })
+    expect(actions.modalOpen).toBe(true)
     mocks.wallets = [owner, other]
     mocks.nativeWallet = other
     view.rerender(tree())
     expect(mocks.selector?.({ wallets: mocks.wallets })?.address).toBe(otherAddress)
     await act(async () => { closeDialog({}); await pending })
+    expect(actions.modalOpen).toBe(false)
     expect(mocks.selector?.({ wallets: mocks.wallets })?.address).toBe(otherAddress)
     expect(actions.error).toBeNull()
   })

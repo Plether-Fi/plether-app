@@ -21,6 +21,7 @@ function actions(signerReady: boolean): WalletActions {
     ready: true,
     signerReady,
     authenticated: false,
+    modalOpen: false,
     wallets: [],
     error: null,
     connect: vi.fn(),

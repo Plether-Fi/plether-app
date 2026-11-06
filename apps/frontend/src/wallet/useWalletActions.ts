@@ -11,6 +11,7 @@ export interface WalletActions {
   ready: boolean
   signerReady: boolean
   authenticated: boolean
+  modalOpen: boolean
   wallets: WalletOption[]
   error: string | null
   connect: () => void
@@ -29,6 +30,7 @@ export const WalletActionsContext = createContext<WalletActions>({
   ready: false,
   signerReady: false,
   authenticated: false,
+  modalOpen: false,
   wallets: [],
   error: null,
   connect: () => { /* Connection is disabled without a Privy app. */ },

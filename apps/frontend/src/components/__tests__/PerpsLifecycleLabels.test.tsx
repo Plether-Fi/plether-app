@@ -20,6 +20,8 @@ const wagmiMocks = vi.hoisted(() => ({
   readContractsData: undefined as readonly unknown[] | undefined,
 }))
 
+const walletMocks = vi.hoisted(() => ({ modalOpen: false }))
+
 vi.mock('../../perps-aa', async () => {
   const { useSponsoredOperationStore } = await import('../../perps-aa/operationStore')
   const {
@@ -133,7 +135,7 @@ function closeReceiptEconomics({
 }
 
 vi.mock('../../wallet/useWalletActions', () => ({
-  useWalletActions: () => ({ connect: vi.fn(), ready: true, configured: true }),
+  useWalletActions: () => ({ connect: vi.fn(), ready: true, configured: true, modalOpen: walletMocks.modalOpen }),
 }))
 
 let mockIsConnected = false
@@ -194,6 +196,7 @@ vi.mock('../../hooks', () => ({
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
     confirmationMocks.status = 'idle'
+    walletMocks.modalOpen = false
     maxQuoteMocks.value = {
       quote: { maxSizeDelta: 400n * 10n ** 18n, preview: { valid: true } },
       marginDelta: 99_800_000n,
@@ -1757,6 +1760,28 @@ describe('perps lifecycle labels', () => {
       expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDG')
     }
   )
+
+  it('opens Deposit after an empty account connects and Privy closes, without reopening after Cancel', () => {
+    walletMocks.modalOpen = true
+    const view = render(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect />)
+    expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()
+    view.rerender(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect settlementBalanceAssetsRaw={0n} />)
+    expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()
+    walletMocks.modalOpen = false
+    view.rerender(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect settlementBalanceAssetsRaw={0n} />)
+    expect(screen.getByText('Deposit Margin')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    view.rerender(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect settlementBalanceAssetsRaw={0n} />)
+    expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
+  })
+
+  it('does not prompt a funded account even when available buying power is zero', () => {
+    render(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect
+      availableToTradeRaw={0n} settlementBalanceAssetsRaw={1n} />)
+    expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()
+  })
 
   it('keeps free-margin deposits separate from live position margin and leverage', () => {
     mockIsConnected = true

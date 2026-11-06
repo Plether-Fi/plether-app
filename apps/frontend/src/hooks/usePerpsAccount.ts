@@ -203,6 +203,7 @@ export function usePerpsAccount(markPrice?: bigint) {
   const {
     data: dynamicContractData,
     isLoading: isDynamicContractsLoading,
+    isFetching: isDynamicContractsFetching,
     error: dynamicContractsError,
     queryKey: dynamicQueryKey,
     refetch: refetchDynamicContracts,
@@ -587,6 +588,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       identityStatus,
       isConnected,
       isLoading,
+      isRefreshing: isDynamicContractsFetching,
       isPendingOrderDetailsLoading: pendingOrderViewsLoading,
       isPendingOrderPolicyLoading: pendingOrderPoliciesLoading,
       error,
@@ -634,7 +636,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsAssets(positionWithLiquidationPrice?.unrealizedPnlAssets),
       },
     }
-  }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
+  }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, isDynamicContractsFetching, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
 
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return

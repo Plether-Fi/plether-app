@@ -18,6 +18,8 @@ import { DOCS_LINKS } from '../config/docs'
 import { useProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import { PerpsProtectionPanel } from '../components/PerpsProtectionPanel'
 import { PROTECTION_RELEASE_ENABLED } from '../contracts/positionProtection'
+import { useSettingsStore } from '../stores/settingsStore'
+import { isSepoliaDeployment } from '../utils/deployment'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -56,6 +58,8 @@ function LivePerps() {
   const protectionConfiguration = useProtectionConfiguration()
   const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
+  const onboardingDismissed = useSettingsStore(state => isSepoliaDeployment()
+    ? state.sepoliaWelcomeDismissed : state.riskAccepted)
   const [isTransactionHistoryActive, setIsTransactionHistoryActive] = useState(false)
   const perpsHistory = usePerpsHistory({
     activityEnabled: isTransactionHistoryActive,
@@ -268,6 +272,9 @@ function LivePerps() {
           </div>
           <PerpsTradeTicket
             enableLiveTrading
+            autoDepositOnConnect={onboardingDismissed && perpsIdentity.status === 'ready'
+              && perpsAccount.snapshotStatus === 'ready' && !perpsAccount.isLoading
+              && !perpsAccount.isRefreshing && !perpsAccount.error}
             oraclePriceRaw={perpsMarket.raw.markPrice}
             oraclePublishTime={perpsMarket.oracleFreshnessTime}
             oraclePriceDisplay={perpsMarket.oraclePrice}

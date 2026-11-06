@@ -1,6 +1,7 @@
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
+import { useDepositOnConnect } from '../hooks/useDepositOnConnect'
 import { readinessBlocker, readinessMessage, useTradingReadiness } from '../perps-aa/readiness'
 import { restoredOrderDraft } from '../perps-aa/orderDraft'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -218,6 +219,7 @@ interface ClosePreviewView {
 }
 
 interface PerpsTradeTicketProps {
+  autoDepositOnConnect?: boolean
   initialLifecycleState?: TradeLifecycleState
   initialReviewOpen?: boolean
   initialDirection?: Direction
@@ -1727,6 +1729,7 @@ function validationReasonCategory(message: string): string {
 }
 
 export function PerpsTradeTicket({
+  autoDepositOnConnect = false,
   initialLifecycleState = 'preview',
   initialReviewOpen = false,
   initialDirection = 'long',
@@ -1805,7 +1808,7 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
-  const { connect, ready: walletReady, configured: walletConfigured } = useWalletActions()
+  const { connect, ready: walletReady, configured: walletConfigured, modalOpen: walletModalOpen } = useWalletActions()
   const deploymentConfirmation = useAccountDeploymentConfirmation()
   const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
   const identity = usePerpsIdentity()
@@ -3697,6 +3700,19 @@ export function PerpsTradeTicket({
     setMarginActionError(undefined)
     setLocallyConfirmedFundingBalances(null)
   }, [commonAnalyticsProperties])
+
+  const openDeposit = useCallback(() => { openMarginAction('deposit') }, [openMarginAction])
+  useDepositOnConnect({
+    connected: enableLiveTrading && identity.status !== 'disconnected',
+    identityKey: identity.chainId !== undefined && identity.ownerAddress && address
+      ? `${String(identity.chainId)}:${identity.ownerAddress.toLowerCase()}:${address.toLowerCase()}` : undefined,
+    enabled: autoDepositOnConnect,
+    balance: settlementBalanceAssetsRaw,
+    depositOpen: marginAction === 'deposit',
+    canOpen: !walletModalOpen && marginAction === null && !isReviewOpen
+      && !activeAccountOperation && !isAwaitingAccountConfirmation,
+    onOpen: openDeposit,
+  })
 
   useEffect(() => {
     if (!marginActionRequest) return

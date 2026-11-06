@@ -5,6 +5,7 @@ import {
   useConnectWallet,
   useCreateWallet,
   useLogin,
+  useModalStatus,
   useExportWallet,
   usePrivy,
   useSetWalletRecovery,
@@ -96,6 +97,7 @@ function SyncedWalletActions({
 
 function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   const { ready: authReady, authenticated, logout } = usePrivy()
+  const { isOpen: authModalOpen } = useModalStatus()
   const { wallets, ready: walletsReady } = useWallets()
   const { wallet: nativeWallet, connect: openNativeWallets, setActiveWallet: setNativeWallet } = useActiveWallet()
   const [accountOpen, setAccountOpen] = useState(false)
@@ -201,6 +203,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     ready,
     signerReady: false,
     authenticated,
+    modalOpen: authModalOpen || accountOpen,
     wallets: wallets.map(wallet => ({
       address: wallet.address,
       name: wallet.walletClientType === 'privy' ? 'Social wallet' : wallet.meta.name,
