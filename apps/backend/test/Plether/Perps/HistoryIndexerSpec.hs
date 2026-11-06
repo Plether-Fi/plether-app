@@ -58,7 +58,9 @@ spec = do
       let result = decodeFixtureReceipt receipt
       case result of
         Right (identities, [(_, kind, _, oid, Object payload)]) -> do
-          map fst identities `shouldBe` [1551]
+          map (\(oid', _, _) -> oid') identities `shouldBe` [1551]
+          map (\(_, _, economics) -> textField "commitmentCarryAssets" economics) identities
+            `shouldBe` [Just "0"]
           oid `shouldBe` 1551
           kind `shouldBe` "ActionChargeSettled"
           KeyMap.lookup "waivedAssets" payload `shouldBe` Just (String "882780318")
@@ -322,6 +324,8 @@ spec = do
               else if index == 14 then word 101_250_000
               else if index == 19 then word 200_000
               else if index == 25 then word 4
+              else if index == 32 then word 70938
+              else if index == 56 then word 70278
               else if index == 67 then word 1700000300
               else if index == 68 then word 60
               else if index == 69 then word 1700000200
@@ -344,6 +348,8 @@ spec = do
               && clientId == clientOrderIdText
               && receiptHash == "0x" <> Text.replicate 32 "aa"
               && textField "executionBountyAssets" economics == Just "200000"
+              && textField "carryAssets" economics == Just "70938"
+              && textField "commitmentCarryAssets" economics == Just "70278"
               && textField "executionBountyAssets" payload == Just "200000"
               && textField "submitBy" payload == Just "1700000300"
               && textField "commitTimestamp" payload == Just "1700000200"
@@ -624,7 +630,7 @@ receiptText key (Object value) = case KeyMap.lookup key value of
   _ -> ""
 receiptText _ _ = ""
 
-decodeFixtureReceipt :: Value -> Either Text ([(Integer, Text)], [(RpcLog, Text, Text, Integer, Value)])
+decodeFixtureReceipt :: Value -> Either Text ([(Integer, Text, Value)], [(RpcLog, Text, Text, Integer, Value)])
 decodeFixtureReceipt receipt = decodeSettlementReceipt fixtureAddresses
   (receiptText "transactionHash" receipt)
   (if receiptText "transactionHash" receipt == "0xa583ee512122717defccf27f420f17ac10e1e887777132b67f31d5edbaac8bbd" then 309072000 else 309002622)
