@@ -1791,7 +1791,7 @@ describe('perps lifecycle labels', () => {
     useSettingsStore.setState({ sepoliaWelcomeDismissed: true })
     render(<PerpsTradeTicket enableLiveTrading autoDepositOnConnect settlementBalanceAssetsRaw={0n} />)
     const notice = screen.getByRole('complementary', { name: 'Sepolia test funds' })
-    expect(notice).toHaveClass('text-brand-yellow', 'bg-brand-yellow/10')
+    expect(notice).toHaveClass('text-app-bg', 'bg-brand-yellow')
     expect(notice).toHaveTextContent('Test funds have no real value.')
     fireEvent.click(within(notice).getByRole('button', { name: 'Get mock USDG' }))
     expect(screen.queryByText('Deposit Margin')).not.toBeInTheDocument()

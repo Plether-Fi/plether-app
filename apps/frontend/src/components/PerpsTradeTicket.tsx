@@ -5595,12 +5595,12 @@ export function PerpsTradeTicket({
       >
         <div className="space-y-5">
           {marginAction === 'deposit' && isSepoliaDeployment() ? (
-            <aside aria-label="Sepolia test funds" className="space-y-3 border border-brand-yellow/40 bg-brand-yellow/10 p-4 text-sm text-brand-yellow">
+            <aside aria-label="Sepolia test funds" className="space-y-3 border border-brand-yellow bg-brand-yellow p-4 text-sm text-app-bg">
               <p>You are on Arbitrum Sepolia. Get mock {PERPS_SETTLEMENT_TOKEN_LABEL} to try trading. Test funds have no real value.</p>
               <button
                 type="button"
                 disabled={isMarginActionPending}
-                className="min-h-11 border border-brand-yellow px-4 py-2 font-semibold transition-colors enabled:hover:bg-brand-yellow enabled:hover:text-app-bg disabled:cursor-not-allowed disabled:opacity-50"
+                className="mx-auto block min-h-11 border border-app-bg px-4 py-2 font-semibold text-app-bg transition-colors enabled:hover:bg-app-bg enabled:hover:text-brand-yellow disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => {
                   trackPerpsButtonClicked('get_mock_usdg', commonAnalyticsProperties)
                   setMarginAction(null)
