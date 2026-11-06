@@ -12,7 +12,7 @@ import { WalletProvider } from './WalletProvider'
 import { useRegistrationWallet } from './useRegistrationWallet'
 import { RegistrationWalletStep } from '../components/RegistrationWalletStep'
 
-type Snapshot = { ready: boolean; authenticated: boolean; wallets: ConnectedWallet[] }
+type Snapshot = { ready: boolean; authenticated: boolean; wallets: ConnectedWallet[]; user?: { linkedAccounts: object[] } }
 type Callbacks = { onSuccess?: (input: { wallet: ConnectedWallet }) => unknown; onError?: (code: string) => unknown; onComplete?: (input: object) => unknown }
 const auth = vi.hoisted(() => ({
   snapshot: { ready: true, authenticated: false, wallets: [] } as Snapshot,
@@ -22,6 +22,9 @@ const auth = vi.hoisted(() => ({
   config: undefined as Config | undefined,
   createChallenge: vi.fn(),
   verifyWallet: vi.fn(),
+  login: vi.fn(),
+  createWallet: vi.fn(),
+  closePicker: vi.fn(),
 }))
 function updateAuth(patch: Partial<Snapshot>) {
   auth.snapshot = { ...auth.snapshot, ...patch }
@@ -47,17 +50,18 @@ vi.mock('@privy-io/react-auth', async () => {
   }
   return {
     PrivyProvider: ({ children }: { children: ReactNode }) => children,
-    usePrivy: () => ({ ...useSnapshot(), user: undefined }),
+    usePrivy: () => useSnapshot(),
     useWallets: () => useSnapshot(),
     useConnectWallet: (callbacks: Callbacks) => {
       subscribe('connect', callbacks)
       return { connectWallet: (options: { description: ReactNode }) => { auth.description = options.description } }
     },
-    useLogin: (callbacks: Callbacks) => { subscribe('login', callbacks); return { login: vi.fn() } },
+    useLogin: (callbacks: Callbacks) => { subscribe('login', callbacks); return { login: auth.login } },
     useConnectOrCreateWallet: (callbacks: Callbacks) => { subscribe('createOrConnect', callbacks); return {} },
-    useCreateWallet: (callbacks: Callbacks) => { subscribe('create', callbacks); return {} },
+    useCreateWallet: (callbacks: Callbacks) => { subscribe('create', callbacks); return { createWallet: auth.createWallet } },
   }
 })
+vi.mock('@privy-io/react-auth/ui', () => ({ usePletherWalletPickerClose: () => auth.closePicker }))
 vi.mock('../config/wagmi', () => ({
   privyAppId: 'integration-privy',
   privyClientId: undefined,
@@ -133,12 +137,132 @@ beforeEach(() => {
   auth.description = null
   auth.createChallenge.mockReset()
   auth.verifyWallet.mockReset()
+  auth.login.mockReset()
+  auth.createWallet.mockReset()
+  auth.closePicker.mockReset().mockResolvedValue(undefined)
   sessionStorage.clear()
   auth.config = createConfig({ chains: [arbitrumSepolia], transports: { [arbitrumSepolia.id]: custom({ request: async () => { throw new Error('No RPC calls expected') } }) }, ssr: false, storage: null, multiInjectedProviderDiscovery: false })
 })
 afterEach(cleanup)
 
 describe('Insights Privy/Wagmi integration', () => {
+  it('offers email above wallets and closes the picker before starting email login', async () => {
+    let close!: () => void
+    auth.closePicker.mockImplementation(() => new Promise<void>(resolve => { close = resolve }))
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    expect(auth.closePicker).toHaveBeenCalledOnce()
+    expect(auth.login).not.toHaveBeenCalled()
+    await act(async () => { close() })
+    expect(auth.login).toHaveBeenCalledWith({ loginMethods: ['email'] })
+    expect(auth.createWallet).not.toHaveBeenCalled()
+  })
+
+  it('uses the authenticated email wallet after an external owner without starting login again', async () => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet, embedded.wallet] }
+    sessionStorage.setItem(storageKey, external.wallet.address)
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' }))
+    await expectAccount(embedded.wallet.address as Address)
+    expect(auth.closePicker).toHaveBeenCalledOnce()
+    expect(auth.login).not.toHaveBeenCalled()
+    expect(auth.createWallet).not.toHaveBeenCalled()
+    let signature: `0x${string}` = '0x'
+    await act(async () => { signature = await sign({ account: embedded.wallet.address as Address, message }) })
+    expect(await recoverMessageAddress({ message, signature })).toBe(embedded.wallet.address)
+  })
+
+  it('waits for an authenticated linked email wallet to become available', async () => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet], user: { linkedAccounts: [
+      { type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address },
+    ] } }
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' }))
+    await waitFor(() => { expect(screen.getByTestId('account')).toHaveTextContent('disconnected') })
+    await act(async () => { updateAuth({ wallets: [external.wallet, embedded.wallet] }) })
+    await expectAccount(embedded.wallet.address as Address)
+    expect(auth.login).not.toHaveBeenCalled()
+    expect(auth.createWallet).not.toHaveBeenCalled()
+  })
+
+  it('creates an email wallet for an authenticated user without one, after closing the picker', async () => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet] }
+    auth.createWallet.mockResolvedValue({ address: embedded.wallet.address, chainType: 'ethereum' })
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+    expect(auth.closePicker).toHaveBeenCalledOnce()
+    expect(auth.createWallet).toHaveBeenCalledOnce()
+    expect(auth.login).not.toHaveBeenCalled()
+    await act(async () => { updateAuth({ wallets: [external.wallet, embedded.wallet] }) })
+    await expectAccount(embedded.wallet.address as Address)
+  })
+
+  it('ignores email wallet creation that completes after another owner is chosen', async () => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    let finishCreation!: (wallet: { address: string; chainType: string }) => void
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet] }
+    auth.createWallet.mockImplementation(() => new Promise(resolve => { finishCreation = resolve }))
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+    expect(auth.createWallet).toHaveBeenCalledOnce()
+    act(() => { selected.selectWallet(external.wallet.address) })
+    await act(async () => { updateAuth({ wallets: [external.wallet, embedded.wallet] }); finishCreation({ address: embedded.wallet.address, chainType: 'ethereum' }) })
+    await emit('create', 'onSuccess', { wallet: { address: embedded.wallet.address, chainType: 'ethereum' } } as never)
+    await expectAccount(external.wallet.address as Address)
+  })
+
+  it('reports failed authenticated email wallet creation without starting a login flow', async () => {
+    const external = testWallet(0)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet] }
+    auth.createWallet.mockRejectedValue(new Error('Wallet creation unavailable'))
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+    expect(selected.error).toBe('Could not prepare your email wallet. Try again.')
+    expect(auth.login).not.toHaveBeenCalled()
+    await expectAccount(external.wallet.address as Address)
+  })
+
+  it('switches from an external owner to the explicitly chosen verified email wallet', async () => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: false, wallets: [external.wallet] }
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' })) })
+    expect(auth.login).toHaveBeenCalledOnce()
+    await emit('login', 'onComplete', { user: { linkedAccounts: [
+      { type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address },
+    ] }, loginMethod: 'email' } as never)
+    await act(async () => { updateAuth({ authenticated: true, wallets: [external.wallet, embedded.wallet] }) })
+    await expectAccount(embedded.wallet.address as Address)
+  })
+
   it('connects an explicitly approved wallet and signs with its real provider', async () => {
     const owner = testWallet(0)
     render(tree())

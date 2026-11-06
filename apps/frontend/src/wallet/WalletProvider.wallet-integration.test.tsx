@@ -12,6 +12,8 @@ import type { WalletActions } from './useWalletActions'
 
 type Callback = (input: never) => unknown
 type Callbacks = Record<string, Callback | undefined>
+type PickerEntry = 'main' | 'native'
+type ConnectionDescription = (close: () => Promise<void>) => ReactNode
 
 const sdk = vi.hoisted(() => {
   vi.stubEnv('VITE_PRIVY_APP_ID', 'bridge-integration')
@@ -27,6 +29,10 @@ const sdk = vi.hoisted(() => {
     login: vi.fn(),
     logout: vi.fn(),
     openNative: vi.fn(),
+    closePicker: vi.fn(),
+    closeNativePicker: vi.fn(),
+    createWallet: vi.fn(),
+    nativeDescription: undefined as ConnectionDescription | undefined,
   }
 })
 
@@ -53,12 +59,18 @@ vi.mock('@privy-io/react-auth', () => {
     useConnectWallet: (callbacks: Callbacks) => { useEvents('connect', callbacks); return { connectWallet: sdk.connect } },
     useConnectOrCreateWallet: (callbacks: Callbacks) => { useEvents('connectOrCreate', callbacks); return { connectOrCreateWallet: vi.fn() } },
     useLogin: (callbacks: Callbacks) => { useEvents('login', callbacks); return { login: sdk.login } },
-    useCreateWallet: (callbacks: Callbacks) => { useEvents('create', callbacks); return { createWallet: vi.fn() } },
+    useCreateWallet: (callbacks: Callbacks) => { useEvents('create', callbacks); return { createWallet: sdk.createWallet } },
     useExportWallet: () => ({ exportWallet: vi.fn() }),
     useSetWalletRecovery: () => ({ setWalletRecovery: vi.fn() }),
   }
 })
-vi.mock('@privy-io/react-auth/ui', () => ({ WalletsDialog: () => null }))
+vi.mock('@privy-io/react-auth/ui', () => ({
+  usePletherWalletPickerClose: () => sdk.closePicker,
+  WalletsDialog: ({ connectionDescription }: { connectionDescription: ConnectionDescription }) => {
+    sdk.nativeDescription = connectionDescription
+    return null
+  },
+}))
 // Keep the real network-switch hook without loading unrelated trading hooks.
 vi.mock('../hooks', async () => import('../hooks/useSwitchToArbitrumSepolia'))
 
@@ -148,11 +160,19 @@ async function expectDisconnected() {
   await waitFor(() => { expect(screen.getByTestId('connection')).toHaveTextContent('disconnected::false') })
 }
 
-async function beginEmail() {
+function renderPicker(entry: PickerEntry = 'main') {
+  if (entry === 'native') {
+    expect(sdk.nativeDescription).toBeTypeOf('function')
+    return render(<>{sdk.nativeDescription?.(sdk.closeNativePicker)}</>)
+  }
   act(() => { actions.connect() })
   const options = sdk.connect.mock.lastCall?.[0] as { description: ReactNode }
-  const view = render(<>{options.description}</>)
-  fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+  return render(<>{options.description}</>)
+}
+
+async function beginEmail() {
+  const view = renderPicker()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' })) })
   view.unmount()
 }
 
@@ -168,6 +188,10 @@ beforeEach(() => {
   sdk.nativeWallet = undefined
   sdk.logout.mockResolvedValue(undefined)
   sdk.openNative.mockResolvedValue({})
+  sdk.closePicker.mockResolvedValue(undefined)
+  sdk.closeNativePicker.mockResolvedValue(undefined)
+  sdk.createWallet.mockResolvedValue(undefined)
+  sdk.nativeDescription = undefined
   config._internal.connectors.setState([])
   config.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
 })
@@ -175,6 +199,111 @@ beforeEach(() => {
 afterEach(() => { cleanup() })
 
 describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
+  it.each(['main', 'native'] as const)('offers Log in with Email in the signed-out %s picker and waits for verified login before switching', async entry => {
+    const email = testWallet(0, 'privy')
+    const external = testWallet(1)
+    sdk.wallets = entry === 'native' ? [external.wallet] : []
+    sessionStorage.setItem(selectionKey, entry === 'native' ? external.account.address : 'disconnected')
+    const view = mount()
+    if (entry === 'native') await expectConnected(external.account.address)
+    else await expectDisconnected()
+    const popup = renderPicker(entry)
+    expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Email', exact: true })) })
+    popup.unmount()
+    const close = entry === 'main' ? sdk.closePicker : sdk.closeNativePicker
+    expect(close).toHaveBeenCalledOnce()
+    expect(sdk.login).toHaveBeenCalledWith({ loginMethods: ['email'] })
+    expect(close.mock.invocationCallOrder[0]).toBeLessThan(sdk.login.mock.invocationCallOrder[0])
+    sdk.wallets = entry === 'native' ? [external.wallet, email.wallet] : [email.wallet]
+    view.refresh()
+    if (entry === 'native') await expectConnected(external.account.address)
+    else await expectDisconnected()
+    sdk.authenticated = true
+    sdk.user = { linkedAccounts: [{ type: 'wallet', address: email.account.address, walletClientType: 'privy', chainType: 'ethereum' }] }
+    await emit('login', 'onComplete', { user: sdk.user, loginMethod: 'email', loginAccount: { type: 'email' } })
+    view.refresh()
+    await expectConnected(email.account.address)
+    const client = await getWalletClient(config)
+    const message = 'Verified email owner from the connection popup'
+    const signature = await client.signMessage({ message })
+    expect(await verifyMessage({ address: email.account.address, message, signature })).toBe(true)
+  })
+
+  it.each([
+    ['main', 'external-owner'], ['main', 'disconnected'], ['main', 'email-owner'],
+    ['native', 'external-owner'], ['native', 'disconnected'], ['native', 'email-owner'],
+  ] as const)('offers Use email wallet in an authenticated %s picker (%s) and activates its guarded signer', async (entry, state) => {
+    const email = testWallet(0, 'privy')
+    const external = testWallet(1)
+    sdk.authenticated = true
+    sdk.user = { linkedAccounts: [{ type: 'wallet', address: email.account.address, walletClientType: 'privy', chainType: 'ethereum' }] }
+    sdk.wallets = [email.wallet, external.wallet]
+    sessionStorage.setItem(selectionKey, state === 'external-owner' ? external.account.address
+      : state === 'email-owner' ? email.account.address : 'disconnected')
+    mount()
+    let previousClient: Awaited<ReturnType<typeof getWalletClient>> | undefined
+    if (state === 'external-owner') {
+      await expectConnected(external.account.address)
+      previousClient = await getWalletClient(config)
+    } else if (state === 'email-owner') await expectConnected(email.account.address)
+    else await expectDisconnected()
+    const popup = renderPicker(entry)
+    expect(screen.queryByRole('button', { name: 'Log in with Email' })).not.toBeInTheDocument()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet', exact: true })) })
+    popup.unmount()
+    await expectConnected(email.account.address)
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(entry === 'main' ? sdk.closePicker : sdk.closeNativePicker).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem(selectionKey)).toBe(email.account.address.toLowerCase())
+    if (previousClient) await expect(previousClient.signMessage({ message: 'Old external signer must not sign' })).rejects.toThrow(/selected wallet changed|not ready/)
+    const client = await getWalletClient(config)
+    const message = 'Email wallet explicitly selected in the connection popup'
+    const signature = await client.signMessage({ message })
+    expect(await verifyMessage({ address: email.account.address, message, signature })).toBe(true)
+  })
+
+  it.each(['main', 'native'] as const)('does not select the authenticated email wallet merely by opening or dismissing the %s picker', async entry => {
+    const email = testWallet(0, 'privy')
+    const external = testWallet(1)
+    sdk.authenticated = true
+    sdk.wallets = [email.wallet, external.wallet]
+    sessionStorage.setItem(selectionKey, external.account.address.toLowerCase())
+    mount()
+    await expectConnected(external.account.address)
+    const popup = renderPicker(entry)
+    expect(screen.getByRole('button', { name: 'Use email wallet', exact: true })).toBeInTheDocument()
+    await expectConnected(external.account.address)
+    await emit('connect', 'onError', 'generic_connect_wallet_error')
+    popup.unmount()
+    await expectConnected(external.account.address)
+    expect(sessionStorage.getItem(selectionKey)).toBe(external.account.address.toLowerCase())
+  })
+
+  it.each(['main', 'native'] as const)('prepares a missing embedded wallet from the authenticated %s picker without logging in again', async entry => {
+    const external = testWallet(1)
+    const email = testWallet(0, 'privy')
+    sdk.authenticated = true
+    sdk.user = { linkedAccounts: [] }
+    sdk.wallets = [external.wallet]
+    let resolveCreation: (wallet: ConnectedWallet) => void = () => { throw new Error('Wallet creation not started') }
+    sdk.createWallet.mockImplementationOnce(() => new Promise(resolve => { resolveCreation = resolve }))
+    sessionStorage.setItem(selectionKey, external.account.address)
+    const view = mount()
+    await expectConnected(external.account.address)
+    const popup = renderPicker(entry)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet', exact: true })) })
+    popup.unmount()
+    expect(entry === 'main' ? sdk.closePicker : sdk.closeNativePicker).toHaveBeenCalledOnce()
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(sdk.createWallet).toHaveBeenCalledOnce()
+    await expectConnected(external.account.address)
+    sdk.wallets = [external.wallet, email.wallet]
+    view.refresh()
+    await act(async () => { resolveCreation(email.wallet) })
+    await expectConnected(email.account.address)
+  })
+
   it('connects after approval and signs recoverable personal and typed messages through Wagmi', async () => {
     const test = testWallet(0)
     const view = mount()

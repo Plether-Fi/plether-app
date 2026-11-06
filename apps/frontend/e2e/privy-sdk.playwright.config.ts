@@ -18,7 +18,7 @@ export default defineConfig({
   use: { baseURL, trace: 'retain-on-failure' },
   projects: [{ name: 'privy-sdk-chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort --force`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,

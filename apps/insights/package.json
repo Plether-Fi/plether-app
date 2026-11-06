@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
+    "postinstall": "node ../../scripts/patch-privy-wallet-dialog.mjs",
     "dev": "vite",
     "dev:registration": "node scripts/registration-dev-server.mjs",
     "build": "tsc -b && vite build",

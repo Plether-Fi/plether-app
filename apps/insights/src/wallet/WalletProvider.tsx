@@ -9,6 +9,7 @@ import {
   type ConnectedWallet,
 } from '@privy-io/react-auth'
 import { WagmiProvider as PrivyWagmiProvider } from '@privy-io/wagmi'
+import { usePletherWalletPickerClose } from '@privy-io/react-auth/ui'
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { WagmiProvider, useConnection } from 'wagmi'
 import { privyAppId, privyClientId, privyConfig, wagmiConfig } from '../config/wagmi'
@@ -40,7 +41,8 @@ function WalletControls({ children, actions, expectedAddress, onStaleConnection 
 }
 
 function ConnectedWalletProvider({ children, appId }: { children: ReactNode; appId: string }) {
-  const { ready, authenticated } = usePrivy()
+  const { ready, authenticated, user } = usePrivy()
+  const closeWalletPicker = usePletherWalletPickerClose()
   const { ready: walletsReady, wallets } = useWallets()
   const storageKey = `plether:privy:insights:owner:${appId}`
   const [selectedAddress, setSelectedAddress] = useState(() => readSelectedWallet(storageKey))
@@ -93,7 +95,8 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     if (!emailIntent.current || !emailVerified.current) return
     emailIntent.current = false
     emailVerified.current = false
-    selectConnectedOwner(address)
+    // Email was explicitly chosen, so it may replace an external owner.
+    selectWallet(address)
   }
   const { login } = useLogin({
     onComplete: ({ user, loginMethod }) => {
@@ -101,7 +104,7 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
       emailVerified.current = true
       const wallet = user.linkedAccounts.filter(account => account.type === 'wallet')
         .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
-        ?? (user.wallet?.chainType === 'ethereum' ? user.wallet : undefined)
+        ?? (user.wallet?.chainType === 'ethereum' && user.wallet.walletClientType === 'privy' ? user.wallet : undefined)
       if (wallet) activateEmailWallet(wallet.address)
     },
     onError: (code) => {
@@ -111,10 +114,51 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
       onConnectError(code)
     },
   })
-  useCreateWallet({ onSuccess: ({ wallet }) => {
+  const { createWallet } = useCreateWallet({ onSuccess: ({ wallet }) => {
     if (wallet.chainType === 'ethereum') activateEmailWallet(wallet.address)
   } })
   const { connectWallet } = useConnectWallet({ onSuccess: onConnected, onError: onConnectError })
+  const openEmailWallet = async () => {
+    connectionIntent.current = false
+    emailVerified.current = false
+    if (authenticated) {
+      const embedded = wallets.find(wallet => wallet.walletClientType === 'privy')
+        ?? user?.linkedAccounts.filter(account => account.type === 'wallet')
+          .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
+      if (embedded) {
+        selectWallet(embedded.address)
+        await closeWalletPicker()
+        return
+      }
+    }
+    const owner = selectedAddress === null ? null : selectedAddress ?? initialOwner.current
+    if (!owner || !wallets.some(wallet => wallet.address.toLowerCase() === owner.toLowerCase())) {
+      signingGuard.select(null)
+      saveSelectedWallet(storageKey, null)
+      setSelectedAddress(null)
+    }
+    emailIntent.current = true
+    // An existing authenticated session needs wallet creation, not another
+    // login flow (which Privy skips for an authenticated user).
+    emailVerified.current = authenticated
+    const revision = signingGuard.revision
+    const isCurrentRequest = () => emailIntent.current && signingGuard.revision === revision
+    await closeWalletPicker()
+    if (!isCurrentRequest()) return
+    if (!authenticated) {
+      login({ loginMethods: ['email'] })
+      return
+    }
+    try {
+      const wallet = await createWallet()
+      if (isCurrentRequest()) activateEmailWallet(wallet.address)
+    } catch {
+      if (!isCurrentRequest()) return
+      emailIntent.current = false
+      emailVerified.current = false
+      setError('Could not prepare your email wallet. Try again.')
+    }
+  }
   const resolveActiveWallet = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
     if (!ready || !walletsReady) return undefined
     const selection = bridgeSelection.owner === null ? null : bridgeSelection.owner ?? initialOwner.current ?? undefined
@@ -139,18 +183,7 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
       emailVerified.current = false
       connectionIntent.current = true
       connectWallet({
-        description: authenticated ? '' : <EmailLoginOption onClick={() => {
-          connectionIntent.current = false
-          const owner = selectedAddress === null ? null : selectedAddress ?? initialOwner.current
-          if (!owner || !wallets.some(wallet => wallet.address.toLowerCase() === owner.toLowerCase())) {
-            signingGuard.select(null)
-            saveSelectedWallet(storageKey, null)
-            setSelectedAddress(null)
-          }
-          emailIntent.current = true
-          emailVerified.current = false
-          login({ loginMethods: ['email'] })
-        }} />,
+        description: <EmailLoginOption label={authenticated ? 'Use email wallet' : 'Log in with Email'} onClick={() => { void openEmailWallet() }} />,
       })
     },
     selectWallet: (address: string) => {

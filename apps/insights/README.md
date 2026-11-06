@@ -182,6 +182,11 @@ unavailable owners, and the registration challenge/signature handoff. Remote
 Privy authentication and registration API responses are fixtures; the suite
 does not deliver live email OTPs or submit a production registration.
 
+The connection picker always offers **Log in with Email** or, when already
+authenticated, **Use email wallet**. Its close action uses the pinned UI-only
+Privy extension installed by `scripts/patch-privy-wallet-dialog.mjs`; the script
+verifies SDK version/file checksums and must be reviewed with any Privy upgrade.
+
 **Deploy Insights** reads GitHub Actions variables `PRIVY_APP_ID` (shared with
 the trading app) and optional `PRIVY_INSIGHTS_CLIENT_ID`. It publishes on pushes
 to `master` affecting this app, so verify social/external wallet registration

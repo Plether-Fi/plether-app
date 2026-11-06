@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WalletActions } from './useWalletActions'
@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     connect: vi.fn(),
     connectExternal: vi.fn(),
     openNative: vi.fn(),
+    closePicker: vi.fn(),
     setNative: vi.fn(),
     nativeWallet: undefined as (MockWallet & { type: 'ethereum' }) | undefined,
     logout: vi.fn(),
@@ -59,7 +60,10 @@ vi.mock('@privy-io/react-auth', () => ({
   useExportWallet: () => ({ exportWallet: mocks.exportWallet }),
   useSetWalletRecovery: () => ({ setWalletRecovery: mocks.setRecovery }),
 }))
-vi.mock('@privy-io/react-auth/ui', () => ({ WalletsDialog: () => <div data-testid="native-wallet-dialog" /> }))
+vi.mock('@privy-io/react-auth/ui', () => ({
+  WalletsDialog: () => <div data-testid="native-wallet-dialog" />,
+  usePletherWalletPickerClose: () => mocks.closePicker,
+}))
 vi.mock('@privy-io/wagmi', () => ({
   WagmiProvider: ({ children, setActiveWalletForWagmi }: { children: ReactNode; setActiveWalletForWagmi: typeof mocks.selector }) => {
     mocks.selector = setActiveWalletForWagmi
@@ -105,6 +109,7 @@ describe('Privy wallet actions', () => {
     mocks.wallets = []
     mocks.nativeWallet = undefined
     mocks.openNative.mockResolvedValue({})
+    mocks.closePicker.mockResolvedValue(undefined)
     mocks.logout.mockResolvedValue(undefined)
     mocks.exportWallet.mockResolvedValue(undefined)
     mocks.setRecovery.mockResolvedValue(undefined)
@@ -118,14 +123,14 @@ describe('Privy wallet actions', () => {
     expect(mocks.connectExternal).toHaveBeenCalledOnce()
   })
 
-  it('offers email above the wallet catalog and opens email login only on selection', () => {
+  it('offers email above the wallet catalog and opens email login only on selection', async () => {
     render(tree())
     act(() => { actions.connect() })
     const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
     render(<>{options.description}</>)
     expect(mocks.connect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
-    expect(mocks.connect).toHaveBeenCalledOnce()
+    await waitFor(() => { expect(mocks.connect).toHaveBeenCalledOnce() })
     expect(mocks.connect).toHaveBeenCalledWith({ loginMethods: ['email'] })
   })
 

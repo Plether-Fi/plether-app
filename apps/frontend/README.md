@@ -110,10 +110,18 @@ do not send email OTPs, create/recover a wallet through the live embedded-key
 service, exercise real extension UI, or pair a physical mobile wallet; those
 remain hosted-service/device smoke checks for deployment.
 
-Privy's native wallet dialog omits embedded wallets from its external-wallet
-switcher. When an authenticated email wallet is available and another owner is
-selected, the header's **Use email wallet** action restores that owner through
-the same guarded signer selection.
+Every connection picker offers **Log in with Email** when signed out or
+**Use email wallet** for an authenticated session, including **Connect new
+wallet** inside Privy's native account dialog. Selecting an email wallet closes
+the picker through Privy's own close path and updates the guarded signer.
+The header also provides a direct shortcut back to an available email wallet.
+
+Privy 3.51.2 does not expose a native-picker description slot or public connection
+modal close hook. Both apps' `postinstall` runs
+`scripts/patch-privy-wallet-dialog.mjs` to add only these UI extension points.
+The patch checks the exact SDK version and complete upstream file checksums,
+is idempotent, and fails installation on drift. Review/update it alongside any
+Privy upgrade; its node tests and actual-SDK browser tests are required in CI.
 
 The trading app emits bounded `wallet_provider_ready` (including initialization
 duration), `wallet_connection_state_changed`, and `wallet_action_failed` events.

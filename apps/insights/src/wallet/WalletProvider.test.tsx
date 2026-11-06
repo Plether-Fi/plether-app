@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WalletProvider } from './WalletProvider'
@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   wallets: [] as TestWallet[],
   connect: vi.fn(),
   connectExternal: vi.fn(),
+  closePicker: vi.fn(),
+  createWallet: vi.fn(),
   selector: undefined as ((input: { wallets: TestWallet[] }) => TestWallet | undefined) | undefined,
   onError: undefined as ((code: string) => void) | undefined,
   emailCallbacks: undefined as undefined | {
@@ -53,9 +55,10 @@ vi.mock('@privy-io/react-auth', () => ({
   },
   useCreateWallet: ({ onSuccess }: { onSuccess: typeof mocks.onWalletCreated }) => {
     mocks.onWalletCreated = onSuccess
-    return { createWallet: vi.fn() }
+    return { createWallet: mocks.createWallet }
   },
 }))
+vi.mock('@privy-io/react-auth/ui', () => ({ usePletherWalletPickerClose: () => mocks.closePicker }))
 vi.mock('@privy-io/wagmi', () => ({
   WagmiProvider: ({ children, setActiveWalletForWagmi }: {
     children: ReactNode
@@ -101,6 +104,7 @@ beforeEach(() => {
   mocks.selector = undefined
   mocks.emailCallbacks = undefined
   mocks.onExternalSuccess = undefined
+  mocks.closePicker.mockResolvedValue(undefined)
 })
 
 describe('Insights Privy wallet provider', () => {
@@ -118,14 +122,14 @@ describe('Insights Privy wallet provider', () => {
     expect(mocks.connectExternal).toHaveBeenCalledTimes(1)
   })
 
-  it('shows the email option before the wallet list without requiring wallet authentication', () => {
+  it('shows the email option before the wallet list without requiring wallet authentication', async () => {
     render(<Provider />)
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
     const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
     render(<>{options.description}</>)
     expect(mocks.connect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
-    expect(mocks.connect).toHaveBeenCalledTimes(1)
+    await waitFor(() => { expect(mocks.connect).toHaveBeenCalledTimes(1) })
     expect(mocks.connect).toHaveBeenCalledWith({ loginMethods: ['email'] })
   })
 

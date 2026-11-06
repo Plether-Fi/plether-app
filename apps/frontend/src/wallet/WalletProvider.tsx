@@ -14,7 +14,7 @@ import {
   type PrivyClientConfig,
 } from '@privy-io/react-auth'
 import { WagmiProvider } from '@privy-io/wagmi'
-import { WalletsDialog } from '@privy-io/react-auth/ui'
+import { WalletsDialog, usePletherWalletPickerClose } from '@privy-io/react-auth/ui'
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { useAccount, WagmiProvider as ReadOnlyWagmiProvider } from 'wagmi'
 import { config, walletChains } from '../config/wagmi'
@@ -96,7 +96,8 @@ function SyncedWalletActions({
 }
 
 function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
-  const { ready: authReady, authenticated, logout } = usePrivy()
+  const { ready: authReady, authenticated, user, logout } = usePrivy()
+  const closeWalletPicker = usePletherWalletPickerClose()
   const { isOpen: authModalOpen } = useModalStatus()
   const { wallets, ready: walletsReady } = useWallets()
   const { wallet: nativeWallet, connect: openNativeWallets, setActiveWallet: setNativeWallet } = useActiveWallet()
@@ -175,7 +176,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     if (!emailVerified.current || emailIntent.current !== signingGuard.revision) return
     emailIntent.current = undefined
     emailVerified.current = false
-    selectConnectedOwner(address)
+    updateSelection(address)
   }
   const { login } = useLogin({
     onComplete: ({ user, loginMethod }) => {
@@ -185,7 +186,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       emailVerified.current = true
       const wallet = user.linkedAccounts.filter(account => account.type === 'wallet')
         .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
-        ?? (user.wallet?.chainType === 'ethereum' ? user.wallet : undefined)
+        ?? (user.wallet?.chainType === 'ethereum' && user.wallet.walletClientType === 'privy' ? user.wallet : undefined)
       if (wallet) activateEmailWallet(wallet.address)
     },
     onError: (code) => {
@@ -196,10 +197,56 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     },
   })
   // Automatic embedded-wallet creation may finish after email authentication.
-  useCreateWallet({ onSuccess: ({ wallet }) => {
+  const { createWallet } = useCreateWallet({ onSuccess: ({ wallet }) => {
     if (wallet.chainType === 'ethereum') activateEmailWallet(wallet.address)
   } })
   const { connectWallet } = useConnectWallet({ onSuccess: onWalletConnected, onError: onConnectionError })
+
+  const handleEmailWallet = async (close: () => void | Promise<void>) => {
+    if (!ready) return
+    connectionIntent.current = undefined
+    accountIntent.current = undefined
+    setAccountOpen(false)
+    emailIntent.current = undefined
+    emailVerified.current = false
+    setError(null)
+    const embedded = authenticated ? wallets.find(wallet => wallet.walletClientType === 'privy') : undefined
+    if (embedded) {
+      chooseWallet(embedded.address)
+      await close()
+      return
+    }
+    if (signingGuard.selection === undefined || !selectedWallet(wallets, signingGuard.selection)) updateSelection(null)
+    const intent = signingGuard.revision
+    emailIntent.current = intent
+    emailVerified.current = authenticated
+    try {
+      await close()
+      if (emailIntent.current !== intent || signingGuard.revision !== intent) return
+      if (authenticated) {
+        const linked = user?.linkedAccounts.filter(account => account.type === 'wallet')
+          .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
+        if (linked) activateEmailWallet(linked.address)
+        else {
+          const wallet = await createWallet()
+          activateEmailWallet(wallet.address)
+        }
+      } else {
+        login({ loginMethods: ['email'] })
+      }
+    } catch {
+      if (emailIntent.current === intent) {
+        emailIntent.current = undefined
+        emailVerified.current = false
+        setError('Could not prepare your email wallet. Try again.')
+      }
+    }
+  }
+
+  const connectionDescription = (close: () => void | Promise<void>) => (
+    <EmailLoginOption label={authenticated ? 'Use email wallet' : 'Log in with Email'}
+      onClick={() => { void handleEmailWallet(close) }} />
+  )
 
   const selectForWagmi = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
     if (!ready) return undefined
@@ -231,15 +278,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       emailVerified.current = false
       connectionIntent.current = signingGuard.revision
       connectWallet({
-        description: authenticated ? '' : <EmailLoginOption onClick={() => {
-          connectionIntent.current = undefined
-          // Prevent a wallet appearing during login/cancellation from being
-          // automatically restored by the bridge, including after a reload.
-          if (signingGuard.selection === undefined || !selectedWallet(wallets, signingGuard.selection)) updateSelection(null)
-          emailIntent.current = signingGuard.revision
-          emailVerified.current = false
-          login({ loginMethods: ['email'] })
-        }} />,
+        description: connectionDescription(closeWalletPicker),
       })
     },
     openAccount: async () => {
@@ -311,7 +350,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
         expectedAddress={availableOwner}
         onStaleConnection={resetStaleConnection}
       >
-        <WalletsDialog networks={walletChains.filter(chain => chain.id !== 31337).map(chain => ({ id: chain.id }))} />
+        <WalletsDialog networks={walletChains.filter(chain => chain.id !== 31337).map(chain => ({ id: chain.id }))}
+          connectionDescription={connectionDescription} />
         {children}
       </SyncedWalletActions>
     </WagmiProvider>

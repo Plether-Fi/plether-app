@@ -1,4 +1,4 @@
-export function EmailLoginOption({ onClick }: { onClick: () => void }) {
+export function EmailLoginOption({ onClick, label = 'Log in with Email' }: { onClick: () => void; label?: string }) {
   return (
     <span className="ph-no-capture ph-no-record" style={{ display: 'block', width: 'min(312px, calc(100vw - 64px))' }}>
       <button
@@ -15,7 +15,7 @@ export function EmailLoginOption({ onClick }: { onClick: () => void }) {
           <rect x="3" y="5" width="18" height="14" rx="2" />
           <path d="m3 6 9 7 9-7" />
         </svg>
-        Log in with Email
+        {label}
       </button>
       <span style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 4px', color: '#D8CBD0', fontSize: 11 }}>
         <span style={{ height: 1, flex: 1, background: 'rgba(255, 171, 150, 0.2)' }} />
