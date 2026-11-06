@@ -6,11 +6,15 @@ const other = { address: '0x2222222222222222222222222222222222222222' }
 
 describe('registration owner selection', () => {
   it('selects the sole initial wallet', () => {
-    expect(selectedWallet([owner], null)).toBe(owner)
+    expect(selectedWallet([owner], undefined)).toBe(owner)
   })
 
   it('requires a choice when multiple wallets are initially connected', () => {
-    expect(selectedWallet([owner, other], null)).toBeUndefined()
+    expect(selectedWallet([owner, other], undefined)).toBeUndefined()
+  })
+
+  it('keeps an explicitly disconnected selection disconnected', () => {
+    expect(selectedWallet([owner], null)).toBeUndefined()
   })
 
   it('preserves the owner when another wallet connects or the list reorders', () => {

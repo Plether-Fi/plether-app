@@ -24,7 +24,11 @@ const mocks = vi.hoisted(() => ({
   connectExternal: vi.fn(),
   selector: undefined as ((input: { wallets: TestWallet[] }) => TestWallet | undefined) | undefined,
   onError: undefined as ((code: string) => void) | undefined,
-  onSuccess: undefined as ((input: { wallet: TestWallet }) => void) | undefined,
+  emailCallbacks: undefined as undefined | {
+    onComplete: (input: { user: { linkedAccounts: { type: string; chainType: string; walletClientType: string; address: string }[] }; loginMethod: string | null }) => void
+    onError: (code: string) => void
+  },
+  onWalletCreated: undefined as undefined | ((input: { wallet: { address: string; chainType: string } }) => void),
   onExternalSuccess: undefined as ((input: { wallet: TestWallet }) => void) | undefined,
 }))
 
@@ -38,14 +42,18 @@ vi.mock('@privy-io/react-auth', () => ({
   PrivyProvider: ({ children }: { children: ReactNode }) => <div data-testid="privy-provider">{children}</div>,
   usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated }),
   useWallets: () => ({ ready: mocks.walletsReady, wallets: mocks.wallets }),
-  useConnectOrCreateWallet: ({ onSuccess }: { onSuccess: (input: { wallet: TestWallet }) => void }) => {
-    mocks.onSuccess = onSuccess
-    return { connectOrCreateWallet: mocks.connect }
+  useLogin: (callbacks: typeof mocks.emailCallbacks) => {
+    mocks.emailCallbacks = callbacks
+    return { login: mocks.connect }
   },
   useConnectWallet: ({ onSuccess, onError }: { onSuccess: (input: { wallet: TestWallet }) => void; onError: (code: string) => void }) => {
     mocks.onError = onError
     mocks.onExternalSuccess = onSuccess
     return { connectWallet: mocks.connectExternal }
+  },
+  useCreateWallet: ({ onSuccess }: { onSuccess: typeof mocks.onWalletCreated }) => {
+    mocks.onWalletCreated = onSuccess
+    return { createWallet: vi.fn() }
   },
 }))
 vi.mock('@privy-io/wagmi', () => ({
@@ -91,7 +99,7 @@ beforeEach(() => {
   mocks.activeAddress = undefined
   mocks.wallets = []
   mocks.selector = undefined
-  mocks.onSuccess = undefined
+  mocks.emailCallbacks = undefined
   mocks.onExternalSuccess = undefined
 })
 
@@ -118,6 +126,60 @@ describe('Insights Privy wallet provider', () => {
     expect(mocks.connect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
     expect(mocks.connect).toHaveBeenCalledTimes(1)
+    expect(mocks.connect).toHaveBeenCalledWith({ loginMethods: ['email'] })
+  })
+
+  it('does not reconnect a retained wallet when email login is dismissed or a callback arrives late', () => {
+    const view = render(<Provider />)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    act(() => { mocks.emailCallbacks?.onError('exited_auth_flow') })
+    mocks.wallets = [other]
+    view.rerender(<Provider />)
+    act(() => {
+      mocks.onExternalSuccess?.({ wallet: other })
+      mocks.emailCallbacks?.onComplete({ user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: owner.address }] }, loginMethod: 'email' })
+      mocks.onWalletCreated?.({ wallet: { address: owner.address, chainType: 'ethereum' } })
+    })
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBeUndefined()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe('disconnected')
+    view.unmount()
+    render(<Provider />)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBeUndefined()
+  })
+
+  it('activates only the verified email wallet when the wallet list arrives after login', () => {
+    const view = render(<Provider />)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    const user = { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: owner.address }] }
+    act(() => { mocks.emailCallbacks?.onComplete({ user, loginMethod: null }) })
+    expect(mocks.selector?.({ wallets: [] })).toBeUndefined()
+    act(() => { mocks.emailCallbacks?.onComplete({ user, loginMethod: 'email' }) })
+    mocks.wallets = [other, owner]
+    view.rerender(<Provider />)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
+  })
+
+  it('accepts delayed embedded-wallet creation only after email verification', () => {
+    const view = render(<Provider />)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    act(() => {
+      mocks.onError?.('generic_connect_wallet_error')
+      mocks.emailCallbacks?.onComplete({ user: { linkedAccounts: [] }, loginMethod: 'email' })
+      mocks.onWalletCreated?.({ wallet: { address: owner.address, chainType: 'ethereum' } })
+    })
+    mocks.wallets = [other, owner]
+    view.rerender(<Provider />)
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
   })
 
   it.each(['generic_connect_wallet_error', 'exited_auth_flow', 'exited_link_flow'])('keeps popup dismissal silent (%s)', (code) => {
@@ -175,9 +237,11 @@ describe('Insights Privy wallet provider', () => {
   })
 
   it('activates the first wallet returned by an explicit connection action', () => {
+    const view = render(<Provider />)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
     mocks.wallets = [other]
-    render(<Provider />)
-    act(() => { mocks.onSuccess?.({ wallet: other }) })
+    view.rerender(<Provider />)
     expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(other)
     expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(other.address)
   })
@@ -186,9 +250,10 @@ describe('Insights Privy wallet provider', () => {
     mocks.wallets = [owner]
     const view = render(<Provider />)
     expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
     mocks.wallets = [owner, other]
     view.rerender(<Provider />)
-    act(() => { mocks.onSuccess?.({ wallet: other }) })
+    act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
     expect(mocks.selector?.({ wallets: mocks.wallets })).toBe(owner)
   })
 

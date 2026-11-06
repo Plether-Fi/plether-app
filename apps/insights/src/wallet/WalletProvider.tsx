@@ -1,8 +1,9 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 import {
   PrivyProvider,
-  useConnectOrCreateWallet,
   useConnectWallet,
+  useCreateWallet,
+  useLogin,
   usePrivy,
   useWallets,
   type ConnectedWallet,
@@ -12,13 +13,13 @@ import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { WagmiProvider, useConnection } from 'wagmi'
 import { privyAppId, privyClientId, privyConfig, wagmiConfig } from '../config/wagmi'
 import { RegistrationWalletContext, type RegistrationWalletActions } from './context'
-import { readSelectedWallet, saveSelectedWallet, selectedWallet } from './selection'
+import { readSelectedWallet, saveSelectedWallet, selectedWallet, type WalletSelection } from './selection'
 import { EmailLoginOption } from './EmailLoginOption'
 
 function WalletControls({ children, actions, selectedAddress }: {
   children: ReactNode
   actions: Omit<RegistrationWalletActions, 'isSelecting'>
-  selectedAddress: string | null
+  selectedAddress: WalletSelection
 }) {
   const { address, isConnecting, isReconnecting } = useConnection()
   const isSelecting = Boolean(isConnecting || isReconnecting || (selectedAddress && actions.wallets.some((wallet) =>
@@ -38,30 +39,63 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
   const storageKey = `plether:privy:insights:owner:${appId}`
   const [selectedAddress, setSelectedAddress] = useState(() => readSelectedWallet(storageKey))
   const initialOwner = useRef<string | null>(null)
+  const emailIntent = useRef(false)
+  const emailVerified = useRef(false)
+  const connectionIntent = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const selectWallet = useCallback((address: string) => {
+    emailIntent.current = false
+    emailVerified.current = false
     setSelectedAddress(address.toLowerCase())
     saveSelectedWallet(storageKey, address)
     setError(null)
   }, [storageKey])
   const onConnected = useCallback(({ wallet }: { wallet: { address: string } }) => {
+    if (!connectionIntent.current || emailIntent.current) return
+    connectionIntent.current = false
     if (!selectedAddress && !initialOwner.current) selectWallet(wallet.address)
   }, [selectedAddress, selectWallet])
   const onConnectError = useCallback((code: string) => {
+    connectionIntent.current = false
     // Closing Privy's wallet picker uses the same generic code as failures
     // already displayed inside the picker; don't persist those below the CTA.
     const dismissed = code === 'generic_connect_wallet_error'
       || code === 'exited_auth_flow' || code === 'exited_link_flow'
     setError(dismissed ? null : 'Wallet connection could not be completed. Try again.')
   }, [])
-  const { connectOrCreateWallet } = useConnectOrCreateWallet({ onSuccess: onConnected, onError: onConnectError })
+  const activateEmailWallet = (address: string) => {
+    if (!emailIntent.current || !emailVerified.current) return
+    emailIntent.current = false
+    emailVerified.current = false
+    if (!selectedAddress && !initialOwner.current) selectWallet(address)
+  }
+  const { login } = useLogin({
+    onComplete: ({ user, loginMethod }) => {
+      if (!emailIntent.current || loginMethod !== 'email') return
+      emailVerified.current = true
+      const wallet = user.linkedAccounts.filter(account => account.type === 'wallet')
+        .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
+        ?? (user.wallet?.chainType === 'ethereum' ? user.wallet : undefined)
+      if (wallet) activateEmailWallet(wallet.address)
+    },
+    onError: (code) => {
+      if (!emailIntent.current) return
+      emailIntent.current = false
+      emailVerified.current = false
+      onConnectError(code)
+    },
+  })
+  useCreateWallet({ onSuccess: ({ wallet }) => {
+    if (wallet.chainType === 'ethereum') activateEmailWallet(wallet.address)
+  } })
   const { connectWallet } = useConnectWallet({ onSuccess: onConnected, onError: onConnectError })
   const resolveActiveWallet = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
     if (!ready || !walletsReady) return undefined
-    const owner = selectedWallet(connectedWallets, selectedAddress ?? initialOwner.current)
+    const selection = selectedAddress === null ? null : selectedAddress ?? initialOwner.current ?? undefined
+    const owner = selectedWallet(connectedWallets, selection)
     // The bridge calls this when its connection state changes. Remember the sole
     // initial wallet so another connection can never replace it automatically.
-    if (owner && !selectedAddress && !initialOwner.current) {
+    if (owner && selectedAddress === undefined && !initialOwner.current) {
       initialOwner.current = owner.address
       saveSelectedWallet(storageKey, owner.address)
     }
@@ -74,8 +108,20 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     connect: () => {
       if (!ready || !walletsReady) return
       setError(null)
+      emailIntent.current = false
+      emailVerified.current = false
+      connectionIntent.current = true
       connectWallet({
-        description: authenticated ? '' : <EmailLoginOption onClick={() => { connectOrCreateWallet() }} />,
+        description: authenticated ? '' : <EmailLoginOption onClick={() => {
+          connectionIntent.current = false
+          if (selectedAddress === undefined && !initialOwner.current) {
+            saveSelectedWallet(storageKey, null)
+            setSelectedAddress(null)
+          }
+          emailIntent.current = true
+          emailVerified.current = false
+          login({ loginMethods: ['email'] })
+        }} />,
       })
     },
     selectWallet: (address: string) => {

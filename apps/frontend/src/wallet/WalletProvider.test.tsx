@@ -28,6 +28,11 @@ const mocks = vi.hoisted(() => {
     exportWallet: vi.fn(),
     setRecovery: vi.fn(),
     callbacks: undefined as undefined | { onSuccess: (args: { wallet: { address: string } }) => void; onError: (code: string) => void },
+    emailCallbacks: undefined as undefined | {
+      onComplete: (input: { user: { linkedAccounts: { type: string; chainType: string; walletClientType: string; address: string }[] }; loginMethod: string | null }) => void
+      onError: (code: string) => void
+    },
+    onWalletCreated: undefined as undefined | ((input: { wallet: { address: string; chainType: string } }) => void),
     selector: undefined as undefined | ((args: { wallets: MockWallet[] }) => { address: string } | undefined),
   }
 })
@@ -37,13 +42,17 @@ vi.mock('@privy-io/react-auth', () => ({
   useActiveWallet: () => ({ wallet: mocks.nativeWallet, connect: mocks.openNative, setActiveWallet: mocks.setNative }),
   usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated, logout: mocks.logout }),
   useWallets: () => ({ ready: mocks.walletsReady, wallets: mocks.wallets }),
-  useConnectOrCreateWallet: (callbacks: typeof mocks.callbacks) => {
-    mocks.callbacks = callbacks
-    return { connectOrCreateWallet: mocks.connect }
+  useLogin: (callbacks: typeof mocks.emailCallbacks) => {
+    mocks.emailCallbacks = callbacks
+    return { login: mocks.connect }
   },
   useConnectWallet: (callbacks: typeof mocks.callbacks) => {
     mocks.callbacks = callbacks
     return { connectWallet: mocks.connectExternal }
+  },
+  useCreateWallet: ({ onSuccess }: { onSuccess: typeof mocks.onWalletCreated }) => {
+    mocks.onWalletCreated = onSuccess
+    return { createWallet: vi.fn() }
   },
   useExportWallet: () => ({ exportWallet: mocks.exportWallet }),
   useSetWalletRecovery: () => ({ setWalletRecovery: mocks.setRecovery }),
@@ -114,6 +123,67 @@ describe('Privy wallet actions', () => {
     expect(mocks.connect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
     expect(mocks.connect).toHaveBeenCalledOnce()
+    expect(mocks.connect).toHaveBeenCalledWith({ loginMethods: ['email'] })
+  })
+
+  it.each([false, true])('stays disconnected after email dismissal and late wallet callbacks (previously disconnected: %s)', (disconnected) => {
+    if (disconnected) sessionStorage.setItem('plether.privy.test-privy-app.owner', 'disconnected')
+    const wallet = { address: ownerAddress, walletClientType: 'metamask', meta: { name: 'MetaMask' }, disconnect: vi.fn() }
+    mocks.wallets = disconnected ? [wallet] : []
+    const view = render(tree())
+    act(() => { actions.connect() })
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    act(() => { mocks.emailCallbacks?.onError('exited_auth_flow') })
+    mocks.wallets = [wallet]
+    view.rerender(tree())
+    act(() => {
+      mocks.callbacks?.onSuccess({ wallet })
+      mocks.emailCallbacks?.onComplete({ user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: ownerAddress }] }, loginMethod: 'email' })
+      mocks.onWalletCreated?.({ wallet: { address: ownerAddress, chainType: 'ethereum' } })
+    })
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBeUndefined()
+    expect(actions.signerReady).toBe(false)
+    expect(actions.error).toBeNull()
+    expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe('disconnected')
+  })
+
+  it('selects the authenticated email wallet after completion even when wallets arrive later', () => {
+    const view = render(tree())
+    act(() => { actions.connect() })
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    const user = { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: ownerAddress }] }
+    act(() => { mocks.callbacks?.onError('generic_connect_wallet_error') })
+    act(() => { mocks.emailCallbacks?.onComplete({ user, loginMethod: null }) })
+    expect(mocks.selector?.({ wallets: [] })).toBeUndefined()
+    act(() => { mocks.emailCallbacks?.onComplete({ user, loginMethod: 'email' }) })
+    expect(mocks.selector?.({ wallets: [] })).toBeUndefined()
+    mocks.wallets = [
+      { address: otherAddress, walletClientType: 'metamask', meta: { name: 'MetaMask' }, disconnect: vi.fn() },
+      { address: ownerAddress, walletClientType: 'privy', meta: { name: 'Privy' }, disconnect: vi.fn() },
+    ]
+    view.rerender(tree())
+    expect(mocks.selector?.({ wallets: mocks.wallets })?.address).toBe(ownerAddress)
+  })
+
+  it('waits for verified email login before accepting a newly created embedded wallet', () => {
+    const view = render(tree())
+    act(() => { actions.connect() })
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    act(() => { mocks.onWalletCreated?.({ wallet: { address: otherAddress, chainType: 'ethereum' } }) })
+    expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe('disconnected')
+    act(() => {
+      mocks.emailCallbacks?.onComplete({ user: { linkedAccounts: [] }, loginMethod: 'email' })
+      mocks.onWalletCreated?.({ wallet: { address: ownerAddress, chainType: 'ethereum' } })
+    })
+    mocks.wallets = [{ address: ownerAddress, walletClientType: 'privy', meta: { name: 'Privy' }, disconnect: vi.fn() }]
+    view.rerender(tree())
+    expect(mocks.selector?.({ wallets: mocks.wallets })?.address).toBe(ownerAddress)
   })
 
   it.each(['generic_connect_wallet_error', 'exited_auth_flow', 'exited_link_flow'])('keeps popup dismissal silent (%s)', (code) => {

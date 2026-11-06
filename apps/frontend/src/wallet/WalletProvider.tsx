@@ -2,8 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import {
   PrivyProvider,
   useActiveWallet,
-  useConnectOrCreateWallet,
   useConnectWallet,
+  useCreateWallet,
+  useLogin,
   useExportWallet,
   usePrivy,
   useSetWalletRecovery,
@@ -106,6 +107,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   const [signingGuard] = useState(() => createSigningGuard(selection))
   const [bridgeRevision, setBridgeRevision] = useState(0)
   const connectionIntent = useRef<number | undefined>(undefined)
+  const emailIntent = useRef<number | undefined>(undefined)
+  const emailVerified = useRef(false)
   const bridgeSelection = useMemo(() => ({ owner: selection, retry: bridgeRevision }), [selection, bridgeRevision])
   const [error, setError] = useState<string | null>(null)
   const ready = authReady && walletsReady
@@ -154,7 +157,34 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       || code === 'exited_auth_flow' || code === 'exited_link_flow'
     setError(dismissed ? null : 'Wallet connection could not be completed. Try again.')
   }
-  const { connectOrCreateWallet } = useConnectOrCreateWallet({ onSuccess: onWalletConnected, onError: onConnectionError })
+  const activateEmailWallet = (address: string) => {
+    if (!emailVerified.current || emailIntent.current !== signingGuard.revision) return
+    emailIntent.current = undefined
+    emailVerified.current = false
+    if (signingGuard.selection === null || signingGuard.selection === undefined) updateSelection(address)
+  }
+  const { login } = useLogin({
+    onComplete: ({ user, loginMethod }) => {
+      // Privy also emits login callbacks while restoring an existing session.
+      // Only a completed, explicitly requested email login can select a wallet.
+      if (emailIntent.current !== signingGuard.revision || loginMethod !== 'email') return
+      emailVerified.current = true
+      const wallet = user.linkedAccounts.filter(account => account.type === 'wallet')
+        .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
+        ?? (user.wallet?.chainType === 'ethereum' ? user.wallet : undefined)
+      if (wallet) activateEmailWallet(wallet.address)
+    },
+    onError: (code) => {
+      if (emailIntent.current === undefined) return
+      emailIntent.current = undefined
+      emailVerified.current = false
+      onConnectionError(code)
+    },
+  })
+  // Automatic embedded-wallet creation may finish after email authentication.
+  useCreateWallet({ onSuccess: ({ wallet }) => {
+    if (wallet.chainType === 'ethereum') activateEmailWallet(wallet.address)
+  } })
   const { connectWallet } = useConnectWallet({ onSuccess: onWalletConnected, onError: onConnectionError })
 
   const selectForWagmi = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
@@ -180,11 +210,18 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     connect: () => {
       if (!ready) return
       setError(null)
+      emailIntent.current = undefined
+      emailVerified.current = false
       connectionIntent.current = signingGuard.revision
       connectWallet({
         description: authenticated ? '' : <EmailLoginOption onClick={() => {
-          connectionIntent.current = signingGuard.revision
-          connectOrCreateWallet()
+          connectionIntent.current = undefined
+          // Prevent a wallet appearing during login/cancellation from being
+          // automatically restored by the bridge, including after a reload.
+          if (signingGuard.selection === undefined) updateSelection(null)
+          emailIntent.current = signingGuard.revision
+          emailVerified.current = false
+          login({ loginMethods: ['email'] })
         }} />,
       })
     },
@@ -209,6 +246,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       if (!ready) return
       setError(null)
       connectionIntent.current = undefined
+      emailIntent.current = undefined
+      emailVerified.current = false
       // Clear the active signer even when an injected wallet cannot revoke
       // its site permission programmatically. Persist that choice on reload.
       updateSelection(null)
