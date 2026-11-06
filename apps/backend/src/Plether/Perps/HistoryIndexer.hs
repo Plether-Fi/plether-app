@@ -1152,7 +1152,7 @@ enrichSettlementReceipts manager pool cfg reqIdRef = do
     \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
     \AND o.receipt_economics IS NOT NULL \
     \AND (o.settlement_evidence_last_attempt_at IS NULL OR o.settlement_evidence_last_attempt_at < NOW() - INTERVAL '5 minutes') \
-    \AND (o.receipt_economics->>'commitmentCarryAssets' IS NULL OR (COALESCE(o.settlement_evidence_version, 0) < 2 \
+    \AND (o.receipt_economics->>'commitmentCarryAssets' IS NULL OR (COALESCE(o.settlement_evidence_version, 0) < 1 \
     \AND EXISTS (SELECT 1 FROM insights_competitions c WHERE c.chain_id = o.chain_id AND c.release_router = o.order_router \
     \AND NOT c.finalized AND o.terminal_timestamp >= c.start_timestamp AND o.terminal_timestamp < c.score_cutoff_timestamp))) \
     \ORDER BY o.terminal_block_number DESC, o.terminal_tx_hash LIMIT 20"
@@ -1204,7 +1204,7 @@ enrichSettlementReceipts manager pool cfg reqIdRef = do
           insertPerpsEvent conn chain router (rlAddress entry) kind txHash blockNumber blockHash
             (rlTxIndex entry) (rlLogIndex entry) timestamp (Just account) (Just oid) Nothing payload
         _ <- execute conn
-          "UPDATE perps_orders SET settlement_evidence_version = 2 WHERE chain_id = ? AND order_router = ? AND terminal_tx_hash = ? AND terminal_block_number = ?"
+          "UPDATE perps_orders SET settlement_evidence_version = 1 WHERE chain_id = ? AND order_router = ? AND terminal_tx_hash = ? AND terminal_block_number = ?"
           (chain, router, txHash, blockNumber)
         pure ()
     case result of
