@@ -142,14 +142,18 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     if (accountOpen && nativeWallet?.type === 'ethereum') chooseWallet(nativeWallet.address)
   }, [accountOpen, nativeWallet, chooseWallet])
 
+  const selectConnectedOwner = (address: string) => {
+    const owner = signingGuard.selection
+    // Preserve an available owner when connecting an additional wallet. A
+    // successful explicit connection can replace an owner no longer available.
+    if (typeof owner !== 'string' || !wallets.some(wallet => wallet.address.toLowerCase() === owner)) {
+      updateSelection(address)
+    }
+  }
   const onWalletConnected = ({ wallet }: { wallet: { address: string } }) => {
     if (connectionIntent.current !== signingGuard.revision) return
     connectionIntent.current = undefined
-    // Connecting an additional wallet never changes an existing owner. The
-    // account panel is the only place to switch an established selection.
-    if (signingGuard.selection === null || signingGuard.selection === undefined) {
-      updateSelection(wallet.address)
-    }
+    selectConnectedOwner(wallet.address)
   }
   const onConnectionError = (code: string) => {
     connectionIntent.current = undefined
@@ -163,7 +167,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     if (!emailVerified.current || emailIntent.current !== signingGuard.revision) return
     emailIntent.current = undefined
     emailVerified.current = false
-    if (signingGuard.selection === null || signingGuard.selection === undefined) updateSelection(address)
+    selectConnectedOwner(address)
   }
   const { login } = useLogin({
     onComplete: ({ user, loginMethod }) => {

@@ -50,11 +50,17 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     saveSelectedWallet(storageKey, address)
     setError(null)
   }, [storageKey])
+  const selectConnectedOwner = useCallback((address: string) => {
+    const owner = selectedAddress === null ? null : selectedAddress ?? initialOwner.current
+    if (!owner || !wallets.some(wallet => wallet.address.toLowerCase() === owner.toLowerCase())) {
+      selectWallet(address)
+    }
+  }, [selectedAddress, selectWallet, wallets])
   const onConnected = useCallback(({ wallet }: { wallet: { address: string } }) => {
     if (!connectionIntent.current || emailIntent.current) return
     connectionIntent.current = false
-    if (!selectedAddress && !initialOwner.current) selectWallet(wallet.address)
-  }, [selectedAddress, selectWallet])
+    selectConnectedOwner(wallet.address)
+  }, [selectConnectedOwner])
   const onConnectError = useCallback((code: string) => {
     connectionIntent.current = false
     // Closing Privy's wallet picker uses the same generic code as failures
@@ -67,7 +73,7 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     if (!emailIntent.current || !emailVerified.current) return
     emailIntent.current = false
     emailVerified.current = false
-    if (!selectedAddress && !initialOwner.current) selectWallet(address)
+    selectConnectedOwner(address)
   }
   const { login } = useLogin({
     onComplete: ({ user, loginMethod }) => {

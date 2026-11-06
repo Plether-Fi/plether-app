@@ -246,6 +246,38 @@ describe('Insights Privy wallet provider', () => {
     expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(other.address)
   })
 
+  it.each(['stored', 'remembered'])('replaces an unavailable %s owner after an explicit connection succeeds', origin => {
+    if (origin === 'stored') window.sessionStorage.setItem('plether:privy:insights:owner:test-privy-app', owner.address)
+    else mocks.wallets = [owner]
+    const view = render(<Provider />)
+    if (origin === 'remembered') expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    mocks.wallets = []
+    view.rerender(<Provider />)
+    expect(mocks.selector?.({ wallets: [] })).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    act(() => { mocks.onExternalSuccess?.({ wallet: other }) })
+    mocks.wallets = [other]
+    view.rerender(<Provider />)
+    expect(mocks.selector?.({ wallets: [other] })).toBe(other)
+    expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(other.address)
+  })
+
+  it('replaces an unavailable saved owner after verified email login', () => {
+    window.sessionStorage.setItem('plether:privy:insights:owner:test-privy-app', other.address)
+    const view = render(<Provider />)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+    render(<>{options.description}</>)
+    fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    act(() => { mocks.emailCallbacks?.onComplete({ user: { linkedAccounts: [
+      { type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: owner.address },
+    ] }, loginMethod: 'email' }) })
+    mocks.wallets = [owner]
+    view.rerender(<Provider />)
+    expect(mocks.selector?.({ wallets: [owner] })).toBe(owner)
+    expect(window.sessionStorage.getItem('plether:privy:insights:owner:test-privy-app')).toBe(owner.address)
+  })
+
   it('does not switch an established owner after connecting another wallet', () => {
     mocks.wallets = [owner]
     const view = render(<Provider />)

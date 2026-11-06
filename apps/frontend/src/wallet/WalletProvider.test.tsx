@@ -140,6 +140,57 @@ describe('Privy wallet actions', () => {
     expect(actions.modalOpen).toBe(false)
   })
 
+  it.each(['external', 'email'])('replaces an unavailable saved owner after a successful %s connection', flow => {
+    sessionStorage.setItem('plether.privy.test-privy-app.owner', otherAddress)
+    const view = render(tree())
+    act(() => { actions.connect() })
+    if (flow === 'email') {
+      const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
+      render(<>{options.description}</>)
+      fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+      act(() => { mocks.emailCallbacks?.onComplete({ user: { linkedAccounts: [
+        { type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: ownerAddress },
+      ] }, loginMethod: 'email' }) })
+    } else {
+      act(() => { mocks.callbacks?.onSuccess({ wallet: { address: ownerAddress } }) })
+    }
+    expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe(ownerAddress)
+    expect(mocks.selector?.({ wallets: [] })).toBeUndefined()
+    expect(actions.signerReady).toBe(false)
+    mocks.wallets = [{ address: ownerAddress, walletClientType: flow === 'email' ? 'privy' : 'metamask', meta: { name: 'Wallet' }, disconnect: vi.fn() }]
+    mocks.activeAddress = ownerAddress
+    view.rerender(tree())
+    expect(mocks.selector?.({ wallets: mocks.wallets })?.address).toBe(ownerAddress)
+    expect(actions.signerReady).toBe(true)
+  })
+
+  it('keeps an unavailable saved owner until an explicit connection succeeds', () => {
+    sessionStorage.setItem('plether.privy.test-privy-app.owner', otherAddress)
+    mocks.wallets = [{ address: ownerAddress, walletClientType: 'metamask', meta: { name: 'MetaMask' }, disconnect: vi.fn() }]
+    render(tree())
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBeUndefined()
+    act(() => {
+      actions.connect()
+      mocks.callbacks?.onError('generic_connect_wallet_error')
+      mocks.callbacks?.onSuccess({ wallet: { address: ownerAddress } })
+    })
+    expect(mocks.selector?.({ wallets: mocks.wallets })).toBeUndefined()
+    expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe(otherAddress)
+  })
+
+  it('preserves an available selected owner after explicitly connecting an additional wallet', () => {
+    const owner = { address: ownerAddress, walletClientType: 'metamask', meta: { name: 'MetaMask' }, disconnect: vi.fn() }
+    mocks.wallets = [owner]
+    sessionStorage.setItem('plether.privy.test-privy-app.owner', ownerAddress)
+    const view = render(tree())
+    act(() => { actions.connect() })
+    mocks.wallets = [owner, { ...owner, address: otherAddress }]
+    view.rerender(tree())
+    act(() => { mocks.callbacks?.onSuccess({ wallet: { address: otherAddress } }) })
+    expect(mocks.selector?.({ wallets: mocks.wallets })?.address).toBe(ownerAddress)
+    expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe(ownerAddress)
+  })
+
   it.each([false, true])('stays disconnected after email dismissal and late wallet callbacks (previously disconnected: %s)', (disconnected) => {
     if (disconnected) sessionStorage.setItem('plether.privy.test-privy-app.owner', 'disconnected')
     const wallet = { address: ownerAddress, walletClientType: 'metamask', meta: { name: 'MetaMask' }, disconnect: vi.fn() }
