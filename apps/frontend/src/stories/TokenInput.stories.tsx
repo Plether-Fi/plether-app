@@ -83,6 +83,17 @@ export const WithError: Story = {
   render: (args) => <TokenInputWithState {...args} />,
 }
 
+export const WithAmountShortcuts: Story = {
+  args: {
+    label: 'Amount to deposit',
+    token: { symbol: 'USDG', decimals: 6 },
+    balance: 25_000_000_000n,
+    balanceLabel: 'Wallet balance:',
+    showAmountShortcuts: true,
+  },
+  render: (args) => <TokenInputWithState {...args} />,
+}
+
 export const Disabled: Story = {
   args: {
     label: 'Amount',

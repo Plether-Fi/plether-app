@@ -95,6 +95,7 @@ import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
 import { EMPTY_PROTECTION_DRAFT, protectionParamsFromInputs, validateProtectionParams, type PositionProtectionParams } from '../contracts/positionProtection'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { PRESET_BUTTON_CLASS, PRESET_BUTTON_SELECTED_CLASS, PRESET_BUTTON_UNSELECTED_CLASS } from './ui/presetButtonStyles'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -4298,7 +4299,7 @@ export function PerpsTradeTicket({
                 type="button"
                 title={`Use ${percentage.toString()}% of maximum order quantity`}
                 disabled={!canUseMaxOrderQuantity || sizeDelta <= 0n}
-                className={`min-w-12 border border-brand-border/30 bg-transparent px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${sizeDelta > 0n && (canUseMaxOrderQuantity || isMaxOpenRefreshing) ? 'cursor-pointer hover:border-brand-border/60 hover:bg-[#3B212D] hover:text-content-primary' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
+                className={`${PRESET_BUTTON_CLASS} border-brand-border/30 bg-transparent ${sizeDelta > 0n && (canUseMaxOrderQuantity || isMaxOpenRefreshing) ? `cursor-pointer ${PRESET_BUTTON_UNSELECTED_CLASS}` : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
                 onClick={() => { fillOrderQuantity(percentage, sizeDelta) }}
               >
                 {percentage}%
@@ -4308,7 +4309,7 @@ export function PerpsTradeTicket({
               type="button"
               title="Use the maximum order quantity"
               aria-pressed={isMaxOrderQuantitySelected}
-              className={`min-w-12 cursor-pointer border px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${isMaxOrderQuantitySelected ? 'border-brand-orange/60 bg-brand-orange/10 text-content-primary hover:bg-brand-orange/20' : 'border-brand-border/30 bg-transparent hover:border-brand-border/60 hover:bg-[#3B212D] hover:text-content-primary'} ${isMaxOpenRefreshing ? '' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
+              className={`${PRESET_BUTTON_CLASS} cursor-pointer ${isMaxOrderQuantitySelected ? PRESET_BUTTON_SELECTED_CLASS : PRESET_BUTTON_UNSELECTED_CLASS} ${isMaxOpenRefreshing ? '' : 'disabled:cursor-not-allowed disabled:opacity-50'}`}
               disabled={!canUseMaxOrderQuantity}
               onClick={() => { fillOrderQuantity(100, maxOrderSizeRaw) }}
             >
@@ -4516,16 +4517,17 @@ export function PerpsTradeTicket({
                   }}
               slippageConfig={
                 isSlippageConfigOpen && !isOracleFrozenClose ? (
-                  <div className="mt-3 py-3">
-                    <div className="grid grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))] gap-2">
+                  <div className="mt-2">
+                    <div role="group" aria-label="Max slippage presets" className="flex gap-1.5 whitespace-nowrap text-xs font-medium text-content-secondary">
                       {slippageOptions.map((option) => (
                         <button
                           key={option.toString()}
                           type="button"
-                          className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
+                          aria-pressed={slippage === option}
+                          className={`${PRESET_BUTTON_CLASS} !min-w-min !px-0 flex-1 cursor-pointer ${
                             slippage === option
-                              ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
-                              : 'border-brand-border/30 text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
+                              ? PRESET_BUTTON_SELECTED_CLASS
+                              : PRESET_BUTTON_UNSELECTED_CLASS
                           }`}
                           onClick={() => {
                             trackPerpsButtonClicked('select_slippage_preset', commonAnalyticsProperties)
