@@ -15,6 +15,32 @@ spec = describe "owner-scoped preparation recovery protocol" $ do
       identifier = "0x" <> T.replicate 64 "3"
       scope = Scope 421614 paymaster sender identifier
       locator chain = object ["version" .= (1::Int), "chainId" .= (chain::T.Text), "sender" .= sender, "preparationId" .= identifier]
+  it "requires an explicit Sepolia loopback origin while keeping the hosted origin" $ do
+    let hosted = Just "https://app.sepolia.plether.com"
+        local = "http://127.0.0.1:5192"
+    parseRecoveryOrigins 421614 hosted "" `shouldBe` Right ["https://app.sepolia.plether.com"]
+    parseRecoveryOrigins 421614 hosted local `shouldBe` Right ["https://app.sepolia.plether.com", local]
+    parseRecoveryOrigins 1 hosted local `shouldSatisfy` isLeft
+    parseRecoveryOrigins 42161 hosted local `shouldSatisfy` isLeft
+    parseRecoveryOrigins 421614 Nothing local `shouldSatisfy` isLeft
+    parseRecoveryOrigins 421614 Nothing "" `shouldBe` Right []
+    parseRecoveryOrigins 421614 (Just local) "" `shouldSatisfy` isLeft
+  it "accepts distinct exact local origins and rejects wildcard, path and authority tricks" $ do
+    let hosted = Just "https://app.sepolia.plether.com"
+    parseRecoveryOrigins 421614 hosted "http://localhost:5192,http://[::1]:5192"
+      `shouldBe` Right ["https://app.sepolia.plether.com", "http://localhost:5192", "http://[::1]:5192"]
+    mapM_ (\origin -> parseRecoveryOrigins 421614 hosted origin `shouldSatisfy` isLeft)
+      [ "http://127.0.0.1.evil.example:5192", "http://0.0.0.0:5192", "http://example.com"
+      , "http://127.0.0.1:5192/", "http://127.0.0.1:5192/path", "http://127.0.0.1:5192?x=1"
+      , "http://127.0.0.1:5192#fragment", "http://owner@127.0.0.1:5192", "http://*.localhost:5192"
+      , "http://127.0.0.1:0", "http://127.0.0.1:65536", "http://127.0.0.1:05192"
+      , "http://127.0.0.1:5192,http://127.0.0.1:5192", "http://127.0.0.1:5192,"
+      , "https://app.sepolia.plether.com", "https://example.com/path" ]
+  it "binds a local recovery signature to its exact configured origin and port" $ do
+    let message = renderChallenge "http://127.0.0.1:5192" scope sender "nonce" 123
+    message `shouldSatisfy` T.isInfixOf "Origin: http://127.0.0.1:5192"
+    message `shouldNotBe` renderChallenge "https://app.sepolia.plether.com" scope sender "nonce" 123
+    message `shouldNotBe` renderChallenge "http://127.0.0.1:5173" scope sender "nonce" 123
   it "parses only the versioned Sepolia locator" $ do
     fmap fst (parseRecoveryRequest paymaster [] [locator "0x66eee"]) `shouldBe` Right scope
     parseRecoveryRequest paymaster [] [locator "0x1"] `shouldSatisfy` isLeft

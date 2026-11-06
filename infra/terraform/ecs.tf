@@ -268,6 +268,7 @@ locals {
     { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },
     { name = "AA_NATIVE_PREPARATION_ENABLED", value = tostring(var.enable_native_aa_preparation) },
     { name = "PERPS_AA_RECOVERY_ORIGIN", value = var.aa_preparation_recovery_origin },
+    { name = "PERPS_AA_RECOVERY_EXTRA_ORIGINS", value = join(",", var.aa_preparation_recovery_extra_origins) },
     { name = "PERPS_AA_RECOVERY_RETIREMENT_ENABLED", value = tostring(var.aa_preparation_retirement_enabled) },
     { name = "AA_READINESS_ENFORCEMENT_ENABLED", value = tostring(var.enable_aa_readiness_enforcement) },
     { name = "AA_FUNDING_COMPONENTS", value = join(",", local.aa_funding_components) },

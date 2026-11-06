@@ -156,7 +156,7 @@ data NativeGatewayState = NativeGatewayState
   , ngsReadiness :: MVar (Maybe (IO Value))
   , ngsDiagnostics :: MVar (Maybe Diagnostics.DiagnosticSink)
   , ngsAttemptId :: Maybe Text
-  , ngsRecoveryOrigin :: Maybe Text
+  , ngsRecoveryOrigins :: [Text]
   , ngsRetirementEnabled :: Bool
   , ngsPreparationFence :: Maybe RecoveryDb.Fence
   , ngsCloseAssistance :: Maybe CloseAssistanceConfig
@@ -208,13 +208,12 @@ newDeployedNativeGatewayState manager cfg client = do
           pure $ Just $ CloseAssistanceConfig (T.toLower address) (T.toLower hash) (global == Just "true") (enabled == Just "true")
     _ -> fail "Enabled close assistance requires a lens, runtime hash, and independently verified native AA"
   origin <- fmap (\value -> if null value then Nothing else Just $ T.pack value) <$> lookupEnv "PERPS_AA_RECOVERY_ORIGIN"
-  let recoveryOrigin = maybe Nothing id origin
+  extraOrigins <- maybe "" T.pack <$> lookupEnv "PERPS_AA_RECOVERY_EXTRA_ORIGINS"
+  recoveryOrigins <- either (fail . T.unpack) pure $ Recovery.parseRecoveryOrigins (cfgPerpsChainId cfg) (maybe Nothing id origin) extraOrigins
   retirement <- lookupEnv "PERPS_AA_RECOVERY_RETIREMENT_ENABLED"
   unless (retirement `elem` [Nothing, Just "false", Just "true"]) $ fail "Invalid recovery retirement flag"
-  unless (maybe True (\value -> "https://" `T.isPrefixOf` value && not (T.null $ T.drop 8 value)
-    && T.all (`elem` (['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> ".-:")) (T.drop 8 value)) recoveryOrigin) $ fail "Recovery origin must be an exact HTTPS origin"
-  when (retirement == Just "true" && recoveryOrigin == Nothing) $ fail "Retirement requires recovery origin"
-  pure base { ngsCloseAssistance = assistance, ngsRecoveryOrigin = recoveryOrigin, ngsRetirementEnabled = retirement == Just "true" }
+  when (retirement == Just "true" && null recoveryOrigins) $ fail "Retirement requires recovery origin"
+  pure base { ngsCloseAssistance = assistance, ngsRecoveryOrigins = recoveryOrigins, ngsRetirementEnabled = retirement == Just "true" }
 
 newNativeGatewayBaseState :: Manager -> Config -> EthClient -> IO NativeGatewayState
 newNativeGatewayBaseState manager cfg client = do
@@ -223,7 +222,7 @@ newNativeGatewayBaseState manager cfg client = do
   snapshots <- newMVar []
   readiness <- newMVar Nothing
   diagnostics <- newMVar Nothing
-  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing Nothing False Nothing Nothing
+  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing [] False Nothing Nothing
       warm state nativeCfg = do
         when (naaPreparationEnabled nativeCfg && naaSponsorshipEnabled nativeCfg && ngsIssuanceError state == Nothing) $
           void $ forkIO $ forever $ do
@@ -2361,9 +2360,9 @@ preparationRecoveryClient cfg pool scope current = do
 handlePreparationRecovery
   :: NativeGatewayState -> Config -> NativeAaConfig -> DbPool -> EthClient
   -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
-handlePreparationRecovery state cfg native pool client manager clientKey request = case ngsRecoveryOrigin state of
-  Nothing -> Legacy.respondFailure requestId $ Legacy.unavailable "RECOVERY_DISABLED" "Wallet recovery is not enabled on this deployment"
-  Just origin -> case Recovery.parseRecoveryRequest (naaPaymasterAddress native) extra (Legacy.rrParams request) of
+handlePreparationRecovery state cfg native pool client manager clientKey request = case ngsRecoveryOrigins state of
+  [] -> Legacy.respondFailure requestId $ Legacy.unavailable "RECOVERY_DISABLED" "Wallet recovery is not enabled on this deployment"
+  origins -> case Recovery.parseRecoveryRequest (naaPaymasterAddress native) extra (Legacy.rrParams request) of
     Left failure -> Legacy.respondFailure requestId failure
     Right (scope,fields) -> do
       rate <- liftDb $ withDb pool $ \conn -> consumeAaRateLimit conn "preparation-recovery" clientKey
@@ -2373,15 +2372,18 @@ handlePreparationRecovery state cfg native pool client manager clientKey request
         Right False -> Legacy.respondFailure requestId Legacy.rateLimited
         Right True -> case method of
           Legacy.GetRecoveryChallenge -> case (Recovery.requiredText "owner" 42 fields, Recovery.requiredText "origin" 256 fields) of
-            (Right owner,Right requestedOrigin) | isFixedHex 20 owner && owner == T.toLower owner && requestedOrigin == origin -> do
+            (Right owner,Right requestedOrigin) | isFixedHex 20 owner && owner == T.toLower owner && requestedOrigin `elem` origins -> do
               nonce <- liftIO Recovery.randomToken
               now <- liftEpochSeconds
               let expires = now+300
-                  message = Recovery.renderChallenge origin scope owner nonce expires
+                  message = Recovery.renderChallenge requestedOrigin scope owner nonce expires
               saved <- liftDb $ withDb pool $ \conn -> RecoveryDb.saveChallengeAt conn scope nonce owner message expires
               case saved of
                 Left _ -> Legacy.respondFailure requestId databaseUnavailable
                 Right () -> respondSuccess requestId $ object ["version" .= (1::Int),"challengeId" .= nonce,"message" .= message,"expiresAt" .= expires]
+            (Right owner, Right _) | isFixedHex 20 owner && owner == T.toLower owner ->
+              Legacy.respondFailure requestId $ Legacy.ProxyFailure status403 (-32001)
+                "Recovery is not enabled for this application origin" "RECOVERY_ORIGIN_NOT_ALLOWED" False
             _ -> Legacy.respondFailure requestId $ Legacy.invalidParams "Invalid recovery owner or origin"
           Legacy.VerifyRecoveryChallenge -> case (Recovery.requiredText "challengeId" 64 fields, Recovery.requiredText "signature" 132 fields) of
             (Right challenge,Right signature) -> do
