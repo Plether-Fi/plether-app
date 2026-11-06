@@ -4908,6 +4908,7 @@ function VaultActionPanel({
             balance={isConnected ? maxAmount : undefined}
             balanceLabel={mode === 'deposit' ? 'Wallet balance:' : 'Estimated position value:'}
             label={mode === 'deposit' ? 'Amount to deposit' : 'Amount to withdraw'}
+            showAmountShortcuts
             error={inputError}
           />
 

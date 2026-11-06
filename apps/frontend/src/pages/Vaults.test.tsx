@@ -1109,6 +1109,26 @@ describe('Vaults page', () => {
     expect(within(section).getByText('11.20%')).toBeInTheDocument()
   })
 
+  it('sizes deposits from the wallet balance and withdrawals from the position value', () => {
+    mocks.account.address = '0x1111111111111111111111111111111111111111'
+    mocks.account.isConnected = true
+    mocks.readContractsData = liveReadFixture({ walletAssets: 1_000, seniorUserShares: 250 })
+
+    renderVaults('/vaults/senior')
+    const deposits = within(screen.getByRole('group', { name: 'Amount to deposit shortcuts' }))
+    fireEvent.click(deposits.getByRole('button', { name: '25%', exact: true }))
+    expect(screen.getByLabelText('Amount to deposit')).toHaveValue('250')
+    fireEvent.click(deposits.getByRole('button', { name: 'Max', exact: true }))
+    expect(screen.getByLabelText('Amount to deposit')).toHaveValue('1000')
+
+    fireEvent.click(screen.getByRole('button', { name: 'withdraw', exact: true }))
+    const withdrawals = within(screen.getByRole('group', { name: 'Amount to withdraw shortcuts' }))
+    fireEvent.click(withdrawals.getByRole('button', { name: '50%', exact: true }))
+    expect(screen.getByLabelText('Amount to withdraw')).toHaveValue('250')
+    fireEvent.click(withdrawals.getByRole('button', { name: 'Max', exact: true }))
+    expect(screen.getByLabelText('Amount to withdraw')).toHaveValue('500')
+  })
+
   it('surfaces a settlement hold without disabling new requests or existing request actions', () => {
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
