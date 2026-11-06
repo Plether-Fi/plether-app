@@ -26,11 +26,10 @@ describe('USDG perps display', () => {
 
   it('uses the configured label in sponsored cost and carry explanations', () => {
     render(<PerpsReviewFooter preparing={false} refreshing={false} slow={false} changes={[]}
-      canConfirm direction="long" sponsoredCloseAssets="0.20" depositCarryAssets="0.10" commitmentCarryAssets="0.05"
+      canConfirm direction="long" sponsoredCloseAssets="0.20" depositCarryAssets="0.10"
       onConfirm={vi.fn()} onCancel={vi.fn()} />)
     expect(screen.getByText(/Plether covers/)).toHaveTextContent('0.20 USDG')
     expect(screen.getByText(/Carry collected with assistance/)).toHaveTextContent('0.10 USDG')
-    expect(screen.getByText(/Carry collected when/)).toHaveTextContent('0.05 USDG')
   })
 
   it.each(['idle', 'deposited'] as const)('keeps a completed backend allocation from minting again in %s phase', (fundingPhase) => {

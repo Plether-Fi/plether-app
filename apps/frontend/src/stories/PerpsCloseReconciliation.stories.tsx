@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsCloseReconciliationDisclosure } from '../components/PerpsCloseReconciliationDetails'
 import { derivePerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { closeOrder14Receipt } from '../utils/__fixtures__/closeOrder14'
+import { closeOrder180Receipt } from '../utils/__fixtures__/closeOrder180'
 import { closeSettlementAdjustmentReceipt } from '../utils/__fixtures__/closeSettlementAdjustment'
 
 const meta = {
@@ -38,4 +39,8 @@ export const PartialClose: Story = {
       preExecutionPositionMarginAssets: 4_500_000_000n,
     })!,
   },
+}
+
+export const CommitmentCarry: Story = {
+  args: { reconciliation: derivePerpsCloseReconciliation(closeOrder180Receipt)! },
 }

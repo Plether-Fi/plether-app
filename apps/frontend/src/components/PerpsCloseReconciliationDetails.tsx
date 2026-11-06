@@ -13,6 +13,7 @@ interface ReconciliationRowProps {
   signed?: boolean
   tone?: AmountTone
   emphasized?: boolean
+  maxDecimals?: number
 }
 
 function amountToneClass(tone: AmountTone): string {
@@ -35,6 +36,7 @@ function ReconciliationRow({
   signed = true,
   tone = amount === undefined ? 'muted' : signed ? signedTone(amount) : 'default',
   emphasized = false,
+  maxDecimals = 2,
 }: ReconciliationRowProps) {
   return (
     <div className={`flex min-h-7 items-start justify-between gap-4 py-1.5 ${
@@ -49,7 +51,7 @@ function ReconciliationRow({
         ) : null}
       </dt>
       <dd className={`shrink-0 text-right ${emphasized ? 'font-semibold' : ''} ${amountToneClass(tone)}`}>
-        {amount === undefined ? 'Unavailable' : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={signed ? formatSignedPerpsAssets(amount) : formatPerpsAssets(amount)} />}
+        {amount === undefined ? 'Unavailable' : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={signed ? formatSignedPerpsAssets(amount, maxDecimals) : formatPerpsAssets(amount, maxDecimals)} />}
       </dd>
     </div>
   )
@@ -92,7 +94,7 @@ function CloseAccountingDetails({
         <dl className="text-sm">
           <ReconciliationRow label="Realized PnL" amount={reconciliation.realizedPnlAssets}
             description="Price-only profit or loss on the quantity closed in this transaction, before carry, fees, VPI, and settlement adjustments." />
-          <ReconciliationRow label="Carry" amount={-reconciliation.carryAssets} />
+          <ReconciliationRow label={reconciliation.commitmentCarryAssets > 0n ? 'Carry at execution' : 'Carry'} amount={-reconciliation.carryAssets} maxDecimals={6} />
           <ReconciliationRow label="Protocol execution fee" amount={-reconciliation.executionFeeAssets} />
           <ReconciliationRow label="Execution reward" amount={-reconciliation.executionBountyAssets} />
           <ReconciliationRow
@@ -117,6 +119,12 @@ function CloseAccountingDetails({
           ) : null}
           <ReconciliationRow label="Net result of this close" amount={reconciliation.actualAccountChangeAssets} emphasized />
         </dl>
+        {reconciliation.commitmentCarryAssets > 0n ? (
+          <p className="mt-3 text-xs leading-5 text-content-secondary">
+            Carry paid at commitment: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(reconciliation.commitmentCarryAssets, 6)} />.
+            {' '}Paid before execution; included under “Other account changes” when lifetime history is available.
+          </p>
+        ) : null}
         {reconciliation.frozenSpreadAssessedAssets > 0n && reconciliation.vpiAssets < 0n ? (
           <p className="mt-3 text-xs leading-5 text-content-secondary">
             The VPI rebate is shown separately and offsets the charges above. Charges withheld from profit are not waived.

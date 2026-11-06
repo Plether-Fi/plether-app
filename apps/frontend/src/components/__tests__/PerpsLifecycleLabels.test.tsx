@@ -67,6 +67,14 @@ import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../co
 import type { PerpsExecutionAssessment, PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
+import { SponsorRequestError } from '../../perps-aa/errors'
+import { usePerpsUiStore } from '../../stores/perpsUiStore'
+
+const confirmationMocks = vi.hoisted(() => ({ status: 'idle' }))
+vi.mock('../../perps-aa/useAccountDeploymentConfirmation', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../perps-aa/useAccountDeploymentConfirmation')>(),
+  useAccountDeploymentConfirmation: () => confirmationMocks.status,
+}))
 
 const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
 
@@ -185,6 +193,7 @@ vi.mock('../../hooks', () => ({
 
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
+    confirmationMocks.status = 'idle'
     maxQuoteMocks.value = {
       quote: { maxSizeDelta: 400n * 10n ** 18n, preview: { valid: true } },
       marginDelta: 99_800_000n,
@@ -335,6 +344,60 @@ describe('perps lifecycle labels', () => {
       })
     }
   )
+
+  it.each([false, true])('waits without failing or retrying automatically (saved attempt: %s)', async (savedAttempt) => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    perpsTradingMocks.commitOrder.mockImplementationOnce(async () => {
+      confirmationMocks.status = 'waiting'
+      if (savedAttempt) {
+        const store = useSponsoredOperationStore.getState()
+        store.beginOperation({ id: 'account-confirmation', ownerAddress: V2_ACCOUNT,
+          accountAddress: V2_ACCOUNT, chainId: 421614, accountMode: 'simple',
+          manifestVersion: 'perps-aa-arbitrum-sepolia-v2', action: 'place-order' })
+        store.failOperation({ id: 'account-confirmation', status: 'preparation-pending',
+          reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true })
+      }
+      throw new Error('Account awaiting confirmation', { cause: new SponsorRequestError({
+        reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true, message: 'pending',
+      }) })
+    })
+    const props = {
+      enableLiveTrading: true, initialReviewOpen: true, initialOrderQuantity: '100',
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: Math.floor(Date.now() / 1_000),
+      availableToTradeRaw: 1_000_000_000n,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await screen.findByText('Waiting for Trading Account confirmation')
+    expect(screen.queryByText('Commit transaction failed')).not.toBeInTheDocument()
+    if (!savedAttempt) expect(screen.getByRole('button', { name: 'Review again' })).toBeDisabled()
+
+    confirmationMocks.status = 'check-unavailable'
+    view.rerender(<PerpsTradeTicket {...props} />)
+    expect(await screen.findByText(/We cannot check network confirmation right now/, {}, { timeout: 3_000 })).toBeInTheDocument()
+    if (!savedAttempt) expect(screen.getByRole('button', { name: 'Review again' })).toBeDisabled()
+
+    confirmationMocks.status = 'ready'
+    view.rerender(<PerpsTradeTicket {...props} />)
+    expect(screen.getByText('Trading Account confirmed')).toBeInTheDocument()
+    if (savedAttempt) {
+      expect(screen.queryByRole('button', { name: 'Review again' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'View account activity' }))
+      expect(usePerpsUiStore.getState().activityRequest?.operationId).toBe('account-confirmation')
+      expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+      expect(useSponsoredOperationStore.getState().getActiveOperation(V2_ACCOUNT)?.id).toBe('account-confirmation')
+      return
+    }
+    expect(screen.getByRole('button', { name: 'Review again' })).toBeEnabled()
+    expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Review again' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(2)
+  })
 
   it('allows confirmation after the provisional review deadline passes', async () => {
     mockIsConnected = true
@@ -1689,6 +1752,7 @@ describe('perps lifecycle labels', () => {
       expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
       expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginAssets: 0n }))
       expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25USDG')
+      expect(within(dialog).queryByText(/Carry collected when the order is committed/)).not.toBeInTheDocument()
       expect(within(dialog).getByText('USDG after execution').closest('div')).toHaveTextContent('12.3USDG')
       expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDG')
     }
@@ -1737,6 +1801,32 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
     expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
     expect(perpsTradingMocks.addPositionMargin).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { action: 'withdraw', label: 'Withdraw', raw: 200_056_366_789n, input: '200056.366789' },
+    { action: 'deposit', label: 'Deposit', raw: 200_056_366_789n, input: '200056.366789' },
+    { action: 'withdraw', label: 'Withdraw', raw: 1n, input: '0.000001' },
+    { action: 'deposit', label: 'Deposit', raw: 1n, input: '0.000001' },
+  ])('uses the exact $input USDG balance for $action Max', async ({ action, label, raw, input }) => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    render(
+      <PerpsTradeTicket enableLiveTrading withdrawableAssetsRaw={raw}
+        ownerWalletAssetsRaw={0n} tradingAccountAssetsRaw={raw} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /Max:/ }))
+    expect(within(dialog).getByRole('textbox', { name: 'Amount' })).toHaveValue(input)
+    expect(within(dialog).queryByText(/Amount exceeds/)).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: label })).toBeEnabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: label }))
+    await waitFor(() => {
+      if (action === 'withdraw') expect(perpsTradingMocks.withdrawMargin).toHaveBeenCalledWith(raw)
+      else expect(perpsTradingMocks.depositMargin).toHaveBeenCalledWith(raw, undefined, 'account')
+    })
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
   })
 
   it('combines owner and Trading Account USDG in the supported deposit flow', () => {

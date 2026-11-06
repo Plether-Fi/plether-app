@@ -8,8 +8,10 @@ import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { formatUnits, zeroAddress } from 'viem'
 import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
+import { findSponsorRequestError } from '../perps-aa/errors'
 import { useWalletActions } from '../wallet/useWalletActions'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
+import { PERPS_DECIMALS } from '../contracts/perpsConstants'
 import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   executionModeOracleFrozen,
@@ -100,6 +102,7 @@ type Direction = PerpsDirection
 export type TradeLifecycleState =
   | 'preview'
   | 'commitPreparing'
+  | 'accountConfirmation'
   | 'commitPending'
   | 'commitConfirmed'
   | 'revealPending'
@@ -1212,7 +1215,7 @@ function PreviewRows({
 
 function lifecycleStep(state: TradeLifecycleState): OrderLifecycleStep {
   if (state === 'preview') return 'preview'
-  if (state === 'commitPreparing' || state === 'commitPending' || state === 'commitConfirmed' || state === 'failed') return 'commit'
+  if (state === 'commitPreparing' || state === 'accountConfirmation' || state === 'commitPending' || state === 'commitConfirmed' || state === 'failed') return 'commit'
   return 'reveal'
 }
 
@@ -3971,6 +3974,11 @@ export function PerpsTradeTicket({
         })
         return
       }
+      if (!inclusionWasReported() && findSponsorRequestError(error)?.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
+        setFlowError(undefined)
+        setLifecycleState('accountConfirmation')
+        return
+      }
       const includedIdentity = readMutableRef(includedCommitIdentityRef)
       const currentOrderHistory = readMutableRef(orderHistoryRef)
       const bundlerError = findBundlerRequestError(error)
@@ -4698,7 +4706,6 @@ export function PerpsTradeTicket({
             <PerpsReviewFooter
               sponsoredCloseAssets={displayedExecutionProtections?.sponsoredClose ? formatPerpsAssets(displayedExecutionProtections.sponsoredClose.amountAssets, 6) : undefined}
               depositCarryAssets={displayedExecutionProtections?.sponsoredClose ? formatPerpsAssets(displayedExecutionProtections.sponsoredClose.depositCarryAssets, 6) : undefined}
-              commitmentCarryAssets={displayedExecutionProtections?.reviewSummary?.commitmentCarryAssets ? formatPerpsAssets(displayedExecutionProtections.reviewSummary.commitmentCarryAssets, 6) : undefined}
               preparing={isExecutionProtectionsLoading}
               recoveringOracle={preparation.recoveringOracle}
               refreshing={preparation.refreshing}
@@ -4872,6 +4879,23 @@ export function PerpsTradeTicket({
             >
               Done
             </Button>
+          ) : lifecycleState === 'accountConfirmation' ? (
+            <div className="flex gap-3">
+              <Button
+                className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                variant="secondary"
+                onClick={closeReviewModal}
+              >
+                Close
+              </Button>
+              <Button
+                className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                disabled={!activeAccountOperation && deploymentConfirmation !== 'ready'}
+                onClick={activeAccountOperation ? openRecoveryActivity : resetReviewLifecycle}
+              >
+                {activeAccountOperation ? 'View account activity' : 'Review again'}
+              </Button>
+            </div>
           ) : lifecycleState === 'failed' ? (
             <div className="flex gap-3">
               <Button
@@ -5034,6 +5058,24 @@ export function PerpsTradeTicket({
               ) : null}
 
             </>
+          ) : null}
+
+          {lifecycleState === 'accountConfirmation' ? (
+            deploymentConfirmation === 'ready' ? (
+              <SuccessStateCard
+                title="Trading Account confirmed"
+                description={activeAccountOperation
+                  ? 'Open account activity to resolve your saved attempt before reviewing the trade again. No trade has been sent.'
+                  : 'You can now review your trade again. No trade has been sent.'}
+              />
+            ) : (
+              <PendingStateCard
+                title="Waiting for Trading Account confirmation"
+                description={deploymentConfirmation === 'check-unavailable'
+                  ? 'We cannot check network confirmation right now. We’ll keep checking automatically. No trade has been sent.'
+                  : 'Your account has been deployed. Arbitrum Sepolia needs to confirm it before you can trade. This can take several minutes. We’re checking automatically; no trade will be sent automatically.'}
+              />
+            )
           ) : null}
 
           {lifecycleState === 'commitPreparing' ? (
@@ -5583,7 +5625,7 @@ export function PerpsTradeTicket({
                 onClick={() => {
                   if (!canUseMarginActionMax) return
                   trackPerpsButtonClicked(`${marginAction ?? 'margin'}_max`, commonAnalyticsProperties)
-                  setMarginActionAmount(marginActionLimitDisplay)
+                  setMarginActionAmount(formatUnits(marginActionLimit, PERPS_DECIMALS.ASSETS))
                   setMarginActionStatus('idle')
                   setMarginActionError(undefined)
                 }}
