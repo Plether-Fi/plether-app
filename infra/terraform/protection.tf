@@ -8,6 +8,16 @@ variable "protection_worker_desired_count" {
   }
 }
 
+variable "protection_worker_poll_seconds" {
+  type        = string
+  default     = "5"
+  description = "Delay between caught-up SL/TP worker scans."
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.protection_worker_poll_seconds)) && try(tonumber(var.protection_worker_poll_seconds) <= 3600, false)
+    error_message = "protection_worker_poll_seconds must be a whole number from 1 through 3600."
+  }
+}
+
 variable "protection_worker_execution_enabled" {
   type    = bool
   default = false
@@ -83,6 +93,7 @@ resource "aws_ecs_task_definition" "protection_worker" {
       { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/arbitrum-sepolia-v2.0.0.json" },
       { name = "PROTECTION_WORKER_EXECUTION_ENABLED", value = tostring(var.protection_worker_execution_enabled) },
       { name = "PROTECTION_WORKER_CONFIRMATIONS", value = "12" },
+      { name = "PROTECTION_WORKER_POLL_SECONDS", value = var.protection_worker_poll_seconds },
       { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
       { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
     ]
