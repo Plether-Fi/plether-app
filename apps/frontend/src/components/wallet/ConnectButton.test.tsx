@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { ConnectButton } from './ConnectButton'
@@ -28,16 +28,21 @@ beforeEach(() => {
   mocks.selectWallet.mockClear()
 })
 
-it.each([undefined, externalAddress])('restores the authenticated email owner from %s', address => {
+it.each([undefined, emailAddress, externalAddress])('does not show an email-wallet shortcut in the header for %s', address => {
   mocks.address = address
   render(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' }))
-  expect(mocks.selectWallet).toHaveBeenCalledWith(emailAddress)
+  expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: address ? /^Open wallet account / : 'Connect Wallet' })).toBeEnabled()
 })
 
-it.each([true, false])('does not offer email switching when it is already selected or unauthenticated (%s)', authenticated => {
-  mocks.authenticated = authenticated
-  mocks.address = authenticated ? emailAddress : externalAddress
-  render(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
+it('keeps the header free of the shortcut throughout logout', () => {
+  mocks.address = emailAddress
+  const view = render(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
+  mocks.address = undefined
+  view.rerender(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
+  expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Connect Wallet' })).toBeEnabled()
+  mocks.authenticated = false
+  view.rerender(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
   expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
 })

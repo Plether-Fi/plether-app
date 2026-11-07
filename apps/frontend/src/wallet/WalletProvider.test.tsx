@@ -45,6 +45,9 @@ vi.mock('@privy-io/react-auth', () => ({
   usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated, logout: mocks.logout }),
   useModalStatus: () => ({ isOpen: mocks.modalOpen }),
   useWallets: () => ({ ready: mocks.walletsReady, wallets: mocks.wallets }),
+  useLinkAccount: () => ({ linkGoogle: vi.fn(), linkPasskey: vi.fn() }),
+  useLoginWithOAuth: () => ({ initOAuth: vi.fn() }),
+  useLoginWithPasskey: () => ({ loginWithPasskey: vi.fn() }),
   useLogin: (callbacks: typeof mocks.emailCallbacks) => {
     mocks.emailCallbacks = callbacks
     return { login: mocks.connect }
@@ -196,7 +199,7 @@ describe('Privy wallet actions', () => {
     expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe(ownerAddress)
   })
 
-  it.each([false, true])('stays disconnected after email dismissal and late wallet callbacks (previously disconnected: %s)', (disconnected) => {
+  it.each([false, true])('stays disconnected after email dismissal and late wallet callbacks (previously disconnected: %s)', async (disconnected) => {
     if (disconnected) sessionStorage.setItem('plether.privy.test-privy-app.owner', 'disconnected')
     const wallet = { address: ownerAddress, walletClientType: 'metamask', meta: { name: 'MetaMask' }, disconnect: vi.fn() }
     mocks.wallets = disconnected ? [wallet] : []
@@ -205,6 +208,7 @@ describe('Privy wallet actions', () => {
     const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
     render(<>{options.description}</>)
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    await waitFor(() => { expect(mocks.connect).toHaveBeenCalledOnce() })
     act(() => { mocks.emailCallbacks?.onError('exited_auth_flow') })
     mocks.wallets = [wallet]
     view.rerender(tree())
