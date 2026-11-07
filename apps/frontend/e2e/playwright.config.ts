@@ -30,7 +30,10 @@ export default defineConfig({
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
-    env: { VITE_PRIVY_APP_ID: '', VITE_PRIVY_CLIENT_ID: '', VITE_POSTHOG_KEY: '' },
+    env: {
+      PLETHER_VITE_CACHE_DIR: `node_modules/.vite-playwright-${port}`,
+      VITE_PRIVY_APP_ID: '', VITE_PRIVY_CLIENT_ID: '', VITE_POSTHOG_KEY: '',
+    },
     reuseExistingServer: false,
     timeout: 120 * 1000,
   },

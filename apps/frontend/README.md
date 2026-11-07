@@ -53,7 +53,7 @@ npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backe
 
 ## Login and wallet connection
 
-Set the public `VITE_PRIVY_APP_ID` in `.env.local` to enable email login
+Set the public `VITE_PRIVY_APP_ID` in `.env.local` to enable email, Google, and passkey login
 and external EVM wallets. `VITE_PRIVY_CLIENT_ID` is optional. With no app ID,
 the application remains available for browsing and wallet connection is disabled.
 Never put a Privy app secret, OAuth client secret, or signing key in a `VITE_`
@@ -74,7 +74,7 @@ origin. Include the local Vite and Storybook origins in the development app when
 using them. External wallets connect without an extra Privy sign-in message;
 Insights still requires its own one-time ownership signature. Embedded wallets
 are EOA owners for the existing Perps trading account implementation, not a
-replacement Privy smart-account or sponsorship service. The connection popup offers email login first, followed by the complete searchable
+replacement Privy smart-account or sponsorship service. The connection popup offers email, Google, and passkey login, followed by the complete searchable
 WalletConnect catalog and detected extensions. Email is optional for external-wallet
 users. Users explicitly select the active owner wallet when more than one is connected.
 
@@ -88,7 +88,7 @@ the public app ID before building. Its mainnet target publishes the existing
 redirect and does not require Privy configuration.
 
 Before merging, test both applications against the same Privy development app:
-external desktop/mobile wallets, email login, returning sessions, explicit owner
+external desktop/mobile wallets, email/Google/passkey login, account linking, returning sessions, explicit owner
 selection, logout, message/typed-data signatures, and a sponsored Perps operation.
 Use the local registration service or an isolated backend with a matching
 canonical registration origin for the full Insights flow. A Pages preview with
@@ -103,7 +103,12 @@ installed Privy/Wagmi bridge, Wagmi connectors/actions, and viem signature
 verification; only remote authentication/modal callbacks are controlled by the
 fixture. Browser CI also requires `test:e2e:privy-sdk`, which runs the actual
 Privy modal and application with injected public test wallets and synthetic
-public app configuration. External HTTP/WebSocket requests are blocked. These suites
+public app configuration. External HTTP/WebSocket requests are blocked.
+Each Playwright server uses a suite/port-specific `PLETHER_VITE_CACHE_DIR` under
+`node_modules`, so forced dependency optimization cannot invalidate chunks in an
+open local app. Vite also ignores generated test/report directories: HTML trace
+snapshots must never reload a tab during OAuth. Keep these settings when adding
+new browser suites. These suites
 cover connection timing, saved owners, cancellation, reconnection, owner/network
 switching, email-wallet creation callbacks, and stale signer revocation. They
 do not send email OTPs, create/recover a wallet through the live embedded-key
@@ -114,11 +119,53 @@ Every connection picker offers **Log in with Email** when signed out or
 **Use email wallet** for an authenticated session, including **Connect new
 wallet** inside Privy's native account dialog. Selecting an email wallet closes
 the picker through Privy's own close path and updates the guarded signer.
-The header also provides a direct shortcut back to an available email wallet.
 
-Privy 3.51.2 does not expose a native-picker description slot or public connection
-modal close hook. Both apps' `postinstall` runs
-`scripts/patch-privy-wallet-dialog.mjs` to add only these UI extension points.
+Google and passkeys must both be enabled in **Privy Dashboard → Login methods**
+for the shared app. Enable standard Google OAuth (not custom OAuth), configure
+its provider credentials and callback URL as shown by Privy (development apps
+can use Privy's default Google credentials), and allow each exact
+application origin, including local development. Passkeys require HTTPS or a
+browser-trusted localhost origin. IP addresses (including `127.0.0.1` and
+`[::1]`) cannot be used as WebAuthn relying-party IDs: open `http://localhost`
+on the same port for local passkey testing. The picker disables passkey login
+and enrollment on unsupported origins and offers a localhost link on loopback. Credentials are scoped to the configured relying
+party: do not assume a passkey enrolled on localhost works on a hosted origin.
+
+Signed-out pickers offer **Log in with Google** and **Log in with passkey**.
+The Google button starts OAuth directly, without an intermediate Privy login
+screen. Returning users reuse their linked embedded wallet; new Google users
+get a wallet after Privy installs the verified session. Wallet preparation
+failures can be retried with **Use email wallet** without signing in again.
+The passkey button also calls the headless login API directly, opening the
+device prompt without a second Privy confirmation screen. Dismissing that prompt
+leaves the selected owner unchanged and shows no error. The connection picker remains open during passkey sign-in; failures update an inline error in the same modal, alongside retry and other login methods. Passkey signup remains
+disabled; users enroll a passkey after signing in with email or Google.
+Sign in to the existing account with email first, then open the connection picker
+(or **Connect new wallet** in the trading app's native wallet dialog) and choose
+**Link Google account** or **Add passkey**. Link before using another method to
+preserve the existing embedded wallet. An account already belonging to another
+Privy user cannot be silently merged. Linking never selects a different trading
+owner or migrates funds. Already-linked Google accounts are labeled **Google linked**;
+additional passkeys may be added through Privy's native management modal.
+
+Google redirects retain a short-lived, owner-bound request marker in session
+storage. Only a verified Privy login callback for that explicit request may select
+the embedded wallet. Cancellation, disconnect, and owner changes invalidate it.
+Automated integration tests cover Google/passkey success, cancellation, linking,
+conflicts, and Google redirect restoration with the installed wallet bridge.
+Live Google consent and device passkey enrollment remain hosted-service checks.
+
+For a selected, authenticated Privy wallet, the native wallet account dialog
+includes **Wallet MFA settings**. It opens Privy's own enrollment/management UI
+using `useMfaEnrollment().showMfaEnrollmentModal()`. Dismissing it returns to the
+wallet dialog without changing the selected owner. Enable the desired methods
+in **Privy Dashboard → User management → Authentication → MFA** first; adding
+a login passkey alone does not enroll it for wallet MFA. Enrollment is an explicit
+user action, and existing enrolled wallets remain protected if app MFA is later disabled.
+
+Privy 3.51.2 does not expose native-picker description/account-action slots or a
+public connection-modal close hook. Both apps' `postinstall` runs
+`scripts/patch-privy-wallet-dialog.mjs` to add these UI extension points.
 The patch checks the exact SDK version and complete upstream file checksums,
 is idempotent, and fails installation on drift. Review/update it alongside any
 Privy upgrade; its node tests and actual-SDK browser tests are required in CI.

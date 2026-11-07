@@ -124,6 +124,9 @@ export default defineConfig(({ mode }) => {
   };
 
   return {
+  // Parallel Playwright servers must not replace a developer's optimized
+  // dependencies while an open login flow still references those chunks.
+  cacheDir: env.PLETHER_VITE_CACHE_DIR ?? 'node_modules/.vite',
   define: {
     'import.meta.env.VITE_BUILD_COMMIT': JSON.stringify(buildCommit(env)),
     'import.meta.env.VITE_DEV_API_PROXY_TARGET': JSON.stringify(env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET),
@@ -137,6 +140,9 @@ export default defineConfig(({ mode }) => {
     }),
   ],
   server: {
+    // Playwright traces contain HTML snapshots. Treating those generated files
+    // as app pages reloads other open tabs in the middle of authentication.
+    watch: { ignored: ['**/.test-results/**', '**/test-results/**', '**/playwright-report/**'] },
     headers: parseHeadersFile(),
     proxy: {
       '/api/spot/v1': apiProxyConfig(env),

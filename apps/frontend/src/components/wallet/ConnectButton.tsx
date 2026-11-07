@@ -18,7 +18,7 @@ const SWITCH_NETWORK_BUTTON_CLASS =
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
-  const { connect, openAccount, disconnect, selectWallet, wallets, authenticated, ready, configured, error } = useWalletActions()
+  const { connect, openAccount, disconnect, ready, configured, error } = useWalletActions()
   const {
     switchToArbitrumSepolia,
     isSwitching: isSwitchingNetwork,
@@ -50,24 +50,9 @@ export function ConnectButton() {
     || location.pathname === '/vaults'
     || location.pathname.startsWith('/vaults/')
   const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
-  // Privy's native dialog lists external wallets only. Keep a direct path back
-  // to an authenticated embedded wallet, including after app disconnection.
-  const emailWallet = authenticated ? wallets.find(wallet => wallet.embedded) : undefined
-  const emailWalletAction = emailWallet && emailWallet.address.toLowerCase() !== address?.toLowerCase() ? (
-    <button
-      type="button"
-      disabled={!ready}
-      onClick={() => { selectWallet(emailWallet.address) }}
-      className="min-h-11 shrink-0 border border-brand-border/30 px-3 py-2 text-xs font-medium text-content-secondary transition-colors enabled:hover:border-brand-peach enabled:hover:text-content-primary disabled:opacity-50"
-    >
-      Use email wallet
-    </button>
-  ) : null
-
   if (!isConnected) {
     return (
       <div className="flex max-w-xs flex-col items-end gap-1">
-        {emailWalletAction}
         <button
           type="button"
           aria-label="Connect Wallet"
@@ -92,7 +77,6 @@ export function ConnectButton() {
   return (
     <div className="flex min-w-0 max-w-full flex-col items-end gap-1">
       <div className="flex min-w-0 max-w-full items-center gap-1.5 sm:gap-2 lg:gap-4">
-        {emailWalletAction}
         {/* Network badge */}
         <span className={`
           hidden max-w-36 truncate whitespace-nowrap border px-2 py-0.5 text-xs font-medium xl:inline-block

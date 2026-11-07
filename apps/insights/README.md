@@ -187,6 +187,41 @@ authenticated, **Use email wallet**. Its close action uses the pinned UI-only
 Privy extension installed by `scripts/patch-privy-wallet-dialog.mjs`; the script
 verifies SDK version/file checksums and must be reviewed with any Privy upgrade.
 
+Google and passkeys must both be enabled in **Privy Dashboard → Login methods**
+for the shared app. Enable standard Google OAuth (not custom OAuth), configure
+its provider credentials and callback URL as shown by Privy (development apps
+can use Privy's default Google credentials), and allow each exact
+application origin, including local development. Passkeys require HTTPS or a
+browser-trusted localhost origin. IP addresses (including `127.0.0.1` and
+`[::1]`) cannot be used as WebAuthn relying-party IDs: open `http://localhost`
+on the same port for local passkey testing. The picker disables passkey login
+and enrollment on unsupported origins and offers a localhost link on loopback. Credentials are scoped to the configured relying
+party: do not assume a passkey enrolled on localhost works on a hosted origin.
+
+Signed-out pickers offer **Log in with Google** and **Log in with passkey**.
+The Google button starts OAuth directly, without an intermediate Privy login
+screen. Returning users reuse their linked embedded wallet; new Google users
+get a wallet after Privy installs the verified session. Wallet preparation
+failures can be retried with **Use email wallet** without signing in again.
+The passkey button also calls the headless login API directly, opening the
+device prompt without a second Privy confirmation screen. Dismissing that prompt
+leaves the selected owner unchanged and shows no error. The connection picker remains open during passkey sign-in; failures update an inline error in the same modal, alongside retry and other login methods. Passkey signup remains
+disabled; users enroll a passkey after signing in with email or Google.
+Sign in to the existing account with email first, then open the connection picker
+(or **Connect new wallet** in the trading app's native wallet dialog) and choose
+**Link Google account** or **Add passkey**. Link before using another method to
+preserve the existing embedded wallet. An account already belonging to another
+Privy user cannot be silently merged. Linking never selects a different trading
+owner or migrates funds. Already-linked Google accounts are labeled **Google linked**;
+additional passkeys may be added through Privy's native management modal.
+
+Google redirects retain a short-lived, owner-bound request marker in session
+storage. Only a verified Privy login callback for that explicit request may select
+the embedded wallet. Cancellation, disconnect, and owner changes invalidate it.
+Automated integration tests cover Google/passkey success, cancellation, linking,
+conflicts, and Google redirect restoration with the installed wallet bridge.
+Live Google consent and device passkey enrollment remain hosted-service checks.
+
 **Deploy Insights** reads GitHub Actions variables `PRIVY_APP_ID` (shared with
 the trading app) and optional `PRIVY_INSIGHTS_CLIENT_ID`. It publishes on pushes
 to `master` affecting this app, so verify social/external wallet registration

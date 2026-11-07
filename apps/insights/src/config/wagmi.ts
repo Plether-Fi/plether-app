@@ -20,7 +20,7 @@ export const insightsChain = {
 }
 
 export const privyConfig = {
-  loginMethods: ['email'],
+  loginMethods: ['email', 'google', 'passkey'],
   appearance: {
     theme: '#250917',
     accentColor: '#FF572D',

@@ -3,8 +3,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Privy 3.51.2 exposes no slot for its native wallet picker's description or
-// public close action. Keep the native UI and add only those two UI surfaces.
+// Privy 3.51.2 exposes no slots for its native wallet picker's description,
+// account actions, or public close action. Keep all dialogs SDK-owned.
 // Verify the entire upstream files before writing; an SDK upgrade must update
 // this reviewed patch instead of silently dropping the email-wallet action.
 const VERSION = '3.51.2'
@@ -35,12 +35,43 @@ const plans = {
   'dist/dts/ui.d.mts': { sha256: '9f512183125d85207151d64bbea127e11a69edddd5e1c5c3e84eb3ffce7043fa', patches: typePatches },
 }
 
+// Apply account actions after the original connection-picker extension. Strip
+// them first when verifying an installation, so the previous complete patch
+// can also be upgraded without weakening the upstream checksum checks.
+const accountActionPatches = {
+  'dist/esm/ui.mjs': [
+    ['connectionDescription:privyConnectionDescription})=>', 'connectionDescription:privyConnectionDescription,accountActions:privyAccountActions})=>'],
+    ['e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h})', 't("div",{children:[e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h}),privyAccountActions]})'],
+  ],
+  'dist/cjs/ui.js': [
+    ['connectionDescription:privyConnectionDescription})=>', 'connectionDescription:privyConnectionDescription,accountActions:privyAccountActions})=>'],
+    ['e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})', 'e.jsxs("div",{children:[e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})'],
+  ],
+}
+const accountActionTypePatches = [
+  ['    networks?: {', '    /** Plether: settings inside the native connected-wallet dialog. */\n    accountActions?: React.ReactNode;\n    networks?: {'],
+  ['({ networks, assets, connectionDescription }: WalletsDialogProps)', '({ networks, assets, connectionDescription, accountActions }: WalletsDialogProps)'],
+]
+accountActionPatches['dist/dts/ui.d.ts'] = accountActionTypePatches
+accountActionPatches['dist/dts/ui.d.mts'] = accountActionTypePatches
+
 function count(source, fragment) { return source.split(fragment).length - 1 }
 
 export function preparePrivyDialogSource(filename, source) {
   const plan = plans[filename]
   if (!plan) throw new Error(`Unsupported Privy patch file: ${filename}`)
   let original = source
+  const accountPatches = accountActionPatches[filename]
+  const accountApplied = accountPatches.map(([before, after]) => {
+    if (count(original, after) === 1) {
+      original = original.replace(after, before)
+      return true
+    }
+    return false
+  })
+  if (accountApplied.some(Boolean) && !accountApplied.every(Boolean)) {
+    throw new Error(`Privy ${VERSION} UI patch is incomplete: ${filename}`)
+  }
   const applied = []
   for (const [before, after] of plan.patches) {
     if (count(original, after) === 1) {
@@ -58,7 +89,12 @@ export function preparePrivyDialogSource(filename, source) {
   if (createHash('sha256').update(original).digest('hex') !== plan.sha256) {
     throw new Error(`Privy ${VERSION} UI patch checksum mismatch: ${filename}`)
   }
-  return plan.patches.reduce((result, [before, after]) => result.replace(before, after), original)
+  let patched = plan.patches.reduce((result, [before, after]) => result.replace(before, after), original)
+  for (const [before, after] of accountPatches) {
+    if (count(patched, before) !== 1) throw new Error(`Privy ${VERSION} account action source mismatch: ${filename}`)
+    patched = patched.replace(before, after)
+  }
+  return patched
 }
 
 export function patchPrivyWalletDialog(packageDirectory = resolve(process.cwd(), 'node_modules/@privy-io/react-auth')) {
