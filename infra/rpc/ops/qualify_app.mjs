@@ -10,10 +10,10 @@ function check(test, pass, fields = {}) {
   console.log(JSON.stringify({ event: 'rpc_app_qualification', test, pass, ...fields }))
   if (!pass) failures++
 }
-async function rpc(url, method, params = []) {
+async function rpc(url, method, params = [], omitParams = false) {
   const response = await fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(20000),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(!omitParams ? { params } : {}) }), signal: AbortSignal.timeout(20000),
   })
   const body = await response.json()
   if (!response.ok || body.id !== 1 || body.error) throw new Error('rpc_probe_failed')
@@ -22,6 +22,8 @@ async function rpc(url, method, params = []) {
 try {
   const chain = await rpc(origin + '/', 'eth_chainId')
   check('ordinary_route_uses_primary', chain.result === '0x66eee' && chain.role === 'primary')
+  const omitted = await rpc(origin + '/', 'eth_chainId', [], true)
+  check('viem_zero_argument_request', omitted.result === '0x66eee' && omitted.role === 'primary')
   const direct = await rpc(origin + '/primary', 'eth_chainId')
   check('direct_route_uses_primary', direct.result === '0x66eee' && direct.role === 'primary')
   const old = await rpc(origin + '/', 'eth_getBalance', [zero, '0x1'])

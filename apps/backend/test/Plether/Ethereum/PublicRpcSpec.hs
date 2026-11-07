@@ -28,6 +28,7 @@ spec = describe "bounded browser execution RPC" $ do
           modifyIORef' count (+1)
           bytes <- strictRequestBody req
           let Right (Object fields) = eitherDecode bytes
+          KM.lookup "params" fields `shouldBe` Just (toJSON ([] :: [Value]))
           respond $ responseLBS status200 [] $ encode $ object
             ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" fields, "result" .= ("0x66eee" :: T.Text)]
     testWithApplication (pure upstream) $ \upstreamPort -> do
@@ -55,6 +56,17 @@ spec = describe "bounded browser execution RPC" $ do
           [object ["jsonrpc" .= ("2.0" :: T.Text),"id" .= String "chain","result" .= ("0x66eee" :: T.Text)],
            object ["jsonrpc" .= ("2.0" :: T.Text),"id" .= Number 2,"result" .= ("0x66eee" :: T.Text)]])
         readIORef count `shouldReturn` 2
+        omitted <- send "private-origin-token" $ encode $ object
+          ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (3 :: Int), "method" .= ("eth_chainId" :: T.Text)]
+        statusCode (HTTP.responseStatus omitted) `shouldBe` 200
+        readIORef count `shouldReturn` 3
+  it "accepts omitted params only for allowlisted zero-argument methods" $ do
+    let omitted method = object ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "method" .= (method :: T.Text)]
+    mapM_ (\method -> fmap (map prcParams) (parsePublicRpc $ omitted method) `shouldBe` Right [toJSON ([] :: [Value])])
+      ["eth_chainId", "net_version", "web3_clientVersion", "eth_syncing", "eth_blockNumber", "eth_gasPrice", "eth_maxPriorityFeePerGas"]
+    mapM_ (\method -> parsePublicRpc (omitted method) `shouldSatisfy` isLeft)
+      ["eth_call", "eth_getLogs", "eth_getBalance", "eth_sendRawTransaction", "admin_peers"]
+    parsePublicRpc (object ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "method" .= ("eth_chainId" :: T.Text), "params" .= Null]) `shouldSatisfy` isLeft
   it "correlates a valid batch and preserves numeric and string IDs" $ do
     let input = toJSON [call (String "balance") "eth_getBalance" [String "0x123", String "latest"], call (Number 2) "eth_chainId" []]
     fmap (map prcId) (parsePublicRpc input) `shouldBe` Right [String "balance", Number 2]

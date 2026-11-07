@@ -69,6 +69,24 @@ test('allowlist rejects signing, invalid traces, notifications, duplicate IDs an
   validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: '0x100', toBlock: '0x200' }] })
 })
 
+test('Viem zero-argument requests may omit params on primary and fallback routes', async () => {
+  const f = await fixture()
+  const body = { jsonrpc: '2.0', id: 'viem-chain', method: 'eth_chainId' }
+  const primary = await f.send(body)
+  assert.equal(primary.status, 200)
+  assert.equal(primary.headers.get('x-plether-rpc-upstream'), 'primary')
+  assert.deepEqual(await primary.json(), { jsonrpc: '2.0', id: 'viem-chain', result: '0x66eee' })
+  f.state.primary = false
+  const backup = await f.send(body)
+  assert.equal(backup.status, 200)
+  assert.equal(backup.headers.get('x-plether-rpc-upstream'), 'backup')
+  await backup.body.cancel()
+  for (const method of ['eth_call', 'eth_getLogs', 'eth_getBalance', 'eth_sendRawTransaction']) {
+    assert.throws(() => validateRequest({ ...body, method }))
+  }
+  for (const params of [null, {}]) assert.throws(() => validateRequest({ ...body, params }))
+})
+
 test('managed receipts, bounded historical traces and old state use Alchemy without demoting the primary', async () => {
   const f = await fixture()
   f.state.primaryHeight = 1000000n
