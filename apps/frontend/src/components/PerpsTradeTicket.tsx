@@ -2303,12 +2303,13 @@ export function PerpsTradeTicket({
     const candidate = keeperExecution ?? fastExecutionProofRef.current?.candidate
     if (!enableLiveTrading || !candidate || orderId !== candidate.orderId
       || address?.toLowerCase() !== candidate.account.toLowerCase()) return undefined
-    let stopped = false
+    const cancelled = { current: false }
     const epoch = fastExecutionEpochRef.current
+    const isCancelled = () => readMutableRef(cancelled) || epoch !== fastExecutionEpochRef.current
     let timer: number | undefined
     const startedAt = Date.now()
     const verify = async () => {
-      if (stopped || epoch !== fastExecutionEpochRef.current) return
+      if (isCancelled()) return
       try {
         const proof = fastExecutionProofRef.current
         const outcome = await readOrderLifecycleOutcome(candidate.orderId, {
@@ -2316,14 +2317,14 @@ export function PerpsTradeTicket({
           ...(proof?.candidate.transactionHash === candidate.transactionHash
             ? { observedInclusion: { blockNumber: proof.blockNumber, blockHash: proof.blockHash } } : {}),
         })
-        if (stopped || epoch !== fastExecutionEpochRef.current) return
+        if (isCancelled()) return
         if (outcome?.transactionBlockNumber !== undefined && outcome.transactionBlockHash !== undefined) {
           fastExecutionProofRef.current = { candidate, blockNumber: outcome.transactionBlockNumber,
             blockHash: outcome.transactionBlockHash }
           applyTerminalOrder(lifecycleOutcomeHistoryRow(outcome))
         }
       } catch (error) {
-        if (stopped || epoch !== fastExecutionEpochRef.current) return
+        if (isCancelled()) return
         if (error instanceof KeeperExecutionReorgedError) {
           const applied = fastExecutionProofRef.current?.candidate.transactionHash === candidate.transactionHash
           setKeeperExecution(undefined)
@@ -2333,10 +2334,10 @@ export function PerpsTradeTicket({
         }
         // A missing receipt or RPC outage cannot prove a reorg or failed order.
       }
-      if (!stopped) timer = window.setTimeout(() => { void verify() }, Date.now() - startedAt < 5_000 ? 500 : 2_000)
+      if (!isCancelled()) timer = window.setTimeout(() => { void verify() }, Date.now() - startedAt < 5_000 ? 500 : 2_000)
     }
     void verify()
-    return () => { stopped = true; if (timer !== undefined) window.clearTimeout(timer) }
+    return () => { cancelled.current = true; if (timer !== undefined) window.clearTimeout(timer) }
   }, [address, applyTerminalOrder, enableLiveTrading, keeperExecution, lifecycleState, orderId,
     readOrderLifecycleOutcome, rewindHandledTerminalOrder])
 
@@ -2483,7 +2484,7 @@ export function PerpsTradeTicket({
     const indexedIdentity = orderHistory.find(row => row.orderId === activeOrderId)
     const identity = includedCommitIdentityRef.current ?? indexedIdentity
     const expectedCommit = includedCommitIdentityRef.current?.hash ?? indexedIdentity?.commitTxHash ?? initialCommitTxHash
-    const identityKey = [address?.toLowerCase(), activeOrderId.toString(), identity?.clientOrderId?.toLowerCase(),
+    const identityKey = [address?.toLowerCase(), activeOrderId.toString(), (identity?.clientOrderId ?? '').toLowerCase(),
       expectedCommit?.toLowerCase()].join(':')
     if (executionCursorRef.current?.identity !== identityKey) executionCursorRef.current = { identity: identityKey }
     const controller = new AbortController()

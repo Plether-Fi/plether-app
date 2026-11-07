@@ -1178,8 +1178,8 @@ export function usePerpsTrading() {
       if (terminal.status !== PERPS_LIFECYCLE_STATUS.EXECUTED && terminal.status !== PERPS_LIFECYCLE_STATUS.FAILED) return undefined
       const matched = transaction.logs.flatMap(log => {
         if (!isAddressEqual(log.address, sponsored.manifest.orderLifecycleBook)
-          || log.transactionHash?.toLowerCase() !== transaction.transactionHash.toLowerCase()
-          || log.blockHash?.toLowerCase() !== transaction.blockHash.toLowerCase()
+          || log.transactionHash.toLowerCase() !== transaction.transactionHash.toLowerCase()
+          || log.blockHash.toLowerCase() !== transaction.blockHash.toLowerCase()
           || log.blockNumber !== transaction.blockNumber || log.removed || log.topics.length === 0) return []
         try {
           const verified = decodeVerifiedOrderFinalized({
@@ -1260,9 +1260,9 @@ export function usePerpsTrading() {
       failedConstraint: outcome.failedConstraint as PerpsFailedConstraint,
       receiptHash: outcome.receiptHash,
       receipt: verified.receipt,
-      ...(event.transactionHash ? { transactionHash: event.transactionHash } : {}),
-      ...(event.blockNumber !== null ? { transactionBlockNumber: event.blockNumber } : {}),
-      ...(event.blockHash ? { transactionBlockHash: event.blockHash } : {}),
+      transactionHash: event.transactionHash,
+      transactionBlockNumber: event.blockNumber,
+      transactionBlockHash: event.blockHash,
     }
   }, [publicClient, requireSponsoredExecution])
 
