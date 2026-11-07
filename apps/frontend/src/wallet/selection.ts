@@ -20,6 +20,27 @@ export function writeWalletSelection(storage: Pick<Storage, 'setItem'>, key: str
   }
 }
 
+// Privy's session survives a discarded mobile tab. Remember the user's wallet
+// choice for the same lifetime, including an explicit disconnected choice.
+export function loadWalletSelection(key: string): WalletSelection {
+  for (const getStorage of [() => window.localStorage, () => window.sessionStorage]) {
+    try {
+      const selection = readWalletSelection(getStorage(), key)
+      if (selection !== undefined) {
+        saveWalletSelection(key, selection)
+        return selection
+      }
+    } catch { /* Try tab storage when persistent storage is blocked. */ }
+  }
+  return undefined
+}
+
+export function saveWalletSelection(key: string, address: string | null): void {
+  for (const getStorage of [() => window.localStorage, () => window.sessionStorage]) {
+    try { writeWalletSelection(getStorage(), key, address) } catch { /* Storage can be blocked independently. */ }
+  }
+}
+
 export function selectedWallet<T extends { address: string }>(wallets: T[], selection: WalletSelection): T | undefined {
   if (selection === null) return undefined
   if (selection !== undefined) {

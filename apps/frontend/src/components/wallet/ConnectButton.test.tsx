@@ -8,6 +8,7 @@ const externalAddress = '0x2222222222222222222222222222222222222222'
 const mocks = vi.hoisted(() => ({
   address: undefined as string | undefined,
   authenticated: true,
+  connect: vi.fn(),
   selectWallet: vi.fn(),
 }))
 vi.mock('wagmi', () => ({
@@ -20,19 +21,21 @@ vi.mock('../../wallet/useWalletActions', () => ({ useWalletActions: () => ({
   ready: true, configured: true, authenticated: mocks.authenticated,
   wallets: [{ address: emailAddress, embedded: true, name: 'Social wallet' }],
   selectWallet: mocks.selectWallet,
+  connect: mocks.connect,
 }) }))
 
 beforeEach(() => {
   mocks.address = undefined
   mocks.authenticated = true
   mocks.selectWallet.mockClear()
+  mocks.connect.mockClear()
 })
 
 it.each([undefined, emailAddress, externalAddress])('does not show an email-wallet shortcut in the header for %s', address => {
   mocks.address = address
   render(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
   expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: address ? /^Open wallet account / : 'Connect Wallet' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: address ? /^Open wallet account / : 'Select Wallet' })).toBeEnabled()
 })
 
 it('keeps the header free of the shortcut throughout logout', () => {
@@ -41,8 +44,9 @@ it('keeps the header free of the shortcut throughout logout', () => {
   mocks.address = undefined
   view.rerender(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
   expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Connect Wallet' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Select Wallet' })).toBeEnabled()
   mocks.authenticated = false
   view.rerender(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
   expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Connect Wallet' })).toBeEnabled()
 })

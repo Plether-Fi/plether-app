@@ -23,7 +23,7 @@ import { useAccount, WagmiProvider as ReadOnlyWagmiProvider } from 'wagmi'
 import { config, walletChains } from '../config/wagmi'
 import { isSepoliaDeployment } from '../utils/deployment'
 import { WalletActionsContext, type WalletActions } from './useWalletActions'
-import { readWalletSelection, selectedWallet, writeWalletSelection, type WalletSelection } from './selection'
+import { loadWalletSelection, saveWalletSelection, selectedWallet, type WalletSelection } from './selection'
 import { createSigningGuard } from './signingGuard'
 import { EmailLoginOption } from './EmailLoginOption'
 import { WalletMfaSettings } from './WalletMfaSettings'
@@ -57,22 +57,6 @@ const privyConfig: PrivyClientConfig = {
   supportedChains: [...walletChains],
   defaultChain,
   embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },
-}
-
-function loadSelection(): WalletSelection {
-  try {
-    return readWalletSelection(window.sessionStorage, selectionKey)
-  } catch {
-    return undefined
-  }
-}
-
-function saveSelection(selection: string | null) {
-  try {
-    writeWalletSelection(window.sessionStorage, selectionKey, selection)
-  } catch {
-    // The active wallet still works if browser storage is unavailable.
-  }
 }
 
 function SyncedWalletActions({
@@ -114,7 +98,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => { nativeWalletRef.current = nativeWallet }, [nativeWallet])
   const { exportWallet } = useExportWallet()
   const { setWalletRecovery } = useSetWalletRecovery()
-  const [selection, setSelection] = useState<WalletSelection>(loadSelection)
+  const [selection, setSelection] = useState<WalletSelection>(() => loadWalletSelection(selectionKey))
   const [signingGuard] = useState(() => createSigningGuard(selection))
   const [bridgeRevision, setBridgeRevision] = useState(0)
   const connectionIntent = useRef<number | undefined>(undefined)
@@ -141,7 +125,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     clearGoogleLoginIntent(selectionKey)
     // Update signing authority synchronously, before React or the bridge catches up.
     signingGuard.select(address)
-    saveSelection(address)
+    saveWalletSelection(selectionKey, address)
     setSelection(address?.toLowerCase() ?? null)
     setBridgeRevision(signingGuard.revision)
   }, [signingGuard])

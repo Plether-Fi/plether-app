@@ -9,9 +9,10 @@ const selectionKey = `plether.privy.${publicConfig.id}.owner`
 const staleOwner = '0x1111111111111111111111111111111111111111'
 const message = 'Plether wallet integration test; no transaction is submitted.'
 const connectButton = (page: Page) => page.getByRole('banner').getByRole('button', { name: 'Connect Wallet', exact: true })
+const selectButton = (page: Page) => page.getByRole('banner').getByRole('button', { name: 'Select Wallet', exact: true })
 const accountButton = (page: Page) => page.getByRole('banner').getByRole('button', { name: /^Open wallet account / })
 
-type GoogleFixture = 'provider' | 'init-error' | 'callback-error'
+type GoogleFixture = 'provider' | 'init-error' | 'callback-error' | 'success'
 type PasskeyFixture = 'cancel' | 'verify-error' | 'init-error'
 async function openApp(page: Page, selection = 'disconnected', hostname?: string, googleFixture: GoogleFixture = 'provider', passkeyFixture: PasskeyFixture = 'cancel', mfaSession: boolean | 'enrolled' = false): Promise<TestWalletController> {
   const wallet = await installTestWallet(page)
@@ -21,6 +22,17 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
   const mfaToken = `${Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url')}.${Buffer.from(JSON.stringify({
     sub: 'did:privy:public-mfa-test', aud: publicConfig.id, iss: 'privy.io', exp: Math.floor(Date.now() / 1000) + 3600,
   })).toString('base64url')}.public-test-signature`
+  const sessionUser = {
+    id: 'did:privy:public-mfa-test', created_at: 1700000000,
+    mfa_methods: mfaSession === 'enrolled' ? [{ type: 'totp', verified_at: 1700000000 }] : [], has_accepted_terms: true,
+    linked_accounts: [
+      ...(googleFixture === 'success'
+        ? [{ type: 'google_oauth', subject: 'public-google-test', email: 'public-test@example.invalid', name: 'Public test', first_verified_at: 1700000000, latest_verified_at: 1700000000 }]
+        : [{ type: 'email', address: 'public-mfa-test@example.invalid', first_verified_at: 1700000000, latest_verified_at: 1700000000 }]),
+      { type: 'wallet', address: TEST_WALLET_ADDRESSES[1], chain_type: 'ethereum', wallet_client_type: 'privy', connector_type: 'embedded',
+        recovery_method: 'privy', wallet_index: 0, imported: false, delegated: false, first_verified_at: 1700000000, latest_verified_at: 1700000000 },
+    ],
+  }
   if (mfaSession) await page.addInitScript(token => {
     localStorage.setItem('privy:token', JSON.stringify(token))
     localStorage.setItem('privy:pat', JSON.stringify(token))
@@ -45,7 +57,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
         'access-control-allow-credentials': 'true',
       } })
     }
-    if (mfaSession && url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/sessions') {
+    if ((mfaSession || googleFixture === 'success') && url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/sessions') {
       const headers = {
         'access-control-allow-origin': route.request().headers().origin,
         'access-control-allow-credentials': 'true',
@@ -54,14 +66,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
       }
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
       return route.fulfill({ headers, json: { token: mfaToken, privy_access_token: mfaToken,
-        refresh_token: 'public-offline-refresh-token', user: {
-          id: 'did:privy:public-mfa-test', created_at: 1700000000, mfa_methods: mfaSession === 'enrolled' ? [{ type: 'totp', verified_at: 1700000000 }] : [], has_accepted_terms: true,
-          linked_accounts: [
-            { type: 'email', address: 'public-mfa-test@example.invalid', first_verified_at: 1700000000, latest_verified_at: 1700000000 },
-            { type: 'wallet', address: TEST_WALLET_ADDRESSES[1], chain_type: 'ethereum', wallet_client_type: 'privy', connector_type: 'embedded',
-              recovery_method: 'privy', wallet_index: 0, imported: false, delegated: false, first_verified_at: 1700000000, latest_verified_at: 1700000000 },
-          ],
-        } } })
+        refresh_token: 'public-offline-refresh-token', user: sessionUser } })
     }
     if (url.hostname === 'auth.privy.io' && ['/api/v1/passkeys/authenticate/init', '/api/v1/passkeys/authenticate'].includes(url.pathname)) {
       const headers = {
@@ -87,6 +92,12 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
         'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '*',
       }
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
+      if (url.pathname.endsWith('/authenticate') && googleFixture === 'success') {
+        return route.fulfill({ headers, json: {
+          token: mfaToken, privy_access_token: mfaToken, refresh_token: 'public-offline-refresh-token', is_new_user: false,
+          user: sessionUser,
+        } })
+      }
       if (url.pathname.endsWith('/authenticate') || googleFixture === 'init-error') {
         return route.fulfill({ status: 400, json: { error: 'Invalid test credentials', code: 'invalid_credentials' }, headers })
       }
@@ -98,7 +109,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
       callback.searchParams.set('privy_oauth_code', 'error')
       googleCancelUrl = callback.href
       callback.searchParams.set('privy_oauth_code', 'public-test-code')
-      return route.fulfill({ json: { url: googleFixture === 'callback-error' ? callback.href : 'https://accounts.google.com/plether-test-oauth' }, headers })
+      return route.fulfill({ json: { url: googleFixture === 'callback-error' || googleFixture === 'success' ? callback.href : 'https://accounts.google.com/plether-test-oauth' }, headers })
     }
     if (url.hostname === 'accounts.google.com' && url.pathname === '/plether-test-oauth') {
       return route.fulfill({ contentType: 'text/html', body: `<!doctype html><h1>Google account chooser (offline fixture)</h1><a href="${googleCancelUrl.replaceAll('&', '&amp;')}">Cancel Google sign-in</a>` })
@@ -127,7 +138,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
   const url = new URL('/privacy', test.info().project.use.baseURL)
   if (hostname) url.hostname = hostname
   await page.goto(url.href)
-  await expect(mfaSession ? accountButton(page) : connectButton(page)).toBeEnabled()
+  await expect(mfaSession ? selection === 'disconnected' ? selectButton(page) : accountButton(page) : connectButton(page)).toBeEnabled()
   return wallet
 }
 
@@ -160,6 +171,39 @@ async function signThroughBridge(page: Page) {
   expect(await verifyMessage({ ...result, message })).toBe(true)
   return result.address
 }
+
+test('Google redirect activates the embedded wallet on mobile and keeps it connected after reload', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openApp(page, 'disconnected', 'localhost', 'success')
+  await openPicker(page)
+  await page.getByRole('button', { name: 'Log in with Google', exact: true }).click()
+  await expect(accountButton(page)).toBeVisible()
+  await expect(connectButton(page)).not.toBeVisible()
+  expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+  await page.reload()
+  await expect(accountButton(page)).toBeVisible()
+  await expect(connectButton(page)).not.toBeVisible()
+  // Mobile browsers can discard a tab's session storage while Privy's
+  // longer-lived authentication session remains in local storage.
+  await page.evaluate(() => sessionStorage.clear())
+  await page.reload()
+  await expect(accountButton(page)).toBeVisible()
+  await expect(connectButton(page)).not.toBeVisible()
+})
+
+test('restored Google session on mobile asks to select a wallet and reconnects without another login', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openApp(page, 'disconnected', 'localhost', 'success', 'cancel', true)
+  await expect(connectButton(page)).not.toBeVisible()
+  await selectButton(page).click()
+  const dialog = page.locator('#privy-dialog')
+  await expect(dialog.getByRole('button', { name: 'Google linked', exact: true })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: 'Add passkey', exact: true })).toBeEnabled()
+  await dialog.getByRole('button', { name: 'Use email wallet', exact: true }).click()
+  await expect(accountButton(page)).toBeVisible()
+  expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+  await expect(dialog).not.toBeVisible()
+})
 
 for (const enrolled of [false, true]) {
   test(`embedded-wallet account dialog opens native MFA settings (already enrolled: ${enrolled})`, async ({ page }, testInfo) => {
