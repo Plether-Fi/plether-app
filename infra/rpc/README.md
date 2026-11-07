@@ -365,7 +365,11 @@ verification. The existing Alto service and its Alchemy parameter
 `/plether/sepolia/perps-rpc-url` are left unchanged. Application task revisions
 use the separate `/plether/sepolia/app-rpc-url`, so they cannot redirect Alto
 on a later task restart. This cutover neither restarts nor redeploys Alto.
-Polling intervals and sponsorship/transaction policies are unchanged.
+After the RPC cutover, the frontend refreshes positions, pending orders and live
+market state every two seconds, and order/trade history every five seconds.
+Transaction history remains lazy-loaded while its tab is active, and timelocked
+configuration keeps its slower cache. Sponsorship and transaction policies are
+unchanged.
 
 Use `ops/prepare_app_cutover.py prepare --directory <private-operator-directory>`
 only after the code has passed checks and merged. It verifies the exact AWS

@@ -282,7 +282,7 @@ describe('usePerpsAccount', () => {
     expect(dynamicCall?.batchSize).toBe(0)
     expect(dynamicCall?.contracts.slice(16, 22).map((contract: { args: bigint[] }) => contract.args))
       .toEqual([[0n], [0n], [0n], [1n], [1n], [1n]])
-    expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
+    expect(dynamicCall?.query).toMatchObject({ refetchInterval: 2_000 })
     expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'riskParams',
       'executionFeeBps',
