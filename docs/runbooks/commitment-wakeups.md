@@ -79,7 +79,8 @@ Verified execution and the receipt's fees, VPI and settlement amounts appear
 immediately while account balances refresh separately. Supplemental oracle and
 lifetime attribution continue to come from indexed evidence. Indexed history
 enriches the result and handles canonical rewinds. The existing safe-block lookup
-remains available when execution progress is unavailable. These browser updates
+remains available when execution progress is unavailable and scans at most the
+public RPC proxy's 1,000-block inclusive limit. These browser updates
 do not require active commitment wakeups and do not alter execution authorization
 or confirmation rules.
 
