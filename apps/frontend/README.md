@@ -163,6 +163,18 @@ in **Privy Dashboard → User management → Authentication → MFA** first; add
 a login passkey alone does not enroll it for wallet MFA. Enrollment is an explicit
 user action, and existing enrolled wallets remain protected if app MFA is later disabled.
 
+If passkey MFA is already enabled and another linked passkey is not enrolled,
+the wallet dialog also offers **Enable additional passkeys for wallet MFA**.
+On the device holding an existing MFA passkey (for example, the Mac), click this
+action and complete Privy's native MFA verification. The app refreshes the server's
+passkey list, then enrolls the linked keys together, preserving existing MFA keys
+and keeping them available for login (`removeForLogin: false`). The mobile passkey
+must already be linked to the same Privy account. This enables that linked key for
+wallet MFA without copying its private key between devices. Cancellation, logout,
+owner changes, or conflicting passkey changes stop the update before submission.
+Unit, installed-wallet-bridge, and offline real-SDK/WebAuthn browser tests cover
+preserving both keys, verification before enrollment, failure/retry, and cancellation.
+
 Privy 3.51.2 does not expose native-picker description/account-action slots or a
 public connection-modal close hook. Both apps' `postinstall` runs
 `scripts/patch-privy-wallet-dialog.mjs` to add these UI extension points.

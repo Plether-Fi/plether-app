@@ -18,7 +18,7 @@ const SWITCH_NETWORK_BUTTON_CLASS =
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
-  const { connect, openAccount, disconnect, ready, configured, authenticated, error } = useWalletActions()
+  const { connect, openAccount, ready, configured, authenticated, connectionPending, error } = useWalletActions()
   const {
     switchToArbitrumSepolia,
     isSwitching: isSwitchingNetwork,
@@ -50,23 +50,27 @@ export function ConnectButton() {
     || location.pathname === '/vaults'
     || location.pathname.startsWith('/vaults/')
   const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
-  if (!isConnected) {
+  if (!isConnected || connectionPending) {
     // A restored Privy login can still need an explicit trading-wallet choice.
     // Keep that distinct from signing in; authentication alone is not a signer.
-    const label = authenticated ? 'Select Wallet' : 'Connect Wallet'
+    const pending = configured && (!ready || connectionPending)
+    const label = pending ? 'Connecting…' : authenticated ? 'Select Wallet' : 'Connect Wallet'
     return (
       <div className="flex max-w-xs flex-col items-end gap-1">
         <button
           type="button"
           aria-label={label}
+          aria-busy={pending}
           onClick={() => {
             clearSwitchError()
             connect()
           }}
-          disabled={!ready || !configured}
+          disabled={pending || !ready || !configured}
           className={`${WALLET_BUTTON_CLASS} text-xs font-medium sm:text-sm`}
         >
-          <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
+          <span className={`material-symbols-outlined text-lg${pending ? ' animate-spin' : ''}`} aria-hidden="true">
+            {pending ? 'progress_activity' : 'account_balance_wallet'}
+          </span>
           <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[340px]:inline">
             {label}
           </span>
@@ -149,16 +153,6 @@ export function ConnectButton() {
           </span>
         </button>
 
-        {/* Disconnect button */}
-        <button
-          onClick={() => { void disconnect() }}
-          disabled={!ready}
-          className="hidden h-11 w-11 items-center justify-center text-content-secondary transition-colors hover:text-content-primary sm:inline-flex"
-          title="Disconnect"
-          aria-label="Disconnect wallet"
-        >
-          <span className="material-symbols-outlined text-xl">logout</span>
-        </button>
       </div>
       {error ? <p role="alert" className="max-w-md text-right text-xs text-brand-orange">{error}</p> : null}
       {switchError && shouldShowPerpsNetworkSwitch ? (

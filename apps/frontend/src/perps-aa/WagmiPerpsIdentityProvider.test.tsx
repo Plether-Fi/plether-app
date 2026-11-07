@@ -20,6 +20,7 @@ function actions(signerReady: boolean): WalletActions {
     configured: true,
     ready: true,
     signerReady,
+    connectionPending: false,
     authenticated: false,
     modalOpen: false,
     wallets: [],

@@ -10,6 +10,7 @@ export interface WalletActions {
   configured: boolean
   ready: boolean
   signerReady: boolean
+  connectionPending: boolean
   authenticated: boolean
   modalOpen: boolean
   wallets: WalletOption[]
@@ -29,6 +30,7 @@ export const WalletActionsContext = createContext<WalletActions>({
   configured: false,
   ready: false,
   signerReady: false,
+  connectionPending: false,
   authenticated: false,
   modalOpen: false,
   wallets: [],

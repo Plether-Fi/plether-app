@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { generateKeyPairSync } from 'node:crypto'
 import { stringToHex, verifyMessage, type Hex } from 'viem'
 import publicConfig from '../fixtures/privy-public-config.json' with { type: 'json' }
 import { installTestWallet, TEST_WALLET_ADDRESSES, type TestWalletController } from '../fixtures/signingWallet'
@@ -14,7 +15,10 @@ const accountButton = (page: Page) => page.getByRole('banner').getByRole('button
 
 type GoogleFixture = 'provider' | 'init-error' | 'callback-error' | 'success'
 type PasskeyFixture = 'cancel' | 'verify-error' | 'init-error'
-async function openApp(page: Page, selection = 'disconnected', hostname?: string, googleFixture: GoogleFixture = 'provider', passkeyFixture: PasskeyFixture = 'cancel', mfaSession: boolean | 'enrolled' = false): Promise<TestWalletController> {
+const macMfaKey = Buffer.from('public-offline-mac-passkey').toString('base64url')
+const mobileMfaKey = Buffer.from('public-offline-mobile-passkey').toString('base64url')
+type MfaUpdateFixture = { outcome: 'success' | 'submit-error'; verified: number; refreshed: number; submissions: string[][] }
+async function openApp(page: Page, selection = 'disconnected', hostname?: string, googleFixture: GoogleFixture = 'provider', passkeyFixture: PasskeyFixture = 'cancel', mfaSession: boolean | 'enrolled' = false, mfaUpdate?: MfaUpdateFixture): Promise<TestWalletController> {
   const wallet = await installTestWallet(page)
   let googleCancelUrl = ''
   // This unsigned token and user exist only inside the offline route fixture.
@@ -24,8 +28,12 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
   })).toString('base64url')}.public-test-signature`
   const sessionUser = {
     id: 'did:privy:public-mfa-test', created_at: 1700000000,
-    mfa_methods: mfaSession === 'enrolled' ? [{ type: 'totp', verified_at: 1700000000 }] : [], has_accepted_terms: true,
+    mfa_methods: mfaUpdate ? [{ type: 'passkey', verified_at: 1700000000 }] : mfaSession === 'enrolled' ? [{ type: 'totp', verified_at: 1700000000 }] : [], has_accepted_terms: true,
     linked_accounts: [
+      ...(mfaUpdate ? [
+        { type: 'passkey', credential_id: macMfaKey, enrolled_in_mfa: true, authenticator_name: 'Mac test passkey', first_verified_at: 1700000000, latest_verified_at: 1700000000 },
+        { type: 'passkey', credential_id: mobileMfaKey, enrolled_in_mfa: false, authenticator_name: 'Mobile test passkey', first_verified_at: 1700000001, latest_verified_at: 1700000001 },
+      ] : []),
       ...(googleFixture === 'success'
         ? [{ type: 'google_oauth', subject: 'public-google-test', email: 'public-test@example.invalid', name: 'Public test', first_verified_at: 1700000000, latest_verified_at: 1700000000 }]
         : [{ type: 'email', address: 'public-mfa-test@example.invalid', first_verified_at: 1700000000, latest_verified_at: 1700000000 }]),
@@ -34,6 +42,8 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
     ],
   }
   if (mfaSession) await page.addInitScript(token => {
+    if (localStorage.getItem('plether.e2e.session-seeded')) return
+    localStorage.setItem('plether.e2e.session-seeded', 'true')
     localStorage.setItem('privy:token', JSON.stringify(token))
     localStorage.setItem('privy:pat', JSON.stringify(token))
     localStorage.setItem('privy:refresh_token', JSON.stringify('public-offline-refresh-token'))
@@ -56,6 +66,65 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
         'access-control-allow-origin': route.request().headers().origin,
         'access-control-allow-credentials': 'true',
       } })
+    }
+    if (mfaUpdate && url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/mfa/passkeys/init') {
+      const headers = {
+        'access-control-allow-origin': route.request().headers().origin,
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '*',
+      }
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
+      return route.fulfill({ headers, json: { options: {
+        challenge: Buffer.alloc(32, 2).toString('base64url'), rp_id: 'localhost', user_verification: 'required', timeout: 10000,
+        allow_credentials: [{ id: macMfaKey, type: 'public-key', transports: ['internal'] }],
+      } } })
+    }
+    if (mfaUpdate && url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/users/me') {
+      const headers = {
+        'access-control-allow-origin': route.request().headers().origin,
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': 'GET, OPTIONS',
+        'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '*',
+      }
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
+      if (mfaUpdate.verified) mfaUpdate.refreshed++
+      return route.fulfill({ headers, json: { user: sessionUser } })
+    }
+    if (mfaUpdate && url.hostname === 'auth.privy.io' && url.pathname === '/offline-mfa-test') {
+      // This handler stands in for the remote wallet service, not the SDK or
+      // browser ceremony. Only synthetic credentials can reach this fixture.
+      const input = route.request().postDataJSON() as { event: string; data: {
+        mfaMethod?: string; mfaCode?: { id: string; response: { signature: string; authenticator_data: string } }; method?: string; credentialIds?: string[]; removeForLogin?: boolean
+      } }
+      if (input.event === 'privy:mfa:verify') {
+        expect(input.data.mfaMethod).toBe('passkey')
+        const assertion = input.data.mfaCode!
+        expect(assertion.id).toBe(macMfaKey)
+        expect(assertion.response.signature).toBeTruthy()
+        expect(assertion.response.authenticator_data).toBeTruthy()
+        mfaUpdate.verified++
+        return route.fulfill({ json: { data: {} } })
+      }
+      expect(input.event).toBe('privy:mfa:submit-enrollment')
+      expect(mfaUpdate.verified).toBeGreaterThan(0)
+      expect(mfaUpdate.refreshed).toBe(mfaUpdate.verified)
+      expect(input.data.method).toBe('passkey')
+      expect(input.data.removeForLogin).toBe(false)
+      expect(input.data.credentialIds).toEqual([macMfaKey, mobileMfaKey])
+      mfaUpdate.submissions.push(input.data.credentialIds!)
+      if (mfaUpdate.outcome === 'submit-error') return route.fulfill({ json: { error: { type: 'error', message: 'Offline enrollment service failure' } } })
+      for (const account of sessionUser.linked_accounts) if (account.type === 'passkey') account.enrolled_in_mfa = true
+      return route.fulfill({ json: { data: {} } })
+    }
+    if (url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/sessions/logout') {
+      const headers = {
+        'access-control-allow-origin': route.request().headers().origin,
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '*',
+      }
+      return route.fulfill({ status: 204, headers })
     }
     if ((mfaSession || googleFixture === 'success') && url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/sessions') {
       const headers = {
@@ -118,15 +187,18 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
       return route.fulfill({ json: { listings: {}, total: 0 }, headers: { 'access-control-allow-origin': '*' } })
     }
     if (url.hostname === 'auth.privy.io' && url.pathname.endsWith('/embedded-wallets')) {
-      // Readiness is the only iframe interaction these external-wallet tests
-      // need. Fail other calls explicitly rather than fabricating wallet keys,
-      // authentication, signatures, or a successfully created embedded wallet.
+      // Other than optional MFA enrollment, only readiness/clear are supported.
+      // Never fabricate a wallet, transaction, or signing response.
       return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><script>
-        addEventListener('message', event => {
-          const input = event.data;
+        addEventListener('message', async event => {
+          const input = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
           if (!input || typeof input.event !== 'string' || !input.event.startsWith('privy:')) return;
           const output = { id: input.id, event: input.event };
           if (input.event === 'privy:iframe:ready' || input.event === 'privy:mfa:clear') output.data = {};
+          else if (${!!mfaUpdate} && ['privy:mfa:verify', 'privy:mfa:submit-enrollment'].includes(input.event)) {
+            const result = await fetch('/offline-mfa-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+            Object.assign(output, await result.json());
+          }
           else output.error = { type: 'unsupported_test_operation', message: 'Embedded wallet operations are not implemented in this external-wallet fixture' };
           event.source.postMessage(output, event.origin);
         });
@@ -158,6 +230,28 @@ async function selectedOwner(page: Page) {
   return page.evaluate(key => sessionStorage.getItem(key), selectionKey)
 }
 
+test('restored Google wallet shows loading then its address without flashing a wallet-choice button', async ({ page }) => {
+  await page.addInitScript(() => {
+    const probe = window as Window & { walletHeaderLabels: string[] }
+    probe.walletHeaderLabels = []
+    new MutationObserver(() => {
+      const button = document.querySelector('header button[aria-label="Connecting…"], header button[aria-label="Select Wallet"], header button[aria-label="Connect Wallet"], header button[aria-label^="Open wallet account "]')
+      const label = button?.getAttribute('aria-label')
+      if (label && probe.walletHeaderLabels.at(-1) !== label) probe.walletHeaderLabels.push(label)
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label'] })
+  })
+  await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'success', 'cancel', true)
+  for (const reload of [false, true]) {
+    if (reload) await page.reload()
+    await expect(accountButton(page)).toBeEnabled()
+    const labels = await page.evaluate(() => (window as Window & { walletHeaderLabels: string[] }).walletHeaderLabels)
+    expect(labels).toContain('Connecting…')
+    expect(labels).not.toContain('Select Wallet')
+    expect(labels).not.toContain('Connect Wallet')
+    expect(labels.at(-1)).toMatch(/^Open wallet account /)
+  }
+})
+
 async function signThroughBridge(page: Page) {
   const result = await page.evaluate(async ({ modulePath, data }) => {
     const { config } = await import(modulePath)
@@ -171,6 +265,94 @@ async function signThroughBridge(page: Page) {
   expect(await verifyMessage({ ...result, message })).toBe(true)
   return result.address
 }
+
+async function previousPage(page: Page) {
+  await page.getByRole('link', { name: 'Terms of Service', exact: true }).click()
+  await expect(page).toHaveURL(/\/terms$/)
+  await page.getByRole('link', { name: 'Privacy Policy', exact: true }).click()
+  await expect(page).toHaveURL(/\/privacy$/)
+}
+
+for (const flow of ['wallet', 'email'] as const) {
+  test(`browser Back dismisses the ${flow} modal before navigating to the previous page`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openApp(page)
+    await previousPage(page)
+    const state = await page.evaluate(() => history.state)
+    await openPicker(page)
+    if (flow === 'email') {
+      await page.getByRole('button', { name: 'Log in with Email', exact: true }).click()
+      await expect(page.getByPlaceholder('your@email.com')).toBeVisible()
+    }
+    await page.goBack()
+    await expect(page.getByRole('button', { name: 'Log in with Email', exact: true })).not.toBeVisible()
+    await expect(page.getByPlaceholder('your@email.com')).not.toBeVisible()
+    await expect(page).toHaveURL(/\/privacy$/)
+    await expect.poll(() => page.evaluate(() => history.state)).toEqual(state)
+    expect(await selectedOwner(page)).toBe('disconnected')
+    await page.goBack()
+    await expect(page).toHaveURL(/\/terms$/)
+    await expect(page.getByRole('heading', { name: 'Terms of Service', exact: true })).toBeVisible()
+  })
+}
+
+test('closing and reopening with the X button does not leave extra Back steps', async ({ page }) => {
+  await openApp(page)
+  await previousPage(page)
+  for (let index = 0; index < 3; index++) {
+    await openPicker(page)
+    await page.locator('#privy-dialog').getByRole('button', { name: 'close modal', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Log in with Email', exact: true })).not.toBeVisible()
+  }
+  await page.goBack()
+  await expect(page).toHaveURL(/\/terms$/)
+})
+
+test('Back closes MFA before the underlying wallet account, without disconnecting', async ({ page }) => {
+  await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true)
+  await previousPage(page)
+  await accountButton(page).click()
+  await page.getByRole('button', { name: 'Wallet MFA settings', exact: true }).click()
+  await expect(page.locator('#privy-dialog').getByText('Transaction Protection', { exact: true })).toBeVisible()
+  await page.goBack()
+  await expect(page.locator('#privy-dialog').getByText('Transaction Protection', { exact: true })).not.toBeVisible()
+  await expect(page.getByRole('button', { name: 'Wallet MFA settings', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/privacy$/)
+  await page.goBack()
+  await expect(page.getByText('Wallet connected', { exact: true })).not.toBeVisible()
+  await expect(accountButton(page)).toBeVisible()
+  expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+  await page.goBack()
+  await expect(page).toHaveURL(/\/terms$/)
+})
+
+test('Back dismisses application dialogs before navigating', async ({ page }) => {
+  await openApp(page)
+  await previousPage(page)
+  await page.getByRole('button', { name: /^Build / }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.goBack()
+  await expect(page.getByRole('dialog')).not.toBeVisible()
+  await expect(page).toHaveURL(/\/privacy$/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/terms$/)
+})
+
+test('normal Back and Forward navigation skips a closed modal entry', async ({ page }) => {
+  await openApp(page)
+  await previousPage(page)
+  await page.getByRole('button', { name: /^Build / }).click()
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click()
+  await expect(page.getByRole('dialog')).not.toBeVisible()
+  await page.getByRole('link', { name: 'Terms of Service', exact: true }).click()
+  await expect(page).toHaveURL(/\/terms$/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/privacy$/)
+  await expect(page.getByRole('heading', { name: 'Privacy Policy', exact: true })).toBeVisible()
+  await page.goForward()
+  await expect(page).toHaveURL(/\/terms$/)
+  await expect(page.getByRole('heading', { name: 'Terms of Service', exact: true })).toBeVisible()
+})
 
 test('Google redirect activates the embedded wallet on mobile and keeps it connected after reload', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
@@ -234,6 +416,68 @@ for (const enrolled of [false, true]) {
   })
 }
 
+for (const outcome of ['success', 'submit-error'] as const) {
+  test(`updates wallet MFA with the existing Mac passkey and preserves both keys (${outcome})`, async ({ page, context }, testInfo) => {
+    if (outcome === 'success') await page.setViewportSize({ width: 390, height: 844 })
+    const fixture: MfaUpdateFixture = { outcome, verified: 0, refreshed: 0, submissions: [] }
+    await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
+    const cdp = await context.newCDPSession(page)
+    await cdp.send('WebAuthn.enable')
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+      protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
+      hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true,
+    } })
+    // A disposable synthetic Mac credential. The browser must authenticate
+    // using it; the mobile login-only key is not in this authenticator.
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    await cdp.send('WebAuthn.addCredential', { authenticatorId, credential: {
+      credentialId: Buffer.from(macMfaKey, 'base64url').toString('base64'),
+      rpId: 'localhost', isResidentCredential: true, userHandle: Buffer.from([1]).toString('base64'), signCount: 0,
+      privateKey: privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
+    } })
+    await accountButton(page).click()
+    const update = page.getByRole('button', { name: 'Enable additional passkeys for wallet MFA', exact: true })
+    await update.scrollIntoViewIfNeeded()
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('additional-mfa-passkeys.png') })
+    await update.click()
+    if (outcome === 'submit-error') {
+      await expect(page.getByRole('alert').filter({ hasText: /wallet MFA/i })).toBeVisible()
+      await expect(update).toBeEnabled()
+      expect(fixture.verified).toBe(1)
+      expect(fixture.submissions).toEqual([[macMfaKey, mobileMfaKey]])
+      fixture.outcome = 'success'
+      await update.click()
+    }
+    await expect(page.getByText('Linked passkeys are enabled for wallet MFA. Your existing passkeys are still enabled.', { exact: true })).toBeVisible()
+    await expect(update).not.toBeVisible()
+    expect(fixture.verified).toBe(outcome === 'success' ? 1 : 2)
+    expect(fixture.submissions).toEqual(Array.from({ length: fixture.verified }, () => [macMfaKey, mobileMfaKey]))
+    expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+    await expect(page.locator('#privy-dialog').getByRole('button', { name: 'close modal', exact: true })).not.toBeVisible()
+    await page.getByRole('dialog', { name: 'Wallet connected', exact: true }).getByRole('button').first().click()
+    await expect(accountButton(page)).toBeVisible()
+    await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId })
+  })
+}
+
+test('Back cancels additional-passkey MFA verification without changing enrollment', async ({ page }) => {
+  const fixture: MfaUpdateFixture = { outcome: 'success', verified: 0, refreshed: 0, submissions: [] }
+  await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.credentials, 'get', { configurable: true, value: () => new Promise(() => {}) })
+  })
+  await accountButton(page).click()
+  const update = page.getByRole('button', { name: 'Enable additional passkeys for wallet MFA', exact: true })
+  await update.click()
+  await expect(page.locator('#privy-dialog').getByText('Verifying with passkey', { exact: true })).toBeVisible()
+  await page.goBack()
+  await expect(page.locator('#privy-dialog').getByText('Verifying with passkey', { exact: true })).not.toBeVisible()
+  await expect(update).toBeEnabled()
+  expect(fixture.verified).toBe(0)
+  expect(fixture.submissions).toEqual([])
+  expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+})
+
 test('external approval replaces an unavailable saved owner and signs through the real bridge', async ({ page }) => {
   const wallet = await openApp(page, staleOwner)
   await wallet.disconnect()
@@ -245,6 +489,7 @@ test('external approval replaces an unavailable saved owner and signs through th
 test('disconnect, reconnect, and returning sessions keep the actual selected signer', async ({ page }) => {
   await openApp(page)
   await approveConnection(page)
+  await accountButton(page).click()
   await page.getByRole('button', { name: 'Disconnect wallet', exact: true }).click()
   await expect(connectButton(page)).toBeVisible()
   expect(await selectedOwner(page)).toBe('disconnected')
@@ -254,6 +499,50 @@ test('disconnect, reconnect, and returning sessions keep the actual selected sig
   await expect(accountButton(page)).toBeVisible()
   expect(await signThroughBridge(page)).toBe(TEST_WALLET_ADDRESSES[0])
 })
+
+for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'desktop', width: 1280, height: 900 }]) {
+  test(`${viewport.name} wallet modal shows an empty placeholder only when no other wallets remain`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    const wallet = await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true)
+    await accountButton(page).click()
+    const placeholder = page.getByText('No other wallets connected.', { exact: true })
+    await expect(placeholder).not.toBeVisible()
+    await wallet.disconnect()
+    await expect(placeholder).toBeVisible()
+    await expect(page.getByRole('button', { name: /Connect new wallet/i })).toBeEnabled()
+    const disconnect = page.getByRole('button', { name: 'Disconnect wallet', exact: true })
+    await expect(disconnect).toHaveCSS('background-color', 'rgb(255, 87, 45)')
+    await expect(disconnect).toHaveCSS('color', 'rgb(255, 255, 255)')
+    await page.screenshot({ path: testInfo.outputPath('wallet-empty-placeholder.png'), animations: 'disabled' })
+  })
+
+  for (const type of ['external', 'google'] as const) {
+    test(`${viewport.name} ${type} wallet disconnects from its account modal and stays disconnected after reload`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height })
+      if (type === 'google') {
+        await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'success', 'cancel', true)
+      } else {
+        await openApp(page)
+        await approveConnection(page)
+      }
+      await expect(page.getByRole('button', { name: 'Disconnect wallet', exact: true })).not.toBeVisible()
+      await accountButton(page).click()
+      await expect(page.getByText('Wallet connected', { exact: true })).toBeVisible()
+      const disconnect = page.getByRole('button', { name: 'Disconnect wallet', exact: true })
+      await expect(disconnect).toBeVisible()
+      await expect(disconnect).toBeEnabled()
+      await page.screenshot({ path: testInfo.outputPath('wallet-disconnect.png'), animations: 'disabled' })
+      await disconnect.click()
+      await expect(page.getByText('Wallet connected', { exact: true })).not.toBeVisible()
+      await expect(connectButton(page)).toBeVisible()
+      expect(await selectedOwner(page)).toBe('disconnected')
+      await page.reload()
+      await expect(connectButton(page)).toBeVisible()
+      await expect(accountButton(page)).not.toBeVisible()
+      expect(await selectedOwner(page)).toBe('disconnected')
+    })
+  }
+}
 
 test('a rejected wallet request leaves the app disconnected and can be retried', async ({ page }) => {
   const wallet = await openApp(page)

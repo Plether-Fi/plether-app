@@ -13,6 +13,13 @@ assert.ok(installed, 'Install frontend or Insights dependencies before testing t
 const filenames = ['dist/esm/ui.mjs', 'dist/cjs/ui.js', 'dist/dts/ui.d.ts', 'dist/dts/ui.d.mts']
 const source = filename => readFileSync(resolve(installed, filename), 'utf8')
 
+function withoutAccountClose(source) {
+  return source
+    .replace('typeof privyAccountActions==="function"?privyAccountActions(u):privyAccountActions', 'privyAccountActions')
+    .replace('typeof privyAccountActions==="function"?privyAccountActions(x):privyAccountActions', 'privyAccountActions')
+    .replace('React.ReactNode | ((close: () => void) => React.ReactNode)', 'React.ReactNode')
+}
+
 function fixture(t) {
   const directory = mkdtempSync(resolve(tmpdir(), 'plether-privy-ui-'))
   t.after(() => { rmSync(directory, { recursive: true, force: true }) })
@@ -30,31 +37,42 @@ test('extends the actual pinned ESM/CJS native picker and declarations with matc
   assert.match(esm, /function usePletherWalletPickerClose\(\)/)
   assert.match(esm, /await close\(\{shouldCallAuthOnSuccess:!1\}\)/)
   assert.match(esm, /accountActions:privyAccountActions/)
-  assert.match(esm, /networks:h\}\),privyAccountActions\]/)
+  assert.match(esm, /privyOtherWallets\.length\?privyOtherWallets:/)
+  assert.match(esm, /children:"No other wallets connected\."/)
+  assert.match(esm, /networks:h\}\),typeof privyAccountActions==="function"\?privyAccountActions\(u\):privyAccountActions\]/)
   const cjs = preparePrivyDialogSource('dist/cjs/ui.js', source('dist/cjs/ui.js'))
   assert.match(cjs, /customDescription:privyConnectionDescription\?\.\(x\)/)
   assert.match(cjs, /exports.usePletherWalletPickerClose=/)
   assert.match(cjs, /await close\(\{shouldCallAuthOnSuccess:!1\}\)/)
   assert.match(cjs, /accountActions:privyAccountActions/)
-  assert.match(cjs, /networks:p\}\),privyAccountActions\]/)
+  assert.match(cjs, /privyOtherWallets\.length\?privyOtherWallets:/)
+  assert.match(cjs, /children:"No other wallets connected\."/)
+  assert.match(cjs, /networks:p\}\),typeof privyAccountActions==="function"\?privyAccountActions\(x\):privyAccountActions\]/)
   for (const filename of filenames.slice(2)) {
     const types = preparePrivyDialogSource(filename, source(filename))
     assert.match(types, /connectionDescription\?: \(close: \(\) => void\) => React.ReactNode/)
     assert.match(types, /declare const usePletherWalletPickerClose: \(\) => \(\) => Promise<void>/)
-    assert.match(types, /accountActions\?: React.ReactNode/)
+    assert.match(types, /accountActions\?: React.ReactNode \| \(\(close: \(\) => void\) => React.ReactNode\)/)
   }
 })
 
 test('upgrades the previous complete picker-only extension', () => {
   for (const filename of filenames) {
     const patched = preparePrivyDialogSource(filename, source(filename))
-    const previous = patched
+    const previous = withoutAccountClose(patched)
       .replace(',accountActions:privyAccountActions', '')
       .replace('t("div",{children:[e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h}),privyAccountActions]})', 'e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h})')
       .replace('e.jsxs("div",{children:[e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})', 'e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})')
       .replace('    /** Plether: settings inside the native connected-wallet dialog. */\n    accountActions?: React.ReactNode;\n', '')
       .replace(', accountActions }: WalletsDialogProps)', ' }: WalletsDialogProps)')
     assert.equal(preparePrivyDialogSource(filename, previous), patched)
+  }
+})
+
+test('upgrades the previous account-actions extension with a native close callback', () => {
+  for (const filename of filenames) {
+    const patched = preparePrivyDialogSource(filename, source(filename))
+    assert.equal(preparePrivyDialogSource(filename, withoutAccountClose(patched)), patched)
   }
 })
 

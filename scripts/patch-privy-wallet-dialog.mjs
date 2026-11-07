@@ -55,12 +55,39 @@ const accountActionTypePatches = [
 accountActionPatches['dist/dts/ui.d.ts'] = accountActionTypePatches
 accountActionPatches['dist/dts/ui.d.mts'] = accountActionTypePatches
 
+// Give account actions the native dialog's close callback, without replacing
+// its wallet management or authentication implementation.
+const accountActionClosePatches = {
+  'dist/esm/ui.mjs': [['}),privyAccountActions]})', '}),typeof privyAccountActions==="function"?privyAccountActions(u):privyAccountActions]})']],
+  'dist/cjs/ui.js': [['}),privyAccountActions]})', '}),typeof privyAccountActions==="function"?privyAccountActions(x):privyAccountActions]})']],
+  'dist/dts/ui.d.ts': [['accountActions?: React.ReactNode;', 'accountActions?: React.ReactNode | ((close: () => void) => React.ReactNode);']],
+  'dist/dts/ui.d.mts': [['accountActions?: React.ReactNode;', 'accountActions?: React.ReactNode | ((close: () => void) => React.ReactNode);']],
+}
+
+const otherWalletLists = {
+  'dist/esm/ui.mjs': '[...s,...c].sort(((e,t)=>e.connectedAt-t.connectedAt)).filter((e=>"privy"!==e.walletClientType)).filter((e=>e.address!==h?.address||e.walletClientType!==h.walletClientType)).map(((t,r)=>/*#__PURE__*/e(Cr,{wallet:t,showBalances:!1,networks:a,assets:n,onSelectWallet:()=>L({address:t.address,client:t.walletClientType,appId:o.id})},r)))',
+  'dist/cjs/ui.js': '[...d,...p].sort(((e,t)=>e.connectedAt-t.connectedAt)).filter((e=>"privy"!==e.walletClientType)).filter((e=>e.address!==u?.address||e.walletClientType!==u.walletClientType)).map(((t,r)=>/*#__PURE__*/e.jsx(ft,{wallet:t,showBalances:!1,networks:l,assets:s,onSelectWallet:()=>i.setActiveWallet({address:t.address,client:t.walletClientType,appId:o.id})},r)))',
+}
+const emptyWalletPatches = Object.fromEntries(Object.entries(otherWalletLists).map(([filename, list]) => {
+  const jsx = filename.endsWith('.mjs') ? 'e' : 'e.jsx'
+  const placeholder = `${jsx}("p",{role:"status",style:{margin:0,padding:"24px 16px",border:"1px dashed var(--privy-color-foreground-4)",color:"var(--privy-color-foreground-3)",fontSize:14,textAlign:"center"},children:"No other wallets connected."})`
+  return [filename, [[list, `(privyOtherWallets=>privyOtherWallets.length?privyOtherWallets:[${placeholder}])(${list})`]]]
+}))
+
 function count(source, fragment) { return source.split(fragment).length - 1 }
 
 export function preparePrivyDialogSource(filename, source) {
   const plan = plans[filename]
   if (!plan) throw new Error(`Unsupported Privy patch file: ${filename}`)
   let original = source
+  const emptyPatches = emptyWalletPatches[filename] ?? []
+  for (const [before, after] of emptyPatches) {
+    if (count(original, after) === 1) original = original.replace(after, before)
+  }
+  const closePatches = accountActionClosePatches[filename]
+  for (const [before, after] of closePatches) {
+    if (count(original, after) === 1) original = original.replace(after, before)
+  }
   const accountPatches = accountActionPatches[filename]
   const accountApplied = accountPatches.map(([before, after]) => {
     if (count(original, after) === 1) {
@@ -92,6 +119,14 @@ export function preparePrivyDialogSource(filename, source) {
   let patched = plan.patches.reduce((result, [before, after]) => result.replace(before, after), original)
   for (const [before, after] of accountPatches) {
     if (count(patched, before) !== 1) throw new Error(`Privy ${VERSION} account action source mismatch: ${filename}`)
+    patched = patched.replace(before, after)
+  }
+  for (const [before, after] of closePatches) {
+    if (count(patched, before) !== 1) throw new Error(`Privy ${VERSION} account close source mismatch: ${filename}`)
+    patched = patched.replace(before, after)
+  }
+  for (const [before, after] of emptyPatches) {
+    if (count(patched, before) !== 1) throw new Error(`Privy ${VERSION} empty wallet list source mismatch: ${filename}`)
     patched = patched.replace(before, after)
   }
   return patched

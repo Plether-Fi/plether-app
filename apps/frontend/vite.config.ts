@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,11 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 import { parseGlobalHeaders } from './src/config/devServerHeaders';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+// The pinned SDK's version does not change when our UI adapter changes.
+// Include its bytes so a restarted dev server never reuses an older adapter.
+const privyUiHash = createHash('sha256')
+  .update(fs.readFileSync(path.join(dirname, 'node_modules/@privy-io/react-auth/dist/esm/ui.mjs')))
+  .digest('hex').slice(0, 12);
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
 const AA_PROXY_PATHS = new Set([
   '/api/perps/v1/readiness',
@@ -126,7 +132,7 @@ export default defineConfig(({ mode }) => {
   return {
   // Parallel Playwright servers must not replace a developer's optimized
   // dependencies while an open login flow still references those chunks.
-  cacheDir: env.PLETHER_VITE_CACHE_DIR ?? 'node_modules/.vite',
+  cacheDir: `${env.PLETHER_VITE_CACHE_DIR ?? 'node_modules/.vite'}-privy-${privyUiHash}`,
   define: {
     'import.meta.env.VITE_BUILD_COMMIT': JSON.stringify(buildCommit(env)),
     'import.meta.env.VITE_DEV_API_PROXY_TARGET': JSON.stringify(env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET),

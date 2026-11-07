@@ -22,7 +22,7 @@ const sdk = vi.hoisted(() => {
     ready: true,
     walletsReady: true,
     authenticated: false,
-    user: null as { id?: string; linkedAccounts: unknown[] } | null,
+    user: null as { id?: string; mfaMethods?: string[]; linkedAccounts: unknown[] } | null,
     wallets: [] as ConnectedWallet[],
     nativeWallet: undefined as ConnectedWallet | undefined,
     events: new Map<string, Set<{ current: Callbacks }>>(),
@@ -38,8 +38,10 @@ const sdk = vi.hoisted(() => {
     closeNativePicker: vi.fn(),
     createWallet: vi.fn(),
     showMfa: vi.fn(),
+    refreshUser: vi.fn(), promptMfa: vi.fn(), initMfaPasskeys: vi.fn(), submitMfaPasskeys: vi.fn(),
     nativeDescription: undefined as ConnectionDescription | undefined,
-    nativeAccountActions: null as ReactNode,
+    nativeAccountActions: undefined as ((close: () => void) => ReactNode) | undefined,
+    closeNativeAccount: vi.fn(),
   }
 })
 
@@ -59,7 +61,12 @@ vi.mock('@privy-io/react-auth', () => {
   }
   return {
     PrivyProvider: ({ children }: { children: ReactNode }) => children,
-    usePrivy: () => ({ ready: sdk.ready, authenticated: sdk.authenticated, user: sdk.user, logout: sdk.logout }),
+    usePrivy: () => {
+      // Match the SDK's stable user identity. Cloning it on each render makes
+      // the real bridge reconnect unnecessarily because it observes user changes.
+      if (sdk.user) sdk.user.mfaMethods ??= []
+      return { ready: sdk.ready, authenticated: sdk.authenticated, user: sdk.user, logout: sdk.logout }
+    },
     useWallets: () => ({ ready: sdk.walletsReady, wallets: sdk.wallets }),
     useModalStatus: () => ({ isOpen: false }),
     useActiveWallet: () => ({ wallet: sdk.nativeWallet, connect: sdk.openNative, setActiveWallet: vi.fn() }),
@@ -72,12 +79,14 @@ vi.mock('@privy-io/react-auth', () => {
     useCreateWallet: (callbacks: Callbacks) => { useEvents('create', callbacks); return { createWallet: sdk.createWallet } },
     useExportWallet: () => ({ exportWallet: vi.fn() }),
     useSetWalletRecovery: () => ({ setWalletRecovery: vi.fn() }),
-    useMfaEnrollment: () => ({ showMfaEnrollmentModal: sdk.showMfa }),
+    useUser: () => ({ refreshUser: sdk.refreshUser }),
+    useMfa: () => ({ promptMfa: sdk.promptMfa }),
+    useMfaEnrollment: () => ({ showMfaEnrollmentModal: sdk.showMfa, initEnrollmentWithPasskey: sdk.initMfaPasskeys, submitEnrollmentWithPasskey: sdk.submitMfaPasskeys }),
   }
 })
 vi.mock('@privy-io/react-auth/ui', () => ({
   usePletherWalletPickerClose: () => sdk.closePicker,
-  WalletsDialog: ({ connectionDescription, accountActions }: { connectionDescription: ConnectionDescription; accountActions: ReactNode }) => {
+  WalletsDialog: ({ connectionDescription, accountActions }: { connectionDescription: ConnectionDescription; accountActions: (close: () => void) => ReactNode }) => {
     sdk.nativeDescription = connectionDescription
     sdk.nativeAccountActions = accountActions
     return null
@@ -208,8 +217,12 @@ beforeEach(() => {
   sdk.closeNativePicker.mockResolvedValue(undefined)
   sdk.createWallet.mockResolvedValue(undefined)
   sdk.nativeDescription = undefined
-  sdk.nativeAccountActions = null
+  sdk.nativeAccountActions = undefined
   sdk.showMfa.mockReset().mockResolvedValue(undefined)
+  sdk.refreshUser.mockReset().mockImplementation(async () => sdk.user)
+  sdk.promptMfa.mockReset().mockResolvedValue(undefined)
+  sdk.initMfaPasskeys.mockReset().mockResolvedValue(undefined)
+  sdk.submitMfaPasskeys.mockReset().mockResolvedValue(undefined)
   config._internal.connectors.setState([])
   config.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
 })
@@ -217,6 +230,32 @@ beforeEach(() => {
 afterEach(() => { cleanup() })
 
 describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
+  it('keeps the header loading through SDK restoration and delayed signer connection without flashing Select Wallet', async () => {
+    const embedded = testWallet(0, 'privy')
+    let finishProvider!: (provider: typeof embedded.provider) => void
+    const provider = new Promise<typeof embedded.provider>(resolve => { finishProvider = resolve })
+    vi.mocked(embedded.wallet.getEthereumProvider).mockReturnValue(provider)
+    sdk.authenticated = true
+    sdk.user = { id: 'returning-user', linkedAccounts: [{ type: 'google_oauth' }] }
+    sdk.walletsReady = false
+    sessionStorage.setItem(selectionKey, embedded.account.address)
+    const view = mount(true)
+    expect(screen.getByRole('button', { name: 'Connecting…' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Select Wallet' })).not.toBeInTheDocument()
+    sdk.walletsReady = true
+    sdk.wallets = [embedded.wallet]
+    view.refresh()
+    await waitFor(() => { expect(embedded.wallet.getEthereumProvider).toHaveBeenCalled() })
+    expect(screen.getByRole('button', { name: 'Connecting…' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Select Wallet' })).not.toBeInTheDocument()
+    expect(actions.connectionPending).toBe(true)
+    await act(async () => { finishProvider(embedded.provider) })
+    await expectConnected(embedded.account.address)
+    expect(screen.getByRole('button', { name: /^Open wallet account / })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Select Wallet' })).not.toBeInTheDocument()
+    expect(actions.connectionPending).toBe(false)
+  })
+
   it('restores the previously selected Google wallet after tab storage is discarded, without falling back to another owner', async () => {
     const embedded = testWallet(0, 'privy')
     const external = testWallet(1)
@@ -276,7 +315,7 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     sdk.showMfa.mockImplementation(() => new Promise<void>(() => {}))
     mount()
     await expectConnected(embedded.account.address)
-    render(<>{sdk.nativeAccountActions}</>)
+    render(<>{sdk.nativeAccountActions?.(sdk.closeNativeAccount)}</>)
     const client = await getWalletClient(config)
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Wallet MFA settings' })) })
     expect(sdk.showMfa).toHaveBeenCalledOnce()
@@ -288,6 +327,60 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     const message = 'The selected embedded owner remains the signer while managing MFA'
     expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
     expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address.toLowerCase())
+  })
+
+  it('adds a linked mobile passkey to wallet MFA after verification while preserving the Mac key and trading signer', async () => {
+    const embedded = testWallet(0, 'privy')
+    sdk.authenticated = true
+    sdk.user = { id: 'embedded-user', mfaMethods: ['passkey'], linkedAccounts: [
+      { type: 'google_oauth' },
+      { type: 'passkey', credentialId: 'public-mac-key', enrolledInMfa: true },
+      { type: 'passkey', credentialId: 'public-mobile-key', enrolledInMfa: false },
+    ] }
+    sdk.wallets = [embedded.wallet]
+    sdk.nativeWallet = embedded.wallet
+    sessionStorage.setItem(selectionKey, embedded.account.address)
+    let verify!: () => void
+    sdk.promptMfa.mockImplementation(() => new Promise<void>(resolve => { verify = resolve }))
+    mount()
+    await expectConnected(embedded.account.address)
+    render(<>{sdk.nativeAccountActions?.(sdk.closeNativeAccount)}</>)
+    const client = await getWalletClient(config)
+    fireEvent.click(screen.getByRole('button', { name: 'Enable additional passkeys for wallet MFA' }))
+    expect(sdk.promptMfa).toHaveBeenCalledOnce()
+    expect(sdk.submitMfaPasskeys).not.toHaveBeenCalled()
+    await act(async () => { verify() })
+    expect(sdk.submitMfaPasskeys).toHaveBeenCalledExactlyOnceWith(
+      { credentialIds: ['public-mac-key', 'public-mobile-key'] }, { removeForLogin: false },
+    )
+    expect(screen.getByText(/Linked passkeys are enabled for wallet MFA/)).toBeVisible()
+    await expectConnected(embedded.account.address)
+    const message = 'The same embedded trading owner signs after adding a second MFA passkey'
+    expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
+    expect(sdk.logout).not.toHaveBeenCalled()
+    expect(sdk.createWallet).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address.toLowerCase())
+  })
+
+  it.each(['metamask', 'privy'])('disconnects %s from the native account modal and revokes the cached signer', async type => {
+    const owner = testWallet(0, type)
+    sdk.wallets = [owner.wallet]
+    sdk.authenticated = type === 'privy'
+    sdk.user = type === 'privy' ? { id: 'embedded-user', linkedAccounts: [] } : null
+    sdk.nativeWallet = owner.wallet
+    const view = mount()
+    await expectConnected(owner.account.address)
+    const client = await getWalletClient(config)
+    render(<>{sdk.nativeAccountActions?.(sdk.closeNativeAccount)}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Disconnect wallet' })) })
+    await expectDisconnected()
+    expect(sdk.closeNativeAccount).toHaveBeenCalledOnce()
+    expect(owner.wallet.disconnect).toHaveBeenCalledOnce()
+    expect(sdk.logout).toHaveBeenCalledTimes(type === 'privy' ? 1 : 0)
+    expect(localStorage.getItem(selectionKey)).toBe('disconnected')
+    await expect(client.signMessage({ message: 'Cannot sign after modal disconnect' })).rejects.toThrow(/selected wallet changed|not ready/)
+    view.refresh()
+    await expectDisconnected()
   })
 
   it.each([false, true])('does not start passkey login/linking on an unsupported origin (authenticated=%s)', async authenticated => {

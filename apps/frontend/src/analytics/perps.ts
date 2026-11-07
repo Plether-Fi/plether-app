@@ -8,7 +8,7 @@ import {
 export type PerpsDirection = 'long' | 'short'
 export type PerpsConnectedState = 'connected' | 'disconnected'
 export type PerpsChainState = 'correct_chain' | 'wrong_chain' | 'unknown'
-export type PerpsCloseReason = 'backdrop' | 'close_button' | 'escape' | 'state_change'
+export type PerpsCloseReason = 'backdrop' | 'close_button' | 'escape' | 'state_change' | 'browser_back'
 export type PerpsOrderLifecycleEvent =
   | 'commit_started'
   | 'commit_pending'
