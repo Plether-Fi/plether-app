@@ -1,6 +1,6 @@
 import copy
 import unittest
-from prepare_worker_cadence import TARGETS, GuardRejected, fingerprint, patch_definition, require_desired_cadence
+from prepare_worker_cadence import TARGETS, GuardRejected, fingerprint, patch_definition, require_desired_cadence, registration_request
 
 
 def fixture(family):
@@ -26,6 +26,20 @@ def fixture(family):
 
 
 class CadencePreparationTests(unittest.TestCase):
+    def test_registration_omits_rejected_empty_tags_and_preserves_real_tags(self):
+        for tags in [[], [{'key': 'Environment', 'value': 'sepolia'}]]:
+            source = fixture('plether-sepolia-workers')
+            source['tags'] = tags
+            source['revision'] = 107
+            allowed = set(source) - {'revision'}
+            request = registration_request(source, allowed)
+            self.assertNotIn('revision', request)
+            if tags:
+                self.assertEqual(request['tags'], tags)
+            else:
+                self.assertNotIn('tags', request)
+            self.assertEqual(fingerprint(source), fingerprint(request))
+
     def test_every_family_changes_only_approved_cadence_slots(self):
         for family in TARGETS:
             with self.subTest(family=family):
