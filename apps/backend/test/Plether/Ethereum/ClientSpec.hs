@@ -4,12 +4,19 @@ import Data.Aeson (Value (..))
 import Plether.Ethereum.Client
   ( RpcError (..)
   , decodeRpcResponseEnvelope
+  , directSecurityRpcEndpoint
   )
 import Test.Hspec
 
 spec :: Spec
 spec =
   describe "strict JSON-RPC response correlation" $ do
+    it "pins Sepolia AA to direct primary and leaves unrelated providers unchanged" $ do
+      directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com/" `shouldBe` "https://rpc-internal.sepolia.plether.com/primary"
+      directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com" `shouldBe` "https://rpc-internal.sepolia.plether.com/primary"
+      directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com/primary" `shouldBe` "https://rpc-internal.sepolia.plether.com/primary"
+      directSecurityRpcEndpoint "https://other.invalid/" `shouldBe` "https://other.invalid/"
+      directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com.evil.invalid/" `shouldBe` "https://rpc-internal.sepolia.plether.com.evil.invalid/"
     it "accepts exactly one result with version 2.0 and the expected id" $
       decodeRpcResponseEnvelope 7 "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x1\"}"
         `shouldBe` Right (String "0x1")

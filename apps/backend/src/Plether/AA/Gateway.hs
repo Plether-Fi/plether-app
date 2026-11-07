@@ -127,6 +127,7 @@ import Plether.Ethereum.Client
   , EthClient
   , ethCallAtBlock
   , newClient
+  , withoutRpcFallback
   , rpcCall
   , withRpcObserver
   )
@@ -189,9 +190,11 @@ newNativeGatewayState
   -> Config
   -> EthClient
   -> IO NativeGatewayState
-newNativeGatewayState manager cfg client
+newNativeGatewayState manager cfg ordinaryClient
   | not Manifest.releaseIsDeployed = newNativeGatewayBaseState manager (cfg {cfgNativeAaConfig = Nothing}) client
   | otherwise = newDeployedNativeGatewayState manager cfg client
+ where
+  client = withoutRpcFallback ordinaryClient
 
 newDeployedNativeGatewayState :: Manager -> Config -> EthClient -> IO NativeGatewayState
 newDeployedNativeGatewayState manager cfg client = do
@@ -238,7 +241,9 @@ newNativeGatewayBaseState manager cfg client = do
         SingleProviderSepolia -> logWarn "aa_single_provider_canary"
           "Sepolia canary uses one RPC provider; repeated reads are not independent verification" []
         DualIndependent -> pure ()
-      securityClient <- newClient $ naaSecurityRpcUrl nativeCfg
+      securityClient <- if naaRpcMode nativeCfg == SingleProviderSepolia
+        then pure client
+        else withoutRpcFallback <$> newClient (naaSecurityRpcUrl nativeCfg)
       profile <- attestNativePaymasterProfile nativeCfg client securityClient
       case profile of
         Left err -> pure $ make Nothing (Just err) (Just securityClient)
@@ -256,7 +261,8 @@ newNativeGatewayBaseState manager cfg client = do
                 Right resolved -> make (Just resolved) Nothing $ Just securityClient) nativeCfg
 
 gatewayReadiness :: NativeGatewayState -> Config -> Maybe DbPool -> EthClient -> IO Value
-gatewayReadiness state cfg pool client = do
+gatewayReadiness state cfg pool ordinaryClient = do
+  let client = withoutRpcFallback ordinaryClient
   readSnapshot <- modifyMVar (ngsReadiness state) $ \current -> case current of
     Just reader -> pure (current, reader)
     Nothing -> do
@@ -265,13 +271,15 @@ gatewayReadiness state cfg pool client = do
   readSnapshot
 
 initializeGatewayObservability :: NativeGatewayState -> Config -> Maybe DbPool -> EthClient -> IO ()
-initializeGatewayObservability state cfg pool client = case (cfgNativeAaConfig cfg, pool) of
+initializeGatewayObservability state cfg pool ordinaryClient = case (cfgNativeAaConfig cfg, pool) of
   (Just _, Just database) -> do
     void $ gatewayReadiness state cfg pool client
     modifyMVar_ (ngsDiagnostics state) $ \current -> case current of
       Just _ -> pure current
       Nothing -> Just <$> Diagnostics.startDiagnostics cfg database client
   _ -> pure ()
+ where
+  client = withoutRpcFallback ordinaryClient
 
 data CloseAssistanceConfig = CloseAssistanceConfig
   { cacLens :: Text
@@ -302,7 +310,8 @@ handleNativeAaRpc
   -> EthClient
   -> Manager
   -> ActionM ()
-handleNativeAaRpc gatewayState cfg mPool perpsClient manager = do
+handleNativeAaRpc gatewayState cfg mPool ordinaryClient manager = do
+  let perpsClient = withoutRpcFallback ordinaryClient
   timing <- liftIO newTiming
   suppliedAttempt <- fmap TL.toStrict <$> header "X-Plether-Attempt-Id"
   let attempt = suppliedAttempt >>= \value -> if Diagnostics.validAttemptId value then Just (T.toLower value) else Nothing

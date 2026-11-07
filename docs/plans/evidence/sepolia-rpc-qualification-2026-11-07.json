@@ -1,0 +1,226 @@
+{
+  "recorded_at_utc": "2026-11-07T07:52:43.997977+00:00",
+  "status": "initial_primary_qualification_passed",
+  "account": "932542905614",
+  "region": "ap-southeast-1",
+  "chain_id": 421614,
+  "instance_id": "i-04a6af37b4583a4ee",
+  "gateway_hostname": "rpc-internal.sepolia.plether.com",
+  "snapshot_url": "https://snapshot.arbitrum.foundation/sepolia-rollup/2026-10-20-dbd26a00/",
+  "snapshot_import_complete": true,
+  "qualification_route": "/primary (direct node; no Alchemy fallback)",
+  "reference": "existing Alchemy Arbitrum Sepolia origin",
+  "before_cleanup": {
+    "task_arn": "arn:aws:ecs:ap-southeast-1:932542905614:task/plether-sepolia/8902bc19606a4224b140b61368c4f0de",
+    "success": true,
+    "results": [
+      {
+        "event": "rpc_qualification",
+        "test": "chain_ids",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "not_syncing",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "canonical_latest",
+        "pass": true,
+        "required": true,
+        "height": 326874857,
+        "hash": "0x9be4175197d93d48194f8c199d84472f636c8f585604b3068d86a3d6f5fbaac5"
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "fresh_head",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "canonical_safe",
+        "pass": true,
+        "required": true,
+        "height": 326871952,
+        "hash": "0x7bfbcd820d50917f492fe21dc0abc68160165af7d184f4408a8e395ecfd07044"
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "canonical_finalized",
+        "pass": true,
+        "required": true,
+        "height": 326870683,
+        "hash": "0x5a61d266d6e36a0dbad4988ed27f7643e5471b99dcc24d6cfe2000f26a8258bb"
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_balance",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_code",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_storage",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_call",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "call_tracer",
+        "pass": true,
+        "required": false
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "javascript_tracer",
+        "pass": true,
+        "required": false
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "required_checks_complete",
+        "pass": true,
+        "required": true
+      }
+    ]
+  },
+  "after_process_restart": {
+    "task_arn": "arn:aws:ecs:ap-southeast-1:932542905614:task/plether-sepolia/564a279ece4e499e865b6ac533518c4e",
+    "success": true,
+    "results": [
+      {
+        "event": "rpc_qualification",
+        "test": "chain_ids",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "not_syncing",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "canonical_latest",
+        "pass": true,
+        "required": true,
+        "height": 326875760,
+        "hash": "0xae38791b009de9e4323760d284b1eaf52f3b366aa30d2d5f25a624b51cb95754"
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "fresh_head",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "canonical_safe",
+        "pass": true,
+        "required": true,
+        "height": 326873238,
+        "hash": "0x02999419d94ee9671e53e16cf4e3c244c5b15d091455811ef4f46486087292d6"
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "canonical_finalized",
+        "pass": true,
+        "required": true,
+        "height": 326871952,
+        "hash": "0x7bfbcd820d50917f492fe21dc0abc68160165af7d184f4408a8e395ecfd07044"
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_balance",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_code",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_storage",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "safe_call",
+        "pass": true,
+        "required": true
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "call_tracer",
+        "pass": true,
+        "required": false
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "javascript_tracer",
+        "pass": true,
+        "required": false
+      },
+      {
+        "event": "rpc_qualification",
+        "test": "required_checks_complete",
+        "pass": true,
+        "required": true
+      }
+    ]
+  },
+  "temporary_staging": {
+    "deleted_volume_id": "vol-0d2eb64dc29721085",
+    "size_gib": 4096,
+    "unmounted_and_fstab_entry_removed": true,
+    "aws_volume_not_found_verified": true,
+    "configuration_staging_volume_gib": 0
+  },
+  "terraform": {
+    "entry_point": "infra/terraform-rpc",
+    "backend_key": "plether/sepolia/rpc/terraform.tfstate",
+    "cleanup_plan": {
+      "add": 0,
+      "change": 1,
+      "destroy": 2
+    },
+    "post_cleanup_plan_exit_code": 0,
+    "post_cleanup_managed_changes": []
+  },
+  "observed_alarm_states": {
+    "plether-sepolia-rpc-node-status": "OK",
+    "plether-sepolia-rpc-node-memory": "OK",
+    "plether-sepolia-rpc-node-disk": "OK",
+    "plether-sepolia-rpc-primary-unhealthy": "OK"
+  },
+  "soak_started_at_utc": "2026-11-07T07:51:45.735957+00:00",
+  "earliest_seven_day_soak_end_utc": "2026-11-14T07:51:45.735957+00:00",
+  "application_traffic_cutover": false,
+  "polling_intervals_changed": false,
+  "remaining_before_cutover": [
+    "Seven days of stable operation; this record proves only initial qualification.",
+    "Outage/failover, workload and capacity qualification described in the operator runbook.",
+    "Consumer, browser and AA migration with independent verification preserved."
+  ]
+}

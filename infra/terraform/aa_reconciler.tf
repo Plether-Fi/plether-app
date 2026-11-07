@@ -80,12 +80,13 @@ resource "aws_iam_role_policy" "aa_reconciler_execution_secrets" {
         "ssm:GetParameters",
         "ssm:GetParameter"
       ]
-      Resource = [
+      Resource = compact([
         aws_ssm_parameter.database_url.arn,
-        aws_ssm_parameter.perps_rpc_url.arn,
+        local.application_rpc_url_parameter_arn,
         local.aa_reconciler_secondary_rpc_url_parameter_arn,
         aws_ssm_parameter.posthog_otlp_authorization_header.arn,
-      ]
+        local.perps_rpc_auth_token_parameter_arn,
+      ])
     }]
   })
 }
@@ -209,20 +210,20 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
 
       logConfiguration = local.posthog_log_configuration
 
-      secrets = [
+      secrets = concat([
         {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         },
         {
           name      = "PERPS_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "AA_RECONCILER_SECONDARY_RPC_URL"
           valueFrom = local.aa_reconciler_secondary_rpc_url_parameter_arn
         },
-      ]
+      ], local.perps_rpc_auth_token_secret)
 
       environment = [
         { name = "AA_RPC_MODE", value = var.aa_rpc_mode },

@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { createGateway, configFromEnv, validateRequest } from './server.mjs'
+import { createGateway, configFromEnv, validateRequest, requiresManagedProvider } from './server.mjs'
 
 const token = 'qualification-only-token-never-used-in-aws'
 const hash = `0x${'a'.repeat(64)}`
@@ -58,7 +58,7 @@ async function fixture({ sharedReference = false } = {}) {
   return { ...gateway, state: gateway.state, upstream: state, send, url, logs, advance: ms => { clock += ms } }
 }
 
-test('allowlist rejects signing, historical tracing, notifications, duplicate IDs and unbounded log scans', () => {
+test('allowlist rejects signing, invalid traces, notifications, duplicate IDs and unbounded log scans', () => {
   for (const method of ['eth_sendTransaction', 'personal_sign', 'debug_traceTransaction', 'admin_peers']) {
     assert.throws(() => validateRequest(request(method)))
   }
@@ -67,6 +67,38 @@ test('allowlist rejects signing, historical tracing, notifications, duplicate ID
   assert.throws(() => validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: 'earliest', toBlock: 'latest' }] }))
   assert.throws(() => validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: '0x1', toBlock: '0xffff' }] }))
   validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: '0x100', toBlock: '0x200' }] })
+})
+
+test('managed receipts, bounded historical traces and old state use Alchemy without demoting the primary', async () => {
+  const f = await fixture()
+  f.state.primaryHeight = 1000000n
+  const managed = [
+    { ...request('eth_getUserOperationReceipt'), params: [hash] },
+    { ...request('debug_traceTransaction'), params: [hash, { tracer: 'callTracer', timeout: '20s' }] },
+    { ...request('eth_call'), params: [{ to: `0x${'0'.repeat(40)}`, data: '0x' }, '0x1'] },
+  ]
+  for (const body of managed) {
+    assert.equal((await f.send(body)).status, 200)
+    assert.equal(calls.at(-1).role, 'backup')
+    assert.equal(f.state.primary, true)
+  }
+  assert.equal((await f.send()).status, 200)
+  assert.equal(calls.at(-1).role, 'primary')
+  const before = calls.length
+  assert.equal((await f.send(managed[0], '/primary')).status, 400)
+  assert.equal(calls.length, before)
+})
+
+test('state history routing is explicit and leaves latest/safe/finalized and the retained window on Nitro', () => {
+  const call = tag => ({ ...request('eth_getBalance'), params: [`0x${'0'.repeat(40)}`, tag] })
+  for (const tag of ['latest', 'safe', 'finalized', 'pending', '0xf4240', '0x9fc40']) {
+    assert.equal(requiresManagedProvider(call(tag), 1000000n), false)
+  }
+  for (const tag of ['earliest', '0x1', { blockNumber: '0x1' }, { blockHash: hash }]) {
+    assert.equal(requiresManagedProvider(call(tag), 1000000n), true)
+  }
+  assert.throws(() => validateRequest({ ...request('debug_traceTransaction'), params: [hash, { tracer: '{}', timeout: '20s' }] }))
+  assert.throws(() => validateRequest({ ...request('debug_traceTransaction'), params: [hash, { tracer: 'callTracer', timeout: '21s' }] }))
 })
 
 test('primary promotion requires two probes and forwards valid JSON-RPC', async () => {

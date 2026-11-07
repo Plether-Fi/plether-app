@@ -19,7 +19,7 @@ import Plether.AA.Reconciler
   )
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
-import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Client (RpcClientOptions (..), newClient, newClientWithOptions, withoutRpcFallback)
 import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, aaRpcModeText, AaRpcMode (..), parseCanonicalAddressList, validateAaSafeLag)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import System.Environment (lookupEnv)
@@ -65,8 +65,11 @@ runMain = do
         "aa_reconciler_schema_invalid"
         ("Could not validate the AA sponsorship schema: " <> T.pack (displayException err))
     Right () -> pure ()
-  primaryClient <- newClient rpcUrl
-  secondaryClient <- newClient secondaryRpcUrl
+  token <- fmap T.pack <$> lookupEnv "PERPS_RPC_AUTH_TOKEN"
+  primaryClient <- withoutRpcFallback <$> newClientWithOptions (RpcClientOptions rpcUrl token "aa-reconciler-primary")
+  secondaryClient <- if rpcMode == SingleProviderSepolia
+    then pure primaryClient
+    else withoutRpcFallback <$> newClient secondaryRpcUrl
   logInfo
     "aa_reconciler_started"
     "AA sponsorship reconciler started"

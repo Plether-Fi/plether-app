@@ -11,6 +11,14 @@ const READS = new Set([
   'eth_feeHistory', 'eth_maxPriorityFeePerGas', 'eth_getProof',
 ])
 const WRITES = new Set(['eth_sendRawTransaction', 'eth_sendRawTransactionConditional'])
+// These capabilities remain on the existing managed provider. A pruned Nitro
+// execution node is neither a bundler receipt service nor a deep trace archive.
+const MANAGED = new Set(['eth_getUserOperationReceipt', 'debug_traceTransaction'])
+const STATE_BLOCK_INDEX = {
+  eth_call: 1, eth_estimateGas: 1, eth_getBalance: 1, eth_getCode: 1,
+  eth_getTransactionCount: 1, eth_getStorageAt: 2, eth_getProof: 2,
+}
+const STATE_HISTORY_BLOCKS = 345600n
 const HEX = /^0x[0-9a-fA-F]+$/
 const HASH = /^0x[0-9a-fA-F]{64}$/
 const MAX_BODY = 512 * 1024
@@ -40,7 +48,7 @@ export function validateRequest(body) {
       || !['string', 'number'].includes(typeof call.id)
       || (typeof call.id === 'number' && !Number.isSafeInteger(call.id))
       || String(call.id).length > 128 || ids.has(JSON.stringify(call.id))
-      || !(READS.has(call.method) || WRITES.has(call.method) || call.method === 'debug_traceCall')
+      || !(READS.has(call.method) || WRITES.has(call.method) || MANAGED.has(call.method) || call.method === 'debug_traceCall')
       || !Array.isArray(call.params)) throw new Error('invalid_request')
     ids.add(JSON.stringify(call.id))
     if (call.method === 'eth_getLogs') {
@@ -50,13 +58,35 @@ export function validateRequest(body) {
         if (!HASH.test(filter.blockHash) || filter.fromBlock || filter.toBlock) throw new Error('invalid_log_filter')
       } else if (!HEX.test(filter.fromBlock) || !HEX.test(filter.toBlock)
         || BigInt(filter.toBlock) < BigInt(filter.fromBlock)
-        || BigInt(filter.toBlock) - BigInt(filter.fromBlock) > 2000n) {
+        || BigInt(filter.toBlock) - BigInt(filter.fromBlock) >= 5000n) {
         throw new Error('log_range_requires_explicit_bounded_blocks')
       }
     }
+    if (MANAGED.has(call.method) && (!HASH.test(call.params[0]) || call.params.length > (call.method === 'debug_traceTransaction' ? 2 : 1))) {
+      throw new Error('invalid_managed_request')
+    }
+    if (call.method === 'debug_traceTransaction') {
+      const options = call.params[1] ?? {}
+      if (!options || Array.isArray(options) || typeof options !== 'object'
+        || options.tracer !== 'callTracer' || (options.timeout && !/^(?:[1-9]|1[0-9]|20)s$/.test(options.timeout))) throw new Error('invalid_trace')
+    }
   }
-  if (calls.filter(c => c.method === 'debug_traceCall').length > 1) throw new Error('one_simulation_per_request')
-  return { calls, writable: calls.some(c => WRITES.has(c.method)), heavy: calls.some(c => c.method === 'debug_traceCall') }
+  const isHeavy = c => c.method === 'debug_traceCall' || c.method === 'debug_traceTransaction'
+  if (calls.filter(isHeavy).length > 1) throw new Error('one_simulation_per_request')
+  return { calls, writable: calls.some(c => WRITES.has(c.method)), heavy: calls.some(isHeavy) }
+}
+
+export function requiresManagedProvider(call, primaryHeight) {
+  if (MANAGED.has(call.method)) return true
+  const index = STATE_BLOCK_INDEX[call.method]
+  if (index === undefined) return false
+  let tag = call.params[index]
+  if (tag && typeof tag === 'object') {
+    if (tag.blockHash) return true // A hash alone cannot establish state age.
+    tag = tag.blockNumber
+  }
+  return tag === 'earliest' || (HEX.test(tag) && primaryHeight !== undefined
+    && BigInt(tag) < primaryHeight - STATE_HISTORY_BLOCKS)
 }
 
 function validResponse(body, request) {
@@ -175,6 +205,7 @@ export function createGateway(config, dependencies = {}) {
         agrees = state.primary && age >= -5n && age <= 15n
       }
       if (primary.status === 'fulfilled') {
+        state.primaryHeight = BigInt(primary.value.latest.number)
         const age = BigInt(Math.floor(now() / 1000)) - BigInt(primary.value.latest.timestamp)
         agrees &&= age >= -5n && age <= 15n
       }
@@ -217,9 +248,12 @@ export function createGateway(config, dependencies = {}) {
       if (isHeavy) { heavy++; countedHeavy = true }
       if (!fresh()) return reply(503, { error: 'health_stale' })
       const primaryOnly = req.url === '/primary'
-      role = state.primary ? 'primary' : (!primaryOnly && state.backup ? 'backup' : 'none')
+      const managed = !primaryOnly && validation.calls.some(c => requiresManagedProvider(c, state.primaryHeight))
+      if (primaryOnly && validation.calls.some(c => MANAGED.has(c.method))) return reply(400, { error: 'managed_capability_requires_ordinary_route' })
+      role = managed ? (state.backup ? 'backup' : 'none')
+        : state.primary ? 'primary' : (!primaryOnly && state.backup ? 'backup' : 'none')
       if (role === 'none') return reply(503, { error: 'no_healthy_upstream' })
-      const signal = AbortSignal.timeout(timeoutMs)
+      const signal = AbortSignal.timeout(validation.calls.some(c => c.method === 'debug_traceTransaction') ? 20000 : timeoutMs)
       let result
       try { result = await upstreamCall(config[role], body, signal) } catch (error) {
         if (role === 'primary' && error.retryable) { state.primary = false; state.passes = 0 }
@@ -227,7 +261,7 @@ export function createGateway(config, dependencies = {}) {
         role = 'backup'
         result = await upstreamCall(config.backup, body, signal)
       }
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-plether-rpc-upstream': role })
       res.end(result.raw)
     } catch (error) {
       reply(error instanceof UpstreamError ? 502 : 400, { error: error instanceof UpstreamError ? 'upstream_unavailable_reconcile_writes_before_retry' : 'invalid_request' })

@@ -6,6 +6,8 @@ module Plether.Ethereum.Client
   , newClientWithOptions
   , newClientWithManager
   , withRpcObserver
+  , withoutRpcFallback
+  , directSecurityRpcEndpoint
   , rpcHttpExceptionText
   , rpcCall
   , ethCall
@@ -196,6 +198,19 @@ newClientWithManager manager reqId RpcClientOptions {..} = do
 -- Scoped request instrumentation; endpoint/credentials are never exposed.
 withRpcObserver :: IO () -> EthClient -> EthClient
 withRpcObserver observer client = client {clientObserver = clientObserver client >> observer}
+
+-- The Sepolia routing service has a separate, fail-closed security route.
+-- Never let an ordinary failover alias turn AA verification into a different
+-- provider halfway through an attestation. Other endpoints are unchanged.
+directSecurityRpcEndpoint :: Text -> Text
+directSecurityRpcEndpoint endpoint
+  | endpoint `elem` [gateway, gateway <> "/"] = gateway <> "/primary"
+  | otherwise = endpoint
+ where
+  gateway = "https://rpc-internal.sepolia.plether.com"
+
+withoutRpcFallback :: EthClient -> EthClient
+withoutRpcFallback client = client {clientRpcUrl = directSecurityRpcEndpoint $ clientRpcUrl client}
 
 nextId :: EthClient -> IO Integer
 nextId client = atomicModifyIORef' (clientRequestId client) $ \n -> (n + 1, n)

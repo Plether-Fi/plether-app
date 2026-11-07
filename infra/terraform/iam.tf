@@ -454,9 +454,11 @@ resource "aws_iam_role_policy" "api_execution_ssm" {
       Resource = distinct(compact(concat(
         [
           aws_ssm_parameter.rpc_url.arn,
-          aws_ssm_parameter.perps_rpc_url.arn,
+          local.application_rpc_url_parameter_arn,
           aws_ssm_parameter.database_url.arn,
           aws_ssm_parameter.posthog_otlp_authorization_header.arn,
+          local.rpc_auth_token_parameter_arn,
+          local.perps_rpc_auth_token_parameter_arn,
         ],
         [for secret in local.pyth_api_key_secret : secret.valueFrom],
         [for secret in local.faucet_private_key_secret : secret.valueFrom],
