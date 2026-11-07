@@ -134,6 +134,9 @@ def main():
             for service in descriptions['services']:
                 require(service['desiredCount'] == service['runningCount'] and service['pendingCount'] == 0, 'service_not_stable')
                 require(len(service['deployments']) == 1 and service['deployments'][0]['rolloutState'] == 'COMPLETED', 'service_rollout_in_progress')
+                if service['serviceName'] != 'plether-alto':
+                    expected_group = 'sg-0c095c11c27499ca7' if service['serviceName'] == 'plether-aa-reconciler' else 'sg-0ef6f711cab9291f8'
+                    require(expected_group in service['networkConfiguration']['awsvpcConfiguration']['securityGroups'], 'consumer_network_group_changed')
                 journal['services'][service['serviceName']] = {'previous_task_definition': service['taskDefinition']}
             write_journal(journal)
         token = get('/plether/sepolia/rpc-node/gateway-token')
@@ -165,6 +168,9 @@ def main():
         require(all(r.get('pass') for r in proof['results']), 'routing_probe_failed')
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(proof['completed_at_utc'])).total_seconds()
         require(0 <= age <= 900, 'routing_qualification_stale')
+        reconciler_proof = json.loads((work / 'reconciler-routing-qualification.json').read_text())
+        require(reconciler_proof['success'] and reconciler_proof['security_group'] == 'sg-0c095c11c27499ca7', 'reconciler_network_qualification_failed')
+        require(0 <= (datetime.now(timezone.utc) - datetime.fromisoformat(reconciler_proof['completed_at_utc'])).total_seconds() <= 900, 'reconciler_qualification_stale')
         alto = ecs.describe_services(cluster=CLUSTER, services=['plether-alto'])['services'][0]
         require(alto['desiredCount'] == alto['runningCount'] == 1 and alto['pendingCount'] == 0 and len(alto['deployments']) == 1, 'alto_not_stable')
         definition = ecs.describe_task_definition(taskDefinition=alto['taskDefinition'])['taskDefinition']

@@ -380,7 +380,10 @@ parameter before changing the ordinary alias. Run `ops/qualify_app.mjs` in a
 short-lived gateway task: it proves actual primary and historical routing,
 bounded concurrent reads, and fallback using an isolated failed-primary fixture.
 Save its successful, fresh result as `app-routing-qualification.json` in the
-operator directory. The live Nitro node is not interrupted for this probe.
+operator directory. Repeat from the reconciler's separate security group and
+save `reconciler-routing-qualification.json`, including its `security_group`.
+The standalone RPC state owns only a TCP/443 gateway ingress rule from that
+existing group. The live Nitro node is not interrupted for either probe.
 
 `ops/prepare_app_cutover.py activate --directory <private-operator-directory>`
 requires that qualification and a stable Alto using its dedicated parameter,
