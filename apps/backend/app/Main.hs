@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO)
+import Control.Exception (SomeException,SomeAsyncException,try,fromException,throwIO)
 import Control.Monad (when)
 import qualified Data.Text as T
 import Network.HTTP.Client (newManager)
@@ -16,7 +17,7 @@ import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Insights.DivisionsLive (ensureDivisionsLiveSchema)
 import Plether.Database.Protection (ensureProtectionSchema)
-import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
+import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema,ensurePerpsExecutionProgressSchema)
 import Plether.Database.VaultActivity (ensureVaultActivitySchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
@@ -39,6 +40,7 @@ import Plether.Vaults.PerformanceIndexer
   )
 import System.Exit (exitFailure)
 import System.Environment (lookupEnv)
+import System.Timeout (timeout)
 import VaultReturnWorker (startVaultReturnWorker)
 import Web.Scotty (middleware, scottyOpts)
 
@@ -89,6 +91,11 @@ main = do
           when Manifest.releaseIsDeployed $ do
             withDb pool ensureBasketSnapshotSchema
             withDb pool ensurePerpsHistorySchema
+            progressSchema <- try $ timeout 2_000_000 $ withDb pool ensurePerpsExecutionProgressSchema
+            case progressSchema of
+              Right (Just ()) -> pure ()
+              Left (err :: SomeException) | Just cancellation <- (fromException err :: Maybe SomeAsyncException) -> throwIO cancellation
+              _ -> logWarn "execution_progress_schema_unavailable" "Optional execution progress schema unavailable; canonical history continues" []
             withDb pool ensureDivisionsLiveSchema
             withDb pool ensureProtectionSchema
             withDb pool ensureTestnetFaucetSchema

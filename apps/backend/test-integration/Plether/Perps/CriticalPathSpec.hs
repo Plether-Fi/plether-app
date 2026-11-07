@@ -2,6 +2,7 @@ module Plether.Perps.CriticalPathSpec
   ( testConfig
   , makeApiApplication
   , criticalPathSpec
+  , withCriticalPathDatabase
   ) where
 
 import Control.Exception (bracket, finally)
@@ -263,11 +264,18 @@ prepareDatabase pool = do
 cleanupDatabase :: DbPool -> IO ()
 cleanupDatabase pool =
   withDb pool $ \connection -> do
+    void $ execute connection "DELETE FROM perps_keeper_broadcasts WHERE order_router = ?"
+      (Only $ Text.toLower testRouter)
     deletePerpsHistoryFromBlock
       connection
       testChainId
       testRouter
       0
+    -- Fixture-owned placeholder rows may not have block evidence yet; the
+    -- canonical rewind intentionally cannot match NULL block comparisons.
+    -- Remove all rows in this dedicated test deployment, not other releases.
+    void $ execute connection "DELETE FROM perps_orders WHERE chain_id = ? AND order_router = ?"
+      (testChainId, Text.toLower testRouter)
     void $
       execute
         connection

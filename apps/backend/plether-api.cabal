@@ -45,6 +45,7 @@ library
         Plether.Keeper.Wakeup
         Plether.Keeper.CommitmentHints
         Plether.Database.CommitmentHints
+        Plether.Database.ExecutionProgress
         Plether.AA.Diagnostics
         Plether.AA.ExecutionDiagnostics
         Plether.AA.RecoveryReceipt
@@ -423,6 +424,7 @@ test-suite plether-api-test
         Plether.Keeper.FundingSpec
         Plether.Keeper.WakeupSpec
         Plether.Keeper.CommitmentHintsSpec
+        Plether.Database.ExecutionProgressSpec
         Plether.AA.OrderDiagnosticsSpec
         Plether.AA.DiagnosticsSpec
         Plether.AA.ExecutionDiagnosticsSpec
@@ -541,6 +543,7 @@ test-suite plether-api-integration-test
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
+        Plether.Perps.ExecutionProgressSpec
         Plether.Perps.ProtectionExecutionSpec
         Plether.Keeper.LpSettlementDatabaseSpec
         Plether.Keeper.LiquidationMonitoringSpec

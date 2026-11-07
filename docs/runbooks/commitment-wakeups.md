@@ -51,6 +51,38 @@ PostgreSQL notifications contain only the deployment router. Dedicated listener
 sessions reconnect and trigger a rescan after `LISTEN` commits. Notification loss,
 provider errors, browser closure and listener failure retain ordinary polling.
 
+## Trade screen execution progress
+
+The keeper's pre-send journal also records the orders targeted by its signed
+transaction. The existing order wait endpoint can return that transaction hash
+with `submitting` or `submitted` progress before terminal history is indexed.
+Only an exact RPC acknowledgement earns `submitted`. Planned batch membership
+does not prove that an order executed, because a batch may stop early.
+
+Progress is scoped to the canonical commitment's router, account, client order
+ID and commitment transaction. An `afterExecution` cursor lets the browser wait
+for a change without repeatedly receiving the same hash. Lightweight progress
+reads run every 250 milliseconds; full history reads retain a one-second cadence.
+The endpoint never returns signed transaction bytes or promotes keeper database
+status into canonical order history.
+
+The browser checks the hinted transaction receipt, the authenticated lifecycle
+receipt, the order identity and canonical block headers before displaying a
+terminal result. The required depth is at least one block and uses the stricter
+of the API's keeper and `PERPS_INDEXER_CONFIRMATIONS` settings. Keep the latter
+equal to the indexer's configured confirmation depth when preparing task
+definitions; Terraform mirrors the existing indexer variable into the API.
+The authenticated lifecycle receipt's contract block clock and the RPC receipt's
+Arbitrum L2 block number remain distinct.
+
+Verified execution and the receipt's fees, VPI and settlement amounts appear
+immediately while account balances refresh separately. Supplemental oracle and
+lifetime attribution continue to come from indexed evidence. Indexed history
+enriches the result and handles canonical rewinds. The existing safe-block lookup
+remains available when execution progress is unavailable. These browser updates
+do not require active commitment wakeups and do not alter execution authorization
+or confirmation rules.
+
 ## Staged Sepolia deployment
 
 Follow [AGENTS.md](../../AGENTS.md) for AWS identity, GitHub CLI authentication,
@@ -102,6 +134,8 @@ backend events:
 - `commitment_wakeup_listener_connected`, `commitment_wakeup_received` and
   `keeper_commitment_wakeup`: listener and idle-wait activity.
 - `reveal_payload_fetch_completed`: validated exact price availability.
+- `keeper_transaction_submitted`: exact broadcast acknowledgement, target count
+  and signing-to-acknowledgement and RPC-send durations.
 
 Compare submission, canonical discovery, exact price availability, execution
 broadcast and terminal receipt timings. Keep chain inclusion, confirmation,

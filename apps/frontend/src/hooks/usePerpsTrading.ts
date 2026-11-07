@@ -6,6 +6,8 @@ import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
 import { useCallback } from 'react'
+import type { PerpsKeeperExecutionProgress } from './usePerpsHistory'
+import { KeeperExecutionReorgedError } from '../utils/keeperExecutionCanonicality'
 import { useQueryClient } from '@tanstack/react-query'
 import { isAddressEqual, parseEventLogs, type Address, type Hex } from 'viem'
 import { usePublicClient, useSignTypedData, useWriteContract, useWalletClient } from 'wagmi'
@@ -1132,10 +1134,79 @@ export function usePerpsTrading() {
   }, [])
 
   const readOrderLifecycleOutcome = useCallback(async (
-    orderId: bigint
+    orderId: bigint,
+    candidate?: PerpsKeeperExecutionProgress & { observedInclusion?: { blockNumber: bigint; blockHash: Hex } },
   ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
     const client = requireClient(publicClient)
     const sponsored = requireSponsoredExecution()
+    if (candidate) {
+      if (candidate.orderId !== orderId || !isAddressEqual(candidate.account, sponsored.accountAddress)
+        || !isAddressEqual(candidate.orderRouter, sponsored.manifest.orderRouter)
+        || !Number.isSafeInteger(candidate.requiredConfirmations) || candidate.requiredConfirmations < 1
+        || candidate.requiredConfirmations > 10_000) return undefined
+      if (candidate.observedInclusion) {
+        const known = await client.getBlock({ blockNumber: candidate.observedInclusion.blockNumber })
+        if (known.hash.toLowerCase() !== candidate.observedInclusion.blockHash.toLowerCase()) {
+          throw new KeeperExecutionReorgedError(candidate.transactionHash)
+        }
+      }
+      const [transaction, head] = await Promise.all([
+        client.getTransactionReceipt({ hash: candidate.transactionHash }),
+        client.getBlock({ blockTag: 'latest' }),
+      ])
+      if (transaction.transactionHash.toLowerCase() !== candidate.transactionHash.toLowerCase()
+        || transaction.status !== 'success') return undefined
+      const depth = BigInt(candidate.requiredConfirmations)
+      const ready = head.number >= transaction.blockNumber + depth
+      const [includedResult, terminalResult] = await Promise.allSettled([
+        client.getBlock({ blockNumber: transaction.blockNumber }),
+        ready ? client.readContract({
+          address: sponsored.manifest.orderLifecycleBook, abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+          functionName: 'terminalOutcome', args: [orderId], blockNumber: head.number - depth,
+        }) : Promise.resolve(undefined),
+      ])
+      // A replaced inclusion is authoritative even if the terminal read now
+      // returns Pending or fails. Inspect it before handling the other result.
+      if (includedResult.status === 'rejected') throw includedResult.reason
+      const included = includedResult.value
+      if (included.hash.toLowerCase() !== transaction.blockHash.toLowerCase()) {
+        throw new KeeperExecutionReorgedError(candidate.transactionHash)
+      }
+      if (terminalResult.status === 'rejected') throw terminalResult.reason
+      const terminal = terminalResult.value
+      if (terminal === undefined) return undefined
+      if (terminal.status !== PERPS_LIFECYCLE_STATUS.EXECUTED && terminal.status !== PERPS_LIFECYCLE_STATUS.FAILED) return undefined
+      const matched = transaction.logs.flatMap(log => {
+        if (!isAddressEqual(log.address, sponsored.manifest.orderLifecycleBook)
+          || log.transactionHash?.toLowerCase() !== transaction.transactionHash.toLowerCase()
+          || log.blockHash?.toLowerCase() !== transaction.blockHash.toLowerCase()
+          || log.blockNumber !== transaction.blockNumber || log.removed || log.topics.length === 0) return []
+        try {
+          const verified = decodeVerifiedOrderFinalized({
+            chainId: BigInt(sponsored.manifest.chainId), book: sponsored.manifest.orderLifecycleBook,
+            router: sponsored.manifest.orderRouter, summary: terminal,
+            log: { address: log.address, data: log.data, topics: log.topics as [Hex, ...Hex[]] },
+          })
+          return verified.receipt.orderId === orderId && isAddressEqual(verified.receipt.account, candidate.account)
+            && verified.receipt.clientOrderId.toLowerCase() === candidate.clientOrderId.toLowerCase() ? [verified] : []
+        } catch { return [] }
+      })
+      if (matched.length !== 1) return undefined
+      const canonical = await client.getBlock({ blockNumber: transaction.blockNumber })
+      if (canonical.hash.toLowerCase() !== transaction.blockHash.toLowerCase()) {
+        throw new KeeperExecutionReorgedError(candidate.transactionHash)
+      }
+      const verified = matched[0]
+      return { orderId, account: verified.receipt.account, clientOrderId: verified.receipt.clientOrderId,
+        status: verified.receipt.status as PerpsLifecycleStatus,
+        terminalReason: verified.receipt.reason as PerpsTerminalReason,
+        executionMode: verified.receipt.executionMode as PerpsExecutionMode,
+        terminalBlock: verified.terminalBlock, terminalTime: verified.terminalTime,
+        executionPrice: verified.receipt.executionPrice,
+        failedConstraint: verified.receipt.failure.constraint as PerpsFailedConstraint,
+        receiptHash: verified.receiptHash, receipt: verified.receipt, transactionHash: transaction.transactionHash,
+        transactionBlockNumber: transaction.blockNumber, transactionBlockHash: transaction.blockHash }
+    }
     const safe = await client.getBlock({ blockTag: 'safe' })
     const terminal = await client.readContract({
       address: sponsored.manifest.orderLifecycleBook,
@@ -1153,12 +1224,12 @@ export function usePerpsTrading() {
       eventName: 'OrderFinalized',
       args: { orderId },
       // Recent receipt recovery is bounded; older evidence comes from indexed history.
-      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 10_000n
-        ? safe.number - 10_000n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
+      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 4_999n
+        ? safe.number - 4_999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
       toBlock: safe.number,
       strict: true,
     })
-    const event = events.find(log => log.args.receiptHash === terminal.receiptHash && log.args.account.toLowerCase() === terminal.account.toLowerCase())
+    const event = events.find(log => !log.removed && log.args.receiptHash === terminal.receiptHash && log.args.account.toLowerCase() === terminal.account.toLowerCase())
     if (!event) return undefined
     const verified = decodeVerifiedOrderFinalized({
       chainId: BigInt(sponsored.manifest.chainId), book: sponsored.manifest.orderLifecycleBook,
@@ -1188,6 +1259,10 @@ export function usePerpsTrading() {
       executionPrice: outcome.executionPrice,
       failedConstraint: outcome.failedConstraint as PerpsFailedConstraint,
       receiptHash: outcome.receiptHash,
+      receipt: verified.receipt,
+      ...(event.transactionHash ? { transactionHash: event.transactionHash } : {}),
+      ...(event.blockNumber !== null ? { transactionBlockNumber: event.blockNumber } : {}),
+      ...(event.blockHash ? { transactionBlockHash: event.blockHash } : {}),
     }
   }, [publicClient, requireSponsoredExecution])
 

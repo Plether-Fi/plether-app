@@ -18,6 +18,7 @@ import Plether.Keeper.LpSettlementDatabaseSpec (lpSettlementDatabaseSpec)
 import Plether.Keeper.LpSettlementWorkerSpec (lpSettlementWorkerSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
 import Plether.Perps.CriticalPathSpec (criticalPathSpec)
+import Plether.Perps.ExecutionProgressSpec (executionProgressSpec)
 import Plether.Perps.ProtectionExecutionSpec (protectionExecutionSpec)
 import Plether.Vaults.ActivityDatabaseSpec (vaultActivityDatabaseSpec)
 import Plether.Vaults.ActivityIndexerIntegrationSpec (vaultActivityIndexerIntegrationSpec)
@@ -42,6 +43,7 @@ main = do
         marginFundingForkSpec $ T.pack value
         liquidationWorkerSpec $ T.pack value
         criticalPathSpec $ T.pack value
+        executionProgressSpec $ T.pack value
         protectionExecutionSpec $ T.pack value
         liquidationMonitoringSpec $ T.pack value
         pythCachePairSpec $ T.pack value

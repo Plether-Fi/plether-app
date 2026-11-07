@@ -65,7 +65,7 @@ import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, withTr
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
-import Plether.Keeper.Broadcast (saveBroadcast, clearBroadcast, reconcileBroadcast)
+import Plether.Keeper.Broadcast (saveOrderBroadcast, markBroadcastSubmitted, clearBroadcast, reconcileBroadcast)
 import Plether.Keeper.Reliability (runOrderReliabilityObserver)
 import Plether.Keeper.Wakeup
   ( WakeupMode (..), readWakeupMode, newWakeup
@@ -2577,7 +2577,7 @@ submitIntent cfg conn client dryRun observeCost deadlines intent = do
                 ]
             else do
               forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
-              sent <- submitKeeperTransaction cfg conn client value callData gasLimit observeCost
+              sent <- submitKeeperTransaction cfg conn client targetIds value callData gasLimit observeCost
               case sent of
                 Left err -> recordAllErrors cfg conn targetIds err
                 Right receipt -> withTransaction conn $ do
@@ -2593,8 +2593,8 @@ intentValue cfg client (ExecuteReady orders _ _ updateData) = do
       Left err -> Left $ rpcErrorText err
       Right updateFee -> Right $ updateFee * fromIntegral (length orders)
 
-submitKeeperTransaction :: Config -> Connection -> EthClient -> Integer -> ByteString -> Integer -> (Integer -> IO ()) -> IO (Either Text TxReceipt)
-submitKeeperTransaction cfg conn client value callData gasLimit observeCost = do
+submitKeeperTransaction :: Config -> Connection -> EthClient -> [Integer] -> Integer -> ByteString -> Integer -> (Integer -> IO ()) -> IO (Either Text TxReceipt)
+submitKeeperTransaction cfg conn client targetIds value callData gasLimit observeCost = do
   result <-
     submitKeeperTransactionTo
       cfg
@@ -2604,7 +2604,15 @@ submitKeeperTransaction cfg conn client value callData gasLimit observeCost = do
       callData
       (Just gasLimit)
       observeCost
-      (saveBroadcast conn $ cfgPerpsOrderRouter cfg)
+      (saveOrderBroadcast conn (cfgPerpsOrderRouter cfg) targetIds)
+      (\hash sendDuration signToAck -> do
+        markBroadcastSubmitted conn (cfgPerpsOrderRouter cfg) hash
+        logInfo "keeper_transaction_submitted" "Keeper transaction acknowledged; terminal order outcomes remain unverified"
+          [ field "transaction_hash" hash
+          , field "target_order_count" $ length targetIds
+          , field "send_duration_ms" sendDuration
+          , field "sign_to_ack_duration_ms" signToAck
+          ])
   pure $ either (Left . snd) Right result
 
 preflightV2OrderTransaction
@@ -2745,8 +2753,9 @@ submitKeeperTransactionTo
   -> Maybe Integer
   -> (Integer -> IO ())
   -> (SignedTransaction -> IO ())
+  -> (Text -> Double -> Double -> IO ())
   -> IO (Either (Bool, Text) TxReceipt)
-submitKeeperTransactionTo cfg client target value callData gasLimitOverride observeCost beforeBroadcast =
+submitKeeperTransactionTo cfg client target value callData gasLimitOverride observeCost beforeBroadcast onAcknowledged =
   case cfgKeeperPrivateKey cfg of
     Nothing -> pure $ Left (False, "KEEPER_PRIVATE_KEY is not configured")
     Just privateKey ->
@@ -2780,16 +2789,29 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
                       , txData = callData
                       }
               observeCost $ value + gasLimit * maxFee
+              signStarted <- getMonotonicTimeNSec
               signResult <- signTransaction privateKey tx
               case signResult of
                 Left err -> pure $ Left (False, err)
                 Right signed -> do
                   beforeBroadcast signed
+                  sendStarted <- getMonotonicTimeNSec
                   sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
                   case sendResult of
                     Left err -> pure $ Left (False, rpcErrorText err)
                     Right txHash -> do
                       unless (T.toLower txHash == T.toLower (signedTransactionHash signed)) $ fail "Keeper RPC returned a different transaction hash"
+                      acknowledgedAt <- getMonotonicTimeNSec
+                      -- The mandatory journal is already durable. Optional UI
+                      -- observation failures cannot skip the receipt wait or
+                      -- cause a second send; cancellation still propagates.
+                      observed <- trySynchronous $ onAcknowledged txHash
+                        (fromIntegral (acknowledgedAt - sendStarted) / 1_000_000)
+                        (fromIntegral (acknowledgedAt - signStarted) / 1_000_000)
+                      case observed of
+                        Left _ -> logWarnEvery 60 "keeper_submission_observation_unavailable"
+                          "Keeper submission observation unavailable; durable receipt reconciliation continues" []
+                        Right () -> pure ()
                       receiptResult <- waitForReceipt client txHash
                       pure $ either (\err -> Left (True, err)) Right receiptResult
             _ ->
