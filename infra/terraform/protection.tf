@@ -75,7 +75,7 @@ resource "aws_ecs_task_definition" "protection_worker" {
     logConfiguration = local.posthog_log_configuration
     secrets = concat([
       { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
-      { name = "PERPS_RPC_URL", valueFrom = aws_ssm_parameter.perps_rpc_url.arn },
+      { name = "PERPS_RPC_URL", valueFrom = local.application_rpc_url_parameter_arn },
       ], local.perps_rpc_auth_token_secret, nonsensitive(var.protection_worker_private_key != "") ? [
       { name = "PROTECTION_WORKER_PRIVATE_KEY", valueFrom = aws_ssm_parameter.protection_worker_private_key[0].arn }
     ] : [])

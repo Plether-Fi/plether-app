@@ -142,6 +142,19 @@ variable "perps_rpc_url" {
   sensitive = true
 }
 
+variable "application_rpc_url_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Optional existing application RPC parameter; preserves the original perps-rpc-url for independently configured services such as Alto."
+  validation {
+    condition = var.application_rpc_url_ssm_parameter_name == "" || (
+      can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", var.application_rpc_url_ssm_parameter_name)) &&
+      startswith(var.application_rpc_url_ssm_parameter_name, "/plether/${var.environment}/")
+    )
+    error_message = "Use an exact environment-scoped application RPC parameter name."
+  }
+}
+
 variable "rpc_auth_token_ssm_parameter_name" {
   type        = string
   default     = ""
