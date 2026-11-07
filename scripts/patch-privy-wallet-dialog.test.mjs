@@ -29,15 +29,38 @@ test('extends the actual pinned ESM/CJS native picker and declarations with matc
   assert.match(esm, /customDescription:privyConnectionDescription\?\.\(u\)/)
   assert.match(esm, /function usePletherWalletPickerClose\(\)/)
   assert.match(esm, /await close\(\{shouldCallAuthOnSuccess:!1\}\)/)
+  assert.match(esm, /accountActions:privyAccountActions/)
+  assert.match(esm, /networks:h\}\),privyAccountActions\]/)
   const cjs = preparePrivyDialogSource('dist/cjs/ui.js', source('dist/cjs/ui.js'))
   assert.match(cjs, /customDescription:privyConnectionDescription\?\.\(x\)/)
   assert.match(cjs, /exports.usePletherWalletPickerClose=/)
   assert.match(cjs, /await close\(\{shouldCallAuthOnSuccess:!1\}\)/)
+  assert.match(cjs, /accountActions:privyAccountActions/)
+  assert.match(cjs, /networks:p\}\),privyAccountActions\]/)
   for (const filename of filenames.slice(2)) {
     const types = preparePrivyDialogSource(filename, source(filename))
     assert.match(types, /connectionDescription\?: \(close: \(\) => void\) => React.ReactNode/)
     assert.match(types, /declare const usePletherWalletPickerClose: \(\) => \(\) => Promise<void>/)
+    assert.match(types, /accountActions\?: React.ReactNode/)
   }
+})
+
+test('upgrades the previous complete picker-only extension', () => {
+  for (const filename of filenames) {
+    const patched = preparePrivyDialogSource(filename, source(filename))
+    const previous = patched
+      .replace(',accountActions:privyAccountActions', '')
+      .replace('t("div",{children:[e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h}),privyAccountActions]})', 'e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h})')
+      .replace('e.jsxs("div",{children:[e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})', 'e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})')
+      .replace('    /** Plether: settings inside the native connected-wallet dialog. */\n    accountActions?: React.ReactNode;\n', '')
+      .replace(', accountActions }: WalletsDialogProps)', ' }: WalletsDialogProps)')
+    assert.equal(preparePrivyDialogSource(filename, previous), patched)
+  }
+})
+
+test('rejects a partially applied account-actions extension', () => {
+  const patched = preparePrivyDialogSource('dist/esm/ui.mjs', source('dist/esm/ui.mjs'))
+  assert.throws(() => preparePrivyDialogSource('dist/esm/ui.mjs', patched.replace(',accountActions:privyAccountActions', '')), /patch is incomplete/)
 })
 
 test('is idempotent across every runtime and declaration format', t => {

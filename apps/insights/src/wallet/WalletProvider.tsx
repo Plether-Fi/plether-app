@@ -4,6 +4,9 @@ import {
   useConnectWallet,
   useCreateWallet,
   useLogin,
+  useLoginWithOAuth,
+  useLoginWithPasskey,
+  useLinkAccount,
   usePrivy,
   useWallets,
   type ConnectedWallet,
@@ -16,7 +19,11 @@ import { privyAppId, privyClientId, privyConfig, wagmiConfig } from '../config/w
 import { RegistrationWalletContext, type RegistrationWalletActions } from './context'
 import { readSelectedWallet, saveSelectedWallet, selectedWallet } from './selection'
 import { EmailLoginOption } from './EmailLoginOption'
+import { isPasskeyOriginSupported } from './passkeyOrigin'
 import { createSigningGuard } from './signingGuard'
+import { clearGoogleLoginIntent, isGoogleLoginReturn, saveGoogleLoginIntent } from './googleLoginIntent'
+
+type LoginMethod = 'email' | 'google' | 'passkey'
 
 function WalletControls({ children, actions, expectedAddress, onStaleConnection }: {
   children: ReactNode
@@ -50,10 +57,20 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
   const [bridgeRevision, setBridgeRevision] = useState(0)
   const bridgeSelection = useMemo(() => ({ owner: selectedAddress, retry: bridgeRevision }), [selectedAddress, bridgeRevision])
   const initialOwner = useRef<string | null>(null)
-  const emailIntent = useRef(false)
-  const emailVerified = useRef(false)
+  const [googleReturn] = useState(() => isGoogleLoginReturn(storageKey, selectedAddress))
+  const loginIntent = useRef(googleReturn)
+  const loginVerified = useRef(false)
+  const loginStarted = useRef(googleReturn)
+  const passkeyPickerClose = useRef<(() => void | Promise<void>) | null>(null)
+  const headlessLogin = useRef<'google' | 'passkey' | null>(googleReturn ? 'google' : null)
+  const [embeddedWalletRequest, setEmbeddedWalletRequest] = useState<{ userId: string; revision: number } | null>(null)
+  const embeddedWalletCreation = useRef<{ userId: string; revision: number } | null>(null)
   const connectionIntent = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  const session = useRef({ ready: ready && walletsReady, authenticated, userId: user?.id })
+  useLayoutEffect(() => {
+    session.current = { ready: ready && walletsReady, authenticated, userId: user?.id }
+  }, [ready, walletsReady, authenticated, user?.id])
   const expectedAddress = selectedWallet(wallets, selectedAddress === undefined ? signingGuard.selection : selectedAddress)?.address
   useLayoutEffect(() => {
     const availableOwner = selectedWallet(wallets, selectedAddress === null ? null : selectedAddress ?? initialOwner.current ?? undefined)
@@ -64,10 +81,11 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     setBridgeRevision(revision => revision + 1)
   }, [])
   const selectWallet = useCallback((address: string) => {
+    clearGoogleLoginIntent(storageKey)
     signingGuard.select(address)
     connectionIntent.current = false
-    emailIntent.current = false
-    emailVerified.current = false
+    loginIntent.current = false
+    loginVerified.current = false
     setSelectedAddress(address.toLowerCase())
     saveSelectedWallet(storageKey, address)
     setError(null)
@@ -79,48 +97,125 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     }
   }, [selectedAddress, selectWallet, wallets])
   const onConnected = useCallback(({ wallet }: { wallet: { address: string } }) => {
-    if (!connectionIntent.current || emailIntent.current) return
+    if (!connectionIntent.current || loginIntent.current) return
     connectionIntent.current = false
     selectConnectedOwner(wallet.address)
   }, [selectConnectedOwner])
   const onConnectError = useCallback((code: string) => {
+    if (headlessLogin.current === 'passkey') {
+      loginIntent.current = false
+      loginVerified.current = false
+      passkeyPickerClose.current = null
+      clearGoogleLoginIntent(storageKey)
+    }
     connectionIntent.current = false
     // Closing Privy's wallet picker uses the same generic code as failures
     // already displayed inside the picker; don't persist those below the CTA.
     const dismissed = code === 'generic_connect_wallet_error'
       || code === 'exited_auth_flow' || code === 'exited_link_flow'
     setError(dismissed ? null : 'Wallet connection could not be completed. Try again.')
-  }, [])
-  const activateEmailWallet = (address: string) => {
-    if (!emailIntent.current || !emailVerified.current) return
-    emailIntent.current = false
-    emailVerified.current = false
-    // Email was explicitly chosen, so it may replace an external owner.
+  }, [storageKey])
+  const activateEmbeddedWallet = useCallback((address: string) => {
+    if (!loginIntent.current || !loginVerified.current) return
+    loginIntent.current = false
+    loginVerified.current = false
+    headlessLogin.current = null
+    // Authentication was explicitly chosen, so it may replace an external owner.
     selectWallet(address)
-  }
-  const { login } = useLogin({
-    onComplete: ({ user, loginMethod }) => {
-      if (!emailIntent.current || loginMethod !== 'email') return
-      emailVerified.current = true
+    const close = passkeyPickerClose.current
+    passkeyPickerClose.current = null
+    void close?.()
+  }, [selectWallet])
+  const loginCallbacks: NonNullable<Parameters<typeof useLogin>[0]> = {
+    onComplete: ({ user, loginMethod, wasAlreadyAuthenticated }) => {
+      if (!loginIntent.current || wasAlreadyAuthenticated
+        || !['email', 'google', 'passkey'].some(method => method === loginMethod)) return
+      if (headlessLogin.current && loginMethod !== headlessLogin.current) return
+      clearGoogleLoginIntent(storageKey)
+      loginVerified.current = true
       const wallet = user.linkedAccounts.filter(account => account.type === 'wallet')
         .find(account => account.chainType === 'ethereum' && account.walletClientType === 'privy')
         ?? (user.wallet?.chainType === 'ethereum' && user.wallet.walletClientType === 'privy' ? user.wallet : undefined)
-      if (wallet) activateEmailWallet(wallet.address)
+      if (wallet) activateEmbeddedWallet(wallet.address)
+      else if (loginMethod === 'google' || (loginMethod === 'passkey' && headlessLogin.current === 'passkey')) setEmbeddedWalletRequest({ userId: user.id, revision: signingGuard.revision })
     },
     onError: (code) => {
-      if (!emailIntent.current) return
-      emailIntent.current = false
-      emailVerified.current = false
+      // Headless passkey errors also arrive here without the original error.
+      // Its promise handles cancellation and failures with the full context.
+      // Closing a previous picker can report cancellation of an earlier login.
+      if (!loginStarted.current || (headlessLogin.current === 'passkey' && !['exited_auth_flow'].includes(code))) return
+      if (!loginIntent.current) return
+      loginIntent.current = false
+      loginVerified.current = false
+      passkeyPickerClose.current = null
+      clearGoogleLoginIntent(storageKey)
       onConnectError(code)
     },
-  })
+  }
+  const { login } = useLogin(loginCallbacks)
+  const { loginWithPasskey } = useLoginWithPasskey({ onComplete: loginCallbacks.onComplete })
   const { createWallet } = useCreateWallet({ onSuccess: ({ wallet }) => {
-    if (wallet.chainType === 'ethereum') activateEmailWallet(wallet.address)
+    if (headlessLogin.current || embeddedWalletCreation.current) return
+    if (wallet.chainType === 'ethereum') activateEmbeddedWallet(wallet.address)
   } })
+  const { initOAuth } = useLoginWithOAuth()
+  useEffect(() => {
+    const request = embeddedWalletRequest
+    if (!request || embeddedWalletCreation.current) return
+    if (!loginIntent.current || signingGuard.revision !== request.revision || !loginVerified.current) return
+    if (!authenticated || user?.id !== request.userId || !walletsReady) return
+    embeddedWalletCreation.current = request
+    void createWallet().then(wallet => {
+      if (loginIntent.current && signingGuard.revision === request.revision
+        && session.current.authenticated && session.current.userId === request.userId) activateEmbeddedWallet(wallet.address)
+    }).catch(() => {
+      if (!loginIntent.current || signingGuard.revision !== request.revision
+        || !session.current.authenticated || session.current.userId !== request.userId) return
+      loginIntent.current = false
+      loginVerified.current = false
+      setError('Signed in, but your wallet could not be prepared. Choose Use email wallet to retry.')
+    }).finally(() => {
+      if (embeddedWalletCreation.current !== request) return
+      embeddedWalletCreation.current = null
+      setEmbeddedWalletRequest(pending => pending === request ? null : pending ? { ...pending } : null)
+    })
+  }, [embeddedWalletRequest, authenticated, user?.id, walletsReady, createWallet, signingGuard, activateEmbeddedWallet])
   const { connectWallet } = useConnectWallet({ onSuccess: onConnected, onError: onConnectError })
-  const openEmailWallet = async () => {
+  const { linkGoogle, linkPasskey } = useLinkAccount({
+    onSuccess: () => { setError(null) },
+    onError: (code: string, details) => {
+      if (details.linkMethod !== 'google' && details.linkMethod !== 'passkey') return
+      setError(code === 'exited_link_flow' || code === 'exited_auth_flow' ? null
+        : 'Could not link this sign-in method. It may already belong to another account. Try again from the original account.')
+    },
+  })
+  const openLink = async (method: 'google' | 'passkey') => {
+    if (method === 'passkey' && !isPasskeyOriginSupported()) return
+    if (!ready || !walletsReady || !authenticated) return
     connectionIntent.current = false
-    emailVerified.current = false
+    loginIntent.current = false
+    loginVerified.current = false
+    headlessLogin.current = null
+    clearGoogleLoginIntent(storageKey)
+    setError(null)
+    const revision = signingGuard.revision
+    const ownerId = user?.id
+    try {
+      await closeWalletPicker()
+      if (signingGuard.revision !== revision || !ownerId || !session.current.ready
+        || !session.current.authenticated || session.current.userId !== ownerId) return
+      if (method === 'google') linkGoogle()
+      else linkPasskey()
+    } catch { setError('Could not open account linking. Try again.') }
+  }
+  const openEmbeddedWallet = async (method: LoginMethod = 'email') => {
+    if (method === 'passkey' && !isPasskeyOriginSupported()) return
+    connectionIntent.current = false
+    loginVerified.current = false
+    loginStarted.current = false
+    passkeyPickerClose.current = null
+    headlessLogin.current = method === 'google' || method === 'passkey' ? method : null
+    clearGoogleLoginIntent(storageKey)
     if (authenticated) {
       const embedded = wallets.find(wallet => wallet.walletClientType === 'privy')
         ?? user?.linkedAccounts.filter(account => account.type === 'wallet')
@@ -137,26 +232,41 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
       saveSelectedWallet(storageKey, null)
       setSelectedAddress(null)
     }
-    emailIntent.current = true
+    loginIntent.current = true
     // An existing authenticated session needs wallet creation, not another
     // login flow (which Privy skips for an authenticated user).
-    emailVerified.current = authenticated
+    loginVerified.current = authenticated
     const revision = signingGuard.revision
-    const isCurrentRequest = () => emailIntent.current && signingGuard.revision === revision
-    await closeWalletPicker()
-    if (!isCurrentRequest()) return
-    if (!authenticated) {
-      login({ loginMethods: ['email'] })
-      return
-    }
+    const isCurrentRequest = () => loginIntent.current && signingGuard.revision === revision
     try {
-      const wallet = await createWallet()
-      if (isCurrentRequest()) activateEmailWallet(wallet.address)
-    } catch {
+      if (method !== 'passkey' || authenticated) await closeWalletPicker()
       if (!isCurrentRequest()) return
-      emailIntent.current = false
-      emailVerified.current = false
-      setError('Could not prepare your email wallet. Try again.')
+      if (!authenticated) {
+        loginStarted.current = true
+        saveGoogleLoginIntent(storageKey, signingGuard.selection)
+        if (method === 'google') await initOAuth({ provider: 'google' })
+        else if (method === 'passkey') {
+          passkeyPickerClose.current = closeWalletPicker
+          await loginWithPasskey()
+        } else login({ loginMethods: [method] })
+        return
+      }
+      const wallet = await createWallet()
+      if (isCurrentRequest()) activateEmbeddedWallet(wallet.address)
+    } catch (error) {
+      if (!isCurrentRequest()) return
+      loginIntent.current = false
+      loginVerified.current = false
+      clearGoogleLoginIntent(storageKey)
+      const cancelled = method === 'passkey' && error !== null && typeof error === 'object'
+        && (('privyErrorCode' in error && error.privyErrorCode === 'passkey_not_allowed')
+          || ('name' in error && (error.name === 'NotAllowedError' || error.name === 'AbortError')))
+      if (method === 'passkey') {
+        setError(null)
+        passkeyPickerClose.current = null
+        connectionIntent.current = true
+        if (!cancelled) return 'Could not sign in with passkey. Try again or use email or Google.'
+      } else setError(authenticated ? 'Could not prepare your email wallet. Try again.' : 'Could not start sign-in. Try again.')
     }
   }
   const resolveActiveWallet = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
@@ -173,17 +283,30 @@ function ConnectedWalletProvider({ children, appId }: { children: ReactNode; app
     return owner ? signingGuard.wrapWallet(owner) : undefined
   }, [ready, walletsReady, bridgeSelection, storageKey, signingGuard])
 
+  const connectionDescription = () => (
+    <EmailLoginOption label={authenticated ? 'Use email wallet' : 'Log in with Email'} onClick={() => { void openEmbeddedWallet() }}
+      options={authenticated ? [
+        { label: user?.linkedAccounts.some(account => account.type === 'google_oauth') ? 'Google linked' : 'Link Google account',
+          disabled: user?.linkedAccounts.some(account => account.type === 'google_oauth'), icon: 'google', onClick: () => { void openLink('google') } },
+        { label: 'Add passkey', kind: 'passkey-link', onClick: () => { void openLink('passkey') } },
+      ] : [
+        { label: 'Log in with Google', icon: 'google', onClick: () => { void openEmbeddedWallet('google') } },
+        { label: 'Log in with passkey', kind: 'passkey-login', onClick: () => openEmbeddedWallet('passkey') },
+      ]} />
+  )
+
   const actions = {
     configured: true,
     ready: ready && walletsReady,
     connect: () => {
       if (!ready || !walletsReady) return
       setError(null)
-      emailIntent.current = false
-      emailVerified.current = false
+      loginIntent.current = false
+      loginVerified.current = false
+      clearGoogleLoginIntent(storageKey)
       connectionIntent.current = true
       connectWallet({
-        description: <EmailLoginOption label={authenticated ? 'Use email wallet' : 'Log in with Email'} onClick={() => { void openEmailWallet() }} />,
+        description: connectionDescription(),
       })
     },
     selectWallet: (address: string) => {

@@ -23,6 +23,7 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
+      PLETHER_VITE_CACHE_DIR: `node_modules/.vite-playwright-privy-sdk-${port}`,
       VITE_PRIVY_APP_ID: 'c000000000000000000000000',
       VITE_PRIVY_CLIENT_ID: '',
       VITE_DEFAULT_CHAIN_ID: '421614',

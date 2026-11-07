@@ -1,3 +1,4 @@
+import * as passkeyOrigin from './passkeyOrigin'
 import { useEffect, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient } from '@tanstack/react-query'
@@ -12,8 +13,8 @@ import { WalletProvider } from './WalletProvider'
 import { useRegistrationWallet } from './useRegistrationWallet'
 import { RegistrationWalletStep } from '../components/RegistrationWalletStep'
 
-type Snapshot = { ready: boolean; authenticated: boolean; wallets: ConnectedWallet[]; user?: { linkedAccounts: object[] } }
-type Callbacks = { onSuccess?: (input: { wallet: ConnectedWallet }) => unknown; onError?: (code: string) => unknown; onComplete?: (input: object) => unknown }
+type Snapshot = { ready: boolean; authenticated: boolean; wallets: ConnectedWallet[]; user?: { id?: string; linkedAccounts: object[] } }
+type Callbacks = Record<string, ((...input: never[]) => unknown) | undefined>
 const auth = vi.hoisted(() => ({
   snapshot: { ready: true, authenticated: false, wallets: [] } as Snapshot,
   listeners: new Set<() => void>(),
@@ -23,6 +24,10 @@ const auth = vi.hoisted(() => ({
   createChallenge: vi.fn(),
   verifyWallet: vi.fn(),
   login: vi.fn(),
+  initOAuth: vi.fn(),
+  loginWithPasskey: vi.fn(),
+  linkGoogle: vi.fn(),
+  linkPasskey: vi.fn(),
   createWallet: vi.fn(),
   closePicker: vi.fn(),
 }))
@@ -30,9 +35,9 @@ function updateAuth(patch: Partial<Snapshot>) {
   auth.snapshot = { ...auth.snapshot, ...patch }
   auth.listeners.forEach(listener => listener())
 }
-async function emit(event: string, callback: keyof Callbacks, input: never) {
+async function emit(event: string, callback: keyof Callbacks, ...input: unknown[]) {
   await act(async () => {
-    await Promise.all([...auth.callbacks.get(event) ?? []].map(ref => ref.current[callback]?.(input)))
+    await Promise.all([...auth.callbacks.get(event) ?? []].map(ref => ref.current[callback]?.(...input as never[])))
   })
 }
 vi.mock('@privy-io/react-auth', async () => {
@@ -56,6 +61,9 @@ vi.mock('@privy-io/react-auth', async () => {
       subscribe('connect', callbacks)
       return { connectWallet: (options: { description: ReactNode }) => { auth.description = options.description } }
     },
+    useLinkAccount: (callbacks: Callbacks) => { subscribe('link', callbacks); return { linkGoogle: auth.linkGoogle, linkPasskey: auth.linkPasskey } },
+    useLoginWithOAuth: () => ({ initOAuth: auth.initOAuth }),
+    useLoginWithPasskey: (callbacks: Callbacks) => { subscribe('passkey', callbacks); return { loginWithPasskey: auth.loginWithPasskey } },
     useLogin: (callbacks: Callbacks) => { subscribe('login', callbacks); return { login: auth.login } },
     useConnectOrCreateWallet: (callbacks: Callbacks) => { subscribe('createOrConnect', callbacks); return {} },
     useCreateWallet: (callbacks: Callbacks) => { subscribe('create', callbacks); return { createWallet: auth.createWallet } },
@@ -137,15 +145,306 @@ beforeEach(() => {
   auth.description = null
   auth.createChallenge.mockReset()
   auth.verifyWallet.mockReset()
+  auth.initOAuth.mockReset().mockResolvedValue(undefined)
+  auth.loginWithPasskey.mockReset().mockResolvedValue(undefined)
   auth.login.mockReset()
   auth.createWallet.mockReset()
   auth.closePicker.mockReset().mockResolvedValue(undefined)
   sessionStorage.clear()
+  window.history.replaceState({}, '', '/')
+  auth.linkGoogle.mockReset()
+  auth.linkPasskey.mockReset()
   auth.config = createConfig({ chains: [arbitrumSepolia], transports: { [arbitrumSepolia.id]: custom({ request: async () => { throw new Error('No RPC calls expected') } }) }, ssr: false, storage: null, multiInjectedProviderDiscovery: false })
 })
 afterEach(cleanup)
 
 describe('Insights Privy/Wagmi integration', () => {
+  it.each([false, true])('prevents unsupported-origin passkey requests (authenticated=%s)', async authenticated => {
+    const origin = vi.spyOn(passkeyOrigin, 'isPasskeyOriginSupported').mockReturnValue(false)
+    try {
+      auth.snapshot = { ready: true, authenticated, wallets: [], user: authenticated ? { id: 'original-user', linkedAccounts: [] } : undefined }
+      render(tree())
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+      render(<>{auth.description}</>)
+      const button = screen.getByRole('button', { name: authenticated ? 'Add passkey' : 'Log in with passkey' })
+      expect(button).toBeDisabled()
+      expect(screen.getByText('Passkeys need an HTTPS domain or localhost.')).toBeVisible()
+      fireEvent.click(button)
+      expect(auth.login).not.toHaveBeenCalled()
+      expect(auth.linkPasskey).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: authenticated ? 'Link Google account' : 'Log in with Google' })).toBeEnabled()
+    } finally { origin.mockRestore() }
+  })
+
+  it.each(['Google'])('can retry %s login when closing the wallet picker fails', async method => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    auth.closePicker.mockRejectedValueOnce(new Error('Modal close failed'))
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: `Log in with ${method}` })) })
+    picker.unmount()
+    expect(auth.login).not.toHaveBeenCalled()
+    expect(selected.error).toBe('Could not start sign-in. Try again.')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const retry = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: `Log in with ${method}` })) })
+    retry.unmount()
+    expect(method === 'Google' ? auth.initOAuth : auth.loginWithPasskey).toHaveBeenCalledOnce()
+  })
+
+  it('keeps passkey failures inside the picker and allows an external-wallet fallback', async () => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    auth.loginWithPasskey.mockRejectedValueOnce(new Error('Offline credential service'))
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const initial = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with passkey' })) })
+    expect(selected.error).toBeNull()
+    expect(auth.closePicker).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not sign in with passkey.')
+    expect(screen.getByRole('button', { name: 'Log in with Email' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Log in with Google' })).toBeEnabled()
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    const external = testWallet(0)
+    await approve(external.wallet)
+    initial.unmount()
+    await expectAccount(external.wallet.address as Address)
+    expect(selected.error).toBeNull()
+  })
+
+  it('cancels a pending passkey when the picker is dismissed and ignores late authentication', async () => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    let finish!: () => void
+    auth.loginWithPasskey.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with passkey' })) })
+    expect(screen.getByRole('button', { name: 'Log in with passkey' })).toBeDisabled()
+    expect(auth.closePicker).not.toHaveBeenCalled()
+    await emit('login', 'onError', 'exited_auth_flow')
+    await emit('connect', 'onError', 'generic_connect_wallet_error')
+    picker.unmount()
+    const embedded = testWallet(1, true)
+    await act(async () => { updateAuth({ wallets: [embedded.wallet] }) })
+    await emit('passkey', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address }] }, loginMethod: 'passkey' })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await act(async () => { finish() })
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    expect(selected.error).toBeNull()
+    expect(auth.closePicker).not.toHaveBeenCalled()
+  })
+
+  it('accepts a native passkey alternative but ignores restored-session completion', async () => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' })) })
+    picker.unmount()
+    const embedded = testWallet(1, true)
+    await act(async () => { updateAuth({ wallets: [embedded.wallet] }) })
+    const user = { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address }] }
+    await emit('login', 'onComplete', { user, loginMethod: 'passkey', wasAlreadyAuthenticated: true })
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    await emit('login', 'onComplete', { user, loginMethod: 'passkey', wasAlreadyAuthenticated: false })
+    await expectAccount(embedded.wallet.address as Address)
+  })
+
+  it.each((['google', 'passkey'] as const).flatMap(method => (['failure', 'owner-change', 'session-change'] as const).map(outcome => ({ method, outcome }))))('handles $method wallet preparation $outcome without selecting a stale owner', async ({ method, outcome }) => {
+    const embedded = testWallet(1, true)
+    const external = testWallet(0)
+    sessionStorage.setItem(storageKey, 'disconnected')
+    let resolveCreation!: (wallet: ConnectedWallet) => void
+    let rejectCreation!: (error: Error) => void
+    auth.createWallet.mockImplementationOnce(() => new Promise<ConnectedWallet>((resolve, reject) => {
+      resolveCreation = resolve
+      rejectCreation = reject
+    }))
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    const user = { id: 'google-user', linkedAccounts: [] }
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { loginMethod: method, user })
+    expect(auth.createWallet).not.toHaveBeenCalled()
+    await act(async () => { updateAuth({ authenticated: true, user }) })
+    await waitFor(() => { expect(auth.createWallet).toHaveBeenCalledOnce() })
+    if (outcome === 'owner-change') {
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+      await approve(external.wallet)
+      await expectAccount(external.wallet.address as Address)
+    } else if (outcome === 'session-change') {
+      await act(async () => { updateAuth({ user: { id: 'different-user', linkedAccounts: [] } }) })
+    }
+    await act(async () => { updateAuth({ wallets: [...auth.snapshot.wallets, embedded.wallet] }) })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await act(async () => {
+      if (outcome === 'failure') rejectCreation(new Error('Offline wallet service'))
+      else resolveCreation(embedded.wallet)
+    })
+    if (outcome === 'owner-change') await expectAccount(external.wallet.address as Address)
+    else expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    if (outcome === 'failure') {
+      expect(selected.error).toMatch(/wallet could not be prepared/)
+      await act(async () => { updateAuth({ wallets: [] }) })
+      auth.createWallet.mockResolvedValueOnce(embedded.wallet)
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+      const retry = render(<>{auth.description}</>)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+      retry.unmount()
+      await act(async () => { updateAuth({ wallets: [embedded.wallet] }) })
+      await expectAccount(embedded.wallet.address as Address)
+      expect(method === 'google' ? auth.initOAuth : auth.loginWithPasskey).toHaveBeenCalledOnce()
+    } else expect(selected.error).toBeNull()
+  })
+
+  it.each(['google', 'passkey'] as const)('waits for verified %s login before preparing a missing wallet', async method => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    const embedded = testWallet(1, true)
+    await act(async () => { updateAuth({ wallets: [embedded.wallet] }) })
+    const created = { wallet: { address: embedded.wallet.address, chainType: 'ethereum' } }
+    await emit('create', 'onSuccess', created)
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    const user = { id: 'verified-google-user', linkedAccounts: [] }
+    auth.createWallet.mockResolvedValueOnce(embedded.wallet)
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { user, loginMethod: method })
+    await act(async () => { updateAuth({ authenticated: true, user }) })
+    await emit('create', 'onSuccess', created)
+    await expectAccount(embedded.wallet.address as Address)
+    expect(auth.createWallet).toHaveBeenCalledOnce()
+  })
+
+  it('does not link after the authenticated user changes while closing the picker', async () => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    auth.snapshot = { ready: true, authenticated: true, wallets: [], user: { id: 'original-user', linkedAccounts: [] } }
+    let close!: () => void
+    auth.closePicker.mockImplementationOnce(() => new Promise<void>(resolve => { close = resolve }))
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Link Google account' })) })
+    await act(async () => { updateAuth({ user: { id: 'different-user', linkedAccounts: [] } }); close() })
+    picker.unmount()
+    expect(auth.linkGoogle).not.toHaveBeenCalled()
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+  })
+
+  it('marks linked Google accounts while allowing additional passkeys', () => {
+    auth.snapshot = { ready: true, authenticated: true, wallets: [], user: { id: 'original-user', linkedAccounts: [{ type: 'google_oauth' }, { type: 'passkey' }] } }
+    render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    render(<>{auth.description}</>)
+    expect(screen.getByRole('button', { name: 'Google linked' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled()
+  })
+
+  it.each(['google', 'passkey'] as const)('authenticates with %s and signs with the existing embedded wallet', async method => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: false, wallets: [external.wallet] }
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    if (method === 'google') {
+      expect(auth.initOAuth).toHaveBeenCalledWith({ provider: 'google' })
+      expect(auth.login).not.toHaveBeenCalled()
+    } else expect(auth.loginWithPasskey).toHaveBeenCalledOnce()
+    const user = { id: 'existing-user', linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address }] }
+    await act(async () => { updateAuth({ wallets: [external.wallet, embedded.wallet] }) })
+    await emit('login', 'onComplete', { user, loginMethod: 'siwe' })
+    await expectAccount(external.wallet.address as Address)
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { user, loginMethod: method })
+    await expectAccount(embedded.wallet.address as Address)
+    expect(auth.closePicker).toHaveBeenCalledOnce()
+    let signature: `0x${string}` = '0x'
+    await act(async () => { signature = await sign({ message }) })
+    expect(await recoverMessageAddress({ message, signature })).toBe(embedded.wallet.address)
+    expect(auth.createWallet).not.toHaveBeenCalled()
+  })
+
+  it.each(['google', 'passkey'] as const)('ignores canceled %s login and late completion', async method => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    render(tree())
+    if (method === 'passkey') auth.loginWithPasskey.mockRejectedValueOnce({ privyErrorCode: 'passkey_not_allowed' })
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    if (method === 'google') await emit('login', 'onError', 'exited_auth_flow')
+    const embedded = testWallet(1, true)
+    await act(async () => { updateAuth({ authenticated: true, wallets: [embedded.wallet] }) })
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { loginMethod: method, user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address }] } })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    expect(selected.error).toBeNull()
+    expect(sessionStorage.getItem(`${storageKey}.google-login`)).toBeNull()
+  })
+
+  it.each(['google', 'passkey'] as const)('links %s without changing the owner, including SDK login and wallet-creation side effects', async method => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet, embedded.wallet], user: { id: 'original-user', linkedAccounts: [] } }
+    sessionStorage.setItem(storageKey, external.wallet.address)
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Link Google account' : 'Add passkey' })) })
+    picker.unmount()
+    expect(method === 'google' ? auth.linkGoogle : auth.linkPasskey).toHaveBeenCalledOnce()
+    await emit('link', 'onSuccess', { user: auth.snapshot.user, linkMethod: method })
+    await emit('login', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address }] }, loginMethod: method })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await expectAccount(external.wallet.address as Address)
+    let signature: `0x${string}` = '0x'
+    await act(async () => { signature = await sign({ message }) })
+    expect(await recoverMessageAddress({ message, signature })).toBe(external.wallet.address)
+    expect(auth.login).not.toHaveBeenCalled()
+    expect(auth.createWallet).not.toHaveBeenCalled()
+  })
+
+  it('keeps the selected owner when account linking conflicts, and cancels silently', async () => {
+    const external = testWallet(0)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet], user: { id: 'original-user', linkedAccounts: [] } }
+    render(tree())
+    await expectAccount(external.wallet.address as Address)
+    await emit('link', 'onError', 'linked_to_another_user', { linkMethod: 'google' })
+    expect(selected.error).toMatch(/already belong to another account/)
+    await expectAccount(external.wallet.address as Address)
+    await emit('link', 'onError', 'exited_link_flow', { linkMethod: 'passkey' })
+    expect(selected.error).toBeNull()
+  })
+
+  it('finishes Google login after a full-page OAuth return to the same saved request', async () => {
+    sessionStorage.setItem(storageKey, 'disconnected')
+    const view = render(tree())
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    const picker = render(<>{auth.description}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Google' })) })
+    picker.unmount()
+    view.unmount()
+    window.history.replaceState({}, '', '/?privy_oauth_provider=google&privy_oauth_code=test&privy_oauth_state=test')
+    const embedded = testWallet(1, true)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [embedded.wallet] }
+    render(tree())
+    expect(screen.getByTestId('account')).toHaveTextContent('disconnected')
+    await emit('login', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.wallet.address }] }, loginMethod: 'google' })
+    await expectAccount(embedded.wallet.address as Address)
+    expect(sessionStorage.getItem(`${storageKey}.google-login`)).toBeNull()
+  })
+
   it('offers email above wallets and closes the picker before starting email login', async () => {
     let close!: () => void
     auth.closePicker.mockImplementation(() => new Promise<void>(resolve => { close = resolve }))

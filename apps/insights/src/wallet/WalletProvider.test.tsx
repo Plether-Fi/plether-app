@@ -44,6 +44,9 @@ vi.mock('@privy-io/react-auth', () => ({
   PrivyProvider: ({ children }: { children: ReactNode }) => <div data-testid="privy-provider">{children}</div>,
   usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated }),
   useWallets: () => ({ ready: mocks.walletsReady, wallets: mocks.wallets }),
+  useLinkAccount: () => ({ linkGoogle: vi.fn(), linkPasskey: vi.fn() }),
+  useLoginWithOAuth: () => ({ initOAuth: vi.fn() }),
+  useLoginWithPasskey: () => ({ loginWithPasskey: vi.fn() }),
   useLogin: (callbacks: typeof mocks.emailCallbacks) => {
     mocks.emailCallbacks = callbacks
     return { login: mocks.connect }
@@ -133,12 +136,13 @@ describe('Insights Privy wallet provider', () => {
     expect(mocks.connect).toHaveBeenCalledWith({ loginMethods: ['email'] })
   })
 
-  it('does not reconnect a retained wallet when email login is dismissed or a callback arrives late', () => {
+  it('does not reconnect a retained wallet when email login is dismissed or a callback arrives late', async () => {
     const view = render(<Provider />)
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
     const options = mocks.connectExternal.mock.lastCall?.[0] as { description: ReactNode }
     render(<>{options.description}</>)
     fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' }))
+    await waitFor(() => { expect(mocks.connect).toHaveBeenCalledOnce() })
     act(() => { mocks.emailCallbacks?.onError('exited_auth_flow') })
     mocks.wallets = [other]
     view.rerender(<Provider />)

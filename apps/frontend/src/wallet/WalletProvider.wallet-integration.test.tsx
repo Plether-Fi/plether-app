@@ -1,3 +1,4 @@
+import * as passkeyOrigin from './passkeyOrigin'
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient } from '@tanstack/react-query'
@@ -10,7 +11,7 @@ import { MemoryRouter } from 'react-router-dom'
 import type { ConnectedWallet } from '@privy-io/react-auth'
 import type { WalletActions } from './useWalletActions'
 
-type Callback = (input: never) => unknown
+type Callback = (...input: never[]) => unknown
 type Callbacks = Record<string, Callback | undefined>
 type PickerEntry = 'main' | 'native'
 type ConnectionDescription = (close: () => Promise<void>) => ReactNode
@@ -21,18 +22,24 @@ const sdk = vi.hoisted(() => {
     ready: true,
     walletsReady: true,
     authenticated: false,
-    user: null as { linkedAccounts: unknown[] } | null,
+    user: null as { id?: string; linkedAccounts: unknown[] } | null,
     wallets: [] as ConnectedWallet[],
     nativeWallet: undefined as ConnectedWallet | undefined,
     events: new Map<string, Set<{ current: Callbacks }>>(),
     connect: vi.fn(),
     login: vi.fn(),
+    initOAuth: vi.fn(),
+    loginWithPasskey: vi.fn(),
+    linkGoogle: vi.fn(),
+    linkPasskey: vi.fn(),
     logout: vi.fn(),
     openNative: vi.fn(),
     closePicker: vi.fn(),
     closeNativePicker: vi.fn(),
     createWallet: vi.fn(),
+    showMfa: vi.fn(),
     nativeDescription: undefined as ConnectionDescription | undefined,
+    nativeAccountActions: null as ReactNode,
   }
 })
 
@@ -58,16 +65,21 @@ vi.mock('@privy-io/react-auth', () => {
     useActiveWallet: () => ({ wallet: sdk.nativeWallet, connect: sdk.openNative, setActiveWallet: vi.fn() }),
     useConnectWallet: (callbacks: Callbacks) => { useEvents('connect', callbacks); return { connectWallet: sdk.connect } },
     useConnectOrCreateWallet: (callbacks: Callbacks) => { useEvents('connectOrCreate', callbacks); return { connectOrCreateWallet: vi.fn() } },
+    useLinkAccount: (callbacks: Callbacks) => { useEvents('link', callbacks); return { linkGoogle: sdk.linkGoogle, linkPasskey: sdk.linkPasskey } },
+    useLoginWithOAuth: () => ({ initOAuth: sdk.initOAuth }),
+    useLoginWithPasskey: (callbacks: Callbacks) => { useEvents('passkey', callbacks); return { loginWithPasskey: sdk.loginWithPasskey } },
     useLogin: (callbacks: Callbacks) => { useEvents('login', callbacks); return { login: sdk.login } },
     useCreateWallet: (callbacks: Callbacks) => { useEvents('create', callbacks); return { createWallet: sdk.createWallet } },
     useExportWallet: () => ({ exportWallet: vi.fn() }),
     useSetWalletRecovery: () => ({ setWalletRecovery: vi.fn() }),
+    useMfaEnrollment: () => ({ showMfaEnrollmentModal: sdk.showMfa }),
   }
 })
 vi.mock('@privy-io/react-auth/ui', () => ({
   usePletherWalletPickerClose: () => sdk.closePicker,
-  WalletsDialog: ({ connectionDescription }: { connectionDescription: ConnectionDescription }) => {
+  WalletsDialog: ({ connectionDescription, accountActions }: { connectionDescription: ConnectionDescription; accountActions: ReactNode }) => {
     sdk.nativeDescription = connectionDescription
+    sdk.nativeAccountActions = accountActions
     return null
   },
 }))
@@ -97,9 +109,9 @@ function mount(header = false) {
   return { ...view, refresh: () => { view.rerender(tree()) } }
 }
 
-async function emit(channel: string, event: string, input: unknown) {
+async function emit(channel: string, event: string, ...input: unknown[]) {
   await act(async () => {
-    await Promise.all([...sdk.events.get(channel) ?? []].map(ref => ref.current[event]?.(input as never)))
+    await Promise.all([...sdk.events.get(channel) ?? []].map(ref => ref.current[event]?.(...input as never[])))
   })
 }
 
@@ -178,6 +190,7 @@ async function beginEmail() {
 
 beforeEach(() => {
   sessionStorage.clear()
+  window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
   sdk.events.clear()
   sdk.ready = true
@@ -186,12 +199,16 @@ beforeEach(() => {
   sdk.user = null
   sdk.wallets = []
   sdk.nativeWallet = undefined
+  sdk.initOAuth.mockReset().mockResolvedValue(undefined)
+  sdk.loginWithPasskey.mockReset().mockResolvedValue(undefined)
   sdk.logout.mockResolvedValue(undefined)
   sdk.openNative.mockResolvedValue({})
   sdk.closePicker.mockResolvedValue(undefined)
   sdk.closeNativePicker.mockResolvedValue(undefined)
   sdk.createWallet.mockResolvedValue(undefined)
   sdk.nativeDescription = undefined
+  sdk.nativeAccountActions = null
+  sdk.showMfa.mockReset().mockResolvedValue(undefined)
   config._internal.connectors.setState([])
   config.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
 })
@@ -199,6 +216,356 @@ beforeEach(() => {
 afterEach(() => { cleanup() })
 
 describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
+  it('opens native MFA settings from the account dialog without changing its owner or signer', async () => {
+    const embedded = testWallet(0, 'privy')
+    const other = testWallet(1)
+    sdk.authenticated = true
+    sdk.user = { id: 'embedded-user', linkedAccounts: [] }
+    sdk.wallets = [embedded.wallet, other.wallet]
+    sdk.nativeWallet = embedded.wallet
+    sessionStorage.setItem(selectionKey, embedded.account.address)
+    sdk.showMfa.mockImplementation(() => new Promise<void>(() => {}))
+    mount()
+    await expectConnected(embedded.account.address)
+    render(<>{sdk.nativeAccountActions}</>)
+    const client = await getWalletClient(config)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Wallet MFA settings' })) })
+    expect(sdk.showMfa).toHaveBeenCalledOnce()
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(sdk.createWallet).not.toHaveBeenCalled()
+    await emit('login', 'onComplete', { loginMethod: 'passkey', user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: other.account.address }] } })
+    await emit('create', 'onSuccess', { wallet: other.wallet })
+    await expectConnected(embedded.account.address)
+    const message = 'The selected embedded owner remains the signer while managing MFA'
+    expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
+    expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address)
+  })
+
+  it.each([false, true])('does not start passkey login/linking on an unsupported origin (authenticated=%s)', async authenticated => {
+    const origin = vi.spyOn(passkeyOrigin, 'isPasskeyOriginSupported').mockReturnValue(false)
+    try {
+      sdk.authenticated = authenticated
+      sdk.user = authenticated ? { id: 'original-user', linkedAccounts: [] } : null
+      mount()
+      renderPicker()
+      const button = screen.getByRole('button', { name: authenticated ? 'Add passkey' : 'Log in with passkey' })
+      expect(button).toBeDisabled()
+      expect(screen.getByText('Passkeys need an HTTPS domain or localhost.')).toBeVisible()
+      fireEvent.click(button)
+      expect(sdk.login).not.toHaveBeenCalled()
+      expect(sdk.linkPasskey).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: authenticated ? 'Link Google account' : 'Log in with Google' })).toBeEnabled()
+    } finally { origin.mockRestore() }
+  })
+
+  it.each(['Google'])('can retry %s sign-in after the connection picker fails to close', async method => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    sdk.closePicker.mockRejectedValueOnce(new Error('Modal close failed'))
+    mount()
+    const first = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: `Log in with ${method}` })) })
+    first.unmount()
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(actions.error).toBe('Could not start sign-in. Try again.')
+
+    await expectDisconnected()
+    const retry = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: `Log in with ${method}` })) })
+    retry.unmount()
+    expect(method === 'Google' ? sdk.initOAuth : sdk.loginWithPasskey).toHaveBeenCalledOnce()
+  })
+
+  it.each(['main', 'native'] as const)('keeps passkey failures inside the %s picker and allows an external-wallet fallback', async entry => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    sdk.loginWithPasskey.mockRejectedValueOnce(new Error('Offline credential service'))
+    const view = mount()
+    const initial = renderPicker(entry)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with passkey' })) })
+    expect(actions.error).toBeNull()
+    expect(entry === 'main' ? sdk.closePicker : sdk.closeNativePicker).not.toHaveBeenCalled()
+    expect(sdk.connect).toHaveBeenCalledTimes(entry === 'main' ? 1 : 0)
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not sign in with passkey.')
+    expect(screen.getByRole('button', { name: 'Log in with Email' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Log in with Google' })).toBeEnabled()
+    await expectDisconnected()
+    const external = testWallet(0)
+    sdk.wallets = [external.wallet]
+    view.refresh()
+    await emit('connect', 'onSuccess', { wallet: external.wallet })
+    initial.unmount()
+    await expectConnected(external.account.address)
+    expect(actions.error).toBeNull()
+  })
+
+  it('cancels a pending passkey when the picker is dismissed and ignores late authentication', async () => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    let finish!: () => void
+    sdk.loginWithPasskey.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    const view = mount()
+    const picker = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with passkey' })) })
+    expect(screen.getByRole('button', { name: 'Log in with passkey' })).toBeDisabled()
+    expect(sdk.closePicker).not.toHaveBeenCalled()
+    await emit('login', 'onError', 'exited_auth_flow')
+    await emit('connect', 'onError', 'generic_connect_wallet_error')
+    picker.unmount()
+    const embedded = testWallet(0, 'privy')
+    sdk.wallets = [embedded.wallet]
+    view.refresh()
+    await emit('passkey', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] }, loginMethod: 'passkey' })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await act(async () => { finish() })
+    await expectDisconnected()
+    expect(actions.error).toBeNull()
+    expect(sdk.closePicker).not.toHaveBeenCalled()
+  })
+
+  it('accepts the native passkey alternative during email login but ignores already-authenticated callbacks', async () => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    const embedded = testWallet(0, 'privy')
+    const view = mount()
+    const picker = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Email' })) })
+    picker.unmount()
+    sdk.wallets = [embedded.wallet]
+    view.refresh()
+    const user = { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] }
+    await emit('login', 'onComplete', { user, loginMethod: 'passkey', wasAlreadyAuthenticated: true })
+    await expectDisconnected()
+    await emit('login', 'onComplete', { user, loginMethod: 'passkey', wasAlreadyAuthenticated: false })
+    await expectConnected(embedded.account.address)
+  })
+
+  it.each((['main', 'native'] as const).flatMap(entry => (['google', 'passkey'] as const).map(method => ({ entry, method }))))('starts $method directly from the $entry picker', async ({ entry, method }) => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    mount()
+    const picker = renderPicker(entry)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    expect(entry === 'main' ? sdk.closePicker : sdk.closeNativePicker).toHaveBeenCalledTimes(method === 'google' ? 1 : 0)
+    if (method === 'google') expect(sdk.initOAuth).toHaveBeenCalledWith({ provider: 'google' })
+    else expect(sdk.loginWithPasskey).toHaveBeenCalledOnce()
+    expect(sdk.login).not.toHaveBeenCalled()
+    await expectDisconnected()
+  })
+
+  it.each((['google', 'passkey'] as const).flatMap(method => (['failure', 'owner-change', 'session-change'] as const).map(outcome => ({ method, outcome }))))('handles $method wallet preparation $outcome without selecting a stale owner', async ({ method, outcome }) => {
+    const embedded = testWallet(0, 'privy')
+    const external = testWallet(1)
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    let resolveCreation!: (wallet: ConnectedWallet) => void
+    let rejectCreation!: (error: Error) => void
+    sdk.createWallet.mockImplementationOnce(() => new Promise<ConnectedWallet>((resolve, reject) => {
+      resolveCreation = resolve
+      rejectCreation = reject
+    }))
+    const view = mount()
+    const picker = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    const user = { id: 'google-user', linkedAccounts: [] }
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { loginMethod: method, user })
+    expect(sdk.createWallet).not.toHaveBeenCalled()
+    sdk.authenticated = true
+    sdk.user = user
+    view.refresh()
+    await waitFor(() => { expect(sdk.createWallet).toHaveBeenCalledOnce() })
+    if (outcome === 'owner-change') {
+      renderPicker().unmount()
+      sdk.wallets = [external.wallet]
+      view.refresh()
+      await emit('connect', 'onSuccess', { wallet: external.wallet })
+      await expectConnected(external.account.address)
+    } else if (outcome === 'session-change') {
+      sdk.user = { id: 'different-user', linkedAccounts: [] }
+      view.refresh()
+    }
+    sdk.wallets = [...sdk.wallets, embedded.wallet]
+    view.refresh()
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await act(async () => {
+      if (outcome === 'failure') rejectCreation(new Error('Offline wallet service'))
+      else resolveCreation(embedded.wallet)
+    })
+    if (outcome === 'owner-change') await expectConnected(external.account.address)
+    else await expectDisconnected()
+    if (outcome === 'failure') {
+      expect(actions.error).toMatch(/wallet could not be prepared/)
+      sdk.wallets = []
+      view.refresh()
+      sdk.createWallet.mockResolvedValueOnce(embedded.wallet)
+      const retry = renderPicker()
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+      retry.unmount()
+      sdk.wallets = [embedded.wallet]
+      view.refresh()
+      await expectConnected(embedded.account.address)
+      expect(method === 'google' ? sdk.initOAuth : sdk.loginWithPasskey).toHaveBeenCalledOnce()
+    } else expect(actions.error).toBeNull()
+  })
+
+  it.each(['google', 'passkey'] as const)('waits for verified %s login before selecting a newly created embedded wallet', async method => {
+    const embedded = testWallet(0, 'privy')
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    const view = mount()
+    const picker = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    picker.unmount()
+    sdk.wallets = [embedded.wallet]
+    view.refresh()
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await expectDisconnected()
+    const user = { id: 'verified-google-user', linkedAccounts: [] }
+    sdk.createWallet.mockResolvedValueOnce(embedded.wallet)
+    sdk.authenticated = true
+    sdk.user = user
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { loginMethod: method, user })
+    view.refresh()
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await expectConnected(embedded.account.address)
+    expect(sdk.createWallet).toHaveBeenCalledOnce()
+  })
+
+  it('does not start linking after the authenticated session changes while closing the picker', async () => {
+    sdk.authenticated = true
+    sdk.user = { id: 'original-user', linkedAccounts: [] }
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    let close: () => void = () => { throw new Error('Close not requested') }
+    sdk.closePicker.mockImplementationOnce(() => new Promise<void>(resolve => { close = resolve }))
+    const view = mount()
+    const picker = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Link Google account' })) })
+    sdk.user = { id: 'different-user', linkedAccounts: [] }
+    view.refresh()
+    await act(async () => { close() })
+    picker.unmount()
+    expect(sdk.linkGoogle).not.toHaveBeenCalled()
+    await expectDisconnected()
+  })
+
+  it('marks an already-linked Google account and still allows adding another passkey', () => {
+    sdk.authenticated = true
+    sdk.user = { id: 'original-user', linkedAccounts: [{ type: 'google_oauth' }, { type: 'passkey' }] }
+    mount()
+    renderPicker()
+    expect(screen.getByRole('button', { name: 'Google linked' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled()
+  })
+
+  it.each(['google', 'passkey'] as const)('logs in with %s to the existing embedded wallet through the real signing bridge', async method => {
+    const embedded = testWallet(0, 'privy')
+    const external = testWallet(1)
+    sdk.wallets = [external.wallet]
+    sessionStorage.setItem(selectionKey, external.account.address)
+    const view = mount()
+    await expectConnected(external.account.address)
+    const cached = await getWalletClient(config)
+    const popup = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    popup.unmount()
+    if (method === 'google') {
+      expect(sdk.initOAuth).toHaveBeenCalledWith({ provider: 'google' })
+      expect(sdk.login).not.toHaveBeenCalled()
+    } else expect(sdk.loginWithPasskey).toHaveBeenCalledOnce()
+    if (method === 'google') expect(sdk.closePicker.mock.invocationCallOrder[0]).toBeLessThan(sdk.initOAuth.mock.invocationCallOrder[0])
+    else expect(sdk.closePicker).not.toHaveBeenCalled()
+    sdk.wallets = [external.wallet, embedded.wallet]
+    view.refresh()
+    const user = { id: 'same-privy-user', linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] }
+    await emit('login', 'onComplete', { user, loginMethod: 'siwe' })
+    await expectConnected(external.account.address)
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { user, loginMethod: method })
+    await expectConnected(embedded.account.address)
+    expect(sdk.closePicker).toHaveBeenCalledOnce()
+    await expect(cached.signMessage({ message: 'Old owner' })).rejects.toThrow(/selected wallet changed|not ready/)
+    const client = await getWalletClient(config)
+    const message = `Existing embedded wallet after ${method} login`
+    expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
+    expect(sdk.createWallet).not.toHaveBeenCalled()
+  })
+
+  it.each(['google', 'passkey'] as const)('ignores canceled %s login and late wallet creation', async method => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    const embedded = testWallet(0, 'privy')
+    const view = mount()
+    if (method === 'passkey') sdk.loginWithPasskey.mockRejectedValueOnce({ privyErrorCode: 'passkey_not_allowed' })
+    const popup = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: method === 'google' ? 'Log in with Google' : 'Log in with passkey' })) })
+    popup.unmount()
+    if (method === 'google') await emit('login', 'onError', 'exited_auth_flow')
+    sdk.wallets = [embedded.wallet]
+    view.refresh()
+    await emit(method === 'passkey' ? 'passkey' : 'login', 'onComplete', { loginMethod: method, user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] } })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await expectDisconnected()
+    expect(actions.error).toBeNull()
+    expect(sessionStorage.getItem(`${selectionKey}.google-login`)).toBeNull()
+  })
+
+  it.each(['main', 'native'] as const)('links Google and passkeys from the %s picker without changing the current owner or its signer', async entry => {
+    const external = testWallet(0)
+    const embedded = testWallet(1, 'privy')
+    sdk.authenticated = true
+    sdk.user = { id: 'original-user', linkedAccounts: [] }
+    sdk.wallets = [external.wallet, embedded.wallet]
+    sessionStorage.setItem(selectionKey, external.account.address)
+    mount()
+    await expectConnected(external.account.address)
+    const client = await getWalletClient(config)
+    for (const [label, method, spy] of [['Link Google account', 'google', sdk.linkGoogle], ['Add passkey', 'passkey', sdk.linkPasskey]] as const) {
+      const popup = renderPicker(entry)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: label })) })
+      popup.unmount()
+      expect(spy).toHaveBeenCalledOnce()
+      await emit('link', 'onSuccess', { user: sdk.user, linkMethod: method })
+      // SDK login/creation events caused by linking cannot change trading owner.
+      await emit('login', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] }, loginMethod: method })
+      await emit('create', 'onSuccess', { wallet: embedded.wallet })
+      await expectConnected(external.account.address)
+      const message = `Original owner after linking ${method}`
+      expect(await verifyMessage({ address: external.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
+    }
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(sdk.createWallet).not.toHaveBeenCalled()
+  })
+
+  it('keeps the owner on linking conflict and dismisses canceled linking silently', async () => {
+    const external = testWallet(0)
+    sdk.wallets = [external.wallet]
+    sdk.authenticated = true
+    sdk.user = { id: 'original-user', linkedAccounts: [] }
+    mount()
+    await expectConnected(external.account.address)
+    const popup = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Link Google account' })) })
+    popup.unmount()
+    await emit('link', 'onError', 'linked_to_another_user', { linkMethod: 'google' })
+    expect(actions.error).toMatch(/already belong to another account/)
+    await expectConnected(external.account.address)
+    await emit('link', 'onError', 'exited_link_flow', { linkMethod: 'passkey' })
+    expect(actions.error).toBeNull()
+    await expectConnected(external.account.address)
+  })
+
+  it('resumes an explicit Google redirect after remount and consumes its saved intent', async () => {
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    const first = mount()
+    const popup = renderPicker()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log in with Google' })) })
+    popup.unmount()
+    expect(sessionStorage.getItem(`${selectionKey}.google-login`)).not.toBeNull()
+    first.unmount()
+    window.history.replaceState({}, '', '/?privy_oauth_provider=google&privy_oauth_code=test-code&privy_oauth_state=test-state')
+    const embedded = testWallet(0, 'privy')
+    sdk.wallets = [embedded.wallet]
+    sdk.authenticated = true
+    mount()
+    await expectDisconnected()
+    await emit('login', 'onComplete', { loginMethod: 'google', user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] } })
+    await expectConnected(embedded.account.address)
+    expect(sessionStorage.getItem(`${selectionKey}.google-login`)).toBeNull()
+  })
+
   it.each(['main', 'native'] as const)('offers Log in with Email in the signed-out %s picker and waits for verified login before switching', async entry => {
     const email = testWallet(0, 'privy')
     const external = testWallet(1)
@@ -521,7 +888,7 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     await expectConnected(next.account.address)
   })
 
-  it('returns from an external owner to the email wallet using the actual header control and guarded signer', async () => {
+  it('returns from an external owner through the connection picker without a header shortcut', async () => {
     const email = testWallet(0, 'privy')
     const external = testWallet(1)
     sessionStorage.setItem(selectionKey, 'disconnected')
@@ -547,11 +914,14 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     const externalSignature = await externalClient.signMessage({ message: externalMessage })
     expect(await verifyMessage({ address: external.account.address, message: externalMessage, signature: externalSignature })).toBe(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' }))
+    expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
+    const picker = renderPicker('native')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+    picker.unmount()
     await expectConnected(email.account.address)
     await expect(externalClient.signMessage({ message: 'External signer must be revoked' })).rejects.toThrow(/selected wallet changed|not ready/)
     const emailClient = await getWalletClient(config)
-    const emailMessage = 'Email owner selected through header'
+    const emailMessage = 'Email owner selected through connection picker'
     const emailSignature = await emailClient.signMessage({ message: emailMessage })
     expect(await verifyMessage({ address: email.account.address, message: emailMessage, signature: emailSignature })).toBe(true)
     expect(screen.queryByRole('button', { name: 'Use email wallet' })).not.toBeInTheDocument()
