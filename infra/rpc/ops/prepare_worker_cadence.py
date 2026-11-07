@@ -51,6 +51,11 @@ def require(condition, reason):
         raise GuardRejected(reason)
 
 
+def registration_request(definition, allowed):
+    # ECS rejects tags=[]; omitting it preserves an untagged definition.
+    return {k: v for k, v in definition.items() if k in allowed and not (k == 'tags' and not v)}
+
+
 def fingerprint(definition, release_independent=False):
     value = deepcopy({k: v for k, v in definition.items() if k not in OUTPUT_FIELDS})
     targets = TARGETS[definition['family']]
@@ -139,7 +144,7 @@ def main():
         return {**response['taskDefinition'], 'tags': response.get('tags', [])}
     def register(definition):
         allowed = set(ecs.meta.service_model.operation_model('RegisterTaskDefinition').input_shape.members)
-        return ecs.register_task_definition(**{k: v for k, v in definition.items() if k in allowed})['taskDefinition']['taskDefinitionArn']
+        return ecs.register_task_definition(**registration_request(definition, allowed))['taskDefinition']['taskDefinitionArn']
     def save(journal):
         temporary = path.with_suffix('.next.json')
         temporary.write_text(json.dumps(journal, indent=2) + '\n')
