@@ -107,7 +107,7 @@ describe('usePerpsMarket', () => {
       'sides',
       'sides',
     ])
-    expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
+    expect(dynamicCall?.query).toMatchObject({ refetchInterval: 2_000 })
     expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'riskParams',
       'executionFeeBps',

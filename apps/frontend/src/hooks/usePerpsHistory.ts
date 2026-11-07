@@ -67,7 +67,7 @@ const EMPTY_PERPS_HISTORY = {
   tradeHistory: [],
 } satisfies PerpsOrdersHistoryData & PerpsActivityHistoryData
 
-const PERPS_HISTORY_REFETCH_INTERVAL_MS = 30_000
+const PERPS_HISTORY_REFETCH_INTERVAL_MS = 5_000
 
 const perpsHistoryQueryKeys = {
   orders: (accountAddress: string) => [
@@ -509,7 +509,7 @@ export function usePerpsHistory({
       return fetchPerpsOrdersHistory(historyAccountAddress, signal)
     },
     enabled: historyAccountAddress !== undefined,
-    staleTime: 10_000,
+    staleTime: PERPS_HISTORY_REFETCH_INTERVAL_MS,
     refetchInterval: PERPS_HISTORY_REFETCH_INTERVAL_MS,
     // The interval is the retry policy; avoid multiplying traffic during an
     // indexer/backend outage via the app-wide retry default.
