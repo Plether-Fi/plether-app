@@ -33,6 +33,7 @@ module Plether.Database.Schema
   , isHistoricalRevealPayload
   , isHistoricalRevealPayloadSource
   , ensurePerpsKeeperSchema
+  , ensurePerpsExecutionProgressSchema
   , verifyLpSettlementSchema
   , verifyNoLegacySubmittedLpSettlementAttempts
   , tryPerpsKeeperLock
@@ -1068,10 +1069,27 @@ instance FromRow PerpsKeeperTerminalOrderRow where
 
 ensurePerpsKeeperSchema :: Connection -> IO ()
 ensurePerpsKeeperSchema conn = do
+  ensurePerpsExecutionProgressSchema conn
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_keeper_broadcast_recoveries (tx_hash TEXT PRIMARY KEY, order_router TEXT NOT NULL, raw_tx BYTEA NOT NULL, proof JSONB NOT NULL, recovered_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+  ensurePerpsKeeperOrdersSchema conn
+
+-- A small additive migration shared by API and keeper during rolling updates.
+-- No signed bytes, nonce state or existing journal identity is changed.
+ensurePerpsExecutionProgressSchema :: Connection -> IO ()
+ensurePerpsExecutionProgressSchema conn = withTransaction conn $ do
+  _ <- execute_ conn "SET LOCAL statement_timeout='1500ms'"
+  _ <- execute_ conn "SET LOCAL lock_timeout='200ms'"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_keeper_broadcasts (order_router TEXT PRIMARY KEY, tx_hash TEXT NOT NULL, raw_tx BYTEA NOT NULL, last_broadcast_at TIMESTAMPTZ NOT NULL DEFAULT now())"
   _ <- execute_ conn
-    "CREATE TABLE IF NOT EXISTS perps_keeper_broadcast_recoveries (tx_hash TEXT PRIMARY KEY, order_router TEXT NOT NULL, raw_tx BYTEA NOT NULL, proof JSONB NOT NULL, recovered_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+    "ALTER TABLE perps_keeper_broadcasts ADD COLUMN IF NOT EXISTS target_order_ids BIGINT[] NOT NULL DEFAULT '{}'"
+  _ <- execute_ conn
+    "ALTER TABLE perps_keeper_broadcasts ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ"
+  pure ()
+
+ensurePerpsKeeperOrdersSchema :: Connection -> IO ()
+ensurePerpsKeeperOrdersSchema conn = do
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_keeper_state (\
     \id INTEGER PRIMARY KEY DEFAULT 1,\

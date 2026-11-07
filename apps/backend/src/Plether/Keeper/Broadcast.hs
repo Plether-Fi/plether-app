@@ -1,7 +1,11 @@
 -- One durable transaction journal per router, owned by the order keeper's
 -- session advisory lock. Unknown broadcasts are retried with identical bytes.
-module Plether.Keeper.Broadcast (saveBroadcast, clearBroadcast, reconcileBroadcast) where
+module Plether.Keeper.Broadcast
+  ( saveBroadcast, saveOrderBroadcast, markBroadcastSubmitted
+  , clearBroadcast, reconcileBroadcast
+  ) where
 
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Control.Monad (void, when)
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
@@ -9,7 +13,7 @@ import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, withTransaction)
-import Database.PostgreSQL.Simple.Types (Binary (..))
+import Database.PostgreSQL.Simple.Types (Binary (..), PGArray (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Ethereum.Rpc
   ( TxReceipt, RpcBlock (..), ethGetTransactionReceipt, ethSendRawTransaction
@@ -18,9 +22,30 @@ import Plether.Ethereum.Transaction (SignedTransaction (..), Tx1559 (..), decode
 import Plether.Logging (field, logErrorEvery, logWarn, logWarnEvery)
 
 saveBroadcast :: Connection -> Text -> SignedTransaction -> IO ()
-saveBroadcast conn router signed = void $ execute conn
-  "INSERT INTO perps_keeper_broadcasts(order_router,tx_hash,raw_tx) VALUES (?,?,?)"
-  (T.toLower router, signedTransactionHash signed, Binary $ signedRawTransaction signed)
+saveBroadcast conn router = saveOrderBroadcast conn router []
+
+-- The signed bytes and planned order association are one mandatory pre-send
+-- journal write. The association is display-only: a batch can stop before every
+-- planned order finalizes, and no browser may infer a terminal result from it.
+saveOrderBroadcast :: Connection -> Text -> [Integer] -> SignedTransaction -> IO ()
+saveOrderBroadcast conn router orders signed = void $ execute conn
+  "INSERT INTO perps_keeper_broadcasts(order_router,tx_hash,raw_tx,target_order_ids) VALUES (?,?,?,?)"
+  (T.toLower router, signedTransactionHash signed, Binary $ signedRawTransaction signed, PGArray orders)
+
+-- Only an exact send acknowledgement earns this timestamp. This optional
+-- observation cannot interrupt receipt handling after a successful broadcast,
+-- cannot overwrite a newer journal, and never releases the mandatory journal.
+markBroadcastSubmitted :: Connection -> Text -> Text -> IO ()
+markBroadcastSubmitted conn router hash = do
+  outcome <- try $ execute conn
+    "UPDATE perps_keeper_broadcasts SET submitted_at=COALESCE(submitted_at,clock_timestamp()) WHERE order_router=? AND tx_hash=?"
+    (T.toLower router, T.toLower hash)
+  case outcome of
+    Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
+      Just _ -> throwIO err
+      Nothing -> logWarnEvery 60 "keeper_submission_observation_unavailable"
+        "Keeper submission acknowledgement could not be observed; durable receipt reconciliation continues" []
+    Right _ -> pure ()
 
 clearBroadcast :: Connection -> Text -> Text -> IO ()
 clearBroadcast conn router hash = void $ execute conn
@@ -48,17 +73,23 @@ reconcileBroadcast conn router client applyReceipt = do
             Left _ -> invalidJournal
             Right (tx, signer) -> do
               recovered <- recoverConsumedNonce hash raw tx signer
-              if recovered then pure True else rebroadcast raw
-        Left _ -> rebroadcast raw
+              if recovered then pure True else rebroadcast hash raw
+        Left _ -> rebroadcast hash raw
     _ -> invalidJournal
  where
   invalidJournal = do
     logErrorEvery 60 "keeper_broadcast_invalid" "Keeper broadcast journal failed integrity validation" []
     pure False
-  rebroadcast raw = do
+  rebroadcast expected raw = do
     due <- execute conn "UPDATE perps_keeper_broadcasts SET last_broadcast_at=now() WHERE order_router=? AND last_broadcast_at < now()-interval '5 seconds'"
       (Only $ T.toLower router)
-    when (due > 0) $ void $ ethSendRawTransaction client raw
+    when (due > 0) $ do
+      sent <- ethSendRawTransaction client raw
+      case sent of
+        Right hash | T.toLower hash == T.toLower expected -> markBroadcastSubmitted conn router expected
+        Right _ -> logWarnEvery 60 "keeper_broadcast_hash_mismatch"
+          "Keeper rebroadcast acknowledgement did not match the durable transaction" []
+        Left _ -> pure ()
     logWarnEvery 30 "keeper_broadcast_unresolved" "Keeper is reconciling its existing signed transaction" []
     pure False
   recoverConsumedNonce hash raw tx signer

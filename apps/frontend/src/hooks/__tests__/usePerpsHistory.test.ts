@@ -293,3 +293,30 @@ describe('waitForPerpsOrderTerminal', () => {
     expect(activityRequestCount).toBe(1)
   })
 })
+
+describe('optional keeper execution progress', () => {
+  const execution = { state: 'submitted', orderId: '42', orderRouter: `0x${'11'.repeat(20)}`,
+    account: `0x${'22'.repeat(20)}`, clientOrderId: `0x${'33'.repeat(32)}`,
+    commitTxHash: `0x${'44'.repeat(32)}`, transactionHash: `0x${'55'.repeat(32)}`, requiredConfirmations: 1 }
+  it('round trips an optional progress cursor and keeps broadcast separate from terminal evidence', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({data:{timedOut:false,execution,executionVersion:'submitted:1'}})))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await waitForPerpsOrderTerminal({orderId:42n,accountAddress:execution.account,afterExecution:'none:0',signal:controller.signal})
+    expect(result).toEqual({timedOut:false,order:undefined,execution:{...execution,orderId:42n},executionVersion:'submitted:1'})
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('afterExecution=none%3A0')
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual({signal:controller.signal})
+  })
+  it.each([{requiredConfirmations:-1},{requiredConfirmations:0},{requiredConfirmations:0.5},{requiredConfirmations:10001},
+    {transactionHash:'0x12'},{clientOrderId:'0x12'},{account:'0x12'},{orderId:'-1'},{state:'executed'}])('rejects malformed advisory progress %j',async patch=>{
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({data:{execution:{...execution,...patch},executionVersion:'bad:1'}}))))
+    await expect(waitForPerpsOrderTerminal({orderId:42n})).resolves.toMatchObject({execution:null,order:undefined})
+  })
+  it('represents explicit clearing and remains compatible with an older backend',async()=>{
+    const fetchMock=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({data:{execution:null,executionVersion:'none:2'}})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({data:{timedOut:true}})))
+    vi.stubGlobal('fetch',fetchMock)
+    await expect(waitForPerpsOrderTerminal({orderId:42n})).resolves.toMatchObject({execution:null,executionVersion:'none:2'})
+    await expect(waitForPerpsOrderTerminal({orderId:42n})).resolves.toEqual({timedOut:true,order:undefined})
+  })
+})

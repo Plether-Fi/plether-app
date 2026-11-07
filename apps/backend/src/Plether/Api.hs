@@ -119,6 +119,7 @@ import Plether.Handlers.Insights
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Database (DbPool)
+import Plether.Database.ExecutionProgress (validExecutionVersion)
 import Plether.Database.VaultActivity (VaultActivityDeployment (..))
 import Plether.Handlers.VaultActivity
   ( getVaultAccountRequestIds
@@ -637,15 +638,19 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
         handleResult result
 
       get "/api/perps/orders/:orderId/wait" $ do
+        setHeader "Cache-Control" "no-store"
         rawOrderId <- pathParam "orderId"
         mAccount <- queryParamMaybe "account"
         mRouter <- queryParamMaybe "router"
         mTimeoutSeconds <- queryParamMaybe "timeoutSeconds"
+        afterExecution <- queryParamMaybe "afterExecution"
         case (parsePositiveInteger rawOrderId, traverse parsePositiveInt mTimeoutSeconds, validateRouterParam mRouter) of
           (Just orderId, Just timeoutSeconds, Just router)
+            | not (maybe True validExecutionVersion afterExecution) ->
+                handleError $ E.invalidAmount "afterExecution must be none or transactionHash:submitting/submitted"
             | maybe True isValidAddress mAccount -> do
                 result <- liftIO $
-                  waitForPerpsOrderTerminal pool cfg router orderId mAccount (maybe 60 id timeoutSeconds)
+                  waitForPerpsOrderTerminal pool cfg router orderId mAccount (maybe 60 id timeoutSeconds) afterExecution
                 handleResult result
             | otherwise ->
                 handleError $ E.invalidAddress $ maybe "" id mAccount

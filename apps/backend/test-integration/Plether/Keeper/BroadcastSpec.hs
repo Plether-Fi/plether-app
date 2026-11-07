@@ -11,6 +11,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple
+import Database.PostgreSQL.Simple.Types (PGArray (..))
 import Network.HTTP.Types (status200)
 import Network.Wai (responseLBS, strictRequestBody)
 import Network.Wai.Handler.Warp (testWithApplication)
@@ -26,7 +27,9 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
       signed <- signedFixture
       let raw = signedRawTransaction signed
           hash = signedTransactionHash signed
-      saveBroadcast conn router signed
+      saveOrderBroadcast conn router [11,12] signed
+      (query_ conn "SELECT target_order_ids,submitted_at::text FROM perps_keeper_broadcasts" :: IO [(PGArray Integer,Maybe Text)])
+        `shouldReturn` [(PGArray [11,12],Nothing)]
       void $ execute_ conn "UPDATE perps_keeper_broadcasts SET last_broadcast_at=now()-interval '10 seconds'"
       observed <- newIORef ([] :: [Value])
       mined <- newIORef False
@@ -58,6 +61,13 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
         requests <- readIORef observed
         let sends = [KM.lookup "params" fields | Object fields <- requests, KM.lookup "method" fields == Just (String "eth_sendRawTransaction")]
         sends `shouldBe` [Just $ toArray [String $ "0x" <> TE.decodeUtf8 (B16.encode raw)]]
+        -- The acknowledgement is separate from signing/journaling and survives
+        -- a process restart with the same exact planned order association.
+        (query_ conn "SELECT target_order_ids,submitted_at IS NOT NULL FROM perps_keeper_broadcasts" :: IO [(PGArray Integer,Bool)])
+          `shouldReturn` [(PGArray [11,12],True)]
+        [Only firstAck] <- query_ conn "SELECT submitted_at::text FROM perps_keeper_broadcasts" :: IO [Only Text]
+        markBroadcastSubmitted conn router hash
+        (query_ conn "SELECT submitted_at::text FROM perps_keeper_broadcasts" :: IO [Only Text]) `shouldReturn` [Only firstAck]
         (query_ conn "SELECT count(*) FROM perps_keeper_broadcasts" :: IO [Only Int]) `shouldReturn` [Only 1]
         -- The unique row cannot be overwritten by a replacement/new operation.
         saveBroadcast conn router signed `shouldThrow` anySqlError
@@ -79,9 +89,31 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
       client <- newClient "http://127.0.0.1:1"
       reconcileBroadcast conn "router" client (\_ -> expectationFailure "Must not apply a corrupt journal") `shouldReturn` False
 
+  it "keeps acknowledgement failures advisory and fences them to the exact router/hash" $
+    fixture $ \conn -> do
+      signed <- signedFixture
+      saveOrderBroadcast conn router [11,12] signed
+      markBroadcastSubmitted conn "another-router" (signedTransactionHash signed)
+      markBroadcastSubmitted conn router ("0x"<>T.replicate 64 "a")
+      (query_ conn "SELECT submitted_at::text FROM perps_keeper_broadcasts" :: IO [Only (Maybe Text)]) `shouldReturn` [Only Nothing]
+      -- A failed optional observation must leave the pre-send signed journal
+      -- intact so receipt handling/restart reconciliation can still proceed.
+      void $ execute_ conn "ALTER TABLE perps_keeper_broadcasts ADD CHECK(submitted_at IS NULL)"
+      markBroadcastSubmitted conn router (signedTransactionHash signed)
+      (query_ conn "SELECT raw_tx,target_order_ids,submitted_at::text FROM perps_keeper_broadcasts" :: IO [(BS.ByteString,PGArray Integer,Maybe Text)])
+        `shouldReturn` [(signedRawTransaction signed,PGArray [11,12],Nothing)]
+
+  it "preserves the legacy journal wrapper without claiming target orders or acknowledgement" $
+    fixture $ \conn -> do
+      signed <- signedFixture
+      saveBroadcast conn router signed
+      (query_ conn "SELECT target_order_ids,submitted_at::text FROM perps_keeper_broadcasts" :: IO [(PGArray Integer,Maybe Text)])
+        `shouldReturn` [(PGArray [],Nothing)]
+
   mapM_ (\(label, mode, expected) -> it label $ fixture $ \conn -> do
       signed <- signedFixture
       saveBroadcast conn router signed
+      void $ execute_ conn "UPDATE perps_keeper_broadcasts SET last_broadcast_at=now()-interval '10 seconds'"
       observed <- newIORef ([] :: [Text])
       receiptReads <- newIORef (0 :: Int)
       blockReads <- newIORef (0 :: Int)
@@ -105,8 +137,8 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
                   "eth_getBlockByNumber" | mode == "reorg" && blocks > 0 -> object
                     ["number" .= ("0x64" :: Text), "hash" .= ("0x" <> T.replicate 64 "b"), "timestamp" .= ("0x64" :: Text)]
                   "eth_getBlockByNumber" -> safeBlock
-                  "eth_getTransactionCount" -> String $ if mode == "equal" then "0x11" else "0x12"
-                  "eth_sendRawTransaction" -> String $ signedTransactionHash signed
+                  "eth_getTransactionCount" -> String $ if mode `elem` ["equal","send-mismatch"] then "0x11" else "0x12"
+                  "eth_sendRawTransaction" -> String $ if mode == "send-mismatch" then "0x"<>T.replicate 64 "b" else signedTransactionHash signed
                   _ -> error "Unexpected recovery RPC"
                 fails = mode == "rpc-failure" && method == "eth_getTransactionCount"
             respond $ responseLBS status200 [("Content-Type","application/json")] $ encode $
@@ -118,6 +150,8 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
         reconcileBroadcast conn router client (\_ -> expectationFailure "Nonce consumption is not execution") `shouldReturn` expected
       (query_ conn "SELECT count(*) FROM perps_keeper_broadcasts" :: IO [Only Int]) `shouldReturn` [Only $ if expected then 0 else 1]
       (query_ conn "SELECT count(*) FROM perps_keeper_broadcast_recoveries" :: IO [Only Int]) `shouldReturn` [Only $ if expected then 1 else 0]
+      whenMethod mode "send-mismatch" $
+        (query_ conn "SELECT submitted_at::text FROM perps_keeper_broadcasts" :: IO [Only (Maybe Text)]) `shouldReturn` [Only Nothing]
       whenMethod expected True $ do
         rows <- query_ conn "SELECT raw_tx FROM perps_keeper_broadcast_recoveries" :: IO [Only BS.ByteString]
         rows `shouldBe` [Only $ signedRawTransaction signed]
@@ -128,11 +162,12 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
      ("keeps a wrong-chain nonce blocked", "chain", False),
      ("keeps a safe-block reorg blocked", "reorg", False),
      ("keeps failed nonce reads blocked", "rpc-failure", False),
+     ("does not acknowledge a different hash returned by rebroadcast", "send-mismatch", False),
      ("keeps unavailable safe finality blocked", "missing-safe", False),
      ("keeps a receipt appearing during recovery for normal reconciliation", "receipt-race", False)]
  where
   fixture action = bracket (connectPostgreSQL $ TE.encodeUtf8 url) close $ \conn -> do
-    void $ execute_ conn "CREATE TEMP TABLE perps_keeper_broadcasts(order_router text PRIMARY KEY,tx_hash text NOT NULL,raw_tx bytea NOT NULL,last_broadcast_at timestamptz NOT NULL DEFAULT now())"
+    void $ execute_ conn "CREATE TEMP TABLE perps_keeper_broadcasts(order_router text PRIMARY KEY,tx_hash text NOT NULL,raw_tx bytea NOT NULL,last_broadcast_at timestamptz NOT NULL DEFAULT now(),target_order_ids bigint[] NOT NULL DEFAULT '{}',submitted_at timestamptz)"
     void $ execute_ conn "CREATE TEMP TABLE perps_keeper_broadcast_recoveries(tx_hash text PRIMARY KEY,order_router text NOT NULL,raw_tx bytea NOT NULL,proof jsonb NOT NULL,recovered_at timestamptz NOT NULL DEFAULT now())"
     action conn
   anySqlError :: SqlError -> Bool
