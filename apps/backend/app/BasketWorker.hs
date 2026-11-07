@@ -79,7 +79,9 @@ import Plether.Pyth.History
   , runBasketBackfill
   , startBasketHistoryIngestor
   )
-import Plether.Pyth.Prefetch (runPriorityPrefetch, retryAfterSeconds, ProviderGate, newProviderGate, withProviderGate)
+import Plether.Keeper.CommitmentHints (loadProvisionalRevealCandidates)
+import Plether.Keeper.Wakeup (WakeupMode (..), readWakeupMode, newWakeup, withWakeupListener, notifyCommitmentWakeup)
+import Plether.Pyth.Prefetch (runPriorityPrefetchWithPriorities, PrefetchPriority (..), retryAfterSeconds, ProviderGate, newProviderGate, withProviderGate)
 import Plether.Pyth.RevealPayload
   ( PythPayloadAdmission (..)
   , classifyPythPayloadAdmission
@@ -506,21 +508,54 @@ verifyLatestRecoveryPayload ethClient cfg update
 
 -- Independent of latest prices and chart ingestion. Shared ticks are fetched once.
 revealLoop :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> IO ()
-revealLoop providerGate manager ethClient pool cfg = runPriorityPrefetch $ do
-  pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) 20
-  if null pending then pure [] else do
-    settlement <- orderSettlementWindow ethClient $ cfgPerpsPletherOracle cfg
-    case settlement of
-      Left _ -> do
-        logWarnEvery 30 "reveal_queue_load_failed" "Could not verify the historical-price settlement window" []
-        pure []
-      Right window -> pure
-        [ ((pkorCommitTime order + 1, window), fetchReveal order window)
-        | order <- nubBy ((==) `on` pkorCommitTime) pending ]
+revealLoop providerGate manager ethClient pool cfg = do
+  mode <- readWakeupMode cfg
+  case (mode, cfgDatabaseUrl cfg) of
+    (WakeupsActive, Just databaseUrl) -> do
+      wakeup <- newWakeup
+      withWakeupListener databaseUrl (cfgPerpsOrderRouter cfg) wakeup $
+        runPriorityPrefetchWithPriorities (Just wakeup) (loadCandidates True)
+    _ -> runPriorityPrefetchWithPriorities Nothing (loadCandidates False)
  where
-  fetchReveal order window = do
-    let firstTick = pkorCommitTime order + 1
-        lastTick = pkorCommitTime order + window
+  loadCandidates active = do
+    pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) 20
+    provisional <- if active then loadHints else pure []
+    -- Canonical queue work keeps priority. Provisional receipt evidence only
+    -- warms signed prices; it never creates keeper rows or authorizes execution.
+    let candidates = nubBy ((==) `on` (\(commitTime, _, _) -> commitTime)) $
+          [(pkorCommitTime order, pkorOrderId order, CanonicalPrefetch) | order <- pending]
+            <> [(commitTime, orderId, ProvisionalPrefetch) | (commitTime, orderId) <- take 20 provisional]
+    if null candidates then pure [] else do
+      settlement <- orderSettlementWindow ethClient $ cfgPerpsPletherOracle cfg
+      case settlement of
+        Left _ -> do
+          logWarnEvery 30 "reveal_queue_load_failed" "Could not verify the historical-price settlement window" []
+          pure []
+        Right window -> pure
+          [ ((commitTime + 1, window), priority, fetchReveal active commitTime orderId window)
+          | (commitTime, orderId, priority) <- candidates ]
+
+  loadHints = do
+    result <- try @SomeException $ timeout 250_000 $
+      withDb pool $ \conn -> loadProvisionalRevealCandidates conn (cfgPerpsOrderRouter cfg)
+    case result of
+      Right (Just candidates) -> pure candidates
+      Left err | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+      _ -> do
+        logWarnEvery 30 "reveal_hint_load_failed" "Optional commitment hints unavailable; canonical price preparation continues" []
+        pure []
+
+  notifyPayloadReady = do
+    result <- try @SomeException $ timeout 250_000 $
+      withDb pool $ \conn -> notifyCommitmentWakeup conn (cfgPerpsOrderRouter cfg)
+    case result of
+      Left err | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+      Right (Just ()) -> pure ()
+      _ -> logWarnEvery 30 "reveal_payload_wakeup_failed" "Price payload is cached; keeper polling will discover it" []
+
+  fetchReveal active commitTime orderId window = do
+    let firstTick = commitTime + 1
+        lastTick = commitTime + window
     cached <- withDb pool $ \conn -> getPythUpdatePayloadForWindow conn firstTick lastTick
     case cached of
       Just payload | isHistoricalRevealPayload payload -> pure $ Right ()
@@ -529,9 +564,9 @@ revealLoop providerGate manager ethClient pool cfg = runPriorityPrefetch $ do
         fetched <- withProviderGate providerGate $ fetchBasketUpdateAt manager cfg firstTick
         case fetched of
           Left err -> do
-            logWarnEvery 30 "reveal_payload_backfill_fetch_failed" "Historical reveal price unavailable" [field "order_id" $ pkorOrderId order]
+            logWarnEvery 30 "reveal_payload_backfill_fetch_failed" "Historical reveal price unavailable" [field "order_id" orderId]
             pure $ Left err
-          Right update -> case validateRevealWindow (pkorCommitTime order) window (hbuPublishTimes update) of
+          Right update -> case validateRevealWindow commitTime window (hbuPublishTimes update) of
             Left err -> pure $ Left err
             Right _ -> do
               cachedResult <- cacheBasketUpdate ethClient pool cfg (Just (firstTick, lastTick)) update
@@ -542,9 +577,10 @@ revealLoop providerGate manager ethClient pool cfg = runPriorityPrefetch $ do
                   availableAt <- floor . (* 1000) <$> getPOSIXTime
                   logInfo "reveal_payload_fetch_completed" "Historical price is validated and available"
                     [field "duration_ms" (fromIntegral (finished - started) / 1_000_000 :: Double),
-                     field "commit_to_price_available_ms" (max 0 (availableAt - pkorCommitTime order * 1000) :: Integer)]
+                     field "commit_to_price_available_ms" (max 0 (availableAt - commitTime * 1000) :: Integer)]
                   logInfo "reveal_payload_backfilled" "First reveal payload was backfilled for an order"
-                    [field "order_id" $ pkorOrderId order, field "publish_time" firstTick]
+                    [field "order_id" orderId, field "publish_time" firstTick]
+                  when active notifyPayloadReady
                   pure $ Right ()
 
 cacheBasketUpdate

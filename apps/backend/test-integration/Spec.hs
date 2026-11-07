@@ -2,6 +2,9 @@ module Main (main) where
 
 import qualified Data.Text as T
 import Plether.Keeper.BroadcastSpec (broadcastSpec)
+import Plether.Keeper.WakeupDatabaseSpec (wakeupDatabaseSpec)
+import Plether.Keeper.CommitmentHintsDatabaseSpec (commitmentHintsDatabaseSpec)
+import Plether.Keeper.CommitmentHintsWatcherSpec (commitmentHintsWatcherSpec)
 import Plether.Keeper.ReliabilitySpec (reliabilitySpec)
 import Plether.DatabaseDiagnosticsSpec (databaseDiagnosticsSpec)
 import Plether.MarginFundingForkSpec (marginFundingForkSpec)
@@ -30,6 +33,9 @@ main = do
     Just value ->
       hspec $ do
         broadcastSpec $ T.pack value
+        wakeupDatabaseSpec $ T.pack value
+        commitmentHintsDatabaseSpec $ T.pack value
+        commitmentHintsWatcherSpec $ T.pack value
         reliabilitySpec $ T.pack value
         databaseDiagnosticsSpec $ T.pack value
         backendUnitRepairSpec $ T.pack value

@@ -67,6 +67,9 @@ import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
 import Plether.Keeper.Broadcast (saveBroadcast, clearBroadcast, reconcileBroadcast)
 import Plether.Keeper.Reliability (runOrderReliabilityObserver)
+import Plether.Keeper.Wakeup
+  ( WakeupMode (..), readWakeupMode, newWakeup
+  , waitWakeup, withWakeupListener )
 import Plether.Keeper.Deferrals (recordDeferral, finishDeferrals, pendingReasonCode)
 import Plether.Keeper.Funding
   ( readFundingEvidence, keeperFeeCaps, keeperReserveCost, classifyKeeperReserve )
@@ -340,20 +343,33 @@ runOrderKeeperSession cfg pool client mode dryRun =
                   threadDelay 10_000_000
             case mode of
               KeeperOnce -> void iteration
-              KeeperLoop -> withAsync observeLoop $ \_ ->
-                case (dryRun, cfgDatabaseUrl cfg) of
-                  (False, Just databaseUrl) ->
-                    withAsync (runOrderReliabilityObserver databaseUrl $ cfgPerpsOrderRouter cfg) $ \_ -> loop iteration
-                  _ -> loop iteration
+              KeeperLoop -> do
+                wakeupMode <- readWakeupMode cfg
+                wakeup <- newWakeup
+                let activeWakeup = if wakeupMode == WakeupsActive && not dryRun then Just wakeup else Nothing
+                    runLoop = withAsync observeLoop $ \_ ->
+                      case (dryRun, cfgDatabaseUrl cfg) of
+                        (False, Just databaseUrl) ->
+                          withAsync (runOrderReliabilityObserver databaseUrl $ cfgPerpsOrderRouter cfg) $ \_ -> loop activeWakeup iteration
+                        _ -> loop activeWakeup iteration
+                case (activeWakeup, cfgDatabaseUrl cfg) of
+                  (Just signal, Just databaseUrl) ->
+                    withWakeupListener databaseUrl (cfgPerpsOrderRouter cfg) signal runLoop
+                  _ -> runLoop
   where
-    loop iteration = do
+    loop wakeup iteration = do
       activity <- iteration
-      threadDelay $
-        keeperPollDelayMicros
-          (cfgKeeperPollSeconds cfg)
-          (cfgKeeperIdlePollSeconds cfg)
-          activity
-      loop iteration
+      let delay = keeperPollDelayMicros
+            (cfgKeeperPollSeconds cfg)
+            (cfgKeeperIdlePollSeconds cfg)
+            activity
+      when (delay > 0) $ case wakeup of
+        Nothing -> threadDelay delay
+        Just signal -> do
+          notified <- waitWakeup signal delay
+          when notified $ logInfoEvery 60 "keeper_commitment_wakeup"
+            "Order keeper idle wait interrupted; canonical indexing and execution checks will run" []
+      loop wakeup iteration
 
 runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> IO KeeperIterationActivity
 runKeeperIteration cfg conn client dryRun observeCost = do

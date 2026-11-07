@@ -19,6 +19,22 @@ variable "environment" {
   default = "sepolia"
 }
 
+variable "perps_commitment_wakeups_mode" {
+  type        = string
+  default     = "off"
+  description = "Advisory commitment preparation: off, observe, or active. Sepolia only; execution confirmations, queue order and gas policy are unchanged."
+
+  validation {
+    condition     = contains(["off", "observe", "active"], var.perps_commitment_wakeups_mode)
+    error_message = "perps_commitment_wakeups_mode must be off, observe, or active."
+  }
+
+  validation {
+    condition     = var.perps_commitment_wakeups_mode == "off" || (var.environment == "sepolia" && var.perps_chain_id == "421614")
+    error_message = "Commitment wakeups may be enabled only for Arbitrum Sepolia."
+  }
+}
+
 variable "posthog_project_token" {
   type        = string
   sensitive   = true
