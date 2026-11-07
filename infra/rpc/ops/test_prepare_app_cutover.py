@@ -1,6 +1,6 @@
 import copy
 import unittest
-from prepare_app_cutover import patch_definition, GuardRejected, PARAMETER_PREFIX, RPC_PARAMETER, TOKEN_PARAMETER, APP_PARAMETER
+from prepare_app_cutover import patch_definition, patch_dormant_keeper, GuardRejected, PARAMETER_PREFIX, RPC_PARAMETER, TOKEN_PARAMETER, APP_PARAMETER
 
 
 def definition(family='plether-sepolia', secrets=None):
@@ -45,6 +45,21 @@ class CutoverPreparationTests(unittest.TestCase):
         original = copy.deepcopy(source)
         with self.assertRaises(GuardRejected): patch_definition(source)
         self.assertEqual(source, original)
+
+    def test_dormant_keeper_must_match_consolidated_configuration_after_rpc_change(self):
+        standalone = definition('plether-sepolia-keeper')
+        standalone['containerDefinitions'][0]['name'] = 'plether-keeper'
+        workers = copy.deepcopy(standalone)
+        workers['family'] = 'plether-sepolia-workers'
+        prepared, _ = patch_definition(workers)
+        updated, _ = patch_dormant_keeper(standalone, prepared)
+        self.assertEqual(updated['containerDefinitions'], prepared['containerDefinitions'])
+        self.assertEqual(standalone['containerDefinitions'][0]['secrets'][0]['valueFrom'], PARAMETER_PREFIX + RPC_PARAMETER)
+        for field, extra in [('environment', {'name': 'LP_SETTLEMENT_MODE', 'value': 'execute'}),
+                             ('secrets', {'name': 'UNRELATED_SIGNER', 'valueFrom': 'different-key'})]:
+            drifted = copy.deepcopy(prepared)
+            drifted['containerDefinitions'][0][field].append(extra)
+            with self.assertRaises(GuardRejected): patch_dormant_keeper(standalone, drifted)
 
     def test_single_provider_verification_follows_the_direct_application_client(self):
         source = definition(secrets=[{'name': n, 'valueFrom': PARAMETER_PREFIX + RPC_PARAMETER} for n in ['PERPS_RPC_URL', 'AA_RECONCILER_SECONDARY_RPC_URL']])
