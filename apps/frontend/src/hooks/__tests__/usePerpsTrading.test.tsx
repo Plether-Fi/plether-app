@@ -646,7 +646,10 @@ describe('usePerpsTrading', () => {
       data: encodeAbiParameters(event.inputs.filter(part => !part.indexed), [receiptHash, terminalBlock, terminalTime, receipt]),
       args: { ...receipt, terminalBlock, terminalTime, receiptHash, receipt },
     }
-    mocks.getContractEvents.mockResolvedValue([log])
+    mocks.getContractEvents.mockImplementation(async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      if (toBlock - fromBlock >= 1_000n) throw new Error('Public log range exceeds 1000 blocks')
+      return [log]
+    })
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.readOrderLifecycleOutcome(12n)).resolves.toEqual({
@@ -659,7 +662,7 @@ describe('usePerpsTrading', () => {
       address: ORDER_LIFECYCLE_BOOK, functionName: 'terminalOutcome', args: [12n], blockNumber: safeBlock,
     }))
     expect(mocks.getContractEvents).toHaveBeenCalledWith(expect.objectContaining({
-      fromBlock: safeBlock - 4_999n, toBlock: safeBlock,
+      fromBlock: safeBlock - 999n, toBlock: safeBlock,
     }))
 
     mocks.getContractEvents.mockResolvedValue([{ ...log,

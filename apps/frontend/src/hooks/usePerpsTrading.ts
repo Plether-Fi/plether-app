@@ -1223,9 +1223,9 @@ export function usePerpsTrading() {
       abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
       eventName: 'OrderFinalized',
       args: { orderId },
-      // Recent receipt recovery is bounded; older evidence comes from indexed history.
-      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 4_999n
-        ? safe.number - 4_999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
+      // Public RPC allows 1,000 blocks inclusive; older evidence comes from indexed history.
+      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 999n
+        ? safe.number - 999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
       toBlock: safe.number,
       strict: true,
     })
