@@ -33,6 +33,7 @@ module Plether.AA.Pimlico
   , readBoundedRequestBody
   , validateClientIp
   , constantTimeTextEq
+  , checkRateLimit
   , respondFailure
   , invalidRequest
   , invalidParams

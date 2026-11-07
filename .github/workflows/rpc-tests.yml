@@ -21,6 +21,7 @@ jobs:
       - run: python3 -m unittest discover -s infra/rpc/node -p 'test_*.py'
       - run: python3 -m unittest discover -s infra/rpc/ops -p 'test_*.py'
       - run: node --check infra/rpc/ops/qualify.mjs
+      - run: node --check infra/rpc/ops/qualify_app.mjs
       - run: docker build -f infra/rpc/gateway/Dockerfile -t plether-rpc-gateway-test .
       - name: Test the unprivileged gateway image without external networking
         run: |

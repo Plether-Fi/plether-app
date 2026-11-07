@@ -1310,8 +1310,9 @@ jobs:
                             {"containerName":"aa-reconciler-tmp-init","condition":"SUCCESS"},
                             {"containerName":"otel-log-router","condition":"START"}
                           ] | sort_by([.containerName, .condition]))
-                  and (($main.secrets // []) | map(.name) | sort)
+                  and (($main.secrets // []) | map(select(.name != "PERPS_RPC_AUTH_TOKEN") | .name) | sort)
                       == (["AA_RECONCILER_SECONDARY_RPC_URL", "DATABASE_URL", "PERPS_RPC_URL"] | sort)
+                  and ([($main.secrets // [])[] | select(.name == "PERPS_RPC_AUTH_TOKEN")] | length) <= 1
                   and all(($main.secrets // [])[]; ((.valueFrom // "") | length) > 0)
                   and (($main.environment // []) | map(.name) | sort)
                       == ([

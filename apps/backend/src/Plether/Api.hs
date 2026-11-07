@@ -6,6 +6,7 @@ module Plether.Api
   ) where
 
 import Control.Exception (evaluate)
+import Control.Applicative ((<|>))
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?), (.=))
@@ -44,6 +45,7 @@ import Plether.Config (NativeAaConfig(..))
 import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
+import Plether.Ethereum.PublicRpc (handlePublicRpc)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Perps.Release
@@ -211,6 +213,9 @@ app = appWithReleaseState Manifest.releaseIsDeployed
 appWithReleaseState :: Bool -> AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
 appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
   middleware $ perpsReleaseMiddleware deployed
+  post "/api/rpc" $ handlePublicRpc (cfgPerpsChainId cfg)
+    ((naaProxyOriginToken <$> cfgNativeAaConfig cfg) <|> (aaProxyOriginToken <$> cfgAaConfig cfg))
+    perpsClient pimlicoProxyState
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"

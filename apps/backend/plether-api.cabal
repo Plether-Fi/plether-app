@@ -73,6 +73,7 @@ library
         Plether.Handlers.User
         Plether.Handlers.Quote
         Plether.Ethereum.Client
+        Plether.Ethereum.PublicRpc
         Plether.Ethereum.Multicall
         Plether.Ethereum.Abi
         Plether.Ethereum.Rlp
@@ -427,6 +428,7 @@ test-suite plether-api-test
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
         Plether.Ethereum.ClientSpec
+        Plether.Ethereum.PublicRpcSpec
         Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
         Plether.Ethereum.Contracts.SettlementMonitorSpec
