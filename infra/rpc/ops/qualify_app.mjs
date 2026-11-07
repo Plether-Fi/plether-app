@@ -26,7 +26,8 @@ try {
   check('direct_route_uses_primary', direct.result === '0x66eee' && direct.role === 'primary')
   const old = await rpc(origin + '/', 'eth_getBalance', [zero, '0x1'])
   check('old_state_uses_managed_origin', typeof old.result === 'string' && old.role === 'backup')
-  const receipt = await rpc(origin + '/', 'eth_getUserOperationReceipt', [`0x${'0'.repeat(64)}`])
+  // Alchemy rejects the all-zero sentinel as invalid instead of returning null.
+  const receipt = await rpc(origin + '/', 'eth_getUserOperationReceipt', [`0x${'1'.repeat(64)}`])
   check('legacy_receipt_uses_managed_origin', receipt.result === null && receipt.role === 'backup')
   const samples = []
   for (let i = 0; i < 10; i++) {
