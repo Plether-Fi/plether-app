@@ -28,6 +28,7 @@ SERVICES = {
     'plether-position-protection-worker': 'plether-sepolia-protection-worker',
     'plether-aa-reconciler': 'plether-sepolia-aa-reconciler',
 }
+AUXILIARY_FAMILY = 'plether-sepolia-keeper'
 
 
 class GuardRejected(ValueError):
@@ -42,7 +43,7 @@ def require(condition, reason):
 def patch_definition(definition):
     patched = deepcopy(definition)
     changes = []
-    require(definition['family'] in SERVICES.values(), 'unexpected_family')
+    require(definition['family'] in [*SERVICES.values(), AUXILIARY_FAMILY], 'unexpected_family')
     require(definition['networkMode'] == 'awsvpc', 'unexpected_network_mode')
     require(definition['runtimePlatform']['cpuArchitecture'] == 'ARM64', 'unexpected_architecture')
     require('FARGATE' in definition['requiresCompatibilities'], 'unexpected_launch_type')
@@ -72,6 +73,19 @@ def patch_definition(definition):
         if additions:
             container['secrets'] = secrets + additions
     require(bool(changes), 'no_matching_consumer')
+    return patched, changes
+
+
+def patch_dormant_keeper(definition, workers):
+    require(definition['family'] == AUXILIARY_FAMILY, 'unexpected_auxiliary_family')
+    require(workers['family'] == SERVICES['plether-workers'], 'unexpected_workers_family')
+    patched, changes = patch_definition(definition)
+    def keeper_config(task):
+        containers = [c for c in task['containerDefinitions'] if c['name'] == 'plether-keeper']
+        require(len(containers) == 1, 'unexpected_keeper_container')
+        return {field: sorted(containers[0].get(field, []), key=lambda item: item['name'])
+                for field in ['environment', 'secrets']}
+    require(keeper_config(patched) == keeper_config(workers), 'keeper_topology_differs_beyond_rpc')
     return patched, changes
 
 
@@ -118,7 +132,7 @@ def main():
                 return
         raise GuardRejected('missing_exact_ssm_policy')
     def register(definition):
-        require(definition['family'] in SERVICES.values(), 'unexpected_registration_family')
+        require(definition['family'] in [*SERVICES.values(), AUXILIARY_FAMILY], 'unexpected_registration_family')
         allowed = set(ecs.meta.service_model.operation_model('RegisterTaskDefinition').input_shape.members)
         request = {k: v for k, v in definition.items() if k in allowed}
         return ecs.register_task_definition(**request)['taskDefinition']['taskDefinitionArn']
@@ -167,6 +181,26 @@ def main():
             state['prepared_task_definition'] = register(patched)
             state['changes'] = changes
             write_journal(journal)
+        # The deployment preflight compares this inactive legacy family with
+        # the consolidated keeper. Prepare its references without starting it.
+        auxiliary = journal.setdefault('auxiliary_task_definitions', {})
+        state = auxiliary.get(AUXILIARY_FAMILY)
+        if not state or not state.get('prepared_task_definition'):
+            services = ecs.describe_services(cluster=CLUSTER, services=['plether-keeper'])
+            require(not services['failures'] and len(services['services']) == 1, 'missing_dormant_keeper')
+            service = services['services'][0]
+            require(service['desiredCount'] == service['runningCount'] == service['pendingCount'] == 0,
+                    'standalone_keeper_not_dormant')
+            latest = ecs.describe_task_definition(taskDefinition=AUXILIARY_FAMILY)['taskDefinition']
+            if not state:
+                state = auxiliary[AUXILIARY_FAMILY] = {'previous_task_definition': latest['taskDefinitionArn']}
+                write_journal(journal)
+            require(latest['taskDefinitionArn'] == state['previous_task_definition'], 'auxiliary_revision_superseded')
+            workers = ecs.describe_task_definition(taskDefinition=journal['services']['plether-workers']['prepared_task_definition'])['taskDefinition']
+            patched, changes = patch_dormant_keeper(latest, workers)
+            state['prepared_task_definition'] = register(patched)
+            state['changes'] = changes
+            write_journal(journal)
         journal['status'] = 'prepared'
         write_journal(journal)
         print(json.dumps(journal))
@@ -186,6 +220,10 @@ def main():
         for service, state in journal['services'].items():
             latest = ecs.describe_task_definition(taskDefinition=SERVICES[service])['taskDefinition']
             require(latest['taskDefinitionArn'] == state['prepared_task_definition'], 'prepared_definition_superseded')
+        auxiliary = journal.get('auxiliary_task_definitions', {}).get(AUXILIARY_FAMILY)
+        require(auxiliary and auxiliary.get('prepared_task_definition'), 'dormant_keeper_not_prepared')
+        latest = ecs.describe_task_definition(taskDefinition=AUXILIARY_FAMILY)['taskDefinition']
+        require(latest['taskDefinitionArn'] == auxiliary['prepared_task_definition'], 'auxiliary_revision_superseded')
         require(get(RPC_PARAMETER) == backup, 'ordinary_origin_changed_after_preparation')
         require(get(TOKEN_PARAMETER) == get('/plether/sepolia/rpc-node/gateway-token'), 'gateway_token_changed')
         journal.update(status='activated_pending_backend_deployment', activated_at_utc=datetime.now(timezone.utc).isoformat())
@@ -199,6 +237,10 @@ def main():
             if service != 'plether-alto':
                 old = ecs.describe_task_definition(taskDefinition=state['previous_task_definition'])['taskDefinition']
                 state['rollback_task_definition'] = register(old)
+        for state in journal.get('auxiliary_task_definitions', {}).values():
+            old = ecs.describe_task_definition(taskDefinition=state['previous_task_definition'])['taskDefinition']
+            require(old['family'] == AUXILIARY_FAMILY, 'unexpected_auxiliary_rollback_family')
+            state['rollback_task_definition'] = register(old)
         journal['status'] = 'rollback_pending_backend_deployment'
         write_journal(journal)
         print(json.dumps({'status': journal['status'], 'next': 'Deploy backend from reviewed master with bootstrap=false.'}))

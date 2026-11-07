@@ -374,6 +374,9 @@ memory to dedicated SecureStrings, adds narrowly scoped token access, and
 registers task definitions that change only RPC secret references. It does not
 start tasks or change the live ordinary URL. Its journal contains identifiers
 and changed reference names, never credential values.
+It also prepares the inactive standalone keeper family, whose environment and
+secret references must match the consolidated keeper for deployment preflight.
+The standalone service must remain at zero tasks; rollback restores both families.
 
 Publish the reviewed gateway image with `rpc-node-admin.yml`, then use a saved,
 reviewed plan in `infra/terraform-rpc` to update only its pinned image/task/service.
