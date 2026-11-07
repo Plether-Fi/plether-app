@@ -96,6 +96,7 @@ function Provider() {
 beforeEach(() => {
   vi.clearAllMocks()
   window.sessionStorage.clear()
+  window.localStorage.clear()
   mocks.appId = 'test-privy-app'
   mocks.ready = true
   mocks.authenticated = false

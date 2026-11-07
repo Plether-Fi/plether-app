@@ -104,6 +104,7 @@ describe('Privy wallet actions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+  localStorage.clear()
     mocks.ready = true
     mocks.walletsReady = true
     mocks.authenticated = false

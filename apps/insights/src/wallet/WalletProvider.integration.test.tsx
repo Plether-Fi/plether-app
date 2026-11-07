@@ -151,6 +151,7 @@ beforeEach(() => {
   auth.createWallet.mockReset()
   auth.closePicker.mockReset().mockResolvedValue(undefined)
   sessionStorage.clear()
+  window.localStorage.clear()
   window.history.replaceState({}, '', '/')
   auth.linkGoogle.mockReset()
   auth.linkPasskey.mockReset()
@@ -159,6 +160,25 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('Insights Privy/Wagmi integration', () => {
+  it('restores the selected embedded wallet when tab storage is discarded', async () => {
+    const embedded = testWallet(0, true)
+    const external = testWallet(1)
+    sessionStorage.setItem(storageKey, embedded.wallet.address)
+    auth.snapshot = { ready: true, authenticated: true, wallets: [external.wallet, embedded.wallet], user: { id: 'returning-google-user', linkedAccounts: [{ type: 'google_oauth' }] } }
+    const view = render(tree())
+    await expectAccount(embedded.wallet.address as Address)
+    view.unmount()
+    sessionStorage.clear()
+    auth.config!.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
+    render(tree())
+    await expectAccount(embedded.wallet.address as Address)
+    expect(auth.login).not.toHaveBeenCalled()
+    let signature: `0x${string}` = '0x'
+    await act(async () => { signature = await sign({ account: embedded.wallet.address as Address, message }) })
+    expect(await recoverMessageAddress({ message, signature })).toBe(embedded.wallet.address)
+    expect(external.calls).not.toContain('personal_sign')
+  })
+
   it.each([false, true])('prevents unsupported-origin passkey requests (authenticated=%s)', async authenticated => {
     const origin = vi.spyOn(passkeyOrigin, 'isPasskeyOriginSupported').mockReturnValue(false)
     try {

@@ -18,7 +18,7 @@ const SWITCH_NETWORK_BUTTON_CLASS =
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
-  const { connect, openAccount, disconnect, ready, configured, error } = useWalletActions()
+  const { connect, openAccount, disconnect, ready, configured, authenticated, error } = useWalletActions()
   const {
     switchToArbitrumSepolia,
     isSwitching: isSwitchingNetwork,
@@ -51,11 +51,14 @@ export function ConnectButton() {
     || location.pathname.startsWith('/vaults/')
   const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
   if (!isConnected) {
+    // A restored Privy login can still need an explicit trading-wallet choice.
+    // Keep that distinct from signing in; authentication alone is not a signer.
+    const label = authenticated ? 'Select Wallet' : 'Connect Wallet'
     return (
       <div className="flex max-w-xs flex-col items-end gap-1">
         <button
           type="button"
-          aria-label="Connect Wallet"
+          aria-label={label}
           onClick={() => {
             clearSwitchError()
             connect()
@@ -65,7 +68,7 @@ export function ConnectButton() {
         >
           <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
           <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[340px]:inline">
-            Connect Wallet
+            {label}
           </span>
         </button>
         {!configured ? <p role="status" className="text-right text-xs text-content-secondary">Wallet login is not configured for this deployment.</p> : null}

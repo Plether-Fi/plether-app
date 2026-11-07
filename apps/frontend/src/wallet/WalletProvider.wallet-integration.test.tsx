@@ -190,6 +190,7 @@ async function beginEmail() {
 
 beforeEach(() => {
   sessionStorage.clear()
+  localStorage.clear()
   window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
   sdk.events.clear()
@@ -216,6 +217,54 @@ beforeEach(() => {
 afterEach(() => { cleanup() })
 
 describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
+  it('restores the previously selected Google wallet after tab storage is discarded, without falling back to another owner', async () => {
+    const embedded = testWallet(0, 'privy')
+    const external = testWallet(1)
+    sdk.authenticated = true
+    sdk.user = { id: 'returning-google-user', linkedAccounts: [{ type: 'google_oauth' }] }
+    sdk.wallets = [external.wallet, embedded.wallet]
+    sessionStorage.setItem(selectionKey, embedded.account.address)
+    const view = mount(true)
+    await expectConnected(embedded.account.address)
+    view.unmount()
+    sessionStorage.clear()
+    config.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
+    sdk.wallets = [embedded.wallet, external.wallet]
+    const restored = mount(true)
+    await expectConnected(embedded.account.address)
+    expect(screen.getByRole('button', { name: /^Open wallet account / })).toBeEnabled()
+    expect(sdk.login).not.toHaveBeenCalled()
+    sdk.wallets = [external.wallet]
+    restored.refresh()
+    await expectDisconnected()
+    expect(localStorage.getItem(selectionKey)).toBe(embedded.account.address.toLowerCase())
+  })
+
+  it('distinguishes a restored Google session from a selected trading wallet and activates it only on selection', async () => {
+    const embedded = testWallet(0, 'privy')
+    sdk.authenticated = true
+    sdk.user = { id: 'returning-google-user', linkedAccounts: [{ type: 'google_oauth' }] }
+    sdk.wallets = [embedded.wallet]
+    sessionStorage.setItem(selectionKey, 'disconnected')
+    mount(true)
+    await expectDisconnected()
+    expect(screen.queryByRole('button', { name: 'Connect Wallet' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Select Wallet' }))
+    const options = sdk.connect.mock.lastCall?.[0] as { description: ReactNode }
+    const picker = render(<>{options.description}</>)
+    expect(screen.getByRole('button', { name: 'Google linked' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
+    picker.unmount()
+    await expectConnected(embedded.account.address)
+    expect(screen.getByRole('button', { name: /^Open wallet account / })).toBeEnabled()
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(sdk.initOAuth).not.toHaveBeenCalled()
+    const client = await getWalletClient(config)
+    const message = 'Explicit wallet choice after restoring a Google session'
+    expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
+  })
+
   it('opens native MFA settings from the account dialog without changing its owner or signer', async () => {
     const embedded = testWallet(0, 'privy')
     const other = testWallet(1)
@@ -238,7 +287,7 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     await expectConnected(embedded.account.address)
     const message = 'The selected embedded owner remains the signer while managing MFA'
     expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
-    expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address)
+    expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address.toLowerCase())
   })
 
   it.each([false, true])('does not start passkey login/linking on an unsupported origin (authenticated=%s)', async authenticated => {
@@ -718,6 +767,7 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     await expectDisconnected()
     await expect(cachedClient.signMessage({ message: 'Must not sign after disconnect' })).rejects.toThrow(/selected wallet changed|not ready/)
     view.unmount()
+    sessionStorage.clear()
     const nextView = mount()
     await expectDisconnected()
     act(() => { actions.connect() })
