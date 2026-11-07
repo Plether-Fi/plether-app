@@ -18,8 +18,8 @@ CLUSTER = 'plether-sepolia'
 PRIMARY = 'https://rpc-internal.sepolia.plether.com/'
 PARAMETER_PREFIX = f'arn:aws:ssm:{REGION}:{ACCOUNT}:parameter'
 RPC_PARAMETER = '/plether/sepolia/perps-rpc-url'
+APP_PARAMETER = '/plether/sepolia/app-rpc-url'
 TOKEN_PARAMETER = '/plether/sepolia/rpc-gateway-token'
-ALTO_PARAMETER = '/plether/sepolia/alto-rpc-url'
 BACKUP_PARAMETER = '/plether/sepolia/rpc-node/backup-url'
 SERVICES = {
     'plether-api': 'plether-sepolia',
@@ -27,7 +27,6 @@ SERVICES = {
     'plether-liquidation-worker': 'plether-sepolia-liquidation-worker',
     'plether-position-protection-worker': 'plether-sepolia-protection-worker',
     'plether-aa-reconciler': 'plether-sepolia-aa-reconciler',
-    'plether-alto': 'plether-sepolia-alto',
 }
 
 
@@ -40,7 +39,7 @@ def require(condition, reason):
         raise GuardRejected(reason)
 
 
-def patch_definition(definition, alto=False):
+def patch_definition(definition):
     patched = deepcopy(definition)
     changes = []
     require(definition['family'] in SERVICES.values(), 'unexpected_family')
@@ -52,23 +51,26 @@ def patch_definition(definition, alto=False):
         require(len({s['name'] for s in secrets}) == len(secrets), 'duplicate_secret_names')
         refs = {s['name']: s['valueFrom'] for s in secrets}
         additions = []
-        if alto:
+        for rpc_name, auth_name in [('PERPS_RPC_URL', 'PERPS_RPC_AUTH_TOKEN'), ('ARBITRUM_SEPOLIA_RPC_URL', 'PERPS_RPC_AUTH_TOKEN'), ('RPC_URL', 'RPC_AUTH_TOKEN')]:
+            if refs.get(rpc_name) in [PARAMETER_PREFIX + RPC_PARAMETER, PARAMETER_PREFIX + APP_PARAMETER]:
+                for secret in secrets:
+                    if secret['name'] == rpc_name:
+                        secret['valueFrom'] = PARAMETER_PREFIX + APP_PARAMETER
+                changes.append({'container': container['name'], 'secret': rpc_name, 'parameter': APP_PARAMETER})
+                expected = PARAMETER_PREFIX + TOKEN_PARAMETER
+                require(auth_name not in refs or refs[auth_name] == expected, 'conflicting_rpc_token')
+                if auth_name not in refs:
+                    additions.append({'name': auth_name, 'valueFrom': expected})
+                    refs[auth_name] = expected
+                    changes.append({'container': container['name'], 'secret': auth_name, 'parameter': TOKEN_PARAMETER})
+        modes = [x['value'] for x in container.get('environment', []) if x['name'] == 'AA_RPC_MODE']
+        if modes == ['single-provider-sepolia'] and refs.get('AA_RECONCILER_SECONDARY_RPC_URL') == PARAMETER_PREFIX + RPC_PARAMETER:
             for secret in secrets:
-                if secret['name'] == 'ALTO_RPC_URL':
-                    require(secret['valueFrom'] in [PARAMETER_PREFIX + RPC_PARAMETER, PARAMETER_PREFIX + ALTO_PARAMETER], 'unexpected_alto_origin')
-                    secret['valueFrom'] = PARAMETER_PREFIX + ALTO_PARAMETER
-                    changes.append({'container': container['name'], 'secret': 'ALTO_RPC_URL', 'parameter': ALTO_PARAMETER})
-        else:
-            for rpc_name, auth_name in [('PERPS_RPC_URL', 'PERPS_RPC_AUTH_TOKEN'), ('ARBITRUM_SEPOLIA_RPC_URL', 'PERPS_RPC_AUTH_TOKEN'), ('RPC_URL', 'RPC_AUTH_TOKEN')]:
-                if refs.get(rpc_name) == PARAMETER_PREFIX + RPC_PARAMETER:
-                    expected = PARAMETER_PREFIX + TOKEN_PARAMETER
-                    require(auth_name not in refs or refs[auth_name] == expected, 'conflicting_rpc_token')
-                    if auth_name not in refs:
-                        additions.append({'name': auth_name, 'valueFrom': expected})
-                        refs[auth_name] = expected
-                        changes.append({'container': container['name'], 'secret': auth_name, 'parameter': TOKEN_PARAMETER})
-            if additions:
-                container['secrets'] = secrets + additions
+                if secret['name'] == 'AA_RECONCILER_SECONDARY_RPC_URL':
+                    secret['valueFrom'] = PARAMETER_PREFIX + APP_PARAMETER
+            changes.append({'container': container['name'], 'secret': 'AA_RECONCILER_SECONDARY_RPC_URL', 'parameter': APP_PARAMETER})
+        if additions:
+            container['secrets'] = secrets + additions
     require(bool(changes), 'no_matching_consumer')
     return patched, changes
 
@@ -126,10 +128,17 @@ def main():
         if journal_path.exists():
             journal = json.loads(journal_path.read_text())
             require(journal['status'] in ['preparing', 'prepared'], 'unexpected_existing_journal')
+            if journal.get('schema_version', 1) == 1:
+                journal['unused_earlier_alto_preparation'] = journal['services'].pop('plether-alto', None)
+                for state in journal['services'].values():
+                    state['superseded_preparation'] = state.pop('prepared_task_definition', None)
+                journal['schema_version'] = 2
+                journal['status'] = 'preparing'
+                write_journal(journal)
         else:
             descriptions = ecs.describe_services(cluster=CLUSTER, services=list(SERVICES))
             require(not descriptions['failures'] and len(descriptions['services']) == len(SERVICES), 'missing_services')
-            journal = {'status': 'preparing', 'account': ACCOUNT, 'region': REGION,
+            journal = {'schema_version': 2, 'status': 'preparing', 'account': ACCOUNT, 'region': REGION,
                        'prepared_at_utc': datetime.now(timezone.utc).isoformat(), 'services': {}}
             for service in descriptions['services']:
                 require(service['desiredCount'] == service['runningCount'] and service['pendingCount'] == 0, 'service_not_stable')
@@ -142,18 +151,19 @@ def main():
         token = get('/plether/sepolia/rpc-node/gateway-token')
         require(len(token) >= 32, 'invalid_gateway_token')
         put_unchanged_or_new(TOKEN_PARAMETER, token)
-        put_unchanged_or_new(ALTO_PARAMETER, backup)
+        put_unchanged_or_new(APP_PARAMETER, PRIMARY)
         grant('plether-sepolia-api-execution', 'exact-ssm-secret-access', TOKEN_PARAMETER)
         grant('plether-sepolia-aa-reconciler-execution', 'exact-ssm-secret-access', TOKEN_PARAMETER)
-        grant('plether-sepolia-alto-execution', 'exact-ssm-secret-access', ALTO_PARAMETER)
+        grant('plether-sepolia-api-execution', 'exact-ssm-secret-access', APP_PARAMETER)
+        grant('plether-sepolia-aa-reconciler-execution', 'exact-ssm-secret-access', APP_PARAMETER)
         for service, state in journal['services'].items():
             if state.get('prepared_task_definition'):
                 continue
             definition = ecs.describe_task_definition(taskDefinition=state['previous_task_definition'])['taskDefinition']
             require(definition['family'] == SERVICES[service], 'unexpected_service_family')
             latest = ecs.describe_task_definition(taskDefinition=SERVICES[service])['taskDefinition']
-            require(latest['taskDefinitionArn'] == definition['taskDefinitionArn'], 'unrelated_pending_task_revision')
-            patched, changes = patch_definition(definition, alto=service == 'plether-alto')
+            require(latest['taskDefinitionArn'] in [definition['taskDefinitionArn'], state.get('superseded_preparation')], 'unrelated_pending_task_revision')
+            patched, changes = patch_definition(definition)
             state['prepared_task_definition'] = register(patched)
             state['changes'] = changes
             write_journal(journal)
@@ -171,28 +181,20 @@ def main():
         reconciler_proof = json.loads((work / 'reconciler-routing-qualification.json').read_text())
         require(reconciler_proof['success'] and reconciler_proof['security_group'] == 'sg-0c095c11c27499ca7', 'reconciler_network_qualification_failed')
         require(0 <= (datetime.now(timezone.utc) - datetime.fromisoformat(reconciler_proof['completed_at_utc'])).total_seconds() <= 900, 'reconciler_qualification_stale')
-        alto = ecs.describe_services(cluster=CLUSTER, services=['plether-alto'])['services'][0]
-        require(alto['desiredCount'] == alto['runningCount'] == 1 and alto['pendingCount'] == 0 and len(alto['deployments']) == 1, 'alto_not_stable')
-        definition = ecs.describe_task_definition(taskDefinition=alto['taskDefinition'])['taskDefinition']
-        refs = [x['valueFrom'] for c in definition['containerDefinitions'] for x in c.get('secrets', []) if x['name'] == 'ALTO_RPC_URL']
-        require(refs == [PARAMETER_PREFIX + ALTO_PARAMETER], 'alto_still_follows_ordinary_alias')
-        require(get(ALTO_PARAMETER) == backup, 'alto_origin_changed')
+        require(get(RPC_PARAMETER) == backup, 'preserved_alchemy_origin_changed')
+        require(get(APP_PARAMETER) == PRIMARY, 'application_origin_changed')
         for service, state in journal['services'].items():
-            if service == 'plether-alto':
-                continue
             latest = ecs.describe_task_definition(taskDefinition=SERVICES[service])['taskDefinition']
             require(latest['taskDefinitionArn'] == state['prepared_task_definition'], 'prepared_definition_superseded')
         require(get(RPC_PARAMETER) == backup, 'ordinary_origin_changed_after_preparation')
         require(get(TOKEN_PARAMETER) == get('/plether/sepolia/rpc-node/gateway-token'), 'gateway_token_changed')
-        ssm.put_parameter(Name=RPC_PARAMETER, Value=PRIMARY, Type='SecureString', Overwrite=True)
         journal.update(status='activated_pending_backend_deployment', activated_at_utc=datetime.now(timezone.utc).isoformat())
         write_journal(journal)
         print(json.dumps({'status': journal['status'], 'next': 'Deploy backend from reviewed master with bootstrap=false, then deploy frontend.'}))
     else:
         journal = json.loads(journal_path.read_text())
         require(journal['status'] in ['activated_pending_backend_deployment', 'cutover_verified'], 'rollback_not_applicable')
-        require(get(RPC_PARAMETER) == PRIMARY, 'ordinary_origin_changed_after_activation')
-        ssm.put_parameter(Name=RPC_PARAMETER, Value=backup, Type='SecureString', Overwrite=True)
+        require(get(RPC_PARAMETER) == backup, 'preserved_alchemy_origin_changed')
         for service, state in journal['services'].items():
             if service != 'plether-alto':
                 old = ecs.describe_task_definition(taskDefinition=state['previous_task_definition'])['taskDefinition']

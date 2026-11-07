@@ -8,7 +8,9 @@ resource "aws_cloudwatch_log_group" "ecs" {
 }
 
 locals {
-  effective_pyth_hermes_url = trimspace(var.pyth_hermes_url)
+  application_rpc_url_parameter_name = var.application_rpc_url_ssm_parameter_name != "" ? var.application_rpc_url_ssm_parameter_name : "/plether/${local.deployment_name}/perps-rpc-url"
+  application_rpc_url_parameter_arn  = var.application_rpc_url_ssm_parameter_name != "" ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${var.application_rpc_url_ssm_parameter_name}" : aws_ssm_parameter.perps_rpc_url.arn
+  effective_pyth_hermes_url          = trimspace(var.pyth_hermes_url)
 
   insights_release_addresses = [
     var.perps_settlement_token,
@@ -415,7 +417,7 @@ resource "aws_ecs_task_definition" "api" {
       },
       {
         name      = "PERPS_RPC_URL"
-        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        valueFrom = local.application_rpc_url_parameter_arn
       },
       {
         name      = "DATABASE_URL"
@@ -661,7 +663,7 @@ resource "aws_ecs_task_definition" "keeper" {
       },
       {
         name      = "PERPS_RPC_URL"
-        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        valueFrom = local.application_rpc_url_parameter_arn
       },
       {
         name      = "KEEPER_PRIVATE_KEY"
@@ -729,7 +731,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       },
       {
         name      = "PERPS_RPC_URL"
-        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        valueFrom = local.application_rpc_url_parameter_arn
       },
       {
         name      = "LIQUIDATION_KEEPER_PRIVATE_KEY"
@@ -820,7 +822,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
       },
       {
         name      = "PERPS_RPC_URL"
-        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        valueFrom = local.application_rpc_url_parameter_arn
       },
       {
         name      = "DATABASE_URL"
@@ -900,7 +902,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
     secrets = concat([
       {
         name      = "PERPS_RPC_URL"
-        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        valueFrom = local.application_rpc_url_parameter_arn
       },
       {
         name      = "DATABASE_URL"
@@ -992,7 +994,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
       secrets = concat([
         {
           name      = "PERPS_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "DATABASE_URL"
@@ -1089,7 +1091,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "PERPS_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "KEEPER_PRIVATE_KEY"
@@ -1118,7 +1120,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "PERPS_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "DATABASE_URL"
@@ -1148,7 +1150,7 @@ resource "aws_ecs_task_definition" "workers" {
       secrets = concat([
         {
           name      = "ARBITRUM_SEPOLIA_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "PERPS_ORACLE_UPDATER_PRIVATE_KEY"
@@ -1181,7 +1183,7 @@ resource "aws_ecs_task_definition" "workers" {
       secrets = concat([
         {
           name      = "PERPS_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "DATABASE_URL"
@@ -1232,7 +1234,7 @@ resource "aws_ecs_task_definition" "workers" {
       secrets = concat([
         {
           name      = "PERPS_RPC_URL"
-          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+          valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "DATABASE_URL"

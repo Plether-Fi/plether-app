@@ -441,7 +441,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
       condition = var.aa_rpc_mode != "single-provider-sepolia" || (
         var.environment == "sepolia" && var.perps_chain_id == "421614"
         && (var.aa_native_global_rollout_enabled || var.aa_native_canary_owners != "")
-        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/${local.deployment_name}/perps-rpc-url"
+        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == local.application_rpc_url_parameter_name
         && var.aa_reconciler_secondary_rpc_url_kms_key_arn == ""
       )
       error_message = "Single-provider mode requires Arbitrum Sepolia, an allowlist or explicit public rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
@@ -450,7 +450,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     precondition {
       condition = !var.provision_self_hosted_aa || var.aa_rpc_mode == "single-provider-sepolia" || (
         startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
-        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/${local.deployment_name}/perps-rpc-url"
+        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != local.application_rpc_url_parameter_name
         && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != trimspace(var.alto_rpc_url_ssm_parameter_name)
       )
       error_message = "Dual-independent mode requires a secondary RPC parameter distinct from both primary Perps RPC and Alto RPC, operated by an independent provider."

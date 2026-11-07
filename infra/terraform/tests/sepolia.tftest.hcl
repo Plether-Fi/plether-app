@@ -56,6 +56,33 @@ variables {
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
 }
+run "application_rpc_preserves_the_existing_alchemy_parameter_and_alto" {
+  command = plan
+  variables {
+    application_rpc_url_ssm_parameter_name             = "/plether/sepolia/app-rpc-url"
+    perps_rpc_auth_token_ssm_parameter_name            = "/plether/sepolia/rpc-gateway-token"
+    aa_rpc_mode                                        = "single-provider-sepolia"
+    aa_native_canary_owners                            = "0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B"
+    aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/app-rpc-url"
+    alto_rpc_url_ssm_parameter_name                    = "/plether/sepolia/perps-rpc-url"
+  }
+  assert {
+    condition = (
+      aws_ssm_parameter.perps_rpc_url.name == "/plether/sepolia/perps-rpc-url" &&
+      nonsensitive(aws_ssm_parameter.perps_rpc_url.value) == "https://fixture.invalid/perps" &&
+      local.application_rpc_url_parameter_arn == "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/app-rpc-url" &&
+      local.alto_rpc_url_parameter_arn == "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/perps-rpc-url"
+    )
+    error_message = "Application consumers must move to their own parameter without overwriting the original Alchemy value or redirecting Alto."
+  }
+}
+run "reject_application_rpc_from_another_environment" {
+  command = plan
+  variables {
+    application_rpc_url_ssm_parameter_name = "/plether/mainnet/app-rpc-url"
+  }
+  expect_failures = [var.application_rpc_url_ssm_parameter_name]
+}
 run "reject_insights_without_release_bindings" {
   command         = plan
   expect_failures = [terraform_data.deployment_target_guard, aws_ecs_task_definition.api]

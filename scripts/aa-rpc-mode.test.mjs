@@ -50,6 +50,15 @@ test('deployment gate rejects unsafe single-provider modes and malformed cohorts
     assert.notEqual(validate(data).status, 0, `${name}=${value}`)
   }
 })
+test('the dedicated application RPC requires the exact gateway credential and an unchanged explicit mode', () => {
+  const data = fixture('single-provider-sepolia')
+  for (const secret of data.containerDefinitions[0].secrets) secret.valueFrom = primary.replace('perps-rpc-url', 'app-rpc-url')
+  assert.notEqual(validate(data).status, 0)
+  data.containerDefinitions[0].secrets.push({ name: 'PERPS_RPC_AUTH_TOKEN', valueFrom: primary.replace('perps-rpc-url', 'rpc-gateway-token') })
+  assert.equal(validate(data).status, 0)
+  data.containerDefinitions[0].secrets.at(-1).valueFrom = 'unrelated-token'
+  assert.notEqual(validate(data).status, 0)
+})
 test('deployment gate rejects accidental shared dual RPCs and non-primary single RPCs', () => {
   const dual = fixture()
   dual.containerDefinitions[0].secrets[1].valueFrom = primary
@@ -105,6 +114,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
     aa_native_global_rollout_enabled: false, aa_native_canary_owners: owner,
     aa_reconciler_secondary_rpc_url_ssm_parameter_name: '/plether/sepolia/aa-reconciler-secondary-rpc-url',
     aa_reconciler_secondary_rpc_url_kms_key_arn: '',
+    application_rpc_url_ssm_parameter_name: '',
     alto_rpc_url_ssm_parameter_name: '/plether/sepolia/perps-rpc-url', provision_self_hosted_aa: true,
   }
   const directory = mkdtempSync(join(tmpdir(), 'plether-aa-rpc-guards-'))
@@ -113,7 +123,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
   try {
     const declarations = Object.entries(defaults).map(([key, value]) =>
       `variable "${key}" {\n type = ${typeof value === 'boolean' ? 'bool' : 'string'}\n default = ${JSON.stringify(value)}\n}`).join('\n')
-    writeFileSync(join(directory, 'main.tf'), `${declarations}\nlocals { deployment_name = var.environment }\nresource "terraform_data" "mode" {\n lifecycle {\n${guards.join('\n')}\n }\n}\n`)
+    writeFileSync(join(directory, 'main.tf'), `${declarations}\nlocals {\n deployment_name = var.environment\n application_rpc_url_parameter_name = var.application_rpc_url_ssm_parameter_name != "" ? var.application_rpc_url_ssm_parameter_name : "/plether/\${var.environment}/perps-rpc-url"\n}\nresource "terraform_data" "mode" {\n lifecycle {\n${guards.join('\n')}\n }\n}\n`)
     const init = run(['init', '-backend=false', '-input=false', '-no-color'])
     assert.equal(init.status, 0, init.stderr)
     const single = { aa_rpc_mode: 'single-provider-sepolia',
@@ -124,6 +134,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
       [{ perps_close_assistance_enabled: true, enable_native_aa_submission: false }, false],
       [{ perps_close_assistance_enabled: true, perps_close_assistance_lens: 'wrong' }, false],
       [single, true], [{ ...single, provision_self_hosted_aa: false }, true],
+      [{ ...single, application_rpc_url_ssm_parameter_name: '/plether/sepolia/app-rpc-url', aa_reconciler_secondary_rpc_url_ssm_parameter_name: '/plether/sepolia/app-rpc-url' }, true],
       [{ ...single, environment: 'mainnet', provision_self_hosted_aa: false }, false],
       [{ ...single, perps_chain_id: '42161' }, false],
       [{ ...single, aa_native_global_rollout_enabled: true, aa_native_canary_owners: '' }, true],

@@ -49,7 +49,7 @@ locals {
     ]
     secrets = concat([
       { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
-      { name = "PERPS_RPC_URL", valueFrom = aws_ssm_parameter.perps_rpc_url.arn },
+      { name = "PERPS_RPC_URL", valueFrom = local.application_rpc_url_parameter_arn },
     ], local.perps_rpc_auth_token_secret)
   }]
 }

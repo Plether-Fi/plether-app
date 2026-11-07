@@ -24,7 +24,9 @@ def secretvalues($name): [(.secrets // [])[] | select(.name == $name) | .valueFr
        and ($owners[0] | ascii_downcase | split(",") | all(. != "0x0000000000000000000000000000000000000000"))
        and ($owners[0] | ascii_downcase | split(",") | length == (unique | length))
        and $primary == $verification
-       and $primary == ["arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/perps-rpc-url"]
+       and ($primary == ["arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/perps-rpc-url"]
+         or ($primary == ["arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/app-rpc-url"]
+           and secretvalues("PERPS_RPC_AUTH_TOKEN") == ["arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/rpc-gateway-token"]))
        | checked) as $canary
     | $mode
   elif $mode == "dual-independent" then
