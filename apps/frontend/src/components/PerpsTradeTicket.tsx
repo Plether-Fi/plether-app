@@ -7,7 +7,7 @@ import { restoredOrderDraft } from '../perps-aa/orderDraft'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
-import { formatUnits, zeroAddress } from 'viem'
+import { formatUnits, zeroAddress, type Hex } from 'viem'
 import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
 import { findSponsorRequestError } from '../perps-aa/errors'
 import { useWalletActions } from '../wallet/useWalletActions'
@@ -39,6 +39,9 @@ import type {
   PerpsPosition,
 } from '../hooks'
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
+import type { PerpsKeeperExecutionProgress } from '../hooks/usePerpsHistory'
+import { KeeperExecutionReorgedError } from '../utils/keeperExecutionCanonicality'
+import { economicsFromVerifiedOrderReceipt } from '../utils/verifiedOrderEconomics'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -574,13 +577,16 @@ function lifecycleOutcomeHistoryRow(
     account: outcome.account,
     clientOrderId: outcome.clientOrderId,
     receiptHash: outcome.receiptHash,
-    terminalBlockNumberRaw: outcome.terminalBlock,
+    terminalBlockNumberRaw: outcome.transactionBlockNumber ?? outcome.terminalBlock,
+    terminalBlockHash: outcome.transactionBlockHash,
+    revealTxHash: outcome.transactionHash,
     terminalReason,
     executionMode: PERPS_EXECUTION_MODE_LABELS[outcome.executionMode],
     failedConstraint,
     executionPriceRaw: outcome.executionPrice === 0n
       ? undefined
       : outcome.executionPrice,
+    ...(outcome.receipt ? economicsFromVerifiedOrderReceipt(outcome.receipt) : {}),
   }
 }
 
@@ -1870,6 +1876,14 @@ export function PerpsTradeTicket({
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
+  const [keeperExecution, setKeeperExecution] = useState<PerpsKeeperExecutionProgress | undefined>()
+  const fastExecutionProofRef = useRef<{
+    candidate: PerpsKeeperExecutionProgress
+    blockNumber: bigint
+    blockHash: Hex
+  } | undefined>(undefined)
+  const executionCursorRef = useRef<{ identity: string; version?: string } | undefined>(undefined)
+  const fastExecutionEpochRef = useRef(0)
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
   const [finalExecutionOraclePrice, setFinalExecutionOraclePrice] = useState<bigint | undefined>(
     initialFinalExecutionOraclePrice
@@ -1943,6 +1957,7 @@ export function PerpsTradeTicket({
   const rejectedTerminalRef = useRef<{
     terminalKey: string
     blockHash?: string
+    provenOrphan?: boolean
   } | undefined>(undefined)
   const executionEvidencePollRef = useRef<{
     terminalKey: string
@@ -2094,10 +2109,12 @@ export function PerpsTradeTicket({
     ) {
       return false
     }
-
     const nextTerminalOrderKey = terminalOrderKey(order)
     const nextTerminalBlockHash = order.terminalBlockHash?.toLowerCase()
     const rejectedTerminal = rejectedTerminalRef.current
+    if (rejectedTerminal?.provenOrphan && (
+      nextTerminalBlockHash === undefined || nextTerminalBlockHash === rejectedTerminal.blockHash
+    )) return false
     if (rejectedTerminal?.terminalKey === nextTerminalOrderKey) {
       const provesDifferentCanonicalBlock =
         rejectedTerminal.blockHash !== undefined
@@ -2107,6 +2124,11 @@ export function PerpsTradeTicket({
     }
     if (rejectedTerminal !== undefined) {
       rejectedTerminalRef.current = undefined
+    }
+    setKeeperExecution(undefined)
+    if (isCanonicalHistory) {
+      fastExecutionProofRef.current = undefined
+      fastExecutionEpochRef.current += 1
     }
     const hasSameTerminalBase =
       handledTerminalOrderKeyRef.current === nextTerminalOrderKey
@@ -2217,26 +2239,15 @@ export function PerpsTradeTicket({
 
     if (order.status === 'Executed') {
       setFlowError(undefined)
+      setLifecycleState('executed')
       const refreshAccount = onAccountRefreshRef.current
-      if (refreshAccount === undefined) {
-        setLifecycleState('executed')
-      } else {
+      if (refreshAccount !== undefined) {
         void (async () => {
           try {
             await refreshAccount()
           } catch {
             // The order is already terminal. Show its result even if the
             // follow-up account read fails; the normal polling can retry it.
-          } finally {
-            const terminalIsStillCurrent =
-              handledTerminalOrderKeyRef.current === nextTerminalOrderKey &&
-              (
-                nextTerminalBlockHash === undefined ||
-                handledTerminalBlockHashRef.current === nextTerminalBlockHash
-              )
-            if (terminalIsStillCurrent) {
-              setLifecycleState('executed')
-            }
           }
         })()
       }
@@ -2248,13 +2259,14 @@ export function PerpsTradeTicket({
     return true
   }, [])
 
-  const rewindHandledTerminalOrder = useCallback(() => {
+  const rewindHandledTerminalOrder = useCallback((provenOrphan = false) => {
     const rewindStartedAt = Date.now()
     const rejectedTerminalKey = handledTerminalOrderKeyRef.current
     if (rejectedTerminalKey !== undefined) {
       rejectedTerminalRef.current = {
         terminalKey: rejectedTerminalKey,
         blockHash: handledTerminalBlockHashRef.current,
+        provenOrphan,
       }
     }
     handledTerminalOrderKeyRef.current = undefined
@@ -2263,6 +2275,9 @@ export function PerpsTradeTicket({
     executionEvidencePollRef.current = undefined
     orderWaitStartedForRef.current = undefined
     setExecuteTxHash(undefined)
+    setKeeperExecution(undefined)
+    fastExecutionProofRef.current = undefined
+    fastExecutionEpochRef.current += 1
     setFinalExecutionPrice(undefined)
     setFinalExecutionOraclePrice(undefined)
     setFinalExecutionOracleFrozen(undefined)
@@ -2276,6 +2291,55 @@ export function PerpsTradeTicket({
     setKeeperRevealNowMs(rewindStartedAt)
     setLifecycleState('revealPending')
   }, [])
+
+  useEffect(() => {
+    setKeeperExecution(undefined)
+    fastExecutionProofRef.current = undefined
+    fastExecutionEpochRef.current += 1
+    executionCursorRef.current = undefined
+  }, [address, orderId])
+
+  useEffect(() => {
+    const candidate = keeperExecution ?? fastExecutionProofRef.current?.candidate
+    if (!enableLiveTrading || !candidate || orderId !== candidate.orderId
+      || address?.toLowerCase() !== candidate.account.toLowerCase()) return undefined
+    const cancelled = { current: false }
+    const epoch = fastExecutionEpochRef.current
+    const isCancelled = () => readMutableRef(cancelled) || epoch !== fastExecutionEpochRef.current
+    let timer: number | undefined
+    const startedAt = Date.now()
+    const verify = async () => {
+      if (isCancelled()) return
+      try {
+        const proof = fastExecutionProofRef.current
+        const outcome = await readOrderLifecycleOutcome(candidate.orderId, {
+          ...candidate,
+          ...(proof?.candidate.transactionHash === candidate.transactionHash
+            ? { observedInclusion: { blockNumber: proof.blockNumber, blockHash: proof.blockHash } } : {}),
+        })
+        if (isCancelled()) return
+        if (outcome?.transactionBlockNumber !== undefined && outcome.transactionBlockHash !== undefined) {
+          fastExecutionProofRef.current = { candidate, blockNumber: outcome.transactionBlockNumber,
+            blockHash: outcome.transactionBlockHash }
+          applyTerminalOrder(lifecycleOutcomeHistoryRow(outcome))
+        }
+      } catch (error) {
+        if (isCancelled()) return
+        if (error instanceof KeeperExecutionReorgedError) {
+          const applied = fastExecutionProofRef.current?.candidate.transactionHash === candidate.transactionHash
+          setKeeperExecution(undefined)
+          fastExecutionProofRef.current = undefined
+          if (applied) rewindHandledTerminalOrder(true)
+          return
+        }
+        // A missing receipt or RPC outage cannot prove a reorg or failed order.
+      }
+      if (!isCancelled()) timer = window.setTimeout(() => { void verify() }, Date.now() - startedAt < 5_000 ? 500 : 2_000)
+    }
+    void verify()
+    return () => { cancelled.current = true; if (timer !== undefined) window.clearTimeout(timer) }
+  }, [address, applyTerminalOrder, enableLiveTrading, keeperExecution, lifecycleState, orderId,
+    readOrderLifecycleOutcome, rewindHandledTerminalOrder])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
@@ -2417,6 +2481,12 @@ export function PerpsTradeTicket({
 
     const activeOrderId = orderId
     orderWaitStartedForRef.current = orderId
+    const indexedIdentity = orderHistory.find(row => row.orderId === activeOrderId)
+    const identity = includedCommitIdentityRef.current ?? indexedIdentity
+    const expectedCommit = includedCommitIdentityRef.current?.hash ?? indexedIdentity?.commitTxHash ?? initialCommitTxHash
+    const identityKey = [address?.toLowerCase(), activeOrderId.toString(), (identity?.clientOrderId ?? '').toLowerCase(),
+      expectedCommit?.toLowerCase()].join(':')
+    if (executionCursorRef.current?.identity !== identityKey) executionCursorRef.current = { identity: identityKey }
     const controller = new AbortController()
     const isCancelled = () => controller.signal.aborted
 
@@ -2443,16 +2513,35 @@ export function PerpsTradeTicket({
             accountAddress: address,
             orderId: activeOrderId,
             timeoutSeconds: ORDER_TERMINAL_WAIT_SECONDS,
+            afterExecution: executionCursorRef.current?.version,
             signal: controller.signal,
           })
 
           if (isCancelled()) return
+          const previousVersion = executionCursorRef.current?.version
+          const progressChanged = result.executionVersion !== undefined && result.executionVersion !== previousVersion
+          if (result.executionVersion !== undefined) executionCursorRef.current = { identity: identityKey, version: result.executionVersion }
+          if (Object.hasOwn(result, 'execution')) {
+            const execution = result.execution
+            if (execution && identity?.account && identity.clientOrderId && expectedCommit
+              && execution.orderId === activeOrderId && execution.account.toLowerCase() === address?.toLowerCase()
+              && execution.account.toLowerCase() === identity.account.toLowerCase()
+              && execution.orderRouter.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.orderRouter.toLowerCase()
+              && execution.clientOrderId.toLowerCase() === identity.clientOrderId.toLowerCase()
+              && execution.commitTxHash.toLowerCase() === expectedCommit.toLowerCase()) {
+              setKeeperExecution(current => current?.transactionHash === execution.transactionHash
+                && current.state === execution.state && current.requiredConfirmations === execution.requiredConfirmations ? current : execution)
+            } else {
+              setKeeperExecution(undefined)
+            }
+          }
           if (result.order !== undefined && applyTerminalOrder(result.order)) {
             if (hasCompleteExecutionEvidence(result.order)) return
             if (stopIfEvidencePollExpired()) return
           } else {
             void onAccountRefreshRef.current?.()
           }
+          if (progressChanged) continue
         } catch (error: unknown) {
           if (isCancelled() || (error instanceof DOMException && error.name === 'AbortError')) return
         }
@@ -2478,6 +2567,7 @@ export function PerpsTradeTicket({
     }
   }, [
     address,
+    initialCommitTxHash,
     applyTerminalOrder,
     enableLiveTrading,
     orderHistory,
@@ -5176,11 +5266,14 @@ export function PerpsTradeTicket({
           {lifecycleState === 'revealPending' ? (
             <>
               <PendingStateCard
-                title={shouldShowFinalizationProgress ? finalizationLoadingMessage.title : 'Finalizing execution price'}
+                title={keeperExecution ? (keeperExecution.state === 'submitted' ? 'Execution submitted' : 'Submitting execution')
+                  : shouldShowFinalizationProgress ? finalizationLoadingMessage.title : 'Finalizing execution price'}
                 progressPercent={shouldShowFinalizationProgress ? keeperRevealProgressPercent : undefined}
                 showAnimatedDots={shouldShowFinalizationProgress}
                 description={
-                  shouldShowFinalizationProgress
+                  keeperExecution
+                    ? 'Waiting for confirmation. Your order is still pending.'
+                    : shouldShowFinalizationProgress
                     ? finalizationLoadingDescription
                     : 'Your order is committed. The next step settles it onchain with the market price for the order window.'
                 }
@@ -5192,6 +5285,7 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
+                    ...(keeperExecution ? [{ label: 'Execution tx', value: <TxHashActions hash={keeperExecution.transactionHash} /> }] : []),
                     ...(isSponsoredAccountConfigured
                       ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
                       : []),

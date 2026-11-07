@@ -1,12 +1,15 @@
 module Plether.Pyth.Prefetch
-  ( runPriorityPrefetch, retryAfterSeconds, ProviderGate, newProviderGate, withProviderGate ) where
+  ( runPriorityPrefetch, runPriorityPrefetchWithWakeup, runPriorityPrefetchWithPriorities
+  , PrefetchPriority (..), retryAfterSeconds, ProviderGate, newProviderGate, withProviderGate ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (concurrently_)
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
+import Control.Concurrent.Async (concurrently_, withAsync)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
-import Control.Monad (forever)
+import Control.Monad (forever, void, when)
+import Data.List (partition)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -14,6 +17,7 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import Text.Read (readMaybe)
 import System.Timeout (timeout)
 import Plether.Logging (logWarnEvery)
+import Plether.Keeper.Wakeup (Wakeup, newWakeup, signalWakeup, waitWakeup)
 
 retryAfterSeconds :: Text -> Maybe Int
 retryAfterSeconds message = do
@@ -47,11 +51,30 @@ withProviderGate gate@(ProviderGate blocked) action = do
 -- cannot hold the head's next retry until the whole queue has been traversed.
 -- Keys identify an exact feed set / first reveal tick / settlement window.
 runPriorityPrefetch :: Ord key => IO [(key, IO (Either Text ()))] -> IO ()
-runPriorityPrefetch load = do
-  state <- newMVar (Map.empty, 0 :: Integer)
+runPriorityPrefetch = runPriorityPrefetchWithWakeup Nothing
+
+-- The optional signal changes scheduling only. One dispatcher invalidates the
+-- candidate snapshot and fans out to both workers, so a busy head fetch cannot
+-- consume the tail worker's wakeup. Job reservations and retry/provider cooldowns
+-- remain in their original shared state and are never cleared by a notification.
+runPriorityPrefetchWithWakeup :: Ord key => Maybe Wakeup -> IO [(key, IO (Either Text ()))] -> IO ()
+runPriorityPrefetchWithWakeup wakeup load =
+  runPriorityPrefetchWithPriorities wakeup $ map (\(key, action) -> (key, CanonicalPrefetch, action)) <$> load
+
+data PrefetchPriority = CanonicalPrefetch | ProvisionalPrefetch
+  deriving stock (Eq, Show)
+
+-- At most one worker may speculate on provisional inclusion evidence. The
+-- remaining slot stays available for canonical queue work even if a speculative
+-- request stalls until its bounded timeout. FIFO order within each class and
+-- shared-key deduplication are preserved.
+runPriorityPrefetchWithPriorities
+  :: Ord key => Maybe Wakeup -> IO [(key, PrefetchPriority, IO (Either Text ()))] -> IO ()
+runPriorityPrefetchWithPriorities wakeup load = do
+  state <- newMVar (Map.empty, 0 :: Integer, False)
   snapshot <- newMVar (0 :: Integer, [])
   let now = floor <$> getPOSIXTime :: IO Integer
-      worker = forever $ do
+      worker waitIdle = forever $ do
         at <- now
         candidates <- modifyMVar snapshot $ \(refreshAt, prior) ->
           if at < refreshAt then pure ((refreshAt, prior), prior)
@@ -64,19 +87,27 @@ runPriorityPrefetch load = do
                 logWarnEvery 30 "reveal_queue_load_failed" "Could not load pending historical-price requests" []
                 pure []
             pure ((at + 1, value), value)
-        selected <- modifyMVar state $ \(jobs, blockedUntil) -> do
-          let live = Set.fromList $ map fst candidates
-              current = Map.filterWithKey (\key value -> value == Nothing || Set.member key live) jobs
-              eligible (key, _) = case Map.lookup key current of
-                Nothing -> True
-                Just (Just due) -> at >= due
-                Just Nothing -> False
-          case if at < blockedUntil then [] else filter eligible candidates of
-            [] -> pure ((current, blockedUntil), Nothing)
-            (key, action):_ -> pure ((Map.insert key Nothing current, blockedUntil), Just (key, action))
+        selected <- modifyMVar state $ \(jobs, blockedUntil, provisionalBusy) -> do
+          let live = Set.fromList [key | (key, _, _) <- candidates]
+              current = Map.filterWithKey (\key value -> value == Nothing || Set.member key live
+                -- A provisional hint may disappear during a failed optional
+                -- reload. Preserve unexpired cooldowns across that wake cycle.
+                || (isJust wakeup && maybe False (> at) value)) jobs
+              eligible (key, priority, _) =
+                (priority == CanonicalPrefetch || not provisionalBusy)
+                  && case Map.lookup key current of
+                    Nothing -> True
+                    Just (Just due) -> at >= due
+                    Just Nothing -> False
+              (canonical, provisional) = partition (\(_, priority, _) -> priority == CanonicalPrefetch) candidates
+          case if at < blockedUntil then [] else filter eligible (canonical <> provisional) of
+            [] -> pure ((current, blockedUntil, provisionalBusy), Nothing)
+            (key, priority, action):_ -> pure
+              ((Map.insert key Nothing current, blockedUntil, provisionalBusy || priority == ProvisionalPrefetch),
+               Just (key, priority, action))
         case selected of
-          Nothing -> threadDelay 1_000_000
-          Just (key, action) -> do
+          Nothing -> waitIdle
+          Just (key, priority, action) -> do
             attempted <- try @SomeException $ timeout 10_000_000 action
             result <- case attempted of
               Left err -> case fromException err :: Maybe SomeAsyncException of
@@ -85,8 +116,21 @@ runPriorityPrefetch load = do
               Right Nothing -> pure $ Left "Reveal request timed out"
               Right (Just value) -> pure value
             finished <- now
-            modifyMVar state $ \(jobs, blockedUntil) -> do
+            modifyMVar state $ \(jobs, blockedUntil, provisionalBusy) -> do
               let cooldown = either (maybe 1 fromIntegral . retryAfterSeconds) (const 60) result
                   providerPause = either (maybe 0 ((finished +) . fromIntegral) . retryAfterSeconds) (const 0) result
-              pure ((Map.insert key (Just $ finished + cooldown) jobs, max blockedUntil providerPause), ())
-  concurrently_ worker worker
+                  stillProvisionalBusy = provisionalBusy && priority /= ProvisionalPrefetch
+              pure ((Map.insert key (Just $ finished + cooldown) jobs, max blockedUntil providerPause, stillProvisionalBusy), ())
+  case wakeup of
+    Nothing -> concurrently_ (worker $ threadDelay 1_000_000) (worker $ threadDelay 1_000_000)
+    Just source -> do
+      first <- newWakeup
+      second <- newWakeup
+      let dispatch = forever $ do
+            changed <- waitWakeup source 1_000_000
+            when changed $ do
+              modifyMVar_ snapshot $ \(_, prior) -> pure (0, prior)
+              signalWakeup first
+              signalWakeup second
+          idle signal = void $ waitWakeup signal 1_000_000
+      withAsync dispatch $ \_ -> concurrently_ (worker $ idle first) (worker $ idle second)

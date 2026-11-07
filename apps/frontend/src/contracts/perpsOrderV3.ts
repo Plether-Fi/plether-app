@@ -1,4 +1,4 @@
-import type { OrderRequestV3, closePreviewV3Abi } from '@plether-fi/perps-aa-client'
+import type { OrderRequestV3, OrderReceiptV5, closePreviewV3Abi } from '@plether-fi/perps-aa-client'
 import { bytesToHex, type Address, type Hex, type ContractFunctionReturnType } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
 import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
@@ -150,6 +150,11 @@ export interface PerpsLifecycleOutcomeSnapshot {
   executionPrice: bigint
   failedConstraint: PerpsFailedConstraint
   receiptHash: Hex
+  receipt?: OrderReceiptV5
+  /** RPC transaction identity; terminalBlock above uses the contract's receipt clock. */
+  transactionHash?: Hex
+  transactionBlockNumber?: bigint
+  transactionBlockHash?: Hex
 }
 
 export interface PreparedPerpsOrderV3 {

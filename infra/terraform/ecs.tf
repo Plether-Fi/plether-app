@@ -84,7 +84,11 @@ locals {
     { name = "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS", value = tostring(var.perps_candle_finalization_grace_seconds) },
   ]
 
-  keeper_environment = [
+  commitment_wakeup_environment = [
+    { name = "PERPS_COMMITMENT_WAKEUPS_MODE", value = var.perps_commitment_wakeups_mode },
+  ]
+
+  keeper_environment = concat(local.commitment_wakeup_environment, [
     { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
     { name = "PERPS_SETTLEMENT_TOKEN", value = var.perps_settlement_token },
     { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
@@ -108,7 +112,7 @@ locals {
     { name = "LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS", value = tostring(var.lp_settlement_pending_replacement_seconds) },
     { name = "LP_SETTLEMENT_MAX_REPLACEMENTS", value = tostring(var.lp_settlement_max_replacements) },
     { name = "LP_SETTLEMENT_MAX_TX_COST_WEI", value = var.lp_settlement_max_tx_cost_wei },
-  ]
+  ])
 
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
     {
@@ -448,6 +452,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
       { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
       { name = "AA_SPONSORSHIP_ENABLED", value = tostring(var.enable_aa_sponsorship) },
       { name = "AA_SPONSOR_PROTECTION_COMMITS_ENABLED", value = tostring(var.aa_protection_commits_enabled) },
       { name = "AA_IP_RATE_LIMIT_PER_MINUTE", value = var.aa_ip_rate_limit_per_minute },
@@ -459,7 +464,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment, local.commitment_wakeup_environment)
   }, merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image })])
 
   lifecycle {
@@ -835,7 +840,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-    ], local.pyth_environment, local.perps_candle_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.commitment_wakeup_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -1133,7 +1138,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
         { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-      ], local.pyth_environment, local.perps_candle_environment)
+      ], local.pyth_environment, local.perps_candle_environment, local.commitment_wakeup_environment)
     },
     {
       name             = "plether-oracle-worker"

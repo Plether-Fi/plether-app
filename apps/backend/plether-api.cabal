@@ -20,6 +20,7 @@ extra-source-files: schema.sql
                     test/fixtures/token-neutral-close-waiver.json
                     test/fixtures/token-neutral-close-rebate.json
                     test/fixtures/candle-admin-deployed-release.json
+                    test/fixtures/commitment-hint-sdk-v040.json
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -41,6 +42,10 @@ library
         Plether.Keeper.Funding
         Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
+        Plether.Keeper.Wakeup
+        Plether.Keeper.CommitmentHints
+        Plether.Database.CommitmentHints
+        Plether.Database.ExecutionProgress
         Plether.AA.Diagnostics
         Plether.AA.ExecutionDiagnostics
         Plether.AA.RecoveryReceipt
@@ -417,6 +422,9 @@ test-suite plether-api-test
         Plether.AA.ReadinessSpec
         Plether.AA.OracleReadinessSpec
         Plether.Keeper.FundingSpec
+        Plether.Keeper.WakeupSpec
+        Plether.Keeper.CommitmentHintsSpec
+        Plether.Database.ExecutionProgressSpec
         Plether.AA.OrderDiagnosticsSpec
         Plether.AA.DiagnosticsSpec
         Plether.AA.ExecutionDiagnosticsSpec
@@ -524,6 +532,9 @@ test-suite plether-api-integration-test
     main-is:          Spec.hs
     other-modules:
         Plether.Keeper.BroadcastSpec
+        Plether.Keeper.WakeupDatabaseSpec
+        Plether.Keeper.CommitmentHintsDatabaseSpec
+        Plether.Keeper.CommitmentHintsWatcherSpec
         Plether.Keeper.ReliabilitySpec
         Plether.DatabaseDiagnosticsSpec
         Plether.BackendUnitRepairSpec
@@ -532,6 +543,7 @@ test-suite plether-api-integration-test
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
+        Plether.Perps.ExecutionProgressSpec
         Plether.Perps.ProtectionExecutionSpec
         Plether.Keeper.LpSettlementDatabaseSpec
         Plether.Keeper.LiquidationMonitoringSpec

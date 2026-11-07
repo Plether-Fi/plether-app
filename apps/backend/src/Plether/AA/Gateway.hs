@@ -20,13 +20,14 @@ module Plether.AA.Gateway
   , revalidateSecuritySnapshot
   , agreeAccountIdentity
   , forwardAlto
+  , forwardAltoWithCommitmentHint
   , classifyAltoResult
   , closeAssistanceStatus
   , observePreparationInclusion
   , securityFailureCategory
   ) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Control.Concurrent.Async (Concurrently (..), concurrently)
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar
@@ -132,6 +133,7 @@ import Plether.Ethereum.Client
   , withRpcObserver
   )
 import Plether.Logging (field, logError, logErrorEvery, logInfo, logWarn, withLogTiming)
+import qualified Plether.Keeper.CommitmentHints as CommitmentHints
 import Web.Scotty
   ( ActionM
   , header
@@ -156,6 +158,7 @@ data NativeGatewayState = NativeGatewayState
   , ngsTiming :: Maybe Timing
   , ngsReadiness :: MVar (Maybe (IO Value))
   , ngsDiagnostics :: MVar (Maybe Diagnostics.DiagnosticSink)
+  , ngsCommitmentHints :: MVar (Maybe CommitmentHints.CommitmentHintSink)
   , ngsAttemptId :: Maybe Text
   , ngsRecoveryOrigins :: [Text]
   , ngsRetirementEnabled :: Bool
@@ -225,7 +228,8 @@ newNativeGatewayBaseState manager cfg client = do
   snapshots <- newMVar []
   readiness <- newMVar Nothing
   diagnostics <- newMVar Nothing
-  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing [] False Nothing Nothing
+  commitmentHints <- newMVar Nothing
+  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics commitmentHints Nothing [] False Nothing Nothing
       warm state nativeCfg = do
         when (naaPreparationEnabled nativeCfg && naaSponsorshipEnabled nativeCfg && ngsIssuanceError state == Nothing) $
           void $ forkIO $ forever $ do
@@ -277,6 +281,11 @@ initializeGatewayObservability state cfg pool ordinaryClient = case (cfgNativeAa
     modifyMVar_ (ngsDiagnostics state) $ \current -> case current of
       Just _ -> pure current
       Nothing -> Just <$> Diagnostics.startDiagnostics cfg database client
+    modifyMVar_ (ngsCommitmentHints state) $ \current -> case current of
+      Just _ -> pure current
+      Nothing -> do
+        started <- tryCommitmentHint $ CommitmentHints.startCommitmentHints cfg database client
+        pure $ either (const Nothing) id started
   _ -> pure ()
  where
   client = withoutRpcFallback ordinaryClient
@@ -722,6 +731,28 @@ noteSubmission gatewayState clientKey operationHash stage = liftIO $ do
   sink <- readMVar $ ngsDiagnostics gatewayState
   mapM_ (\queue -> Diagnostics.enqueueDiagnostic queue $
     Diagnostics.SubmissionDiagnostic clientKey operationHash stage) sink
+
+-- Hint scheduling is independent of submission journaling and diagnostics. A
+-- full queue, failed initializer, or synchronous hint failure cannot change the
+-- signed operation's forward-once path or its response. Cancellation still wins.
+tryCommitmentHint :: IO a -> IO (Either SomeException a)
+tryCommitmentHint action = do
+  result <- try action
+  case result of
+    Left err -> case fromException err :: Maybe SomeAsyncException of
+      Just cancelled -> throwIO cancelled
+      Nothing -> pure result
+    Right _ -> pure result
+
+noteCommitmentSubmission :: NativeGatewayState -> Text -> ActionM ()
+noteCommitmentSubmission gatewayState operationHash = liftIO $ enqueueGatewayCommitmentHint gatewayState operationHash
+
+enqueueGatewayCommitmentHint :: NativeGatewayState -> Text -> IO ()
+enqueueGatewayCommitmentHint gatewayState operationHash = void $ tryCommitmentHint $ do
+  available <- tryReadMVar $ ngsCommitmentHints gatewayState
+  case available of
+    Just sink -> CommitmentHints.enqueueCommitmentHint sink operationHash
+    Nothing -> pure ()
 
 dispatchNative
   :: NativeGatewayState
@@ -1193,6 +1224,7 @@ submitSponsoredOperation gatewayState nativeCfg pool manager securityContext cli
                         Right False -> observedAuthorized "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal-rejected"
                         Right True -> do
                           observedAuthorized "submission_journaled"
+                          noteCommitmentSubmission gatewayState operationHash
                           finalSecurityCheck <-
                             liftIO $
                               maybe
@@ -1214,6 +1246,7 @@ submitSponsoredOperation gatewayState nativeCfg pool manager securityContext cli
                                       "Submission may already have reached the network; check recovery" "SUBMISSION_OUTCOME_UNKNOWN" False
                                     else Legacy.respondFailure requestId failure
                                 Right () -> relayToAltoObserved nativeCfg manager request (Just operationHash) observedAuthorized
+                                  (enqueueGatewayCommitmentHint gatewayState operationHash)
 
   requestId = Legacy.rrId request
 
@@ -1604,12 +1637,12 @@ relayToAlto
   -> Maybe Text
   -> ActionM ()
 relayToAlto nativeCfg manager request expectedHash =
-  relayToAltoObserved nativeCfg manager request expectedHash (const $ pure ())
+  relayToAltoObserved nativeCfg manager request expectedHash (const $ pure ()) (pure ())
 
-relayToAltoObserved :: NativeAaConfig -> Manager -> Legacy.RpcRequest -> Maybe Text -> (Text -> ActionM ()) -> ActionM ()
-relayToAltoObserved nativeCfg manager request expectedHash observe = do
+relayToAltoObserved :: NativeAaConfig -> Manager -> Legacy.RpcRequest -> Maybe Text -> (Text -> ActionM ()) -> IO () -> ActionM ()
+relayToAltoObserved nativeCfg manager request expectedHash observe onAcknowledged = do
   observe "bundler_forwarded"
-  upstream <- liftIO $ forwardAlto manager (naaAltoRpcUrl nativeCfg) request
+  upstream <- liftIO $ forwardAltoWithCommitmentHint manager (naaAltoRpcUrl nativeCfg) request expectedHash onAcknowledged
   case upstream of
     Left failure -> observe "bundler_unavailable" >> Legacy.respondFailure (Legacy.rrId request) failure
     Right (upstreamValue, retryAfter) ->
@@ -1640,6 +1673,24 @@ relayToAltoObserved nativeCfg manager request expectedHash observe = do
           status status200
           json upstreamValue
   fromMaybeText = maybe "<invalid-success-result>" id
+
+-- A single forward owns the complete response. Scheduling can observe an exact
+-- send acknowledgement, but its synchronous failures cannot retry that send or
+-- replace its response (including caller ID and Retry-After).
+forwardAltoWithCommitmentHint
+  :: Manager
+  -> Text
+  -> Legacy.RpcRequest
+  -> Maybe Text
+  -> IO ()
+  -> IO (Either Legacy.ProxyFailure (Value, Maybe Text))
+forwardAltoWithCommitmentHint manager rpcUrl request expectedHash acknowledged = do
+  result <- forwardAlto manager rpcUrl request
+  case (Legacy.rrMethod request, expectedHash, result) of
+    (Legacy.SendUserOperation, Just localHash, Right (value, _))
+      | responseOperationHash value == Just localHash -> void $ tryCommitmentHint acknowledged
+    _ -> pure ()
+  pure result
 
 forwardAlto
   :: Manager

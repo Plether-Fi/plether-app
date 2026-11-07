@@ -105,7 +105,36 @@ interface BackendOrderWaitResponse {
   data?: {
     timedOut?: boolean
     order?: BackendOrderRow | null
+    execution?: unknown
+    executionVersion?: unknown
   }
+}
+
+/** An advisory keeper transaction; this is never proof of execution success. */
+export interface PerpsKeeperExecutionProgress {
+  state: 'submitting' | 'submitted'
+  orderId: bigint
+  orderRouter: Hex
+  account: Hex
+  clientOrderId: Hex
+  commitTxHash: Hex
+  transactionHash: Hex
+  requiredConfirmations: number
+}
+
+function mapKeeperExecution(value: unknown): PerpsKeeperExecutionProgress | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Record<string, unknown>
+  const address = (x: unknown): x is Hex => typeof x === 'string' && /^0x[0-9a-fA-F]{40}$/.test(x)
+  const hash = (x: unknown): x is Hex => typeof x === 'string' && /^0x[0-9a-fA-F]{64}$/.test(x)
+  if ((row.state !== 'submitting' && row.state !== 'submitted') || typeof row.orderId !== 'string'
+    || !/^[1-9][0-9]*$/.test(row.orderId) || !address(row.orderRouter) || !address(row.account)
+    || !hash(row.clientOrderId) || !hash(row.commitTxHash) || !hash(row.transactionHash)
+    || typeof row.requiredConfirmations !== 'number' || !Number.isSafeInteger(row.requiredConfirmations)
+    || row.requiredConfirmations < 1 || row.requiredConfirmations > 10_000) return undefined
+  return { state: row.state, orderId: BigInt(row.orderId), orderRouter: row.orderRouter,
+    account: row.account, clientOrderId: row.clientOrderId, commitTxHash: row.commitTxHash,
+    transactionHash: row.transactionHash, requiredConfirmations: row.requiredConfirmations }
 }
 
 interface BackendErrorResponse {
@@ -436,15 +465,18 @@ export async function waitForPerpsOrderTerminal({
   accountAddress,
   orderId,
   timeoutSeconds = 60,
+  afterExecution,
   signal,
 }: {
   accountAddress?: string
   orderId: bigint
   timeoutSeconds?: number
+  afterExecution?: string
   signal?: AbortSignal
-}): Promise<{ timedOut: boolean; order?: PerpsOrderHistoryRow }> {
+}): Promise<{ timedOut: boolean; order?: PerpsOrderHistoryRow; execution?: PerpsKeeperExecutionProgress | null; executionVersion?: string }> {
   const waitUrl = perpsApiUrl(`/perps/orders/${orderId.toString()}/wait`)
   waitUrl.searchParams.set('timeoutSeconds', String(timeoutSeconds))
+  if (afterExecution) waitUrl.searchParams.set('afterExecution', afterExecution)
   if (accountAddress) {
     waitUrl.searchParams.set('account', accountAddress)
   }
@@ -454,6 +486,10 @@ export async function waitForPerpsOrderTerminal({
   return {
     timedOut: Boolean(response.data?.timedOut),
     order,
+    ...(response.data && Object.hasOwn(response.data, 'execution')
+      ? { execution: mapKeeperExecution(response.data.execution) ?? null } : {}),
+    ...(typeof response.data?.executionVersion === 'string' && response.data.executionVersion.length <= 512
+      ? { executionVersion: response.data.executionVersion } : {}),
   }
 }
 

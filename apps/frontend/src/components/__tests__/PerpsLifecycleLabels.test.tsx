@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const identityMocks = vi.hoisted(() => ({
   isAaManifestConfigured: false,
   settlementTokenSupportsEip3009: false,
+  accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
 }))
 
 const maxQuoteMocks = vi.hoisted(() => ({
@@ -38,7 +39,7 @@ vi.mock('../../perps-aa', async () => {
     usePerpsIdentity: () => ({
       status: 'ready',
       ownerAddress: address,
-      accountAddress: address,
+      accountAddress: identityMocks.accountAddress,
       chainId: 421614,
       isAaManifestConfigured: identityMocks.isAaManifestConfigured,
       sponsorshipEnabled: identityMocks.isAaManifestConfigured,
@@ -69,7 +70,9 @@ import {
 } from '../../perps-aa'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../contracts/preparePerpsOrderV3'
 import type { PerpsExecutionAssessment, PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
-import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
+import type { PerpsOrderHistoryRow, PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
+import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
+import { KeeperExecutionReorgedError } from '../../utils/keeperExecutionCanonicality'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 import { SponsorRequestError } from '../../perps-aa/errors'
 import { usePerpsUiStore } from '../../stores/perpsUiStore'
@@ -210,6 +213,7 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
     identityMocks.settlementTokenSupportsEip3009 = false
+    identityMocks.accountAddress = V2_ACCOUNT
     wagmiMocks.readContractsData = undefined
     useSponsoredOperationStore.setState({
       operations: [],
@@ -2784,7 +2788,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
   })
 
-  it('updates the account position before publishing the execution result', async () => {
+  it('publishes verified execution while account positions refresh independently', async () => {
     mockIsConnected = true
     let resolveAccountRefresh = () => {}
     const accountRefreshGate = new Promise<void>((resolve) => {
@@ -2852,7 +2856,7 @@ describe('perps lifecycle labels', () => {
       expect(onAccountRefresh).toHaveBeenCalledOnce()
     })
     expect(screen.getByLabelText('Current position')).toHaveTextContent('No position')
-    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+    expect(screen.getByText('Final Result')).toBeInTheDocument()
 
     await act(async () => {
       resolveAccountRefresh()
@@ -3455,6 +3459,176 @@ describe('perps lifecycle labels', () => {
     )
     expect(screen.getByText(/cannot be retried or finalized manually/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry Finalizing' })).not.toBeInTheDocument()
+  })
+
+  describe('execution progress before indexed settlement', () => {
+    const commitTxHash = `0x${'78'.repeat(32)}` as const
+    const transactionHash = `0x${'ab'.repeat(32)}` as const
+    const transactionBlockHash = `0x${'cd'.repeat(32)}` as const
+    const committed: PerpsOrderHistoryRow = {
+      orderId: 12n, time: '--', market: 'plDXY Perp', side: 'Long', type: 'Open',
+      price: '--', size: '1 000', status: 'Committed', account: V2_ACCOUNT,
+      clientOrderId: V2_CLIENT_ORDER_ID, commitTxHash,
+    }
+    const execution = {
+      state: 'submitted' as const, orderId: 12n, orderRouter: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+      account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID, commitTxHash,
+      transactionHash, requiredConfirmations: 1,
+    }
+    const outcome = {
+      orderId: 12n, account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID,
+      status: 2 as const, terminalReason: 0 as const, executionMode: 1 as const,
+      terminalBlock: 11_604_786n, terminalTime: 1_788_167_807n,
+      executionPrice: 98_750_341n, failedConstraint: 0 as const, receiptHash: V2_RECEIPT_HASH,
+      transactionHash, transactionBlockNumber: 303_662_120n, transactionBlockHash,
+    }
+    const props = {
+      enableLiveTrading: true, initialLifecycleState: 'revealPending' as const,
+      initialReviewOpen: true, initialDirection: 'long' as const, initialOrderQuantity: '1 000',
+      initialOrderId: 12n, initialCommitTxHash: commitTxHash, orderHistory: [committed],
+      ordersIndexedThroughBlockRaw: 303_662_119n, oraclePriceRaw: 98_750_339n,
+      oraclePublishTime: Math.floor(Date.now() / 1_000), availableToTradeRaw: 15_000_000_000n,
+    }
+    function queueProgress(patch: Record<string, unknown> = {}) {
+      perpsTradingMocks.waitForPerpsOrderTerminal
+        .mockResolvedValueOnce({ timedOut: false, order: committed, execution: { ...execution, ...patch }, executionVersion: 'submitted:1' })
+        .mockReturnValue(new Promise(() => {}))
+    }
+    beforeEach(() => { mockIsConnected = true })
+
+    it('shows a transaction as pending and immediately reconnects with its cursor', async () => {
+      queueProgress()
+      render(<PerpsTradeTicket {...props} />)
+      await screen.findByText('Execution submitted')
+      expect(screen.getByText('Waiting for confirmation. Your order is still pending.')).toBeVisible()
+      expect(screen.getByText('Execution tx').closest('div')?.querySelector('a')).toHaveAttribute(
+        'href', `https://arbitrum-sepolia.blockscout.com/tx/${transactionHash}`,
+      )
+      expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+      expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenNthCalledWith(2, expect.objectContaining({ afterExecution: 'submitted:1' }))
+      expect(perpsTradingMocks.readOrderLifecycleOutcome).toHaveBeenCalledWith(12n, execution)
+    })
+
+    it.each([
+      { account: `0x${'90'.repeat(20)}` }, { clientOrderId: `0x${'90'.repeat(32)}` },
+      { orderId: 13n }, { orderRouter: `0x${'90'.repeat(20)}` }, { commitTxHash: `0x${'90'.repeat(32)}` },
+    ])('ignores progress for another committed identity', async (patch) => {
+      queueProgress(patch)
+      render(<PerpsTradeTicket {...props} />)
+      await waitFor(() => expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2))
+      expect(screen.queryByText('Execution submitted')).not.toBeInTheDocument()
+      expect(perpsTradingMocks.readOrderLifecycleOutcome.mock.calls.some(call => call[1] !== undefined)).toBe(false)
+    })
+
+    it('polls candidate confirmation independently of the held long poll and never overlaps checks', async () => {
+      vi.useFakeTimers()
+      let finishVerification: (value: unknown) => void = () => {}
+      perpsTradingMocks.readOrderLifecycleOutcome.mockImplementation((_id, candidate) => candidate
+        ? new Promise(resolve => { finishVerification = resolve }) : Promise.resolve(undefined))
+      queueProgress()
+      const view = render(<PerpsTradeTicket {...props} />)
+      await act(async () => { await Promise.resolve() })
+      const targetedCalls = () => perpsTradingMocks.readOrderLifecycleOutcome.mock.calls.filter(call => call[1] !== undefined)
+      expect(targetedCalls()).toHaveLength(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+      expect(targetedCalls()).toHaveLength(1)
+      await act(async () => { finishVerification(undefined) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+      expect(targetedCalls()).toHaveLength(2)
+      const signal = perpsTradingMocks.waitForPerpsOrderTerminal.mock.calls.at(-1)?.[0].signal as AbortSignal
+      view.unmount()
+      expect(signal.aborted).toBe(true)
+      await act(async () => { finishVerification(outcome); await vi.advanceTimersByTimeAsync(5_000) })
+      expect(targetedCalls()).toHaveLength(2)
+    })
+
+    it('publishes verified success without waiting for positions or indexed economics', async () => {
+      const refresh = vi.fn(() => new Promise<void>(() => {}))
+      perpsTradingMocks.readOrderLifecycleOutcome.mockImplementation(async (_id, candidate) => candidate ? outcome : undefined)
+      queueProgress()
+      render(<PerpsTradeTicket {...props} onAccountRefresh={refresh} />)
+      await screen.findByText('Final Result')
+      expect(refresh).toHaveBeenCalled()
+      expect(screen.queryByText('Execution submitted')).not.toBeInTheDocument()
+      expect(screen.getByText('Reveal tx').closest('div')?.querySelector('a')).toHaveAttribute(
+        'href', `https://arbitrum-sepolia.blockscout.com/tx/${transactionHash}`,
+      )
+      expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
+    })
+
+    it('ignores an in-flight receipt result after the active trading account changes', async () => {
+      let finishVerification: (value: unknown) => void = () => {}
+      perpsTradingMocks.readOrderLifecycleOutcome.mockImplementation((_id, candidate) => candidate
+        ? new Promise(resolve => { finishVerification = resolve }) : Promise.resolve(undefined))
+      queueProgress()
+      const view = render(<PerpsTradeTicket {...props} />)
+      await screen.findByText('Execution submitted')
+      const signal = perpsTradingMocks.waitForPerpsOrderTerminal.mock.calls.at(-1)?.[0].signal as AbortSignal
+      identityMocks.accountAddress = `0x${'90'.repeat(20)}`
+      view.rerender(<PerpsTradeTicket {...props} />)
+      await act(async () => { finishVerification(outcome) })
+      expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ accountAddress: identityMocks.accountAddress }))
+      expect(signal.aborted).toBe(true)
+      expect(screen.queryByText('Execution tx')).not.toBeInTheDocument()
+      expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+    })
+
+    it('retains verified success during an RPC outage and retracts it on a proven reorg', async () => {
+      vi.useFakeTimers()
+      let reorg = false
+      let outage = false
+      perpsTradingMocks.readOrderLifecycleOutcome.mockImplementation(async (_id, candidate) => {
+        if (!candidate) return undefined
+        if (reorg) throw new KeeperExecutionReorgedError(transactionHash)
+        if (outage) throw new Error('RPC unavailable')
+        return outcome
+      })
+      queueProgress()
+      const view = render(<PerpsTradeTicket {...props} />)
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+      outage = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+      expect(perpsTradingMocks.readOrderLifecycleOutcome).toHaveBeenLastCalledWith(12n, expect.objectContaining({
+        observedInclusion: { blockNumber: outcome.transactionBlockNumber, blockHash: transactionBlockHash },
+      }))
+      reorg = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+      expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+      expect(screen.queryByText('Execution submitted')).not.toBeInTheDocument()
+      expect(screen.queryByText('Finalization tx')).not.toBeInTheDocument()
+      expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
+      const staleTerminal: PerpsOrderHistoryRow = { ...committed, status: 'Executed',
+        revealTxHash: transactionHash, receiptHash: V2_RECEIPT_HASH,
+        terminalBlockNumberRaw: outcome.transactionBlockNumber, terminalBlockHash: transactionBlockHash,
+        executionPriceRaw: outcome.executionPrice,
+      }
+      view.rerender(<PerpsTradeTicket {...props} orderHistory={[staleTerminal]} />)
+      expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+      view.unmount()
+    })
+
+    it('stops targeted receipt checking when canonical history takes over', async () => {
+      vi.useFakeTimers()
+      perpsTradingMocks.readOrderLifecycleOutcome.mockImplementation(async (_id, candidate) => candidate ? outcome : undefined)
+      queueProgress()
+      const view = render(<PerpsTradeTicket {...props} />)
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+      const terminal: PerpsOrderHistoryRow = { ...committed, status: 'Executed',
+        receiptHash: V2_RECEIPT_HASH, revealTxHash: transactionHash,
+        terminalBlockNumberRaw: outcome.transactionBlockNumber, terminalBlockHash: transactionBlockHash,
+        executionPriceRaw: outcome.executionPrice, executionEconomicsVersion: 2,
+        executionMode: 'Normal', vpiAssetsRaw: 0n,
+      }
+      view.rerender(<PerpsTradeTicket {...props} orderHistory={[terminal]} ordersIndexedThroughBlockRaw={outcome.transactionBlockNumber} />)
+      const calls = perpsTradingMocks.readOrderLifecycleOutcome.mock.calls.length
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      expect(perpsTradingMocks.readOrderLifecycleOutcome).toHaveBeenCalledTimes(calls)
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+      view.unmount()
+    })
   })
 
   it('shows a direct lifecycle constraint failure while indexed history is behind', async () => {

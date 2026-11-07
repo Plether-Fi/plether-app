@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   protectionParent: 42n,
   getBlock: vi.fn(),
   getContractEvents: vi.fn(),
+  getTransactionReceipt: vi.fn(),
   readContract: vi.fn(),
   simulateContract: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
@@ -63,6 +64,7 @@ vi.mock('wagmi', () => ({
   usePublicClient: () => ({
     getBlock: mocks.getBlock,
     getContractEvents: mocks.getContractEvents,
+    getTransactionReceipt: mocks.getTransactionReceipt,
     readContract: mocks.readContract,
     simulateContract: mocks.simulateContract,
     waitForTransactionReceipt: mocks.waitForTransactionReceipt,
@@ -637,25 +639,30 @@ describe('usePerpsTrading', () => {
     mocks.readContract.mockResolvedValue({ account: ACCOUNT, status: 3, reason: 8, terminalBlock, receiptHash })
     const log = {
       address: ORDER_LIFECYCLE_BOOK, blockNumber: rpcLogBlock,
+      transactionHash: TRANSACTION_HASH, blockHash: REVIEWED_BLOCK_HASH, removed: false,
       topics: encodeEventTopics({ abi: orderLifecycleV5Abi, eventName: 'OrderFinalized', args: {
         orderId: receipt.orderId, account: receipt.account, clientOrderId: receipt.clientOrderId,
       } }),
       data: encodeAbiParameters(event.inputs.filter(part => !part.indexed), [receiptHash, terminalBlock, terminalTime, receipt]),
       args: { ...receipt, terminalBlock, terminalTime, receiptHash, receipt },
     }
-    mocks.getContractEvents.mockResolvedValue([log])
+    mocks.getContractEvents.mockImplementation(async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      if (toBlock - fromBlock >= 1_000n) throw new Error('Public log range exceeds 1000 blocks')
+      return [log]
+    })
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.readOrderLifecycleOutcome(12n)).resolves.toEqual({
       orderId: 12n, account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID, status: 3,
       terminalReason: 8, executionMode: 1, terminalBlock, terminalTime,
-      executionPrice: 98_750_341n, failedConstraint: 2, receiptHash,
+      executionPrice: 98_750_341n, failedConstraint: 2, receiptHash, receipt,
+      transactionHash: TRANSACTION_HASH, transactionBlockNumber: rpcLogBlock, transactionBlockHash: REVIEWED_BLOCK_HASH,
     })
     expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({
       address: ORDER_LIFECYCLE_BOOK, functionName: 'terminalOutcome', args: [12n], blockNumber: safeBlock,
     }))
     expect(mocks.getContractEvents).toHaveBeenCalledWith(expect.objectContaining({
-      fromBlock: safeBlock - 10_000n, toBlock: safeBlock,
+      fromBlock: safeBlock - 999n, toBlock: safeBlock,
     }))
 
     mocks.getContractEvents.mockResolvedValue([{ ...log,
@@ -1022,4 +1029,94 @@ describe('usePerpsTrading', () => {
       queryKey: ['protocol', 'status'],
     })).toBe(false)
   })
+  describe('receipt-targeted execution hints', () => {
+    function fixture() {
+      mocks.identityReady = true
+      const blockHash = `0x${'cd'.repeat(32)}` as Hex
+      const txBlock = 302_299_900n
+      const terminalBlock = 11_604_786n // Authenticated V5 clock is distinct from receipt L2 block.
+      const terminalTime = 1_788_167_807n
+      const event = orderLifecycleV5Abi.find(item => item.type === 'event' && item.name === 'OrderFinalized')!
+      function zero(parameter: AbiParameter): unknown {
+        if (parameter.type === 'tuple' && 'components' in parameter) return Object.fromEntries(parameter.components.map(part => [part.name, zero(part)]))
+        if (parameter.type === 'address') return `0x${'00'.repeat(20)}`
+        if (parameter.type === 'bool') return false
+        if (parameter.type.startsWith('bytes')) return `0x${'00'.repeat(Number(parameter.type.slice(5)))}`
+        return Number(parameter.type.replace(/\D/g, '')) <= 48 ? 0 : 0n
+      }
+      const empty = zero(event.inputs[6]) as OrderReceiptV5
+      const receipt: OrderReceiptV5 = {...empty,orderId:12n,account:ACCOUNT,clientOrderId:CLIENT_ORDER_ID,
+        status:2,reason:0,executionMode:1,executionPrice:98_750_341n}
+      const receiptHash = hashOrderReceiptV5({chainId:421614n,book:ORDER_LIFECYCLE_BOOK,
+        router:PERPS_ARBITRUM_SEPOLIA.orderRouter,terminalBlock,terminalTime,receipt})
+      const log = {address:ORDER_LIFECYCLE_BOOK,transactionHash:TRANSACTION_HASH,blockNumber:txBlock,blockHash,removed:false,
+        topics:encodeEventTopics({abi:orderLifecycleV5Abi,eventName:'OrderFinalized',args:{orderId:receipt.orderId,account:receipt.account,clientOrderId:receipt.clientOrderId}}),
+        data:encodeAbiParameters(event.inputs.filter(part=>!part.indexed),[receiptHash,terminalBlock,terminalTime,receipt])}
+      const transaction = {transactionHash:TRANSACTION_HASH,blockNumber:txBlock,blockHash,status:'success',logs:[log]}
+      const candidate = {state:'submitted' as const,orderId:12n,orderRouter:PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        account:ACCOUNT,clientOrderId:CLIENT_ORDER_ID,commitTxHash:REVIEWED_BLOCK_HASH,
+        transactionHash:TRANSACTION_HASH,requiredConfirmations:1}
+      mocks.getTransactionReceipt.mockResolvedValue(transaction)
+      mocks.getBlock.mockImplementation(async(input:{blockTag?:string;blockNumber?:bigint})=>
+        input.blockTag==='latest'?{number:txBlock+1n,hash:REVIEWED_BLOCK_HASH}:{number:txBlock,hash:blockHash})
+      mocks.readContract.mockResolvedValue({account:ACCOUNT,status:2,reason:0,terminalBlock,receiptHash})
+      const {result}=renderHook(()=>usePerpsTrading(),{wrapper})
+      return {result,candidate,transaction,txBlock,blockHash,log,receiptHash}
+    }
+    it('verifies an exact receipt at the unchanged confirmation depth without scanning logs',async()=>{
+      const f=fixture()
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).resolves.toMatchObject({
+        orderId:12n,status:2,terminalBlock:11_604_786n,transactionBlockNumber:f.txBlock,
+        transactionBlockHash:f.blockHash,transactionHash:TRANSACTION_HASH,receiptHash:f.receiptHash})
+      expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({blockNumber:f.txBlock}))
+      expect(mocks.getContractEvents).not.toHaveBeenCalled()
+    })
+    it('keeps a successful batch transaction pending when this order has no matching finalization',async()=>{
+      const f=fixture();mocks.getTransactionReceipt.mockResolvedValue({...f.transaction,logs:[]})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).resolves.toBeUndefined()
+    })
+    it('rejects duplicate matching receipt events and a block replaced during verification',async()=>{
+      const f=fixture()
+      mocks.getTransactionReceipt.mockResolvedValue({...f.transaction,logs:[f.log,f.log]})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).resolves.toBeUndefined()
+      mocks.getTransactionReceipt.mockResolvedValue(f.transaction)
+      let inclusionReads=0
+      mocks.getBlock.mockImplementation(async(input:{blockTag?:string})=>input.blockTag==='latest'
+        ?{number:f.txBlock+1n,hash:REVIEWED_BLOCK_HASH}
+        :{number:f.txBlock,hash:++inclusionReads===1?f.blockHash:REVIEWED_BLOCK_HASH})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).rejects.toMatchObject({name:'KeeperExecutionReorgedError'})
+    })
+    it('does not interpret a reverted transaction as a failed order',async()=>{
+      const f=fixture();mocks.getTransactionReceipt.mockResolvedValue({...f.transaction,status:'reverted'})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).resolves.toBeUndefined()
+      expect(mocks.readContract).not.toHaveBeenCalled()
+    })
+    it('waits for required depth and rejects mismatched account, client ID and receipt identity',async()=>{
+      const f=fixture();mocks.getBlock.mockResolvedValue({number:f.txBlock,hash:f.blockHash})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,{...f.candidate,requiredConfirmations:0})).resolves.toBeUndefined()
+      expect(mocks.getTransactionReceipt).not.toHaveBeenCalled()
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).resolves.toBeUndefined()
+      expect(mocks.readContract).not.toHaveBeenCalled()
+      mocks.getBlock.mockResolvedValue({number:f.txBlock+1n,hash:f.blockHash})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,{...f.candidate,account:`0x${'ab'.repeat(20)}`})).resolves.toBeUndefined()
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,{...f.candidate,clientOrderId:`0x${'ab'.repeat(32)}`})).resolves.toBeUndefined()
+      mocks.getTransactionReceipt.mockResolvedValue({...f.transaction,transactionHash:REVIEWED_BLOCK_HASH})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).resolves.toBeUndefined()
+    })
+    it('detects a replaced receipt block even when the new chain has no terminal summary',async()=>{
+      const f=fixture();mocks.getBlock.mockResolvedValue({number:f.txBlock+1n,hash:REVIEWED_BLOCK_HASH})
+      mocks.readContract.mockResolvedValue({status:1})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,f.candidate)).rejects.toMatchObject({name:'KeeperExecutionReorgedError'})
+      expect(mocks.getContractEvents).not.toHaveBeenCalled()
+    })
+    it('rechecks a previously verified block before a receipt lookup and preserves RPC outages',async()=>{
+      const f=fixture()
+      mocks.getTransactionReceipt.mockRejectedValue(new Error('temporarily unavailable'))
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,{...f.candidate,observedInclusion:{blockNumber:f.txBlock,blockHash:f.blockHash}})).rejects.toThrow('temporarily unavailable')
+      mocks.getTransactionReceipt.mockClear();mocks.getBlock.mockResolvedValue({number:f.txBlock,hash:REVIEWED_BLOCK_HASH})
+      await expect(f.result.current.readOrderLifecycleOutcome(12n,{...f.candidate,observedInclusion:{blockNumber:f.txBlock,blockHash:f.blockHash}})).rejects.toMatchObject({name:'KeeperExecutionReorgedError'})
+      expect(mocks.getTransactionReceipt).not.toHaveBeenCalled()
+    })
+  })
+
 })

@@ -371,6 +371,24 @@ Transaction history remains lazy-loaded while its tab is active, and timelocked
 configuration keeps its slower cache. Sponsorship and transaction policies are
 unchanged.
 
+The Sepolia own-RPC overlay also sets the order keeper to one second while
+active or idle, and liquidation, SL/TP, history indexing and AA reconciliation
+to two seconds. Oracle refresh/health checks and LP settlement retain their
+existing cadence. Confirmation depths, fee/gas limits, batch sizes and execution
+modes are preserved.
+
+For an existing deployment, use `ops/prepare_worker_cadence.py prepare --directory
+<private-operator-directory>` after the reviewed change is merged. It registers
+cadence-only task revisions for the four running services and their inactive
+keeper/indexer counterparts; it neither starts dormant services nor reads secret
+values. The normal backend workflow deploys those revisions from `master` with
+`bootstrap=false` and close-assistance mode `preserve`. Then run the operator's
+`verify` operation: it checks actual running revisions and a fingerprint of every
+non-cadence setting, allowing only deployment image/log-router version updates.
+The `rollback` operation prepares the recorded previous definitions for another
+normal backend deployment; it does not update services itself. Do not apply the
+whole application Terraform root with synthetic secrets to change these timers.
+
 Use `ops/prepare_app_cutover.py prepare --directory <private-operator-directory>`
 only after the code has passed checks and merged. It verifies the exact AWS
 account, stable services and task families, copies only RPC credentials in

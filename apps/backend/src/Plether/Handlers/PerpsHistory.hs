@@ -12,13 +12,21 @@ module Plether.Handlers.PerpsHistory
 
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, SomeAsyncException, try, fromException, throwIO)
 import Data.Aeson (Value, object, (.=))
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import GHC.Clock (getMonotonicTimeNSec)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
+import Plether.Database.ExecutionProgress
+  ( getExecutionProgress, executionProgressJson, executionProgressVersion
+  , readExecutionConfirmations
+  )
+import Plether.Logging (logWarnEvery)
+import System.Timeout (timeout)
 import Plether.Database.Schema
   ( PerpsActivityRow (..)
   , PerpsIndexerStatusRow (..)
@@ -147,42 +155,64 @@ waitForPerpsOrderTerminal
   -> Integer
   -> Maybe Text
   -> Int
+  -> Maybe Text
   -> IO (Either ApiError (ApiResponse Value))
-waitForPerpsOrderTerminal pool cfg mRouter orderId mAccount timeoutSeconds = do
+waitForPerpsOrderTerminal pool cfg mRouter orderId mAccount timeoutSeconds afterExecution = do
   let waitSeconds = min 60 $ max 1 timeoutSeconds
       account = T.toLower <$> mAccount
       chainId = cfgPerpsChainId cfg
       orderRouter = perpsHistoryRouter cfg mRouter
-  (timedOut, mOrder) <- go orderRouter account waitSeconds
+  confirmations <- readExecutionConfirmations cfg
+  started <- getMonotonicTimeNSec
+  let deadline = started + fromIntegral waitSeconds * 1_000_000_000
+      -- Progress is only a transaction locator. An unchanged cursor holds the
+      -- long poll, while replacement/clearing is observable without busy loops.
+      go nextHistory cached = do
+        now <- getMonotonicTimeNSec
+        progress <- case confirmations of
+          Nothing -> pure Nothing
+          Just _ -> do
+            result <- try $ timeout 250_000 $ withDb pool $ \conn ->
+              getExecutionProgress conn chainId orderRouter orderId account
+            case result of
+              Right (Just value) -> pure value
+              Left (err :: SomeException)
+                | Just cancellation <- (fromException err :: Maybe SomeAsyncException) -> throwIO cancellation
+              _ -> do
+                logWarnEvery 60 "execution_progress_read_unavailable"
+                  "Optional execution locator unavailable; canonical history continues" []
+                pure Nothing
+        let version = executionProgressVersion <$> progress
+            changed = case (afterExecution, version) of
+              (Nothing, Just value) -> value /= "none"
+              (Just cursor, Just value) -> T.toLower cursor /= value
+              _ -> False
+            refresh = now >= nextHistory || changed
+        mOrder <-
+          if refresh
+            then withDb pool $ \conn -> fmap historyOrderSnapshot <$>
+              getPerpsOrderById conn chainId orderRouter orderId account
+            else pure cached
+        let next = if refresh then now + 1_000_000_000 else nextHistory
+        finished <- getMonotonicTimeNSec
+        if maybe False ((/= "Committed") . wosTerminalStatus) mOrder
+          then pure (False, mOrder, progress)
+          else if changed then pure (False, mOrder, progress)
+          else if finished >= deadline then pure (True, mOrder, progress)
+          else threadDelay 250_000 >> go next mOrder
+  (timedOut, mOrder, progress) <- go 0 Nothing
   pure $
     Right $
       mkResponse (maybe 0 wosBlock mOrder) chainId $
-        object
+        object $
           [ "timedOut" .= timedOut
           , "order" .= fmap wosJson mOrder
-          ]
-  where
-    go :: Text -> Maybe Text -> Int -> IO (Bool, Maybe WaitOrderSnapshot)
-    go orderRouter account remainingSeconds = do
-      mOrder <- withDb pool $ \conn ->
-        fmap historyOrderSnapshot
-          <$> getPerpsOrderById
-            conn
-            (cfgPerpsChainId cfg)
-            orderRouter
-            orderId
-            account
-      case mOrder of
-        Just row | isTerminalOrder row ->
-          pure (False, Just row)
-        _ | remainingSeconds <= 0 ->
-          pure (True, mOrder)
-        _ -> do
-          threadDelay 1_000_000
-          go orderRouter account (remainingSeconds - 1)
-
-    isTerminalOrder :: WaitOrderSnapshot -> Bool
-    isTerminalOrder row = wosTerminalStatus row /= "Committed"
+          ] <> case (confirmations, progress) of
+            (Just required, Just known) ->
+              [ "execution" .= fmap (executionProgressJson required) known
+              , "executionVersion" .= executionProgressVersion known
+              ]
+            _ -> []
 
 data WaitOrderSnapshot = WaitOrderSnapshot
   { wosBlock :: Integer
