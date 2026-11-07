@@ -342,3 +342,58 @@ legacy receipt compatibility, authenticated AA/direct-primary wiring and
 independent verification, consumer/browser cutover, public gateway controls,
 adaptive faster polling and workload-specific dashboards/SLO qualification.
 Do not enable new polling or AA traffic merely because infrastructure exists.
+
+## Sepolia application primary cutover
+
+After initial qualification on 7 November 2026, the owner authorized moving the
+Sepolia application to the node with Alchemy backup while the stability soak
+continues. This testnet authorization does not authorize a mainnet cutover.
+
+The browser uses its same-origin `/api/perps/v1/rpc` endpoint. The Pages Worker
+authenticates to the API with the existing origin credential, and the API uses
+the private gateway token from SSM. No node token enters a browser bundle.
+The public route bounds body/batch size, gas, logs, fee history, methods and
+per-IP/global request rates; debug methods and state overrides remain private.
+Ordinary requests prefer Nitro. Old state outside the retained window, bounded
+historical transaction traces and legacy UserOperation receipts explicitly use
+Alchemy; contract reverts and ambiguous writes are not retried across providers.
+
+The existing, explicitly configured `single-provider-sepolia` AA policy is
+preserved. AA security reads use `/primary`, which cannot fall back; both reads
+in that mode remain reads from one provider. This is not dual independent
+verification. The separately qualified Alto upstream remains Alchemy through
+`/plether/sepolia/alto-rpc-url`, decoupled from the ordinary application alias.
+Polling intervals and sponsorship/transaction policies are unchanged.
+
+Use `ops/prepare_app_cutover.py prepare --directory <private-operator-directory>`
+only after the code has passed checks and merged. It verifies the exact AWS
+account, stable services and task families, copies only RPC credentials in
+memory to dedicated SecureStrings, adds narrowly scoped token access, and
+registers task definitions that change only RPC secret references. It does not
+start tasks or change the live ordinary URL. Its journal contains identifiers
+and changed reference names, never credential values.
+
+Publish the reviewed gateway image with `rpc-node-admin.yml`, then use a saved,
+reviewed plan in `infra/terraform-rpc` to update only its pinned image/task/service.
+Run `deploy-alto.yml` to make the existing bundler use its dedicated Alchemy
+parameter before changing the ordinary alias. Run `ops/qualify_app.mjs` in a
+short-lived gateway task: it proves actual primary and historical routing,
+bounded concurrent reads, and fallback using an isolated failed-primary fixture.
+Save its successful, fresh result as `app-routing-qualification.json` in the
+operator directory. The live Nitro node is not interrupted for this probe.
+
+`ops/prepare_app_cutover.py activate --directory <private-operator-directory>`
+requires that qualification and a stable Alto using its dedicated parameter,
+then changes only `/plether/sepolia/perps-rpc-url`. Deploy backend from reviewed
+`master` with `bootstrap=false`, followed by the Sepolia frontend; verify workflow
+SHAs/results, application endpoints, AA readiness and actual gateway primary
+requests before declaring the cutover complete. Existing running tasks keep
+their injected RPC configuration until the deployment replaces them.
+
+Include `infra/terraform/sepolia-own-rpc.tfvars` after the current release and AA
+overlays in future application Terraform plans. Do not apply the application
+root with fabricated signer/database inputs to perform this cutover.
+For rollback, `ops/prepare_app_cutover.py rollback` restores the original
+Alchemy URL from the dedicated backup parameter and registers the prior RPC
+references, then the backend workflow must redeploy from reviewed `master`.
+The browser can keep its proxy URL during that rollback.

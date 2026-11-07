@@ -7,6 +7,7 @@ const AA_PROXY_PATHS = new Set([
   '/api/perps/v1/aa/diagnostics',
   '/api/perps/v1/aa/pimlico',
   '/api/perps/v1/aa/rpc',
+  '/api/perps/v1/rpc',
 ]);
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';

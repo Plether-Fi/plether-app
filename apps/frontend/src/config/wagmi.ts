@@ -11,7 +11,10 @@ function optionalRpcUrl(value: unknown): string | undefined {
 const mainnetRpcUrl = optionalRpcUrl(import.meta.env.VITE_MAINNET_RPC_URL)
 const sepoliaRpcUrl = optionalRpcUrl(import.meta.env.VITE_SEPOLIA_RPC_URL)
 const arbitrumSepoliaRpcUrl = optionalRpcUrl(import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL)
-  ?? 'https://sepolia-rollup.arbitrum.io/rpc'
+  ?? (import.meta.env.VITE_DEPLOYMENT_ENV === 'sepolia'
+    ? new URL('/api/perps/v1/rpc', typeof window === 'undefined'
+      ? 'https://plether-testnet.pages.dev' : window.location.origin).href
+    : 'https://sepolia-rollup.arbitrum.io/rpc')
 
 export const anvil = defineChain({
   id: 31337,

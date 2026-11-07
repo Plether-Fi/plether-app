@@ -63,6 +63,21 @@ function workerEnv() {
 }
 
 describe('Trading readiness and diagnostics proxy authentication', () => {
+  it('authenticates browser RPC at the origin without exposing a node credential or caching responses', async () => {
+    const fetchMock = mockOriginFetch(new Response('{"jsonrpc":"2.0","id":1,"result":"0x66eee"}', { headers: { 'Cache-Control': 'no-store' } }), 1);
+    const response = await worker.fetch(new Request('https://app.plether.com/api/perps/v1/rpc', {
+      method: 'POST', body: '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}',
+      headers: { 'X-Plether-AA-Proxy-Token': 'forged', 'CF-Connecting-IP': '192.0.2.1' },
+    }), { ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'trusted-origin-token' });
+    assert.equal(fetchMock.mock.calls[0].arguments[0].href, 'https://sepolia-api.plether.test/api/rpc');
+    const options = fetchMock.mock.calls[0].arguments[1];
+    assert.equal(options.headers.get('X-Plether-AA-Proxy-Token'), 'trusted-origin-token');
+    assert.equal(options.headers.get('CF-Connecting-IP'), '192.0.2.1');
+    assert.equal(options.redirect, 'manual');
+    assert.equal(options.cf, undefined);
+    assert.equal(response.headers.get('X-Plether-AA-Proxy-Token'), null);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  });
   it('passes recovery credentials only to AA and preserves the uncached response credential', async () => {
     const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store', 'X-Plether-AA-Recovery': 'scoped-response' } }), 1);
     const response = await worker.fetch(new Request('https://app.plether.com/api/perps/v1/aa/rpc', {
