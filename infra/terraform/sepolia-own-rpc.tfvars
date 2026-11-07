@@ -18,3 +18,7 @@ liquidation_worker_poll_seconds = "2"
 protection_worker_poll_seconds  = "2"
 perps_indexer_poll_seconds      = "2"
 aa_reconciler_poll_seconds      = "2"
+
+# Hints prepare inputs and wake the existing keeper; canonical execution gates
+# and the one-second reconciliation fallback remain authoritative.
+perps_commitment_wakeups_mode = "active"

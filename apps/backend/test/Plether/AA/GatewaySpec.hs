@@ -1,15 +1,17 @@
 module Plether.AA.GatewaySpec (spec) where
 
 import Control.Monad (forM_)
+import Control.Exception (AsyncException (UserInterrupt), throwIO, try)
 import Data.Aeson (Value(..), object, (.=), encode, eitherDecode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Text as T
 import Data.Either (isLeft)
+import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
 import Network.Wai (strictRequestBody, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.HTTP.Types (status200)
-import Network.HTTP.Client (newManager, defaultManagerSettings)
-import Plether.AA.Gateway (forwardAlto, classifyAltoResult, securityFailureCategory)
+import Network.HTTP.Client (Manager, newManager, defaultManagerSettings)
+import Plether.AA.Gateway (forwardAlto, forwardAltoWithCommitmentHint, classifyAltoResult, securityFailureCategory)
 import qualified Plether.AA.Pimlico as Rpc
 import Test.Hspec
 
@@ -91,3 +93,60 @@ spec = describe "Alto request ID normalization" $ do
         let Right request = Rpc.parseRpcRequest $ object ["jsonrpc" .= ("2.0" :: T.Text),
               "id" .= ("caller" :: T.Text), "method" .= ("pimlico_getUserOperationGasPrice" :: T.Text)]
         forwardAlto manager ("http://127.0.0.1:" <> T.pack (show port)) request >>= (`shouldSatisfy` isLeft)
+
+  describe "optional commitment hint scheduling" $ do
+    let localHash = "0x" <> T.replicate 64 "a"
+        response = object ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "result" .= localHash]
+        Right request = Rpc.parseRpcRequest $ object ["jsonrpc" .= ("2.0" :: T.Text),
+          "id" .= ("hint-client" :: T.Text), "method" .= ("eth_sendUserOperation" :: T.Text)]
+        callerResponse (Object value) = Object $ KM.insert "id" (String "hint-client") value
+        callerResponse value = value
+    it "forwards once and preserves the acknowledgement when optional scheduling throws" $
+      withAltoReply response $ \manager url sends -> do
+        hints <- newIORef (0 :: Int)
+        result <- forwardAltoWithCommitmentHint manager url request (Just localHash) $
+          modifyIORef' hints (+1) >> ioError (userError "optional hint storage unavailable")
+        result `shouldBe` Right (callerResponse response, Just "3")
+        readIORef sends `shouldReturn` 1
+        readIORef hints `shouldReturn` 1
+    forM_
+      [ ("another operation hash", Just localHash,
+          object ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "result" .= ("0x" <> T.replicate 64 "b")])
+      , ("a missing expected hash", Nothing, response)
+      , ("a bundler rejection", Just localHash,
+          object ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "error" .= object
+            ["code" .= (-32500 :: Int), "message" .= ("rejected" :: T.Text)]])
+      , ("an invalid result hash", Just localHash,
+          object ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "result" .= ("not-a-hash" :: T.Text)])
+      ] $ \(name, expected, upstream) ->
+        it ("does not schedule for " <> name) $
+          withAltoReply upstream $ \manager url sends -> do
+            hints <- newIORef (0 :: Int)
+            result <- forwardAltoWithCommitmentHint manager url request expected (modifyIORef' hints (+1))
+            result `shouldBe` Right (callerResponse upstream, Just "3")
+            readIORef sends `shouldReturn` 1
+            readIORef hints `shouldReturn` 0
+    it "does not schedule an unrelated RPC method even if its result resembles the hash" $
+      withAltoReply response $ \manager url sends -> do
+        hints <- newIORef (0 :: Int)
+        let unrelated = request {Rpc.rrMethod = Rpc.GetGasPrice,
+              Rpc.rrObject = KM.insert "method" (String "pimlico_getUserOperationGasPrice") $ Rpc.rrObject request}
+        _ <- forwardAltoWithCommitmentHint manager url unrelated (Just localHash) (modifyIORef' hints (+1))
+        readIORef sends `shouldReturn` 1
+        readIORef hints `shouldReturn` 0
+    it "preserves asynchronous cancellation without replaying the signed submission" $
+      withAltoReply response $ \manager url sends -> do
+        cancelled <- try @AsyncException $
+          forwardAltoWithCommitmentHint manager url request (Just localHash) (throwIO UserInterrupt)
+        cancelled `shouldBe` Left UserInterrupt
+        readIORef sends `shouldReturn` 1
+
+withAltoReply :: Value -> (Manager -> T.Text -> IORef Int -> IO a) -> IO a
+withAltoReply body action = do
+  sends <- newIORef 0
+  let app _ respond = do
+        modifyIORef' sends (+1)
+        respond $ responseLBS status200 [("Retry-After", "3")] $ encode body
+  testWithApplication (pure app) $ \port -> do
+    manager <- newManager defaultManagerSettings
+    action manager ("http://127.0.0.1:" <> T.pack (show port)) sends

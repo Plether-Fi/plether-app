@@ -56,6 +56,38 @@ variables {
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
 }
+run "commitment_wakeups_are_off_by_default" {
+  command = plan
+  assert {
+    condition = contains(local.keeper_environment, {
+      name = "PERPS_COMMITMENT_WAKEUPS_MODE", value = "off"
+    })
+    error_message = "Existing deployments must retain polling until commitment wakeups are explicitly enabled."
+  }
+}
+run "sepolia_commitment_wakeups_preserve_keeper_execution_policy" {
+  command = plan
+  variables {
+    perps_commitment_wakeups_mode = "active"
+  }
+  assert {
+    condition = alltrue([
+      contains(local.keeper_environment, { name = "PERPS_COMMITMENT_WAKEUPS_MODE", value = "active" }),
+      contains(local.keeper_environment, { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations }),
+      contains(local.keeper_environment, { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size }),
+      contains(local.keeper_environment, { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps }),
+      contains(local.keeper_environment, { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps }),
+    ])
+    error_message = "Advisory wakeups must preserve the normal confirmation, batching and gas/fee policy."
+  }
+}
+run "reject_unknown_commitment_wakeup_mode" {
+  command = plan
+  variables {
+    perps_commitment_wakeups_mode = "immediate"
+  }
+  expect_failures = [var.perps_commitment_wakeups_mode]
+}
 run "application_rpc_preserves_the_existing_alchemy_parameter_and_alto" {
   command = plan
   variables {
