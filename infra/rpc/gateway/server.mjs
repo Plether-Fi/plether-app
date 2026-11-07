@@ -11,6 +11,10 @@ const READS = new Set([
   'eth_feeHistory', 'eth_maxPriorityFeePerGas', 'eth_getProof',
 ])
 const WRITES = new Set(['eth_sendRawTransaction', 'eth_sendRawTransactionConditional'])
+const ZERO_ARGUMENT_METHODS = new Set([
+  'eth_chainId', 'net_version', 'web3_clientVersion', 'eth_syncing',
+  'eth_blockNumber', 'eth_gasPrice', 'eth_maxPriorityFeePerGas',
+])
 // These capabilities remain on the existing managed provider. A pruned Nitro
 // execution node is neither a bundler receipt service nor a deep trace archive.
 const MANAGED = new Set(['eth_getUserOperationReceipt', 'debug_traceTransaction'])
@@ -49,7 +53,7 @@ export function validateRequest(body) {
       || (typeof call.id === 'number' && !Number.isSafeInteger(call.id))
       || String(call.id).length > 128 || ids.has(JSON.stringify(call.id))
       || !(READS.has(call.method) || WRITES.has(call.method) || MANAGED.has(call.method) || call.method === 'debug_traceCall')
-      || !Array.isArray(call.params)) throw new Error('invalid_request')
+      || !(Array.isArray(call.params) || (call.params === undefined && ZERO_ARGUMENT_METHODS.has(call.method)))) throw new Error('invalid_request')
     ids.add(JSON.stringify(call.id))
     if (call.method === 'eth_getLogs') {
       const filter = call.params[0]

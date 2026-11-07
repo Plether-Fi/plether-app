@@ -48,7 +48,10 @@ parsePublicRpc input = do
     unless (validId identifier) $ Left "Invalid request ID"
     method <- case KM.lookup "method" fields of Just (String value) -> Right value; _ -> Left "Method required"
     unless (method `elem` publicMethods) $ Left "Method not available on public RPC"
-    params <- case KM.lookup "params" fields of Just (Array xs) -> Right xs; _ -> Left "Array params required"
+    params <- case KM.lookup "params" fields of
+      Just (Array xs) -> Right xs
+      Nothing | method `elem` zeroArgumentMethods -> Right V.empty
+      _ -> Left "Array params required"
     unless (V.length params <= 4) $ Left "Too many params"
     bounded <- boundParams method params
     pure $ PublicRpcCall identifier method (Array bounded)
@@ -67,6 +70,12 @@ publicMethods =
   , "eth_getBalance", "eth_getCode", "eth_getStorageAt", "eth_call", "eth_estimateGas"
   , "eth_gasPrice", "eth_feeHistory", "eth_maxPriorityFeePerGas", "eth_getLogs"
   , "eth_sendRawTransaction"
+  ]
+
+zeroArgumentMethods :: [Text]
+zeroArgumentMethods =
+  [ "eth_chainId", "net_version", "web3_clientVersion", "eth_syncing"
+  , "eth_blockNumber", "eth_gasPrice", "eth_maxPriorityFeePerGas"
   ]
 
 quantity :: Value -> Maybe Integer
