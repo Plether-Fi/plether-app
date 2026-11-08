@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { trackPerpsModalClosed, trackPerpsModalOpened, type PerpsCloseReason } from '../../analytics/perps'
 import type { AnalyticsProperties } from '../../analytics/client'
+import { useModalBackButton } from '../../hooks/useModalBackButton'
 
 interface ModalProps {
   isOpen: boolean
@@ -100,6 +101,11 @@ export function Modal({
     closeReasonRef.current = reason
     onClose(reason)
   }, [onClose])
+
+  useModalBackButton(isOpen, () => {
+    if (!closeOnEscape) return false
+    handleClose('browser_back')
+  })
 
   useEffect(() => {
     if (isOpen) {

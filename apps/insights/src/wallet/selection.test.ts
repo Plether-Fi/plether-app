@@ -1,10 +1,27 @@
-import { describe, expect, it } from 'vitest'
-import { selectedWallet } from './selection'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { readSelectedWallet, saveSelectedWallet, selectedWallet } from './selection'
 
 const owner = { address: '0x1111111111111111111111111111111111111111' }
 const other = { address: '0x2222222222222222222222222222222222222222' }
 
+beforeEach(() => { window.localStorage.clear(); window.sessionStorage.clear() })
+
 describe('registration owner selection', () => {
+  it('preserves an existing tab choice across discarded tab storage', () => {
+    window.sessionStorage.setItem('owner', other.address)
+    expect(readSelectedWallet('owner')).toBe(other.address)
+    window.sessionStorage.clear()
+    expect(readSelectedWallet('owner')).toBe(other.address)
+  })
+
+  it('does not restore an old tab owner over a persistent disconnect', () => {
+    saveSelectedWallet('owner', null)
+    window.sessionStorage.setItem('owner', owner.address)
+    expect(readSelectedWallet('owner')).toBeNull()
+    window.sessionStorage.clear()
+    expect(readSelectedWallet('owner')).toBeNull()
+  })
+
   it('selects the sole initial wallet', () => {
     expect(selectedWallet([owner], undefined)).toBe(owner)
   })

@@ -23,12 +23,14 @@ import { useAccount, WagmiProvider as ReadOnlyWagmiProvider } from 'wagmi'
 import { config, walletChains } from '../config/wagmi'
 import { isSepoliaDeployment } from '../utils/deployment'
 import { WalletActionsContext, type WalletActions } from './useWalletActions'
-import { readWalletSelection, selectedWallet, writeWalletSelection, type WalletSelection } from './selection'
+import { loadWalletSelection, saveWalletSelection, selectedWallet, type WalletSelection } from './selection'
 import { createSigningGuard } from './signingGuard'
 import { EmailLoginOption } from './EmailLoginOption'
 import { WalletMfaSettings } from './WalletMfaSettings'
 import { isPasskeyOriginSupported } from './passkeyOrigin'
 import { clearGoogleLoginIntent, isGoogleLoginReturn, saveGoogleLoginIntent } from './googleLoginIntent'
+import { useModalBackButton } from '../hooks/useModalBackButton'
+import { WalletModalHistory } from './WalletModalHistory'
 
 type LoginMethod = 'email' | 'google' | 'passkey'
 
@@ -59,22 +61,6 @@ const privyConfig: PrivyClientConfig = {
   embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },
 }
 
-function loadSelection(): WalletSelection {
-  try {
-    return readWalletSelection(window.sessionStorage, selectionKey)
-  } catch {
-    return undefined
-  }
-}
-
-function saveSelection(selection: string | null) {
-  try {
-    writeWalletSelection(window.sessionStorage, selectionKey, selection)
-  } catch {
-    // The active wallet still works if browser storage is unavailable.
-  }
-}
-
 function SyncedWalletActions({
   actions,
   expectedAddress,
@@ -96,8 +82,10 @@ function SyncedWalletActions({
   // disabled while it is still exposing the previous owner's signer.
   const signerReady = actions.ready && expectedAddress !== undefined && !isConnecting && !isReconnecting
     && address?.toLowerCase() === expectedAddress.toLowerCase()
+  const connectionPending = !actions.ready || isConnecting || isReconnecting
+    || (expectedAddress !== undefined && !signerReady)
   return (
-    <WalletActionsContext value={{ ...actions, signerReady }}>
+    <WalletActionsContext value={{ ...actions, signerReady, connectionPending }}>
       {children}
     </WalletActionsContext>
   )
@@ -107,6 +95,18 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   const { ready: authReady, authenticated, user, logout } = usePrivy()
   const closeWalletPicker = usePletherWalletPickerClose()
   const { isOpen: authModalOpen } = useModalStatus()
+  useModalBackButton(authModalOpen, () => {
+    // Use the screen's own close handler: the SDK's generic Escape handler
+    // does not cancel a standalone promptMfa() flow. This also keeps underlying
+    // app modals open instead of broadcasting Escape through the document.
+    const close = document.querySelector<HTMLButtonElement>('#privy-dialog button[aria-label="close modal"]')
+    if (close) {
+      if (close.disabled) return false
+      close.click()
+      return
+    }
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  })
   const { wallets, ready: walletsReady } = useWallets()
   const { wallet: nativeWallet, connect: openNativeWallets, setActiveWallet: setNativeWallet } = useActiveWallet()
   const [accountOpen, setAccountOpen] = useState(false)
@@ -114,7 +114,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => { nativeWalletRef.current = nativeWallet }, [nativeWallet])
   const { exportWallet } = useExportWallet()
   const { setWalletRecovery } = useSetWalletRecovery()
-  const [selection, setSelection] = useState<WalletSelection>(loadSelection)
+  const [selection, setSelection] = useState<WalletSelection>(() => loadWalletSelection(selectionKey))
   const [signingGuard] = useState(() => createSigningGuard(selection))
   const [bridgeRevision, setBridgeRevision] = useState(0)
   const connectionIntent = useRef<number | undefined>(undefined)
@@ -141,7 +141,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     clearGoogleLoginIntent(selectionKey)
     // Update signing authority synchronously, before React or the bridge catches up.
     signingGuard.select(address)
-    saveSelection(address)
+    saveWalletSelection(selectionKey, address)
     setSelection(address?.toLowerCase() ?? null)
     setBridgeRevision(signingGuard.revision)
   }, [signingGuard])
@@ -362,8 +362,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const connectionDescription = (close: () => void | Promise<void>) => (
-    <EmailLoginOption label={authenticated ? 'Use email wallet' : 'Log in with Email'}
+  const connectionDescription = (close: () => void | Promise<void>, native = false) => {
+    const content = <EmailLoginOption label={authenticated ? 'Use email wallet' : 'Log in with Email'}
       onClick={() => { void handleEmbeddedWallet(close) }}
       options={authenticated ? [
         { label: user?.linkedAccounts.some(account => account.type === 'google_oauth') ? 'Google linked' : 'Link Google account',
@@ -373,7 +373,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
         { label: 'Log in with Google', icon: 'google', onClick: () => { void handleEmbeddedWallet(close, 'google') } },
         { label: 'Log in with passkey', kind: 'passkey-login', onClick: () => handleEmbeddedWallet(close, 'passkey') },
       ]} />
-  )
+    return native ? <WalletModalHistory onClose={() => { void close() }}>{content}</WalletModalHistory> : content
+  }
 
   const selectForWagmi = useCallback(({ wallets: connectedWallets }: { wallets: ConnectedWallet[] }) => {
     if (!ready) return undefined
@@ -388,6 +389,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     configured: true,
     ready,
     signerReady: false,
+    connectionPending: !ready,
     authenticated,
     modalOpen: authModalOpen || accountOpen,
     wallets: wallets.map(wallet => ({
@@ -480,7 +482,23 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
         onStaleConnection={resetStaleConnection}
       >
         <WalletsDialog networks={walletChains.filter(chain => chain.id !== 31337).map(chain => ({ id: chain.id }))}
-          connectionDescription={connectionDescription} accountActions={<WalletMfaSettings />} />
+          connectionDescription={close => connectionDescription(close, true)} accountActions={close => <WalletModalHistory onClose={close}>
+            <WalletMfaSettings />
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--privy-color-foreground-4)' }}>
+              <button type="button" disabled={!ready} onClick={() => {
+                // Revoke the signer before closing; ignore any late result
+                // from the native account picker through the existing guard.
+                void actions.disconnect()
+                close()
+              }} style={{ width: '100%', minHeight: 44, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8,
+                border: '1px solid var(--privy-color-accent)', borderRadius: 0,
+                background: 'var(--privy-color-accent)', color: '#fff',
+                fontSize: 14, textAlign: 'left', cursor: 'pointer' }}>
+                <span className="material-symbols-outlined text-lg" aria-hidden="true">logout</span>
+                Disconnect wallet
+              </button>
+            </div>
+          </WalletModalHistory>} />
         {children}
       </SyncedWalletActions>
     </WagmiProvider>

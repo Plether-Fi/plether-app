@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Header } from './Header'
 import { Footer } from './Footer'
@@ -9,6 +9,7 @@ import { useAccount } from 'wagmi'
 import { useTransactionStore } from '../../stores/transactionStore'
 import { isSepoliaDeployment } from '../../utils/deployment'
 import { AccountDeploymentConfirmation } from '../../perps-aa/AccountDeploymentConfirmation'
+import { syncModalHistoryNavigation } from '../../hooks/useModalBackButton'
 
 interface LayoutProps {
   children: ReactNode
@@ -16,7 +17,8 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const { isConnected } = useAccount()
-  const { pathname } = useLocation()
+  const { pathname, key } = useLocation()
+  useLayoutEffect(syncModalHistoryNavigation, [key])
   const fullWidth = pathname === '/'
   const cleanupOldTransactions = useTransactionStore((s) => s.cleanupOldTransactions)
 

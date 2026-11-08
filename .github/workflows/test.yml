@@ -117,12 +117,21 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs scripts/install-foundry-ci.test.mjs
 
       - name: Install pinned local EVM for AA execution regressions
+        id: foundry
+        continue-on-error: true
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
         with:
           version: v1.5.1
+
+      - name: Install verified pinned Foundry through the GitHub API if release downloads fail
+        if: steps.foundry.outcome == 'failure'
+        working-directory: .
+        run: node scripts/install-foundry-ci.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Install the compiler for the production gas-policy adapter
         uses: haskell-actions/setup@v2
