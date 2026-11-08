@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef } from 'react'
 import { ModalHistory } from './modalHistory'
 
 const modalHistory = new ModalHistory()
+if (import.meta.hot) import.meta.hot.dispose(() => { modalHistory.dispose() })
 
 export function syncModalHistoryNavigation() { modalHistory.noteNavigation() }
 

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WalletMfaSettings } from './WalletMfaSettings'
+import * as passkeyOrigin from './passkeyOrigin'
 
 const sdk = vi.hoisted(() => ({
   ready: true, authenticated: true, user: { id: 'public-test-user', mfaMethods: [], linkedAccounts: [] } as { id: string; mfaMethods: string[]; linkedAccounts: { type: string; credentialId: string; enrolledInMfa: boolean }[] } | null,
@@ -26,6 +27,7 @@ beforeEach(() => {
   sdk.init.mockReset().mockResolvedValue(undefined)
   sdk.submit.mockReset().mockResolvedValue(undefined)
 })
+afterEach(() => { vi.restoreAllMocks() })
 
 it.each(['loading', 'signed-out', 'no-user', 'external', 'no-wallet'])('does not offer embedded-wallet MFA for %s', state => {
   if (state === 'loading') sdk.ready = false
@@ -33,9 +35,31 @@ it.each(['loading', 'signed-out', 'no-user', 'external', 'no-wallet'])('does not
   if (state === 'no-user') sdk.user = null
   if (state === 'external') sdk.wallet = { walletClientType: 'metamask', address: '0x5678' }
   if (state === 'no-wallet') sdk.wallet = undefined
-  render(<WalletMfaSettings />)
+  render(<WalletMfaSettings onAddPasskey={vi.fn()} />)
   expect(screen.queryByRole('button', { name: 'Wallet MFA settings' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Add passkey' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Registered passkeys' })).not.toBeInTheDocument()
   expect(sdk.show).not.toHaveBeenCalled()
+})
+
+it('offers passkey linking directly from the embedded-wallet actions', () => {
+  vi.spyOn(passkeyOrigin, 'isPasskeyOriginSupported').mockReturnValue(true)
+  const add = vi.fn()
+  render(<WalletMfaSettings onAddPasskey={add} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Add passkey' }))
+  expect(add).toHaveBeenCalledOnce()
+  expect(sdk.show).not.toHaveBeenCalled()
+  expect(sdk.prompt).not.toHaveBeenCalled()
+})
+
+it('does not start passkey linking on an unsupported origin', () => {
+  vi.spyOn(passkeyOrigin, 'isPasskeyOriginSupported').mockReturnValue(false)
+  const add = vi.fn()
+  render(<WalletMfaSettings onAddPasskey={add} />)
+  expect(screen.getByRole('button', { name: 'Add passkey' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Add passkey' }))
+  expect(add).not.toHaveBeenCalled()
+  expect(screen.getByText(/Passkeys need an HTTPS domain or localhost/)).toBeVisible()
 })
 
 it('opens the native MFA settings again after they are dismissed', async () => {
@@ -70,6 +94,14 @@ function deferred() {
   return { promise, resolve }
 }
 
+it('includes registered passkeys and their individual enrollment status in the wallet actions', () => {
+  withAdditionalPasskey()
+  render(<WalletMfaSettings />)
+  expect(screen.getByRole('list', { name: 'Registered passkeys' })).toBeVisible()
+  expect(screen.getByText('Wallet MFA enabled')).toBeVisible()
+  expect(screen.getByText('Not enabled for wallet MFA')).toBeVisible()
+})
+
 it.each(['not-enrolled', 'all-enrolled', 'no-passkeys'])('does not offer an unnecessary enrollment update (%s)', state => {
   withAdditionalPasskey()
   if (state === 'not-enrolled') sdk.user!.mfaMethods = []
@@ -84,13 +116,17 @@ it('verifies existing MFA before adding the mobile key, keeping the Mac key and 
   withAdditionalPasskey()
   const verification = deferred()
   sdk.prompt.mockReturnValue(verification.promise)
-  render(<WalletMfaSettings />)
+  const add = vi.fn()
+  render(<WalletMfaSettings onAddPasskey={add} />)
   fireEvent.click(screen.getByRole('button', { name: updateName }))
   expect(sdk.prompt).toHaveBeenCalledOnce()
   expect(sdk.init).not.toHaveBeenCalled()
   expect(sdk.submit).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: 'Updating wallet MFA…' })).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Wallet MFA settings' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Add passkey' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Add passkey' }))
+  expect(add).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Updating wallet MFA…' }))
   await act(async () => { verification.resolve() })
   expect(sdk.prompt).toHaveBeenCalledOnce()
