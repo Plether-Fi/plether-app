@@ -31,8 +31,15 @@ jobs:
       - run: npm ci --no-audit --no-fund
         working-directory: apps/frontend
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        id: foundry
+        continue-on-error: true
         with:
           version: v1.5.1
+      - name: Install verified pinned Foundry through the GitHub API if release downloads fail
+        if: steps.foundry.outcome == 'failure'
+        run: node scripts/install-foundry-ci.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
       - uses: haskell-actions/setup@v2
         with:
