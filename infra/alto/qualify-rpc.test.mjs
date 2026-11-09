@@ -6,7 +6,7 @@ import test from 'node:test'
 import { parseIdleMetrics, runQualification } from './qualify-rpc.mjs'
 
 const TOKEN = 'canary-auth-private-test-value-123456789'
-const BACKUP = 'https://arb-sepolia.g.alchemy.com/v2/canary-private-test-value'
+const BACKUP = 'https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY'
 const BASELINE = 'http://internal-plether-sepolia-alto-123.ap-southeast-1.elb.amazonaws.com/'
 const rpcEnv = {
   PLETHER_ALTO_QUALIFY_MODE: 'rpc', ALTO_RPC_URL: 'https://rpc-internal.sepolia.plether.com/',

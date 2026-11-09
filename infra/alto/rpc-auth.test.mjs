@@ -54,7 +54,7 @@ test('does not send the token to other origins, paths, queries, fragments, or cr
   const fetch = createAltoRpcFetch(env, (input, init) => { calls.push({ input, init }); return Promise.resolve(new Response('OK')) })
   const init = { method: 'POST', body: 'untouched', headers: { 'x-test': 'original' }, redirect: 'follow' }
   for (const input of [
-    'https://arb-sepolia.g.alchemy.com/v2/fixture-only',
+    'https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY',
     'https://rpc-internal.sepolia.plether.com.attacker.invalid/',
     'http://rpc-internal.sepolia.plether.com/',
     'https://rpc-internal.sepolia.plether.com/primary',
