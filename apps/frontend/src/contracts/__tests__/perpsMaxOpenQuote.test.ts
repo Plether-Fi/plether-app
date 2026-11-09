@@ -36,9 +36,12 @@ describe('single-RPC Max quote', () => {
     }))
     expect(await quotePerpsMaxOpen(client, input)).toEqual({ marginDelta: 99_400_000n, quote })
     expect(request).toHaveBeenCalledOnce()
-    const call = request.mock.calls[0]![0] as unknown as { method: string; params: [{ to?: string; data: Hex }, string] }
+    const call = request.mock.calls[0]![0] as unknown as { method: string; params: [{ to?: string; data: Hex; gas?: Hex }, string] }
     expect(call.method).toBe('eth_call')
     expect(call.params[0].to).toBeUndefined()
+    // Check the serialized request: omitting gas lets the public RPC apply its
+    // smaller default instead of the budget intended for the planner search.
+    expect(call.params[0].gas).toBe('0x989680')
     expect(call.params[1]).toBe('latest')
     expect(call.params[0].data).toContain(PERPS_MAX_OPEN_QUOTER_BYTECODE.slice(2))
     expect(call.params[0].data).toContain(encodeFunctionData({
@@ -55,7 +58,7 @@ describe('single-RPC Max quote', () => {
     }))
     expect(await quotePerpsMaxOpenWithMargin(client, { ...input, marginDelta: 99_400_000n, blockNumber: 42n })).toEqual(quote)
     expect(request).toHaveBeenCalledOnce()
-    expect(request.mock.lastCall).toEqual(expect.arrayContaining([expect.objectContaining({ method: 'eth_call', params: [expect.objectContaining({ data: expect.any(String) }), '0x2a'] })]))
+    expect(request.mock.lastCall).toEqual(expect.arrayContaining([expect.objectContaining({ method: 'eth_call', params: [expect.objectContaining({ data: expect.any(String), gas: '0x989680' }), '0x2a'] })]))
   })
 
   it('returns no quote when execution and protection rewards exhaust the budget', async () => {

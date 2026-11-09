@@ -84,6 +84,25 @@ spec = describe "bounded browser execution RPC" $ do
       `shouldBe` Right [toJSON [object ["to" .= ("0x123" :: T.Text),"gas" .= ("0x1e8480" :: T.Text)],String "latest"]]
     parsePublicRpc (call (Number 1) "eth_call" [tx,String "latest",object []]) `shouldSatisfy` isLeft
     parsePublicRpc (call (Number 1) "eth_call" [object ["gas" .= ("0xffffff" :: T.Text)],String "latest"]) `shouldSatisfy` isLeft
+  it "admits explicitly budgeted deployless quotes while keeping ordinary call and estimate defaults" $ do
+    let tx gas = object ["data" .= ("0x60006000f3" :: T.Text), "gas" .= (gas :: T.Text)]
+        quote = call (Number 1) "eth_call" [tx "0x989680", String "latest"]
+    fmap (map prcParams) (parsePublicRpc quote)
+      `shouldBe` Right [toJSON [tx "0x989680", String "latest"]]
+    fmap publicRpcCost (parsePublicRpc quote) `shouldBe` Right 5
+    parsePublicRpc (call (Number 1) "eth_call" [tx "0x989681", String "latest"]) `shouldSatisfy` isLeft
+    parsePublicRpc (call (Number 1) "eth_call" [tx "0x989680", String "latest", object []]) `shouldSatisfy` isLeft
+    parsePublicRpc (call (Number 1) "eth_estimateGas" [tx "0x989680", String "latest"]) `shouldSatisfy` isLeft
+    fmap publicRpcCost (parsePublicRpc $ call (Number 1) "eth_call" [object [], String "latest"]) `shouldBe` Right 1
+    fmap (map prcParams) (parsePublicRpc $ call (Number 1) "eth_estimateGas" [object [], String "latest"])
+      `shouldBe` Right [toJSON [object ["gas" .= ("0x1e8480" :: T.Text)], String "latest"]]
+  it "charges large simulations against the original aggregate batch work budget" $ do
+    let quote identifier gas = call (Number $ fromIntegral (identifier :: Int)) "eth_call" [object ["gas" .= (gas :: T.Text)], String "latest"]
+        large = [quote n "0x989680" | n <- [1..4]]
+    fmap publicRpcCost (parsePublicRpc $ toJSON large) `shouldBe` Right 20
+    parsePublicRpc (toJSON $ large <> [call (Number 5) "eth_chainId" []]) `shouldSatisfy` isLeft
+    fmap publicRpcCost (parsePublicRpc $ toJSON [quote 1 "0x1e8481", quote 2 "0x3d0900", quote 3 "0x3d0901"])
+      `shouldBe` Right 7
   it "requires addressed bounded log scans and bounds fee history" $ do
     let filterAt from to = object ["address" .= ("0x123" :: T.Text),"fromBlock" .= (from :: T.Text),"toBlock" .= (to :: T.Text)]
     parsePublicRpc (call (Number 1) "eth_getLogs" [filterAt "0x1" "0x3e8"]) `shouldBe` Right [PublicRpcCall (Number 1) "eth_getLogs" (toJSON [filterAt "0x1" "0x3e8"])]

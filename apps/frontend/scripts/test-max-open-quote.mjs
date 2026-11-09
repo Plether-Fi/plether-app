@@ -48,6 +48,8 @@ const abi = await importTypeScript(new URL('../src/contracts/abis/Perps.ts', imp
 const generated = await importTypeScript(new URL('../src/contracts/generated/perpsMaxOpenQuoter.ts', import.meta.url))
 const helperAbi = generated.PERPS_MAX_OPEN_QUOTER_ABI
 const helperCode = generated.PERPS_MAX_OPEN_QUOTER_BYTECODE
+// EVM computation budget for these read-only quotes, not transaction gas.
+const quoteGas = 10_000_000n
 assert.ok(helperAbi && helperCode, 'Missing generated Max quoter ABI or creation bytecode')
 const requests = []
 const client = createPublicClient({ transport: custom({ request: async ({ method, params }) => {
@@ -127,7 +129,7 @@ for (const scenario of [
     code: helperCode, abi: helperAbi, functionName: 'quoteAvailable',
     args: [at('cfdEngineLens'), at('cfdEngine'), at('orderRouter'), account,
       scenario.side, availableAssets, scenario.protection, oraclePrice, scenario.leverage],
-    blockNumber, gas: 5_000_000n,
+    blockNumber, gas: quoteGas,
   })
   const newMilliseconds = Math.round(performance.now() - newStart)
   const newRequests = requests.slice(newReadsStart)
@@ -137,7 +139,7 @@ for (const scenario of [
   const fixed = await client.readContract({
     code: helperCode, abi: helperAbi, functionName: 'quoteWithMargin',
     args: [at('cfdEngineLens'), at('cfdEngine'), account, scenario.side,
-      marginDelta, oraclePrice, scenario.leverage], blockNumber, gas: 5_000_000n,
+      marginDelta, oraclePrice, scenario.leverage], blockNumber, gas: quoteGas,
   })
   assert.deepEqual(fixed, expected, 'Review-specific fixed-margin quote differs')
   if (expected.maxSizeDelta > 0n && oldRequests > 1) constrainedPositive++
