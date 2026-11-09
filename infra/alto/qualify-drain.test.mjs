@@ -151,6 +151,8 @@ test('complete proof uses both providers, final full reread, real barrier grace 
 })
 
 test('psql contract is uncapped, repeatable-read and read-only with secret confined to child env', async () => {
+  const source = readFileSync(new URL('./qualify-drain.mjs', import.meta.url), 'utf8')
+  assert.match(source, /deadlineMs = 240000/)
   assert.match(JOURNAL_SQL, /^BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;/)
   assert.match(JOURNAL_SQL, /ROLLBACK;\s*$/)
   assert.doesNotMatch(JOURNAL_SQL, /\b(INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|LIMIT|FOR UPDATE)\b/i)
@@ -172,9 +174,9 @@ test('psql contract is uncapped, repeatable-read and read-only with secret confi
     assert.equal(child.config.env.PGPASSWORD, 'YOUR_PASSWORD')
     assert.equal(child.config.env.PGSSLMODE, 'require')
     assert.match(child.config.env.PGOPTIONS, /default_transaction_read_only=on/)
-    assert.match(child.config.env.PGOPTIONS, /statement_timeout=15000/)
+    assert.match(child.config.env.PGOPTIONS, /statement_timeout=45000/)
     assert.deepEqual(Object.keys(child.config.env).sort(), ['PATH', 'PGAPPNAME', 'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST', 'PGOPTIONS', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'])
-    assert.equal(child.config.timeout, 20000)
+    assert.equal(child.config.timeout, 55000)
     assert.equal(child.config.killSignal, 'SIGKILL')
   }
 })

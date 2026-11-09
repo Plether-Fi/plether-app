@@ -206,7 +206,7 @@ export function databaseEnvironment(database) {
   const result = {
     PATH: '/usr/local/bin:/usr/bin:/bin', PGHOST: url.hostname, PGPORT: url.port || '5432',
     PGUSER: decoded(url.username), PGPASSWORD: decodeURIComponent(url.password), PGDATABASE: decoded(url.pathname.slice(1)),
-    PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=15000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=20000',
+    PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=45000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=20000',
     PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'plether-alto-drain-readonly',
   }
   assert(!result.PGPASSWORD.includes('\0'))
@@ -252,7 +252,7 @@ export function readJournal({ database, signal, execFileImpl = execFile, sql = J
       const childEnv = databaseEnvironment(database)
       child = execFileImpl('/usr/bin/psql', ['-X', '-qAt', '--no-password', '--set=ON_ERROR_STOP=1', '--file=-'], {
         env: childEnv,
-        signal, timeout: 20000, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024,
+        signal, timeout: 55000, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024,
       }, (error, stdout) => {
         if (error) { failure(); return }
         try { resolve(JSON.parse(stdout.trim())) } catch { failure() }
@@ -484,7 +484,7 @@ function wait(ms, signal) {
 }
 
 export async function runDrainQualification({ env = process.env, fetchImpl = globalThis.fetch,
-  now = Date.now, sleep = wait, execFileImpl = execFile, deadlineMs = 120000, requestTimeoutMs = 10000 } = {}) {
+  now = Date.now, sleep = wait, execFileImpl = execFile, deadlineMs = 240000, requestTimeoutMs = 10000 } = {}) {
   const startedAt = now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), deadlineMs)
