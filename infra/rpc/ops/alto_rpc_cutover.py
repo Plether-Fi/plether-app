@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Guarded Sepolia Alto RPC migration, invoked by the protected GitHub workflow.
 
-Only the Alto task definition/service are mutated. Signer values are never read;
-the canary receives only RPC credentials. Every live replacement stops the old
-signer task and proves it stopped before starting another, including rollback.
+The Alto service and a temporary admission rule are changed. Signer values are
+never read; RPC canaries and the read-only journal observer receive only their
+required RPC/database references. Every replacement proves the old signer task
+stopped before starting another, including rollback.
 """
 import argparse
 from copy import deepcopy
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -40,6 +42,26 @@ OUTPUT_FIELDS = {'taskDefinitionArn', 'revision', 'status', 'requiresAttributes'
                  'compatibilities', 'registeredAt', 'registeredBy', 'deregisteredAt'}
 CANARY_EVENT = 'alto_rpc_qualification'
 PUBLIC = 'https://app.sepolia.plether.com/api/perps/v1'
+API_SERVICE = 'plether-api'
+API_FAMILY = 'plether-sepolia'
+API_TASK = TASK_PREFIX + API_FAMILY + ':148'
+API_SOURCE = '0713acef754f1413352bcf1ece9d350ee717dd17'
+API_IMAGE = REGISTRY + '/plether-api-sepolia@sha256:b901c9b3c7a9d0db811659de396f4032409621089150d6e2f39e1026cdadf8e5'
+VPC = 'vpc-0df986b0047f901d3'
+ALTO_SG = 'sg-00afd84a1d927a86a'
+ALTO_ALB_SG = 'sg-0d925e07019465e6c'
+API_BASE_SG = 'sg-0ef6f711cab9291f8'
+API_WRITER_SG = 'sg-0230bc105fbcecc86'
+BASELINE_ARN = TASK_PREFIX + FAMILY + ':6'
+BASELINE_FINGERPRINT = '1648f589fb8f414f223bef62cda79ba591fc715bc315820da5335553ba1d860b'
+RPC_CHECKS = {'configuration', 'chain_and_primary_route', 'not_syncing', 'fresh_head',
+              'canonical_latest', 'canonical_safe', 'canonical_finalized', 'safe_state_reads',
+              'fee_history', 'gas_price', 'deployed_contracts', 'combined_state_overrides',
+              'call_tracer_state_overrides', 'bounded_latest_logs', 'isolated_fallback'}
+JOURNAL_CHECKS = {'drain_configuration', 'admission_barrier', 'acknowledgement_grace',
+                  'executor_wallets', 'process_continuity', 'journal_snapshot',
+                  'journal_terminal', 'reconciler_freshness', 'canonical_boundary',
+                  'fresh_canonical_heads', 'canonical_settlements'}
 
 
 class GuardRejected(ValueError):
@@ -78,6 +100,24 @@ def canonical(definition):
 
 def fingerprint(definition):
     return hashlib.sha256(json.dumps(canonical(definition), sort_keys=True).encode()).hexdigest()
+
+
+def canary_canonical(definition):
+    value = canonical(definition)
+    # RegisterTaskDefinition may materialize these harmless omitted defaults.
+    # Keep the baseline fingerprint unchanged and compare every nonempty field.
+    for c in value.get('containerDefinitions', []):
+        for key in ['portMappings', 'mountPoints', 'volumesFrom', 'dependsOn', 'environmentFiles',
+                    'resourceRequirements', 'credentialSpecs', 'systemControls']:
+            if c.get(key) == []:
+                c.pop(key, None)
+        if c.get('cpu') == 0:
+            c.pop('cpu', None)
+        if c.get('logConfiguration', {}).get('secretOptions') == []:
+            c['logConfiguration'].pop('secretOptions')
+    if value.get('enableFaultInjection') is False:
+        value.pop('enableFaultInjection')
+    return value
 
 
 def validate_image(image):
@@ -182,14 +222,125 @@ def canary_definition(candidate, source, script, baseline_url):
     return result
 
 
-def idle_canary_definition(candidate, source, script, baseline_url):
-    result = canary_definition(candidate, source, script, baseline_url)
-    c = container(result)
+def require_api_definition(definition):
+    require(definition.get('family') == API_FAMILY and definition.get('taskDefinitionArn') == API_TASK
+            and definition.get('status', 'ACTIVE') == 'ACTIVE', 'unexpected_api_definition')
+    require(definition.get('executionRoleArn') == f'arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-execution',
+            'unexpected_api_execution_role')
+    require(definition.get('networkMode') == 'awsvpc' and definition.get('requiresCompatibilities') == ['FARGATE']
+            and definition.get('runtimePlatform', {}).get('cpuArchitecture') == 'ARM64'
+            and definition.get('runtimePlatform', {}).get('operatingSystemFamily', 'LINUX') == 'LINUX',
+            'unexpected_api_topology')
+    api = container(definition, API_SERVICE)
+    require(api.get('essential') is True
+            and api.get('image') in [API_IMAGE, REGISTRY + '/plether-api-sepolia:' + API_SOURCE],
+            'unexpected_api_image')
+    refs = named(api.get('secrets', []))
+    for name, parameter in [('DATABASE_URL', 'database-url'), ('PERPS_RPC_URL', 'app-rpc-url'),
+                            ('PERPS_RPC_AUTH_TOKEN', 'rpc-gateway-token')]:
+        require(refs.get(name, {}).get('valueFrom') == PREFIX + parameter, 'unexpected_journal_secret')
+    env = named(api.get('environment', []))
+    require(env.get('PERPS_CHAIN_ID', {}).get('value') == '421614'
+            and re.fullmatch(r'0x[0-9a-fA-F]{40}', env.get('AA_PAYMASTER_ADDRESS', {}).get('value', ''))
+            and env.get('AA_RECONCILER_MAX_SAFE_LAG_SECONDS', {}).get('value') == '1800',
+            'unexpected_api_chain_or_paymaster')
+
+
+def journal_idle_definition(api_definition, source, script, baseline_url):
+    """Run only the reviewed read-only source, with DB/RPC refs and no signer role."""
+    require_api_definition(api_definition)
+    validate_baseline_url(baseline_url)
+    require(re.fullmatch(r'[0-9a-f]{40}', source) is not None, 'invalid_source')
+    require(isinstance(script, str) and 0 < len(script.encode()) <= 100_000, 'invalid_canary_source')
+    api = container(api_definition, API_SERVICE)
+    result = deepcopy(api_definition)
+    c = deepcopy(api)
+    c['name'] = ALTO
+    c['image'] = API_IMAGE
     c['entryPoint'] = ['node', '--input-type=module', '-e']
-    c['secrets'] = []
+    c['command'] = [script]
+    refs = named(api['secrets'])
+    c['secrets'] = [deepcopy(refs[key]) for key in ['DATABASE_URL', 'PERPS_RPC_URL', 'PERPS_RPC_AUTH_TOKEN']]
+    c['secrets'].append({'name': 'PLETHER_ALTO_BACKUP_RPC_URL', 'valueFrom': PREFIX + 'perps-rpc-url'})
+    env = named(api['environment'])
     c['environment'] = [{'name': 'PLETHER_ALTO_BASELINE_URL', 'value': baseline_url.rstrip('/')},
-                        {'name': 'PLETHER_ALTO_QUALIFY_MODE', 'value': 'idle'}]
+                        {'name': 'PLETHER_ALTO_QUALIFY_MODE', 'value': 'journal_idle'},
+                        deepcopy(env['AA_PAYMASTER_ADDRESS']), deepcopy(env['PERPS_CHAIN_ID']),
+                        deepcopy(env['AA_RECONCILER_MAX_SAFE_LAG_SECONDS'])]
+    c['essential'] = True
+    c['readonlyRootFilesystem'] = True
+    for key in ['dependsOn', 'healthCheck', 'mountPoints', 'portMappings', 'volumesFrom', 'firelensConfiguration',
+                'environmentFiles', 'repositoryCredentials', 'credentialSpecs', 'resourceRequirements']:
+        c.pop(key, None)
+    c['logConfiguration'] = {'logDriver': 'awslogs', 'options': {
+        'awslogs-group': '/ecs/plether-sepolia', 'awslogs-region': REGION, 'awslogs-stream-prefix': 'alto-rpc-canary'}}
+    result['family'] = CANARY_FAMILY
+    result['containerDefinitions'] = [c]
+    result['volumes'] = []
+    result.pop('taskRoleArn', None)
+    result['tags'] = [{'key': 'Capability', 'value': 'alto-rpc-qualification'}, {'key': 'Source', 'value': source}]
     return result
+
+
+def validate_writer_ingress(alto_service, api_service, load_balancer, security_groups):
+    """Current ingress must permit only the pinned API to submit to Alto.
+
+    The pinned task revisions also identify the already reviewed historical
+    journal-before-forward baseline; current SGs alone do not prove past ingress.
+    """
+    require(alto_service.get('serviceName') == SERVICE and api_service.get('serviceName') == API_SERVICE
+            and all(service.get('clusterArn') == f'arn:aws:ecs:{REGION}:{ACCOUNT}:cluster/{CLUSTER}'
+                    for service in [alto_service, api_service]), 'foreign_writer_service')
+    alto_network = alto_service.get('networkConfiguration', {}).get('awsvpcConfiguration', {})
+    api_network = api_service.get('networkConfiguration', {}).get('awsvpcConfiguration', {})
+    require(alto_network.get('securityGroups') == [ALTO_SG]
+            and set(api_network.get('securityGroups', [])) == {API_BASE_SG, API_WRITER_SG}
+            and len(api_network.get('securityGroups', [])) == 2, 'unexpected_writer_network')
+    require(load_balancer.get('VpcId') == VPC and load_balancer.get('SecurityGroups') == [ALTO_ALB_SG]
+            and load_balancer.get('Scheme') == 'internal'
+            and re.fullmatch(re.escape(f'arn:aws:elasticloadbalancing:{REGION}:{ACCOUNT}:loadbalancer/app/plether-sepolia-alto/')
+                             + r'[0-9a-f]+', load_balancer.get('LoadBalancerArn', '')),
+            'unexpected_alto_load_balancer_network')
+    require(isinstance(security_groups, list) and len(security_groups) == 4, 'missing_writer_security_groups')
+    groups = {group.get('GroupId'): group for group in security_groups}
+    require(set(groups) == {ALTO_SG, ALTO_ALB_SG, API_BASE_SG, API_WRITER_SG}
+            and all(group.get('VpcId') == VPC and group.get('OwnerId') == ACCOUNT for group in groups.values()),
+            'foreign_writer_security_group')
+    for target, source, port in [(ALTO_ALB_SG, API_WRITER_SG, 80), (ALTO_SG, ALTO_ALB_SG, 3000)]:
+        rules = groups[target].get('IpPermissions', [])
+        require(len(rules) == 1, 'additional_alto_writer_ingress')
+        rule = rules[0]
+        pairs = rule.get('UserIdGroupPairs', [])
+        require(rule.get('IpProtocol') == 'tcp' and rule.get('FromPort') == rule.get('ToPort') == port
+                and not rule.get('IpRanges') and not rule.get('Ipv6Ranges') and not rule.get('PrefixListIds')
+                and len(pairs) == 1 and pairs[0].get('GroupId') == source
+                and pairs[0].get('UserId') == ACCOUNT, 'additional_alto_writer_ingress')
+
+
+def validate_canary_proof(proof, scope, now_ms):
+    checks = RPC_CHECKS if scope == 'rpc' else JOURNAL_CHECKS if scope == 'journal_idle' else None
+    require(checks is not None and isinstance(proof, dict) and proof.get('event') == CANARY_EVENT
+            and type(proof.get('schema_version')) is int and proof['schema_version'] == 1
+            and proof.get('scope') == scope and proof.get('required_checks_complete') is True,
+            'missing_or_failed_canary_proof')
+    tests = proof.get('tests')
+    require(isinstance(tests, list) and len(tests) == len(checks)
+            and all(isinstance(test, dict) and isinstance(test.get('name'), str) and test.get('pass') is True for test in tests)
+            and {test.get('name') for test in tests} == checks, 'missing_or_failed_canary_proof')
+    def finite(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    start, finish = proof.get('started_at_ms'), proof.get('finished_at_ms')
+    require(finite(now_ms) and finite(start) and finite(finish) and 0 < start <= finish <= now_ms
+            and now_ms - finish <= 300_000, 'invalid_canary_timestamps')
+    if scope == 'journal_idle':
+        observed = proof.get('idle_observed_at_ms')
+        require(proof.get('idle_sample_count') == proof.get('snapshot_count') == 2
+                and proof.get('unresolved_count') == 0 and not isinstance(proof.get('unresolved_count'), bool)
+                and proof.get('executor_wallets_available') == proof.get('executor_wallets_total') == 4
+                and finite(observed) and start <= observed <= finish and 0 <= now_ms - observed <= 30_000
+                and finite(proof.get('process_started_at_seconds')) and 0 < proof['process_started_at_seconds'] <= start / 1000,
+                'missing_quiescence_proof')
+    return proof
 
 
 def validate_service(service, stable=True):
@@ -285,6 +436,7 @@ class Deployment:
         self.ecr = session.client('ecr')
         self.logs = session.client('logs')
         self.elb = session.client('elbv2')
+        self.ec2 = session.client('ec2')
         self.args, self.directory = args, directory
         self.path = directory / 'rollout.json'
         self.deadline = time.monotonic() + args.deadline_seconds
@@ -302,7 +454,7 @@ class Deployment:
             if (not was_paused or self.journal.get('admission_opened')) and hasattr(self, 'candidate_definition'):
                 # Public smoke may have reopened admission. Drain any operations
                 # accepted in that interval before replacing the signer again.
-                self.canary(self.candidate_definition, self.baseline_service, 'idle')
+                self.canary(self.candidate_definition, self.baseline_service, 'journal_idle')
                 require(self.quiescent(), 'rollback_mempool_not_proven_idle')
             self.journal['status'] = 'rolling_back'
         self.journal['updated_at_utc'] = datetime.now(timezone.utc).isoformat()
@@ -347,6 +499,15 @@ class Deployment:
                     break
             require(not token, 'task_history_exceeds_bounded_capture')
         self.stopping_tasks = seen
+
+    def before_signer_stop(self):
+        self.capture_signers()
+        # Recheck freshness after the bounded AWS capture, immediately before
+        # desiredCount=0. Continuous admission pause permits rollback without
+        # reusing this age gate after an already-proven initial drain.
+        if not self.rollback or self.journal.get('admission_opened'):
+            self.journal_observer_context(self.baseline_service)
+            require(self.quiescent(), 'stale_journal_drain_before_stop')
 
     def wait_stopped(self):
         while True:
@@ -403,6 +564,7 @@ class Deployment:
                 'unexpected_alto_target_group')
         lb = self.elb.describe_load_balancers(LoadBalancerArns=group['LoadBalancerArns'])['LoadBalancers'][0]
         require(lb['Scheme'] == 'internal', 'alto_load_balancer_not_private')
+        self.load_balancer = lb
         result = 'http://' + lb['DNSName']
         validate_baseline_url(result)
         listeners = self.elb.describe_listeners(LoadBalancerArn=lb['LoadBalancerArn'])['Listeners']
@@ -412,6 +574,127 @@ class Deployment:
                 and selected[0]['DefaultActions'][0].get('TargetGroupArn') == groups[0], 'unexpected_alto_listener')
         self.listener = selected[0]['ListenerArn']
         return result
+
+    def stopped_canary_interfaces(self):
+        approved = {}
+        history = self.journal.get('canary_history', [])
+        require(isinstance(history, list) and len(history) <= 8, 'invalid_canary_history')
+        for record in history:
+            require(record.get('scope') in ['rpc', 'journal_idle'], 'unexpected_recorded_canary_scope')
+            owner = f'alto-rpc-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}-{record["scope"]}'
+            response = self.ecs.describe_tasks(cluster=CLUSTER, tasks=[record['task']])
+            require(not response.get('failures') and len(response.get('tasks', [])) == 1,
+                    'missing_recorded_canary')
+            task = response['tasks'][0]
+            require(task.get('lastStatus') == 'STOPPED' and task.get('startedBy') == owner
+                    and task.get('taskDefinitionArn') == record.get('definition'), 'recorded_canary_not_stopped')
+            definition = self.definition(record['definition'])
+            require(fingerprint(definition) == record.get('fingerprint') and not definition.get('taskRoleArn')
+                    and definition.get('family') == CANARY_FAMILY
+                    and len(definition.get('containerDefinitions', [])) == 1, 'recorded_canary_definition_drift')
+            observer = container(definition)
+            secret_names = set(named(observer.get('secrets', [])))
+            if record['scope'] == 'rpc':
+                require(observer.get('image') == self.args.image
+                        and observer.get('entryPoint') == ['node', '--import', '/app/plether-rpc-auth.mjs', '--input-type=module', '-e']
+                        and secret_names == {'ALTO_RPC_URL', AUTH_KEY, 'PLETHER_ALTO_BACKUP_RPC_URL'},
+                        'unsafe_recorded_rpc_canary')
+                groups = {ALTO_SG}
+            else:
+                require(observer.get('image') == API_IMAGE
+                        and observer.get('entryPoint') == ['node', '--input-type=module', '-e']
+                        and secret_names == {'DATABASE_URL', 'PERPS_RPC_URL', 'PERPS_RPC_AUTH_TOKEN', 'PLETHER_ALTO_BACKUP_RPC_URL'},
+                        'unsafe_recorded_journal_canary')
+                groups = {API_BASE_SG, API_WRITER_SG}
+            for attachment in task.get('attachments', []):
+                if attachment.get('type') == 'ElasticNetworkInterface':
+                    for detail in attachment.get('details', []):
+                        if detail.get('name') == 'networkInterfaceId':
+                            require(detail['value'] not in approved, 'duplicate_recorded_canary_interface')
+                            approved[detail['value']] = groups
+        return approved
+
+    def journal_observer_context(self, alto_service):
+        response = self.ecs.describe_services(cluster=CLUSTER, services=[API_SERVICE])
+        require(not response.get('failures') and len(response.get('services', [])) == 1,
+                'missing_api_observer_network')
+        api = response['services'][0]
+        require(api.get('serviceName') == API_SERVICE
+                and api.get('clusterArn') == f'arn:aws:ecs:{REGION}:{ACCOUNT}:cluster/{CLUSTER}'
+                and api.get('taskDefinition') == API_TASK
+                and api.get('launchType') == 'FARGATE' and api.get('platformVersion') == '1.4.0'
+                and api.get('desiredCount') == api.get('runningCount') == 1 and api.get('pendingCount') == 0
+                and len(api.get('deployments', [])) == 1
+                and api['deployments'][0].get('rolloutState') == 'COMPLETED', 'api_observer_not_stable')
+        definition = self.definition(API_TASK)
+        require_api_definition(definition)
+        api_network = api.get('networkConfiguration', {}).get('awsvpcConfiguration', {})
+        alto_network = alto_service.get('networkConfiguration', {}).get('awsvpcConfiguration', {})
+        require(api_network.get('assignPublicIp') == alto_network.get('assignPublicIp') == 'ENABLED'
+                and set(api_network.get('subnets', [])) == set(alto_network.get('subnets', []))
+                and len(api_network.get('subnets', [])) == 2, 'unexpected_observer_subnets')
+        groups = self.ec2.describe_security_groups(GroupIds=[ALTO_SG, ALTO_ALB_SG, API_BASE_SG, API_WRITER_SG])['SecurityGroups']
+        validate_writer_ingress(alto_service, api, self.load_balancer, groups)
+
+        def task_eni(name, expected_definition, expected_image=None):
+            arns = self.ecs.list_tasks(cluster=CLUSTER, serviceName=name, desiredStatus='RUNNING')['taskArns']
+            require(len(arns) == 1, 'ambiguous_writer_task')
+            response = self.ecs.describe_tasks(cluster=CLUSTER, tasks=arns)
+            require(not response.get('failures') and len(response.get('tasks', [])) == 1, 'missing_writer_task')
+            task = response['tasks'][0]
+            require(task.get('lastStatus') == 'RUNNING' and task.get('taskDefinitionArn') == expected_definition,
+                    'writer_task_revision_drift')
+            if expected_image:
+                running = [c for c in task.get('containers', []) if c.get('name') == name]
+                require(len(running) == 1 and running[0].get('imageDigest') == expected_image.split('@')[1]
+                        and running[0].get('lastStatus') == 'RUNNING', 'api_running_image_mismatch')
+            enis = [detail['value'] for attachment in task.get('attachments', [])
+                    if attachment.get('type') == 'ElasticNetworkInterface'
+                    for detail in attachment.get('details', []) if detail.get('name') == 'networkInterfaceId']
+            require(len(enis) == 1, 'missing_writer_task_network_identity')
+            return enis[0]
+
+        api_eni = task_eni(API_SERVICE, API_TASK, API_IMAGE)
+        current_alto = self.service()
+        require(current_alto.get('taskDefinition') in [BASELINE_ARN, self.journal.get('candidate_task_definition')]
+                and current_alto.get('networkConfiguration') == alto_service.get('networkConfiguration'),
+                'alto_writer_revision_drift')
+        alto_eni = task_eni(SERVICE, current_alto['taskDefinition'])
+        interfaces, token = [], None
+        for _ in range(10):
+            args = {'Filters': [{'Name': 'group-id', 'Values': [API_WRITER_SG, ALTO_ALB_SG, ALTO_SG]},
+                                {'Name': 'status', 'Values': ['in-use']}], 'MaxResults': 100}
+            if token:
+                args['NextToken'] = token
+            response = self.ec2.describe_network_interfaces(**args)
+            interfaces.extend(response['NetworkInterfaces'])
+            token = response.get('NextToken')
+            if not token:
+                break
+        require(not token, 'writer_network_pagination_requires_reconciliation')
+        approved_canaries = self.stopped_canary_interfaces()
+        seen = set()
+        lb_description = 'ELB ' + self.load_balancer['LoadBalancerArn'].split(':loadbalancer/')[1]
+        for interface in interfaces:
+            require(interface.get('OwnerId') == ACCOUNT and interface.get('VpcId') == VPC,
+                    'foreign_writer_network_interface')
+            attached = {x['GroupId'] for x in interface.get('Groups', [])}
+            identifier = interface.get('NetworkInterfaceId')
+            if identifier in approved_canaries:
+                require(attached == approved_canaries[identifier], 'recorded_canary_network_drift')
+                continue
+            if API_WRITER_SG in attached:
+                require(identifier == api_eni and attached == {API_BASE_SG, API_WRITER_SG}, 'untrusted_api_writer_interface')
+                seen.add('api')
+            if ALTO_SG in attached:
+                require(identifier == alto_eni and attached == {ALTO_SG}, 'untrusted_alto_interface')
+                seen.add('alto')
+            if ALTO_ALB_SG in attached:
+                require(attached == {ALTO_ALB_SG} and interface.get('RequesterManaged') is True
+                        and interface.get('Description') == lb_description, 'untrusted_alto_load_balancer_interface')
+                seen.add('alb')
+        require(seen == {'api', 'alto', 'alb'}, 'missing_writer_network_interfaces')
+        return definition, deepcopy(api['networkConfiguration'])
 
     def ensure_barrier(self):
         rules = self.elb.describe_rules(ListenerArn=self.listener)['Rules']
@@ -494,7 +777,8 @@ class Deployment:
         validate_scan(response, digest, datetime.now(timezone.utc))
 
     def canary(self, candidate, service, scope='rpc'):
-        source = Path(__file__).resolve().parents[3] / 'infra' / 'alto' / 'qualify-rpc.mjs'
+        source = Path(__file__).resolve().parents[3] / 'infra' / 'alto' / (
+            'qualify-rpc.mjs' if scope == 'rpc' else 'qualify-drain.mjs')
         require(source.is_file(), 'missing_canary_source')
         code = source.read_text()
         if scope == 'rpc':
@@ -503,15 +787,10 @@ class Deployment:
             definition = canary_definition(candidate, self.args.source, code, self.baseline_url(service))
             network = deepcopy(service['networkConfiguration'])
         else:
-            require(scope == 'idle', 'unexpected_canary_scope')
-            definition = idle_canary_definition(candidate, self.args.source, code, self.baseline_url(service))
-            api = self.ecs.describe_services(cluster=CLUSTER, services=['plether-api'])
-            require(not api.get('failures') and len(api['services']) == 1, 'missing_api_observer_network')
-            api = api['services'][0]
-            require(api['serviceName'] == 'plether-api' and api['desiredCount'] == api['runningCount'] == 1
-                    and api['pendingCount'] == 0 and len(api['deployments']) == 1
-                    and api['deployments'][0]['rolloutState'] == 'COMPLETED', 'api_observer_not_stable')
-            network = deepcopy(api['networkConfiguration'])
+            require(scope == 'journal_idle', 'unexpected_canary_scope')
+            baseline_url = self.baseline_url(service)
+            api_definition, network = self.journal_observer_context(service)
+            definition = journal_idle_definition(api_definition, self.args.source, code, baseline_url)
         owner = f'alto-rpc-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}-{scope}'
         # A previous unfinished credential-free/credential-minimized canary must
         # finish before another one is launched, including interrupted runs.
@@ -519,6 +798,8 @@ class Deployment:
             self.budget()
             time.sleep(2)
         arn = self.register(definition)
+        reviewed = self.definition(arn)
+        require(canary_canonical(reviewed) == canary_canonical(definition), 'canary_registration_drift')
         sequence = self.journal.get('canary_sequence', 0) + 1
         self.save({'canary_definition': arn, 'canary_sequence': sequence, 'status': 'canary_starting'})
         # Each new observation gets a new task. A repeated token would otherwise
@@ -531,7 +812,9 @@ class Deployment:
                                            {'key': 'WorkflowOwner', 'value': owner}])
         require(not response.get('failures') and len(response.get('tasks', [])) == 1, 'canary_launch_failed')
         task_arn = response['tasks'][0]['taskArn']
-        self.save({'canary_task': task_arn, 'status': 'canary_running'})
+        history = self.journal.get('canary_history', []) + [{'task': task_arn, 'definition': arn,
+                   'fingerprint': fingerprint(reviewed), 'scope': scope}]
+        self.save({'canary_task': task_arn, 'canary_history': history, 'status': 'canary_running'})
         try:
             while True:
                 self.budget()
@@ -570,18 +853,23 @@ class Deployment:
                 if records:
                     break
                 time.sleep(2)
-            require(len(records) == 1 and records[0].get('scope') == scope and records[0].get('required_checks_complete') is True
-                    and records[0].get('tests') and all(x.get('pass') is True for x in records[0]['tests']),
-                    'missing_or_failed_canary_proof')
-            proof = records[0]
-            saved = {'scope': scope, 'required_checks_complete': True,
+            require(len(records) == 1, 'missing_or_failed_canary_proof')
+            proof = validate_canary_proof(records[0], scope, time.time() * 1000)
+            saved = {'event': CANARY_EVENT, 'schema_version': 1, 'scope': scope, 'required_checks_complete': True,
+                     'started_at_ms': proof['started_at_ms'], 'finished_at_ms': proof['finished_at_ms'],
                      'tests': [{'name': x['name'], 'pass': True} for x in proof['tests']]}
-            if scope == 'idle':
-                require(proof.get('idle_sample_count') == 2 and isinstance(proof.get('idle_observed_at_ms'), (int, float)),
-                        'missing_quiescence_proof')
-                saved.update(idle_sample_count=2, idle_observed_at_ms=proof['idle_observed_at_ms'])
+            if scope == 'journal_idle':
+                for key in ['idle_sample_count', 'idle_observed_at_ms', 'snapshot_count', 'unresolved_count',
+                            'submitted_count', 'settled_count', 'expired_count', 'outstanding_gauge_first',
+                            'outstanding_gauge_last', 'executor_wallets_available', 'executor_wallets_total',
+                            'process_started_at_seconds', 'rpc_call_count', 'latest_age_seconds', 'safe_age_seconds',
+                            'reconciler_age_seconds', 'boundary_block_number', 'canonical_settlement_count']:
+                    value = proof.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+                        saved[key] = value
                 self.canary_proof = saved
-            private_save(self.directory / (scope + '-qualification.json'), saved)
+            private_save(self.directory / ('idle-qualification.json' if scope == 'journal_idle'
+                                           else 'rpc-qualification.json'), saved)
         finally:
             current = self.ecs.describe_tasks(cluster=CLUSTER, tasks=[task_arn])['tasks'][0]
             if current['lastStatus'] != 'STOPPED':
@@ -589,8 +877,11 @@ class Deployment:
             self.ecs.deregister_task_definition(taskDefinition=arn)
 
     def quiescent(self):
-        return bool(self.canary_proof and self.canary_proof['idle_sample_count'] == 2
-                    and 0 <= time.time() * 1000 - self.canary_proof['idle_observed_at_ms'] <= 30_000)
+        try:
+            validate_canary_proof(self.canary_proof, 'journal_idle', time.time() * 1000)
+            return True
+        except GuardRejected:
+            return False
 
     def postcheck(self):
         def fetch(path, payload=None):
@@ -616,6 +907,8 @@ class Deployment:
         validate_service(service)
         before = self.definition(service['taskDefinition'])
         require_baseline(before)
+        require(before['taskDefinitionArn'] == BASELINE_ARN and fingerprint(before) == BASELINE_FINGERPRINT,
+                'journal_provenance_baseline_mismatch')
         self.scan()
         candidate = patch_definition(before, self.args.image)
         self.save({'previous_task_definition': before['taskDefinitionArn'],
@@ -633,7 +926,7 @@ class Deployment:
                     and current['networkConfiguration'] == service['networkConfiguration']
                     and fingerprint(self.definition(before['taskDefinitionArn'])) == fingerprint(before), 'baseline_drift')
             self.ensure_barrier()
-            self.canary(registered, service, 'idle')
+            self.canary(registered, service, 'journal_idle')
         def healthy(target):
             self.rollback = target == before['taskDefinitionArn']
             self.wait_healthy(target)
@@ -646,7 +939,7 @@ class Deployment:
             self.remove_barrier()
             self.postcheck()
         perform_cutover(self.ecs, before['taskDefinitionArn'], arn, canary, self.quiescent,
-                        self.wait_stopped, healthy, postcheck, self.save, self.cleanup_barrier, self.capture_signers)
+                        self.wait_stopped, healthy, postcheck, self.save, self.cleanup_barrier, self.before_signer_stop)
 
     def recover(self):
         require(self.path.is_file(), 'missing_recovery_journal')
@@ -659,6 +952,8 @@ class Deployment:
         require(re.fullmatch(re.escape(TASK_PREFIX + FAMILY + ':') + r'[1-9][0-9]*', previous), 'invalid_recovery_baseline')
         before = self.definition(previous)
         require_baseline(before)
+        require(previous == BASELINE_ARN and fingerprint(before) == BASELINE_FINGERPRINT,
+                'journal_provenance_baseline_mismatch')
         require(fingerprint(before) == journal.get('baseline_fingerprint'), 'recovery_baseline_drift')
         service = self.service()
         validate_service(service, stable=False)
@@ -688,7 +983,7 @@ class Deployment:
         self.candidate_definition, self.baseline_service = registered, service
         try:
             self.save({'status': 'rolling_back'})
-            replace_service(self.ecs, previous, self.wait_stopped, self.wait_healthy, self.capture_signers)
+            replace_service(self.ecs, previous, self.wait_stopped, self.wait_healthy, self.before_signer_stop)
             self.save({'status': 'rolled_back'})
             self.cleanup_barrier()
         except BaseException:

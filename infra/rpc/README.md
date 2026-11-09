@@ -461,9 +461,18 @@ own network, including simulation overrides, primary routing, bounded log scans
 and isolated Alchemy fallback.
 
 The operator temporarily returns a retryable 503 for new Alto POST requests. A
-separate observer without RPC or signer credentials uses the API network to
-verify that admission is paused, wait for the API acknowledgement timeout, and
-observe an empty outstanding queue and all executor wallets available twice.
+separate observer uses the API network to verify that admission is paused, wait
+for the API acknowledgement timeout, and observe all executor wallets available
+twice from the same process. Alto 1.2.7's outstanding-operation gauge accumulates
+normal queue pops, so its value cannot establish whether the queue is empty.
+Instead, the observer checks the complete durable submission journal in read-only
+database snapshots. Every operation marked submitted must have canonical terminal
+event evidence or an expired validity window, verified against a fresh reconciler
+boundary on both RPC providers. Unaccounted submissions or inconsistent evidence
+block the cutover. The operator also verifies that Alto accepts submissions only
+from the expected journal-backed API path. The observer receives only the database
+and RPC credentials needed for these reads, with no task role or signer secrets;
+it emits check results and aggregate counts only.
 Operations whose submission outcome is unknown retain the existing journal and
 same-hash recovery path. The old signer task must reach actual `STOPPED` before
 the replacement starts. Signers, gas budgets, validation settings and all other

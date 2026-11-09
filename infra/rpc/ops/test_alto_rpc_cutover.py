@@ -10,8 +10,9 @@ from unittest.mock import patch
 
 from alto_rpc_cutover import (
     GuardRejected, require_baseline, patch_definition, assert_only_rpc_patch,
-    canary_definition, idle_canary_definition, validate_service, validate_scan,
-    replace_service, perform_cutover, fingerprint, Deployment,
+    canary_definition, journal_idle_definition, validate_writer_ingress,
+    validate_canary_proof, validate_service, validate_scan,
+    replace_service, perform_cutover, fingerprint, canary_canonical, Deployment,
 )
 
 ACCOUNT = "932542905614"
@@ -23,6 +24,22 @@ SOURCE = "b" * 40
 BASELINE_URL = "http://internal-plether-sepolia-alto-123.ap-southeast-1.elb.amazonaws.com"
 BEFORE = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia-alto:6"
 AFTER = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia-alto:7"
+API_SOURCE = "0713acef754f1413352bcf1ece9d350ee717dd17"
+API_IMAGE = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/plether-api-sepolia@sha256:b901c9b3c7a9d0db811659de396f4032409621089150d6e2f39e1026cdadf8e5"
+API_TAGGED_IMAGE = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/plether-api-sepolia:{API_SOURCE}"
+PAYMASTER = "0x" + "1" * 40
+VPC = "vpc-0df986b0047f901d3"
+ALTO_SG = "sg-00afd84a1d927a86a"
+ALB_SG = "sg-0d925e07019465e6c"
+API_SG = "sg-0ef6f711cab9291f8"
+API_MARKER_SG = "sg-0230bc105fbcecc86"
+RPC_CHECKS = ["configuration", "chain_and_primary_route", "not_syncing", "fresh_head", "canonical_latest",
+              "canonical_safe", "canonical_finalized", "safe_state_reads", "fee_history", "gas_price",
+              "deployed_contracts", "combined_state_overrides", "call_tracer_state_overrides",
+              "bounded_latest_logs", "isolated_fallback"]
+JOURNAL_CHECKS = ["drain_configuration", "admission_barrier", "acknowledgement_grace", "executor_wallets",
+                  "process_continuity", "journal_snapshot", "journal_terminal", "reconciler_freshness",
+                  "canonical_boundary", "fresh_canonical_heads", "canonical_settlements"]
 
 
 def fixture():
@@ -86,6 +103,60 @@ def main_container(definition):
     return next(container for container in definition["containerDefinitions"] if container["name"] == "plether-alto")
 
 
+def api_fixture():
+    value = fixture()
+    value.update(family="plether-sepolia", revision=148,
+                 taskDefinitionArn=f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia:148",
+                 executionRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-execution",
+                 taskRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-task")
+    api = value["containerDefinitions"][0]
+    api.update(name="plether-api", image=API_TAGGED_IMAGE,
+               entryPoint=["/app/api-server"], command=[],
+               environment=[{"name": "PERPS_CHAIN_ID", "value": "421614"},
+                            {"name": "AA_PAYMASTER_ADDRESS", "value": PAYMASTER},
+                            {"name": "AA_PAYMASTER_KMS_KEY_ID", "value": "must-not-reach-observer"},
+                            {"name": "NODE_OPTIONS", "value": "--import=unrelated-preload"},
+                            {"name": "AA_RECONCILER_MAX_SAFE_LAG_SECONDS", "value": "1800"}],
+               secrets=[{"name": "DATABASE_URL", "valueFrom": PREFIX + "database-url"},
+                        {"name": "PERPS_RPC_URL", "valueFrom": PREFIX + "app-rpc-url"},
+                        {"name": "PERPS_RPC_AUTH_TOKEN", "valueFrom": PREFIX + "rpc-gateway-token"},
+                        {"name": "FAUCET_PRIVATE_KEY", "valueFrom": PREFIX + "faucet-private-key"},
+                        {"name": "UNRELATED_API_SECRET", "valueFrom": PREFIX + "unrelated"}])
+    value["containerDefinitions"] = [api, value["containerDefinitions"][2]]
+    return value
+
+
+def writer_ingress_fixture():
+    alto = service_fixture()
+    alto["networkConfiguration"]["awsvpcConfiguration"]["securityGroups"] = [ALTO_SG]
+    api = copy.deepcopy(alto)
+    api.update(serviceName="plether-api", taskDefinition=api_fixture()["taskDefinitionArn"])
+    api["networkConfiguration"]["awsvpcConfiguration"]["securityGroups"] = [API_SG, API_MARKER_SG]
+    lb = {"VpcId": VPC, "SecurityGroups": [ALB_SG], "Scheme": "internal",
+          "LoadBalancerArn": f"arn:aws:elasticloadbalancing:{REGION}:{ACCOUNT}:loadbalancer/app/plether-sepolia-alto/123"}
+    def rule(port, source):
+        return {"IpProtocol": "tcp", "FromPort": port, "ToPort": port,
+                "UserIdGroupPairs": [{"GroupId": source, "UserId": ACCOUNT}],
+                "IpRanges": [], "Ipv6Ranges": [], "PrefixListIds": []}
+    groups = [{"GroupId": group, "VpcId": VPC, "OwnerId": ACCOUNT, "IpPermissions": []}
+              for group in [ALTO_SG, ALB_SG, API_SG, API_MARKER_SG]]
+    next(group for group in groups if group["GroupId"] == ALTO_SG)["IpPermissions"] = [rule(3000, ALB_SG)]
+    next(group for group in groups if group["GroupId"] == ALB_SG)["IpPermissions"] = [rule(80, API_MARKER_SG)]
+    return alto, api, lb, groups
+
+
+def proof_fixture(scope="rpc", now_ms=1_794_213_000_000):
+    checks = JOURNAL_CHECKS if scope == "journal_idle" else RPC_CHECKS
+    proof = {"event": "alto_rpc_qualification", "schema_version": 1, "scope": scope,
+             "required_checks_complete": True, "tests": [{"name": name, "pass": True} for name in checks],
+             "started_at_ms": now_ms - 40_000, "finished_at_ms": now_ms - 1000}
+    if scope == "journal_idle":
+        proof.update(idle_sample_count=2, snapshot_count=2, idle_observed_at_ms=now_ms - 1000,
+                     unresolved_count=0, executor_wallets_available=4, executor_wallets_total=4,
+                     process_started_at_seconds=now_ms / 1000 - 60)
+    return proof
+
+
 def scan_fixture(now=1_794_213_000):
     recent = datetime.fromtimestamp(now - 30, timezone.utc)
     return {"registryId": ACCOUNT, "repositoryName": "plether-alto-sepolia",
@@ -96,6 +167,47 @@ def scan_fixture(now=1_794_213_000):
 
 
 class RpcCutoverPolicyTests(unittest.TestCase):
+    def test_canary_registration_normalizes_only_harmless_ecs_omitted_defaults(self):
+        observers = [canary_definition(patch_definition(fixture(), IMAGE), SOURCE, "console.log('rpc fixture')", BASELINE_URL),
+                     journal_idle_definition(api_fixture(), SOURCE, "console.log('idle fixture')", BASELINE_URL)]
+        for expected in observers:
+            original = copy.deepcopy(expected)
+            original_fingerprint = fingerprint(expected)
+            returned = copy.deepcopy(expected)
+            observer = main_container(returned)
+            for key in ["portMappings", "mountPoints", "volumesFrom", "dependsOn", "environmentFiles",
+                        "resourceRequirements", "credentialSpecs", "systemControls"]:
+                observer[key] = []
+            observer["cpu"] = 0
+            observer["logConfiguration"]["secretOptions"] = []
+            returned["enableFaultInjection"] = False
+            with self.subTest(mode=main_container(expected)["environment"]):
+                self.assertEqual(canary_canonical(expected), canary_canonical(returned))
+                self.assertEqual(expected, original, "Normalization must not mutate the source definition")
+                self.assertEqual(fingerprint(expected), original_fingerprint)
+                self.assertNotEqual(fingerprint(returned), original_fingerprint,
+                                    "Full registered fingerprints must retain the returned configuration for ENI records")
+
+    def test_canary_registration_canonicalization_keeps_every_meaningful_runtime_difference(self):
+        expected = journal_idle_definition(api_fixture(), SOURCE, "console.log('idle fixture')", BASELINE_URL)
+        mutations = [
+            lambda value: main_container(value).update(portMappings=[{"containerPort": 3000, "protocol": "tcp"}]),
+            lambda value: main_container(value).update(mountPoints=[{"sourceVolume": "unexpected", "containerPath": "/tmp"}]),
+            lambda value: main_container(value)["environment"].append({"name": "NEW_RUNTIME_OPTION", "value": "true"}),
+            lambda value: main_container(value)["secrets"][0].update(valueFrom=PREFIX + "different-database"),
+            lambda value: main_container(value).update(entryPoint=["node", "/app/api-server"]),
+            lambda value: main_container(value).update(image=IMAGE),
+            lambda value: value.update(taskRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-task"),
+            lambda value: main_container(value).update(cpu=256),
+            lambda value: main_container(value)["logConfiguration"].update(secretOptions=[{"name": "token", "valueFrom": PREFIX + "unexpected"}]),
+            lambda value: value.update(enableFaultInjection=True),
+        ]
+        for index, mutate in enumerate(mutations):
+            returned = copy.deepcopy(expected)
+            mutate(returned)
+            with self.subTest(case=index):
+                self.assertNotEqual(canary_canonical(expected), canary_canonical(returned))
+
     def test_patch_changes_only_rpc_auth_entrypoint_and_both_payload_images(self):
         before = fixture()
         original = copy.deepcopy(before)
@@ -209,18 +321,77 @@ class RpcCutoverPolicyTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(GuardRejected):
                 canary_definition(prepared, SOURCE, "console.log('fixture canary')", url)
 
-    def test_idle_observer_has_no_credentials_or_preload_and_cannot_run_the_bundler(self):
-        prepared = patch_definition(fixture(), IMAGE)
-        idle = idle_canary_definition(prepared, SOURCE, "console.log('idle fixture')", BASELINE_URL)
+    def test_journal_idle_observer_receives_only_read_credentials_and_no_runtime_role_or_server(self):
+        before = api_fixture()
+        original = copy.deepcopy(before)
+        idle = journal_idle_definition(before, SOURCE, "console.log('idle fixture')", BASELINE_URL)
+        self.assertEqual(before, original, "Observer preparation must preserve the running API definition")
         self.assertFalse(idle.get("taskRoleArn"))
         self.assertEqual(len(idle["containerDefinitions"]), 1)
         observer = idle["containerDefinitions"][0]
-        self.assertEqual(observer.get("secrets"), [])
+        self.assertEqual(observer["name"], "plether-alto")
+        self.assertEqual(observer["image"], API_IMAGE)
+        self.assertEqual(idle["executionRoleArn"], before["executionRoleArn"])
+        self.assertEqual({item["name"]: item["valueFrom"] for item in observer["secrets"]}, {
+            "DATABASE_URL": PREFIX + "database-url",
+            "PERPS_RPC_URL": PREFIX + "app-rpc-url",
+            "PERPS_RPC_AUTH_TOKEN": PREFIX + "rpc-gateway-token",
+            "PLETHER_ALTO_BACKUP_RPC_URL": PREFIX + "perps-rpc-url"})
         self.assertEqual(observer["entryPoint"], ["node", "--input-type=module", "-e"])
         self.assertEqual(observer["command"], ["console.log('idle fixture')"])
         self.assertEqual({item["name"]: item["value"] for item in observer["environment"]}, {
-            "PLETHER_ALTO_BASELINE_URL": BASELINE_URL, "PLETHER_ALTO_QUALIFY_MODE": "idle"})
-        self.assertFalse(observer.get("portMappings"))
+            "PLETHER_ALTO_BASELINE_URL": BASELINE_URL, "PLETHER_ALTO_QUALIFY_MODE": "journal_idle",
+            "AA_PAYMASTER_ADDRESS": PAYMASTER, "PERPS_CHAIN_ID": "421614",
+            "AA_RECONCILER_MAX_SAFE_LAG_SECONDS": "1800"})
+        for key in ["portMappings", "dependsOn", "mountPoints", "healthCheck", "firelensConfiguration"]:
+            self.assertFalse(observer.get(key), key)
+        self.assertEqual(idle.get("volumes"), [])
+
+    def test_journal_idle_observer_rejects_unapproved_api_source_identity_or_scope(self):
+        mutations = [
+            lambda value: value.update(family="plether-mainnet"),
+            lambda value: value.update(taskDefinitionArn=value["taskDefinitionArn"].replace(ACCOUNT, "000000000000")),
+            lambda value: value.update(taskDefinitionArn=value["taskDefinitionArn"].replace(":148", ":149")),
+            lambda value: value.update(executionRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-alto-execution"),
+            lambda value: value.update(networkMode="bridge"),
+            lambda value: value["runtimePlatform"].update(cpuArchitecture="X86_64"),
+            lambda value: value["containerDefinitions"][0].update(image=API_TAGGED_IMAGE.replace(API_SOURCE, "c" * 40)),
+            lambda value: value["containerDefinitions"][0].update(image=API_TAGGED_IMAGE.replace(ACCOUNT, "000000000000")),
+            lambda value: value["containerDefinitions"][0].update(image=API_TAGGED_IMAGE.replace("plether-api-sepolia", "other")),
+            lambda value: value["containerDefinitions"][0].update(image=API_IMAGE.replace("b901", "0000")),
+            lambda value: value["containerDefinitions"].append(copy.deepcopy(value["containerDefinitions"][0])),
+        ]
+        for index, mutate in enumerate(mutations):
+            definition = api_fixture()
+            mutate(definition)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                journal_idle_definition(definition, SOURCE, "console.log('idle fixture')", BASELINE_URL)
+
+    def test_journal_idle_observer_rejects_changed_rpc_database_references_or_paymaster(self):
+        mutations = [
+            lambda api: api["secrets"][0].update(valueFrom=PREFIX + "other-database"),
+            lambda api: api["secrets"][1].update(valueFrom=PREFIX + "perps-rpc-url"),
+            lambda api: api["secrets"][2].update(valueFrom=PREFIX + "other-token"),
+            lambda api: api["secrets"].append(copy.deepcopy(api["secrets"][0])),
+            lambda api: api["environment"][0].update(value="42161"),
+            lambda api: api["environment"][1].update(value="not-an-address"),
+            lambda api: api["environment"][4].update(value="3600"),
+            lambda api: api["environment"].append(copy.deepcopy(api["environment"][1])),
+        ]
+        for index, mutate in enumerate(mutations):
+            definition = api_fixture()
+            mutate(definition["containerDefinitions"][0])
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                journal_idle_definition(definition, SOURCE, "console.log('idle fixture')", BASELINE_URL)
+
+    def test_journal_observer_rejects_non_private_origins_or_invalid_source(self):
+        for url in ["https://example.com", BASELINE_URL + "/metrics", BASELINE_URL + "?token=secret",
+                    BASELINE_URL.replace("http://", "http://token@")]:
+            with self.subTest(url=url), self.assertRaises(GuardRejected):
+                journal_idle_definition(api_fixture(), SOURCE, "console.log('idle fixture')", url)
+        for source in ["", "g" * 40, SOURCE + "0"]:
+            with self.subTest(source=source), self.assertRaises(GuardRejected):
+                journal_idle_definition(api_fixture(), source, "console.log('idle fixture')", BASELINE_URL)
 
     def test_stable_service_requires_single_signer_process_and_stop_before_start_configuration(self):
         validate_service(service_fixture())
@@ -266,6 +437,360 @@ class RpcCutoverPolicyTests(unittest.TestCase):
             validate_scan(scan, IMAGE.split("@")[1], now)
 
 
+class CanaryProofTests(unittest.TestCase):
+    def test_cached_journal_proof_must_still_be_fresh_and_include_the_reviewed_checks(self):
+        now_ms = 1_794_213_000_000
+        deployment = object.__new__(Deployment)
+        with patch("alto_rpc_cutover.time.time", return_value=now_ms / 1000):
+            deployment.canary_proof = proof_fixture("journal_idle", now_ms)
+            self.assertTrue(deployment.quiescent())
+            mutations = [
+                lambda value: value.update(scope="idle"),
+                lambda value: value.update(required_checks_complete=False),
+                lambda value: value.update(idle_observed_at_ms=now_ms - 30_001),
+                lambda value: value.update(idle_observed_at_ms=now_ms + 1),
+                lambda value: value.update(unresolved_count=1),
+                lambda value: value.update(snapshot_count=1),
+                lambda value: value.update(executor_wallets_available=3),
+                lambda value: value["tests"][0].update(name="made_up_success"),
+                lambda value: value["tests"][0].update(**{"pass": False}),
+            ]
+            for index, mutate in enumerate(mutations):
+                deployment.canary_proof = proof_fixture("journal_idle", now_ms)
+                mutate(deployment.canary_proof)
+                with self.subTest(case=index):
+                    self.assertFalse(deployment.quiescent())
+
+    def test_rpc_proof_requires_the_complete_reviewed_checks_rather_than_arbitrary_success_names(self):
+        now_ms = 1_794_213_000_000
+        validate_canary_proof(proof_fixture(now_ms=now_ms), "rpc", now_ms)
+        mutations = [
+            lambda value: value.update(event="unrelated_event"),
+            lambda value: value.update(schema_version=2),
+            lambda value: value.update(scope="journal_idle"),
+            lambda value: value.update(required_checks_complete=False),
+            lambda value: value.update(required_checks_complete=1),
+            lambda value: value.update(tests=[]),
+            lambda value: value["tests"][0].update(**{"pass": 1}),
+            lambda value: value["tests"][0].update(name="made_up_success"),
+            lambda value: value["tests"].pop(),
+            lambda value: value["tests"].append(copy.deepcopy(value["tests"][0])),
+            lambda value: value["tests"].append({"name": "extra_success", "pass": True}),
+        ]
+        for index, mutate in enumerate(mutations):
+            proof = proof_fixture(now_ms=now_ms)
+            mutate(proof)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof, "rpc", now_ms)
+
+    def test_unknown_observer_scope_is_not_accepted_as_rpc_or_idle(self):
+        for scope in ["idle", "invalid", "", None]:
+            with self.subTest(scope=scope), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof_fixture(scope=scope), scope, 1_794_213_000_000)
+
+    def test_journal_idle_proof_expires_after_thirty_seconds_including_previously_successful_tasks(self):
+        now_ms = 1_794_213_000_000
+        proof = proof_fixture("journal_idle", now_ms)
+        proof["idle_observed_at_ms"] = now_ms - 30_000
+        validate_canary_proof(proof, "journal_idle", now_ms)
+        proof["idle_observed_at_ms"] -= 1
+        with self.assertRaisesRegex(GuardRejected, "quiescence"):
+            validate_canary_proof(proof, "journal_idle", now_ms)
+
+    def test_journal_idle_proof_cannot_claim_success_without_two_empty_stable_observations(self):
+        now_ms = 1_794_213_000_000
+        mutations = [
+            lambda value: value.update(idle_sample_count=1),
+            lambda value: value.update(snapshot_count=1),
+            lambda value: value.update(unresolved_count=1),
+            lambda value: value.update(unresolved_count=False),
+            lambda value: value.update(executor_wallets_available=3),
+            lambda value: value.update(executor_wallets_total=5),
+            lambda value: value.update(idle_observed_at_ms=now_ms + 1),
+            lambda value: value.update(idle_observed_at_ms=value["started_at_ms"] - 1),
+            lambda value: value.update(idle_observed_at_ms=value["finished_at_ms"] + 1),
+            lambda value: value.update(idle_observed_at_ms=float("nan")),
+            lambda value: value.update(idle_observed_at_ms=True),
+            lambda value: value.update(process_started_at_seconds=0),
+            lambda value: value.update(process_started_at_seconds=float("inf")),
+            lambda value: value.update(process_started_at_seconds=True),
+            lambda value: value["tests"][0].update(name="made_up_success"),
+            lambda value: value["tests"].pop(),
+            lambda value: value["tests"].append(copy.deepcopy(value["tests"][0])),
+        ]
+        for index, mutate in enumerate(mutations):
+            proof = proof_fixture("journal_idle", now_ms)
+            mutate(proof)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof, "journal_idle", now_ms)
+
+    def test_canary_proof_rejects_nonfinite_future_reversed_or_old_task_timestamps(self):
+        now_ms = 1_794_213_000_000
+        mutations = [
+            lambda value: value.update(started_at_ms=True),
+            lambda value: value.update(started_at_ms=0),
+            lambda value: value.update(started_at_ms=value["finished_at_ms"] + 1),
+            lambda value: value.update(finished_at_ms=now_ms + 1),
+            lambda value: value.update(finished_at_ms=float("nan")),
+            lambda value: value.update(started_at_ms=now_ms - 400_000, finished_at_ms=now_ms - 300_001),
+        ]
+        for index, mutate in enumerate(mutations):
+            proof = proof_fixture(now_ms=now_ms)
+            mutate(proof)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof, "rpc", now_ms)
+        for invalid_now in [True, float("nan"), float("inf")]:
+            with self.subTest(now=invalid_now), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof_fixture(now_ms=now_ms), "rpc", invalid_now)
+
+
+class WriterIngressTests(unittest.TestCase):
+    def test_only_api_marker_can_write_to_alto_through_the_fixed_internal_load_balancer(self):
+        validate_writer_ingress(*writer_ingress_fixture())
+
+    def test_extra_ports_protocols_or_sources_cannot_bypass_the_paused_api_writer(self):
+        mutations = [
+            lambda rule: rule.update(FromPort=0),
+            lambda rule: rule.update(ToPort=65535),
+            lambda rule: rule.update(IpProtocol="-1"),
+            lambda rule: rule.update(IpProtocol="udp"),
+            lambda rule: rule["IpRanges"].append({"CidrIp": "0.0.0.0/0"}),
+            lambda rule: rule["Ipv6Ranges"].append({"CidrIpv6": "::/0"}),
+            lambda rule: rule["PrefixListIds"].append({"PrefixListId": "pl-unreviewed"}),
+            lambda rule: rule["UserIdGroupPairs"].append({"GroupId": API_SG, "UserId": ACCOUNT}),
+            lambda rule: rule["UserIdGroupPairs"][0].update(GroupId="sg-unreviewed"),
+            lambda rule: rule["UserIdGroupPairs"][0].update(UserId="000000000000"),
+        ]
+        for target in [ALB_SG, ALTO_SG]:
+            for index, mutate in enumerate(mutations):
+                alto, api, lb, groups = writer_ingress_fixture()
+                selected = next(group for group in groups if group["GroupId"] == target)
+                mutate(selected["IpPermissions"][0])
+                with self.subTest(target=target, case=index), self.assertRaises(GuardRejected):
+                    validate_writer_ingress(alto, api, lb, groups)
+            alto, api, lb, groups = writer_ingress_fixture()
+            selected = next(group for group in groups if group["GroupId"] == target)
+            selected["IpPermissions"].append(copy.deepcopy(selected["IpPermissions"][0]))
+            with self.subTest(target=target, case="extra_rule"), self.assertRaises(GuardRejected):
+                validate_writer_ingress(alto, api, lb, groups)
+
+    def test_fixed_security_group_membership_account_and_vpc_are_required(self):
+        mutations = [
+            lambda alto, api, lb, groups: alto["networkConfiguration"]["awsvpcConfiguration"]["securityGroups"].append(API_SG),
+            lambda alto, api, lb, groups: api["networkConfiguration"]["awsvpcConfiguration"].update(securityGroups=[API_SG]),
+            lambda alto, api, lb, groups: api["networkConfiguration"]["awsvpcConfiguration"]["securityGroups"].append("sg-unreviewed"),
+            lambda alto, api, lb, groups: lb["SecurityGroups"].append(API_SG),
+            lambda alto, api, lb, groups: lb.update(VpcId="vpc-unreviewed"),
+            lambda alto, api, lb, groups: lb.update(Scheme="internet-facing"),
+            lambda alto, api, lb, groups: lb.update(LoadBalancerArn=lb["LoadBalancerArn"].replace(ACCOUNT, "000000000000")),
+            lambda alto, api, lb, groups: alto.update(clusterArn=alto["clusterArn"].replace(ACCOUNT, "000000000000")),
+            lambda alto, api, lb, groups: api.update(clusterArn=api["clusterArn"].replace(ACCOUNT, "000000000000")),
+            lambda alto, api, lb, groups: groups.pop(),
+            lambda alto, api, lb, groups: groups.append(copy.deepcopy(groups[0])),
+        ]
+        for index, mutate in enumerate(mutations):
+            values = writer_ingress_fixture()
+            mutate(*values)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                validate_writer_ingress(*values)
+        for target in [ALTO_SG, ALB_SG, API_SG, API_MARKER_SG]:
+            for key, bad_value in [("OwnerId", "000000000000"), ("VpcId", "vpc-unreviewed")]:
+                values = writer_ingress_fixture()
+                next(group for group in values[3] if group["GroupId"] == target)[key] = bad_value
+                with self.subTest(target=target, key=key), self.assertRaises(GuardRejected):
+                    validate_writer_ingress(*values)
+
+
+class ObserverEcs:
+    def __init__(self, api):
+        self.api = api
+        self.tasks = {}
+        self.task_lists = {}
+        for name, definition, eni in [("plether-api", api_fixture()["taskDefinitionArn"], "eni-api"),
+                                       ("plether-alto", BEFORE, "eni-alto")]:
+            arn = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task/plether-sepolia/{name}-fixture"
+            self.task_lists[name] = [arn]
+            self.tasks[arn] = {"taskArn": arn, "taskDefinitionArn": definition, "lastStatus": "RUNNING",
+                "containers": [{"name": name, "lastStatus": "RUNNING", "imageDigest": API_IMAGE.split("@")[1]}],
+                "attachments": [{"type": "ElasticNetworkInterface", "details": [
+                    {"name": "networkInterfaceId", "value": eni}]}]}
+
+    def describe_services(self, cluster, services):
+        assert cluster == "plether-sepolia" and services == ["plether-api"]
+        return {"services": [copy.deepcopy(self.api)], "failures": []}
+
+    def list_tasks(self, cluster, serviceName, desiredStatus):
+        assert cluster == "plether-sepolia" and desiredStatus == "RUNNING"
+        return {"taskArns": self.task_lists[serviceName][:]}
+
+    def describe_tasks(self, cluster, tasks):
+        assert cluster == "plether-sepolia"
+        return {"tasks": [copy.deepcopy(self.tasks[arn]) for arn in tasks], "failures": []}
+
+
+class ObserverEc2:
+    def __init__(self, groups, interfaces):
+        self.groups, self.pages = groups, [interfaces]
+        self.requests = []
+        self.unbounded = False
+
+    def describe_security_groups(self, GroupIds):
+        assert set(GroupIds) == {ALTO_SG, ALB_SG, API_SG, API_MARKER_SG}
+        return {"SecurityGroups": copy.deepcopy(self.groups)}
+
+    def describe_network_interfaces(self, **kwargs):
+        self.requests.append(copy.deepcopy(kwargs))
+        index = int(kwargs.get("NextToken", "0"))
+        result = {"NetworkInterfaces": copy.deepcopy(self.pages[min(index, len(self.pages) - 1)])}
+        if self.unbounded or index + 1 < len(self.pages):
+            result["NextToken"] = str(index + 1)
+        return result
+
+
+class JournalObserverContextTests(unittest.TestCase):
+    def setup_context(self):
+        alto, api, lb, groups = writer_ingress_fixture()
+        subnets = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+        for service in [alto, api]:
+            service["networkConfiguration"]["awsvpcConfiguration"]["subnets"] = subnets[:]
+        interfaces = [
+            {"NetworkInterfaceId": "eni-api", "Groups": [{"GroupId": API_SG}, {"GroupId": API_MARKER_SG}]},
+            {"NetworkInterfaceId": "eni-alto", "Groups": [{"GroupId": ALTO_SG}]},
+            {"NetworkInterfaceId": "eni-alb", "Groups": [{"GroupId": ALB_SG}], "RequesterManaged": True,
+             "Description": "ELB " + lb["LoadBalancerArn"].split(":loadbalancer/")[1]},
+        ]
+        for interface in interfaces:
+            interface.update(OwnerId=ACCOUNT, VpcId=VPC)
+        deployment = object.__new__(Deployment)
+        deployment.ecs = ObserverEcs(api)
+        deployment.ec2 = ObserverEc2(groups, interfaces)
+        deployment.load_balancer = lb
+        deployment.journal = {"candidate_task_definition": AFTER}
+        deployment.definition = lambda arn: copy.deepcopy(api_fixture())
+        deployment.service = lambda: copy.deepcopy(alto)
+        return deployment, alto, api, interfaces
+
+    def add_stopped_canary(self, deployment, scope):
+        if scope == "rpc":
+            definition = canary_definition(patch_definition(fixture(), IMAGE), SOURCE, "console.log('fixture')", BASELINE_URL)
+            groups = [ALTO_SG]
+        else:
+            definition = journal_idle_definition(api_fixture(), SOURCE, "console.log('fixture')", BASELINE_URL)
+            groups = [API_SG, API_MARKER_SG]
+        definition["taskDefinitionArn"] = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia-alto-rpc-canary:1"
+        arn = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task/plether-sepolia/stopped-{scope}"
+        eni = "eni-stopped-" + scope
+        task = {"taskArn": arn, "taskDefinitionArn": definition["taskDefinitionArn"], "lastStatus": "STOPPED",
+                "startedBy": f"alto-rpc-123-1-{scope}", "attachments": [{"type": "ElasticNetworkInterface",
+                    "details": [{"name": "networkInterfaceId", "value": eni}]}]}
+        record = {"scope": scope, "task": arn, "definition": definition["taskDefinitionArn"],
+                  "fingerprint": fingerprint(definition)}
+        deployment.journal["canary_history"] = [record]
+        deployment.ecs.tasks[arn] = task
+        deployment.args = SimpleNamespace(image=IMAGE)
+        deployment.definition = lambda task_arn: copy.deepcopy(definition if task_arn == record["definition"] else api_fixture())
+        deployment.ec2.pages[0].append({"NetworkInterfaceId": eni, "OwnerId": ACCOUNT, "VpcId": VPC,
+                                        "Groups": [{"GroupId": group} for group in groups]})
+        return definition, task, record, eni, groups
+
+    def test_context_uses_the_pinned_running_api_image_and_its_exact_writer_network(self):
+        deployment, alto, api, _ = self.setup_context()
+        definition, network = deployment.journal_observer_context(alto)
+        self.assertEqual(definition, api_fixture())
+        self.assertEqual(network, api["networkConfiguration"])
+        network["awsvpcConfiguration"]["securityGroups"].clear()
+        self.assertEqual(api["networkConfiguration"]["awsvpcConfiguration"]["securityGroups"], [API_SG, API_MARKER_SG])
+
+    def test_api_running_digest_revision_or_task_count_drift_blocks_the_journal_observer(self):
+        for case in ["digest", "revision", "second_task", "missing_eni"]:
+            deployment, alto, _, _ = self.setup_context()
+            arn = deployment.ecs.task_lists["plether-api"][0]
+            task = deployment.ecs.tasks[arn]
+            if case == "digest":
+                task["containers"][0]["imageDigest"] = "sha256:" + "0" * 64
+            elif case == "revision":
+                task["taskDefinitionArn"] = task["taskDefinitionArn"].replace(":148", ":149")
+            elif case == "second_task":
+                deployment.ecs.task_lists["plether-api"].append(arn + "-other")
+            else:
+                task["attachments"] = []
+            with self.subTest(case=case), self.assertRaises(GuardRejected):
+                deployment.journal_observer_context(alto)
+
+    def test_all_eni_pages_are_checked_and_a_second_api_writer_is_never_ignored(self):
+        deployment, alto, _, interfaces = self.setup_context()
+        deployment.ec2.pages = [interfaces[:1], interfaces[1:]]
+        deployment.journal_observer_context(alto)
+        self.assertEqual(len(deployment.ec2.requests), 2)
+        self.assertEqual(deployment.ec2.requests[1]["NextToken"], "1")
+        intruder = copy.deepcopy(interfaces[0])
+        intruder["NetworkInterfaceId"] = "eni-untrusted-writer"
+        deployment.ec2.pages[1].append(intruder)
+        with self.assertRaisesRegex(GuardRejected, "untrusted_api_writer_interface"):
+            deployment.journal_observer_context(alto)
+
+    def test_eni_pagination_must_finish_within_the_bounded_read(self):
+        deployment, alto, _, _ = self.setup_context()
+        deployment.ec2.unbounded = True
+        with self.assertRaisesRegex(GuardRejected, "writer_network_pagination_requires_reconciliation"):
+            deployment.journal_observer_context(alto)
+        self.assertEqual(len(deployment.ec2.requests), 10)
+
+    def test_writer_enis_cannot_be_foreign_or_attach_unreviewed_groups(self):
+        for index in range(3):
+            for key, bad_value in [("OwnerId", "000000000000"), ("VpcId", "vpc-unreviewed")]:
+                deployment, alto, _, interfaces = self.setup_context()
+                interfaces[index][key] = bad_value
+                with self.subTest(eni=index, key=key), self.assertRaisesRegex(GuardRejected, "foreign_writer_network_interface"):
+                    deployment.journal_observer_context(alto)
+            deployment, alto, _, interfaces = self.setup_context()
+            interfaces[index]["Groups"].append({"GroupId": "sg-unreviewed"})
+            with self.subTest(eni=index, key="extra_group"), self.assertRaises(GuardRejected):
+                deployment.journal_observer_context(alto)
+        for key, bad_value in [("RequesterManaged", False), ("Description", "ELB another-load-balancer")]:
+            deployment, alto, _, interfaces = self.setup_context()
+            interfaces[2][key] = bad_value
+            with self.subTest(key=key), self.assertRaisesRegex(GuardRejected, "untrusted_alto_load_balancer_interface"):
+                deployment.journal_observer_context(alto)
+
+    def test_only_an_exact_stopped_current_run_canary_may_leave_a_temporary_writer_eni(self):
+        for scope in ["rpc", "journal_idle"]:
+            deployment, alto, _, _ = self.setup_context()
+            _, _, _, eni, groups = self.add_stopped_canary(deployment, scope)
+            with self.subTest(scope=scope), patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
+                self.assertEqual(deployment.stopped_canary_interfaces(), {eni: set(groups)})
+                deployment.journal_observer_context(alto)
+                deployment.ec2.pages[0][-1]["Groups"].append({"GroupId": "sg-unreviewed"})
+                with self.assertRaisesRegex(GuardRejected, "recorded_canary_network_drift"):
+                    deployment.journal_observer_context(alto)
+
+    def test_running_foreign_or_modified_canaries_cannot_be_exempted_from_writer_ownership(self):
+        for case in ["stopping", "foreign_run", "different_definition", "fingerprint", "task_role", "signer", "image", "server"]:
+            deployment, _, _, _ = self.setup_context()
+            definition, task, record, _, _ = self.add_stopped_canary(deployment, "journal_idle")
+            if case == "stopping":
+                task["lastStatus"] = "STOPPING"
+            elif case == "foreign_run":
+                task["startedBy"] = "alto-rpc-other-run-journal_idle"
+            elif case == "different_definition":
+                task["taskDefinitionArn"] += "0"
+            elif case == "fingerprint":
+                record["fingerprint"] = "0" * 64
+            else:
+                if case == "task_role":
+                    definition["taskRoleArn"] = f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-task"
+                elif case == "signer":
+                    definition["containerDefinitions"][0]["secrets"].append({"name": "ALTO_EXECUTOR_PRIVATE_KEYS", "valueFrom": PREFIX + "alto-executor-private-keys"})
+                elif case == "image":
+                    definition["containerDefinitions"][0]["image"] = IMAGE
+                else:
+                    definition["containerDefinitions"][0]["entryPoint"] = ["/app/api-server"]
+                record["fingerprint"] = fingerprint(definition)
+            with self.subTest(case=case), patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
+                with self.assertRaises(GuardRejected):
+                    deployment.stopped_canary_interfaces()
+
+
 class FakeEcs:
     def __init__(self, events):
         self.events = events
@@ -278,6 +803,28 @@ class FakeEcs:
 
 
 class RpcCutoverSequencingTests(unittest.TestCase):
+    def test_signer_capture_cannot_turn_a_fresh_drain_into_a_stale_authorization_to_stop(self):
+        for rollback, journal in [(False, {}), (True, {"admission_opened": True})]:
+            events, saved = [], []
+            now_ms = [1_794_213_000_000]
+            deployment = object.__new__(Deployment)
+            deployment.canary_proof = proof_fixture("journal_idle", now_ms[0])
+            deployment.rollback, deployment.journal = rollback, journal
+            deployment.baseline_service = service_fixture()
+            deployment.journal_observer_context = lambda service: events.append(("recheck",))
+            def capture():
+                events.append(("capture",))
+                now_ms[0] += 30_001
+            deployment.capture_signers = capture
+            with self.subTest(rollback=rollback), patch("alto_rpc_cutover.time.time", side_effect=lambda: now_ms[0] / 1000):
+                with self.assertRaisesRegex(GuardRejected, "stale_journal_drain_before_stop"):
+                    perform_cutover(FakeEcs(events), BEFORE, AFTER, lambda: True, deployment.quiescent,
+                        lambda: self.fail("The signer must remain running"), lambda target: None,
+                        lambda: None, lambda value: saved.append(copy.deepcopy(value)),
+                        cleanup=lambda: events.append(("cleanup",)), before_stop=deployment.before_signer_stop)
+            self.assertEqual(events, [("capture",), ("recheck",), ("cleanup",)])
+            self.assertFalse(any(value.get("mutation_started") for value in saved))
+
     def test_replace_never_starts_a_second_signer_before_stopped_confirmation(self):
         events = []
         target = fixture()["taskDefinitionArn"].rsplit(":", 1)[0] + ":7"
@@ -559,7 +1106,7 @@ class AdmissionBarrierTests(unittest.TestCase):
             deployment.canary = lambda candidate, service, scope: observed.append(scope)
             deployment.quiescent = lambda: True
             deployment.save({"status": "rolling_back"})
-            self.assertEqual(observed, ["idle"])
+            self.assertEqual(observed, ["journal_idle"])
             self.assertTrue(deployment.rollback)
             self.assertEqual(deployment.journal["status"], "rolling_back")
 
@@ -585,7 +1132,7 @@ class AdmissionBarrierTests(unittest.TestCase):
             deployment.canary = lambda candidate, service, scope: scopes.append(scope)
             deployment.quiescent = lambda: True
             deployment.save({"status": "rolling_back"})
-            self.assertEqual(scopes, ["idle"], "A currently visible pause cannot erase the previous open-admission interval")
+            self.assertEqual(scopes, ["journal_idle"], "A currently visible pause cannot erase the previous open-admission interval")
             self.assertTrue(deployment.journal["admission_opened"])
 
     def test_removing_rule_seen_in_stale_control_plane_response_is_not_trusted_as_continuously_paused(self):
@@ -609,6 +1156,11 @@ class AdmissionBarrierTests(unittest.TestCase):
 
 
 class InterruptedRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        baseline_pin = patch("alto_rpc_cutover.BASELINE_FINGERPRINT", fingerprint(fixture()))
+        baseline_pin.start()
+        self.addCleanup(baseline_pin.stop)
+
     def setup_recovery(self, directory, *, status="verifying", service_revision=AFTER):
         events = []
         before = fixture()
@@ -670,7 +1222,23 @@ class InterruptedRecoveryTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             deployment, definitions, _, events = self.setup_recovery(directory)
             definitions[BEFORE]["memory"] = "4096"
+            with self.assertRaisesRegex(GuardRejected, "journal_provenance_baseline_mismatch"):
+                deployment.recover()
+            self.assertEqual(events, [])
+
+    def test_a_changed_journal_fingerprint_cannot_override_the_reviewed_baseline_pin(self):
+        with TemporaryDirectory() as directory:
+            deployment, _, journal, events = self.setup_recovery(directory)
+            journal["baseline_fingerprint"] = "0" * 64
+            deployment.path.write_text(json.dumps(journal))
             with self.assertRaisesRegex(GuardRejected, "recovery_baseline_drift"):
+                deployment.recover()
+            self.assertEqual(events, [])
+
+    def test_provenance_pin_mismatch_blocks_even_an_internally_consistent_recovery_journal(self):
+        with TemporaryDirectory() as directory, patch("alto_rpc_cutover.BASELINE_FINGERPRINT", "0" * 64):
+            deployment, _, _, events = self.setup_recovery(directory)
+            with self.assertRaisesRegex(GuardRejected, "journal_provenance_baseline_mismatch"):
                 deployment.recover()
             self.assertEqual(events, [])
 
