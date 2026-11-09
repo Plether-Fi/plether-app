@@ -1506,6 +1506,12 @@ jobs:
           ' task-def.json > task-def.funding.json
           mv task-def.funding.json task-def.json
 
+      - name: Configure Sepolia Privy app for passkey names
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
+        run: python3 deployment-policy/.github/scripts/configure-privy-app.py task-def.json "$PRIVY_APP_ID"
+
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
         env:

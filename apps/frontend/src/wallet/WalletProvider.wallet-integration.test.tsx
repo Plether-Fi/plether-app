@@ -1,3 +1,7 @@
+vi.mock('./passkeyNames', async importOriginal => ({
+  ...await importOriginal<typeof import('./passkeyNames')>(),
+  usePasskeyNames: () => ({ names: {}, loading: false, saving: false, error: null, retry: vi.fn(), rename: vi.fn().mockResolvedValue(null) }),
+}))
 import * as passkeyOrigin from './passkeyOrigin'
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -375,14 +379,14 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     await expectConnected(embedded.account.address)
     render(<>{sdk.nativeAccountActions?.(sdk.closeNativeAccount)}</>)
     const client = await getWalletClient(config)
-    fireEvent.click(screen.getByRole('button', { name: 'Enable additional passkeys for wallet MFA' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Enable for wallet MFA' }))
     expect(sdk.promptMfa).toHaveBeenCalledOnce()
     expect(sdk.submitMfaPasskeys).not.toHaveBeenCalled()
     await act(async () => { verify() })
     expect(sdk.submitMfaPasskeys).toHaveBeenCalledExactlyOnceWith(
       { credentialIds: ['public-mac-key', 'public-mobile-key'] }, { removeForLogin: false },
     )
-    expect(screen.getByText(/Linked passkeys are enabled for wallet MFA/)).toBeVisible()
+    expect(screen.getByText(/Wallet MFA enabled for this passkey/)).toBeVisible()
     await expectConnected(embedded.account.address)
     const message = 'The same embedded trading owner signs after adding a second MFA passkey'
     expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)

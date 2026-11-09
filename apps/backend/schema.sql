@@ -3385,3 +3385,11 @@ CREATE TABLE IF NOT EXISTS vault_return_evidence (
   payload JSONB NOT NULL,
   PRIMARY KEY (deployment_key, evidence_key, block_hash)
 );
+-- Cosmetic, account-scoped passkey labels. Credentials/MFA remain owned by Privy.
+CREATE TABLE IF NOT EXISTS passkey_names (
+    privy_user_id TEXT NOT NULL,
+    credential_id TEXT NOT NULL CHECK (length(credential_id) BETWEEN 1 AND 2048),
+    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (privy_user_id, credential_id)
+);

@@ -2031,3 +2031,12 @@ variable "liquidation_worker_max_transaction_gas" {
     error_message = "Liquidation gas ceiling must be a positive integer."
   }
 }
+variable "privy_app_id" {
+  description = "Public Privy app ID used to verify passkey-name API access tokens"
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.privy_app_id == "" || can(regex("^[a-zA-Z0-9_-]{1,128}$", var.privy_app_id))
+    error_message = "Use a valid public Privy app ID, or leave empty to disable passkey names."
+  }
+}

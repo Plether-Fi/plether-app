@@ -1,13 +1,7 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useActiveWallet, useMfa, useMfaEnrollment, usePrivy, useUser, type User } from '@privy-io/react-auth'
-import { RegisteredPasskeys } from './RegisteredPasskeys'
-import { isPasskeyOriginSupported, localhostPasskeyUrl } from './passkeyOrigin'
-
-const buttonStyle: CSSProperties = {
-  width: '100%', padding: '12px 16px', border: '1px solid var(--privy-color-foreground-4)',
-  borderRadius: 0, background: 'var(--privy-color-background-2)',
-  color: 'var(--privy-color-foreground)', fontSize: 14, textAlign: 'left', cursor: 'pointer',
-}
+import { usePasskeyNames } from './passkeyNames'
+import { WalletMfaSettingsView } from './WalletMfaSettingsView'
 
 export function WalletMfaSettings({ onAddPasskey }: { onAddPasskey?: () => void }) {
   const { ready, authenticated, user } = usePrivy()
@@ -21,12 +15,15 @@ function WalletMfaActions({ user, wallet, onAddPasskey }: {
   wallet: NonNullable<ReturnType<typeof useActiveWallet>['wallet']>
   onAddPasskey?: () => void
 }) {
+  const { getAccessToken } = usePrivy()
+  const labels = usePasskeyNames(user.id, getAccessToken)
   const { promptMfa } = useMfa()
   const { refreshUser } = useUser()
   const { showMfaEnrollmentModal, initEnrollmentWithPasskey, submitEnrollmentWithPasskey } = useMfaEnrollment()
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState(false)
-  const [updated, setUpdated] = useState(false)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [updatedKey, setUpdatedKey] = useState<string | null>(null)
   const context = useRef({ user, wallet })
   const attempt = useRef(0)
   const pending = useRef(false)
@@ -36,10 +33,10 @@ function WalletMfaActions({ user, wallet, onAddPasskey }: {
 
   const passkeys = user.linkedAccounts.filter(account => account.type === 'passkey')
   const canUpdate = user.mfaMethods.includes('passkey') && passkeys.some(key => !key.enrolledInMfa)
-  const passkeySupported = isPasskeyOriginSupported()
-  const localhostUrl = localhostPasskeyUrl()
 
   const openSettings = () => {
+    setSelectedKey(null)
+    setUpdatedKey(null)
     setError(null)
     // The SDK owns enrollment, verification, and dismissal. Keep the account
     // dialog underneath, just as for Privy's other wallet management screens.
@@ -48,8 +45,8 @@ function WalletMfaActions({ user, wallet, onAddPasskey }: {
     })
   }
 
-  const enableAdditionalPasskeys = async () => {
-    if (pending.current || !canUpdate) return
+  const enablePasskey = async (credentialId: string) => {
+    if (pending.current || !canUpdate || !passkeys.some(key => key.credentialId === credentialId && !key.enrolledInMfa)) return
     const id = ++attempt.current
     const originalIds = passkeys.map(key => key.credentialId)
     const enrolledIds = passkeys.filter(key => key.enrolledInMfa).map(key => key.credentialId)
@@ -68,12 +65,13 @@ function WalletMfaActions({ user, wallet, onAddPasskey }: {
       }
       // Enrollment replaces the credential list. Preserve every enrolled key,
       // including keys enrolled elsewhere while verification was in progress.
-      return keys.filter(key => originalIds.includes(key.credentialId) || key.enrolledInMfa)
+      return keys.filter(key => key.credentialId === credentialId || key.enrolledInMfa)
     }
 
     pending.current = true
+    setSelectedKey(credentialId)
     setUpdating(true)
-    setUpdated(false)
+    setUpdatedKey(null)
     setError(null)
     try {
       await promptMfa()
@@ -89,7 +87,7 @@ function WalletMfaActions({ user, wallet, onAddPasskey }: {
       const keys = currentPasskeys(latestUser)
       if (!keys) return
       await submitEnrollmentWithPasskey({ credentialIds: [...new Set(keys.map(key => key.credentialId))] }, { removeForLogin: false })
-      if (currentPasskeys()) setUpdated(true)
+      if (currentPasskeys()) setUpdatedKey(credentialId)
     } catch {
       if (attempt.current === id) setError('Could not complete the wallet MFA update. Verify with an existing MFA method and try again.')
     } finally {
@@ -98,39 +96,7 @@ function WalletMfaActions({ user, wallet, onAddPasskey }: {
     }
   }
 
-  return (
-    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--privy-color-foreground-4)' }}>
-      <RegisteredPasskeys passkeys={passkeys} mfaEnabled={user.mfaMethods.includes('passkey')} action={onAddPasskey ? (
-        <button type="button" disabled={updating || !passkeySupported} onClick={onAddPasskey} style={{
-          display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: 44, padding: 0,
-          border: 0, background: 'transparent', color: 'var(--privy-color-foreground)',
-          fontSize: '0.875rem', lineHeight: '1.375rem', fontWeight: 400, cursor: updating || !passkeySupported ? 'default' : 'pointer',
-          opacity: updating || !passkeySupported ? 0.65 : 1,
-        }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 4.5v15M4.5 12h15" />
-          </svg>
-          Add passkey
-        </button>
-      ) : undefined} />
-      {onAddPasskey && !passkeySupported ? <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--privy-color-foreground-2)' }}>
-          Passkeys need an HTTPS domain or localhost.{localhostUrl ? <> <a href={localhostUrl}
-            style={{ color: 'var(--privy-color-foreground)', textDecoration: 'underline' }}>Open localhost to use passkeys</a>.</> : null}
-      </p> : null}
-      <button type="button" onClick={openSettings} disabled={updating} style={buttonStyle}>
-        Wallet MFA settings
-      </button>
-      {canUpdate && !updated ? <>
-        <button type="button" onClick={() => { void enableAdditionalPasskeys() }} disabled={updating}
-          style={{ ...buttonStyle, marginTop: 12 }}>
-          {updating ? 'Updating wallet MFA…' : 'Enable additional passkeys for wallet MFA'}
-        </button>
-        <p style={{ marginTop: 12, color: 'var(--privy-color-foreground-2)', fontSize: 14 }}>
-          Verify with an existing wallet MFA method to enable all linked passkeys. Your current MFA passkeys and login methods will be kept.
-        </p>
-      </> : null}
-      {updated ? <p role="status" style={{ marginTop: 12, fontSize: 14 }}>Linked passkeys are enabled for wallet MFA. Your existing passkeys are still enabled.</p> : null}
-      {error ? <p role="alert" style={{ marginTop: 12, color: 'var(--privy-color-error)', fontSize: 14 }}>{error}</p> : null}
-    </div>
-  )
+  return <WalletMfaSettingsView passkeys={passkeys} mfaEnabled={user.mfaMethods.includes('passkey')} labels={labels}
+    updating={updating} selectedKey={selectedKey} updatedKey={updatedKey} error={error}
+    onEnablePasskey={credentialId => { void enablePasskey(credentialId) }} onOpenSettings={openSettings} onAddPasskey={onAddPasskey} />
 }

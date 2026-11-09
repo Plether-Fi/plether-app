@@ -1,4 +1,12 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+const nameState = vi.hoisted(() => ({
+  names: {}, loading: false, saving: false, error: null as string | null,
+  retry: vi.fn(), rename: vi.fn(),
+}))
+vi.mock('./passkeyNames', async importOriginal => ({
+  ...await importOriginal<typeof import('./passkeyNames')>(),
+  usePasskeyNames: () => nameState,
+}))
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WalletMfaSettings } from './WalletMfaSettings'
 import * as passkeyOrigin from './passkeyOrigin'
@@ -17,6 +25,12 @@ vi.mock('@privy-io/react-auth', () => ({
 }))
 
 beforeEach(() => {
+  nameState.names = {}
+  nameState.loading = false
+  nameState.saving = false
+  nameState.error = null
+  nameState.retry.mockReset()
+  nameState.rename.mockReset().mockResolvedValue(null)
   sdk.ready = true
   sdk.authenticated = true
   sdk.user = { id: 'public-test-user', mfaMethods: [], linkedAccounts: [] }
@@ -82,7 +96,7 @@ it('shows an opening failure in the wallet modal and allows a retry', async () =
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
-const updateName = 'Enable additional passkeys for wallet MFA'
+const updateName = 'Enable for wallet MFA'
 const mac = { type: 'passkey', credentialId: 'public-mac-key', enrolledInMfa: true }
 const mobile = { type: 'passkey', credentialId: 'public-mobile-key', enrolledInMfa: false }
 function withAdditionalPasskey() {
@@ -100,6 +114,29 @@ it('includes registered passkeys and their individual enrollment status in the w
   expect(screen.getByRole('list', { name: 'Registered passkeys' })).toBeVisible()
   expect(screen.getByText('Wallet MFA enabled')).toBeVisible()
   expect(screen.getByText('Not enabled for wallet MFA')).toBeVisible()
+})
+
+it.each(['loading', 'unavailable'])('opens the pencil editor even when saved names are %s', async state => {
+  sdk.user!.linkedAccounts = [{ ...mac }]
+  nameState.loading = state === 'loading'
+  nameState.error = state === 'unavailable' ? 'API unavailable' : null
+  nameState.rename.mockResolvedValueOnce('Passkey names are temporarily unavailable. Try again.')
+  render(<WalletMfaSettings />)
+  const row = screen.getByRole('listitem')
+  const rename = within(row).getByRole('button', { name: 'Rename passkey', exact: true })
+  expect(rename).toBeEnabled()
+  expect(rename).toHaveAttribute('title', 'Rename passkey')
+  expect(rename.querySelector('.material-symbols-outlined')).toHaveTextContent('edit')
+  fireEvent.click(rename)
+  const input = within(row).getByRole('textbox', { name: 'Passkey name' })
+  expect(input).toHaveFocus()
+  fireEvent.change(input, { target: { value: 'YubiKey' } })
+  await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Save', exact: true })) })
+  expect(within(row).getByRole('alert')).toHaveTextContent('temporarily unavailable')
+  expect(input).toHaveValue('YubiKey')
+  await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Save', exact: true })) })
+  expect(within(row).queryByRole('textbox')).not.toBeInTheDocument()
+  expect(nameState.rename).toHaveBeenCalledTimes(2)
 })
 
 it.each(['not-enrolled', 'all-enrolled', 'no-passkeys'])('does not offer an unnecessary enrollment update (%s)', state => {
@@ -134,8 +171,40 @@ it('verifies existing MFA before adding the mobile key, keeping the Mac key and 
   expect(sdk.submit).toHaveBeenCalledExactlyOnceWith(
     { credentialIds: [mac.credentialId, mobile.credentialId] }, { removeForLogin: false },
   )
-  expect(screen.getByRole('status')).toHaveTextContent('Linked passkeys are enabled for wallet MFA')
+  expect(screen.getByRole('status')).toHaveTextContent('Wallet MFA enabled for this passkey')
   expect(screen.queryByRole('button', { name: updateName })).not.toBeInTheDocument()
+})
+
+it('enables only the selected key while preserving existing MFA and leaving another login key alone', async () => {
+  withAdditionalPasskey()
+  const yubikey = { ...mobile, credentialId: 'public-yubikey' }
+  sdk.user!.linkedAccounts.push(yubikey)
+  render(<WalletMfaSettings />)
+  const rows = screen.getAllByRole('listitem')
+  expect(within(rows[0]).queryByRole('button', { name: updateName })).not.toBeInTheDocument()
+  expect(within(rows[1]).getByRole('button', { name: updateName })).toBeEnabled()
+  await act(async () => { fireEvent.click(within(rows[2]).getByRole('button', { name: updateName })) })
+  expect(sdk.submit).toHaveBeenCalledExactlyOnceWith(
+    { credentialIds: [mac.credentialId, yubikey.credentialId] }, { removeForLogin: false },
+  )
+  expect(within(rows[1]).getByRole('button', { name: updateName })).toBeEnabled()
+  expect(within(rows[1]).queryByRole('status')).not.toBeInTheDocument()
+  expect(within(rows[2]).getByRole('status')).toHaveTextContent('Wallet MFA enabled for this passkey')
+})
+
+it('keeps enrollment failures and retries inside the selected passkey row', async () => {
+  withAdditionalPasskey()
+  sdk.user!.linkedAccounts.push({ ...mobile, credentialId: 'public-yubikey' })
+  sdk.prompt.mockRejectedValueOnce(new Error('Canceled'))
+  render(<WalletMfaSettings />)
+  const rows = screen.getAllByRole('listitem')
+  await act(async () => { fireEvent.click(within(rows[2]).getByRole('button', { name: updateName })) })
+  expect(within(rows[2]).getByRole('alert')).toBeVisible()
+  expect(within(rows[1]).queryByRole('alert')).not.toBeInTheDocument()
+  await act(async () => { fireEvent.click(within(rows[2]).getByRole('button', { name: updateName })) })
+  expect(sdk.submit).toHaveBeenCalledExactlyOnceWith(
+    { credentialIds: [mac.credentialId, 'public-yubikey'] }, { removeForLogin: false },
+  )
 })
 
 it.each(['prompt', 'init', 'refresh', 'submit'] as const)('allows retry after %s fails, without reporting success', async stage => {
