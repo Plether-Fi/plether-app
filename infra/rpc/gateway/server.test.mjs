@@ -15,6 +15,18 @@ async function listen(server) {
   return `http://127.0.0.1:${server.address().port}`
 }
 const request = (method = 'eth_blockNumber', id = 7) => ({ jsonrpc: '2.0', id, method, params: [] })
+const latestLogs = (fromBlock = '0x100', id = 7) => ({
+  ...request('eth_getLogs', id),
+  params: [{ address: `0x${'1'.repeat(40)}`, fromBlock, toBlock: 'latest', topics: [hash] }],
+})
+async function bounded(promise) {
+  let timer
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('fixture_request_not_started')), 2000)
+    })])
+  } finally { clearTimeout(timer) }
+}
 async function fixture({ sharedReference = false } = {}) {
   let clock = Date.now()
   const logs = []
@@ -26,10 +38,24 @@ async function fixture({ sharedReference = false } = {}) {
       for await (const chunk of req) data += chunk
       const body = JSON.parse(data)
       calls.push({ role, body, authorization: req.headers.authorization })
+      const batch = Array.isArray(body) ? body : [body]
+      if (batch.some(c => c.method === 'eth_blockNumber')) {
+        state[role].onBlockNumber?.()
+        if (state[role].blockNumberWait) await state[role].blockNumberWait
+      }
+      if (batch.some(c => c.method === 'debug_traceCall')) {
+        state[role].onTrace?.()
+        if (state[role].traceWait) await state[role].traceWait
+      }
       if (state[role].status) { res.writeHead(state[role].status); return res.end() }
+      if (state[role].logStatus && batch.some(c => c.method === 'eth_getLogs')) {
+        res.writeHead(state[role].logStatus); return res.end()
+      }
       const answer = c => {
         let result
         if (c.method === 'eth_chainId') result = state[role].chain ?? '0x66eee'
+        else if (c.method === 'eth_blockNumber') result = state[role].height ?? '0x100'
+        else if (c.method === 'eth_getLogs') result = []
         else if (c.method === 'eth_syncing') result = state[role].syncing ?? false
         else if (c.method === 'eth_getBlockByNumber') {
           result = {
@@ -105,6 +131,172 @@ test('managed receipts, bounded historical traces and old state use Alchemy with
   const before = calls.length
   assert.equal((await f.send(managed[0], '/primary')).status, 400)
   assert.equal(calls.length, before)
+})
+
+test('Alto latest log polls pin a fresh selected-upstream head without using probe height or mutating the request', async () => {
+  const f = await fixture()
+  f.state.primaryHeight = 0x100n
+  f.upstream.primary.height = '0x2f3'
+  const body = latestLogs('0x100')
+  const before = calls.length
+  const response = await f.send([request('eth_chainId', 1), body], '/primary')
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-plether-rpc-upstream'), 'primary')
+  const sent = calls.slice(before)
+  assert.equal(sent.length, 2)
+  assert.equal(sent[0].body.method, 'eth_blockNumber')
+  assert.equal(sent[1].body[1].params[0].toBlock, '0x2f3')
+  assert.equal(body.params[0].toBlock, 'latest')
+  assert.deepEqual(sent[1].body[1].params[0].topics, [hash])
+  await response.body.cancel()
+})
+
+test('latest log ranges retain the 5,000-block bound before forwarding a scan', async () => {
+  const f = await fixture()
+  f.upstream.primary.height = '0x1388'
+  let before = calls.length
+  const allowed = await f.send(latestLogs('0x1'))
+  assert.equal(allowed.status, 200)
+  assert.equal(calls.slice(before).filter(c => c.body.method === 'eth_getLogs').length, 1)
+  await allowed.body.cancel()
+  for (const height of ['0x1389', '0x0']) {
+    f.upstream.primary.height = height
+    before = calls.length
+    const denied = await f.send(latestLogs('0x1'))
+    assert.equal(denied.status, 400)
+    assert.deepEqual(calls.slice(before).map(c => c.body.method), ['eth_blockNumber'])
+    assert.equal(f.state.primary, true)
+    await denied.body.cancel()
+  }
+})
+
+test('latest log filters require valid addresses and numeric starts before any upstream access', async () => {
+  const f = await fixture()
+  for (const changes of [
+    { address: undefined }, { address: [] }, { address: '0x123' },
+    { address: ['0x123'] }, { fromBlock: undefined }, { fromBlock: 'earliest' },
+    { blockHash: hash },
+  ]) {
+    const body = latestLogs()
+    Object.assign(body.params[0], changes)
+    const before = calls.length
+    const response = await f.send(body)
+    assert.equal(response.status, 400)
+    assert.equal(calls.length, before)
+    await response.body.cancel()
+  }
+  const body = latestLogs()
+  const before = calls.length
+  const invalidBatch = await f.send([body, request('personal_sign', 2)])
+  assert.equal(invalidBatch.status, 400)
+  assert.equal(calls.length, before)
+  await invalidBatch.body.cancel()
+})
+
+test('read fallback re-pins latest logs to the backup head; direct-primary requests never fall back', async () => {
+  const f = await fixture()
+  f.upstream.primary.height = '0x120'
+  f.upstream.backup.height = '0x140'
+  f.upstream.primary.logStatus = 503
+  const before = calls.length
+  const response = await f.send(latestLogs())
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-plether-rpc-upstream'), 'backup')
+  assert.deepEqual(calls.slice(before).map(c => [c.role, c.body.method, c.body.params[0]?.toBlock]), [
+    ['primary', 'eth_blockNumber', undefined], ['primary', 'eth_getLogs', '0x120'],
+    ['backup', 'eth_blockNumber', undefined], ['backup', 'eth_getLogs', '0x140'],
+  ])
+  await response.body.cancel()
+  f.state.primary = true
+  const directBefore = calls.length
+  const direct = await f.send(latestLogs(), '/primary')
+  assert.equal(direct.status, 502)
+  assert.deepEqual(calls.slice(directBefore).map(c => c.role), ['primary', 'primary'])
+  await direct.body.cancel()
+})
+
+test('a latest log request cannot replay a batch containing a raw send', async () => {
+  const f = await fixture()
+  const raw = { ...request('eth_sendRawTransaction', 2), params: ['0xdeadbeef'] }
+  f.upstream.primary.height = '0x120'
+  f.upstream.primary.logStatus = 503
+  const before = calls.length
+  const response = await f.send([latestLogs('0x100', 1), raw])
+  assert.equal(response.status, 502)
+  assert.deepEqual(calls.slice(before).map(c => c.role), ['primary', 'primary'])
+  assert.deepEqual(calls.at(-1).body[1], raw)
+  await response.body.cancel()
+})
+
+test('latest-head normalization respects authentication, stale probes and active-request limits first', async () => {
+  const f = await fixture()
+  let before = calls.length
+  const unauthorized = await f.send(latestLogs(), '/', 'wrong')
+  assert.equal(unauthorized.status, 401)
+  assert.equal(calls.length, before)
+  await unauthorized.body.cancel()
+  f.advance(16_000)
+  const stale = await f.send(latestLogs())
+  assert.equal(stale.status, 503)
+  assert.equal(calls.length, before)
+  await stale.body.cancel()
+  await f.probe()
+  await f.probe()
+  let release
+  f.upstream.primary.blockNumberWait = new Promise(resolve => { release = resolve })
+  let started = 0
+  let allStarted
+  const barrier = new Promise(resolve => { allStarted = resolve })
+  f.upstream.primary.onBlockNumber = () => { if (++started === 16) allStarted() }
+  const active = Array.from({ length: 16 }, () => f.send(latestLogs()))
+  try {
+    await bounded(barrier)
+    before = calls.length
+    const busy = await f.send(latestLogs())
+    assert.equal(busy.status, 429)
+    assert.equal(calls.length, before)
+    await busy.body.cancel()
+  } finally { release() }
+  const responses = await Promise.all(active)
+  assert.equal(responses.every(response => response.status === 200), true)
+  await Promise.all(responses.map(response => response.body.cancel()))
+})
+
+test('heavy-request admission rejects a third simulation before its latest-head lookup', async () => {
+  const f = await fixture()
+  let release
+  f.upstream.primary.traceWait = new Promise(resolve => { release = resolve })
+  let started = 0
+  let allStarted
+  const barrier = new Promise(resolve => { allStarted = resolve })
+  f.upstream.primary.onTrace = () => { if (++started === 2) allStarted() }
+  const body = [request('debug_traceCall', 1), latestLogs('0x100', 2)]
+  const active = [f.send(body), f.send(body)]
+  try {
+    await bounded(barrier)
+    const before = calls.length
+    const busy = await f.send(body)
+    assert.equal(busy.status, 429)
+    assert.equal(calls.length, before)
+    await busy.body.cancel()
+  } finally { release() }
+  const responses = await Promise.all(active)
+  assert.equal(responses.every(response => response.status === 200), true)
+  await Promise.all(responses.map(response => response.body.cancel()))
+})
+
+test('a latest-head timeout consumes the request deadline without forwarding logs or replaying writes', async () => {
+  const f = await fixture()
+  let release
+  f.upstream.primary.blockNumberWait = new Promise(resolve => { release = resolve })
+  const before = calls.length
+  const body = [latestLogs('0x100', 1), { ...request('eth_sendRawTransaction', 2), params: ['0xdeadbeef'] }]
+  try {
+    const response = await f.send(body)
+    assert.equal(response.status, 502)
+    assert.deepEqual(calls.slice(before).map(c => [c.role, c.body.method]), [['primary', 'eth_blockNumber']])
+    await response.body.cancel()
+  } finally { release() }
 })
 
 test('state history routing is explicit and leaves latest/safe/finalized and the retained window on Nitro', () => {

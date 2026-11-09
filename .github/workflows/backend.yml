@@ -56,6 +56,17 @@ jobs:
         working-directory: .
         run: node --test scripts/candle-admin-task-identity.test.mjs
 
+      - name: Set up Node for Alto RPC authentication tests
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 25.2.1
+
+      - name: Test Alto RPC cutover and scoped authentication
+        working-directory: .
+        run: |
+          python3 -m unittest discover -s infra/rpc/ops -p 'test_alto_rpc_cutover.py'
+          node --test infra/alto/rpc-auth.test.mjs infra/alto/qualify-rpc.test.mjs
+
       - name: Reject Blockscout runtime dependencies
         working-directory: .
         run: |
@@ -72,7 +83,7 @@ jobs:
         working-directory: .
         run: |
           terraform -chdir=infra/terraform init -backend=false -input=false
-          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -no-color
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -filter=tests/alto_ingress.tftest.hcl -no-color
 
       - name: Test AA RPC mode and recovery origin guards
         env:

@@ -361,8 +361,8 @@ Alchemy; contract reverts and ambiguous writes are not retried across providers.
 The existing, explicitly configured `single-provider-sepolia` AA policy is
 preserved. AA security reads use `/primary`, which cannot fall back; both reads
 in that mode remain reads from one provider. This is not dual independent
-verification. The existing Alto service and its Alchemy parameter
-`/plether/sepolia/perps-rpc-url` are left unchanged. Application task revisions
+verification. The initial application cutover leaves Alto and its Alchemy parameter
+`/plether/sepolia/perps-rpc-url` unchanged. Application task revisions
 use the separate `/plether/sepolia/app-rpc-url`, so they cannot redirect Alto
 on a later task restart. This cutover neither restarts nor redeploys Alto.
 After the RPC cutover, the frontend refreshes positions, pending orders and live
@@ -427,3 +427,58 @@ For rollback, `ops/prepare_app_cutover.py rollback` registers the prior RPC
 references to the preserved Alchemy parameter, then the backend workflow must
 redeploy from reviewed `master`.
 The browser can keep its proxy URL during that rollback.
+
+## Alto RPC migration
+
+Alto can use the same private gateway for simulation, chain reads and bundle
+submission, with Alchemy retained as its fallback. Its pinned CLI cannot configure
+HTTP headers. The derivative image in `infra/alto/Dockerfile` preserves the pinned
+Alto application and adds a Node preload that authenticates only the exact gateway
+origin. Credentials remain in SSM and headers; they are never placed in URLs.
+
+Before the cutover, publish the reviewed gateway image through
+`rpc-node-admin.yml` and review the standalone RPC Terraform plan. The plan may
+update the gateway image/task/service and add HTTPS ingress from the existing
+Alto security group. It must not alter the Nitro instance, its database or other
+application services. The gateway pins Alto's addressed `latest` log requests to
+a fresh numeric head and retains the 5,000-block bound. Ambiguous write failures
+are returned to Alto for reconciliation; the gateway never replays those writes
+against the backup.
+
+Prepare the exact runtime SSM grants and protected deployment-role permissions
+declared in Terraform. Retain access to the original Alchemy parameter for
+rollback. Use the dedicated protected workflow from reviewed `master`:
+
+```bash
+gh workflow run alto-rpc-cutover.yml \
+  --repo Plether-Fi/plether-app --ref master -f environment=sepolia
+```
+
+The workflow builds an immutable authentication image and requires a fresh,
+complete scan with zero critical findings. It does not renew the old image
+exception. A canary without signer credentials checks the new path from Alto's
+own network, including simulation overrides, primary routing, bounded log scans
+and isolated Alchemy fallback.
+
+The operator temporarily returns a retryable 503 for new Alto POST requests. A
+separate observer without RPC or signer credentials uses the API network to
+verify that admission is paused, wait for the API acknowledgement timeout, and
+observe an empty outstanding queue and all executor wallets available twice.
+Operations whose submission outcome is unknown retain the existing journal and
+same-hash recovery path. The old signer task must reach actual `STOPPED` before
+the replacement starts. Signers, gas budgets, validation settings and all other
+task configuration remain unchanged apart from the reviewed image, preload and
+RPC credential bindings.
+
+Promotion requires healthy ECS targets and public AA entrypoint/gas-price checks.
+Failure triggers restoration of the exact recorded baseline task definition with
+the same stop-before-start rule. The workflow retains identifier-only rollout and
+qualification records for seven days. A `rollback_failed` result requires operator
+attention: retain the recorded admission barrier and task identifiers, and do not
+start a second signer instance manually.
+
+After successful qualification, pin the published gateway image in the standalone
+RPC inputs and set `alto_rpc_auth_image`, `alto_rpc_auth_token_ssm_parameter_name`
+and `alto_rpc_url_ssm_parameter_name` in the Sepolia application overlay. This
+records the deployed configuration for later Terraform use; it does not require
+applying the whole application root.

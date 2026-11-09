@@ -16,6 +16,16 @@ mock_provider "aws" {
   }
   override_resource {
     override_during = plan
+    target          = aws_ssm_parameter.posthog_otlp_authorization_header
+    values          = { arn = "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/posthog-otlp-authorization-header" }
+  }
+  override_resource {
+    override_during = plan
+    target          = aws_lb_listener.alto[0]
+    values          = { arn = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:listener/app/plether-sepolia-alto/1111111111111111/2222222222222222" }
+  }
+  override_resource {
+    override_during = plan
     target          = aws_iam_role.aa_reconciler_execution[0]
     values          = { arn = "arn:aws:iam::932542905614:role/synthetic-aa-reconciler-execution" }
   }
@@ -108,6 +118,77 @@ run "application_rpc_preserves_the_existing_alchemy_parameter_and_alto" {
     error_message = "Application consumers must move to their own parameter without overwriting the original Alchemy value or redirecting Alto."
   }
 }
+run "alto_rpc_auth_is_off_without_explicit_image_and_token" {
+  command = plan
+  assert {
+    condition = (
+      !local.alto_rpc_auth_enabled &&
+      local.alto_rpc_auth_token_parameter_arn == null &&
+      jsonencode(local.alto_entrypoint) == jsonencode(["node", "/app/src/esm/cli/alto.js"]) &&
+      !contains([for secret in local.alto_optional_secrets : secret.name], "PLETHER_ALTO_RPC_AUTH_TOKEN")
+    )
+    error_message = "Existing Alto configuration must not install the authentication preload or obtain its token by default."
+  }
+}
+run "authenticated_alto_uses_exact_gateway_credentials_and_qualified_image" {
+  command = plan
+  variables {
+    alto_rpc_url_ssm_parameter_name        = "/plether/sepolia/app-rpc-url"
+    alto_rpc_auth_token_ssm_parameter_name = "/plether/sepolia/rpc-gateway-token"
+    alto_rpc_auth_image                    = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    alto_max_gas_per_user_operation        = "31000000"
+    alto_max_gas_per_bundle                = "125000000"
+  }
+  assert {
+    condition = (
+      jsonencode(local.alto_entrypoint) == jsonencode(["node", "--import", "/app/plether-rpc-auth.mjs", "/app/src/esm/cli/alto.js"]) &&
+      local.alto_image == var.alto_rpc_auth_image &&
+      jsonencode(local.alto_optional_secrets) == jsonencode([{
+        name      = "PLETHER_ALTO_RPC_AUTH_TOKEN"
+        valueFrom = "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/rpc-gateway-token"
+      }]) &&
+      jsonencode(local.alto_gas_environment) == jsonencode([
+        { name = "ALTO_MAX_GAS_PER_USER_OP", value = "31000000" },
+        { name = "ALTO_MAX_GAS_PER_BUNDLE", value = "125000000" },
+      ])
+    )
+    error_message = "Alto RPC authentication must select its reviewed preload/image and exact credential while retaining supplied gas limits."
+  }
+  assert {
+    condition = (
+      contains(jsondecode(aws_iam_role_policy.alto_execution_secrets[0].policy).Statement[0].Resource, "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/app-rpc-url") &&
+      contains(jsondecode(aws_iam_role_policy.alto_execution_secrets[0].policy).Statement[0].Resource, "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/rpc-gateway-token") &&
+      contains(jsondecode(aws_iam_role_policy.alto_execution_secrets[0].policy).Statement[0].Resource, "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/perps-rpc-url") &&
+      !contains(jsondecode(aws_iam_role_policy.alto_execution_secrets[0].policy).Statement[0].Resource, "*")
+    )
+    error_message = "The Alto execution role must obtain only the exact configured gateway URL/token parameters."
+  }
+}
+run "reject_authenticated_alto_without_qualified_image" {
+  command = plan
+  variables {
+    alto_rpc_url_ssm_parameter_name        = "/plether/sepolia/app-rpc-url"
+    alto_rpc_auth_token_ssm_parameter_name = "/plether/sepolia/rpc-gateway-token"
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_authenticated_alto_with_provider_bypass" {
+  command = plan
+  variables {
+    alto_rpc_url_ssm_parameter_name                  = "/plether/sepolia/app-rpc-url"
+    alto_rpc_auth_token_ssm_parameter_name           = "/plether/sepolia/rpc-gateway-token"
+    alto_rpc_auth_image                              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    alto_send_transaction_rpc_url_ssm_parameter_name = "/plether/sepolia/perps-rpc-url"
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_preload_image_without_auth_configuration" {
+  command = plan
+  variables {
+    alto_rpc_auth_image = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
 run "reject_application_rpc_from_another_environment" {
   command = plan
   variables {
@@ -157,6 +238,52 @@ run "preserve_singapore_identity" {
 }
 run "deployment_metadata_permissions" {
   command = plan
+  assert {
+    condition = (
+      one([for statement in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : statement if statement.Sid == "PauseAltoRpcAdmission"]) == {
+        Sid      = "PauseAltoRpcAdmission"
+        Effect   = "Allow"
+        Action   = "elasticloadbalancing:CreateRule"
+        Resource = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:listener/app/plether-sepolia-alto/1111111111111111/2222222222222222"
+        Condition = {
+          StringEquals = { "aws:RequestTag/Capability" = "alto-rpc-admission" }
+          StringLike = {
+            "aws:RequestTag/WorkflowOwner" = "alto-rpc-*"
+            "aws:RequestTag/Source"        = "????????????????????????????????????????"
+          }
+          "ForAllValues:StringEquals" = { "aws:TagKeys" = ["Capability", "WorkflowOwner", "Source"] }
+        }
+      } &&
+      one([for statement in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : statement if statement.Sid == "RestoreAltoRpcAdmission"]) == {
+        Sid      = "RestoreAltoRpcAdmission"
+        Effect   = "Allow"
+        Action   = "elasticloadbalancing:DeleteRule"
+        Resource = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:listener-rule/app/plether-sepolia-alto/1111111111111111/2222222222222222/*"
+        Condition = {
+          StringEquals = { "aws:ResourceTag/Capability" = "alto-rpc-admission" }
+          StringLike = {
+            "aws:ResourceTag/WorkflowOwner" = "alto-rpc-*"
+            "aws:ResourceTag/Source"        = "????????????????????????????????????????"
+          }
+        }
+      }
+    )
+    error_message = "The admission barrier may create rules on only Alto's exact listener and delete rules from only that listener's rule family."
+  }
+  assert {
+    condition = (
+      one([for statement in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : statement if statement.Sid == "TagAltoRpcAdmissionOnCreate"]).Resource == "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:listener-rule/app/plether-sepolia-alto/1111111111111111/2222222222222222/*" &&
+      one([for statement in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : statement if statement.Sid == "TagAltoRpcAdmissionOnCreate"]).Condition.StringEquals["elasticloadbalancing:CreateAction"] == "CreateRule" &&
+      one([for statement in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : statement if statement.Sid == "InspectAltoRpcAdmissionTags"]) == {
+        Sid       = "InspectAltoRpcAdmissionTags"
+        Effect    = "Allow"
+        Action    = "elasticloadbalancing:DescribeTags"
+        Resource  = "*"
+        Condition = { StringEquals = { "aws:RequestedRegion" = "ap-southeast-1" } }
+      }
+    )
+    error_message = "Admission rule tagging must be create-only and ARN-bound; unavoidable tag inspection must remain read-only and region-bound."
+  }
   assert {
     condition = one([
       for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : s

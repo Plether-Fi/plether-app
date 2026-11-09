@@ -294,10 +294,73 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
           "ec2:DescribeSecurityGroupRules",
           "ec2:DescribeSecurityGroups",
           "ec2:DescribeSubnets",
+          "elasticloadbalancing:DescribeListeners",
+          "elasticloadbalancing:DescribeLoadBalancers",
+          "elasticloadbalancing:DescribeRules",
           "elasticloadbalancing:DescribeTargetGroups",
           "elasticloadbalancing:DescribeTargetHealth",
         ]
         Resource = "*"
+      },
+      {
+        Sid      = "PauseAltoRpcAdmission"
+        Effect   = "Allow"
+        Action   = "elasticloadbalancing:CreateRule"
+        Resource = aws_lb_listener.alto[0].arn
+        Condition = {
+          StringEquals = {
+            "aws:RequestTag/Capability" = "alto-rpc-admission"
+          }
+          StringLike = {
+            "aws:RequestTag/WorkflowOwner" = "alto-rpc-*"
+            "aws:RequestTag/Source"        = "????????????????????????????????????????"
+          }
+          "ForAllValues:StringEquals" = {
+            "aws:TagKeys" = ["Capability", "WorkflowOwner", "Source"]
+          }
+        }
+      },
+      {
+        Sid      = "RestoreAltoRpcAdmission"
+        Effect   = "Allow"
+        Action   = "elasticloadbalancing:DeleteRule"
+        Resource = "${replace(aws_lb_listener.alto[0].arn, ":listener/", ":listener-rule/")}/*"
+        Condition = {
+          StringEquals = { "aws:ResourceTag/Capability" = "alto-rpc-admission" }
+          StringLike = {
+            "aws:ResourceTag/WorkflowOwner" = "alto-rpc-*"
+            "aws:ResourceTag/Source"        = "????????????????????????????????????????"
+          }
+        }
+      },
+      {
+        Sid      = "TagAltoRpcAdmissionOnCreate"
+        Effect   = "Allow"
+        Action   = "elasticloadbalancing:AddTags"
+        Resource = "${replace(aws_lb_listener.alto[0].arn, ":listener/", ":listener-rule/")}/*"
+        Condition = {
+          StringEquals = {
+            "elasticloadbalancing:CreateAction" = "CreateRule"
+            "aws:RequestTag/Capability"         = "alto-rpc-admission"
+          }
+          StringLike = {
+            "aws:RequestTag/WorkflowOwner" = "alto-rpc-*"
+            "aws:RequestTag/Source"        = "????????????????????????????????????????"
+          }
+          "ForAllValues:StringEquals" = {
+            "aws:TagKeys" = ["Capability", "WorkflowOwner", "Source"]
+          }
+        }
+      },
+      {
+        Sid    = "InspectAltoRpcAdmissionTags"
+        Effect = "Allow"
+        Action = "elasticloadbalancing:DescribeTags"
+        # ELB's DescribeTags API has no resource-level authorization support.
+        Resource = "*"
+        Condition = {
+          StringEquals = { "aws:RequestedRegion" = var.aws_region }
+        }
       },
       {
         Sid      = "DescribeAaPaymasterKey"
@@ -332,12 +395,14 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
               "fixed-digest-kms-attestation",
               "resume-aa-issuance",
               "simulation-bootstrap",
+              "alto-rpc-qualification",
             ]
           }
           StringLike = {
             "aws:RequestTag/WorkflowOwner" = [
               "aa-admin-*",
               "alto-b-*",
+              "alto-rpc-*",
             ]
           }
           "ForAllValues:StringEquals" = {
@@ -604,6 +669,8 @@ resource "aws_iam_role_policy" "alto_execution_secrets" {
         ]
         Resource = compact([
           local.alto_rpc_url_parameter_arn,
+          local.alto_rpc_auth_token_parameter_arn,
+          local.alto_rollback_rpc_url_parameter_arn,
           local.alto_send_transaction_rpc_url_parameter_arn,
           local.alto_executor_keys_parameter_arn,
           local.alto_utility_key_parameter_arn,
