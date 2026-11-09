@@ -6,13 +6,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from alto_rpc_cutover import (
     GuardRejected, require_baseline, patch_definition, assert_only_rpc_patch,
     canary_definition, journal_idle_definition, validate_writer_ingress,
     validate_canary_proof, validate_service, validate_scan,
-    replace_service, perform_cutover, fingerprint, canary_canonical, Deployment,
+    replace_service, perform_cutover, fingerprint, canary_canonical, canary_exit_code,
+    require_no_canary_restart, Deployment,
 )
 
 ACCOUNT = "932542905614"
@@ -165,6 +166,12 @@ def proof_fixture(scope="rpc", now_ms=1_794_213_000_000):
                      unresolved_count=0, executor_wallets_available=4, executor_wallets_total=4,
                      process_started_at_seconds=now_ms / 1000 - 60)
     return proof
+
+
+def canary_task_fixture(task_status="DEPROVISIONING", container_status="STOPPED", exit_code=0):
+    return {"taskArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:task/plether-sepolia/canary-fixture",
+            "lastStatus": task_status, "desiredStatus": "STOPPED",
+            "containers": [{"name": "plether-alto", "lastStatus": container_status, "exitCode": exit_code}]}
 
 
 def scan_fixture(now=1_794_213_000):
@@ -659,6 +666,163 @@ class CanaryProofTests(unittest.TestCase):
                 validate_canary_proof(proof_fixture(now_ms=now_ms), "rpc", invalid_now)
 
 
+class CanaryProcessExitTests(unittest.TestCase):
+    def test_only_absent_or_explicitly_disabled_container_restart_policy_is_allowed_for_exit_proof(self):
+        for policy in [None, {"enabled": False}]:
+            api, prepared = api_fixture(), patch_definition(fixture(), IMAGE)
+            if policy is not None:
+                api["containerDefinitions"][0]["restartPolicy"] = copy.deepcopy(policy)
+                main_container(prepared)["restartPolicy"] = copy.deepcopy(policy)
+            observers = [canary_definition(prepared, SOURCE, "console.log('rpc')", BASELINE_URL),
+                         journal_idle_definition(api, SOURCE, "console.log('idle')", BASELINE_URL)]
+            for observer in observers:
+                with self.subTest(policy=policy):
+                    require_no_canary_restart(observer)
+
+    def test_restart_enabled_or_malformed_policies_cannot_authorize_canary_process_exit(self):
+        for policy in [{"enabled": True}, {"enabled": True, "ignoredExitCodes": [1]},
+                       {}, {"enabled": 0}, {"enabled": "false"}, False, [], "disabled"]:
+            api, prepared = api_fixture(), patch_definition(fixture(), IMAGE)
+            api["containerDefinitions"][0]["restartPolicy"] = copy.deepcopy(policy)
+            main_container(prepared)["restartPolicy"] = copy.deepcopy(policy)
+            with self.subTest(policy=policy, scope="rpc"), self.assertRaisesRegex(GuardRejected, "restart_policy"):
+                canary_definition(prepared, SOURCE, "console.log('rpc')", BASELINE_URL)
+            with self.subTest(policy=policy, scope="journal_idle"), self.assertRaisesRegex(GuardRejected, "restart_policy"):
+                journal_idle_definition(api, SOURCE, "console.log('idle')", BASELINE_URL)
+
+    def test_canary_restart_restriction_does_not_change_the_running_alto_configuration(self):
+        before = fixture()
+        main_container(before)["restartPolicy"] = {"enabled": True, "restartAttemptPeriod": 60}
+        prepared = patch_definition(before, IMAGE)
+        assert_only_rpc_patch(before, prepared, IMAGE)
+        self.assertEqual(main_container(prepared)["restartPolicy"], main_container(before)["restartPolicy"])
+
+    def test_definite_sole_canary_container_exit_does_not_wait_for_task_deprovisioning(self):
+        for status in ["RUNNING", "STOPPING", "DEPROVISIONING", "STOPPED"]:
+            for code in [0, 1]:
+                with self.subTest(task_status=status, exit_code=code):
+                    self.assertEqual(canary_exit_code(canary_task_fixture(status, exit_code=code)), code)
+
+    def test_desired_task_stop_does_not_prove_the_canary_process_has_exited(self):
+        task = canary_task_fixture(task_status="STOPPED", container_status="RUNNING", exit_code=0)
+        self.assertIsNone(canary_exit_code(task))
+        for code in [None, True, False, 0.0, "0"]:
+            task = canary_task_fixture(exit_code=code)
+            with self.subTest(exit_code=code):
+                self.assertIsNone(canary_exit_code(task))
+        task = canary_task_fixture()
+        task["containers"][0].pop("exitCode")
+        self.assertIsNone(canary_exit_code(task))
+
+    def test_an_unexpected_container_or_extra_process_cannot_supply_exit_proof(self):
+        for case in ["wrong_name", "two_containers", "no_containers"]:
+            task = canary_task_fixture()
+            if case == "wrong_name":
+                task["containers"][0]["name"] = "plether-api"
+            elif case == "two_containers":
+                task["containers"].append(copy.deepcopy(task["containers"][0]))
+            else:
+                task["containers"] = []
+            with self.subTest(case=case):
+                self.assertIsNone(canary_exit_code(task))
+
+
+class CanaryLifecycleTests(unittest.TestCase):
+    now_ms = 1_794_213_000_000
+
+    def setup_canary(self, directory, states, records=None):
+        deployment = object.__new__(Deployment)
+        deployment.args = SimpleNamespace(source=SOURCE, image=IMAGE)
+        deployment.directory = Path(directory)
+        deployment.journal, deployment.canary_proof = {}, None
+        deployment.budget = lambda: None
+        deployment.baseline_url = lambda service: BASELINE_URL
+        deployment.journal_observer_context = lambda service: (api_fixture(), copy.deepcopy(service["networkConfiguration"]))
+        definition_arn = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia-alto-rpc-canary:1"
+        reviewed = {}
+        def register(definition):
+            reviewed[definition_arn] = copy.deepcopy(definition)
+            return definition_arn
+        deployment.register = Mock(side_effect=register)
+        deployment.definition = lambda arn: copy.deepcopy(reviewed[arn])
+        deployment.save = lambda value: deployment.journal.update(copy.deepcopy(value))
+        observations = []
+        def describe(**kwargs):
+            task = copy.deepcopy(states[min(len(observations), len(states) - 1)])
+            observations.append(task)
+            return {"tasks": [task], "failures": []}
+        deployment.ecs = SimpleNamespace(
+            list_tasks=Mock(return_value={"taskArns": []}),
+            run_task=Mock(return_value={"tasks": [{"taskArn": states[0]["taskArn"]}], "failures": []}),
+            describe_tasks=Mock(side_effect=describe), stop_task=Mock(), deregister_task_definition=Mock())
+        if records is None:
+            records = [{"message": json.dumps(proof_fixture("journal_idle", self.now_ms))}]
+        def logs(**kwargs):
+            self.assertIsNotNone(canary_exit_code(observations[-1]), "Logs must not authorize a still-running process")
+            return {"events": records}
+        deployment.logs = SimpleNamespace(filter_log_events=Mock(side_effect=logs),
+                                         exceptions=SimpleNamespace(ResourceNotFoundException=LookupError))
+        return deployment, observations
+
+    def run_canary(self, deployment, delays):
+        with patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}), \
+             patch("alto_rpc_cutover.Path.read_text", return_value="console.log('fixture completion')"), \
+             patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000), \
+             patch("alto_rpc_cutover.time.sleep", side_effect=delays.append):
+            deployment.canary(patch_definition(fixture(), IMAGE), service_fixture(), "journal_idle")
+
+    def test_validated_proof_is_consumed_after_process_exit_before_task_cleanup_finishes(self):
+        for status in ["RUNNING", "DEPROVISIONING"]:
+            with self.subTest(task_status=status), TemporaryDirectory() as directory:
+                deployment, observations = self.setup_canary(directory, [canary_task_fixture(status)])
+                delays = []
+                self.run_canary(deployment, delays)
+                self.assertEqual(delays, [], "Container exit must not wait for slower task/ENI cleanup")
+                self.assertEqual(len(observations), 2, "One process observation plus final cleanup check suffices")
+                self.assertTrue(all(task["lastStatus"] == status for task in observations))
+                deployment.ecs.stop_task.assert_not_called()
+                deployment.ecs.deregister_task_definition.assert_called_once()
+                self.assertIs(deployment.canary_proof["required_checks_complete"], True)
+                self.assertTrue((Path(directory) / "idle-qualification.json").is_file())
+
+    def test_desired_stopped_does_not_consume_available_proof_while_the_process_is_running(self):
+        states = [canary_task_fixture("RUNNING", "RUNNING"), canary_task_fixture("DEPROVISIONING")]
+        with TemporaryDirectory() as directory:
+            deployment, observations = self.setup_canary(directory, states)
+            delays = []
+            self.run_canary(deployment, delays)
+            self.assertEqual(delays, [2])
+            self.assertEqual(len(observations), 3)
+            self.assertEqual(observations[0]["desiredStatus"], "STOPPED")
+            self.assertEqual(observations[0]["containers"][0]["lastStatus"], "RUNNING")
+            deployment.logs.filter_log_events.assert_called_once()
+            deployment.ecs.stop_task.assert_not_called()
+
+    def test_nonzero_process_exit_aborts_before_proof_reads_without_stopping_an_exited_process_again(self):
+        with TemporaryDirectory() as directory:
+            deployment, _ = self.setup_canary(directory, [canary_task_fixture(exit_code=1)])
+            with self.assertRaisesRegex(GuardRejected, "canary_failed"):
+                self.run_canary(deployment, [])
+            deployment.logs.filter_log_events.assert_not_called()
+            deployment.ecs.stop_task.assert_not_called()
+            deployment.ecs.deregister_task_definition.assert_called_once()
+            self.assertIsNone(deployment.canary_proof)
+            self.assertFalse((Path(directory) / "idle-qualification.json").exists())
+
+    def test_process_exit_or_completion_stdout_does_not_replace_a_valid_qualification_proof(self):
+        invalid = proof_fixture("journal_idle", self.now_ms)
+        invalid["tests"][0]["name"] = "completion_only"
+        for records in [[{"message": "fixture completion"}], [{"message": json.dumps(invalid)}]]:
+            with self.subTest(records=records), TemporaryDirectory() as directory:
+                deployment, _ = self.setup_canary(directory, [canary_task_fixture()], records)
+                with self.assertRaises(GuardRejected):
+                    self.run_canary(deployment, [])
+                deployment.ecs.stop_task.assert_not_called()
+                deployment.ecs.deregister_task_definition.assert_called_once()
+                self.assertIsNone(deployment.canary_proof)
+                self.assertFalse((Path(directory) / "idle-qualification.json").exists())
+
+
 class WriterIngressTests(unittest.TestCase):
     def test_only_api_marker_can_write_to_alto_through_the_fixed_internal_load_balancer(self):
         validate_writer_ingress(*writer_ingress_fixture())
@@ -796,6 +960,7 @@ class JournalObserverContextTests(unittest.TestCase):
         arn = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task/plether-sepolia/stopped-{scope}"
         eni = "eni-stopped-" + scope
         task = {"taskArn": arn, "taskDefinitionArn": definition["taskDefinitionArn"], "lastStatus": "STOPPED",
+                "containers": [{"name": "plether-alto", "lastStatus": "STOPPED", "exitCode": 0}],
                 "startedBy": f"alto-rpc-123-1-{scope}", "attachments": [{"type": "ElasticNetworkInterface",
                     "details": [{"name": "networkInterfaceId", "value": eni}]}]}
         record = {"scope": scope, "task": arn, "definition": definition["taskDefinitionArn"],
@@ -879,12 +1044,40 @@ class JournalObserverContextTests(unittest.TestCase):
                 with self.assertRaisesRegex(GuardRejected, "recorded_canary_network_drift"):
                     deployment.journal_observer_context(alto)
 
+    def test_exited_current_run_canary_eni_is_safe_while_ecs_finishes_task_cleanup(self):
+        for status in ["RUNNING", "STOPPING", "DEPROVISIONING"]:
+            for code in [0, 1]:
+                deployment, alto, _, _ = self.setup_context()
+                _, task, _, eni, groups = self.add_stopped_canary(deployment, "journal_idle")
+                task["lastStatus"] = status
+                task["containers"][0]["exitCode"] = code
+                with self.subTest(task_status=status, exit_code=code), patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
+                    self.assertEqual(deployment.stopped_canary_interfaces(), {eni: set(groups)})
+                    deployment.journal_observer_context(alto)
+
+    def test_unknown_or_ambiguous_canary_exit_metadata_cannot_exempt_a_writer_eni(self):
+        for case in ["missing_code", "boolean_code", "wrong_name", "extra_container"]:
+            deployment, _, _, _ = self.setup_context()
+            _, task, _, _, _ = self.add_stopped_canary(deployment, "journal_idle")
+            if case == "missing_code":
+                task["containers"][0].pop("exitCode")
+            elif case == "boolean_code":
+                task["containers"][0]["exitCode"] = False
+            elif case == "wrong_name":
+                task["containers"][0]["name"] = "plether-api"
+            else:
+                task["containers"].append(copy.deepcopy(task["containers"][0]))
+            with self.subTest(case=case), patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
+                with self.assertRaises(GuardRejected):
+                    deployment.stopped_canary_interfaces()
+
     def test_running_foreign_or_modified_canaries_cannot_be_exempted_from_writer_ownership(self):
-        for case in ["stopping", "foreign_run", "different_definition", "fingerprint", "task_role", "signer", "image", "server"]:
+        for case in ["active_container", "foreign_run", "different_definition", "fingerprint", "task_role", "signer", "image", "server", "restart"]:
             deployment, _, _, _ = self.setup_context()
             definition, task, record, _, _ = self.add_stopped_canary(deployment, "journal_idle")
-            if case == "stopping":
-                task["lastStatus"] = "STOPPING"
+            if case == "active_container":
+                task["desiredStatus"] = "STOPPED"
+                task["containers"][0]["lastStatus"] = "RUNNING"
             elif case == "foreign_run":
                 task["startedBy"] = "alto-rpc-other-run-journal_idle"
             elif case == "different_definition":
@@ -898,6 +1091,8 @@ class JournalObserverContextTests(unittest.TestCase):
                     definition["containerDefinitions"][0]["secrets"].append({"name": "ALTO_EXECUTOR_PRIVATE_KEYS", "valueFrom": PREFIX + "alto-executor-private-keys"})
                 elif case == "image":
                     definition["containerDefinitions"][0]["image"] = IMAGE
+                elif case == "restart":
+                    definition["containerDefinitions"][0]["restartPolicy"] = {"enabled": True}
                 else:
                     definition["containerDefinitions"][0]["entryPoint"] = ["/app/api-server"]
                 record["fingerprint"] = fingerprint(definition)
