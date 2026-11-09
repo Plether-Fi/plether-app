@@ -363,6 +363,16 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
         }
       },
       {
+        Sid    = "InspectAltoWriterNetworkInterfaces"
+        Effect = "Allow"
+        Action = "ec2:DescribeNetworkInterfaces"
+        # Verify that only the approved API task owns Alto's writer security group.
+        Resource = "*"
+        Condition = {
+          StringEquals = { "aws:RequestedRegion" = var.aws_region }
+        }
+      },
+      {
         Sid      = "DescribeAaPaymasterKey"
         Effect   = "Allow"
         Action   = "kms:DescribeKey"
