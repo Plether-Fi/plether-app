@@ -367,6 +367,44 @@ aaIntegrationSpec databaseUrl =
           `shouldReturn` Right ()
         getAaIssuancePause conn `shouldReturn` Nothing
 
+    it "keeps exact rolling budget totals while ignoring history outside each window" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        previous <- submittedAuthorization conn now
+        let digest = saDigest previous
+            operationHash = maybe (hashOf '0') id $ saExpectedUserOperationHash previous
+            candidate = draft '7' '8' '9' 10 1000 now
+            event = object ["source" .= ("budget-window-integration" :: Text)]
+        settleSponsorship conn digest operationHash (hashOf 'b') 101 (hashOf 'c') True 400 event
+          `shouldReturn` Right ()
+        void $ execute conn "UPDATE aa_user_operation_events SET finalized_at=clock_timestamp()-INTERVAL '30 minutes' WHERE digest=?" (Only digest)
+        reserveSponsorship conn (testConfig {naaAccountHourlyWei=1399}) candidate
+          `shouldReturn` Left "ACCOUNT_HOURLY_BUDGET_EXCEEDED"
+        reserveSponsorship conn (testConfig {naaGlobalHourlyWei=1399}) candidate
+          `shouldReturn` Left "GLOBAL_HOURLY_BUDGET_EXCEEDED"
+        reserveSponsorship conn (testConfig {naaGlobalDailyWei=1399}) candidate
+          `shouldReturn` Left "GLOBAL_DAILY_BUDGET_EXCEEDED"
+        void $ execute conn "UPDATE aa_user_operation_events SET finalized_at=clock_timestamp()-INTERVAL '2 hours' WHERE digest=?" (Only digest)
+        reserveSponsorship conn (testConfig {naaAccountHourlyWei=1000,naaGlobalHourlyWei=1000,naaGlobalDailyWei=1399}) candidate
+          `shouldReturn` Left "GLOBAL_DAILY_BUDGET_EXCEEDED"
+        void $ execute conn "UPDATE aa_user_operation_events SET finalized_at=clock_timestamp()-INTERVAL '25 hours' WHERE digest=?" (Only digest)
+        authorization <- reserveSponsorship conn (testConfig {naaAccountHourlyWei=1000,naaGlobalHourlyWei=1000,naaGlobalDailyWei=1000}) candidate >>= expectAuthorization
+        getSponsorshipByDigest conn (sdDigest candidate) `shouldReturn` Just authorization
+
+    it "does not overspend the global budget when distinct reservations race" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let cfg = testConfig {naaGlobalOutstandingWei=1000}
+        withPeerConnection databaseUrl $ \peer -> do
+          (a,b) <- concurrently
+            (reserveSponsorship conn cfg $ draft '1' '2' '3' 7 1000 now)
+            (reserveSponsorship peer cfg $ draft '4' '5' '6' 8 1000 now)
+          length [() | Right _ <- [a,b]] `shouldBe` 1
+          length [() | Left "GLOBAL_OUTSTANDING_BUDGET_EXCEEDED" <- [a,b]] `shouldBe` 1
+        query_ conn "SELECT COUNT(*) FROM aa_sponsorship_ledger WHERE entry_type='reserve'" `shouldReturn` [Only (1 :: Int64)]
+
     it "serializes concurrent idempotent reservations across API connections" $
       withFixture databaseUrl $ \firstConnection -> do
         readyDatabase firstConnection

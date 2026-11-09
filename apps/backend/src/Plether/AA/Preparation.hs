@@ -1,8 +1,9 @@
 module Plether.AA.Preparation
   ( PreparationIntent (..), parsePreparationIntent, unsignedSkeleton, intentHash, matchesIntent, internalRequest
   , PreparationLocator (..), parsePreparationLocator, preparationStatusResponse
-  , gasPolicyVersion, sepoliaExecutionGasCap, executionGasWithHeadroom ) where
+  , gasPolicyVersion, sepoliaExecutionGasCap, executionGasWithHeadroom, estimateWithBindings ) where
 
+import Control.Concurrent.Async (withAsync, wait)
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, encode, (.=))
 import qualified Data.Aeson.Key as Key
@@ -22,6 +23,17 @@ data PreparationIntent = PreparationIntent
   { piIdentifier :: Text, piSender :: Text, piCallData :: Text
   , piFactory :: Maybe Text, piFactoryData :: Maybe Text, piResumeOnly :: Bool
   } deriving stock (Eq, Show)
+
+-- Only use after the intent has passed security checks and claimed its work
+-- lease. Estimation is read-only; delivery still requires successful durable
+-- bindings. A failed binding cancels and joins the speculative estimator.
+estimateWithBindings :: IO (Either Legacy.ProxyFailure ()) -> IO (Either Legacy.ProxyFailure a)
+  -> IO (Either Legacy.ProxyFailure a)
+estimateWithBindings bindings estimate = withAsync estimate $ \pending -> do
+  bound <- bindings
+  case bound of
+    Left failure -> pure $ Left failure
+    Right () -> wait pending
 
 parsePreparationIntent :: [Value] -> Either Legacy.ProxyFailure PreparationIntent
 parsePreparationIntent [Object fields] = do

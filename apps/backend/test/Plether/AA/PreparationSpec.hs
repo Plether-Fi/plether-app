@@ -2,6 +2,7 @@ module Plether.AA.PreparationSpec (spec) where
 
 import Control.Concurrent.MVar
 import Control.Concurrent.Async (async, wait)
+import Control.Exception (finally)
 import Control.Monad (forM_)
 import Data.Aeson (Value (..), object, (.=), encode, eitherDecode)
 import qualified Data.Aeson.KeyMap as KM
@@ -32,6 +33,36 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "estimation overlapped with durable preparation bindings" $ do
+    it "starts estimation during binding but cannot deliver until binding succeeds" $ do
+      estimated <- newEmptyMVar
+      release <- newEmptyMVar
+      bindingWaiting <- newEmptyMVar
+      delivered <- newEmptyMVar
+      worker <- async $ do
+        result <- estimateWithBindings
+          (takeMVar estimated >> putMVar bindingWaiting () >> takeMVar release >> pure (Right ()))
+          (putMVar estimated () >> pure (Right ("fresh" :: T.Text)))
+        putMVar delivered result
+      timeout 2_000_000 (takeMVar bindingWaiting) `shouldReturn` Just ()
+      tryReadMVar delivered `shouldReturn` Nothing
+      putMVar release ()
+      timeout 2_000_000 (wait worker) `shouldReturn` Just ()
+      fmap (either (const "failed") id) (takeMVar delivered) `shouldReturn` "fresh"
+    it "cancels and joins read-only estimation when the durable binding fails" $ do
+      started <- newEmptyMVar
+      stopped <- newEmptyMVar
+      never <- newEmptyMVar
+      result <- timeout 2_000_000 $ estimateWithBindings
+        (takeMVar started >> pure (Left $ Legacy.unavailable "PREPARATION_LEASE_LOST" "retry"))
+        ((putMVar started () >> takeMVar never >> pure (Right ("unused" :: T.Text)))
+          `finally` putMVar stopped ())
+      fmap (either Legacy.pfReason (const "delivered")) result `shouldBe` Just "PREPARATION_LEASE_LOST"
+      timeout 2_000_000 (takeMVar stopped) `shouldReturn` Just ()
+    it "fails closed when the fresh estimator rejects the operation" $ do
+      result <- estimateWithBindings (pure $ Right ())
+        (pure $ Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "retry") :: IO (Either Legacy.ProxyFailure T.Text)
+      either Legacy.pfReason (const "delivered") result `shouldBe` "BUNDLER_UNAVAILABLE"
   describe "read-only preparation locators" $ do
     let locator = KM.fromList [("version",Number 1),("chainId",String "0x66eee"),
           ("sender",String "0x2222222222222222222222222222222222222222"),

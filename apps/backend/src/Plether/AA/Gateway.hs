@@ -502,15 +502,17 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
             PreparationDb.PreparationDisabled -> throwE $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
             PreparationDb.PreparationBusy -> throwE $ Legacy.unavailable "PREPARATION_BUSY" "Retry the same preparation ID"
             PreparationDb.PreparationClaimed operation -> pure operation
-          bound <- timed timing "preparation_bind" $ db $ \conn -> PreparationDb.bindPreparationDeployment conn clientKey
-            (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
-          recoveryBound <- timed timing "recovery_bind" $ case ngsPreparationFence gatewayState of
-            Nothing -> pure False
-            Just fence -> db $ \conn -> RecoveryDb.bindDeployment conn fence clientKey
-          unless (bound && recoveryBound) $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
+          case stored of
+            Just (Object _) -> pure ()
+            Just _ -> throwE databaseUnavailable
+            Nothing -> unless (naaPreparationEnabled nativeCfg) $
+              throwE $ Legacy.unavailable "PREPARATION_DISABLED" "New preparation is disabled"
+          estimate <- ioStage timing "bindings_and_estimation" $ Preparation.estimateWithBindings
+            (bindPreparation timing intent identifier fence)
+            (timed timing (if isJust stored then "resume_estimation" else "fees_nonce_estimation") $
+              buildPreparedOperation timing nativeCfg client manager intent)
           operationObject <- case stored of
             Just (Object operation) -> do
-              estimate <- ioStage timing "resume_estimation" $ buildPreparedOperation timing nativeCfg client manager intent
               unless (KM.lookup "nonce" estimate == KM.lookup "nonce" operation) $
                 throwE $ (Legacy.policyDenied "The account nonce changed; review account activity") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
               let quantityIn fields key = KM.lookup key fields >>= \case
@@ -524,8 +526,7 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
               pure operation
             Just _ -> throwE databaseUnavailable
             Nothing -> do
-              unless (naaPreparationEnabled nativeCfg) $ throwE $ Legacy.unavailable "PREPARATION_DISABLED" "New preparation is disabled"
-              built <- ioStage timing "fees_nonce_estimation" $ buildPreparedOperation timing nativeCfg client manager intent
+              let built = estimate
               saved <- timed timing "preparation_save" $ db $ \conn -> PreparationDb.savePreparedOperation conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (Object built)
               unless saved $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
@@ -587,6 +588,17 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
   checked = ExceptT . pure
   db action = ExceptT $ fmap (either (const $ Left databaseUnavailable) Right) $ liftDb $ withDb pool action
   ioStage timing stage action = ExceptT $ liftIO $ timed timing stage action
+  bindPreparation timing intent identifier fence = do
+    result <- try $ withDb pool $ \conn -> do
+      bound <- timed timing "preparation_bind" $ PreparationDb.bindPreparationDeployment conn clientKey
+        (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
+      recoveryBound <- timed timing "recovery_bind" $ RecoveryDb.bindDeployment conn fence clientKey
+      pure $ bound && recoveryBound
+    case result of
+      Left (err :: SomeException) | Just async <- (fromException err :: Maybe SomeAsyncException) -> throwIO async
+      Left _ -> pure $ Left databaseUnavailable
+      Right False -> pure $ Left $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
+      Right True -> pure $ Right ()
   consumeAaRateLimitFor intent conn = consumeAaRateLimit conn "account" nativeAccountRateClientKey
     (pseudonymousAccountKey (naaProxyOriginToken nativeCfg) $ Preparation.piSender intent)
     (naaAccountRateLimitPerMinute nativeCfg)
