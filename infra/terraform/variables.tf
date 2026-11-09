@@ -721,6 +721,28 @@ variable "alto_rpc_url_ssm_parameter_name" {
   }
 }
 
+variable "alto_rpc_auth_token_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Optional existing SecureString for the reviewed Alto RPC authentication preload. Empty retains the original direct-provider configuration."
+
+  validation {
+    condition     = contains(["", "/plether/sepolia/rpc-gateway-token"], var.alto_rpc_auth_token_ssm_parameter_name)
+    error_message = "Alto RPC authentication must be disabled or reference the exact existing Sepolia gateway-token parameter."
+  }
+}
+
+variable "alto_rpc_auth_image" {
+  type        = string
+  default     = ""
+  description = "Reviewed immutable Alto v1.2.7 image containing the scoped RPC authentication preload. Required only when alto_rpc_auth_token_ssm_parameter_name is enabled; publish and qualify the candidate before selecting its digest."
+
+  validation {
+    condition     = var.alto_rpc_auth_image == "" || can(regex("^932542905614\\.dkr\\.ecr\\.ap-southeast-1\\.amazonaws\\.com/plether-alto-sepolia@sha256:[0-9a-f]{64}$", var.alto_rpc_auth_image))
+    error_message = "Select an exact immutable digest in the approved Singapore Sepolia Alto ECR repository."
+  }
+}
+
 variable "alto_send_transaction_rpc_url_ssm_parameter_name" {
   type        = string
   default     = ""

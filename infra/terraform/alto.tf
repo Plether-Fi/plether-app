@@ -11,13 +11,22 @@ locals {
     { name = "ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT", value = "0" },
     { name = "ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER", value = "0" },
   ]
+  alto_gas_environment = [
+    { name = "ALTO_MAX_GAS_PER_USER_OP", value = var.alto_max_gas_per_user_operation },
+    { name = "ALTO_MAX_GAS_PER_BUNDLE", value = var.alto_max_gas_per_bundle },
+  ]
   self_hosted_aa_resource_count = var.provision_self_hosted_aa && var.environment == "sepolia" ? 1 : 0
   native_aa_backend_configured  = local.self_hosted_aa_resource_count == 1 && var.configure_native_aa_backend
   native_aa_sponsorship_enabled = local.native_aa_backend_configured && var.enable_native_aa_sponsorship
   aa_gateway_enabled            = var.provision_aa_proxy || local.native_aa_backend_configured
   alto_ecr_image_tag            = "v1.2.7-arm64-28cee87ea6b5"
 
-  alto_rpc_url_parameter_arn                  = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_rpc_url_ssm_parameter_name)}"
+  alto_rpc_url_parameter_arn        = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_rpc_url_ssm_parameter_name)}"
+  alto_rpc_auth_enabled             = var.alto_rpc_auth_token_ssm_parameter_name != ""
+  alto_rpc_auth_token_parameter_arn = local.alto_rpc_auth_enabled ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${var.alto_rpc_auth_token_ssm_parameter_name}" : null
+  # Keep the previous task revision restartable during a guarded RPC rollback.
+  alto_rollback_rpc_url_parameter_arn         = local.alto_rpc_auth_enabled ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/sepolia/perps-rpc-url" : null
+  alto_entrypoint                             = local.alto_rpc_auth_enabled ? ["node", "--import", "/app/plether-rpc-auth.mjs", "/app/src/esm/cli/alto.js"] : ["node", "/app/src/esm/cli/alto.js"]
   alto_executor_keys_parameter_arn            = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_executor_private_keys_ssm_parameter_name)}"
   alto_utility_key_parameter_arn              = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_utility_private_key_ssm_parameter_name)}"
   alto_send_transaction_rpc_url_parameter_arn = trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name) == "" ? null : "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name)}"
@@ -32,10 +41,13 @@ locals {
     "pimlico_getUserOperationStatus",
   ])
 
-  alto_optional_secrets = local.alto_send_transaction_rpc_url_parameter_arn == null ? [] : [{
+  alto_optional_secrets = concat(local.alto_send_transaction_rpc_url_parameter_arn == null ? [] : [{
     name      = "ALTO_SEND_TRANSACTION_RPC_URL"
     valueFrom = local.alto_send_transaction_rpc_url_parameter_arn
-  }]
+    }], local.alto_rpc_auth_enabled ? [{
+    name      = "PLETHER_ALTO_RPC_AUTH_TOKEN"
+    valueFrom = local.alto_rpc_auth_token_parameter_arn
+  }] : [])
 
   alto_log_router_container = merge(local.otel_log_router_container, {
     environment = [
@@ -195,7 +207,7 @@ resource "aws_ecs_task_definition" "alto" {
       readonlyRootFilesystem = true
       user                   = "1000:1000"
       stopTimeout            = 120
-      entryPoint             = ["node", "/app/src/esm/cli/alto.js"]
+      entryPoint             = local.alto_entrypoint
       command                = ["run"]
 
       linuxParameters = {
@@ -301,9 +313,7 @@ resource "aws_ecs_task_definition" "alto" {
         { name = "ALTO_UTILITY_WALLET_MONITOR", value = "true" },
         { name = "ALTO_UTILITY_WALLET_MONITOR_INTERVAL", value = "15000" },
         { name = "ALTO_EXECUTOR_REFILL_INTERVAL", value = "1200" },
-        { name = "ALTO_MAX_GAS_PER_USER_OP", value = var.alto_max_gas_per_user_operation },
-        { name = "ALTO_MAX_GAS_PER_BUNDLE", value = var.alto_max_gas_per_bundle },
-      ], local.alto_zero_post_op_environment)
+      ], local.alto_gas_environment, local.alto_zero_post_op_environment)
     },
     {
       name                   = "alto-tmp-init"

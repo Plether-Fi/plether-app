@@ -301,6 +301,8 @@ resource "terraform_data" "self_hosted_aa_guard" {
     aa_reconciler_secondary_rpc_url_kms_key_arn = var.aa_reconciler_secondary_rpc_url_kms_key_arn
     aa_rpc_mode                                 = var.aa_rpc_mode
     alto_upstream_image                         = var.alto_upstream_image
+    alto_rpc_auth_enabled                       = local.alto_rpc_auth_enabled
+    alto_rpc_auth_image                         = var.alto_rpc_auth_image
     alto_entrypoint_address                     = var.alto_entrypoint_address
     aa_paymaster_address                        = var.aa_paymaster_address
     aa_paymaster_signer_address                 = var.aa_paymaster_signer_address
@@ -310,6 +312,22 @@ resource "terraform_data" "self_hosted_aa_guard" {
   }
 
   lifecycle {
+    precondition {
+      condition = !local.alto_rpc_auth_enabled ? var.alto_rpc_auth_image == "" : (
+        var.provision_self_hosted_aa
+        && var.environment == "sepolia"
+        && var.perps_chain_id == "421614"
+        && var.aws_region == "ap-southeast-1"
+        && var.expected_aws_account_id == "932542905614"
+        && data.aws_caller_identity.current.account_id == "932542905614"
+        && var.alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
+        && var.alto_rpc_auth_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
+        && var.alto_send_transaction_rpc_url_ssm_parameter_name == ""
+        && var.alto_rpc_auth_image != ""
+      )
+      error_message = "Authenticated Alto RPC requires the reviewed immutable preload image, exact Singapore Arbitrum Sepolia gateway URL/token parameters and no separate send RPC; omit its image when authentication is disabled."
+    }
+
     precondition {
       condition = length(var.aa_preparation_recovery_extra_origins) == 0 || (
         var.aa_preparation_recovery_origin != ""
