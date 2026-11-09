@@ -61,7 +61,7 @@ RPC_CHECKS = {'configuration', 'chain_and_primary_route', 'not_syncing', 'fresh_
 JOURNAL_CHECKS = {'drain_configuration', 'admission_barrier', 'acknowledgement_grace',
                   'executor_wallets', 'process_continuity', 'journal_snapshot',
                   'journal_terminal', 'reconciler_freshness', 'canonical_boundary',
-                  'fresh_canonical_heads', 'canonical_settlements'}
+                  'fresh_canonical_heads', 'historical_expiry_cutoff_verified', 'canonical_settlements'}
 
 
 class GuardRejected(ValueError):
@@ -334,6 +334,26 @@ def validate_canary_proof(proof, scope, now_ms):
             and now_ms - finish <= 300_000, 'invalid_canary_timestamps')
     if scope == 'journal_idle':
         observed = proof.get('idle_observed_at_ms')
+        counts = [proof.get(key) for key in ['journal_read_count', 'boundary_read_count', 'authorization_count',
+                  'submitted_count', 'settled_count', 'expired_count', 'history_settled_count', 'history_expired_count',
+                  'frontier_settled_count', 'frontier_expired_count', 'canonical_settlement_count',
+                  'historical_expiry_cutoff_block_number', 'historical_expiry_cutoff_timestamp_seconds',
+                  'historical_authorization_count', 'historical_event_count', 'invalid_authorization_count',
+                  'invalid_event_count', 'invalid_terminal_count', 'boundary_block_number']]
+        require(all(finite(value) and value >= 0 and value == int(value) for value in counts)
+                and proof['journal_read_count'] == 3 and proof['boundary_read_count'] == 1
+                and proof['invalid_authorization_count'] == proof['invalid_event_count'] == proof['invalid_terminal_count'] == 0
+                and proof['settled_count'] == proof['history_settled_count'] + proof['frontier_settled_count']
+                and proof['expired_count'] == proof['history_expired_count'] + proof['frontier_expired_count']
+                and proof['canonical_settlement_count'] == proof['frontier_settled_count']
+                and proof['authorization_count'] >= max(proof['submitted_count'], proof['settled_count'] + proof['expired_count'])
+                and proof['submitted_count'] <= proof['settled_count'] + proof['expired_count']
+                and proof['historical_authorization_count'] == proof['history_settled_count'] + proof['history_expired_count']
+                and proof['historical_event_count'] == proof['history_settled_count']
+                and proof['historical_authorization_count'] <= proof['authorization_count']
+                and 0 < proof['historical_expiry_cutoff_block_number'] <= proof['boundary_block_number']
+                and 0 < proof['historical_expiry_cutoff_timestamp_seconds'] <= finish / 1000,
+                'incomplete_journal_settlement_proof')
         require(proof.get('idle_sample_count') == proof.get('snapshot_count') == 2
                 and proof.get('unresolved_count') == 0 and not isinstance(proof.get('unresolved_count'), bool)
                 and proof.get('executor_wallets_available') == proof.get('executor_wallets_total') == 4
@@ -859,8 +879,13 @@ class Deployment:
                      'started_at_ms': proof['started_at_ms'], 'finished_at_ms': proof['finished_at_ms'],
                      'tests': [{'name': x['name'], 'pass': True} for x in proof['tests']]}
             if scope == 'journal_idle':
-                for key in ['idle_sample_count', 'idle_observed_at_ms', 'snapshot_count', 'unresolved_count',
-                            'submitted_count', 'settled_count', 'expired_count', 'outstanding_gauge_first',
+                for key in ['idle_sample_count', 'idle_observed_at_ms', 'snapshot_count', 'journal_read_count',
+                            'boundary_read_count', 'authorization_count', 'unresolved_count',
+                            'submitted_count', 'settled_count', 'history_settled_count', 'frontier_settled_count',
+                            'expired_count', 'history_expired_count', 'frontier_expired_count',
+                            'historical_expiry_cutoff_block_number', 'historical_expiry_cutoff_timestamp_seconds',
+                            'historical_authorization_count', 'historical_event_count', 'invalid_authorization_count',
+                            'invalid_event_count', 'invalid_terminal_count', 'outstanding_gauge_first',
                             'outstanding_gauge_last', 'executor_wallets_available', 'executor_wallets_total',
                             'process_started_at_seconds', 'rpc_call_count', 'latest_age_seconds', 'safe_age_seconds',
                             'reconciler_age_seconds', 'boundary_block_number', 'canonical_settlement_count']:

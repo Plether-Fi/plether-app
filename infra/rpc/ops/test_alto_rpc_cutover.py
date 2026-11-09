@@ -39,7 +39,8 @@ RPC_CHECKS = ["configuration", "chain_and_primary_route", "not_syncing", "fresh_
               "bounded_latest_logs", "isolated_fallback"]
 JOURNAL_CHECKS = ["drain_configuration", "admission_barrier", "acknowledgement_grace", "executor_wallets",
                   "process_continuity", "journal_snapshot", "journal_terminal", "reconciler_freshness",
-                  "canonical_boundary", "fresh_canonical_heads", "canonical_settlements"]
+                  "canonical_boundary", "fresh_canonical_heads", "historical_expiry_cutoff_verified",
+                  "canonical_settlements"]
 
 
 def fixture():
@@ -152,6 +153,15 @@ def proof_fixture(scope="rpc", now_ms=1_794_213_000_000):
              "started_at_ms": now_ms - 40_000, "finished_at_ms": now_ms - 1000}
     if scope == "journal_idle":
         proof.update(idle_sample_count=2, snapshot_count=2, idle_observed_at_ms=now_ms - 1000,
+                     journal_read_count=3, settled_count=7, history_settled_count=5,
+                     frontier_settled_count=2, canonical_settlement_count=2,
+                     authorization_count=10, submitted_count=7, expired_count=2,
+                     history_expired_count=1, frontier_expired_count=1,
+                     historical_expiry_cutoff_block_number=100, boundary_block_number=101,
+                     historical_expiry_cutoff_timestamp_seconds=now_ms / 1000 - 10,
+                     historical_authorization_count=6, historical_event_count=5,
+                     invalid_authorization_count=0, invalid_event_count=0, invalid_terminal_count=0,
+                     boundary_read_count=1,
                      unresolved_count=0, executor_wallets_available=4, executor_wallets_total=4,
                      process_started_at_seconds=now_ms / 1000 - 60)
     return proof
@@ -438,6 +448,111 @@ class RpcCutoverPolicyTests(unittest.TestCase):
 
 
 class CanaryProofTests(unittest.TestCase):
+    def test_journal_proof_requires_three_reads_complete_aggregates_and_canonical_frontier_counts(self):
+        now_ms = 1_794_213_000_000
+        empty = proof_fixture('journal_idle', now_ms)
+        empty.update(settled_count=0, history_settled_count=0, frontier_settled_count=0, canonical_settlement_count=0,
+                     historical_authorization_count=1, historical_event_count=0, submitted_count=0)
+        validate_canary_proof(empty, 'journal_idle', now_ms)
+        mutations = [
+            lambda value: value.update(journal_read_count=2),
+            lambda value: value.update(journal_read_count=4),
+            lambda value: value.update(canonical_settlement_count=1),
+            lambda value: value.update(canonical_settlement_count=3),
+            lambda value: value.update(canonical_settlement_count=7),
+            lambda value: value.update(settled_count=6),
+            lambda value: value.update(settled_count=8),
+            lambda value: value.update(history_settled_count=4),
+            lambda value: value.update(history_settled_count=6),
+            lambda value: value.update(history_settled_count=8),
+            lambda value: value.update(frontier_settled_count=1),
+            lambda value: value.update(frontier_settled_count=3),
+            lambda value: value.update(frontier_settled_count=0, canonical_settlement_count=0),
+            lambda value: value.update(expired_count=1),
+            lambda value: value.update(expired_count=3),
+            lambda value: value.update(history_expired_count=0),
+            lambda value: value.update(history_expired_count=2),
+            lambda value: value.update(frontier_expired_count=0),
+            lambda value: value.update(frontier_expired_count=2),
+            lambda value: value.update(authorization_count=6),
+            lambda value: value.update(authorization_count=8),
+            lambda value: value.update(submitted_count=11),
+            lambda value: value.update(submitted_count=10),
+            lambda value: value.update(historical_authorization_count=11),
+            lambda value: value.update(historical_authorization_count=5),
+            lambda value: value.update(historical_authorization_count=7),
+            lambda value: value.update(historical_event_count=4),
+            lambda value: value.update(historical_event_count=6),
+            lambda value: value.update(historical_event_count=7),
+            lambda value: value.update(history_settled_count=7, frontier_settled_count=0,
+                                       canonical_settlement_count=0, historical_authorization_count=0,
+                                       historical_event_count=0),
+            lambda value: value.update(invalid_authorization_count=1),
+            lambda value: value.update(invalid_event_count=1),
+            lambda value: value.update(invalid_terminal_count=1),
+            lambda value: value.update(boundary_read_count=0),
+            lambda value: value.update(boundary_read_count=2),
+            lambda value: value.update(historical_expiry_cutoff_block_number=0),
+            lambda value: value.update(historical_expiry_cutoff_block_number=102),
+            lambda value: value.update(historical_expiry_cutoff_timestamp_seconds=0),
+            lambda value: value.update(historical_expiry_cutoff_timestamp_seconds=now_ms / 1000),
+        ]
+        for key in ['journal_read_count', 'authorization_count', 'submitted_count', 'settled_count',
+                    'expired_count', 'history_settled_count', 'frontier_settled_count', 'history_expired_count',
+                    'frontier_expired_count', 'canonical_settlement_count', 'historical_expiry_cutoff_block_number',
+                    'historical_expiry_cutoff_timestamp_seconds', 'historical_authorization_count',
+                    'historical_event_count', 'invalid_authorization_count', 'invalid_event_count',
+                    'invalid_terminal_count', 'boundary_read_count', 'boundary_block_number']:
+            mutations.append(lambda value, key=key: value.pop(key))
+            for invalid in [True, False, -1, 1.5, float('nan'), float('inf'), '7', None]:
+                mutations.append(lambda value, key=key, invalid=invalid: value.update({key: invalid}))
+        for index, mutate in enumerate(mutations):
+            proof = proof_fixture('journal_idle', now_ms)
+            mutate(proof)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof, 'journal_idle', now_ms)
+            deployment = object.__new__(Deployment)
+            deployment.canary_proof = proof
+            with patch('alto_rpc_cutover.time.time', return_value=now_ms / 1000):
+                with self.subTest(cached_case=index):
+                    self.assertFalse(deployment.quiescent())
+
+    def test_expired_history_needs_no_frontier_receipts_but_must_still_account_for_every_settlement(self):
+        now_ms = 1_794_213_000_000
+        for history, frontier in [(7, 0), (0, 7), (5, 2)]:
+            proof = proof_fixture('journal_idle', now_ms)
+            proof.update(history_settled_count=history, frontier_settled_count=frontier,
+                         canonical_settlement_count=frontier,
+                         historical_authorization_count=history + proof['history_expired_count'],
+                         historical_event_count=history)
+            with self.subTest(history=history, frontier=frontier):
+                validate_canary_proof(proof, 'journal_idle', now_ms)
+                deployment = object.__new__(Deployment)
+                deployment.canary_proof = proof
+                with patch('alto_rpc_cutover.time.time', return_value=now_ms / 1000):
+                    self.assertTrue(deployment.quiescent())
+
+    def test_historical_settlements_cannot_bypass_frontier_receipts_without_verified_expiry_cutoff(self):
+        now_ms = 1_794_213_000_000
+        for case in ['missing', 'failed', 'unreviewed_name']:
+            proof = proof_fixture('journal_idle', now_ms)
+            proof.update(history_settled_count=7, frontier_settled_count=0,
+                         canonical_settlement_count=0, historical_authorization_count=8,
+                         historical_event_count=7)
+            check = next(test for test in proof['tests'] if test['name'] == 'historical_expiry_cutoff_verified')
+            if case == 'missing':
+                proof['tests'].remove(check)
+            elif case == 'failed':
+                check['pass'] = False
+            else:
+                check['name'] = 'assume_old_operations_expired'
+            with self.subTest(case=case), self.assertRaises(GuardRejected):
+                validate_canary_proof(proof, 'journal_idle', now_ms)
+            deployment = object.__new__(Deployment)
+            deployment.canary_proof = proof
+            with patch('alto_rpc_cutover.time.time', return_value=now_ms / 1000):
+                self.assertFalse(deployment.quiescent())
+
     def test_cached_journal_proof_must_still_be_fresh_and_include_the_reviewed_checks(self):
         now_ms = 1_794_213_000_000
         deployment = object.__new__(Deployment)

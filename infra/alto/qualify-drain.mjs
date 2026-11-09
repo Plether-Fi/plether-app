@@ -14,13 +14,13 @@ export const REQUIRED_CHECKS = Object.freeze([
   'drain_configuration', 'admission_barrier', 'acknowledgement_grace',
   'executor_wallets', 'process_continuity', 'journal_snapshot', 'journal_terminal',
   'reconciler_freshness', 'canonical_boundary', 'fresh_canonical_heads', 'canonical_settlements',
+  'historical_expiry_cutoff_verified',
 ])
 
 // There is deliberately no LIMIT, state filter, recovery-table expiry filter,
 // or chain/paymaster WHERE clause. Unexpected scope and impossible markers
 // must fail qualification instead of falling outside the scanned population.
-export const JOURNAL_SQL = `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
-SELECT jsonb_build_object(
+const DETAIL_QUERY = `SELECT jsonb_build_object(
   'read_only', current_setting('transaction_read_only'),
   'isolation', current_setting('transaction_isolation'),
   'snapshot_at_ms', floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint::text,
@@ -57,8 +57,128 @@ SELECT jsonb_build_object(
     'last_success_at_ms',floor(extract(epoch FROM last_success_at)*1000)::bigint::text
   )) FROM aa_reconciler_health),'[]'::jsonb)
 );
+`
+
+const META_QUERY = `SELECT jsonb_build_object(
+  'read_only',current_setting('transaction_read_only'), 'isolation',current_setting('transaction_isolation'),
+  'snapshot_at_ms',floor(extract(epoch FROM clock_timestamp())*1000)::bigint::text,
+  'cursors',COALESCE((SELECT jsonb_agg(jsonb_build_object('chain_id',chain_id::text,'paymaster',paymaster,
+    'safe_block',safe_block::text,'safe_block_hash',safe_block_hash,
+    'updated_at_ms',floor(extract(epoch FROM updated_at)*1000)::bigint::text)) FROM aa_reconciler_cursor),'[]'::jsonb),
+  'health',COALESCE((SELECT jsonb_agg(jsonb_build_object('chain_id',chain_id::text,'paymaster',paymaster,
+    'safe_block',safe_block::text,'safe_block_hash',safe_block_hash,
+    'last_success_at_ms',floor(extract(epoch FROM last_success_at)*1000)::bigint::text)) FROM aa_reconciler_health),'[]'::jsonb)
+);`
+export const BOUNDARY_SQL = `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;\n${META_QUERY}\nROLLBACK;\n`
+
+// PostgreSQL has no arbitrary-width hexadecimal numeric cast. This bounded,
+// read-only expression validates native uint256 JSON quantities without a
+// function/schema mutation or lossy BIGINT/double conversion.
+function hexNumeric(expression) {
+  const padded = `lpad(substr(${expression},3),64,'0')`
+  const chunks = Array.from({ length: 8 }, (_, index) =>
+    `(('x'||substr(${padded},${index * 8 + 1},8))::bit(32)::bigint)::numeric*${1n << BigInt((7 - index) * 32)}`)
+  return `(CASE WHEN (${expression}) ~ '^0x[0-9a-fA-F]{1,64}$' THEN (${chunks.join('+')}) ELSE NULL END)`
+}
+
+export function buildJournalSQL(cutoffSeconds) {
+  decimal(cutoffSeconds)
+  const data = `(e.event_json->>'data')`
+  const authValid = `(a.request_key ~ '^0x[0-9a-f]{64}$' AND a.digest ~ '^0x[0-9a-f]{64}$'
+    AND a.sender ~ '^0x[0-9a-f]{40}$' AND a.owner ~ '^0x[0-9a-f]{40}$'
+    AND a.nonce>=0 AND a.max_cost_wei>0 AND a.valid_after>=0 AND a.valid_until>a.valid_after
+    AND a.valid_until<281474976710656 AND a.valid_until-a.valid_after<=600
+    AND jsonb_typeof(a.operation)='object' AND lower(a.operation->>'sender')=a.sender
+    AND (a.operation->>'nonce') ~ '^0x(0|[1-9a-fA-F][0-9a-fA-F]{0,63})$'
+    AND ${hexNumeric("a.operation->>'nonce'")}=a.nonce
+    AND (a.operation->>'paymaster' IS NULL OR lower(a.operation->>'paymaster')='${PAYMASTER}')
+    AND (a.operation->>'chainId' IS NULL OR a.operation->>'chainId' IN ('421614','0x66eee'))
+    AND (a.operation->>'entryPoint' IS NULL OR lower(a.operation->>'entryPoint')='${ENTRYPOINT}')
+    AND CASE WHEN a.state IN ('reserved','cancelled') THEN
+      a.signature IS NULL AND a.expected_user_operation_hash IS NULL AND a.user_operation_hash IS NULL
+      AND a.signed_at IS NULL AND a.submitted_at IS NULL
+      AND CASE WHEN a.state='reserved' THEN a.settled_at IS NULL
+        ELSE a.settled_at IS NOT NULL AND a.settled_at<=clock_timestamp()+interval '5 seconds' END
+    WHEN a.state IN ('signed','submitted','settled','expired') THEN
+      a.signature ~ '^0x[0-9a-f]{130}$' AND a.expected_user_operation_hash ~ '^0x[0-9a-f]{64}$'
+      AND a.signed_at IS NOT NULL AND extract(epoch FROM a.signed_at)>=a.valid_after
+      AND extract(epoch FROM a.signed_at)<a.valid_until AND a.signed_at<=clock_timestamp()+interval '5 seconds'
+      AND (a.user_operation_hash IS NULL OR a.user_operation_hash=a.expected_user_operation_hash)
+      AND (a.submitted_at IS NULL OR (a.user_operation_hash=a.expected_user_operation_hash
+        AND a.submitted_at>=a.signed_at AND a.submitted_at<=clock_timestamp()+interval '5 seconds'))
+      AND CASE WHEN a.state='signed' THEN a.user_operation_hash IS NULL AND a.submitted_at IS NULL AND a.settled_at IS NULL
+        WHEN a.state='submitted' THEN a.submitted_at IS NOT NULL AND a.user_operation_hash=a.expected_user_operation_hash AND a.settled_at IS NULL
+        WHEN a.state='settled' THEN a.user_operation_hash=a.expected_user_operation_hash
+          AND a.settled_at>=a.signed_at AND a.settled_at<=clock_timestamp()+interval '5 seconds'
+        ELSE ((a.user_operation_hash IS NULL)=(a.submitted_at IS NULL))
+          AND a.settled_at>=a.signed_at AND a.settled_at<=clock_timestamp()+interval '5 seconds' END
+    ELSE false END)`
+  const eventValid = `(e.digest ~ '^0x[0-9a-f]{64}$' AND e.user_operation_hash ~ '^0x[0-9a-f]{64}$'
+    AND e.transaction_hash ~ '^0x[0-9a-f]{64}$' AND e.block_hash ~ '^0x[0-9a-f]{64}$'
+    AND e.block_number>=0 AND e.block_number<=(SELECT max(safe_block) FROM aa_reconciler_cursor)
+    AND e.actual_gas_cost_wei>=0 AND e.actual_gas_cost_wei<=a.max_cost_wei
+    AND e.finalized_at IS NOT NULL AND e.finalized_at<=clock_timestamp()+interval '5 seconds'
+    AND a.valid AND a.state='settled' AND a.expected_user_operation_hash=e.user_operation_hash AND a.user_operation_hash=e.user_operation_hash
+    AND jsonb_typeof(e.event_json)='object' AND lower(e.event_json->>'address')='${ENTRYPOINT}'
+    AND CASE WHEN jsonb_typeof(e.event_json->'topics')='array' THEN jsonb_array_length(e.event_json->'topics')=4 ELSE false END
+    AND lower(e.event_json->'topics'->>0)='${TOPIC}' AND lower(e.event_json->'topics'->>1)=e.user_operation_hash
+    AND lower(e.event_json->'topics'->>2)='0x'||repeat('0',24)||substr(a.sender,3)
+    AND lower(e.event_json->'topics'->>3)='0x'||repeat('0',24)||substr('${PAYMASTER}',3)
+    AND ${data} ~ '^0x[0-9a-fA-F]{128}[0-9a-fA-F]{128}$'
+    AND ${hexNumeric(`'0x'||substr(${data},3,64)`)}=a.nonce
+    AND lower(substr(${data},67,64))=CASE WHEN e.success THEN repeat('0',63)||'1' ELSE repeat('0',64) END
+    AND ${hexNumeric(`'0x'||substr(${data},131,64)`)}=e.actual_gas_cost_wei
+    AND lower(e.event_json->>'transactionHash')=e.transaction_hash
+    AND lower(e.event_json->>'blockHash')=e.block_hash
+    AND ${hexNumeric("e.event_json->>'blockNumber'")}=e.block_number
+    AND ${hexNumeric("e.event_json->>'logIndex'")}>=0
+    AND (NOT(e.event_json?'removed') OR e.event_json->'removed'='false'::jsonb))`
+  const accepted = `(a.submitted_at IS NOT NULL OR a.user_operation_hash IS NOT NULL OR a.state='submitted')`
+  const historical = `(a.state IN ('settled','expired') AND a.valid_until<${cutoffSeconds})`
+  const accounting = `jsonb_build_object(
+    'authorization_count',(SELECT count(*) FROM checked_auths),
+    'submitted_count',(SELECT count(*) FROM checked_auths WHERE submitted_at IS NOT NULL),
+    'unresolved_count',(SELECT count(*) FROM checked_auths a WHERE ${accepted} AND state NOT IN ('settled','expired')),
+    'settled_count',(SELECT count(*) FROM checked_auths WHERE state='settled'),
+    'expired_count',(SELECT count(*) FROM checked_auths WHERE state='expired'),
+    'history_settled_count',(SELECT count(*) FROM checked_auths a WHERE ${historical} AND state='settled'),
+    'history_expired_count',(SELECT count(*) FROM checked_auths a WHERE ${historical} AND state='expired'),
+    'frontier_settled_count',(SELECT count(*) FROM frontier_authorizations WHERE state='settled'),
+    'frontier_expired_count',(SELECT count(*) FROM frontier_authorizations WHERE state='expired'),
+    'historical_authorization_count',(SELECT count(*) FROM checked_auths a WHERE ${historical}),
+    'historical_event_count',(SELECT count(*) FROM checked_events e JOIN checked_auths a ON a.digest=e.digest WHERE ${historical}),
+    'invalid_authorization_count',(SELECT count(*) FROM checked_auths WHERE NOT valid),
+    'invalid_event_count',(SELECT count(*) FROM checked_events WHERE NOT valid),
+    'invalid_terminal_count',(SELECT count(*) FROM checked_auths a LEFT JOIN event_summary es ON es.digest=a.digest WHERE
+      (state='settled' AND (COALESCE(es.valid_count,0)<>1 OR es.only_hash<>a.expected_user_operation_hash))
+      OR (state='expired' AND EXISTS(SELECT 1 FROM aa_user_operation_events e WHERE e.digest=a.digest OR e.user_operation_hash=a.expected_user_operation_hash OR e.user_operation_hash=a.user_operation_hash))),
+    'historical_fingerprint',md5(COALESCE((SELECT string_agg(md5(to_jsonb(a)::text),'' ORDER BY digest)
+      FROM checked_auths a WHERE ${historical} AND ${accepted}),'') || ':' ||
+      COALESCE((SELECT string_agg(md5(to_jsonb(e)::text),'' ORDER BY e.user_operation_hash)
+      FROM checked_events e JOIN checked_auths a ON a.digest=e.digest WHERE ${historical} AND ${accepted}),''))
+  )`
+  // Invalidity is evaluated over the entire population before frontier detail
+  // selection. Expired signed terminal history is no longer actionable; its
+  // receipts are intentionally not represented as freshly RPC-verified.
+  const details = DETAIL_QUERY.replace('SELECT jsonb_build_object(', `SELECT ${accounting} || jsonb_build_object(`)
+    .replace('FROM aa_sponsorship_authorizations)', 'FROM frontier_authorizations)')
+    .replace('FROM aa_user_operation_events)', 'FROM frontier_events)')
+  return `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+WITH checked_auths AS MATERIALIZED (SELECT a.*, (${authValid}) IS TRUE AS valid FROM aa_sponsorship_authorizations a),
+checked_events AS MATERIALIZED (SELECT e.*, (${eventValid}) IS TRUE AS valid FROM aa_user_operation_events e LEFT JOIN checked_auths a ON a.digest=e.digest),
+event_summary AS MATERIALIZED (SELECT digest,count(*) FILTER(WHERE valid) AS valid_count,min(user_operation_hash) AS only_hash FROM checked_events GROUP BY digest),
+frontier_authorizations AS MATERIALIZED (SELECT a.* FROM checked_auths a WHERE NOT ${historical}),
+frontier_events AS MATERIALIZED (SELECT e.* FROM checked_events e WHERE e.digest IN(SELECT digest FROM frontier_authorizations)
+  OR e.user_operation_hash IN(SELECT expected_user_operation_hash FROM frontier_authorizations)
+  OR e.user_operation_hash IN(SELECT user_operation_hash FROM frontier_authorizations))
+${details}
 ROLLBACK;
 `
+}
+
+// Static export remains useful for inspecting the full-scan SQL contract;
+// execution always binds the independently attested numeric cutoff instead.
+export const JOURNAL_SQL = buildJournalSQL('0')
 
 function assert(ok) { if (!ok) throw new Error('drain_check_failed') }
 function decimal(value) { assert(typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value)); return BigInt(value) }
@@ -113,7 +233,7 @@ function configuration(env) {
 
 // Secrets are passed only in the child environment. -X disables psqlrc; no
 // shell is used, no database URL occurs in argv, and child errors are discarded.
-export function readJournal({ database, signal, execFileImpl = execFile }) {
+export function readJournal({ database, signal, execFileImpl = execFile, sql = JOURNAL_SQL }) {
   return new Promise((resolve, reject) => {
     const failure = () => reject(new Error('drain_database_failed'))
     let child
@@ -127,7 +247,7 @@ export function readJournal({ database, signal, execFileImpl = execFile }) {
         try { resolve(JSON.parse(stdout.trim())) } catch { failure() }
       })
       child.stdin.on('error', failure)
-      child.stdin.end(JOURNAL_SQL)
+      child.stdin.end(sql)
     } catch { failure() }
   })
 }
@@ -186,11 +306,10 @@ function block(value) {
 }
 function sameBlock(a, b) { assert(a.number === b.number && a.hash === b.hash && a.timestamp === b.timestamp) }
 
-export function inspectJournal(snapshot, now) {
+export function inspectBoundary(snapshot, now) {
   assert(snapshot?.read_only === 'on' && snapshot.isolation === 'repeatable read')
   const snapshotAt = milliseconds(snapshot.snapshot_at_ms)
   fresh(snapshotAt, now, 15000)
-  assert(Array.isArray(snapshot.authorizations) && Array.isArray(snapshot.events))
   assert(Array.isArray(snapshot.cursors) && snapshot.cursors.length === 1 && Array.isArray(snapshot.health) && snapshot.health.length === 1)
   const cursor = snapshot.cursors[0]
   const health = snapshot.health[0]
@@ -201,6 +320,28 @@ export function inspectJournal(snapshot, now) {
   assert(cursor.safe_block === health.safe_block && cursor.safe_block_hash === health.safe_block_hash)
   fresh(milliseconds(cursor.updated_at_ms), now, 120000)
   fresh(milliseconds(health.last_success_at_ms), now, 120000)
+  return { snapshotAt, cursor, health }
+}
+
+const COUNT_FIELDS = ['authorization_count', 'submitted_count', 'unresolved_count', 'settled_count', 'expired_count',
+  'history_settled_count', 'history_expired_count', 'frontier_settled_count', 'frontier_expired_count',
+  'historical_authorization_count', 'historical_event_count',
+  'invalid_authorization_count', 'invalid_event_count', 'invalid_terminal_count']
+
+export function inspectJournal(snapshot, now) {
+  const { snapshotAt, cursor, health } = inspectBoundary(snapshot, now)
+  assert(Array.isArray(snapshot.authorizations) && Array.isArray(snapshot.events))
+  const counts = Object.fromEntries(COUNT_FIELDS.map(name => {
+    assert(Number.isSafeInteger(snapshot[name]) && snapshot[name] >= 0)
+    return [name, snapshot[name]]
+  }))
+  assert(counts.invalid_authorization_count === 0 && counts.invalid_event_count === 0 && counts.invalid_terminal_count === 0)
+  assert(typeof snapshot.historical_fingerprint === 'string' && /^[0-9a-f]{32}$/.test(snapshot.historical_fingerprint))
+  assert(counts.authorization_count === snapshot.authorizations.length + counts.historical_authorization_count &&
+    counts.settled_count === counts.history_settled_count + counts.frontier_settled_count &&
+    counts.expired_count === counts.history_expired_count + counts.frontier_expired_count &&
+    counts.historical_authorization_count === counts.history_settled_count + counts.history_expired_count &&
+    counts.historical_event_count === counts.history_settled_count)
   const byDigest = new Map()
   const hashes = new Set()
   let submitted = 0
@@ -264,7 +405,10 @@ export function inspectJournal(snapshot, now) {
   assert(events.size === settled.length)
   for (const row of settled) assert(events.get(row.digest)?.user_hash === row.expected_hash)
   for (const row of expired) assert(!events.has(row.digest) && !eventHashes.has(row.expected_hash))
-  return { snapshotAt, cursor, health, byDigest, events, settled, expired, submitted, unresolved }
+  assert(counts.frontier_settled_count === settled.length && counts.frontier_expired_count === expired.length &&
+    counts.unresolved_count === unresolved && counts.submitted_count >= submitted)
+  return { snapshotAt, cursor, health, byDigest, events, settled, expired, submitted: counts.submitted_count,
+    unresolved, counts, historicalFingerprint: snapshot.historical_fingerprint }
 }
 
 function parsedEvent(value) {
@@ -342,6 +486,8 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
   let safeAge = 0
   let settledVerified = 0
   let journalReads = 0
+  let boundaryReads = 0
+  let cutoff
   let reachedEnd = false
   async function check(name, run) {
     try { signal.throwIfAborted(); const value = await run(); tests[name] = true; return value }
@@ -373,7 +519,8 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
       return value.result
     }
     async function journalRead() {
-      const value = await check('journal_snapshot', () => readJournal({ database: env.DATABASE_URL, signal, execFileImpl }))
+      const value = await check('journal_snapshot', () => readJournal({ database: env.DATABASE_URL, signal, execFileImpl,
+        sql: buildJournalSQL(cutoff.timestamp.toString()) }))
       journalReads++
       return value
     }
@@ -385,6 +532,7 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
         }))
         sameBlock(...headers)
         assert(headers[0].number === decimal(journal.cursor.safe_block) && headers[0].hash === journal.cursor.safe_block_hash)
+        if (cutoff) assert(headers[0].number >= cutoff.number && headers[0].timestamp >= cutoff.timestamp)
         return headers[0]
       })
     }
@@ -408,10 +556,18 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
       const sorted = (rows, key) => [...rows].sort((a, b) => a[key].localeCompare(b[key]))
       const accepted = raw.authorizations.filter(row => row.submitted_at_ms !== null || row.user_hash !== null || row.state === 'submitted')
       const digests = new Set(accepted.map(row => row.digest))
-      return JSON.stringify([sorted(accepted, 'digest'), sorted(raw.events.filter(event => digests.has(event.digest)), 'user_hash')])
+      return JSON.stringify([raw.historical_fingerprint, sorted(accepted, 'digest'), sorted(raw.events.filter(event => digests.has(event.digest)), 'user_hash')])
     }
     await barrier()
     await check('acknowledgement_grace', async () => { await sleep(22000, signal); signal.throwIfAborted() })
+    await barrier()
+    await check('historical_expiry_cutoff_verified', async () => {
+      const raw = await readJournal({ database: env.DATABASE_URL, signal, execFileImpl, sql: BOUNDARY_SQL })
+      boundaryReads++
+      const initial = inspectBoundary(raw, now())
+      cutoff = await canonicalBoundary(initial)
+      await canonicalHeads(cutoff)
+    })
     for (let sample = 0; sample < 2; sample++) {
       if (sample) await sleep(5000, signal)
       await barrier()
@@ -436,6 +592,11 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
       }
       boundary = await canonicalBoundary(journal)
       await canonicalHeads(boundary)
+      if (sample === 1) await check('historical_expiry_cutoff_verified', async () => {
+        const headers = await Promise.all([0, 1].map(async provider =>
+          block(await rpc(provider, 'eth_getBlockByNumber', [hex(cutoff.number), false]))))
+        for (const header of headers) sameBlock(header, cutoff)
+      })
       await check('journal_terminal', async () => {
         assert(journal.unresolved === 0)
         for (const row of journal.expired) assert(decimal(row.valid_until) < boundary.timestamp)
@@ -454,6 +615,8 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
         return result
       }))
       journals.push(journal)
+      if (journals.length === 2) await check('journal_terminal', async () =>
+        assert(journals[0].historicalFingerprint === journals[1].historicalFingerprint))
     }
     await check('process_continuity', async () => assert(samples.length === 2 && samples[0].started === samples[1].started))
     const last = journals.at(-1)
@@ -472,25 +635,27 @@ export async function runDrainQualification({ env = process.env, fetchImpl = glo
   }
   const complete = reachedEnd && REQUIRED_CHECKS.every(name => tests[name]) && samples.length === 2 && journals.length === 2
   const last = journals.at(-1)
+  const finishedAt = now()
   const result = {
     event: 'alto_rpc_qualification', schema_version: 1, scope: 'journal_idle',
     required_checks_complete: complete, tests: REQUIRED_CHECKS.map(name => ({ name, pass: tests[name] })),
-    started_at_ms: startedAt, finished_at_ms: now(), idle_sample_count: samples.length, snapshot_count: journals.length,
-    rpc_call_count: calls, journal_read_count: journalReads,
+    started_at_ms: startedAt, finished_at_ms: finishedAt, idle_sample_count: samples.length, snapshot_count: journals.length,
+    rpc_call_count: calls, journal_read_count: journalReads, boundary_read_count: boundaryReads,
   }
   if (complete) Object.assign(result, {
-    idle_observed_at_ms: now(), submitted_count: last.submitted, unresolved_count: last.unresolved,
-    settled_count: last.settled.length, expired_count: last.expired.length,
+    ...last.counts, idle_observed_at_ms: finishedAt,
     outstanding_gauge_first: samples[0].outstanding, outstanding_gauge_last: samples[1].outstanding,
     executor_wallets_available: samples[1].available, executor_wallets_total: samples[1].total,
     process_started_at_seconds: samples[1].started, canonical_settlement_count: settledVerified,
     boundary_block_number: Number(decimal(last.cursor.safe_block)), latest_age_seconds: latestAge,
-    safe_age_seconds: safeAge, reconciler_age_seconds: (now() - milliseconds(last.health.last_success_at_ms)) / 1000,
+    safe_age_seconds: safeAge, reconciler_age_seconds: (finishedAt - milliseconds(last.health.last_success_at_ms)) / 1000,
+    historical_expiry_cutoff_block_number: Number(cutoff.number), historical_expiry_cutoff_timestamp_seconds: Number(cutoff.timestamp),
   })
   return result
 }
 
-if (!process.argv[1] || import.meta.url === pathToFileURL(process.argv[1]).href) {
+if ((!process.argv[1] && import.meta.url.endsWith('/[eval1]')) ||
+    (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)) {
   const result = await runDrainQualification()
   process.stdout.write(`${JSON.stringify(result)}\n`)
   if (!result.required_checks_complete) process.exitCode = 1

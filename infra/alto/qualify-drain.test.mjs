@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { EventEmitter } from 'node:events'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { databaseEnvironment, inspectJournal, JOURNAL_SQL, parseExecutorMetrics, readJournal, REQUIRED_CHECKS, runDrainQualification } from './qualify-drain.mjs'
+import { BOUNDARY_SQL, buildJournalSQL, databaseEnvironment, inspectJournal, JOURNAL_SQL, parseExecutorMetrics, readJournal, REQUIRED_CHECKS, runDrainQualification } from './qualify-drain.mjs'
 
 const BASE = 1794230000000
 const HASH = number => `0x${number.toString(16).padStart(64, '0')}`
@@ -29,7 +29,7 @@ function authorization(id, state) {
   const signed = !['reserved', 'cancelled'].includes(state)
   return { digest: HASH(id), request_key: HASH(id + 100), expected_hash: signed ? HASH(id + 200) : null,
     user_hash: submitted ? HASH(id + 200) : null, sender: SENDER, owner: OWNER, nonce: String(id),
-    valid_after: epoch(BASE / 1000 - 400), valid_until: epoch(BASE / 1000 - 200), max_cost: '1000', state,
+    valid_after: epoch(BASE / 1000 - 400), valid_until: epoch(BASE / 1000 + (state === 'settled' ? 200 : state === 'expired' ? -80 : -200)), max_cost: '1000', state,
     signature_present: signed, signature_valid: signed, signed_at_ms: signed ? epoch(BASE - 300000) : null,
     submitted_at_ms: submitted ? epoch(BASE - 250000) : null,
     settled_at_ms: ['settled', 'expired', 'cancelled'].includes(state) ? epoch(BASE - 50000) : null,
@@ -47,8 +47,12 @@ function snapshot(now) {
     authorizations: [settled, authorization(2, 'expired'), authorization(3, 'signed'), authorization(4, 'reserved')],
     events: [{ digest: settled.digest, user_hash: settled.expected_hash, transaction_hash: HASH(400),
       block_number: '500', block_hash: HASH(500), success: true, actual_cost: '100', event: logFor(settled), finalized_at_ms: epoch(BASE - 50000) }],
-    cursors: [{ chain_id: '421614', paymaster: PAYMASTER, safe_block: '600', safe_block_hash: HASH(600), updated_at_ms: epoch(now - 1000) }],
-    health: [{ chain_id: '421614', paymaster: PAYMASTER, safe_block: '600', safe_block_hash: HASH(600), last_success_at_ms: epoch(now - 1000) }] }
+    cursors: [{ chain_id: '421614', paymaster: PAYMASTER, safe_block: '700', safe_block_hash: HASH(700), updated_at_ms: epoch(now - 1000) }],
+    health: [{ chain_id: '421614', paymaster: PAYMASTER, safe_block: '700', safe_block_hash: HASH(700), last_success_at_ms: epoch(now - 1000) }],
+    authorization_count: 4, submitted_count: 2, unresolved_count: 0, settled_count: 1, expired_count: 1,
+    history_settled_count: 0, history_expired_count: 0, frontier_settled_count: 1, frontier_expired_count: 1,
+    historical_authorization_count: 0, historical_event_count: 0,
+    invalid_authorization_count: 0, invalid_event_count: 0, invalid_terminal_count: 0, historical_fingerprint: '0'.repeat(32) }
 }
 function metrics(outstanding = 187, started = 1793728822) {
   return `alto_user_operations_in_mempool_count{status="outstanding"} ${outstanding}\nalto_executor_wallets_available_count 4\nalto_executor_wallets_total_count 4\nprocess_start_time_seconds ${started}\n`
@@ -62,9 +66,21 @@ function fixture(options = {}) {
     events.push({ type: 'psql', command, args, config })
     const stdin = new EventEmitter()
     stdin.end = sql => {
-      assert.equal(sql, JOURNAL_SQL)
       const raw = snapshot(now)
-      options.snapshot?.(raw, databaseCalls++)
+      if (sql === BOUNDARY_SQL) {
+        raw.cursors[0].safe_block = raw.health[0].safe_block = '600'
+        raw.cursors[0].safe_block_hash = raw.health[0].safe_block_hash = HASH(600)
+      } else {
+        assert.equal(sql, buildJournalSQL(String(BASE / 1000 - 100)))
+        options.snapshot?.(raw, databaseCalls++)
+        raw.authorization_count = raw.authorizations.length + raw.historical_authorization_count
+        raw.frontier_settled_count = raw.authorizations.filter(row => row.state === 'settled').length
+        raw.frontier_expired_count = raw.authorizations.filter(row => row.state === 'expired').length
+        raw.settled_count = raw.frontier_settled_count + raw.history_settled_count
+        raw.expired_count = raw.frontier_expired_count + raw.history_expired_count
+        raw.submitted_count = raw.authorizations.filter(row => row.submitted_at_ms !== null).length + (options.historySubmitted ?? 0)
+        raw.unresolved_count = raw.authorizations.filter(row => (row.submitted_at_ms !== null || row.user_hash !== null || row.state === 'submitted') && !['settled', 'expired'].includes(row.state)).length
+      }
       queueMicrotask(() => callback(options.databaseError ?? null, options.databaseText ?? JSON.stringify(raw)))
     }
     return { stdin }
@@ -107,7 +123,7 @@ function fixture(options = {}) {
       status: 200, headers: { 'x-plether-rpc-upstream': options.upstream ?? 'primary' },
     })
   }
-  return { events, run: extra => runDrainQualification({ env: ENV, fetchImpl, execFileImpl, now: () => now,
+  return { events, run: extra => runDrainQualification({ env: ENV, fetchImpl, execFileImpl, now: () => options.advancingClock ? now++ : now,
     sleep: async ms => { events.push({ type: 'sleep', ms }); now += ms }, ...extra }) }
 }
 
@@ -120,6 +136,7 @@ test('complete proof uses both providers, final full reread, real barrier grace 
   assert.equal(result.idle_sample_count, 2)
   assert.equal(result.snapshot_count, 2)
   assert.equal(result.journal_read_count, 3)
+  assert.equal(result.boundary_read_count, 1)
   assert.equal(result.unresolved_count, 0)
   assert.equal(result.submitted_count, 2)
   assert.equal(result.canonical_settlement_count, 1)
@@ -183,6 +200,47 @@ test('zero or stale-positive outstanding cannot bypass an unresolved durable sub
   }
 })
 
+test('expired terminal history is fully accounted while only actionable frontier receives live receipt checks', async () => {
+  const mock = fixture({ historySubmitted: 53337, snapshot: raw => {
+    raw.history_settled_count = 53337
+    raw.historical_authorization_count = 53337
+    raw.historical_event_count = 53337
+  } })
+  const result = await mock.run()
+  assert.equal(result.required_checks_complete, true)
+  assert.equal(result.authorization_count, 53341)
+  assert.equal(result.settled_count, 53338)
+  assert.equal(result.history_settled_count, 53337)
+  assert.equal(result.frontier_settled_count, 1)
+  assert.equal(result.canonical_settlement_count, 1)
+  assert.equal(result.historical_expiry_cutoff_timestamp_seconds, BASE / 1000 - 100)
+  assert.equal(mock.events.filter(event => event.type === 'rpc' && event.method === 'eth_getTransactionReceipt').length, 4)
+  assert(!JSON.stringify(result).includes('historical_fingerprint'))
+  assert.match(buildJournalSQL(String(BASE / 1000 - 100)), new RegExp(`a.valid_until<${BASE / 1000 - 100}`))
+  assert.throws(() => buildJournalSQL('1;DELETE FROM authorizations'))
+})
+
+test('historical invalidity, inconsistent aggregate accounting, or changed accepted-history fingerprint fail closed', async () => {
+  for (const snapshot of [
+    raw => { raw.invalid_authorization_count = 1 },
+    raw => { raw.invalid_event_count = 1 },
+    raw => { raw.invalid_terminal_count = 1 },
+    raw => { raw.history_settled_count = 2; raw.historical_authorization_count = 2; raw.historical_event_count = 0 },
+    (raw, index) => { if (index === 2) raw.historical_fingerprint = 'f'.repeat(32) },
+  ]) assert.equal((await fixture({ snapshot }).run()).required_checks_complete, false)
+})
+
+test('immutable verified cutoff is checked again and cannot be replaced by wallclock or a different fork', async () => {
+  let reads = 0
+  const mock = fixture({ rpc: ({ provider, request, result }) => {
+    if (request.method === 'eth_getBlockByNumber' && request.params[0] === '0x258') {
+      reads++
+      if (reads > 2 && provider) { result.hash = HASH(999); return result }
+    }
+  } })
+  assert.equal((await mock.run()).required_checks_complete, false)
+})
+
 test('every impossible authorization combination fails closed, including rows outside submitted_at', () => {
   const mutations = [
     raw => { raw.authorizations[0].expected_hash = null },
@@ -210,7 +268,7 @@ test('every impossible authorization combination fails closed, including rows ou
 
 test('terminal expired needs strict safe-time expiry and no event by either identity', async () => {
   for (const mutation of [
-    raw => { raw.authorizations[1].valid_until = epoch(BASE / 1000 - 100) },
+    raw => { raw.authorizations[1].valid_until = epoch(BASE / 1000 - 60) },
     raw => { raw.events.push({ ...clone(raw.events[0]), digest: raw.authorizations[1].digest, user_hash: raw.authorizations[1].expected_hash }) },
     raw => { raw.authorizations[1].expected_hash = raw.authorizations[0].expected_hash; raw.authorizations[1].user_hash = raw.authorizations[0].expected_hash },
   ]) assert.equal((await fixture({ snapshot: mutation }).run()).required_checks_complete, false)
@@ -221,7 +279,7 @@ test('settled evidence requires finalized exact DB event, no strays, no duplicat
     raw => { raw.events[0].finalized_at_ms = null },
     raw => { raw.events[0].digest = HASH(999) },
     raw => { raw.events[0].user_hash = HASH(999) },
-    raw => { raw.events[0].block_number = '601' },
+    raw => { raw.events[0].block_number = '701' },
     raw => { raw.events.push(clone(raw.events[0])) },
     raw => { raw.events = [] },
   ]) assert.equal((await fixture({ snapshot: mutation }).run()).required_checks_complete, false)
@@ -302,6 +360,14 @@ test('deadline aborts grace and child failures are generic', async () => {
   await assert.rejects(readJournal({ database: ENV.DATABASE_URL, execFileImpl: () => { throw new Error(ENV.DATABASE_URL) } }), { message: 'drain_database_failed' })
 })
 
+test('observed timestamp never exceeds finished timestamp with an advancing clock', async () => {
+  const mock = fixture({ advancingClock: true })
+  const result = await mock.run()
+  assert.equal(result.required_checks_complete, true)
+  assert(result.started_at_ms <= result.idle_observed_at_ms)
+  assert.equal(result.idle_observed_at_ms, result.finished_at_ms)
+})
+
 test('inline Node source emits exactly one safe fail-closed JSON event without configured secrets', () => {
   const source = readFileSync(new URL('./qualify-drain.mjs', import.meta.url), 'utf8')
   let stdout
@@ -310,4 +376,10 @@ test('inline Node source emits exactly one safe fail-closed JSON event without c
   const lines = stdout.trim().split('\n')
   assert.equal(lines.length, 1)
   assert.equal(JSON.parse(lines[0]).required_checks_complete, false)
+})
+
+test('importing the builder from node-e is inert and cannot accidentally start qualification', () => {
+  const source = `const mod=await import(${JSON.stringify(new URL('./qualify-drain.mjs', import.meta.url).href)}); process.stdout.write(String(typeof mod.buildJournalSQL))`
+  const stdout = execFileSync(process.execPath, ['--input-type=module', '-e', source], { env: { PATH: process.env.PATH }, encoding: 'utf8' })
+  assert.equal(stdout, 'function')
 })
