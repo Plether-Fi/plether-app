@@ -7,13 +7,16 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 from alto_rpc_cutover import (
     GuardRejected, require_baseline, patch_definition, assert_only_rpc_patch,
     canary_definition, journal_idle_definition, validate_writer_ingress,
     validate_canary_proof, validate_service, validate_scan,
     replace_service, perform_cutover, fingerprint, canary_canonical, canary_exit_code,
-    require_no_canary_restart, Deployment,
+    require_no_canary_restart, validate_origin_evidence, require_origin_barrier, Deployment,
+    ORIGIN_SOURCE, ORIGIN_RUN_ID, ORIGIN_RUN_ATTEMPT, ORIGIN_IMAGE, ORIGIN_CANDIDATE_ARN,
+    ORIGIN_CANDIDATE_FINGERPRINT, ORIGIN_BARRIER, ORIGIN_SIGNER_TASK,
 )
 
 ACCOUNT = "932542905614"
@@ -172,6 +175,24 @@ def canary_task_fixture(task_status="DEPROVISIONING", container_status="STOPPED"
     return {"taskArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:task/plether-sepolia/canary-fixture",
             "lastStatus": task_status, "desiredStatus": "STOPPED",
             "containers": [{"name": "plether-alto", "lastStatus": container_status, "exitCode": exit_code}]}
+
+
+def origin_fixture():
+    return {"schema_version": 1, "account": ACCOUNT, "region": REGION, "status": "rollback_failed",
+            "source": ORIGIN_SOURCE, "image": ORIGIN_IMAGE, "previous_task_definition": BEFORE,
+            "candidate_task_definition": ORIGIN_CANDIDATE_ARN,
+            "baseline_fingerprint": "1648f589fb8f414f223bef62cda79ba591fc715bc315820da5335553ba1d860b",
+            "candidate_fingerprint": ORIGIN_CANDIDATE_FINGERPRINT,
+            "pause_rule": ORIGIN_BARRIER, "pause_status": "active", "mutation_started": True,
+            "admission_opened": True}
+
+
+def origin_barrier_fixture():
+    return {"RuleArn": ORIGIN_BARRIER, "Priority": "1", "IsDefault": False,
+            "Conditions": [{"Field": "http-request-method", "HttpRequestMethodConfig": {"Values": ["POST"]}}],
+            "Actions": [{"Type": "fixed-response", "FixedResponseConfig": {
+                "StatusCode": "503", "ContentType": "application/json",
+                "MessageBody": '{"error":"alto_rpc_cutover_in_progress"}'}}]}
 
 
 def scan_fixture(now=1_794_213_000):
@@ -1113,6 +1134,51 @@ class FakeEcs:
 
 
 class RpcCutoverSequencingTests(unittest.TestCase):
+    def test_original_failure_diagnostic_write_error_cannot_skip_normal_rollback(self):
+        events, saved = [], []
+        def save(delta):
+            saved.append(copy.deepcopy(delta))
+            if "original_failure" in delta:
+                raise OSError("fixture_disk_unavailable")
+        def postcheck():
+            raise GuardRejected("public_smoke_http_failure")
+        with self.assertRaisesRegex(GuardRejected, "public_smoke_http_failure"):
+            perform_cutover(FakeEcs(events), BEFORE, AFTER, lambda: True, lambda: True,
+                lambda: events.append(("stopped",)), lambda arn: events.append(("healthy", arn)),
+                postcheck, save, cleanup=lambda: events.append(("cleanup",)))
+        updates = [event[1] for event in events if event[0] == "update"]
+        self.assertEqual([value["desiredCount"] for value in updates], [0, 1, 0, 1])
+        self.assertEqual(updates[-1]["taskDefinition"], BEFORE)
+        self.assertTrue(any(value.get("status") == "rolled_back" for value in saved))
+        self.assertEqual(events[-1], ("cleanup",))
+
+    def test_original_smoke_failure_is_preserved_when_rollback_also_fails(self):
+        for original in [GuardRejected("public_smoke_http_failure"),
+                         HTTPError("https://example.invalid/private?token=must-not-log", 503,
+                                   "Service Unavailable", {}, None)]:
+            if isinstance(original, HTTPError):
+                self.addCleanup(original.close)
+            events, saved = [], []
+            def healthy(target):
+                if target == BEFORE:
+                    raise GuardRejected("fixture_rollback_not_healthy")
+            def postcheck():
+                raise original
+            with self.subTest(error=type(original).__name__), self.assertRaisesRegex(GuardRejected, "rollback_failed_requires_attention"):
+                perform_cutover(FakeEcs(events), BEFORE, AFTER, lambda: True, lambda: True,
+                    lambda: None, healthy, postcheck, lambda value: saved.append(copy.deepcopy(value)))
+            failure = next(value["original_failure"] for value in saved if "original_failure" in value)
+            self.assertEqual(failure["error_type"], type(original).__name__)
+            if isinstance(original, GuardRejected):
+                self.assertEqual(failure["reason"], "public_smoke_http_failure")
+            else:
+                self.assertEqual(failure["http_status"], 503)
+            self.assertNotIn("must-not-log", json.dumps(saved))
+            self.assertNotIn("private?token", json.dumps(saved))
+            failure_index = next(index for index, value in enumerate(saved) if "original_failure" in value)
+            rollback_index = next(index for index, value in enumerate(saved) if value.get("status") == "rolling_back")
+            self.assertLess(failure_index, rollback_index)
+
     def test_signer_capture_cannot_turn_a_fresh_drain_into_a_stale_authorization_to_stop(self):
         for rollback, journal in [(False, {}), (True, {"admission_opened": True})]:
             events, saved = [], []
@@ -1463,6 +1529,395 @@ class AdmissionBarrierTests(unittest.TestCase):
             elb.delete_rule = lost_response
             with self.assertRaisesRegex(TimeoutError, "fixture_lost_delete_response"):
                 deployment.remove_barrier()
+
+
+class FinalizationOriginPolicyTests(unittest.TestCase):
+    def test_original_barrier_requires_exact_post_only_503_maintenance_behavior(self):
+        require_origin_barrier(origin_barrier_fixture())
+        mutations = [
+            lambda value: value.update(RuleArn="foreign-rule"),
+            lambda value: value.update(Priority="2"),
+            lambda value: value.update(IsDefault=True),
+            lambda value: value.update(Conditions=[]),
+            lambda value: value["Conditions"][0]["HttpRequestMethodConfig"].update(Values=["POST", "GET"]),
+            lambda value: value["Conditions"].append({"Field": "path-pattern", "Values": ["/*"]}),
+            lambda value: value["Actions"][0].update(Type="forward"),
+            lambda value: value["Actions"][0]["FixedResponseConfig"].update(StatusCode="200"),
+            lambda value: value["Actions"][0]["FixedResponseConfig"].update(ContentType="text/plain"),
+            lambda value: value["Actions"][0]["FixedResponseConfig"].update(MessageBody="different maintenance"),
+            lambda value: value["Actions"].append(copy.deepcopy(value["Actions"][0])),
+        ]
+        for index, mutate in enumerate(mutations):
+            rule = origin_barrier_fixture()
+            mutate(rule)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                require_origin_barrier(rule)
+
+    def test_original_failed_rollout_is_reduced_to_the_fixed_identifier_allowlist(self):
+        journal = origin_fixture()
+        journal["unreviewed_runtime_config"] = "must-not-copy"
+        original = copy.deepcopy(journal)
+        provenance = validate_origin_evidence(journal)
+        self.assertEqual(journal, original)
+        self.assertEqual(provenance, {
+            "source": ORIGIN_SOURCE, "run_id": ORIGIN_RUN_ID, "run_attempt": ORIGIN_RUN_ATTEMPT,
+            "image": ORIGIN_IMAGE, "previous_task_definition": BEFORE,
+            "candidate_task_definition": ORIGIN_CANDIDATE_ARN,
+            "baseline_fingerprint": journal["baseline_fingerprint"],
+            "candidate_fingerprint": ORIGIN_CANDIDATE_FINGERPRINT, "barrier_rule": ORIGIN_BARRIER})
+
+    def test_changed_or_missing_origin_identity_cannot_authorize_finalization(self):
+        mutations = [
+            lambda value: value.update(schema_version=2),
+            lambda value: value.update(account="000000000000"),
+            lambda value: value.update(region="us-east-1"),
+            lambda value: value.update(status="complete"),
+            lambda value: value.update(source=SOURCE),
+            lambda value: value.update(image=IMAGE),
+            lambda value: value.update(previous_task_definition=AFTER),
+            lambda value: value.update(candidate_task_definition=AFTER),
+            lambda value: value.update(baseline_fingerprint="0" * 64),
+            lambda value: value.update(candidate_fingerprint="0" * 64),
+            lambda value: value.update(pause_rule="foreign-rule"),
+        ]
+        for key in ["source", "image", "previous_task_definition", "candidate_task_definition",
+                    "baseline_fingerprint", "candidate_fingerprint", "pause_rule"]:
+            mutations.append(lambda value, key=key: value.pop(key))
+        for index, mutate in enumerate(mutations):
+            journal = origin_fixture()
+            mutate(journal)
+            with self.subTest(case=index), self.assertRaises(GuardRejected):
+                validate_origin_evidence(journal)
+
+
+class FinalizationLiveGuardTests(unittest.TestCase):
+    def preflight(self, directory):
+        before = fixture()
+        candidate = patch_definition(before, ORIGIN_IMAGE)
+        candidate.update(taskDefinitionArn=ORIGIN_CANDIDATE_ARN, revision=12)
+        for name, value in [("BASELINE_FINGERPRINT", fingerprint(before)),
+                            ("ORIGIN_CANDIDATE_FINGERPRINT", fingerprint(candidate))]:
+            pin = patch("alto_rpc_cutover." + name, value)
+            pin.start()
+            self.addCleanup(pin.stop)
+        origin = origin_fixture()
+        origin.update(baseline_fingerprint=fingerprint(before), candidate_fingerprint=fingerprint(candidate))
+        path = Path(directory)
+        (path / "rollout.json").write_text(json.dumps(origin))
+        for scope, filename in [("rpc", "rpc-qualification.json"), ("journal_idle", "idle-qualification.json")]:
+            (path / filename).write_text(json.dumps(proof_fixture(scope)))
+        service = service_fixture()
+        service["taskDefinition"] = ORIGIN_CANDIDATE_ARN
+        service["deployments"][0]["taskDefinition"] = ORIGIN_CANDIDATE_ARN
+        value = object.__new__(Deployment)
+        value.args = SimpleNamespace(source=SOURCE, image=ORIGIN_IMAGE, origin_evidence_directory=path)
+        value.journal = {"source": SOURCE}
+        definitions = {BEFORE: before, ORIGIN_CANDIDATE_ARN: candidate}
+        value.definition = lambda arn: copy.deepcopy(definitions[arn])
+        value.service = lambda: copy.deepcopy(service)
+        value.listener = "original-listener"
+        value.baseline_url = lambda current: BASELINE_URL
+        value.elb = SimpleNamespace(
+            describe_rules=Mock(return_value={"Rules": [
+                {"RuleArn": "default", "IsDefault": True},
+                origin_barrier_fixture()]}),
+            describe_tags=Mock(return_value={"TagDescriptions": [{"Tags": [
+                {"Key": "WorkflowOwner", "Value": f"alto-rpc-{ORIGIN_RUN_ID}-{ORIGIN_RUN_ATTEMPT}"},
+                {"Key": "Source", "Value": ORIGIN_SOURCE}, {"Key": "Capability", "Value": "alto-rpc-admission"}]}]}))
+        old = {"taskArn": ORIGIN_SIGNER_TASK, "taskDefinitionArn": BEFORE, "lastStatus": "STOPPED"}
+        value.ecs = SimpleNamespace(describe_tasks=Mock(return_value={"tasks": [old], "failures": []}),
+            update_service=Mock(side_effect=AssertionError("Preflight cannot update ECS")),
+            stop_task=Mock(side_effect=AssertionError("Preflight cannot stop ECS")))
+        value.existing_candidate_task = Mock(return_value="existing-candidate-task")
+        value.scan, value.journal_observer_context = Mock(), Mock()
+        value.save = lambda delta: value.journal.update(copy.deepcopy(delta))
+        return value, service, definitions, old
+
+    def test_origin_preflight_binds_the_old_stopped_signer_candidate_and_api_writer_context(self):
+        with TemporaryDirectory() as directory:
+            deployment, _, _, _ = self.preflight(directory)
+            before, candidate, service = deployment.finalization_origin()
+            self.assertEqual(before["taskDefinitionArn"], BEFORE)
+            self.assertEqual(candidate["taskDefinitionArn"], ORIGIN_CANDIDATE_ARN)
+            self.assertEqual(service["taskDefinition"], ORIGIN_CANDIDATE_ARN)
+            deployment.ecs.describe_tasks.assert_called_once_with(cluster="plether-sepolia", tasks=[ORIGIN_SIGNER_TASK])
+            deployment.journal_observer_context.assert_called_once_with(service)
+            self.assertEqual(deployment.journal["origin_provenance"]["source"], ORIGIN_SOURCE)
+            self.assertEqual(deployment.journal["source"], SOURCE)
+            deployment.ecs.update_service.assert_not_called()
+            deployment.ecs.stop_task.assert_not_called()
+
+    def test_stopping_old_signer_wrong_revision_or_extra_service_signer_blocks_preflight(self):
+        for case in ["old_stopping", "old_wrong_revision", "old_missing", "service_count", "service_revision", "barrier_owner"]:
+            with self.subTest(case=case), TemporaryDirectory() as directory:
+                deployment, service, _, old = self.preflight(directory)
+                if case == "old_stopping":
+                    old.update(lastStatus="STOPPING", desiredStatus="STOPPED",
+                               containers=[{"name": "plether-alto", "lastStatus": "STOPPED", "exitCode": 0}])
+                elif case == "old_wrong_revision":
+                    old["taskDefinitionArn"] = AFTER
+                elif case == "old_missing":
+                    deployment.ecs.describe_tasks.return_value = {"tasks": [], "failures": [{"reason": "MISSING"}]}
+                elif case == "service_count":
+                    service["runningCount"] = 2
+                elif case == "service_revision":
+                    service["taskDefinition"] = AFTER
+                else:
+                    deployment.elb.describe_tags.return_value["TagDescriptions"][0]["Tags"][0]["Value"] = "foreign-owner"
+                with self.assertRaises(GuardRejected):
+                    deployment.finalization_origin()
+                deployment.ecs.update_service.assert_not_called()
+                deployment.ecs.stop_task.assert_not_called()
+
+    def test_origin_qualification_or_non_rpc_candidate_drift_cannot_be_finalized(self):
+        for case in ["qualification", "candidate", "baseline"]:
+            with self.subTest(case=case), TemporaryDirectory() as directory:
+                deployment, _, definitions, _ = self.preflight(directory)
+                if case == "qualification":
+                    proof = proof_fixture("journal_idle")
+                    proof["tests"][0]["name"] = "unreviewed_success"
+                    (Path(directory) / "idle-qualification.json").write_text(json.dumps(proof))
+                elif case == "candidate":
+                    main_container(definitions[ORIGIN_CANDIDATE_ARN])["secrets"][1]["valueFrom"] = PREFIX + "different-signers"
+                else:
+                    definitions[BEFORE]["memory"] = "4096"
+                with self.assertRaises(GuardRejected):
+                    deployment.finalization_origin()
+                deployment.ecs.update_service.assert_not_called()
+                deployment.ecs.stop_task.assert_not_called()
+
+    def test_existing_candidate_task_requires_one_healthy_pinned_signer_and_target(self):
+        for case in ["valid", "extra_signer", "wrong_image", "wrong_task", "unhealthy", "extra_container", "unhealthy_target"]:
+            service = service_fixture()
+            service["taskDefinition"] = ORIGIN_CANDIDATE_ARN
+            service["deployments"][0]["taskDefinition"] = ORIGIN_CANDIDATE_ARN
+            service["loadBalancers"] = [{"containerName": "plether-alto", "targetGroupArn": "reviewed-target"}]
+            task = {"taskDefinitionArn": ORIGIN_CANDIDATE_ARN, "lastStatus": "RUNNING", "healthStatus": "HEALTHY",
+                    "containers": [{"name": "plether-alto", "lastStatus": "RUNNING", "imageDigest": ORIGIN_IMAGE.split("@")[1]},
+                                   {"name": "alto-tmp-init", "lastStatus": "STOPPED", "exitCode": 0},
+                                   {"name": "otel-log-router", "lastStatus": "RUNNING"}]}
+            deployment = object.__new__(Deployment)
+            deployment.service = lambda: copy.deepcopy(service)
+            deployment.ecs = SimpleNamespace(list_tasks=Mock(return_value={"taskArns": ["candidate-task"]}),
+                                              describe_tasks=Mock(return_value={"tasks": [task], "failures": []}))
+            deployment.elb = SimpleNamespace(describe_target_health=Mock(return_value={
+                "TargetHealthDescriptions": [{"TargetHealth": {"State": "healthy"}}]}))
+            if case == "extra_signer":
+                deployment.ecs.list_tasks.return_value["taskArns"].append("unreviewed-second-task")
+            elif case == "wrong_image":
+                task["containers"][0]["imageDigest"] = "sha256:" + "0" * 64
+            elif case == "wrong_task":
+                task["taskDefinitionArn"] = AFTER
+            elif case == "unhealthy":
+                task["healthStatus"] = "UNHEALTHY"
+            elif case == "extra_container":
+                task["containers"].append({"name": "extra", "lastStatus": "RUNNING"})
+            elif case == "unhealthy_target":
+                deployment.elb.describe_target_health.return_value["TargetHealthDescriptions"][0]["TargetHealth"]["State"] = "draining"
+            with self.subTest(case=case):
+                if case == "valid":
+                    self.assertEqual(deployment.existing_candidate_task(), "candidate-task")
+                else:
+                    with self.assertRaises(GuardRejected):
+                        deployment.existing_candidate_task()
+
+
+class PublicSmokeRetryTests(unittest.TestCase):
+    def deployment(self):
+        value = object.__new__(Deployment)
+        value.journal = {}
+        value.save = lambda delta: value.journal.update(copy.deepcopy(delta))
+        value.budget = lambda: None
+        return value
+
+    def test_503_propagation_retries_then_succeeds_within_the_original_wall_clock_bound(self):
+        deployment = self.deployment()
+        error = HTTPError("https://example.invalid", 503, "Unavailable", {}, None)
+        self.addCleanup(error.close)
+        deployment.postcheck = Mock(side_effect=[error, None])
+        clock, sleeps = [0], []
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock[0] += seconds
+        with patch("alto_rpc_cutover.time.monotonic", side_effect=lambda: clock[0]), patch("alto_rpc_cutover.time.sleep", side_effect=sleep):
+            deployment.postcheck_with_retry()
+        self.assertEqual(deployment.postcheck.call_count, 2)
+        self.assertEqual(sleeps, [2])
+        self.assertEqual(deployment.journal["public_smoke_first_failure"]["http_status"], 503)
+
+    def test_persistent_503_cannot_extend_the_45_second_retry_window(self):
+        deployment = self.deployment()
+        error = HTTPError("https://example.invalid", 503, "Unavailable", {}, None)
+        self.addCleanup(error.close)
+        deployment.postcheck = Mock(side_effect=error)
+        clock = [0]
+        def sleep(seconds):
+            self.assertGreater(seconds, 0)
+            clock[0] += seconds
+        with patch("alto_rpc_cutover.time.monotonic", side_effect=lambda: clock[0]), patch("alto_rpc_cutover.time.sleep", side_effect=sleep):
+            with self.assertRaises(HTTPError):
+                deployment.postcheck_with_retry()
+        self.assertLessEqual(clock[0], 45)
+        self.assertLessEqual(deployment.postcheck.call_count, 24)
+
+    def test_cancellation_deadline_or_keyboard_interrupt_are_never_retried(self):
+        for error in [GuardRejected("operator_cancelled"), GuardRejected("operator_deadline"), KeyboardInterrupt()]:
+            deployment = self.deployment()
+            deployment.postcheck = Mock(side_effect=error)
+            with self.subTest(error=type(error).__name__), patch("alto_rpc_cutover.time.monotonic", return_value=0), \
+                 patch("alto_rpc_cutover.time.sleep") as sleep:
+                with self.assertRaises(type(error)):
+                    deployment.postcheck_with_retry()
+                deployment.postcheck.assert_called_once()
+                sleep.assert_not_called()
+
+
+class ExistingCandidateFinalizationTests(unittest.TestCase):
+    now_ms = 1_794_213_000_000
+
+    def deployment(self):
+        events = []
+        before = fixture()
+        candidate = patch_definition(before, ORIGIN_IMAGE)
+        candidate.update(taskDefinitionArn=ORIGIN_CANDIDATE_ARN, revision=12)
+        service = service_fixture()
+        service["taskDefinition"] = ORIGIN_CANDIDATE_ARN
+        service["deployments"][0]["taskDefinition"] = ORIGIN_CANDIDATE_ARN
+        value = object.__new__(Deployment)
+        value.args = SimpleNamespace(source=SOURCE, image=ORIGIN_IMAGE)
+        value.journal = {"schema_version": 1, "account": ACCOUNT, "region": REGION,
+                         "source": SOURCE, "image": ORIGIN_IMAGE, "status": "preflight", "mutation_started": False}
+        value.canary_proof = None
+        value.existing_signer_task = "existing-reviewed-candidate-task"
+        value.ecs = SimpleNamespace(update_service=Mock(side_effect=AssertionError("Finalization cannot replace a signer")),
+                                    stop_task=Mock(side_effect=AssertionError("Finalization cannot stop a signer")))
+        value.register = Mock(side_effect=AssertionError("Only the delegated canary may register a task"))
+        def origin():
+            events.append("origin")
+            value.barrier_context = {"owner": f"alto-rpc-{ORIGIN_RUN_ID}-{ORIGIN_RUN_ATTEMPT}", "source": ORIGIN_SOURCE}
+            value.candidate_definition, value.baseline_service = candidate, service
+            value.journal["origin_provenance"] = validate_origin_evidence(origin_fixture())
+            value.journal.update(previous_task_definition=BEFORE, candidate_task_definition=ORIGIN_CANDIDATE_ARN)
+            return before, candidate, service
+        value.finalization_origin = Mock(side_effect=origin)
+        value.save = lambda delta: value.journal.update(copy.deepcopy(delta))
+        value.service = lambda: copy.deepcopy(service)
+        value.budget = lambda: None
+        value.wait_healthy = Mock(side_effect=lambda arn: events.append(("healthy", arn)))
+        value.existing_candidate_task = Mock(return_value=value.existing_signer_task)
+        value.journal_observer_context = Mock(return_value=(api_fixture(), service["networkConfiguration"]))
+        def canary(definition, current_service, scope="rpc"):
+            events.append(scope)
+            self.assertEqual(definition["taskDefinitionArn"], ORIGIN_CANDIDATE_ARN)
+            if scope == "journal_idle":
+                value.canary_proof = proof_fixture("journal_idle", self.now_ms)
+        value.canary = Mock(side_effect=canary)
+        def barrier(action):
+            self.assertEqual(value.barrier_context, {
+                "owner": f"alto-rpc-{ORIGIN_RUN_ID}-{ORIGIN_RUN_ATTEMPT}", "source": ORIGIN_SOURCE})
+            self.assertEqual(value.args.source, SOURCE, "Barrier ownership must not replace the fresh canary source")
+            events.append(action)
+            value.journal["pause_status"] = "active" if action == "pause" else "removed"
+            return True
+        value.remove_barrier = Mock(side_effect=lambda: barrier("remove"))
+        value.ensure_barrier = Mock(side_effect=lambda: barrier("pause"))
+        value.postcheck_with_retry = Mock(side_effect=lambda: events.append("smoke"))
+        return value, events
+
+    def assert_no_signer_mutation(self, deployment):
+        deployment.ecs.update_service.assert_not_called()
+        deployment.ecs.stop_task.assert_not_called()
+        deployment.register.assert_not_called()
+
+    def test_existing_healthy_candidate_is_qualified_and_unpaused_without_replacement(self):
+        deployment, events = self.deployment()
+        with patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000):
+            deployment.finalize_existing()
+        self.assertEqual(deployment.journal["status"], "complete")
+        self.assertEqual(events[:3], ["origin", "rpc", "journal_idle"])
+        self.assertLess(events.index("journal_idle"), events.index("remove"))
+        self.assertLess(events.index("remove"), events.index("smoke"))
+        deployment.ensure_barrier.assert_not_called()
+        self.assertEqual(deployment.journal["source"], SOURCE)
+        self.assertEqual(deployment.journal["origin_provenance"]["source"], ORIGIN_SOURCE)
+        self.assert_no_signer_mutation(deployment)
+
+    def test_smoke_failure_restores_original_owned_pause_without_rolling_back_the_signer(self):
+        deployment, events = self.deployment()
+        deployment.postcheck_with_retry.side_effect = HTTPError("https://example.invalid/smoke", 503,
+                                                                "Service Unavailable", {}, None)
+        self.addCleanup(deployment.postcheck_with_retry.side_effect.close)
+        with patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000):
+            with self.assertRaises(GuardRejected):
+                deployment.finalize_existing()
+        self.assertEqual(deployment.journal["status"], "finalization_failed")
+        self.assertEqual(deployment.journal["pause_status"], "active")
+        self.assertLess(events.index("remove"), events.index("pause"))
+        deployment.ensure_barrier.assert_called_once()
+        self.assert_no_signer_mutation(deployment)
+
+    def test_failed_diagnostic_and_repause_result_writes_cannot_skip_original_barrier_recovery(self):
+        deployment, events = self.deployment()
+        original_save = deployment.save
+        def save(delta):
+            if delta.get("status") == "finalization_failed" or "barrier_repause" in delta:
+                raise OSError("fixture_disk_unavailable")
+            original_save(delta)
+        deployment.save = save
+        deployment.postcheck_with_retry.side_effect = GuardRejected("public_smoke_http_failure")
+        with patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000):
+            with self.assertRaisesRegex(GuardRejected, "finalization_failed_requires_attention"):
+                deployment.finalize_existing()
+        deployment.ensure_barrier.assert_called_once()
+        self.assertLess(events.index("remove"), events.index("pause"))
+        self.assertEqual(deployment.journal["status"], "finalization_failed")
+        self.assertEqual(deployment.journal["barrier_repause"], "active")
+        self.assertEqual(deployment.journal["pause_status"], "active")
+        self.assert_no_signer_mutation(deployment)
+
+    def test_new_or_ambiguous_barrier_recreation_is_reported_as_unverified(self):
+        for confirmed in [False, None]:
+            deployment, _ = self.deployment()
+            pause = deployment.ensure_barrier.side_effect
+            def ensure_barrier():
+                pause()
+                return confirmed
+            deployment.ensure_barrier.side_effect = ensure_barrier
+            deployment.postcheck_with_retry.side_effect = GuardRejected("public_smoke_http_failure")
+            with self.subTest(confirmed=confirmed), patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000):
+                with self.assertRaisesRegex(GuardRejected, "finalization_failed_requires_attention"):
+                    deployment.finalize_existing()
+            deployment.ensure_barrier.assert_called_once()
+            self.assertEqual(deployment.journal["status"], "finalization_failed")
+            self.assertEqual(deployment.journal["barrier_repause"], "unverified")
+            self.assertIs(deployment.journal["attention_required"], True)
+            self.assert_no_signer_mutation(deployment)
+
+    def test_changed_or_additional_candidate_task_cannot_be_finalized(self):
+        deployment, _ = self.deployment()
+        deployment.existing_candidate_task.return_value = "different-or-extra-signer"
+        with patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000):
+            with self.assertRaises(GuardRejected):
+                deployment.finalize_existing()
+        deployment.remove_barrier.assert_not_called()
+        deployment.ensure_barrier.assert_called_once()
+        self.assert_no_signer_mutation(deployment)
+
+    def test_global_pending_or_stale_journal_proof_cannot_open_original_admission(self):
+        for key, bad_value in [("unresolved_count", 1), ("idle_observed_at_ms", self.now_ms - 30_001)]:
+            deployment, _ = self.deployment()
+            original = deployment.canary.side_effect
+            def canary(definition, service, scope="rpc"):
+                original(definition, service, scope)
+                if scope == "journal_idle":
+                    deployment.canary_proof[key] = bad_value
+            deployment.canary.side_effect = canary
+            with self.subTest(key=key), patch("alto_rpc_cutover.time.time", return_value=self.now_ms / 1000):
+                with self.assertRaises(GuardRejected):
+                    deployment.finalize_existing()
+            deployment.remove_barrier.assert_not_called()
+            deployment.ensure_barrier.assert_called_once()
+            self.assert_no_signer_mutation(deployment)
 
 
 class InterruptedRecoveryTests(unittest.TestCase):

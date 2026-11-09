@@ -198,9 +198,9 @@ test('libpq env decodes credentials and database while preserving verify-full ro
   assert.throws(() => databaseEnvironment('postgresql://u:%00@database.internal/plether'))
 })
 
-test('zero or stale-positive outstanding cannot bypass an unresolved durable submission', async () => {
-  for (const gauge of [0, 187]) {
-    const result = await fixture({ metrics: () => metrics(gauge), snapshot: raw => raw.authorizations.push(authorization(10, 'submitted')) }).run()
+test('absent, zero or stale-positive outstanding cannot bypass an unresolved durable submission', async () => {
+  for (const gauge of [null, 0, 187]) {
+    const result = await fixture({ metrics: () => gauge === null ? metrics().replace(/alto_user_operations[^\n]+\n/, '') : metrics(gauge), snapshot: raw => raw.authorizations.push(authorization(10, 'submitted')) }).run()
     assert.equal(result.required_checks_complete, false)
     assert.equal(result.tests.find(test => test.name === 'journal_terminal').pass, false)
   }
@@ -321,9 +321,23 @@ test('reconciler and canonical head checks reject stale/mismatched/foreign scope
   assert.equal((await fixture({ upstream: 'backup' }).run()).required_checks_complete, false)
 })
 
-test('wallet proof requires explicit gauges, fresh HTTPDate, no process restart; only known stale outstanding may be positive', async () => {
+test('fresh Alto can qualify without its lazy diagnostic series while wallet and journal proofs stay mandatory', async () => {
+  const text = metrics().replace(/alto_user_operations[^\n]+\n/, '')
+  assert.equal(parseExecutorMetrics(text).outstanding, null)
+  const result = await fixture({ metrics: () => text }).run()
+  assert.equal(result.required_checks_complete, true)
+  assert.equal(result.outstanding_gauge_first, null)
+  assert.equal(result.outstanding_gauge_last, null)
+  assert.equal(result.executor_wallets_available, 4)
+  assert.equal(result.journal_read_count, 3)
+  for (const name of ['alto_executor_wallets_available_count', 'alto_executor_wallets_total_count', 'process_start_time_seconds']) {
+    assert.throws(() => parseExecutorMetrics(text.split('\n').filter(line => !line.startsWith(name)).join('\n')))
+  }
+})
+
+test('wallet proof requires explicit wallet gauges, fresh HTTPDate, no process restart; only known stale outstanding may be positive', async () => {
   assert.equal(parseExecutorMetrics(metrics()).outstanding, 187)
-  for (const text of [metrics().replace(/alto_user_operations[^\n]+\n/, ''), metrics(-1), metrics().replace('available_count 4', 'available_count 3'),
+  for (const text of [metrics(-1), metrics().replace('available_count 4', 'available_count 3'),
     metrics() + 'alto_user_operations_in_mempool_count{status="queued"} 1\n', metrics() + 'alto_executor_wallets_total_count 4\n']) assert.throws(() => parseExecutorMetrics(text))
   assert.equal((await fixture({ metricAge: -20000 }).run()).required_checks_complete, false)
   assert.equal((await fixture({ metrics: index => metrics(187, 1793728822 + index) }).run()).required_checks_complete, false)

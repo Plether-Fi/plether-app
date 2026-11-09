@@ -1,5 +1,5 @@
 name: Cut over Alto RPC
-run-name: Alto RPC / sepolia / ${{ github.sha }}
+run-name: Alto RPC / ${{ inputs.operation || 'cutover' }} / sepolia / ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -10,6 +10,14 @@ on:
         type: choice
         options:
           - sepolia
+      operation:
+        description: Cut over a new image or finalize the fixed qualified recovery candidate
+        required: true
+        default: cutover
+        type: choice
+        options:
+          - cutover
+          - finalize-existing
 
 # Share the signer-service mutation lock with deploy-alto.yml.
 concurrency:
@@ -21,6 +29,7 @@ env:
   EXPECTED_AWS_ACCOUNT_ID: '932542905614'
   ADMIN_ENVIRONMENT: alto-admin-sepolia
   TARGET_ENV: ${{ inputs.environment }}
+  OPERATION: ${{ inputs.operation || 'cutover' }}
   ECR_REPOSITORY: plether-alto-sepolia
   AWS_PAGER: ''
   AWS_MAX_ATTEMPTS: '3'
@@ -46,6 +55,7 @@ jobs:
             echo '::error::Alto RPC cutover is restricted to master and Sepolia.'
             exit 1
           fi
+          [[ "$OPERATION" = 'cutover' || "$OPERATION" = 'finalize-existing' ]]
           environment_file="$RUNNER_TEMP/alto-rpc-environment.json"
           branch_policy_file="$RUNNER_TEMP/alto-rpc-branches.json"
           gh api --method GET \
@@ -87,6 +97,7 @@ jobs:
           umask 077
           [ "$GITHUB_REF" = 'refs/heads/master' ]
           [ "$TARGET_ENV" = 'sepolia' ]
+          [[ "$OPERATION" = 'cutover' || "$OPERATION" = 'finalize-existing' ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           [ "$CONFIGURED_AWS_ACCOUNT_ID" = "$EXPECTED_AWS_ACCOUNT_ID" ]
           [[ "$CONFIGURED_DEPLOY_ROLE" =~ ^arn:aws:iam::932542905614:role/[A-Za-z0-9+=,.@_/-]+$ ]]
@@ -138,19 +149,87 @@ jobs:
           tag="rpc-auth-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Verify and download the fixed failed rollout evidence
+        if: ${{ inputs.operation == 'finalize-existing' }}
+        id: origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [ "$GITHUB_REPOSITORY" = 'Plether-Fi/plether-app' ]
+          origin_run_file="$RUNNER_TEMP/alto-rpc-origin-run.json"
+          origin_workflow_file="$RUNNER_TEMP/alto-rpc-origin-workflow.json"
+          origin_artifacts_file="$RUNNER_TEMP/alto-rpc-origin-artifacts.json"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/alto-rpc-cutover.yml" > "$origin_workflow_file"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/runs/42618751809" > "$origin_run_file"
+          jq --exit-status '.path == ".github/workflows/alto-rpc-cutover.yml"' \
+            "$origin_workflow_file" >/dev/null
+          jq --exit-status --slurpfile workflow "$origin_workflow_file" \
+            '.id == 42618751809 and .run_attempt == 1
+             and .workflow_id == $workflow[0].id
+             and .repository.full_name == "Plether-Fi/plether-app"
+             and .head_repository.full_name == "Plether-Fi/plether-app"
+             and .head_branch == "master" and .event == "workflow_dispatch"
+             and .status == "completed" and .conclusion == "failure"
+             and .head_sha == "63f170103ed6dcbb9432dcde7c5cad294de14490"' \
+            "$origin_run_file" >/dev/null
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/runs/42618751809/artifacts?per_page=100" > "$origin_artifacts_file"
+          jq --exit-status \
+            '.total_count == (.artifacts | length)
+             and ([.artifacts[] | select(.name == "alto-rpc-cutover-42618751809-1" and .expired == false)] | length) == 1' \
+            "$origin_artifacts_file" >/dev/null
+          origin_directory="$RUNNER_TEMP/alto-rpc-origin"
+          mkdir -m 700 "$origin_directory"
+          gh run download 42618751809 --repo "$GITHUB_REPOSITORY" \
+            --name alto-rpc-cutover-42618751809-1 --dir "$origin_directory"
+          ORIGIN_DIRECTORY="$origin_directory" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          directory = Path(os.environ['ORIGIN_DIRECTORY'])
+          names = {'rollout.json', 'rpc-qualification.json', 'idle-qualification.json'}
+          if {path.name for path in directory.iterdir()} != names:
+              raise SystemExit('Unexpected origin evidence files')
+          for name in names:
+              path = directory / name
+              if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 131072:
+                  raise SystemExit('Invalid origin evidence file')
+          journal = json.loads((directory / 'rollout.json').read_text())
+          expected = {
+              'schema_version': 1, 'account': '932542905614', 'region': 'ap-southeast-1',
+              'source': '63f170103ed6dcbb9432dcde7c5cad294de14490',
+              'status': 'rollback_failed', 'mutation_started': True,
+              'previous_task_definition': 'arn:aws:ecs:ap-southeast-1:932542905614:task-definition/plether-sepolia-alto:6',
+              'candidate_task_definition': 'arn:aws:ecs:ap-southeast-1:932542905614:task-definition/plether-sepolia-alto:12',
+              'image': '932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-alto-sepolia@sha256:a9bef3cb23f1475954daf0ded8301c47dbe1837ae9e47bb6b77749fa501a8f0e',
+          }
+          if any(journal.get(key) != value for key, value in expected.items()):
+              raise SystemExit('Origin rollout identity mismatch')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('image=' + expected['image'] + '\n')
+          PY
+
       - name: Log in to ECR
+        if: ${{ inputs.operation != 'finalize-existing' }}
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       - name: Enable ARM64 image builds
+        if: ${{ inputs.operation != 'finalize-existing' }}
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: arm64
 
       - name: Set up Buildx
+        if: ${{ inputs.operation != 'finalize-existing' }}
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build the pinned Alto image with the RPC authentication preload
+        if: ${{ inputs.operation != 'finalize-existing' }}
         id: image
         timeout-minutes: 15
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -167,6 +246,7 @@ jobs:
             io.plether.rpc-auth.sha256=${{ hashFiles('infra/alto/rpc-auth.mjs') }}
 
       - name: Require a fresh complete scan with no critical findings
+        if: ${{ inputs.operation != 'finalize-existing' }}
         id: candidate
         timeout-minutes: 6
         env:
@@ -242,24 +322,25 @@ jobs:
       - name: Install the bounded operator dependencies
         run: python3 -m pip install --disable-pip-version-check --requirement infra/rpc/ops/requirements.txt
 
-      - name: Qualify the route and cut over with guarded rollback
+      - name: Qualify the route and complete the selected operation
         id: cutover
         timeout-minutes: 25
         env:
-          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image || steps.origin.outputs.image }}
         run: |
           set -euo pipefail
           umask 077
-          python3 infra/rpc/ops/alto_rpc_cutover.py \
-            --image "$CANDIDATE_IMAGE" \
-            --source "$GITHUB_SHA" \
-            --directory "$RUNNER_TEMP/alto-rpc-cutover" \
-            --deadline-seconds 1200
+          arguments=(--image "$CANDIDATE_IMAGE" --source "$GITHUB_SHA"
+            --directory "$RUNNER_TEMP/alto-rpc-cutover" --deadline-seconds 1200)
+          if [ "$OPERATION" = 'finalize-existing' ]; then
+            arguments+=(--finalize-existing --origin-evidence-directory "$RUNNER_TEMP/alto-rpc-origin")
+          fi
+          python3 infra/rpc/ops/alto_rpc_cutover.py "${arguments[@]}"
 
       # Best effort after a killed step; runner/job loss can still prevent it.
       # Reconcile the journal and live service before retrying an interrupted run.
       - name: Reconcile an interrupted journal with guarded recovery
-        if: ${{ always() && steps.candidate.outputs.image != '' && steps.cutover.outcome != 'success' }}
+        if: ${{ always() && inputs.operation != 'finalize-existing' && steps.candidate.outputs.image != '' && steps.cutover.outcome != 'success' }}
         timeout-minutes: 15
         env:
           CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
@@ -280,10 +361,11 @@ jobs:
 
       - name: Record successful source and image identifiers
         env:
-          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image || steps.origin.outputs.image }}
         run: |
           {
             echo 'Alto RPC cutover qualified on Arbitrum Sepolia.'
+            echo "Operation: \`$OPERATION\`"
             echo "Source: \`$GITHUB_SHA\`"
             echo "Candidate: \`$CANDIDATE_IMAGE\`"
           } >> "$GITHUB_STEP_SUMMARY"
