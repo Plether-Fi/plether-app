@@ -76,9 +76,15 @@ export const BOUNDARY_SQL = `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ R
 // function/schema mutation or lossy BIGINT/double conversion.
 function hexNumeric(expression) {
   const padded = `lpad(substr(${expression},3),64,'0')`
+  const significant = `ltrim(substr(${expression},3),'0')`
   const chunks = Array.from({ length: 8 }, (_, index) =>
     `(('x'||substr(${padded},${index * 8 + 1},8))::bit(32)::bigint)::numeric*${1n << BigInt((7 - index) * 32)}`)
-  return `(CASE WHEN (${expression}) ~ '^0x[0-9a-fA-F]{1,64}$' THEN (${chunks.join('+')}) ELSE NULL END)`
+  // Common block/log/gas/nonce words fit below 2^60. Strip ABI padding before
+  // choosing the fast path; a 16-digit value keeps the exact uint256 fallback.
+  return `(CASE WHEN (${expression}) ~ '^0x[0-9a-fA-F]{1,64}$' THEN
+    CASE WHEN length(${significant})<=15 THEN
+      ('x'||lpad(COALESCE(NULLIF(${significant},''),'0'),16,'0'))::bit(64)::bigint::numeric
+    ELSE (${chunks.join('+')}) END ELSE NULL END)`
 }
 
 export function buildJournalSQL(cutoffSeconds) {
@@ -124,7 +130,7 @@ export function buildJournalSQL(cutoffSeconds) {
     AND lower(e.event_json->'topics'->>0)='${TOPIC}' AND lower(e.event_json->'topics'->>1)=e.user_operation_hash
     AND lower(e.event_json->'topics'->>2)='0x'||repeat('0',24)||substr(a.sender,3)
     AND lower(e.event_json->'topics'->>3)='0x'||repeat('0',24)||substr('${PAYMASTER}',3)
-    AND ${data} ~ '^0x[0-9a-fA-F]{128}[0-9a-fA-F]{128}$'
+    AND length(${data})=258 AND ${data} ~ '^0x[0-9a-fA-F]+$'
     AND ${hexNumeric(`'0x'||substr(${data},3,64)`)}=a.nonce
     AND lower(substr(${data},67,64))=CASE WHEN e.success THEN repeat('0',63)||'1' ELSE repeat('0',64) END
     AND ${hexNumeric(`'0x'||substr(${data},131,64)`)}=e.actual_gas_cost_wei
@@ -135,28 +141,31 @@ export function buildJournalSQL(cutoffSeconds) {
     AND (NOT(e.event_json?'removed') OR e.event_json->'removed'='false'::jsonb))`
   const accepted = `(a.submitted_at IS NOT NULL OR a.user_operation_hash IS NOT NULL OR a.state='submitted')`
   const historical = `(a.state IN ('settled','expired') AND a.valid_until<${cutoffSeconds})`
-  const accounting = `jsonb_build_object(
-    'authorization_count',(SELECT count(*) FROM checked_auths),
-    'submitted_count',(SELECT count(*) FROM checked_auths WHERE submitted_at IS NOT NULL),
-    'unresolved_count',(SELECT count(*) FROM checked_auths a WHERE ${accepted} AND state NOT IN ('settled','expired')),
-    'settled_count',(SELECT count(*) FROM checked_auths WHERE state='settled'),
-    'expired_count',(SELECT count(*) FROM checked_auths WHERE state='expired'),
-    'history_settled_count',(SELECT count(*) FROM checked_auths a WHERE ${historical} AND state='settled'),
-    'history_expired_count',(SELECT count(*) FROM checked_auths a WHERE ${historical} AND state='expired'),
-    'frontier_settled_count',(SELECT count(*) FROM frontier_authorizations WHERE state='settled'),
-    'frontier_expired_count',(SELECT count(*) FROM frontier_authorizations WHERE state='expired'),
-    'historical_authorization_count',(SELECT count(*) FROM checked_auths a WHERE ${historical}),
-    'historical_event_count',(SELECT count(*) FROM checked_events e JOIN checked_auths a ON a.digest=e.digest WHERE ${historical}),
-    'invalid_authorization_count',(SELECT count(*) FROM checked_auths WHERE NOT valid),
-    'invalid_event_count',(SELECT count(*) FROM checked_events WHERE NOT valid),
-    'invalid_terminal_count',(SELECT count(*) FROM checked_auths a LEFT JOIN event_summary es ON es.digest=a.digest WHERE
-      (state='settled' AND (COALESCE(es.valid_count,0)<>1 OR es.only_hash<>a.expected_user_operation_hash))
-      OR (state='expired' AND EXISTS(SELECT 1 FROM aa_user_operation_events e WHERE e.digest=a.digest OR e.user_operation_hash=a.expected_user_operation_hash OR e.user_operation_hash=a.user_operation_hash))),
-    'historical_fingerprint',md5(COALESCE((SELECT string_agg(md5(to_jsonb(a)::text),'' ORDER BY digest)
-      FROM checked_auths a WHERE ${historical} AND ${accepted}),'') || ':' ||
-      COALESCE((SELECT string_agg(md5(to_jsonb(e)::text),'' ORDER BY e.user_operation_hash)
-      FROM checked_events e JOIN checked_auths a ON a.digest=e.digest WHERE ${historical} AND ${accepted}),''))
-  )`
+  // Consolidate counts and fingerprints into one aggregate per population.
+  // Repeated scans of wide materialized rows otherwise create large temp I/O.
+  const authTotals = `SELECT count(*) AS authorization_count,
+    count(*) FILTER(WHERE a.submitted_at IS NOT NULL) AS submitted_count,
+    count(*) FILTER(WHERE ${accepted} AND a.state NOT IN ('settled','expired')) AS unresolved_count,
+    count(*) FILTER(WHERE a.state='settled') AS settled_count,
+    count(*) FILTER(WHERE a.state='expired') AS expired_count,
+    count(*) FILTER(WHERE ${historical} AND a.state='settled') AS history_settled_count,
+    count(*) FILTER(WHERE ${historical} AND a.state='expired') AS history_expired_count,
+    count(*) FILTER(WHERE NOT ${historical} AND a.state='settled') AS frontier_settled_count,
+    count(*) FILTER(WHERE NOT ${historical} AND a.state='expired') AS frontier_expired_count,
+    count(*) FILTER(WHERE ${historical}) AS historical_authorization_count,
+    count(*) FILTER(WHERE NOT a.valid) AS invalid_authorization_count,
+    count(*) FILTER(WHERE (a.state='settled' AND (COALESCE(es.valid_count,0)<>1 OR es.only_hash<>a.expected_user_operation_hash))
+      OR (a.state='expired' AND EXISTS(SELECT 1 FROM aa_user_operation_events e
+        WHERE e.digest=a.digest OR e.user_operation_hash=a.expected_user_operation_hash OR e.user_operation_hash=a.user_operation_hash))) AS invalid_terminal_count,
+    COALESCE(string_agg(md5(to_jsonb(a)::text),'' ORDER BY a.digest) FILTER(WHERE ${historical} AND ${accepted}),'') AS auth_fingerprint
+    FROM checked_auths a LEFT JOIN event_summary es ON es.digest=a.digest`
+  const eventTotals = `SELECT count(*) FILTER(WHERE NOT e.valid) AS invalid_event_count,
+    count(*) FILTER(WHERE ${historical}) AS historical_event_count,
+    COALESCE(string_agg(md5(to_jsonb(e)::text),'' ORDER BY e.user_operation_hash)
+      FILTER(WHERE ${historical} AND ${accepted}),'') AS event_fingerprint
+    FROM checked_events e LEFT JOIN checked_auths a ON a.digest=e.digest`
+  const accounting = `(SELECT (to_jsonb(a)-'auth_fingerprint') || (to_jsonb(e)-'event_fingerprint')
+    || jsonb_build_object('historical_fingerprint',md5(a.auth_fingerprint||':'||e.event_fingerprint)) FROM auth_totals a CROSS JOIN event_totals e)`
   // Invalidity is evaluated over the entire population before frontier detail
   // selection. Expired signed terminal history is no longer actionable; its
   // receipts are intentionally not represented as freshly RPC-verified.
@@ -167,6 +176,8 @@ export function buildJournalSQL(cutoffSeconds) {
 WITH checked_auths AS MATERIALIZED (SELECT a.*, (${authValid}) IS TRUE AS valid FROM aa_sponsorship_authorizations a),
 checked_events AS MATERIALIZED (SELECT e.*, (${eventValid}) IS TRUE AS valid FROM aa_user_operation_events e LEFT JOIN checked_auths a ON a.digest=e.digest),
 event_summary AS MATERIALIZED (SELECT digest,count(*) FILTER(WHERE valid) AS valid_count,min(user_operation_hash) AS only_hash FROM checked_events GROUP BY digest),
+auth_totals AS MATERIALIZED (${authTotals}),
+event_totals AS MATERIALIZED (${eventTotals}),
 frontier_authorizations AS MATERIALIZED (SELECT a.* FROM checked_auths a WHERE NOT ${historical}),
 frontier_events AS MATERIALIZED (SELECT e.* FROM checked_events e WHERE e.digest IN(SELECT digest FROM frontier_authorizations)
   OR e.user_operation_hash IN(SELECT expected_user_operation_hash FROM frontier_authorizations)
