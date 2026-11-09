@@ -86,6 +86,12 @@ def container(definition, name=ALTO):
     return values[name]
 
 
+def require_no_canary_restart(definition):
+    policy = container(definition).get('restartPolicy')
+    require(policy is None or (isinstance(policy, dict) and policy.get('enabled') is False),
+            'canary_restart_policy_enabled')
+
+
 def canonical(definition):
     value = deepcopy({k: v for k, v in definition.items() if k not in OUTPUT_FIELDS})
     for c in value.get('containerDefinitions', []):
@@ -219,6 +225,7 @@ def canary_definition(candidate, source, script, baseline_url):
     result['volumes'] = []
     result.pop('taskRoleArn', None)
     result['tags'] = [{'key': 'Capability', 'value': 'alto-rpc-qualification'}, {'key': 'Source', 'value': source}]
+    require_no_canary_restart(result)
     return result
 
 
@@ -279,6 +286,7 @@ def journal_idle_definition(api_definition, source, script, baseline_url):
     result['volumes'] = []
     result.pop('taskRoleArn', None)
     result['tags'] = [{'key': 'Capability', 'value': 'alto-rpc-qualification'}, {'key': 'Source', 'value': source}]
+    require_no_canary_restart(result)
     return result
 
 
@@ -361,6 +369,23 @@ def validate_canary_proof(proof, scope, now_ms):
                 and finite(proof.get('process_started_at_seconds')) and 0 < proof['process_started_at_seconds'] <= start / 1000,
                 'missing_quiescence_proof')
     return proof
+
+
+def canary_exit_code(task):
+    """Observer process exit, independent of later Fargate/ENI cleanup.
+
+    This applies only to the reviewed single-container, signer-free canary.
+    Signer replacement still requires the actual ECS task to be STOPPED.
+    """
+    containers = task.get('containers', []) if isinstance(task, dict) else []
+    if isinstance(containers, list) and len(containers) == 1:
+        value = containers[0]
+        if not isinstance(value, dict):
+            return None
+        code = value.get('exitCode')
+        if value.get('name') == ALTO and value.get('lastStatus') == 'STOPPED' and type(code) is int:
+            return code
+    return None
 
 
 def validate_service(service, stable=True):
@@ -606,13 +631,14 @@ class Deployment:
             require(not response.get('failures') and len(response.get('tasks', [])) == 1,
                     'missing_recorded_canary')
             task = response['tasks'][0]
-            require(task.get('lastStatus') == 'STOPPED' and task.get('startedBy') == owner
+            require(canary_exit_code(task) is not None and task.get('startedBy') == owner
                     and task.get('taskDefinitionArn') == record.get('definition'), 'recorded_canary_not_stopped')
             definition = self.definition(record['definition'])
             require(fingerprint(definition) == record.get('fingerprint') and not definition.get('taskRoleArn')
                     and definition.get('family') == CANARY_FAMILY
                     and len(definition.get('containerDefinitions', [])) == 1, 'recorded_canary_definition_drift')
             observer = container(definition)
+            require_no_canary_restart(definition)
             secret_names = set(named(observer.get('secrets', [])))
             if record['scope'] == 'rpc':
                 require(observer.get('image') == self.args.image
@@ -820,6 +846,7 @@ class Deployment:
         arn = self.register(definition)
         reviewed = self.definition(arn)
         require(canary_canonical(reviewed) == canary_canonical(definition), 'canary_registration_drift')
+        require_no_canary_restart(reviewed)
         sequence = self.journal.get('canary_sequence', 0) + 1
         self.save({'canary_definition': arn, 'canary_sequence': sequence, 'status': 'canary_starting'})
         # Each new observation gets a new task. A repeated token would otherwise
@@ -839,9 +866,11 @@ class Deployment:
             while True:
                 self.budget()
                 task = self.ecs.describe_tasks(cluster=CLUSTER, tasks=[task_arn])['tasks'][0]
-                if task['lastStatus'] == 'STOPPED':
-                    require(len(task['containers']) == 1 and task['containers'][0].get('exitCode') == 0, 'canary_failed')
+                code = canary_exit_code(task)
+                if code is not None:
+                    require(code == 0, 'canary_failed')
                     break
+                require(task['lastStatus'] != 'STOPPED', 'canary_failed')
                 time.sleep(2)
             stream = 'alto-rpc-canary/' + ALTO + '/' + task_arn.rsplit('/', 1)[1]
             records = []
@@ -897,7 +926,8 @@ class Deployment:
                                            else 'rpc-qualification.json'), saved)
         finally:
             current = self.ecs.describe_tasks(cluster=CLUSTER, tasks=[task_arn])['tasks'][0]
-            if current['lastStatus'] != 'STOPPED':
+            app = current.get('containers', [])
+            if current['lastStatus'] != 'STOPPED' and not (app and all(c.get('lastStatus') == 'STOPPED' for c in app)):
                 self.ecs.stop_task(cluster=CLUSTER, task=task_arn, reason='Bounded credential-minimized RPC canary cleanup')
             self.ecs.deregister_task_definition(taskDefinition=arn)
 
