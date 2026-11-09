@@ -17,10 +17,12 @@ type GoogleFixture = 'provider' | 'init-error' | 'callback-error' | 'success'
 type PasskeyFixture = 'cancel' | 'verify-error' | 'init-error'
 const macMfaKey = Buffer.from('public-offline-mac-passkey').toString('base64url')
 const mobileMfaKey = Buffer.from('public-offline-mobile-passkey').toString('base64url')
-type MfaUpdateFixture = { outcome: 'success' | 'submit-error'; verified: number; refreshed: number; submissions: string[][] }
+const securityMfaKey = Buffer.from('public-offline-security-passkey').toString('base64url')
+type MfaUpdateFixture = { names?: Record<string, string>; outcome: 'success' | 'submit-error'; verified: number; refreshed: number; submissions: string[][] }
 async function openApp(page: Page, selection = 'disconnected', hostname?: string, googleFixture: GoogleFixture = 'provider', passkeyFixture: PasskeyFixture = 'cancel', mfaSession: boolean | 'enrolled' = false, mfaUpdate?: MfaUpdateFixture): Promise<TestWalletController> {
   const wallet = await installTestWallet(page)
   let googleCancelUrl = ''
+  const passkeyNames = mfaUpdate?.names ?? {}
   // This unsigned token and user exist only inside the offline route fixture.
   // They cannot authenticate with Privy or any application backend.
   const mfaToken = `${Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url')}.${Buffer.from(JSON.stringify({
@@ -33,6 +35,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
       ...(mfaUpdate ? [
         { type: 'passkey', credential_id: macMfaKey, enrolled_in_mfa: true, authenticator_name: 'Mac test passkey', created_with_device: 'Macintosh', created_with_os: 'Mac OS', created_with_browser: 'Chrome', first_verified_at: 1700000000, latest_verified_at: 1700000000 },
         { type: 'passkey', credential_id: mobileMfaKey, enrolled_in_mfa: false, authenticator_name: 'Mobile test passkey', created_with_device: 'K', created_with_os: 'Android', created_with_browser: 'Chrome', first_verified_at: 1700000001, latest_verified_at: 1700000001 },
+        { type: 'passkey', credential_id: securityMfaKey, enrolled_in_mfa: false, created_with_os: 'Mac OS', created_with_browser: 'Firefox', first_verified_at: 1700000002, latest_verified_at: 1700000002 },
       ] : []),
       ...(googleFixture === 'success'
         ? [{ type: 'google_oauth', subject: 'public-google-test', email: 'public-test@example.invalid', name: 'Public test', first_verified_at: 1700000000, latest_verified_at: 1700000000 }]
@@ -58,6 +61,18 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
   await page.route('**/*', route => {
     const url = new URL(route.request().url())
     if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+      if (url.pathname.endsWith('/user/passkey-names')) {
+        expect(route.request().headers().authorization).toBe(`Bearer ${mfaToken}`)
+        if (route.request().method() === 'PUT') {
+          const { userId, credentialId, name } = route.request().postDataJSON() as { userId: string; credentialId: string; name: string }
+          expect(userId).toBe(sessionUser.id)
+          passkeyNames[credentialId] = name
+          return route.fulfill({ json: { userId, name } })
+        }
+        expect(url.searchParams.get('userId')).toBe(sessionUser.id)
+        return route.fulfill({ json: { userId: sessionUser.id, names: Object.entries(passkeyNames).map(([credentialId, name]) => ({ credentialId, name })) } })
+      }
+
       if (url.pathname.startsWith('/api/')) return route.fulfill({ status: 503, json: {} })
       return route.continue()
     }
@@ -114,7 +129,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
       expect(input.data.credentialIds).toEqual([macMfaKey, mobileMfaKey])
       mfaUpdate.submissions.push(input.data.credentialIds!)
       if (mfaUpdate.outcome === 'submit-error') return route.fulfill({ json: { error: { type: 'error', message: 'Offline enrollment service failure' } } })
-      for (const account of sessionUser.linked_accounts) if (account.type === 'passkey') account.enrolled_in_mfa = true
+      for (const account of sessionUser.linked_accounts) if (account.type === 'passkey') account.enrolled_in_mfa = input.data.credentialIds!.includes(account.credential_id)
       return route.fulfill({ json: { data: {} } })
     }
     if (url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/sessions/logout') {
@@ -560,8 +575,8 @@ for (const outcome of ['success', 'submit-error'] as const) {
     const mobileRow = passkeys.getByRole('listitem').filter({ hasText: 'Android · Chrome' })
     const matchingRow = outcome === 'success' ? mobileRow : macRow
     const otherRow = outcome === 'success' ? macRow : mobileRow
-    await expect(matchingRow.getByText('Matches this device', { exact: true })).toBeVisible()
-    await expect(otherRow.getByText('Matches this device', { exact: true })).not.toBeVisible()
+    await expect(matchingRow.getByText('Registration matches this browser', { exact: true })).toBeVisible()
+    await expect(otherRow.getByText('Registration matches this browser', { exact: true })).not.toBeVisible()
     await expect(matchingRow).toHaveCSS('border-color', 'rgb(255, 87, 45)')
     await expect(passkeys.getByText(/^K ·/)).not.toBeVisible()
     await expect(macRow.getByText('Wallet MFA enabled', { exact: true })).toBeVisible()
@@ -573,7 +588,7 @@ for (const outcome of ['success', 'submit-error'] as const) {
     // Metadata comes through the real installed SDK; it must fit the wallet
     // dialog on mobile as well as desktop without horizontal scrolling.
     expect(await passkeys.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-    const update = page.getByRole('button', { name: 'Enable additional passkeys for wallet MFA', exact: true })
+    const update = page.getByRole('listitem').filter({ hasText: 'Registered on Android · Chrome' }).getByRole('button', { name: 'Enable for wallet MFA', exact: true })
     await update.scrollIntoViewIfNeeded()
     await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('additional-mfa-passkeys.png') })
     await update.click()
@@ -586,10 +601,13 @@ for (const outcome of ['success', 'submit-error'] as const) {
       fixture.outcome = 'success'
       await update.click()
     }
-    await expect(page.getByText('Linked passkeys are enabled for wallet MFA. Your existing passkeys are still enabled.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Wallet MFA enabled for this passkey. Existing MFA keys remain enabled.', { exact: true })).toBeVisible()
     await expect(update).not.toBeVisible()
     await expect(macRow.getByText('Wallet MFA enabled', { exact: true })).toBeVisible()
     await expect(mobileRow.getByText('Wallet MFA enabled', { exact: true })).toBeVisible()
+    const securityRow = passkeys.getByRole('listitem').filter({ hasText: 'Registered on macOS · Firefox' })
+    await expect(securityRow.getByText('Not enabled for wallet MFA', { exact: true })).toBeVisible()
+    await expect(securityRow.getByRole('button', { name: 'Enable for wallet MFA', exact: true })).toBeEnabled()
     await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('registered-passkeys-enrolled.png') })
     expect(fixture.verified).toBe(outcome === 'success' ? 1 : 2)
     expect(fixture.submissions).toEqual(Array.from({ length: fixture.verified }, () => [macMfaKey, mobileMfaKey]))
@@ -601,6 +619,89 @@ for (const outcome of ['success', 'submit-error'] as const) {
   })
 }
 
+for (const viewport of ['desktop', 'mobile'] as const) {
+  test(`${viewport} passkey names survive reload without changing login or MFA`, async ({ page, browser }, testInfo) => {
+    if (viewport === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
+    const fixture: MfaUpdateFixture = { names: {}, outcome: 'success', verified: 0, refreshed: 0, submissions: [] }
+    await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
+    await accountButton(page).click()
+    const row = page.getByRole('listitem').filter({ hasText: 'Registered on macOS · Firefox' })
+    await row.getByRole('button', { name: 'Rename passkey', exact: true }).click()
+    await expect(row.getByText(/Name syncs across your devices/)).toBeVisible()
+    await row.getByRole('textbox', { name: 'Passkey name' }).fill('YubiKey')
+    await row.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(row.getByText('YubiKey', { exact: true })).toBeVisible()
+    await expect(row.getByRole('button', { name: 'Enable for wallet MFA', exact: true })).toBeEnabled()
+    expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('renamed-passkey.png') })
+    await page.reload()
+    await accountButton(page).click()
+    await expect(row.getByText('YubiKey', { exact: true })).toBeVisible()
+    await expect(row.getByText('Not enabled for wallet MFA', { exact: true })).toBeVisible()
+    await expect(row.getByText('Registered on macOS · Firefox', { exact: true })).toBeVisible()
+    // A separate browser context has neither this device's local storage nor
+    // its query cache. Only the authenticated backend fixture is shared.
+    const otherDevice = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    try {
+      const otherPage = await otherDevice.newPage()
+      await openApp(otherPage, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
+      await accountButton(otherPage).click()
+      const otherRow = otherPage.getByRole('listitem').filter({ hasText: 'Registered on macOS · Firefox' })
+      await expect(otherRow.getByText('YubiKey', { exact: true })).toBeVisible()
+      await expect(otherRow.getByText('Not enabled for wallet MFA', { exact: true })).toBeVisible()
+    } finally { await otherDevice.close() }
+    expect(fixture.verified).toBe(0)
+    expect(fixture.submissions).toEqual([])
+    expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+  })
+}
+
+for (const viewport of ['desktop', 'mobile'] as const) {
+  for (const service of ['loading', 'unavailable'] as const) {
+    test(`${viewport} pencil opens passkey editor when names are ${service} and retries a failed save`, async ({ page }, testInfo) => {
+      if (viewport === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
+      const fixture: MfaUpdateFixture = { names: {}, outcome: 'success', verified: 0, refreshed: 0, submissions: [] }
+      await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
+      let available = false
+      let readStarted = false
+      let releaseRead!: () => void
+      const pendingRead = new Promise<void>(resolve => { releaseRead = resolve })
+      await page.route(url => url.pathname.endsWith('/user/passkey-names'), async route => {
+        if (route.request().method() === 'GET') {
+          readStarted = true
+          if (!available && service === 'loading') await pendingRead
+          else if (!available) return route.fulfill({ status: 503, json: {} })
+        } else if (!available) return route.fulfill({ status: 503, json: {} })
+        return route.fallback()
+      })
+      try {
+        await accountButton(page).click()
+        await expect.poll(() => readStarted).toBe(true)
+        if (service === 'unavailable') await expect(page.getByText('Could not load passkey names.', { exact: false })).toBeVisible()
+        const row = page.getByRole('listitem').filter({ hasText: 'Registered on macOS · Firefox' })
+        const pencil = row.getByRole('button', { name: 'Rename passkey', exact: true })
+        await expect(pencil).toBeEnabled()
+        await expect(pencil.locator('.material-symbols-outlined')).toHaveText('edit')
+        await pencil.click()
+        const input = row.getByRole('textbox', { name: 'Passkey name' })
+        await expect(input).toBeFocused()
+        await input.fill('YubiKey')
+        await row.getByRole('button', { name: 'Save', exact: true }).click()
+        await expect(row.getByRole('alert')).toContainText('temporarily unavailable')
+        await expect(input).toHaveValue('YubiKey')
+        await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('passkey-pencil-save-error.png') })
+        available = true
+        releaseRead()
+        await row.getByRole('button', { name: 'Save', exact: true }).click()
+        await expect(input).not.toBeVisible()
+        await expect(row.getByText('YubiKey', { exact: true })).toBeVisible()
+        expect(fixture.submissions).toEqual([])
+        expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+      } finally { releaseRead() }
+    })
+  }
+}
+
 test('Back cancels additional-passkey MFA verification without changing enrollment', async ({ page }) => {
   const fixture: MfaUpdateFixture = { outcome: 'success', verified: 0, refreshed: 0, submissions: [] }
   await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
@@ -608,7 +709,7 @@ test('Back cancels additional-passkey MFA verification without changing enrollme
     Object.defineProperty(navigator.credentials, 'get', { configurable: true, value: () => new Promise(() => {}) })
   })
   await accountButton(page).click()
-  const update = page.getByRole('button', { name: 'Enable additional passkeys for wallet MFA', exact: true })
+  const update = page.getByRole('listitem').filter({ hasText: 'Registered on Android · Chrome' }).getByRole('button', { name: 'Enable for wallet MFA', exact: true })
   await update.click()
   await expect(page.locator('#privy-dialog').getByText('Verifying with passkey', { exact: true })).toBeVisible()
   await page.goBack()

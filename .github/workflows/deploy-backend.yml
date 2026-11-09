@@ -40,6 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  TF_VAR_privy_app_id: ${{ vars.PRIVY_APP_ID }}
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   BACKEND_ADMIN_ENVIRONMENT: backend-admin-sepolia
   TARGET_ENV: ${{ inputs.environment }}

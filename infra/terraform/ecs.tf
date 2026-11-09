@@ -431,6 +431,7 @@ resource "aws_ecs_task_definition" "api" {
 
     environment = concat([
       { name = "PORT", value = "3001" },
+      { name = "PRIVY_APP_ID", value = var.privy_app_id },
       { name = "CHAIN_ID", value = var.chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "VAULT_HISTORY_HOUSE_POOL_ADDRESS", value = var.vault_history_house_pool_address },

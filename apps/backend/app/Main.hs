@@ -25,6 +25,7 @@ import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
 import Plether.Handlers.DivisionsRegistration (ensureDivisionsSchema, loadDiscordConfig)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Database.TestnetFunding (ensureMarginFundingSchema)
+import qualified Plether.Passkeys.Names as PasskeyNames
 import Plether.Handlers.TestnetMarginFunding (startMarginFundingProcessor)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
@@ -100,6 +101,7 @@ main = do
             withDb pool ensureProtectionSchema
             withDb pool ensureTestnetFaucetSchema
             withDb pool ensureMarginFundingSchema
+            withDb pool PasskeyNames.ensureSchema
             withDb pool ensureVaultPerformanceSchema
             withDb pool ensureVaultActivitySchema
             withDb pool ensureAaSponsorshipSchema

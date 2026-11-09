@@ -57,6 +57,9 @@ library
         Plether.AA.Paymaster
         Plether.AA.Reconciler
         Plether.Api
+        Plether.Passkeys.Auth
+        Plether.Passkeys.Names
+        Plether.Handlers.PasskeyNames
         Plether.Cache
         Plether.Config
         Plether.Logging
@@ -411,6 +414,8 @@ test-suite plether-api-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.Passkeys.AuthSpec
+        Plether.Handlers.PasskeyNamesSpec
         Plether.AA.PimlicoSpec
         Plether.AA.CloseAssistanceEvidenceSpec
         Plether.AA.GatewaySpec
@@ -514,6 +519,7 @@ test-suite plether-api-test
         postgresql-simple >= 0.7,
         text >= 2.0,
         base16-bytestring >= 1.0,
+        base64-bytestring >= 1.2,
         time >= 1.12,
         wai >= 3.2,
         warp >= 3.3,

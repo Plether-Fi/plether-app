@@ -35,7 +35,7 @@ import Network.Wai.Middleware.Cors
   , cors
   , simpleCorsResourcePolicy
   )
-import Plether.Cache (AppCache)
+import Plether.Cache (AppCache (cachePrivyVerifier))
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness, closeAssistanceStatus)
 import qualified Plether.AA.Pimlico as AaProxy
@@ -118,6 +118,7 @@ import Plether.Handlers.Insights
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
+import Plether.Handlers.PasskeyNames (registerPasskeyNameRoutes)
 import Plether.Database (DbPool)
 import Plether.Database.ExecutionProgress (validExecutionVersion)
 import Plether.Database.VaultActivity (VaultActivityDeployment (..))
@@ -256,6 +257,7 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
 
   case if deployed then mPool else Nothing of
     Just pool -> do
+      registerPasskeyNameRoutes (cachePrivyVerifier cache) pool manager
       registerInsightsRegistrationRoutes pool perpsClient cfg manager
       registerDivisionsRegistrationRoutes pool perpsClient cfg manager discordConfig
     Nothing -> pure ()

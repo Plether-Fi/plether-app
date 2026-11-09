@@ -164,16 +164,32 @@ a login passkey alone does not enroll it for wallet MFA. Enrollment is an explic
 user action, and existing enrolled wallets remain protected if app MFA is later disabled.
 
 If passkey MFA is already enabled and another linked passkey is not enrolled,
-the wallet dialog also offers **Enable additional passkeys for wallet MFA**.
+each unenrolled passkey offers **Enable for wallet MFA** in its own row.
 On the device holding an existing MFA passkey (for example, the Mac), click this
 action and complete Privy's native MFA verification. The app refreshes the server's
-passkey list, then enrolls the linked keys together, preserving existing MFA keys
+passkey list, then enrolls only the selected key, preserving every existing MFA key
 and keeping them available for login (`removeForLogin: false`). The mobile passkey
 must already be linked to the same Privy account. This enables that linked key for
 wallet MFA without copying its private key between devices. Cancellation, logout,
 owner changes, or conflicting passkey changes stop the update before submission.
 Unit, installed-wallet-bridge, and offline real-SDK/WebAuthn browser tests cover
 preserving both keys, verification before enrollment, failure/retry, and cancellation.
+
+The registered passkey list separates the authenticator/custom name from
+**Registered on OS · Browser** metadata. **Rename** stores a cosmetic label in
+the API's `passkey_names` table, scoped to the authenticated Privy user and
+credential. Names sync when the wallet modal opens or the app regains focus;
+clearing a name restores the default label. They do not change the credential
+stored on a YubiKey or password manager, login, or wallet MFA enrollment.
+
+Deploy the backend before the frontend for this feature. The API creates the
+table idempotently on startup and requires the public `PRIVY_APP_ID` environment
+variable to match the frontend app. Terraform's `privy_app_id` variable is passed
+from the existing GitHub Actions `PRIVY_APP_ID` variable during backend deploys.
+No Privy app secret is required: access tokens are verified against the fixed
+app JWKS endpoint with ES256, issuer, audience and expiry checks. API responses
+are never cached. Missing authentication/configuration or a failed save remains
+visible in the wallet modal; there is no browser-only persistence fallback.
 
 Privy 3.51.2 does not expose native-picker description/account-action slots or a
 public connection-modal close hook. Both apps' `postinstall` runs
