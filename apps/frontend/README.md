@@ -184,8 +184,10 @@ stored on a YubiKey or password manager, login, or wallet MFA enrollment.
 
 Deploy the backend before the frontend for this feature. The API creates the
 table idempotently on startup and requires the public `PRIVY_APP_ID` environment
-variable to match the frontend app. Terraform's `privy_app_id` variable is passed
-from the existing GitHub Actions `PRIVY_APP_ID` variable during backend deploys.
+variable to match the frontend app. The Sepolia backend deployment workflow
+upserts the existing public GitHub Actions `PRIVY_APP_ID` variable into the API
+task definition before deploying its image. When applying Terraform separately,
+set `privy_app_id` to that same public app ID; normal image deployments do not run Terraform.
 No Privy app secret is required: access tokens are verified against the fixed
 app JWKS endpoint with ES256, issuer, audience and expiry checks. API responses
 are never cached. Missing authentication/configuration or a failed save remains

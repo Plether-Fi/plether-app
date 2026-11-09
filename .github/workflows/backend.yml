@@ -50,7 +50,9 @@ jobs:
 
       - name: Test close assistance deployment controls
         working-directory: .
-        run: python3 .github/scripts/test-configure-close-assistance.py
+        run: |
+          python3 .github/scripts/test-configure-close-assistance.py
+          python3 .github/scripts/test-configure-privy-app.py
 
       - name: Test candle administration task identity
         working-directory: .

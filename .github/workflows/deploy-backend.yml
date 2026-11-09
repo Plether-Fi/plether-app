@@ -40,7 +40,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TF_VAR_privy_app_id: ${{ vars.PRIVY_APP_ID }}
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   BACKEND_ADMIN_ENVIRONMENT: backend-admin-sepolia
   TARGET_ENV: ${{ inputs.environment }}
@@ -1506,6 +1505,12 @@ jobs:
             )
           ' task-def.json > task-def.funding.json
           mv task-def.funding.json task-def.json
+
+      - name: Configure Sepolia Privy app for passkey names
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
+        run: python3 deployment-policy/.github/scripts/configure-privy-app.py task-def.json "$PRIVY_APP_ID"
 
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
