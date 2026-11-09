@@ -10,7 +10,7 @@ aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/app-rpc-u
 # applying this overlay; the gateway provides Alchemy fallback for both paths.
 alto_rpc_url_ssm_parameter_name                  = "/plether/sepolia/app-rpc-url"
 alto_rpc_auth_token_ssm_parameter_name           = "/plether/sepolia/rpc-gateway-token"
-alto_rpc_auth_image                              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-alto-sepolia@sha256:1a6c3e820409d3f215da8497acc6f12e9ab930abb4f30fa07ea2116f95e11a1a"
+alto_rpc_auth_image                              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-alto-sepolia@sha256:5d182ba429ba353efa6187bdc1b3152c39503329f64a3dfbce0c3af4ba2269b0"
 alto_send_transaction_rpc_url_ssm_parameter_name = ""
 
 # Post-cutover scan cadence only. Confirmation depths, batching, gas budgets,
