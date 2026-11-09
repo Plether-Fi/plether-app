@@ -301,11 +301,13 @@ export function parseExecutorMetrics(text) {
       statuses.set(found[0][1], value)
     } else { assert(!fields.has(name)); fields.set(name, value) }
   }
-  const outstanding = statuses.get('outstanding')
+  // Alto creates this labeled diagnostic lazily on its first submission.
+  // An absent series is unknown, rather than evidence of an empty mempool.
+  const outstanding = statuses.get('outstanding') ?? null
   const available = fields.get('alto_executor_wallets_available_count')
   const total = fields.get('alto_executor_wallets_total_count')
   const started = fields.get('process_start_time_seconds')
-  assert(Number.isSafeInteger(outstanding) && outstanding >= 0 && available === 4 && total === 4 && started > 0)
+  assert((outstanding === null || (Number.isSafeInteger(outstanding) && outstanding >= 0)) && available === 4 && total === 4 && started > 0)
   assert([...statuses].every(([status, value]) => status === 'outstanding' || value === 0))
   // This value is diagnostic only. Zero also cannot bypass journal validation.
   return { outstanding, available, total, started }

@@ -19,6 +19,7 @@ import re
 import signal
 import time
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ACCOUNT = '932542905614'
@@ -62,6 +63,13 @@ JOURNAL_CHECKS = {'drain_configuration', 'admission_barrier', 'acknowledgement_g
                   'executor_wallets', 'process_continuity', 'journal_snapshot',
                   'journal_terminal', 'reconciler_freshness', 'canonical_boundary',
                   'fresh_canonical_heads', 'historical_expiry_cutoff_verified', 'canonical_settlements'}
+ORIGIN_SOURCE = '63f170103ed6dcbb9432dcde7c5cad294de14490'
+ORIGIN_RUN_ID, ORIGIN_RUN_ATTEMPT = '42618751809', '1'
+ORIGIN_IMAGE = REGISTRY + '/' + REPOSITORY + '@sha256:a9bef3cb23f1475954daf0ded8301c47dbe1837ae9e47bb6b77749fa501a8f0e'
+ORIGIN_CANDIDATE_ARN = TASK_PREFIX + FAMILY + ':12'
+ORIGIN_CANDIDATE_FINGERPRINT = 'c64d96f71d12f1615bbd5b1e121ef0de603fbe0012a7563a63d952d9b12c426d'
+ORIGIN_SIGNER_TASK = f'arn:aws:ecs:{REGION}:{ACCOUNT}:task/{CLUSTER}/348286e1553644f78722d4548f44aa4f'
+ORIGIN_BARRIER = f'arn:aws:elasticloadbalancing:{REGION}:{ACCOUNT}:listener-rule/app/plether-sepolia-alto/052368285f0c0277/95f49d17a64baf9e/e8b97d5505b86521'
 
 
 class GuardRejected(ValueError):
@@ -71,6 +79,40 @@ class GuardRejected(ValueError):
 def require(condition, reason):
     if not condition:
         raise GuardRejected(reason)
+
+
+def safe_failure(error):
+    value = {'error_type': type(error).__name__,
+             'reason': str(error) if isinstance(error, GuardRejected) else 'details_suppressed'}
+    if isinstance(error, HTTPError) and type(error.code) is int and 100 <= error.code <= 599:
+        value['http_status'] = error.code
+    return value
+
+
+def validate_origin_evidence(journal):
+    expected = {'schema_version': 1, 'account': ACCOUNT, 'region': REGION, 'source': ORIGIN_SOURCE,
+                'image': ORIGIN_IMAGE, 'status': 'rollback_failed', 'mutation_started': True,
+                'previous_task_definition': BASELINE_ARN, 'baseline_fingerprint': BASELINE_FINGERPRINT,
+                'candidate_task_definition': ORIGIN_CANDIDATE_ARN, 'candidate_fingerprint': ORIGIN_CANDIDATE_FINGERPRINT,
+                'pause_rule': ORIGIN_BARRIER, 'pause_status': 'active', 'admission_opened': True}
+    require(isinstance(journal, dict) and type(journal.get('schema_version')) is int
+            and journal.get('mutation_started') is True and journal.get('admission_opened') is True
+            and all(journal.get(key) == value for key, value in expected.items()),
+            'unexpected_finalization_origin')
+    return {'source': ORIGIN_SOURCE, 'run_id': ORIGIN_RUN_ID, 'run_attempt': ORIGIN_RUN_ATTEMPT,
+            **{key: journal[key] for key in ['image', 'previous_task_definition', 'baseline_fingerprint',
+                                           'candidate_task_definition', 'candidate_fingerprint']},
+            'barrier_rule': ORIGIN_BARRIER}
+
+
+def require_origin_barrier(rule):
+    conditions, actions = rule.get('Conditions', []), rule.get('Actions', [])
+    require(rule.get('RuleArn') == ORIGIN_BARRIER and rule.get('Priority') == '1' and rule.get('IsDefault') is False
+            and len(conditions) == 1 and conditions[0].get('Field') == 'http-request-method'
+            and conditions[0].get('HttpRequestMethodConfig', {}).get('Values') == ['POST']
+            and len(actions) == 1 and actions[0].get('Type') == 'fixed-response'
+            and actions[0].get('FixedResponseConfig') == {'StatusCode': '503', 'ContentType': 'application/json',
+                'MessageBody': '{"error":"alto_rpc_cutover_in_progress"}'}, 'finalization_barrier_shape_changed')
 
 
 def named(items):
@@ -452,13 +494,20 @@ def perform_cutover(ecs, before_arn, candidate_arn, run_canary, quiescent,
             save({'status': 'verifying'})
             postcheck()
             save({'status': 'complete'})
-        except BaseException:
+        except BaseException as error:
+            try:
+                save({'original_failure': safe_failure(error)})
+            except BaseException:
+                pass  # Diagnostics must never prevent guarded restoration.
             try:
                 save({'status': 'rolling_back'})
                 replace_service(ecs, before_arn, wait_stopped, wait_healthy, before_stop)
                 save({'status': 'rolled_back'})
             except BaseException:
-                save({'status': 'rollback_failed'})
+                try:
+                    save({'status': 'rollback_failed'})
+                except BaseException:
+                    pass  # Deployment.save updates the in-memory pause guard first.
                 raise GuardRejected('rollback_failed_requires_attention') from None
             raise
     finally:
@@ -483,6 +532,7 @@ class Deployment:
         self.elb = session.client('elbv2')
         self.ec2 = session.client('ec2')
         self.args, self.directory = args, directory
+        self.finalizing = bool(getattr(args, 'finalize_existing', False))
         self.path = directory / 'rollout.json'
         self.deadline = time.monotonic() + args.deadline_seconds
         self.rollback = False
@@ -490,6 +540,8 @@ class Deployment:
                         'image': args.image, 'status': 'preflight', 'mutation_started': False}
         self.canary_proof = None
         self.stopping_tasks = set()
+        if self.finalizing:
+            self.journal['mode'] = 'finalize_existing'
 
     def save(self, delta):
         self.journal.update(delta)
@@ -505,10 +557,17 @@ class Deployment:
         self.journal['updated_at_utc'] = datetime.now(timezone.utc).isoformat()
         private_save(self.path, self.journal)
 
+    def record_failure(self, delta):
+        self.journal.update(delta)
+        try:
+            self.save(delta)
+        except BaseException:
+            pass  # Failure evidence must not prevent the owned barrier recovery.
+
     def budget(self):
         # Restoring a signer may require another idle observer, a full 120s stop
         # grace and cold ECS/ALB startup. Keep that time unavailable to forward work.
-        reserve = 0 if self.rollback else 600
+        reserve = 120 if getattr(self, 'finalizing', False) else 0 if self.rollback else 600
         require(time.monotonic() < self.deadline - reserve, 'operator_deadline')
 
     def service(self):
@@ -763,33 +822,53 @@ class Deployment:
             return True
         require(len(rules) == 1 and rules[0].get('IsDefault') is True, 'unexpected_existing_listener_rules')
         self.save({'pause_status': 'creating', 'listener': self.listener})
-        owner = f'alto-rpc-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
+        owner, source = self.barrier_identity()
         result = self.elb.create_rule(ListenerArn=self.listener, Priority=1,
             Conditions=[{'Field': 'http-request-method', 'HttpRequestMethodConfig': {'Values': ['POST']}}],
             Actions=[{'Type': 'fixed-response', 'FixedResponseConfig': {'StatusCode': '503',
                        'ContentType': 'application/json', 'MessageBody': '{"error":"alto_rpc_cutover_in_progress"}'}}],
             Tags=[{'Key': 'Capability', 'Value': 'alto-rpc-admission'}, {'Key': 'WorkflowOwner', 'Value': owner},
-                  {'Key': 'Source', 'Value': self.args.source}])
+                  {'Key': 'Source', 'Value': source}])
         require(len(result.get('Rules', [])) == 1, 'barrier_registration_failed')
         self.save({'pause_rule': result['Rules'][0]['RuleArn'], 'pause_status': 'active'})
         return False
 
+    def barrier_identity(self):
+        context = getattr(self, 'barrier_context', None)
+        if context is not None:
+            require(context == {'owner': f'alto-rpc-{ORIGIN_RUN_ID}-{ORIGIN_RUN_ATTEMPT}', 'source': ORIGIN_SOURCE},
+                    'unexpected_barrier_context')
+            return context['owner'], context['source']
+        return f'alto-rpc-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}', self.args.source
+
     def require_barrier_owner(self, arn):
         tags = self.elb.describe_tags(ResourceArns=[arn])['TagDescriptions']
-        owner = f'alto-rpc-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
+        owner, source = self.barrier_identity()
         require(len(tags) == 1 and {x['Key']: x['Value'] for x in tags[0]['Tags']}.get('WorkflowOwner') == owner
-                and {x['Key']: x['Value'] for x in tags[0]['Tags']}.get('Source') == self.args.source,
+                and {x['Key']: x['Value'] for x in tags[0]['Tags']}.get('Source') == source,
                 'barrier_owner_mismatch')
+        if getattr(self, 'barrier_context', None) is not None:
+            require({x['Key']: x['Value'] for x in tags[0]['Tags']}.get('Capability') == 'alto-rpc-admission',
+                    'barrier_capability_mismatch')
 
     def remove_barrier(self):
         arn = self.journal.get('pause_rule')
         if not arn:
             return
+        if getattr(self, 'finalizing', False):
+            require(arn == ORIGIN_BARRIER, 'unexpected_finalization_barrier')
         rules = self.elb.describe_rules(ListenerArn=self.listener)['Rules']
+        if getattr(self, 'finalizing', False):
+            matches = [x for x in rules if x['RuleArn'] == arn]
+            require(len(matches) == 1, 'finalization_barrier_missing')
+            require_origin_barrier(matches[0])
         if not any(x['RuleArn'] == arn for x in rules):
             self.save({'pause_rule': None, 'pause_status': 'removed', 'admission_opened': True})
             return
         self.require_barrier_owner(arn)
+        if getattr(self, 'finalizing', False):
+            self.budget()
+            require(self.quiescent(), 'stale_finalization_journal_proof')
         # This sticky intent survives both lost DeleteRule responses and a
         # later interrupted re-pause. Such recovery must drain admission again.
         self.save({'pause_status': 'removing', 'admission_opened': True})
@@ -803,21 +882,21 @@ class Deployment:
             return
         if self.journal.get('pause_status') == 'creating' and not self.journal.get('pause_rule'):
             # Reconcile a lost CreateRule response without creating another rule.
-            owner = f'alto-rpc-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
+            owner, source = self.barrier_identity()
             rules = self.elb.describe_rules(ListenerArn=self.listener)['Rules']
             for rule in rules:
                 if rule.get('IsDefault'):
                     continue
                 descriptions = self.elb.describe_tags(ResourceArns=[rule['RuleArn']])['TagDescriptions']
                 tags = {x['Key']: x['Value'] for x in descriptions[0]['Tags']}
-                if tags.get('WorkflowOwner') == owner and tags.get('Source') == self.args.source:
+                if tags.get('WorkflowOwner') == owner and tags.get('Source') == source:
                     self.save({'pause_rule': rule['RuleArn']})
         self.remove_barrier()
 
-    def scan(self):
+    def scan(self, expected_tag=None):
         digest = self.args.image.split('@', 1)[1]
         detail = self.ecr.describe_images(repositoryName=REPOSITORY, imageIds=[{'imageDigest': digest}])['imageDetails'][0]
-        expected_tag = f'rpc-auth-{self.args.source}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
+        expected_tag = expected_tag or f'rpc-auth-{self.args.source}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
         require(expected_tag in detail.get('imageTags', []), 'candidate_source_tag_mismatch')
         response = self.ecr.describe_image_scan_findings(repositoryName=REPOSITORY, imageId={'imageDigest': digest})
         validate_scan(response, digest, datetime.now(timezone.utc))
@@ -938,11 +1017,129 @@ class Deployment:
         except GuardRejected:
             return False
 
+    def existing_candidate_task(self):
+        service = self.service()
+        validate_service(service)
+        require(service['taskDefinition'] == ORIGIN_CANDIDATE_ARN, 'finalization_service_drift')
+        ids = self.ecs.list_tasks(cluster=CLUSTER, serviceName=SERVICE, desiredStatus='RUNNING')['taskArns']
+        require(len(ids) == 1, 'finalization_signer_count')
+        result = self.ecs.describe_tasks(cluster=CLUSTER, tasks=ids)
+        require(not result.get('failures') and len(result.get('tasks', [])) == 1, 'finalization_signer_missing')
+        task = result['tasks'][0]
+        values = named(task.get('containers', []))
+        require(task.get('taskDefinitionArn') == ORIGIN_CANDIDATE_ARN and task.get('lastStatus') == 'RUNNING'
+                and task.get('healthStatus') == 'HEALTHY' and set(values) == {ALTO, INIT, ROUTER}
+                and values[ALTO].get('imageDigest') == ORIGIN_IMAGE.split('@')[1]
+                and all(c.get('lastStatus') == 'RUNNING' or (name == INIT and c.get('lastStatus') == 'STOPPED'
+                        and c.get('exitCode') == 0) for name, c in values.items()), 'finalization_signer_not_healthy')
+        groups = [x['targetGroupArn'] for x in service.get('loadBalancers', []) if x.get('containerName') == ALTO]
+        require(len(groups) == 1, 'unexpected_target_groups')
+        health = self.elb.describe_target_health(TargetGroupArn=groups[0])['TargetHealthDescriptions']
+        require(len(health) == 1 and health[0]['TargetHealth']['State'] == 'healthy', 'finalization_target_not_healthy')
+        return ids[0]
+
+    def finalization_origin(self):
+        require(self.args.image == ORIGIN_IMAGE, 'unexpected_finalization_image')
+        directory = self.args.origin_evidence_directory
+        require(directory is not None and directory.is_dir() and not directory.is_symlink(), 'missing_origin_evidence')
+        path = directory / 'rollout.json'
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 100_000, 'invalid_origin_journal')
+        raw = path.read_bytes()
+        origin = validate_origin_evidence(json.loads(raw))
+        origin['journal_sha256'] = hashlib.sha256(raw).hexdigest()
+        for name, scope, checks in [('rpc-qualification.json', 'rpc', RPC_CHECKS),
+                                    ('idle-qualification.json', 'journal_idle', JOURNAL_CHECKS)]:
+            path = directory / name
+            require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 100_000, 'missing_origin_qualification')
+            proof = json.loads(path.read_text())
+            rows = proof.get('tests', [])
+            require(proof.get('scope') == scope and proof.get('required_checks_complete') is True
+                    and isinstance(rows, list) and len(rows) == len(checks)
+                    and all(isinstance(x, dict) and isinstance(x.get('name'), str) and x.get('pass') is True for x in rows)
+                    and {x['name'] for x in rows} == checks, 'invalid_origin_qualification')
+        before = self.definition(BASELINE_ARN)
+        require_baseline(before)
+        require(fingerprint(before) == BASELINE_FINGERPRINT, 'finalization_baseline_drift')
+        candidate = self.definition(ORIGIN_CANDIDATE_ARN)
+        assert_only_rpc_patch(before, candidate, ORIGIN_IMAGE)
+        require(fingerprint(candidate) == ORIGIN_CANDIDATE_FINGERPRINT, 'finalization_candidate_drift')
+        service = self.service()
+        validate_service(service)
+        require(service['taskDefinition'] == ORIGIN_CANDIDATE_ARN, 'finalization_service_drift')
+        self.baseline_url(service)
+        self.barrier_context = {'owner': f'alto-rpc-{ORIGIN_RUN_ID}-{ORIGIN_RUN_ATTEMPT}', 'source': ORIGIN_SOURCE}
+        rules = self.elb.describe_rules(ListenerArn=self.listener)['Rules']
+        barrier = [x for x in rules if x.get('RuleArn') == ORIGIN_BARRIER]
+        require(len(rules) == 2 and len(barrier) == 1 and barrier[0].get('Priority') == '1', 'finalization_barrier_drift')
+        require_origin_barrier(barrier[0])
+        self.require_barrier_owner(ORIGIN_BARRIER)
+        stopped = self.ecs.describe_tasks(cluster=CLUSTER, tasks=[ORIGIN_SIGNER_TASK])
+        require(not stopped.get('failures') and len(stopped.get('tasks', [])) == 1
+                and stopped['tasks'][0].get('taskDefinitionArn') == BASELINE_ARN
+                and stopped['tasks'][0].get('lastStatus') == 'STOPPED', 'original_signer_not_stopped')
+        self.existing_signer_task = self.existing_candidate_task()
+        self.candidate_definition, self.baseline_service = candidate, service
+        self.save({'mode': 'finalize_existing', 'origin_provenance': origin, 'existing_signer_task': self.existing_signer_task,
+                   'previous_task_definition': BASELINE_ARN, 'baseline_fingerprint': BASELINE_FINGERPRINT,
+                   'candidate_task_definition': ORIGIN_CANDIDATE_ARN, 'candidate_fingerprint': ORIGIN_CANDIDATE_FINGERPRINT,
+                   'pause_rule': ORIGIN_BARRIER, 'pause_status': 'active', 'admission_opened': False,
+                   'mutation_started': False, 'status': 'prepared'})
+        self.scan(f'rpc-auth-{ORIGIN_SOURCE}-{ORIGIN_RUN_ID}-{ORIGIN_RUN_ATTEMPT}')
+        self.journal_observer_context(service)
+        return before, candidate, service
+
+    def finalize_existing(self):
+        try:
+            _, candidate, service = self.finalization_origin()
+            self.canary(candidate, service, 'rpc')
+            self.canary(candidate, service, 'journal_idle')
+            require(self.existing_candidate_task() == self.existing_signer_task, 'finalization_signer_changed')
+            self.journal_observer_context(service)
+            require(self.quiescent(), 'stale_finalization_journal_proof')
+            self.save({'status': 'verifying', 'barrier_mutation_started': True})
+            self.remove_barrier()
+            self.postcheck_with_retry()
+            require(self.existing_candidate_task() == self.existing_signer_task, 'finalization_signer_changed')
+            self.save({'status': 'complete', 'finalized_existing': True})
+        except BaseException as error:
+            self.record_failure({'status': 'finalization_failed', 'finalization_failure': safe_failure(error), 'attention_required': True})
+            try:
+                confirmed = self.ensure_barrier()
+                self.record_failure({'barrier_repause': 'active' if confirmed is True else 'unverified'})
+            except BaseException as pause_error:
+                self.record_failure({'barrier_repause': 'failed', 'barrier_failure': safe_failure(pause_error)})
+            raise GuardRejected('finalization_failed_requires_attention') from None
+
+    def postcheck_with_retry(self):
+        deadline = time.monotonic() + 45
+        self.public_smoke_deadline = deadline
+        first = None
+        try:
+            while True:
+                self.budget()
+                try:
+                    self.postcheck()
+                    return
+                except Exception as error:
+                    if isinstance(error, GuardRejected) and str(error) in {'operator_cancelled', 'operator_deadline'}:
+                        raise
+                    if first is None:
+                        first = safe_failure(error)
+                        self.save({'public_smoke_first_failure': first})
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(min(2, deadline - time.monotonic()))
+        finally:
+            self.public_smoke_deadline = None
+
     def postcheck(self):
         def fetch(path, payload=None):
             request = Request(PUBLIC + path, data=None if payload is None else json.dumps(payload).encode(),
                               headers={'User-Agent': 'plether-alto-rpc-cutover/1', 'Content-Type': 'application/json'})
-            with urlopen(request, timeout=15) as response:
+            deadline = getattr(self, 'public_smoke_deadline', None)
+            remaining = 15 if deadline is None else deadline - time.monotonic()
+            require(remaining > 0, 'public_smoke_retry_deadline')
+            with urlopen(request, timeout=min(15, remaining)) as response:
                 require(response.status == 200, 'public_smoke_http_failure')
                 return json.load(response)
         entry = fetch('/aa/rpc', {'jsonrpc': '2.0', 'id': 1, 'method': 'eth_supportedEntryPoints', 'params': []})
@@ -992,7 +1189,7 @@ class Deployment:
                 assert_only_rpc_patch(before, actual, self.args.image)
         def postcheck():
             self.remove_barrier()
-            self.postcheck()
+            self.postcheck_with_retry()
         perform_cutover(self.ecs, before['taskDefinitionArn'], arn, canary, self.quiescent,
                         self.wait_stopped, healthy, postcheck, self.save, self.cleanup_barrier, self.before_signer_stop)
 
@@ -1053,7 +1250,11 @@ def main():
     parser.add_argument('--directory', required=True, type=Path)
     parser.add_argument('--deadline-seconds', type=int, default=1200)
     parser.add_argument('--recover', action='store_true')
+    parser.add_argument('--finalize-existing', action='store_true')
+    parser.add_argument('--origin-evidence-directory', type=Path)
     args = parser.parse_args()
+    require(not (args.recover and args.finalize_existing)
+            and (args.origin_evidence_directory is not None) == args.finalize_existing, 'invalid_operator_mode')
     validate_image(args.image)
     require(re.fullmatch(r'[0-9a-f]{40}', args.source) is not None and args.source == os.environ.get('GITHUB_SHA'), 'source_mismatch')
     require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REF') == 'refs/heads/master'
@@ -1075,7 +1276,9 @@ def main():
             raise GuardRejected('operator_cancelled')
         signal.signal(signal.SIGTERM, cancelled)
         try:
-            if args.recover:
+            if args.finalize_existing:
+                deployment.finalize_existing()
+            elif args.recover:
                 deployment.recover()
             else:
                 deployment.run()
