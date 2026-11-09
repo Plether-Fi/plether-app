@@ -50,7 +50,9 @@ jobs:
 
       - name: Test close assistance deployment controls
         working-directory: .
-        run: python3 .github/scripts/test-configure-close-assistance.py
+        run: |
+          python3 .github/scripts/test-configure-close-assistance.py
+          python3 .github/scripts/test-configure-privy-app.py
 
       - name: Test candle administration task identity
         working-directory: .
@@ -98,6 +100,17 @@ jobs:
   test:
     name: Backend unit tests
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: passkey_names_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: apps/backend
@@ -146,6 +159,8 @@ jobs:
 
       - name: Run tests
         run: cabal test plether-api-test
+        env:
+          PASSKEY_NAMES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/passkey_names_test
 
   perps-critical-path-integration:
     name: Perps critical path integration

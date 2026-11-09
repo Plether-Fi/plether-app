@@ -51,6 +51,7 @@ import Plether.Types.Api (ApiResponse)
 import Plether.Types.Error (ApiError)
 import Plether.Types.Protocol (ProtocolStatus)
 import Plether.Types.Perps (BasketCandlePage, PythUpdateResponse)
+import Plether.Passkeys.Auth (VerifierCache, newVerifierCache)
 import Plether.Types.User (UserAllowances, UserDashboard)
 
 data CacheEntry a = CacheEntry
@@ -120,7 +121,8 @@ data SingleFlightDecision value
   | StartRefresh !value !(TMVar (Either SomeException value))
 
 data AppCache = AppCache
-  { cacheProtocolStatus :: !(TVar (Maybe (CacheEntry ProtocolStatus)))
+  { cachePrivyVerifier :: !VerifierCache
+  , cacheProtocolStatus :: !(TVar (Maybe (CacheEntry ProtocolStatus)))
   , cacheUserDashboards :: !(TVar (Map Text (CacheEntry UserDashboard)))
   , cacheUserAllowances :: !(TVar (Map Text (CacheEntry UserAllowances)))
   , cachePythLatestUpdates
@@ -178,7 +180,8 @@ newAppCache = do
   pythHistorical <- newSingleFlightCache 64 pythHistoricalCacheTtlNs
   storedPythValidations <- newSingleFlightCache 4 storedPythValidationCacheTtlNs
   AppCache
-    <$> newTVarIO Nothing
+    <$> newVerifierCache
+    <*> newTVarIO Nothing
     <*> newTVarIO Map.empty
     <*> newTVarIO Map.empty
     <*> pure pythLatest
