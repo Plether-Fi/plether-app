@@ -296,8 +296,10 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       await close()
       if (signingGuard.revision !== revision || !ownerId || !session.current.ready
         || !session.current.authenticated || session.current.userId !== ownerId) return
-      if (method === 'google') linkGoogle()
-      else linkPasskey()
+      // SDK 3.51.2 exposes void types here but returns initialization promises.
+      // Observe them so an unavailable linking service remains recoverable.
+      const startLink: () => unknown = method === 'google' ? linkGoogle : linkPasskey
+      await startLink()
     } catch { setError('Could not open account linking. Try again.') }
   }
 
@@ -368,7 +370,6 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       options={authenticated ? [
         { label: user?.linkedAccounts.some(account => account.type === 'google_oauth') ? 'Google linked' : 'Link Google account',
           disabled: user?.linkedAccounts.some(account => account.type === 'google_oauth'), icon: 'google', onClick: () => { void handleLink('google', close) } },
-        { label: 'Add passkey', kind: 'passkey-link', onClick: () => { void handleLink('passkey', close) } },
       ] : [
         { label: 'Log in with Google', icon: 'google', onClick: () => { void handleEmbeddedWallet(close, 'google') } },
         { label: 'Log in with passkey', kind: 'passkey-login', onClick: () => handleEmbeddedWallet(close, 'passkey') },
@@ -483,7 +484,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       >
         <WalletsDialog networks={walletChains.filter(chain => chain.id !== 31337).map(chain => ({ id: chain.id }))}
           connectionDescription={close => connectionDescription(close, true)} accountActions={close => <WalletModalHistory onClose={close}>
-            <WalletMfaSettings />
+            <WalletMfaSettings onAddPasskey={() => { void handleLink('passkey', close) }} />
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--privy-color-foreground-4)' }}>
               <button type="button" disabled={!ready} onClick={() => {
                 // Revoke the signer before closing; ignore any late result

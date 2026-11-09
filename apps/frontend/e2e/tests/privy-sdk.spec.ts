@@ -31,8 +31,8 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
     mfa_methods: mfaUpdate ? [{ type: 'passkey', verified_at: 1700000000 }] : mfaSession === 'enrolled' ? [{ type: 'totp', verified_at: 1700000000 }] : [], has_accepted_terms: true,
     linked_accounts: [
       ...(mfaUpdate ? [
-        { type: 'passkey', credential_id: macMfaKey, enrolled_in_mfa: true, authenticator_name: 'Mac test passkey', first_verified_at: 1700000000, latest_verified_at: 1700000000 },
-        { type: 'passkey', credential_id: mobileMfaKey, enrolled_in_mfa: false, authenticator_name: 'Mobile test passkey', first_verified_at: 1700000001, latest_verified_at: 1700000001 },
+        { type: 'passkey', credential_id: macMfaKey, enrolled_in_mfa: true, authenticator_name: 'Mac test passkey', created_with_device: 'Macintosh', created_with_os: 'Mac OS', created_with_browser: 'Chrome', first_verified_at: 1700000000, latest_verified_at: 1700000000 },
+        { type: 'passkey', credential_id: mobileMfaKey, enrolled_in_mfa: false, authenticator_name: 'Mobile test passkey', created_with_device: 'K', created_with_os: 'Android', created_with_browser: 'Chrome', first_verified_at: 1700000001, latest_verified_at: 1700000001 },
       ] : []),
       ...(googleFixture === 'success'
         ? [{ type: 'google_oauth', subject: 'public-google-test', email: 'public-test@example.invalid', name: 'Public test', first_verified_at: 1700000000, latest_verified_at: 1700000000 }]
@@ -136,6 +136,24 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
       return route.fulfill({ headers, json: { token: mfaToken, privy_access_token: mfaToken,
         refresh_token: 'public-offline-refresh-token', user: sessionUser } })
+    }
+    if (url.hostname === 'auth.privy.io' && url.pathname === '/api/v1/passkeys/link/init') {
+      const headers = {
+        'access-control-allow-origin': route.request().headers().origin,
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '*',
+      }
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
+      if (passkeyFixture === 'init-error') return route.fulfill({ status: 400, headers, json: { error: 'Offline linking service failure', code: 'invalid_credentials' } })
+      return route.fulfill({ headers, json: { relying_party: 'localhost', options: {
+        rp: { id: 'localhost', name: 'Plether offline test' },
+        user: { id: Buffer.from('public-link-test-user').toString('base64url'), name: 'public-test@example.invalid', display_name: 'Public test' },
+        challenge: Buffer.alloc(32, 3).toString('base64url'),
+        pub_key_cred_params: [{ type: 'public-key', alg: -7 }],
+        authenticator_selection: { resident_key: 'required', user_verification: 'required' },
+        exclude_credentials: [], timeout: 10000,
+      } } })
     }
     if (url.hostname === 'auth.privy.io' && ['/api/v1/passkeys/authenticate/init', '/api/v1/passkeys/authenticate'].includes(url.pathname)) {
       const headers = {
@@ -308,23 +326,68 @@ test('closing and reopening with the X button does not leave extra Back steps', 
   await expect(page).toHaveURL(/\/terms$/)
 })
 
-test('Back closes MFA before the underlying wallet account, without disconnecting', async ({ page }) => {
-  await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true)
-  await previousPage(page)
-  await accountButton(page).click()
-  await page.getByRole('button', { name: 'Wallet MFA settings', exact: true }).click()
-  await expect(page.locator('#privy-dialog').getByText('Transaction Protection', { exact: true })).toBeVisible()
-  await page.goBack()
-  await expect(page.locator('#privy-dialog').getByText('Transaction Protection', { exact: true })).not.toBeVisible()
-  await expect(page.getByRole('button', { name: 'Wallet MFA settings', exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/\/privacy$/)
-  await page.goBack()
-  await expect(page.getByText('Wallet connected', { exact: true })).not.toBeVisible()
-  await expect(accountButton(page)).toBeVisible()
-  expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
-  await page.goBack()
-  await expect(page).toHaveURL(/\/terms$/)
-})
+for (const session of ['fresh', 'restored', 'replaced-url', 'open-url-cleanup', 'skipped-entry'] as const) {
+  test(`Back closes the native wallet account before navigating (${session} session)`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    const wallet = await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true)
+    await wallet.disconnect()
+    await previousPage(page)
+    if (session === 'restored') await page.reload()
+    await expect(accountButton(page)).toBeVisible()
+    if (session === 'replaced-url') {
+      await accountButton(page).click()
+      await page.getByRole('dialog', { name: 'Wallet connected', exact: true }).getByRole('button').first().click()
+      await page.evaluate(() => history.replaceState(history.state, '', '/privacy?cleaned=1'))
+    }
+    const state = await page.evaluate(() => history.state)
+    let href = page.url()
+    const panel = page.getByRole('dialog', { name: 'Wallet connected', exact: true }).locator('[id^="headlessui-dialog-panel-"]')
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await accountButton(page).click()
+      await expect(panel).toBeVisible()
+      if (session === 'open-url-cleanup' && attempt === 0) {
+        await page.evaluate(() => history.replaceState(history.state, '', '/privacy?cleaned=1'))
+        href = page.url()
+      }
+      if (session === 'skipped-entry') await page.evaluate(() => history.go(-2))
+      else await page.goBack()
+      await expect(panel).not.toBeVisible()
+      await expect(page).toHaveURL(href)
+      if (session !== 'open-url-cleanup') await expect.poll(() => page.evaluate(() => history.state)).toEqual(state)
+      expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+    }
+    if (session === 'fresh' || session === 'restored' || session === 'skipped-entry') {
+      await page.goBack()
+      await expect(page).toHaveURL(/\/terms$/)
+    }
+  })
+}
+
+for (const traversal of ['normal', 'skipped-entry'] as const) {
+  test(`Back closes stacked MFA and wallet dialogs one at a time (${traversal})`, async ({ page }) => {
+    await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true)
+    await previousPage(page)
+    await accountButton(page).click()
+    const originalGuard = await page.evaluate(() => history.state)
+    await page.getByRole('button', { name: 'Wallet MFA settings', exact: true }).click()
+    await expect(page.locator('#privy-dialog').getByText('Transaction Protection', { exact: true })).toBeVisible()
+    if (traversal === 'skipped-entry') await page.evaluate(() => history.go(-2))
+    else await page.goBack()
+    await expect(page.locator('#privy-dialog').getByText('Transaction Protection', { exact: true })).not.toBeVisible()
+    await expect(page.getByRole('button', { name: 'Wallet MFA settings', exact: true })).toBeVisible()
+    await expect(page).toHaveURL(/\/privacy$/)
+    // Reusing this entry matters for the browser toolbar: a fresh pushState
+    // after Back can mark the stack skippable despite history.back() tests passing.
+    await expect.poll(() => page.evaluate(() => history.state)).toEqual(originalGuard)
+    if (traversal === 'skipped-entry') await page.evaluate(() => history.go(-2))
+    else await page.goBack()
+    await expect(page.getByText('Wallet connected', { exact: true })).not.toBeVisible()
+    await expect(accountButton(page)).toBeVisible()
+    expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+    await page.goBack()
+    await expect(page).toHaveURL(/\/terms$/)
+  })
+}
 
 test('Back dismisses application dialogs before navigating', async ({ page }) => {
   await openApp(page)
@@ -380,7 +443,7 @@ test('restored Google session on mobile asks to select a wallet and reconnects w
   await selectButton(page).click()
   const dialog = page.locator('#privy-dialog')
   await expect(dialog.getByRole('button', { name: 'Google linked', exact: true })).toBeDisabled()
-  await expect(dialog.getByRole('button', { name: 'Add passkey', exact: true })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: 'Add passkey', exact: true })).not.toBeVisible()
   await dialog.getByRole('button', { name: 'Use email wallet', exact: true }).click()
   await expect(accountButton(page)).toBeVisible()
   expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
@@ -394,6 +457,7 @@ for (const enrolled of [false, true]) {
     await accountButton(page).click()
     const settings = page.getByRole('button', { name: 'Wallet MFA settings', exact: true })
     await expect(settings).toBeVisible()
+    await expect(page.getByText('No passkeys registered yet.', { exact: true })).toBeVisible()
     await settings.click()
     const dialog = page.locator('#privy-dialog')
     if (!enrolled) {
@@ -416,9 +480,62 @@ for (const enrolled of [false, true]) {
   })
 }
 
+for (const viewport of ['desktop', 'mobile'] as const) {
+  test(`${viewport} wallet details links passkeys directly without opening the wallet picker`, async ({ page }, testInfo) => {
+    if (viewport === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
+    await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'success', 'cancel', true)
+    const href = page.url()
+    await accountButton(page).click()
+    const account = page.getByRole('dialog', { name: 'Wallet connected', exact: true })
+    const add = account.getByRole('button', { name: 'Add passkey', exact: true })
+    await expect(add).toBeEnabled()
+    await add.scrollIntoViewIfNeeded()
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('wallet-add-passkey.png') })
+    await add.click()
+    const dialog = page.locator('#privy-dialog')
+    await expect(dialog.getByText('Set up passkey verification', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Add new passkey', exact: true })).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: 'Add new passkey', exact: true })).toHaveCSS('color', 'rgb(255, 255, 255)')
+    await expect(page.getByText('Select your wallet', { exact: true })).not.toBeVisible()
+    await expect(page.getByText('Wallet connected', { exact: true })).not.toBeVisible()
+    expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+    // Opening this flow does not enroll or remove any real credential.
+    // Cancellation must preserve the selected owner and the current page.
+    if (viewport === 'mobile') await page.goBack()
+    else await dialog.getByRole('button', { name: 'close modal', exact: true }).click()
+    await expect(dialog.getByText('Set up passkey verification', { exact: true })).not.toBeVisible()
+    await expect(page).toHaveURL(href)
+    await expect(accountButton(page)).toBeEnabled()
+    await expect(page.getByRole('banner').getByRole('alert')).not.toBeVisible()
+    expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+    await accountButton(page).click()
+    await expect(add).toBeEnabled()
+    await account.getByRole('button', { name: 'Connect new wallet', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Use email wallet', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Add passkey', exact: true })).not.toBeVisible()
+  })
+}
+
+test('direct wallet passkey linking handles an initialization failure without an unhandled rejection', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => { errors.push(error.message) })
+  await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'init-error', true)
+  await accountButton(page).click()
+  await page.getByRole('dialog', { name: 'Wallet connected', exact: true }).getByRole('button', { name: 'Add passkey', exact: true }).click()
+  await expect(page.getByRole('banner').getByRole('alert')).toContainText('Could not open account linking. Try again.')
+  expect(errors).toEqual([])
+  expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
+  await expect(accountButton(page)).toBeEnabled()
+})
+
 for (const outcome of ['success', 'submit-error'] as const) {
   test(`updates wallet MFA with the existing Mac passkey and preserves both keys (${outcome})`, async ({ page, context }, testInfo) => {
     if (outcome === 'success') await page.setViewportSize({ width: 390, height: 844 })
+    await page.addInitScript(userAgent => {
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => userAgent })
+    }, outcome === 'success'
+      ? 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36'
+      : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36')
     const fixture: MfaUpdateFixture = { outcome, verified: 0, refreshed: 0, submissions: [] }
     await openApp(page, TEST_WALLET_ADDRESSES[1].toLowerCase(), 'localhost', 'provider', 'cancel', true, fixture)
     const cdp = await context.newCDPSession(page)
@@ -436,6 +553,26 @@ for (const outcome of ['success', 'submit-error'] as const) {
       privateKey: privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
     } })
     await accountButton(page).click()
+    const accountDialog = page.getByRole('dialog', { name: 'Wallet connected', exact: true })
+    await expect(accountDialog.getByRole('button').first()).toBeInViewport()
+    const passkeys = page.getByRole('list', { name: 'Registered passkeys', exact: true })
+    const macRow = passkeys.getByRole('listitem').filter({ hasText: 'macOS · Chrome' })
+    const mobileRow = passkeys.getByRole('listitem').filter({ hasText: 'Android · Chrome' })
+    const matchingRow = outcome === 'success' ? mobileRow : macRow
+    const otherRow = outcome === 'success' ? macRow : mobileRow
+    await expect(matchingRow.getByText('Matches this device', { exact: true })).toBeVisible()
+    await expect(otherRow.getByText('Matches this device', { exact: true })).not.toBeVisible()
+    await expect(matchingRow).toHaveCSS('border-color', 'rgb(255, 87, 45)')
+    await expect(passkeys.getByText(/^K ·/)).not.toBeVisible()
+    await expect(macRow.getByText('Wallet MFA enabled', { exact: true })).toBeVisible()
+    await expect(mobileRow.getByText('Not enabled for wallet MFA', { exact: true })).toBeVisible()
+    await expect(macRow.getByText('Mac test passkey', { exact: true })).toBeVisible()
+    await expect(mobileRow.getByText('Mobile test passkey', { exact: true })).toBeVisible()
+    await expect(macRow.locator('time')).toHaveAttribute('datetime', new Date(1700000000 * 1000).toISOString())
+    await expect(mobileRow.locator('time')).toHaveAttribute('datetime', new Date(1700000001 * 1000).toISOString())
+    // Metadata comes through the real installed SDK; it must fit the wallet
+    // dialog on mobile as well as desktop without horizontal scrolling.
+    expect(await passkeys.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
     const update = page.getByRole('button', { name: 'Enable additional passkeys for wallet MFA', exact: true })
     await update.scrollIntoViewIfNeeded()
     await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('additional-mfa-passkeys.png') })
@@ -443,6 +580,7 @@ for (const outcome of ['success', 'submit-error'] as const) {
     if (outcome === 'submit-error') {
       await expect(page.getByRole('alert').filter({ hasText: /wallet MFA/i })).toBeVisible()
       await expect(update).toBeEnabled()
+      await expect(mobileRow.getByText('Not enabled for wallet MFA', { exact: true })).toBeVisible()
       expect(fixture.verified).toBe(1)
       expect(fixture.submissions).toEqual([[macMfaKey, mobileMfaKey]])
       fixture.outcome = 'success'
@@ -450,11 +588,14 @@ for (const outcome of ['success', 'submit-error'] as const) {
     }
     await expect(page.getByText('Linked passkeys are enabled for wallet MFA. Your existing passkeys are still enabled.', { exact: true })).toBeVisible()
     await expect(update).not.toBeVisible()
+    await expect(macRow.getByText('Wallet MFA enabled', { exact: true })).toBeVisible()
+    await expect(mobileRow.getByText('Wallet MFA enabled', { exact: true })).toBeVisible()
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('registered-passkeys-enrolled.png') })
     expect(fixture.verified).toBe(outcome === 'success' ? 1 : 2)
     expect(fixture.submissions).toEqual(Array.from({ length: fixture.verified }, () => [macMfaKey, mobileMfaKey]))
     expect(await selectedOwner(page)).toBe(TEST_WALLET_ADDRESSES[1].toLowerCase())
     await expect(page.locator('#privy-dialog').getByRole('button', { name: 'close modal', exact: true })).not.toBeVisible()
-    await page.getByRole('dialog', { name: 'Wallet connected', exact: true }).getByRole('button').first().click()
+    await accountDialog.getByRole('button').first().click()
     await expect(accountButton(page)).toBeVisible()
     await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId })
   })

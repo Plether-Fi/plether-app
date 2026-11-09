@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { useActiveWallet, useMfa, useMfaEnrollment, usePrivy, useUser, type User } from '@privy-io/react-auth'
+import { RegisteredPasskeys } from './RegisteredPasskeys'
+import { isPasskeyOriginSupported, localhostPasskeyUrl } from './passkeyOrigin'
 
 const buttonStyle: CSSProperties = {
   width: '100%', padding: '12px 16px', border: '1px solid var(--privy-color-foreground-4)',
@@ -7,16 +9,17 @@ const buttonStyle: CSSProperties = {
   color: 'var(--privy-color-foreground)', fontSize: 14, textAlign: 'left', cursor: 'pointer',
 }
 
-export function WalletMfaSettings() {
+export function WalletMfaSettings({ onAddPasskey }: { onAddPasskey?: () => void }) {
   const { ready, authenticated, user } = usePrivy()
   const { wallet } = useActiveWallet()
   if (!ready || !authenticated || !user || wallet?.walletClientType !== 'privy') return null
-  return <WalletMfaActions key={`${user.id}:${wallet.address.toLowerCase()}`} user={user} wallet={wallet} />
+  return <WalletMfaActions key={`${user.id}:${wallet.address.toLowerCase()}`} user={user} wallet={wallet} onAddPasskey={onAddPasskey} />
 }
 
-function WalletMfaActions({ user, wallet }: {
+function WalletMfaActions({ user, wallet, onAddPasskey }: {
   user: User
   wallet: NonNullable<ReturnType<typeof useActiveWallet>['wallet']>
+  onAddPasskey?: () => void
 }) {
   const { promptMfa } = useMfa()
   const { refreshUser } = useUser()
@@ -33,6 +36,8 @@ function WalletMfaActions({ user, wallet }: {
 
   const passkeys = user.linkedAccounts.filter(account => account.type === 'passkey')
   const canUpdate = user.mfaMethods.includes('passkey') && passkeys.some(key => !key.enrolledInMfa)
+  const passkeySupported = isPasskeyOriginSupported()
+  const localhostUrl = localhostPasskeyUrl()
 
   const openSettings = () => {
     setError(null)
@@ -95,6 +100,23 @@ function WalletMfaActions({ user, wallet }: {
 
   return (
     <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--privy-color-foreground-4)' }}>
+      <RegisteredPasskeys passkeys={passkeys} mfaEnabled={user.mfaMethods.includes('passkey')} action={onAddPasskey ? (
+        <button type="button" disabled={updating || !passkeySupported} onClick={onAddPasskey} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: 44, padding: 0,
+          border: 0, background: 'transparent', color: 'var(--privy-color-foreground)',
+          fontSize: '0.875rem', lineHeight: '1.375rem', fontWeight: 400, cursor: updating || !passkeySupported ? 'default' : 'pointer',
+          opacity: updating || !passkeySupported ? 0.65 : 1,
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 4.5v15M4.5 12h15" />
+          </svg>
+          Add passkey
+        </button>
+      ) : undefined} />
+      {onAddPasskey && !passkeySupported ? <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--privy-color-foreground-2)' }}>
+          Passkeys need an HTTPS domain or localhost.{localhostUrl ? <> <a href={localhostUrl}
+            style={{ color: 'var(--privy-color-foreground)', textDecoration: 'underline' }}>Open localhost to use passkeys</a>.</> : null}
+      </p> : null}
       <button type="button" onClick={openSettings} disabled={updating} style={buttonStyle}>
         Wallet MFA settings
       </button>
