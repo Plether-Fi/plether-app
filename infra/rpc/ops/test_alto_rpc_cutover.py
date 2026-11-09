@@ -25,8 +25,8 @@ SOURCE = "b" * 40
 BASELINE_URL = "http://internal-plether-sepolia-alto-123.ap-southeast-1.elb.amazonaws.com"
 BEFORE = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia-alto:6"
 AFTER = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia-alto:7"
-API_SOURCE = "0713acef754f1413352bcf1ece9d350ee717dd17"
-API_IMAGE = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/plether-api-sepolia@sha256:b901c9b3c7a9d0db811659de396f4032409621089150d6e2f39e1026cdadf8e5"
+API_SOURCE = "09727312b2420d01ee1ee9982904a4829b628f6d"
+API_IMAGE = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/plether-api-sepolia@sha256:7f7bd98e666200aa6eb64b3bc7a6358b53e9463aa3f7ca5d4942e47778835f82"
 API_TAGGED_IMAGE = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/plether-api-sepolia:{API_SOURCE}"
 PAYMASTER = "0x" + "1" * 40
 VPC = "vpc-0df986b0047f901d3"
@@ -107,8 +107,8 @@ def main_container(definition):
 
 def api_fixture():
     value = fixture()
-    value.update(family="plether-sepolia", revision=148,
-                 taskDefinitionArn=f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia:148",
+    value.update(family="plether-sepolia", revision=149,
+                 taskDefinitionArn=f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/plether-sepolia:149",
                  executionRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-execution",
                  taskRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-api-task")
     api = value["containerDefinitions"][0]
@@ -368,14 +368,14 @@ class RpcCutoverPolicyTests(unittest.TestCase):
         mutations = [
             lambda value: value.update(family="plether-mainnet"),
             lambda value: value.update(taskDefinitionArn=value["taskDefinitionArn"].replace(ACCOUNT, "000000000000")),
-            lambda value: value.update(taskDefinitionArn=value["taskDefinitionArn"].replace(":148", ":149")),
+            lambda value: value.update(taskDefinitionArn=value["taskDefinitionArn"].replace(":149", ":148")),
             lambda value: value.update(executionRoleArn=f"arn:aws:iam::{ACCOUNT}:role/plether-sepolia-alto-execution"),
             lambda value: value.update(networkMode="bridge"),
             lambda value: value["runtimePlatform"].update(cpuArchitecture="X86_64"),
             lambda value: value["containerDefinitions"][0].update(image=API_TAGGED_IMAGE.replace(API_SOURCE, "c" * 40)),
             lambda value: value["containerDefinitions"][0].update(image=API_TAGGED_IMAGE.replace(ACCOUNT, "000000000000")),
             lambda value: value["containerDefinitions"][0].update(image=API_TAGGED_IMAGE.replace("plether-api-sepolia", "other")),
-            lambda value: value["containerDefinitions"][0].update(image=API_IMAGE.replace("b901", "0000")),
+            lambda value: value["containerDefinitions"][0].update(image=API_IMAGE.replace("7f7b", "0000")),
             lambda value: value["containerDefinitions"].append(copy.deepcopy(value["containerDefinitions"][0])),
         ]
         for index, mutate in enumerate(mutations):
@@ -989,7 +989,7 @@ class JournalObserverContextTests(unittest.TestCase):
             if case == "digest":
                 task["containers"][0]["imageDigest"] = "sha256:" + "0" * 64
             elif case == "revision":
-                task["taskDefinitionArn"] = task["taskDefinitionArn"].replace(":148", ":149")
+                task["taskDefinitionArn"] = task["taskDefinitionArn"].replace(":149", ":148")
             elif case == "second_task":
                 deployment.ecs.task_lists["plether-api"].append(arn + "-other")
             else:
