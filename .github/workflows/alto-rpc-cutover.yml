@@ -1,0 +1,303 @@
+name: Cut over Alto RPC
+run-name: Alto RPC / sepolia / ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - sepolia
+
+# Share the signer-service mutation lock with deploy-alto.yml.
+concurrency:
+  group: plether-alto-mutation-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-1
+  EXPECTED_AWS_ACCOUNT_ID: '932542905614'
+  ADMIN_ENVIRONMENT: alto-admin-sepolia
+  TARGET_ENV: ${{ inputs.environment }}
+  ECR_REPOSITORY: plether-alto-sepolia
+  AWS_PAGER: ''
+  AWS_MAX_ATTEMPTS: '3'
+  AWS_RETRY_MODE: standard
+
+jobs:
+  protected-environment-preflight:
+    name: Require protected Sepolia Alto environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+    steps:
+      - name: Verify protected environment and master-only policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$GITHUB_REF" != 'refs/heads/master' ] || [ "$TARGET_ENV" != 'sepolia' ]; then
+            echo '::error::Alto RPC cutover is restricted to master and Sepolia.'
+            exit 1
+          fi
+          environment_file="$RUNNER_TEMP/alto-rpc-environment.json"
+          branch_policy_file="$RUNNER_TEMP/alto-rpc-branches.json"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" > "$environment_file"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+          jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+            '.name == $name
+             and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$environment_file" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$branch_policy_file" >/dev/null
+
+  cutover:
+    name: Build and qualify Alto RPC cutover
+    needs: protected-environment-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: alto-admin-sepolia
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+      id-token: write
+    steps:
+      - name: Revalidate environment after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIGURED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          CONFIGURED_DEPLOY_ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [ "$GITHUB_REF" = 'refs/heads/master' ]
+          [ "$TARGET_ENV" = 'sepolia' ]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$CONFIGURED_AWS_ACCOUNT_ID" = "$EXPECTED_AWS_ACCOUNT_ID" ]
+          [[ "$CONFIGURED_DEPLOY_ROLE" =~ ^arn:aws:iam::932542905614:role/[A-Za-z0-9+=,.@_/-]+$ ]]
+          environment_file="$RUNNER_TEMP/alto-rpc-environment-recheck.json"
+          branch_policy_file="$RUNNER_TEMP/alto-rpc-branches-recheck.json"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" > "$environment_file"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+          jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+            '.name == $name
+             and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$environment_file" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$branch_policy_file" >/dev/null
+
+      - name: Check out the reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+          allowed-account-ids: '932542905614'
+          role-session-name: plether-alto-rpc-${{ github.run_id }}
+
+      - name: Verify the AWS boundary and candidate inputs
+        id: inputs
+        run: |
+          set -euo pipefail
+          [ "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_AWS_ACCOUNT_ID" ]
+          [ "$AWS_REGION" = 'ap-southeast-1' ]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          test -s infra/alto/Dockerfile
+          test -s infra/alto/rpc-auth.mjs
+          test -s infra/rpc/ops/alto_rpc_cutover.py
+          test -s infra/alto/qualify-rpc.mjs
+          tag="rpc-auth-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Enable ARM64 image builds
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build the pinned Alto image with the RPC authentication preload
+        id: image
+        timeout-minutes: 15
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: infra/alto
+          file: infra/alto/Dockerfile
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.inputs.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.plether.rpc-auth.sha256=${{ hashFiles('infra/alto/rpc-auth.mjs') }}
+
+      - name: Require a fresh complete scan with no critical findings
+        id: candidate
+        timeout-minutes: 6
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.inputs.outputs.tag }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [ "$IMAGE_REGISTRY" = '932542905614.dkr.ecr.ap-southeast-1.amazonaws.com' ]
+          resolved_digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)
+          [ "$resolved_digest" = "$IMAGE_DIGEST" ]
+          scan_error="$RUNNER_TEMP/alto-rpc-scan-error"
+          if ! aws ecr start-image-scan --repository-name "$ECR_REPOSITORY" \
+              --image-id "imageDigest=$IMAGE_DIGEST" > /dev/null 2> "$scan_error"; then
+            if ! grep -Eq 'LimitExceededException|ScanAlreadyExistsException' "$scan_error"; then
+              echo '::error::The candidate image scan could not be started.'
+              exit 1
+            fi
+          fi
+          aws ecr wait image-scan-complete --repository-name "$ECR_REPOSITORY" \
+            --image-id "imageDigest=$IMAGE_DIGEST"
+          scan_file="$RUNNER_TEMP/alto-rpc-candidate-scan.json"
+          aws ecr describe-image-scan-findings --repository-name "$ECR_REPOSITORY" \
+            --image-id "imageDigest=$IMAGE_DIGEST" --no-paginate --output json > "$scan_file"
+          SCAN_FILE="$scan_file" python3 - <<'PY'
+          import json, os, time
+          from datetime import datetime
+
+          def require(condition, reason):
+              if not condition:
+                  raise SystemExit(reason)
+
+          def timestamp(value):
+              require(isinstance(value, str), 'Image scan timestamp is missing')
+              try:
+                  parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                  require(parsed.tzinfo is not None, 'Image scan timestamp lacks timezone')
+                  return parsed.timestamp()
+              except (ValueError, OverflowError):
+                  raise SystemExit('Image scan timestamp is invalid')
+
+          with open(os.environ['SCAN_FILE']) as handle:
+              result = json.load(handle)
+          require(result.get('registryId') == '932542905614', 'Wrong scan account')
+          require(result.get('repositoryName') == 'plether-alto-sepolia', 'Wrong scan repository')
+          require(result.get('imageId', {}).get('imageDigest') == os.environ['IMAGE_DIGEST'], 'Wrong scan digest')
+          require(result.get('imageScanStatus', {}).get('status') == 'COMPLETE', 'Image scan is incomplete')
+          require(not result.get('nextToken'), 'Image scan findings are truncated')
+          scan = result.get('imageScanFindings', {})
+          findings, counts = scan.get('findings'), scan.get('findingSeverityCounts')
+          require(isinstance(findings, list) and isinstance(counts, dict), 'Image scan evidence is missing')
+          severities = {'INFORMATIONAL', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNDEFINED'}
+          require(all(isinstance(row, dict) and isinstance(row.get('name'), str) and row['name']
+                      and row.get('severity') in severities for row in findings), 'Image scan findings are malformed')
+          require(all(key in severities and isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                      for key, value in counts.items()), 'Image scan counts are malformed')
+          critical = sum(row['severity'] == 'CRITICAL' for row in findings)
+          require(critical == counts.get('CRITICAL', 0), 'Critical findings do not match counts')
+          require(all(sum(row['severity'] == severity for row in findings) == counts.get(severity, 0)
+                      for severity in severities), 'Image scan details do not match severity counts')
+          require(critical == 0, 'Candidate has critical findings; cutover is blocked')
+          now = time.time()
+          require(-300 <= now - timestamp(scan.get('imageScanCompletedAt')) <= 3600, 'Image scan is not fresh')
+          require(-300 <= now - timestamp(scan.get('vulnerabilitySourceUpdatedAt')) <= 7 * 86400,
+                  'Image vulnerability source is stale')
+          print('Candidate scan complete, fresh and unpaginated; critical findings: 0')
+          PY
+          echo "image=$IMAGE_REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install the bounded operator dependencies
+        run: python3 -m pip install --disable-pip-version-check --requirement infra/rpc/ops/requirements.txt
+
+      - name: Qualify the route and cut over with guarded rollback
+        id: cutover
+        timeout-minutes: 25
+        env:
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 infra/rpc/ops/alto_rpc_cutover.py \
+            --image "$CANDIDATE_IMAGE" \
+            --source "$GITHUB_SHA" \
+            --directory "$RUNNER_TEMP/alto-rpc-cutover" \
+            --deadline-seconds 1200
+
+      # Best effort after a killed step; runner/job loss can still prevent it.
+      # Reconcile the journal and live service before retrying an interrupted run.
+      - name: Reconcile an interrupted journal with guarded recovery
+        if: ${{ always() && steps.candidate.outputs.image != '' && steps.cutover.outcome != 'success' }}
+        timeout-minutes: 15
+        env:
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
+        run: |
+          set -euo pipefail
+          umask 077
+          journal="$RUNNER_TEMP/alto-rpc-cutover/rollout.json"
+          if [ ! -f "$journal" ]; then
+            echo 'No cutover journal was created; no recovery is required.'
+            exit 0
+          fi
+          python3 infra/rpc/ops/alto_rpc_cutover.py \
+            --recover \
+            --image "$CANDIDATE_IMAGE" \
+            --source "$GITHUB_SHA" \
+            --directory "$RUNNER_TEMP/alto-rpc-cutover" \
+            --deadline-seconds 840
+
+      - name: Record successful source and image identifiers
+        env:
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
+        run: |
+          {
+            echo 'Alto RPC cutover qualified on Arbitrum Sepolia.'
+            echo "Source: \`$GITHUB_SHA\`"
+            echo "Candidate: \`$CANDIDATE_IMAGE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # These files contain identifiers and allowlisted qualification results.
+      # Runtime definitions, provider responses and raw logs are never uploaded.
+      - name: Preserve identifier-only rollout and qualification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: alto-rpc-cutover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/alto-rpc-cutover/rollout.json
+            ${{ runner.temp }}/alto-rpc-cutover/rpc-qualification.json
+            ${{ runner.temp }}/alto-rpc-cutover/idle-qualification.json
+          if-no-files-found: ignore
+          retention-days: 7

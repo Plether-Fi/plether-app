@@ -1,6 +1,7 @@
 module Plether.Ethereum.PublicRpc
   ( PublicRpcCall (..)
   , parsePublicRpc
+  , publicRpcCost
   , handlePublicRpc
   ) where
 
@@ -39,6 +40,7 @@ parsePublicRpc input = do
   unless (not (null values) && length values <= 20) $ Left "Invalid batch size"
   calls <- traverse parseCall values
   unless (length (nub $ map prcId calls) == length calls) $ Left "Duplicate request IDs"
+  unless (publicRpcCost calls <= 20) $ Left "Batch work exceeds public limit"
   pure calls
  where
   parseCall (Object fields) = do
@@ -84,14 +86,28 @@ quantity (String value)
   , not (T.null digits), T.length digits <= 16, T.all isHexDigit digits = Just $ hexToInteger digits
 quantity _ = Nothing
 
+-- One unit retains the original two-million-gas call budget. The deployless
+-- maximum-size planner can request more work explicitly, without multiplying
+-- the public batch or per-client/global rate budgets.
+publicRpcCost :: [PublicRpcCall] -> Int
+publicRpcCost = sum . map cost
+ where
+  cost PublicRpcCall {..}
+    | prcMethod == "eth_call"
+    , Array params <- prcParams
+    , Just (Object fields) <- params V.!? 0
+    , Just gas <- KM.lookup "gas" fields >>= quantity = fromInteger $ max 1 ((gas + 1999999) `div` 2000000)
+    | otherwise = 1
+
 boundParams :: Text -> V.Vector Value -> Either Text (V.Vector Value)
 boundParams method params
   | method `elem` ["eth_call", "eth_estimateGas"] = do
       unless (V.length params >= 1 && V.length params <= 2) $ Left "State overrides are not public"
       transaction <- case params V.!? 0 of Just (Object fields) -> Right fields; _ -> Left "Transaction required"
+      let gasLimit = if method == "eth_call" then 10000000 else 2000000
       case KM.lookup "gas" transaction of
         Nothing -> pure ()
-        Just gas -> unless (maybe False (<= 2000000) $ quantity gas) $ Left "Call gas exceeds public limit"
+        Just gas -> unless (maybe False (<= gasLimit) $ quantity gas) $ Left "Call gas exceeds public limit"
       pure $ params V.// [(0, Object $ KM.insert "gas" (maybe (String "0x1e8480") id $ KM.lookup "gas" transaction) transaction)]
   | method == "eth_getLogs" = do
       fields <- case toList params of [Object value] -> Right value; _ -> Left "One log filter required"
@@ -131,8 +147,8 @@ handlePublicRpc chainId expected client limits = do
               Right value -> case parsePublicRpc value of
                 Left _ -> invalid
                 Right calls -> do
-                  allowed <- liftIO $ and <$> replicateM (length calls) (Proxy.checkRateLimit limits now ("public-rpc-call:" <> pseudonymousClientKey secret trustedIp) 600)
-                  global <- liftIO $ and <$> replicateM (length calls) (Proxy.checkRateLimit limits now "public-rpc-global" 12000)
+                  allowed <- liftIO $ and <$> replicateM (publicRpcCost calls) (Proxy.checkRateLimit limits now ("public-rpc-call:" <> pseudonymousClientKey secret trustedIp) 600)
+                  global <- liftIO $ and <$> replicateM (publicRpcCost calls) (Proxy.checkRateLimit limits now "public-rpc-global" 12000)
                   if not (allowed && global) then limited else do
                     result <- liftIO $ timeout 15000000 $ traverse relay calls
                     case result of

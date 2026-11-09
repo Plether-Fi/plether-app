@@ -25,6 +25,7 @@ const STATE_BLOCK_INDEX = {
 const STATE_HISTORY_BLOCKS = 345600n
 const HEX = /^0x[0-9a-fA-F]+$/
 const HASH = /^0x[0-9a-fA-F]{64}$/
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const MAX_BODY = 512 * 1024
 const MAX_RESPONSE = 8 * 1024 * 1024
 
@@ -47,6 +48,7 @@ export function validateRequest(body) {
   const calls = Array.isArray(body) ? body : [body]
   if (!calls.length || calls.length > 20) throw new Error('invalid_batch')
   const ids = new Set()
+  let latestLogs = false
   for (const call of calls) {
     if (!call || Array.isArray(call) || call.jsonrpc !== '2.0'
       || !['string', 'number'].includes(typeof call.id)
@@ -60,6 +62,15 @@ export function validateRequest(body) {
       if (!filter || typeof filter !== 'object') throw new Error('invalid_log_filter')
       if (filter.blockHash) {
         if (!HASH.test(filter.blockHash) || filter.fromBlock || filter.toBlock) throw new Error('invalid_log_filter')
+      } else if (filter.toBlock === 'latest') {
+        const addresses = Array.isArray(filter.address) ? filter.address : [filter.address]
+        if (!HEX.test(filter.fromBlock) || !addresses.length || addresses.length > 20
+          || !addresses.every(address => typeof address === 'string' && ADDRESS.test(address))) {
+          throw new Error('latest_logs_require_address_and_explicit_start')
+        }
+        // Alto polls a bounded history ending at the current head. Resolve that
+        // head per request before admitting the actual numeric range.
+        latestLogs = true
       } else if (!HEX.test(filter.fromBlock) || !HEX.test(filter.toBlock)
         || BigInt(filter.toBlock) < BigInt(filter.fromBlock)
         || BigInt(filter.toBlock) - BigInt(filter.fromBlock) >= 5000n) {
@@ -77,7 +88,20 @@ export function validateRequest(body) {
   }
   const isHeavy = c => c.method === 'debug_traceCall' || c.method === 'debug_traceTransaction'
   if (calls.filter(isHeavy).length > 1) throw new Error('one_simulation_per_request')
-  return { calls, writable: calls.some(c => WRITES.has(c.method)), heavy: calls.some(isHeavy) }
+  return { calls, writable: calls.some(c => WRITES.has(c.method)), heavy: calls.some(isHeavy), latestLogs }
+}
+
+async function pinLatestLogRanges(body, upstream, signal) {
+  const height = await rpc(upstream, 'eth_blockNumber', [], signal)
+  if (typeof height !== 'string' || !HEX.test(height)) throw new UpstreamError('invalid_latest_height')
+  const calls = Array.isArray(body) ? body : [body]
+  const pinned = calls.map(call => call.method === 'eth_getLogs' && call.params[0].toBlock === 'latest'
+    ? { ...call, params: [{ ...call.params[0], toBlock: height }, ...call.params.slice(1)] } : call)
+  const request = Array.isArray(body) ? pinned : pinned[0]
+  // The original 5,000-block bound applies to the resolved head. An oversized
+  // range remains a caller error, rather than a reason to fail over providers.
+  validateRequest(request)
+  return request
 }
 
 export function requiresManagedProvider(call, primaryHeight) {
@@ -258,12 +282,17 @@ export function createGateway(config, dependencies = {}) {
         : state.primary ? 'primary' : (!primaryOnly && state.backup ? 'backup' : 'none')
       if (role === 'none') return reply(503, { error: 'no_healthy_upstream' })
       const signal = AbortSignal.timeout(validation.calls.some(c => c.method === 'debug_traceTransaction') ? 20000 : timeoutMs)
+      const relay = async selectedRole => {
+        const upstream = config[selectedRole]
+        const request = validation.latestLogs ? await pinLatestLogRanges(body, upstream, signal) : body
+        return upstreamCall(upstream, request, signal)
+      }
       let result
-      try { result = await upstreamCall(config[role], body, signal) } catch (error) {
+      try { result = await relay(role) } catch (error) {
         if (role === 'primary' && error.retryable) { state.primary = false; state.passes = 0 }
         if (role !== 'primary' || primaryOnly || validation.writable || !error.retryable || !state.backup || signal.aborted) throw error
         role = 'backup'
-        result = await upstreamCall(config.backup, body, signal)
+        result = await relay(role)
       }
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-plether-rpc-upstream': role })
       res.end(result.raw)
