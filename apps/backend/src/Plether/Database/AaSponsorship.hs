@@ -923,18 +923,22 @@ reserveSponsorshipFenced conn cfg draft assistance fence = withTransaction conn 
               else pure $ Left "SPONSORSHIP_RETRY_EXPIRED"
       Nothing -> do
         -- One snapshot/round trip for all six totals, still under the same
-        -- exclusive budget lock as the subsequent reservation.
+        -- exclusive budget lock as the subsequent reservation. Use a stable
+        -- statement-time cutoff so PostgreSQL can use the finalized_at index.
+        -- This statement starts after acquiring the budget lock; its slightly
+        -- earlier cutoff conservatively includes more charges than a moving
+        -- per-row clock, never fewer.
         totals <- query conn
           "SELECT outstanding.account_total,outstanding.client_total,outstanding.global_total,history.account_hour,history.global_hour,history.global_day \
           \FROM (SELECT COALESCE(SUM(max_cost_wei) FILTER (WHERE sender=?),0)::TEXT AS account_total, \
           \COALESCE(SUM(max_cost_wei) FILTER (WHERE client_key=?),0)::TEXT AS client_total, \
           \COALESCE(SUM(max_cost_wei),0)::TEXT AS global_total FROM aa_sponsorship_authorizations \
           \WHERE state IN ('reserved','signed','submitted')) outstanding CROSS JOIN \
-          \(SELECT COALESCE(SUM(e.actual_gas_cost_wei) FILTER (WHERE a.sender=? AND e.finalized_at>=clock_timestamp()-interval '1 hour'),0)::TEXT AS account_hour, \
-          \COALESCE(SUM(e.actual_gas_cost_wei) FILTER (WHERE e.finalized_at>=clock_timestamp()-interval '1 hour'),0)::TEXT AS global_hour, \
+          \(SELECT COALESCE(SUM(e.actual_gas_cost_wei) FILTER (WHERE a.sender=? AND e.finalized_at>=statement_timestamp()-interval '1 hour'),0)::TEXT AS account_hour, \
+          \COALESCE(SUM(e.actual_gas_cost_wei) FILTER (WHERE e.finalized_at>=statement_timestamp()-interval '1 hour'),0)::TEXT AS global_hour, \
           \COALESCE(SUM(e.actual_gas_cost_wei),0)::TEXT AS global_day FROM aa_user_operation_events e \
           \LEFT JOIN aa_sponsorship_authorizations a ON a.digest=e.digest \
-          \WHERE e.finalized_at>=clock_timestamp()-interval '24 hours') history"
+          \WHERE e.finalized_at>=statement_timestamp()-interval '24 hours') history"
           (T.toLower $ sdSender draft, T.toLower $ sdClientKey draft, T.toLower $ sdSender draft)
         BudgetTotals accountOutstanding clientOutstanding globalOutstanding accountHourly globalHourly globalDaily <-
           case totals of
@@ -955,11 +959,13 @@ reserveSponsorshipFenced conn cfg draft assistance fence = withTransaction conn 
         case denied of
           Just reason -> pure $ Left reason
           Nothing -> do
-            inserted <- execute conn
+            inserted <- query conn
               "INSERT INTO aa_sponsorship_authorizations \
               \(request_key, digest, sender, owner, nonce, valid_after, valid_until, \
               \ max_cost_wei, client_key, operation, state, created_at, updated_at) \
-              \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', clock_timestamp(), clock_timestamp())"
+              \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', clock_timestamp(), clock_timestamp()) \
+              \RETURNING request_key,digest,expected_user_operation_hash,sender,owner,nonce,valid_after,valid_until, \
+              \max_cost_wei,client_key,signature,state"
               ( T.toLower $ sdRequestKey draft
               , T.toLower $ sdDigest draft
               , T.toLower $ sdSender draft
@@ -971,17 +977,15 @@ reserveSponsorshipFenced conn cfg draft assistance fence = withTransaction conn 
               , T.toLower $ sdClientKey draft
               , encode $ sdOperation draft
               )
-            unless (inserted == (1 :: Int64)) $
-              fail "aa sponsorship reservation insert did not affect one row"
+            authorization <- case inserted of
+              [value] -> pure value
+              _ -> fail "aa sponsorship reservation insert did not return one row"
             void $ execute conn
               "INSERT INTO aa_sponsorship_ledger (digest, entry_type, amount_wei, created_at) \
               \VALUES (?, 'reserve', ?, clock_timestamp())"
               (T.toLower $ sdDigest draft, sdMaxCostWei draft)
             maybe (pure ()) (insertCloseAssistanceReservation conn (sdDigest draft)) assistance
-            maybe
-              (fail "aa sponsorship reservation could not be read back")
-              (pure . Right)
-              =<< getSponsorshipByDigest conn (sdDigest draft)
+            pure $ Right authorization
 
 storeSponsorshipSignature :: Connection -> NativeAaConfig -> Text -> Text -> Text -> IO Bool
 storeSponsorshipSignature conn cfg digest signature expectedUserOperationHash = storeSponsorshipSignatureFenced conn cfg digest signature expectedUserOperationHash Nothing
