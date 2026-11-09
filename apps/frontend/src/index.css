@@ -413,7 +413,7 @@ body {
   --privy-color-foreground-2: #d8cbd0;
   --privy-color-foreground-3: #baa5af;
   --privy-color-foreground-4: rgba(255, 171, 150, 0.22);
-  --privy-color-foreground-accent: #250917;
+  --privy-color-foreground-accent: #fff;
   --privy-color-accent: #ff572d;
   --privy-color-accent-light: #ffab96;
   --privy-color-accent-lightest: #61313b;
@@ -452,6 +452,11 @@ body {
 
 [id^="headlessui-dialog-panel-"] {
   border: 1px solid var(--privy-color-foreground-4);
+  /* Wallet details and registered passkeys must remain reachable on phones
+     and short screens instead of extending beyond the centered overlay. */
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Match the shared Modal's bg-app-bg/85 and backdrop-blur-sm scrim. */

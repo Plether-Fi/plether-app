@@ -292,7 +292,7 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     const options = sdk.connect.mock.lastCall?.[0] as { description: ReactNode }
     const picker = render(<>{options.description}</>)
     expect(screen.getByRole('button', { name: 'Google linked' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Add passkey' })).not.toBeInTheDocument()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use email wallet' })) })
     picker.unmount()
     await expectConnected(embedded.account.address)
@@ -327,6 +327,35 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     const message = 'The selected embedded owner remains the signer while managing MFA'
     expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
     expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address.toLowerCase())
+  })
+
+  it('links a passkey directly from wallet details without changing the owner or signer', async () => {
+    const embedded = testWallet(0, 'privy')
+    sdk.authenticated = true
+    sdk.user = { id: 'embedded-user', linkedAccounts: [
+      { type: 'google_oauth' },
+      { type: 'passkey', credentialId: 'public-existing-key', enrolledInMfa: true },
+    ] }
+    sdk.wallets = [embedded.wallet]
+    sdk.nativeWallet = embedded.wallet
+    sessionStorage.setItem(selectionKey, embedded.account.address)
+    mount()
+    await expectConnected(embedded.account.address)
+    const client = await getWalletClient(config)
+    render(<>{sdk.nativeAccountActions?.(sdk.closeNativeAccount)}</>)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add passkey', exact: true })) })
+    expect(sdk.closeNativeAccount).toHaveBeenCalledOnce()
+    expect(sdk.linkPasskey).toHaveBeenCalledOnce()
+    expect(sdk.connect).not.toHaveBeenCalled()
+    expect(sdk.openNative).not.toHaveBeenCalled()
+    await emit('link', 'onSuccess', { user: sdk.user, linkMethod: 'passkey', linkedAccount: { type: 'passkey', credentialId: 'public-new-key' } })
+    await expectConnected(embedded.account.address)
+    const message = 'Adding a login passkey preserves the embedded trading signer'
+    expect(await verifyMessage({ address: embedded.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
+    expect(sessionStorage.getItem(selectionKey)).toBe(embedded.account.address.toLowerCase())
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(sdk.createWallet).not.toHaveBeenCalled()
+    expect(sdk.submitMfaPasskeys).not.toHaveBeenCalled()
   })
 
   it('adds a linked mobile passkey to wallet MFA after verification while preserving the Mac key and trading signer', async () => {
@@ -388,15 +417,24 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     try {
       sdk.authenticated = authenticated
       sdk.user = authenticated ? { id: 'original-user', linkedAccounts: [] } : null
+      const embedded = testWallet(0, 'privy')
+      if (authenticated) {
+        sdk.wallets = [embedded.wallet]
+        sdk.nativeWallet = embedded.wallet
+        sessionStorage.setItem(selectionKey, embedded.account.address)
+      }
       mount()
-      renderPicker()
+      if (authenticated) {
+        await expectConnected(embedded.account.address)
+        render(<>{sdk.nativeAccountActions?.(sdk.closeNativeAccount)}</>)
+      } else renderPicker()
       const button = screen.getByRole('button', { name: authenticated ? 'Add passkey' : 'Log in with passkey' })
       expect(button).toBeDisabled()
       expect(screen.getByText('Passkeys need an HTTPS domain or localhost.')).toBeVisible()
       fireEvent.click(button)
       expect(sdk.login).not.toHaveBeenCalled()
       expect(sdk.linkPasskey).not.toHaveBeenCalled()
-      expect(screen.getByRole('button', { name: authenticated ? 'Link Google account' : 'Log in with Google' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: authenticated ? 'Wallet MFA settings' : 'Log in with Google' })).toBeEnabled()
     } finally { origin.mockRestore() }
   })
 
@@ -585,13 +623,13 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     await expectDisconnected()
   })
 
-  it('marks an already-linked Google account and still allows adding another passkey', () => {
+  it('marks an already-linked Google account without offering passkey management in the wallet picker', () => {
     sdk.authenticated = true
     sdk.user = { id: 'original-user', linkedAccounts: [{ type: 'google_oauth' }, { type: 'passkey' }] }
     mount()
     renderPicker()
     expect(screen.getByRole('button', { name: 'Google linked' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Add passkey' })).not.toBeInTheDocument()
   })
 
   it.each(['google', 'passkey'] as const)('logs in with %s to the existing embedded wallet through the real signing bridge', async method => {
@@ -644,7 +682,7 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     expect(sessionStorage.getItem(`${selectionKey}.google-login`)).toBeNull()
   })
 
-  it.each(['main', 'native'] as const)('links Google and passkeys from the %s picker without changing the current owner or its signer', async entry => {
+  it.each(['main', 'native'] as const)('links Google from the %s picker without changing the current owner or its signer', async entry => {
     const external = testWallet(0)
     const embedded = testWallet(1, 'privy')
     sdk.authenticated = true
@@ -654,19 +692,18 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     mount()
     await expectConnected(external.account.address)
     const client = await getWalletClient(config)
-    for (const [label, method, spy] of [['Link Google account', 'google', sdk.linkGoogle], ['Add passkey', 'passkey', sdk.linkPasskey]] as const) {
-      const popup = renderPicker(entry)
-      await act(async () => { fireEvent.click(screen.getByRole('button', { name: label })) })
-      popup.unmount()
-      expect(spy).toHaveBeenCalledOnce()
-      await emit('link', 'onSuccess', { user: sdk.user, linkMethod: method })
-      // SDK login/creation events caused by linking cannot change trading owner.
-      await emit('login', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] }, loginMethod: method })
-      await emit('create', 'onSuccess', { wallet: embedded.wallet })
-      await expectConnected(external.account.address)
-      const message = `Original owner after linking ${method}`
-      expect(await verifyMessage({ address: external.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
-    }
+    const popup = renderPicker(entry)
+    expect(screen.queryByRole('button', { name: 'Add passkey' })).not.toBeInTheDocument()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Link Google account' })) })
+    popup.unmount()
+    expect(sdk.linkGoogle).toHaveBeenCalledOnce()
+    await emit('link', 'onSuccess', { user: sdk.user, linkMethod: 'google' })
+    // SDK login/creation events caused by linking cannot change trading owner.
+    await emit('login', 'onComplete', { user: { linkedAccounts: [{ type: 'wallet', chainType: 'ethereum', walletClientType: 'privy', address: embedded.account.address }] }, loginMethod: 'google' })
+    await emit('create', 'onSuccess', { wallet: embedded.wallet })
+    await expectConnected(external.account.address)
+    const message = 'Original owner after linking Google'
+    expect(await verifyMessage({ address: external.account.address, message, signature: await client.signMessage({ message }) })).toBe(true)
     expect(sdk.login).not.toHaveBeenCalled()
     expect(sdk.createWallet).not.toHaveBeenCalled()
   })
