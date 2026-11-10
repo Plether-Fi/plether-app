@@ -204,7 +204,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     {needsFreshReview && <p role="status">This order has expired or needs a new deadline. Verify recovery, then select “Review order again” to safely discard it and restore your trade inputs.</p>}
     {walletRecovery && (signedRecovery || unsignedRecovery || (!verified && (walletRequired
       || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown'))) && <div
-        className={unsignedRecovery ? `space-y-2 border-l-2 py-2 pl-3 ${verified ? 'border-brand-border/30' : 'border-brand-orange'}`
+        className={unsignedRecovery ? `space-y-2 border-l-2 py-2 pl-3 ${verified ? 'border-brand-border/30 opacity-60 grayscale' : 'border-brand-orange'}`
           : signedRecovery && verified ? 'border-l-2 border-brand-border/30 py-2 pl-3 text-content-secondary' : undefined}>
       {(signedRecovery || unsignedRecovery) && <p className={`mb-2 flex flex-wrap items-center gap-2 font-semibold ${verified ? 'text-content-secondary' : 'text-content-primary'}`}>
         <span>1. Verify your wallet</span>
@@ -239,7 +239,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
           <p>New transactions are paused to avoid submitting the same action twice. You can check again or get help with this saved attempt.</p>
           </>}
     </div>}
-    <div className={unsignedRecovery ? `space-y-3 border-l-2 py-2 pl-3 ${verified ? 'border-brand-orange' : 'border-brand-border/30'}` : 'contents space-y-2'}>
+    <div className={unsignedRecovery ? `space-y-3 border-l-2 py-2 pl-3 ${verified ? 'border-brand-orange' : 'border-brand-border/30 opacity-50 grayscale'}` : 'contents space-y-2'}>
       {unsignedRecovery && <>
         <p className={`font-semibold ${verified ? 'text-content-primary' : 'text-content-secondary'}`}>
           2. {needsFreshReview ? 'Review order again' : canOfferResume ? 'Resume or discard the saved transaction' : 'Discard the saved transaction'}
