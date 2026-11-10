@@ -28,9 +28,19 @@ const HASH = /^0x[0-9a-fA-F]{64}$/
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const MAX_BODY = 512 * 1024
 const MAX_RESPONSE = 8 * 1024 * 1024
+// Only fixed, internal codes may enter logs. Never log parser/provider messages,
+// request IDs, parameters, headers, paths, addresses or transaction payloads.
+const REJECTIONS = new Set([
+  'body_limit', 'invalid_batch', 'invalid_request', 'invalid_log_filter',
+  'latest_logs_require_address_and_explicit_start',
+  'log_range_requires_explicit_bounded_blocks', 'invalid_managed_request',
+  'invalid_trace', 'one_simulation_per_request',
+])
 
 class UpstreamError extends Error {
-  constructor(message, retryable = true) { super(message); this.retryable = retryable }
+  constructor(code, retryable = true, httpStatus) {
+    super(code); this.code = code; this.retryable = retryable; this.httpStatus = httpStatus
+  }
 }
 
 async function limitedBody(stream, limit) {
@@ -138,7 +148,7 @@ export async function upstreamCall(upstream, request, signal) {
     })
     if (!response.ok) {
       await response.body?.cancel()
-      throw new UpstreamError('upstream_http', [429, 502, 503, 504].includes(response.status))
+      throw new UpstreamError('upstream_http', [429, 502, 503, 504].includes(response.status), response.status)
     }
     const raw = await limitedBody(response.body, MAX_RESPONSE)
     const body = JSON.parse(raw)
@@ -146,7 +156,7 @@ export async function upstreamCall(upstream, request, signal) {
     return { raw, body }
   } catch (error) {
     // Never expose URL-embedded credentials, headers or provider error messages.
-    throw new UpstreamError('upstream_unavailable', error instanceof UpstreamError ? error.retryable : true)
+    throw error instanceof UpstreamError ? error : new UpstreamError('upstream_transport')
   }
 }
 
@@ -171,7 +181,30 @@ async function inspect(upstream, chainId, signal) {
   if (chain !== chainId || syncing !== false) throw new Error('chain_or_sync')
   for (const b of [latest, safe, finalized]) block(b)
   if (BigInt(finalized.number) > BigInt(safe.number) || BigInt(safe.number) > BigInt(latest.number)) throw new Error('invalid_heads')
+  const heights = new Map()
+  for (const b of [latest, safe, finalized]) {
+    const previous = heights.get(BigInt(b.number))
+    if (previous && (previous.hash !== b.hash || BigInt(previous.timestamp) !== BigInt(b.timestamp))) throw new Error('inconsistent_heads')
+    heights.set(BigInt(b.number), b)
+  }
   return { latest, safe, finalized }
+}
+
+// Fresh tagged responses already identify a canonical block at their own height.
+// Reuse them only within this probe. Different heights still require a numeric
+// lookup on the higher upstream; no block/hash survives into the next probe.
+function checkpointReader(upstream, heads, signal, counts) {
+  const blocks = new Map(Object.values(heads).map(b => [BigInt(b.number), Promise.resolve(b)]))
+  return height => {
+    if (blocks.has(height)) { counts.reused++; return blocks.get(height) }
+    counts.fetched++
+    const pending = rpc(upstream, 'eth_getBlockByNumber', [`0x${height.toString(16)}`, false], signal).then(value => {
+      if (BigInt(block(value).number) !== height) throw new Error('invalid_checkpoint_height')
+      return value
+    })
+    blocks.set(height, pending)
+    return pending
+  }
 }
 
 export function createGateway(config, dependencies = {}) {
@@ -191,6 +224,11 @@ export function createGateway(config, dependencies = {}) {
     if (probing) return
     probing = true
     const signal = AbortSignal.timeout(Math.min(timeoutMs, probeMs))
+    const checkpoints = { fetched: 0, reused: 0 }
+    let reason = 'checkpoint_failed'
+    const recordProbe = () => log({ event: 'rpc_probe', primary_ready: state.primary,
+      backup_ready: state.backup, primary_unhealthy: state.primary ? 0 : 1, reason,
+      checkpoint_fetches: checkpoints.fetched, checkpoint_reuses: checkpoints.reused })
     const comparisonCheck = inspect(reference, config.chainId, signal)
     const backupCheck = (reference === config.backup ? comparisonCheck : inspect(config.backup, config.chainId, signal)).then(
       value => ({ status: 'fulfilled', value }), () => ({ status: 'rejected' }),
@@ -208,6 +246,7 @@ export function createGateway(config, dependencies = {}) {
         inspect(config.primary, config.chainId, signal), comparisonCheck,
       ])
       let agrees = false
+      reason = primary.status !== 'fulfilled' ? 'primary_inspection_failed' : 'latest_heads_diverged'
       if (primary.status === 'fulfilled' && comparison.status === 'fulfilled') {
         const p = primary.value.latest
         const b = comparison.value.latest
@@ -215,14 +254,16 @@ export function createGateway(config, dependencies = {}) {
         if (gap >= -5n && gap <= 5n) {
           // Compare canonical hashes at common latest, safe and finalized heights.
           agrees = true
+          reason = 'canonical_mismatch'
+          const primaryBlock = checkpointReader(config.primary, primary.value, signal, checkpoints)
+          const referenceBlock = checkpointReader(reference, comparison.value, signal, checkpoints)
           for (const tag of ['latest', 'safe', 'finalized']) {
             const pb = primary.value[tag]
             const bb = comparison.value[tag]
-            const common = BigInt(pb.number) < BigInt(bb.number) ? pb.number : bb.number
-            const [pc, bc] = await Promise.all([
-              rpc(config.primary, 'eth_getBlockByNumber', [common, false], signal),
-              rpc(reference, 'eth_getBlockByNumber', [common, false], signal),
-            ])
+            const common = BigInt(pb.number) < BigInt(bb.number) ? BigInt(pb.number) : BigInt(bb.number)
+            reason = 'checkpoint_failed'
+            const [pc, bc] = await Promise.all([primaryBlock(common), referenceBlock(common)])
+            reason = 'canonical_mismatch'
             if (block(pc).hash !== block(bc).hash || BigInt(pc.number) !== BigInt(common) || BigInt(bc.number) !== BigInt(common)) { agrees = false; break }
           }
         }
@@ -231,77 +272,133 @@ export function createGateway(config, dependencies = {}) {
         // verified node may continue only while its latest head is recent.
         const age = BigInt(Math.floor(now() / 1000)) - BigInt(primary.value.latest.timestamp)
         agrees = state.primary && age >= -5n && age <= 15n
+        reason = agrees ? 'reference_unavailable_previous_primary' : 'reference_unavailable'
       }
       if (primary.status === 'fulfilled') {
         state.primaryHeight = BigInt(primary.value.latest.number)
         const age = BigInt(Math.floor(now() / 1000)) - BigInt(primary.value.latest.timestamp)
         agrees &&= age >= -5n && age <= 15n
+        if (age < -5n || age > 15n) reason = 'primary_stale'
       }
       await updateBackup()
       state.passes = agrees ? state.passes + 1 : 0
       state.primary = agrees && state.passes >= 2
       state.checkedAt = now()
-      log({ event: 'rpc_probe', primary_ready: state.primary, backup_ready: state.backup, primary_unhealthy: state.primary ? 0 : 1 })
+      if (agrees && reason !== 'reference_unavailable_previous_primary') reason = state.primary ? 'ready' : 'promotion_pending'
+      recordProbe()
     } catch {
       state.primary = false
       await updateBackup()
       state.passes = 0
       state.checkedAt = now()
-      log({ event: 'rpc_probe', primary_ready: false, backup_ready: state.backup, primary_unhealthy: 1 })
+      recordProbe()
     } finally { probing = false }
   }
 
   const server = http.createServer(async (req, res) => {
+    // Health checks are deliberately separate from application-request counters.
+    if (req.method === 'GET' && req.url === '/healthz') {
+      const ready = fresh() && (state.primary || state.backup)
+      res.writeHead(ready ? 200 : 503,
+        { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      return res.end(JSON.stringify({ ready }))
+    }
+    const start = now()
+    const diagnostic = {
+      event: 'rpc_request', upstream: 'none',
+      route: req.url === '/' ? 'ordinary' : req.url === '/primary' ? 'primary_only' : 'unknown',
+      route_reason: 'not_selected', failover: false, attempts: [], methods: [],
+      stage: 'admission', outcome: 'rejected', status: 500,
+      primary_ready: state.primary, backup_ready: state.backup,
+    }
     const reply = (status, value) => {
+      diagnostic.status = status
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify(value))
     }
-    if (req.method === 'GET' && req.url === '/healthz') {
-      return reply(fresh() && (state.primary || state.backup) ? 200 : 503, { ready: fresh() && (state.primary || state.backup) })
+    const reject = (status, reason, publicReason = reason) => {
+      diagnostic.rejection_reason = reason
+      return reply(status, { error: publicReason })
     }
-    if (req.method !== 'POST' || !['/', '/primary'].includes(req.url)) return reply(404, { error: 'not_found' })
-    const supplied = Buffer.from((req.headers.authorization ?? '').replace(/^Bearer /, ''))
-    if (supplied.length !== expectedToken.length || !timingSafeEqual(supplied, expectedToken)) return reply(401, { error: 'unauthorized' })
-    if (active >= 16) return reply(429, { error: 'busy' })
-    active++
-    let isHeavy = false
+    let admitted = false
     let countedHeavy = false
     let role = 'none'
-    const start = now()
     try {
+      if (req.method !== 'POST' || diagnostic.route === 'unknown') return reject(404, 'not_found')
+      const supplied = Buffer.from((req.headers.authorization ?? '').replace(/^Bearer /, ''))
+      if (supplied.length !== expectedToken.length || !timingSafeEqual(supplied, expectedToken)) return reject(401, 'unauthorized')
+      if (active >= 16) return reject(429, 'busy')
+      active++
+      admitted = true
+      diagnostic.stage = 'validation'
       const body = JSON.parse(await limitedBody(req, MAX_BODY))
+      const envelope = Array.isArray(body) ? body : [body]
+      // Method names are allowlisted even for rejected requests. Untrusted
+      // method strings and all parameters stay out of the diagnostic record.
+      diagnostic.methods = [...new Set(envelope.slice(0, 20).map(c =>
+        READS.has(c?.method) || WRITES.has(c?.method) || MANAGED.has(c?.method) || c?.method === 'debug_traceCall'
+          ? c.method : 'unsupported'))].sort()
+      diagnostic.batch_size = Math.min(envelope.length, 21)
       const validation = validateRequest(body)
-      isHeavy = validation.heavy
-      if (isHeavy && heavy >= 2) return reply(429, { error: 'simulation_busy' })
-      if (isHeavy) { heavy++; countedHeavy = true }
-      if (!fresh()) return reply(503, { error: 'health_stale' })
+      diagnostic.stage = 'admission'
+      if (validation.heavy && heavy >= 2) return reject(429, 'simulation_busy')
+      if (validation.heavy) { heavy++; countedHeavy = true }
+      diagnostic.stage = 'health'
+      if (!fresh()) return reject(503, 'health_stale')
       const primaryOnly = req.url === '/primary'
+      const managedMethod = validation.calls.some(c => MANAGED.has(c.method))
       const managed = !primaryOnly && validation.calls.some(c => requiresManagedProvider(c, state.primaryHeight))
-      if (primaryOnly && validation.calls.some(c => MANAGED.has(c.method))) return reply(400, { error: 'managed_capability_requires_ordinary_route' })
+      if (primaryOnly && managedMethod) return reject(400, 'managed_capability_requires_ordinary_route')
+      diagnostic.route_reason = managed ? (managedMethod ? 'managed_method' : 'historical_state')
+        : state.primary ? 'primary_healthy' : primaryOnly ? 'primary_required' : 'primary_unhealthy'
       role = managed ? (state.backup ? 'backup' : 'none')
         : state.primary ? 'primary' : (!primaryOnly && state.backup ? 'backup' : 'none')
-      if (role === 'none') return reply(503, { error: 'no_healthy_upstream' })
+      if (role === 'none') return reject(503, 'no_healthy_upstream')
+      diagnostic.failover = role === 'backup' && !managed
       const signal = AbortSignal.timeout(validation.calls.some(c => c.method === 'debug_traceTransaction') ? 20000 : timeoutMs)
       const relay = async selectedRole => {
+        diagnostic.attempts.push(selectedRole)
         const upstream = config[selectedRole]
+        diagnostic.stage = validation.latestLogs ? 'normalization' : 'upstream'
         const request = validation.latestLogs ? await pinLatestLogRanges(body, upstream, signal) : body
+        diagnostic.stage = 'upstream'
         return upstreamCall(upstream, request, signal)
       }
       let result
       try { result = await relay(role) } catch (error) {
+        if (role === 'primary' && error instanceof UpstreamError) {
+          diagnostic.primary_error = error.code
+          diagnostic.primary_http_status = error.httpStatus
+        }
         if (role === 'primary' && error.retryable) { state.primary = false; state.passes = 0 }
         if (role !== 'primary' || primaryOnly || validation.writable || !error.retryable || !state.backup || signal.aborted) throw error
         role = 'backup'
+        diagnostic.failover = true
+        diagnostic.route_reason = 'primary_upstream_failure'
         result = await relay(role)
       }
+      const replies = Array.isArray(result.body) ? result.body : [result.body]
+      diagnostic.rpc_error_count = replies.filter(r => Object.hasOwn(r, 'error')).length
+      diagnostic.outcome = diagnostic.rpc_error_count ? 'rpc_error' : 'success'
+      diagnostic.stage = 'complete'
+      diagnostic.status = 200
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-plether-rpc-upstream': role })
       res.end(result.raw)
     } catch (error) {
-      reply(error instanceof UpstreamError ? 502 : 400, { error: error instanceof UpstreamError ? 'upstream_unavailable_reconcile_writes_before_retry' : 'invalid_request' })
+      if (error instanceof UpstreamError) {
+        diagnostic.outcome = 'upstream_error'
+        diagnostic.upstream_error = error.code
+        diagnostic.upstream_http_status = error.httpStatus
+        reply(502, { error: 'upstream_unavailable_reconcile_writes_before_retry' })
+      } else {
+        const reason = error instanceof SyntaxError ? 'invalid_json'
+          : REJECTIONS.has(error.message) ? error.message : 'invalid_request'
+        reject(400, reason, 'invalid_request')
+      }
     } finally {
-      active--
+      if (admitted) active--
       if (countedHeavy) heavy--
-      log({ event: 'rpc_request', upstream: role, duration_ms: now() - start })
+      log({ ...diagnostic, upstream: role, duration_ms: now() - start })
     }
   })
   server.requestTimeout = 10_000

@@ -59,11 +59,12 @@ async function fixture({ sharedReference = false } = {}) {
         else if (c.method === 'eth_syncing') result = state[role].syncing ?? false
         else if (c.method === 'eth_getBlockByNumber') {
           result = {
-            number: '0x100', timestamp: `0x${(Math.floor(clock / 1000) - (state[role].lag ?? 0)).toString(16)}`,
+            number: /^0x/.test(c.params[0]) ? c.params[0] : '0x100', timestamp: `0x${(Math.floor(clock / 1000) - (state[role].lag ?? 0)).toString(16)}`,
             hash: state[role].hash ?? hash,
+            ...state[role].blocks?.[c.params[0]],
           }
         } else result = '0x100'
-        const blockFailure = state[role].blockLookupError && c.method === 'eth_getBlockByNumber' && c.params[0] === '0x100'
+        const blockFailure = state[role].blockLookupError && c.method === 'eth_getBlockByNumber' && /^0x/.test(c.params[0])
         return state[role].rpcError || blockFailure ? { jsonrpc: '2.0', id: c.id, error: { code: -32000, message: 'execution reverted' } }
           : { jsonrpc: '2.0', id: c.id, result }
       }
@@ -125,6 +126,8 @@ test('managed receipts, bounded historical traces and old state use Alchemy with
     assert.equal((await f.send(body)).status, 200)
     assert.equal(calls.at(-1).role, 'backup')
     assert.equal(f.state.primary, true)
+    assert.equal(f.logs.at(-1).failover, false)
+    assert.equal(f.logs.at(-1).route_reason, body.method === 'eth_call' ? 'historical_state' : 'managed_method')
   }
   assert.equal((await f.send()).status, 200)
   assert.equal(calls.at(-1).role, 'primary')
@@ -164,6 +167,8 @@ test('latest log ranges retain the 5,000-block bound before forwarding a scan', 
     before = calls.length
     const denied = await f.send(latestLogs('0x1'))
     assert.equal(denied.status, 400)
+    assert.equal(f.logs.at(-1).rejection_reason, 'log_range_requires_explicit_bounded_blocks')
+    assert.equal(f.logs.at(-1).stage, 'normalization')
     assert.deepEqual(calls.slice(before).map(c => c.body.method), ['eth_blockNumber'])
     assert.equal(f.state.primary, true)
     await denied.body.cancel()
@@ -254,6 +259,8 @@ test('latest-head normalization respects authentication, stale probes and active
     before = calls.length
     const busy = await f.send(latestLogs())
     assert.equal(busy.status, 429)
+    assert.equal(f.logs.at(-1).rejection_reason, 'busy')
+    assert.equal(f.logs.at(-1).upstream, 'none')
     assert.equal(calls.length, before)
     await busy.body.cancel()
   } finally { release() }
@@ -277,6 +284,8 @@ test('heavy-request admission rejects a third simulation before its latest-head 
     const before = calls.length
     const busy = await f.send(body)
     assert.equal(busy.status, 429)
+    assert.equal(f.logs.at(-1).rejection_reason, 'simulation_busy')
+    assert.equal(f.logs.at(-1).upstream, 'none')
     assert.equal(calls.length, before)
     await busy.body.cancel()
   } finally { release() }
@@ -348,11 +357,19 @@ test('transport failures retry reads once; contract errors and permanent HTTP er
   let before = calls.length
   assert.equal((await f.send()).status, 200)
   assert.deepEqual(calls.slice(before).map(c => c.role), ['primary', 'backup'])
+  assert.equal(f.logs.at(-1).failover, true)
+  assert.equal(f.logs.at(-1).route_reason, 'primary_upstream_failure')
+  assert.equal(f.logs.at(-1).primary_error, 'upstream_http')
+  assert.equal(f.logs.at(-1).primary_http_status, 503)
+  assert.deepEqual(f.logs.at(-1).attempts, ['primary', 'backup'])
   f.upstream.primary.status = 401
   f.state.primary = true
   before = calls.length
   assert.equal((await f.send()).status, 502)
   assert.deepEqual(calls.slice(before).map(c => c.role), ['primary'])
+  assert.equal(f.logs.at(-1).failover, false)
+  assert.equal(f.logs.at(-1).outcome, 'upstream_error')
+  assert.equal(f.logs.at(-1).upstream_http_status, 401)
   f.upstream.primary.status = 0
   f.upstream.primary.rpcError = true
   before = calls.length
@@ -360,6 +377,9 @@ test('transport failures retry reads once; contract errors and permanent HTTP er
   assert.equal(response.status, 200)
   assert.equal((await response.json()).error.code, -32000)
   assert.deepEqual(calls.slice(before).map(c => c.role), ['primary'])
+  assert.equal(f.logs.at(-1).outcome, 'rpc_error')
+  assert.equal(f.logs.at(-1).rpc_error_count, 1)
+  assert.equal(f.logs.at(-1).failover, false)
 })
 
 test('ambiguous raw sends and batches containing writes are never replayed', async () => {
@@ -371,6 +391,8 @@ test('ambiguous raw sends and batches containing writes are never replayed', asy
     assert.equal((await f.send(body)).status, 502)
     assert.deepEqual(calls.slice(before).map(c => c.role), ['primary'])
     assert.deepEqual(calls.at(-1).body, body)
+    assert.equal(f.logs.at(-1).failover, false)
+    assert.equal(f.logs.at(-1).status, 502)
   }
 })
 
@@ -420,11 +442,16 @@ test('shared reference qualifies primary and avoids duplicate standby probes', a
   assert.equal(f.state.primary, true)
   const backupCalls = calls.slice(before).filter(c => c.role === 'backup')
   assert.equal(backupCalls.filter(c => c.body.method === 'eth_chainId').length, 1)
-  assert.equal(backupCalls.length, 8)
+  assert.equal(backupCalls.length, 5)
+  assert.deepEqual(f.logs.at(-1), {
+    event: 'rpc_probe', primary_ready: true, backup_ready: true, primary_unhealthy: 0,
+    reason: 'ready', checkpoint_fetches: 0, checkpoint_reuses: 6,
+  })
 })
 
 test('a failed primary checkpoint query preserves the healthy shared backup', async () => {
   const f = await fixture({ sharedReference: true })
+  f.upstream.primary.blocks = Object.fromEntries(['latest', 'safe', 'finalized'].map(tag => [tag, { number: '0x101' }]))
   f.upstream.primary.blockLookupError = true
   await f.probe()
   assert.equal(f.state.primary, false)
@@ -432,4 +459,170 @@ test('a failed primary checkpoint query preserves the healthy shared backup', as
   assert.equal((await f.send(request(), '/primary')).status, 503)
   assert.equal((await f.send()).status, 200)
   assert.equal(calls.at(-1).role, 'backup')
+})
+
+test('unequal heads fetch only missing common heights and coalesce repeated checkpoints within a probe', async () => {
+  const f = await fixture({ sharedReference: true })
+  f.upstream.primary.blocks = Object.fromEntries(['latest', 'safe', 'finalized'].map(tag => [tag, { number: '0x101' }]))
+  const before = calls.length
+  await f.probe()
+  assert.equal(f.state.primary, true)
+  const sent = calls.slice(before)
+  assert.equal(sent.filter(c => c.role === 'backup').length, 5)
+  assert.equal(sent.filter(c => c.role === 'primary').length, 6)
+  assert.deepEqual(sent.filter(c => /^0x/.test(c.body.params[0])).map(c => [c.role, c.body.params[0]]), [['primary', '0x100']])
+  assert.equal(f.logs.at(-1).checkpoint_fetches, 1)
+  assert.equal(f.logs.at(-1).checkpoint_reuses, 5)
+  // A previously fetched numeric checkpoint must also be refreshed next time.
+  const next = calls.length
+  await f.probe()
+  assert.equal(calls.slice(next).filter(c => /^0x/.test(c.body.params[0])).length, 1)
+  f.upstream.primary.blocks['0x100'] = { number: '0x101' }
+  await f.probe()
+  assert.equal(f.state.primary, false)
+  assert.equal(f.state.backup, true)
+  assert.equal(f.logs.at(-1).reason, 'checkpoint_failed')
+})
+
+test('fresh tagged checkpoints detect safe and finalized disagreement without numeric refetches', async () => {
+  for (const divergent of ['safe', 'finalized']) {
+    const f = await fixture({ sharedReference: true })
+    for (const role of ['primary', 'backup']) {
+      f.upstream[role].blocks = { latest: { number: '0x102' }, safe: { number: '0x101' }, finalized: { number: '0x100' } }
+    }
+    f.upstream.primary.blocks[divergent].hash = `0x${'b'.repeat(64)}`
+    await f.probe()
+    assert.equal(f.state.primary, false)
+    assert.equal(f.state.backup, true)
+    assert.equal(f.logs.at(-1).reason, 'canonical_mismatch')
+    assert.equal(f.logs.at(-1).checkpoint_fetches, 0)
+  }
+})
+
+test('a higher reference head fetches the common block on reference, not the already fetched primary', async () => {
+  const f = await fixture({ sharedReference: true })
+  f.upstream.backup.blocks = Object.fromEntries(['latest', 'safe', 'finalized'].map(tag => [tag, { number: '0x101' }]))
+  const before = calls.length
+  await f.probe()
+  assert.equal(f.state.primary, true)
+  const numeric = calls.slice(before).filter(c => /^0x/.test(c.body.params[0]))
+  assert.deepEqual(numeric.map(c => [c.role, c.body.params[0]]), [['backup', '0x100']])
+  f.upstream.backup.blocks['0x100'] = { hash: `0x${'b'.repeat(64)}` }
+  await f.probe()
+  assert.equal(f.state.primary, false)
+  assert.equal(f.state.backup, true)
+  assert.equal(f.logs.at(-1).reason, 'canonical_mismatch')
+})
+
+test('tagged responses are never reused across probes, including same-height reorgs', async () => {
+  const f = await fixture({ sharedReference: true })
+  f.upstream.primary.hash = `0x${'b'.repeat(64)}`
+  await f.probe()
+  assert.equal(f.state.primary, false)
+  f.upstream.backup.hash = f.upstream.primary.hash
+  await f.probe()
+  assert.equal(f.state.primary, false)
+  assert.equal(f.logs.at(-1).reason, 'promotion_pending')
+  await f.probe()
+  assert.equal(f.state.primary, true)
+})
+
+test('internally conflicting tagged blocks or invalid head order fail closed', async () => {
+  for (const blocks of [
+    { safe: { hash: `0x${'b'.repeat(64)}` } },
+    { safe: { timestamp: '0x1' } },
+    { safe: { number: '0x101' } },
+  ]) {
+    const f = await fixture({ sharedReference: true })
+    f.upstream.primary.blocks = blocks
+    await f.probe()
+    assert.equal(f.state.primary, false)
+    assert.equal(f.state.backup, true)
+    assert.equal(f.logs.at(-1).reason, 'primary_inspection_failed')
+  }
+})
+
+test('a reference outage cannot promote an unverified primary and stale health still expires', async () => {
+  const f = await fixture({ sharedReference: true })
+  f.upstream.backup.status = 503
+  await f.probe()
+  assert.equal(f.state.primary, true)
+  assert.equal(f.state.backup, false)
+  assert.equal(f.logs.at(-1).reason, 'reference_unavailable_previous_primary')
+  f.state.primary = false
+  f.state.passes = 0
+  await f.probe()
+  assert.equal(f.state.primary, false)
+  assert.equal(f.logs.at(-1).reason, 'reference_unavailable')
+  f.advance(16_000)
+  const response = await f.send()
+  assert.equal(response.status, 503)
+  assert.equal(f.logs.at(-1).rejection_reason, 'health_stale')
+  assert.equal(f.logs.at(-1).stage, 'health')
+  await response.body.cancel()
+})
+
+test('request diagnostics distinguish healthy routing, health failover, managed routing and strict-primary rejection', async () => {
+  const f = await fixture()
+  const good = await f.send()
+  await good.body.cancel()
+  assert.equal(f.logs.at(-1).route_reason, 'primary_healthy')
+  assert.equal(f.logs.at(-1).status, 200)
+  assert.equal(f.logs.at(-1).failover, false)
+  f.state.primary = false
+  const fallback = await f.send()
+  await fallback.body.cancel()
+  assert.equal(f.logs.at(-1).route_reason, 'primary_unhealthy')
+  assert.equal(f.logs.at(-1).failover, true)
+  assert.deepEqual(f.logs.at(-1).attempts, ['backup'])
+  const direct = await f.send(request(), '/primary')
+  await direct.body.cancel()
+  assert.equal(f.logs.at(-1).route_reason, 'primary_required')
+  assert.equal(f.logs.at(-1).route, 'primary_only')
+  assert.equal(f.logs.at(-1).rejection_reason, 'no_healthy_upstream')
+  assert.equal(f.logs.at(-1).failover, false)
+  const managed = await f.send({ ...request('debug_traceTransaction'), params: [hash, { tracer: 'callTracer' }] })
+  await managed.body.cancel()
+  assert.equal(f.logs.at(-1).route_reason, 'managed_method')
+  assert.equal(f.logs.at(-1).failover, false)
+})
+
+test('rejection diagnostics cover validation, authorization and malformed bodies without logging sensitive input', async () => {
+  const f = await fixture()
+  const secret = 'sensitive-payload-credential-and-wallet'
+  const invalid = await f.send({ ...request(secret), params: [secret] })
+  assert.equal(invalid.status, 400)
+  await invalid.body.cancel()
+  assert.equal(f.logs.at(-1).rejection_reason, 'invalid_request')
+  assert.deepEqual(f.logs.at(-1).methods, ['unsupported'])
+  assert.equal(f.logs.at(-1).upstream, 'none')
+  const unauth = await f.send(request(), '/', secret)
+  await unauth.body.cancel()
+  assert.equal(f.logs.at(-1).rejection_reason, 'unauthorized')
+  assert.equal(f.logs.at(-1).stage, 'admission')
+  const path = await fetch(`${f.url}/${secret}`)
+  await path.body.cancel()
+  assert.equal(f.logs.at(-1).rejection_reason, 'not_found')
+  assert.equal(f.logs.at(-1).route, 'unknown')
+  const privateCall = await f.send({ ...request('eth_call'), params: [{ to: `0x${'1'.repeat(40)}`, data: secret }, 'latest'] })
+  await privateCall.body.cancel()
+  const beforeHealth = f.logs.length
+  await (await fetch(`${f.url}/healthz`)).body.cancel()
+  assert.equal(f.logs.length, beforeHealth)
+  for (const [body, reason] of [[`{"${secret}":`, 'invalid_json'], [secret.repeat(20000), 'body_limit']]) {
+    let response
+    try { response = await fetch(f.url, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body }) } catch (error) {
+      // An oversized incoming stream may be closed by Node before the 400 can
+      // reach the client. It must still produce the bounded diagnostic record.
+      assert.equal(reason, 'body_limit')
+      assert.ok(['ECONNRESET', 'UND_ERR_SOCKET', 'EPIPE'].includes(error.cause?.code))
+    }
+    if (response) {
+      assert.equal(response.status, 400)
+      await response.body.cancel()
+    }
+    assert.equal(f.logs.at(-1).rejection_reason, reason)
+    assert.equal(f.logs.at(-1).stage, 'validation')
+  }
+  assert.doesNotMatch(JSON.stringify(f.logs), /sensitive-payload|upstream-private-key|qualification-only-token|127\.0\.0\.1|0x1111111111111111111111111111111111111111/)
 })
