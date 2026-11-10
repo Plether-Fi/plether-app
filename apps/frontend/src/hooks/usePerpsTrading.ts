@@ -512,7 +512,7 @@ export function usePerpsTrading() {
 
   const invalidatePerpsReads = useCallback(() => {
     void queryClient.invalidateQueries({
-      predicate: (query) => isPerpsDynamicContractQuery(query.queryKey) || (query.queryKey[0] === 'perps' && (query.queryKey[1] === 'protections' || query.queryKey[1] === 'protection-events' || query.queryKey[1] === 'max-open')),
+      predicate: (query) => isPerpsDynamicContractQuery(query.queryKey) || (query.queryKey[0] === 'perps' && (query.queryKey[1] === 'protections' || query.queryKey[1] === 'protection-events' || query.queryKey[1] === 'max-open' || query.queryKey[1] === 'open-margin')),
     })
   }, [queryClient])
 

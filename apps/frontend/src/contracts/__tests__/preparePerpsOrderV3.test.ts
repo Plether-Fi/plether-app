@@ -61,6 +61,14 @@ function assessment(
   }
 }
 
+// Canonical fixed-size preview; policy assessment below adds the exact
+// execution costs and adverse-price adjustments separately.
+function openPreview(args: readonly unknown[] | undefined) {
+  return { valid: true, invalidReason: 0, marginDeltaAssets: args?.[3] as bigint,
+    postSize: args?.[2] as bigint, postEquityAssets: args?.[3] as bigint,
+    executionPrice: args?.[4] as bigint }
+}
+
 function closePreview(result: PerpsExecutionAssessment, carry = 123_456n): PerpsClosePreview {
   return {
     replayOrderId: 0n,
@@ -80,6 +88,58 @@ describe('preparePerpsOrderV3 leverage margin', () => {
     })
   })
 
+  it('quotes liquidation reserve funding at every reviewed price before assessing or signing a manual size', async () => {
+    const reserve = 1_200_000_000n
+    const values: Record<string, unknown> = {
+      maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash,
+      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyAssets: 10_000n,
+      maxOpenOrderExecutionBountyAssets: 200_000n, closeOrderExecutionBountyAssets: 200_000n,
+      lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
+      totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
+      activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
+      getFreeBuyingPowerAssets: 10_000_000_000n, getPosition: { exists: false, side: 0 },
+    }
+    const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+      if (functionName === 'previewOpen') {
+        const margin = args?.[3] as bigint
+        return { ...openPreview(args), valid: margin > reserve + 500_000n, invalidReason: margin > reserve + 500_000n ? 0 : 9,
+          postEquityAssets: margin > reserve + 500_000n ? margin - reserve - 500_000n : 0n }
+      }
+      if (functionName === 'assessOrder') {
+        const { marginDelta: margin, sizeDelta } = args?.[1] as { marginDelta: bigint; sizeDelta: bigint }
+        if (margin <= reserve) throw new Error('Liquidation reserve unfunded')
+        const price = args?.[3] as bigint
+        const result = assessment(price, margin - reserve)
+        const notional = sizeDelta * price / 10n ** 20n
+        return { ...result, postPositionSize: sizeDelta,
+          postLeverageBps: (notional * 10_000n + result.postPositionEquityAssets - 1n) / result.postPositionEquityAssets }
+      }
+      if (functionName in values) return values[functionName]
+      throw new Error(`Unexpected read ${functionName}`)
+    })
+    const simulateContract = vi.fn(async () => ({ request: {} }))
+    const client = { readContract, simulateContract } as unknown as PublicClient
+    const prepared = await preparePerpsOrderV3(client, manifest, {
+      account, direction: 'short', side: 1, sizeDelta: 50n * 10n ** 20n,
+      marginDelta: 1_000_000_000n, slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 50_000,
+    })
+    expect(prepared.request.marginDelta).toBe(2_201_500_000n)
+    const quotedPrices = readContract.mock.calls.filter(([call]) => call.functionName === 'previewOpen').map(([call]) => call.args?.[4])
+    expect(new Set(quotedPrices)).toEqual(new Set([100_000_000n, 100_050_000n, 100_100_000n]))
+    for (const [call] of readContract.mock.calls) expect(call).toMatchObject({ blockNumber: block.number })
+    expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request] }))
+
+    // A manual size reserves its actual reviewed reward, rather than the
+    // maximum-size reward. This account can fund this order exactly.
+    values.getFreeBuyingPowerAssets = 1_220_530_100n
+    const small = await preparePerpsOrderV3(client, manifest, {
+      account, direction: 'short', side: 1, sizeDelta: 100n * 10n ** 18n,
+      marginDelta: 20_000_000n, slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 50_000,
+    })
+    expect(small.request.marginDelta).toBe(1_220_520_000n)
+    expect(small.reviewSummary?.requiredFundingAssets).toBe(values.getFreeBuyingPowerAssets)
+  })
+
   it('reviews the protection trigger reward separately and simulates the exact atomic protected open', async () => {
     let exists = false
     let available = 10_000_000_000n
@@ -90,6 +150,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
     const client = { getBlock: vi.fn(async () => block), simulateContract, readContract: vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'getPosition') return { exists }
       if (functionName === 'getFreeBuyingPowerAssets') return available
+      if (functionName === 'previewOpen') return openPreview(args)
       if (functionName === 'assessOrder') return assessment(args?.[3] as bigint, (args?.[1] as { marginDelta: bigint }).marginDelta)
       if (functionName in values) return values[functionName]
       throw new Error(`Unexpected read ${functionName}`)
@@ -131,6 +192,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
         case 'maxPendingOrders': return 8n
         case 'getFreeBuyingPowerAssets': return freeBuyingPowerAssets
         case 'getPosition': return { exists: false, side: 0 }
+        case 'previewOpen': return openPreview(request.args)
         case 'assessOrder': {
           const order = request.args?.[1] as { marginDelta: bigint }
           const price = request.args?.[3] as bigint
@@ -179,9 +241,9 @@ describe('preparePerpsOrderV3 leverage margin', () => {
       expect(typeof request.args?.[6]).toBe('bigint')
     }
     expect(assessedMargins).toEqual([
-      1_000_000_000n,
-      1_000_000_000n,
-      1_000_000_000n,
+      1_001_000_000n,
+      1_001_000_000n,
+      1_001_000_000n,
       1_001_500_000n,
       1_001_500_000n,
       1_001_500_000n,
@@ -206,10 +268,7 @@ describe('preparePerpsOrderV3 leverage margin', () => {
       isClose: false,
       selectedMaxLeverageBps: 50_000,
       clientOrderId: `0x${'44'.repeat(32)}`,
-    })).rejects.toMatchObject({
-      name: 'PerpsOrderFundingShortfallError',
-      shortfallAssets: 1_702_000n,
-    })
+    })).rejects.toThrow('Available margin cannot fund this order at the selected leverage')
     expect(simulateContract).toHaveBeenCalledTimes(1)
   })
 })
@@ -234,6 +293,7 @@ describe('reviewed leverage validation', () => {
       getPosition: { exists: false, side: 0 },
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+      if (functionName === 'previewOpen') return openPreview(args)
       if (functionName === 'assessOrder' || functionName === 'previewClose') {
         const price = args?.[functionName === 'previewClose' ? 4 : 3] as bigint
         const result = { ...assessment(price, 2_000_000_000n), ...overrides(price) }
@@ -456,6 +516,7 @@ describe('Max opening review', () => {
           postEquityAssets: typeof leverage === 'function' || previewSize === 0n ? 999_000_000n : (notionalBps + leverage - 1n) / leverage }
         return { maxSizeDelta: size, preview, limitingReason: 9 }
       }
+      if (functionName === 'previewOpen') return openPreview(args)
       if (functionName === 'previewClose') return closePreview(assessment(args?.[4] as bigint, 2_000_000_000n), 0n)
       if (functionName === 'assessOrder') {
         if (assessmentFailure) throw assessmentFailure

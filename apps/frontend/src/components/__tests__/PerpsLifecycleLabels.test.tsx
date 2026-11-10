@@ -13,6 +13,10 @@ const identityMocks = vi.hoisted(() => ({
 const maxQuoteMocks = vi.hoisted(() => ({
   value: {} as Record<string, unknown>,
 }))
+vi.mock('../../hooks/usePerpsOpenMargin', () => ({
+  usePerpsOpenMargin: () => ({ preview: undefined, error: undefined, isPending: false }),
+}))
+
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: () => maxQuoteMocks.value,
 }))
@@ -1525,10 +1529,10 @@ describe('perps lifecycle labels', () => {
     if (_state === 'failed') expect(screen.getByText(/Maximum size quote failed/)).toBeInTheDocument()
   })
 
-  it('reviews and commits the refreshed lens maximum when the earlier preview is invalid', async () => {
+  it('reviews and commits the refreshed lens maximum after validating its funded preview', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
-    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: false, invalidReason: 5 } }]
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
     const base = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     const prepared = { ...base, request: { ...base.request, sizeDelta: 300n * 10n ** 18n, marginDelta: 65_000_000n } }
     let resolveReview!: (order: PreparedPerpsOrderV3) => void
@@ -1543,6 +1547,7 @@ describe('perps lifecycle labels', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
     expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
@@ -1572,6 +1577,7 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Max' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '300' } })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
       sizeDelta: 300n * 10n ** 18n, maxSize: undefined,
@@ -1582,6 +1588,7 @@ describe('perps lifecycle labels', () => {
   it('ignores a Max result delivered after the review is cancelled', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
     const prepared = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     let resolveReview!: (order: PreparedPerpsOrderV3) => void
     perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV3>((resolve) => { resolveReview = resolve }))
@@ -1591,6 +1598,7 @@ describe('perps lifecycle labels', () => {
       availableToTradeRaw={100_000_000n} longOpenCapacityAssets={1_000_000_000n}
     />)
     fireEvent.click(screen.getByRole('button', { name: 'Max' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))

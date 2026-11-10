@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../hooks/usePerpsOpenMargin', () => ({
+  usePerpsOpenMargin: () => ({ preview: undefined, error: undefined, isPending: false }),
+}))
+
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
 }))

@@ -24,6 +24,9 @@ import {
   type PerpsLifecycleOutcomeSnapshot,
 } from '../contracts/perpsOrderV3'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
+import { usePerpsOpenMargin } from '../hooks/usePerpsOpenMargin'
+import { openPreviewLeverageBps } from '../contracts/perpsOpenMargin'
+import { perpsMaxOpenMarginBudget } from '../contracts/perpsMaxOpen'
 import { usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerpsOrderPreparation'
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
@@ -2769,10 +2772,31 @@ export function PerpsTradeTicket({
   const contractNotionalAssets = orderSizeDelta > 0n
     ? sizeDeltaToNotionalAssets(orderSizeDelta, calculationOraclePriceRaw) ?? 0n
     : 0n
+  // Keeper rewards stay outside the engine margin. The canonical quote then
+  // funds the position's reserves and selected leverage for every size.
+  const estimatedKeeperBountyAssets = isReducingCurrentPosition ? 0n : estimateOpenBountyAssetsRaw(contractNotionalAssets)
+  const openMarginInputs = useMemo(() => ({
+    account: address,
+    side: directionToPerpsSide(effectiveOrderDirection),
+    sizeDelta: orderSizeDelta,
+    marginBudget: availableToTradeRaw !== undefined && maxProtectionRewardsAssets !== undefined
+      ? perpsMaxOpenMarginBudget(availableToTradeRaw, estimatedKeeperBountyAssets, maxProtectionRewardsAssets) : undefined,
+    oraclePrice: calculationOraclePriceRaw,
+    selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+  }), [address, effectiveOrderDirection, orderSizeDelta, availableToTradeRaw, maxProtectionRewardsAssets,
+    estimatedKeeperBountyAssets, calculationOraclePriceRaw, activeLeverage])
+  const debouncedOpenMarginInputs = useDebouncedValue(openMarginInputs, TRADE_PREVIEW_DEBOUNCE_MS)
+  const shouldQuoteOpenMargin = enableLiveTrading && isConnected && chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID &&
+    !isReducingCurrentPosition && !isReviewOpen && orderSizeDelta > 0n && isOrderQuantityAligned &&
+    calculationOraclePriceRaw !== undefined && calculationOraclePriceRaw > 0n && (oraclePublishTime ?? 0) > 0
+  const isOpenMarginDebouncing = shouldQuoteOpenMargin && debouncedOpenMarginInputs !== openMarginInputs
+  const openMarginQuote = usePerpsOpenMargin({ ...openMarginInputs, enabled: shouldQuoteOpenMargin && !isOpenMarginDebouncing })
+  const isOpenMarginPending = shouldQuoteOpenMargin && (isOpenMarginDebouncing || openMarginQuote.isPending)
   const marginAssets = isReducingCurrentPosition ? 0n
     : isReviewOpen && reviewSnapshot ? reviewSnapshot.marginAssets
-      : isMaxOpenIntent ? maxOpenQuote.marginDelta ?? 0n
+      : openMarginQuote.preview?.marginDeltaAssets ?? (isMaxOpenIntent ? maxOpenQuote.marginDelta ?? 0n
         : activeLeverage > 0 ? contractNotionalAssets / BigInt(activeLeverage) : 0n
+      )
   const defaultMaxLeverageMarginAssets = contractNotionalAssets > 0n
     ? contractNotionalAssets / BigInt(DEFAULT_MAX_LEVERAGE)
     : 0n
@@ -2782,9 +2806,6 @@ export function PerpsTradeTicket({
   const estimatedMaintenanceMarginAssets = maintenanceMarginBps !== undefined && contractNotionalAssets > 0n
     ? (contractNotionalAssets * maintenanceMarginBps) / 10_000n
     : undefined
-  // Ordinary and protected closes have no execution reward in this release.
-  // The separate TP/SL trigger reward still comes from protectionConfiguration.
-  const estimatedKeeperBountyAssets = isReducingCurrentPosition ? 0n : estimateOpenBountyAssetsRaw(contractNotionalAssets)
   const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
   const protocolExecutionFeeRaw = executionFeeAssetsRaw(contractNotionalAssets, executionFeeBpsRaw)
   const slippageNumber = isOracleFrozenClose
@@ -2884,7 +2905,7 @@ export function PerpsTradeTicket({
   // inputs immediately, while free-form ticket edits remain debounced.
   const isTradePreviewDebouncing = !isReviewOpen && tradePreviewRequest !== undefined &&
     debouncedTradePreviewRequest !== tradePreviewRequest
-  const isTradePreviewQueryEnabled = tradePreviewRequest !== undefined && !isTradePreviewDebouncing
+  const isTradePreviewQueryEnabled = tradePreviewRequest !== undefined && !isTradePreviewDebouncing && !isOpenMarginPending && !openMarginQuote.error
   const {
     data: tradePreviewData,
     isLoading: isTradePreviewLoading,
@@ -2935,7 +2956,7 @@ export function PerpsTradeTicket({
     : undefined
   const tradePreviewFailure = readFailure(activeTradePreviewData as readonly ContractResult[] | undefined, 0)
   const currentTradePreview = isReducingCurrentPosition ? closePreview : openPreview
-  const isTradePreviewPending = shouldReadTradePreview && (
+  const isTradePreviewPending = isOpenMarginPending || shouldReadTradePreview && (
     isTradePreviewDebouncing ||
     (isTradePreviewQueryEnabled && isTradePreviewLoading) ||
     (isTradePreviewQueryEnabled && isTradePreviewFetching && currentTradePreview === undefined)
@@ -3032,7 +3053,6 @@ export function PerpsTradeTicket({
     if (
       !isReducingCurrentPosition &&
       !isReduceOnly &&
-      !isMaxOpenIntent &&
       selectedOpenDxyCapacityAssets !== undefined &&
       effectiveMinOpenDxyExposureAssets !== undefined &&
       selectedOpenDxyCapacityAssets < effectiveMinOpenDxyExposureAssets
@@ -3052,7 +3072,7 @@ export function PerpsTradeTicket({
       const minimumLabel = isOpeningFromZero ? 'Minimum new position' : 'Minimum order size'
       return `${minimumLabel} is ${formatPerpsAssets(effectiveMinOpenDxyExposureAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     }
-    if (!isReducingCurrentPosition && !isReduceOnly && !isMaxOpenIntent && selectedOpenDxyCapacityAssets !== undefined && orderDxyExposureAssets > selectedOpenDxyCapacityAssets) {
+    if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenDxyCapacityAssets !== undefined && orderDxyExposureAssets > selectedOpenDxyCapacityAssets) {
       return `Max ${directionLabel(direction)} plDXY Perp exposure is ${formatPerpsAssets(selectedOpenDxyCapacityAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL} before hitting the market skew cap.`
     }
     if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
@@ -3093,12 +3113,20 @@ export function PerpsTradeTicket({
         ? `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Wait for the keeper to finalize or clean up an order before committing a new one.`
         : `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
     }
-    if (marginShortfall > 0n && !isMaxOpenIntent) return `Deposit ${formatPerpsAssets(marginShortfall)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more before committing this order.`
+    if (openMarginQuote.error) return 'Margin quote failed. Refresh market data and retry before reviewing this order.'
+    if (!isOpenMarginPending && openMarginQuote.preview) {
+      if (!openMarginQuote.preview.valid) return getPerpsOpenRevertMessage(openMarginQuote.preview.invalidReason)
+      const leverageBps = openPreviewLeverageBps(openMarginQuote.preview, openMarginQuote.preview.executionPrice)
+      if (leverageBps === undefined || leverageBps > BigInt(Math.round(activeLeverage * 10_000))) {
+        return 'Available margin cannot fund this order at the selected leverage. Reduce size or deposit more margin.'
+      }
+    }
+    if (marginShortfall > 0n && !isOpenMarginPending) return `Deposit ${formatPerpsAssets(marginShortfall)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more before committing this order.`
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
       return 'Waiting for fresh oracle publish time before previewing this order.'
     }
-    // Refresh Max at the review block; the earlier quote is advisory.
-    if (shouldReadTradePreview && !(isMaxOpenIntent && !isReducingCurrentPosition)) {
+    // Every size must pass the exact funded preview before opening review.
+    if (shouldReadTradePreview) {
       if (tradePreviewFailure) {
         return 'Trade preview failed. Refresh market data and retry before reviewing this order.'
       }
@@ -3672,7 +3700,7 @@ export function PerpsTradeTicket({
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
-    (Boolean(activeAccountOperation) || Boolean(liveValidationError) || (isTradePreviewPending && !isMaxOpenIntent))
+    (Boolean(activeAccountOperation) || Boolean(liveValidationError) || isTradePreviewPending)
   ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsAssets(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
@@ -4266,7 +4294,7 @@ export function PerpsTradeTicket({
     setProtectionDraft(draft.protection ?? EMPTY_PROTECTION_DRAFT)
     setRestoredDraftNotice(incomplete
       ? 'Saved size and direction restored where available. Review leverage, slippage and TP/SL before reviewing this order again.'
-      : 'Trade inputs restored. Review the updated prices and execution protections before signing again.')
+      : undefined)
     usePerpsUiStore.getState().clearOrderReviewRequest(orderReviewRequest.id)
   }, [orderReviewRequest, identity.chainId, identity.ownerAddress, address, resetReviewLifecycle, initialLeverage, oracleFrozen])
 

@@ -16,6 +16,7 @@ import {
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
 import { constrainPerpsMaxOpen, perpsMaxOpenMarginBudget } from './perpsMaxOpen'
 import { quotePerpsMaxOpenWithMargin } from './perpsMaxOpenQuote'
+import { openPreviewLeverageBps, quotePerpsOpenMargin } from './perpsOpenMargin'
 import {
   deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
@@ -577,15 +578,41 @@ export async function reviewPerpsOrderV3(
     }
     return reviewed
   }
-  if (!input.maxSize || input.isClose) return review(input)
-
+  if (input.isClose) return review(input)
+  const commitReferencePrice = context.lastMarkPrice === 0n ? 100_000_000n : context.lastMarkPrice
+  const openBounty = input.maxSize ? context.maximumOpenBounty : exactExecutionBounty({
+    isClose: false, sizeDelta: input.sizeDelta,
+    commitReferencePrice: commitReferencePrice > context.capPrice ? context.capPrice : commitReferencePrice,
+    openBountyBps: context.openBountyBps, minimumOpenBounty: context.minimumOpenBounty,
+    maximumOpenBounty: context.maximumOpenBounty, closeBounty: context.closeBounty,
+  })
   const marginDelta = perpsMaxOpenMarginBudget(
-    context.freeBuyingPowerAssets > context.closeBounty ? context.freeBuyingPowerAssets - context.closeBounty : 0n,
-    reviewedExecutionBountyMaximum(context.maximumOpenBounty),
+    input.maxSize
+      ? context.freeBuyingPowerAssets > context.closeBounty ? context.freeBuyingPowerAssets - context.closeBounty : 0n
+      : context.freeBuyingPowerAssets,
+    reviewedExecutionBountyMaximum(openBounty),
     protection ? protection.triggerBountyAssets + protection.executionBountyAssets : 0n
   )
   if (marginDelta <= 0n) {
     throw new Error('Available margin cannot fund an opening order after execution rewards.')
+  }
+  if (!input.maxSize) {
+    const targetPrice = getPerpsTargetPrice({ direction: input.direction, isClose: false,
+      oraclePrice: context.currentPrice, slippagePercent: input.slippagePercent })
+    const margins = await Promise.all(assessmentPrices(context.currentPrice, targetPrice).map(async oraclePrice => {
+      const preview = await withPreparationStep('margin_quote', 'previewOpen', () => quotePerpsOpenMargin(client, {
+        account: input.account, side: input.side, sizeDelta: input.sizeDelta,
+        marginBudget: marginDelta, oraclePrice,
+        selectedMaxLeverageBps: input.selectedMaxLeverageBps, blockNumber: context.blockNumber, signal: input.signal,
+      }))
+      if (!preview.valid) throw new Error(getPerpsOpenRevertMessage(preview.invalidReason))
+      const leverage = openPreviewLeverageBps(preview, preview.executionPrice)
+      if (leverage === undefined || leverage > BigInt(input.selectedMaxLeverageBps)) {
+        throw new Error('Available margin cannot fund this order at the selected leverage. Reduce size or deposit more margin.')
+      }
+      return preview.marginDeltaAssets
+    }))
+    return review({ ...input, marginDelta: maximum(margins) })
   }
   input.signal?.throwIfAborted()
   // The deployless helper applies selected leverage inside the same eth_call
