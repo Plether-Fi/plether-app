@@ -29,6 +29,9 @@ interface Candidate<T> { key: string; input: T }
 interface Options<T> {
   candidate?: Candidate<T>
   identityKey: string
+  /** User-entered trade intent, excluding live market/account values. When
+   * supplied, warm once per intent; context polling only invalidates reuse. */
+  backgroundKey?: string
   contextKey?: string
   reviewValid?: boolean
   mode: Mode
@@ -68,6 +71,7 @@ class PreparationController<T> {
   oracleRecovery?: { startedAt: number; deadline: number; error: unknown }
   resumeRecovery?: () => void
   backgroundGeneration?: number
+  lastBackground?: { identityKey: string; key: string }
   disposed = false
   openedAt?: number
   admission?: 'completed_reuse' | 'pending_reuse' | 'cold' | 'refresh'
@@ -131,8 +135,12 @@ class PreparationController<T> {
   }
   scheduleBackground() {
     clearTimeout(this.timer)
-    if (!this.state.visible || this.backgroundGeneration !== undefined) return
+    if (!this.state.visible || this.backgroundGeneration !== undefined || this.backgroundAlreadyStarted()) return
     this.timer = setTimeout(() => { this.start('background'); }, PREPARATION_IDLE_MS)
+  }
+  backgroundAlreadyStarted() {
+    return this.options?.backgroundKey !== undefined && this.lastBackground?.key === this.options.backgroundKey &&
+      this.lastBackground.identityKey === this.options.identityKey
   }
   trackReady() {
     if (!this.state.visible || this.options?.mode !== 'review' || this.options.reviewValid === false || this.openedAt === undefined) return
@@ -144,7 +152,7 @@ class PreparationController<T> {
   start(source: Source) {
     const options = this.options
     if (!options?.candidate || options.mode === 'inactive' || !this.state.visible || this.disposed) return
-    if (source === 'background' && (options.mode !== 'background' || this.backgroundGeneration !== undefined)) return
+    if (source === 'background' && (options.mode !== 'background' || this.backgroundGeneration !== undefined || this.backgroundAlreadyStarted())) return
     const continuingRecovery = source === 'refresh' && this.state.recoveringOracle &&
       this.state.key === options.candidate.key && this.state.identityKey === options.identityKey
       ? this.oracleRecovery : undefined
@@ -156,7 +164,10 @@ class PreparationController<T> {
     const generation = this.generation
     const startedAt = continuingRecovery ? continuingRecovery.deadline - PREPARATION_TIMEOUT_MS : performance.now()
     const previous = source === 'refresh' ? this.state.result : undefined
-    if (source === 'background') this.backgroundGeneration = generation
+    if (source === 'background') {
+      this.backgroundGeneration = generation
+      this.lastBackground = options.backgroundKey === undefined ? undefined : { identityKey: options.identityKey, key: options.backgroundKey }
+    }
     if (source === 'refresh') { this.openedAt = startedAt; this.admission = 'refresh' }
     this.publish({ key: options.candidate.key, identityKey: options.identityKey, contextKey: options.contextKey, status: 'pending', startedAt,
       result: previous, previous, error: undefined, supportReference: undefined, slow: false, recoveringOracle: continuingRecovery !== undefined, refreshing: source === 'refresh' })
@@ -250,7 +261,7 @@ class PreparationController<T> {
       else if (this.state.status === 'idle') this.start('cold')
     } else if (this.options?.mode === 'background' && this.state.status === 'idle') this.scheduleBackground()
   }
-  dispose = () => { this.disposed = true; this.invalidate(); this.jobs.forEach(clearTimeout); this.jobs.clear(); this.options = undefined; this.state = initialState; this.backgroundGeneration = undefined }
+  dispose = () => { this.disposed = true; this.invalidate(); this.jobs.forEach(clearTimeout); this.jobs.clear(); this.options = undefined; this.state = initialState; this.backgroundGeneration = undefined; this.lastBackground = undefined }
 }
 
 export function usePerpsOrderPreparation<T>(options: Options<T>) {

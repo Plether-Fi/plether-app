@@ -114,6 +114,79 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(2)
   })
 
+  it('warms once per trade edit despite polling, preview loading, failures, and visibility changes', async () => {
+    const prepare = vi.fn().mockRejectedValue(new Error('temporary review failure'))
+    const initialProps = { mode: 'background' as Mode, key: 'quote-0', contextKey: 'block-0', backgroundKey: 'size-100', identityKey: 'account-one' }
+    const view = renderHook(props => usePerpsOrderPreparation({
+      ...props, candidate: { key: props.key, input: { quantity: 100n } }, prepare,
+    }), { initialProps })
+    await advance(500)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    for (let tick = 1; tick <= 30; tick++) {
+      const props = { ...initialProps, key: `quote-${tick}`, contextKey: `block-${tick}` }
+      view.rerender({ ...props, mode: 'inactive' })
+      await advance(300)
+      view.rerender(props)
+      await advance(1700)
+    }
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(view.result.current.ready).toBe(false)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await advance(500)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    view.rerender({ ...initialProps, key: 'size-edited', backgroundKey: 'size-200' })
+    await advance(500)
+    expect(prepare).toHaveBeenCalledTimes(2)
+    view.rerender({ ...initialProps, key: 'other-account', identityKey: 'account-two', backgroundKey: 'size-200' })
+    await advance(500)
+    expect(prepare).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects a warm quote invalidated by polling and starts fresh immediately on review', async () => {
+    const prepare = vi.fn().mockResolvedValueOnce(prepared(60, 20_000_000n)).mockResolvedValueOnce(prepared(60, 30_000_000n))
+    const initialProps = { mode: 'background' as Mode, key: 'old-quote', contextKey: 'old-block', backgroundKey: 'size-100' }
+    const view = renderHook(props => usePerpsOrderPreparation({
+      ...props, identityKey: 'account', candidate: { key: props.key, input: { quantity: 100n } }, prepare,
+    }), { initialProps })
+    await advance(500)
+    const warm = view.result.current.result
+    view.rerender({ ...initialProps, key: 'new-quote', contextKey: 'new-block' })
+    await advance(2000)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(view.result.current.ready).toBe(false)
+    expect(view.result.current.result).toBeUndefined()
+    view.rerender({ ...initialProps, mode: 'review', key: 'new-quote', contextKey: 'new-block' })
+    await advance(0)
+    expect(prepare).toHaveBeenCalledTimes(2)
+    expect(view.result.current.ready).toBe(true)
+    expect(view.result.current.result).not.toBe(warm)
+    expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
+  })
+
+  it('does not restart an aborted background quote on polling or accept its late result', async () => {
+    const pending = deferred<PreparedPerpsOrderV3>()
+    const prepare = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(prepared())
+    const initialProps = { mode: 'background' as Mode, key: 'old-quote' }
+    const view = renderHook(props => usePerpsOrderPreparation({
+      ...props, backgroundKey: 'size-100', identityKey: 'account', candidate: { key: props.key, input: { quantity: 100n } }, prepare,
+    }), { initialProps })
+    await advance(500)
+    view.rerender({ ...initialProps, key: 'polled-quote' })
+    expect(prepare.mock.calls[0][1].aborted).toBe(true)
+    await act(async () => { pending.resolve(prepared(60, 999n)) })
+    await advance(10_000)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(view.result.current.ready).toBe(false)
+    expect(view.result.current.result).toBeUndefined()
+    view.rerender({ mode: 'review', key: 'polled-quote' })
+    await advance(0)
+    expect(prepare).toHaveBeenCalledTimes(2)
+    expect(view.result.current.ready).toBe(true)
+  })
+
   it('queues only the latest background candidate and ignores old completions', async () => {
     const pending = deferred<PreparedPerpsOrderV3>()
     const prepare = vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared())

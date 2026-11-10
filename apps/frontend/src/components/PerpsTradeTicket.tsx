@@ -3178,6 +3178,15 @@ export function PerpsTradeTicket({
     currentPosition, pendingOrders, pendingOrderCount, activePositionProtectionId,
     protectionConfiguration, marketPhase, activeAccountOperation?.id,
   ])
+  // Market/position polling must invalidate stale terms without scheduling a
+  // complete three-price review every two seconds. Warm only after a trade
+  // edit; the full candidate/context keys still govern reuse on opening Review.
+  const backgroundPreparationKey = orderPreparationKey([
+    preparationIdentityKey, reviewGeneration, effectiveOrderDirection,
+    isReducingCurrentPosition, isReduceOnly,
+    isMaxOpenIntent ? 'max' : isFullCloseIntent ? 'full-close' : orderSizeDelta,
+    activeLeverage, slippageNumber, isProtectionEnabled, protectionDraft,
+  ])
   const candidateSnapshot = useMemo(() => isReviewOpen && reviewSnapshot
     ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
@@ -3189,6 +3198,7 @@ export function PerpsTradeTicket({
   const preparation = usePerpsOrderPreparation({
     candidate: { key: candidateKey, input: candidateSnapshot },
     identityKey: preparationIdentityKey,
+    backgroundKey: backgroundPreparationKey,
     contextKey: preparationAccountContextKey,
     reviewValid: !liveValidationError && !activeAccountOperation,
     mode: !canPrepare ? 'inactive' : isReviewOpen ? 'review'

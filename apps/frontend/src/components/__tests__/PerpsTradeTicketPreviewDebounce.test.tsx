@@ -426,6 +426,33 @@ describe('Perps trade preview debounce', () => {
     expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
   })
 
+  it('does not repeatedly prepare while an untouched position and oracle poll, but rechecks fresh margin on review', async () => {
+    const warm = prepared()
+    warm.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    warm.request.sizeDelta = 100n * 10n ** 18n
+    const fresh = { ...warm, request: { ...warm.request, marginDelta: 30_000_000n } }
+    wagmiMocks.prepareOrder.mockResolvedValueOnce(warm).mockResolvedValue(fresh)
+    const props = { enableLiveTrading: true, initialOrderQuantity: '100', initialDirection: 'long' as const,
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n,
+      currentPosition: existingLongPosition }
+    const view = render(<PerpsTradeTicket {...props} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    for (let tick = 1; tick <= 30; tick++) {
+      view.rerender(<PerpsTradeTicket {...props} oraclePublishTime={props.oraclePublishTime + tick * 2}
+        currentPosition={{ ...existingLongPosition, unrealizedPnlAssets: BigInt(tick) * 1_000n }} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    }
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    expect(wagmiMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: fresh }))
+  })
+
   it('keeps reviewed terms and confirmation available after the provisional deadline', async () => {
     const first = prepared(55)
     first.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
