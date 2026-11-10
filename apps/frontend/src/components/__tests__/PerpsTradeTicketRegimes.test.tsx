@@ -17,6 +17,10 @@ vi.mock('../../perps-aa/readiness', async importOriginal => ({
   useTradingReadiness: () => readinessFixture.snapshot,
 }))
 
+vi.mock('../../hooks/usePerpsOpenMargin', () => ({
+  usePerpsOpenMargin: () => ({ preview: undefined, error: undefined, isPending: false }),
+}))
+
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
 }))
