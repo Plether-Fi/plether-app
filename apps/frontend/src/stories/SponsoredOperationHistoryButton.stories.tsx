@@ -590,6 +590,40 @@ const expiredSignedStatus: PreparationStatusV1 & { recoveryVerified: true; canRe
   ...RESUMABLE_STATUS, phase: 'resolved', authorizationState: 'expired',
   recoverable: false, reason: 'PREPARATION_UNUSABLE', recoveryVerified: true as const, canRetire: true,
 }
+const savedWithdrawalOperations = [recoveryFixture('withdraw-to-owner')]
+const savedWithdrawalRuntime: PerpsAaSmartAccountRuntime = {
+  ...previewRuntime(expiredSignedStatus),
+  preparationRecovery: {
+    // Simulate ownership verification locally so both steps can be previewed.
+    verify: async () => {},
+    status: async () => expiredSignedStatus,
+    retire: async () => ({ version: 1, recoveryState: 'retired', reason: 'PREPARATION_RETIRED', canRetire: false, operationHashes: [] }),
+    headers: () => ({}), bindOperation: () => {}, operationHeaders: () => ({}),
+  },
+}
+export const SavedTransactionVerifyBeforeDiscard: Story = {
+  parameters: { docs: { description: { story: 'Expired, declined withdrawal with two recovery steps: verify the owner wallet, then discard. Verification is simulated locally; no wallet request or transaction is sent.' } } },
+  render: () => <WalletHeaderPreview operations={savedWithdrawalOperations} runtime={savedWithdrawalRuntime} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: /Open Trading Account activity/ }))
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    expect(await dialog.findByText('1. Verify your wallet')).toBeVisible()
+    expect(dialog.getByText('2. Discard the saved transaction')).toBeVisible()
+    expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Verify wallet to recover' })).toBeEnabled()
+    expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeDisabled()
+  },
+}
+export const SavedTransactionReadyToDiscard: Story = {
+  ...SavedTransactionVerifyBeforeDiscard,
+  play: async context => {
+    await SavedTransactionVerifyBeforeDiscard.play?.(context)
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    await userEvent.click(dialog.getByRole('button', { name: 'Verify wallet to recover' }))
+    expect(await dialog.findByText('Completed')).toBeVisible()
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeEnabled())
+  },
+}
 const signedRecoveryOperations: SponsoredOperation[] = [{
   ...recoveryFixture('place-order'), status: 'receipt-timeout', userOperationHash: hash('c'),
 }]
