@@ -168,7 +168,52 @@ runtime directory contains a UID-1000-readable private configuration file.
 Redeploy gateway tasks after rotating their SSM values; restart the Nitro
 process after changing its parent credentials or runtime configuration.
 Treat restricted Nitro logs as potentially sensitive provider diagnostics;
-gateway logs contain only readiness flags, routing role and duration.
+gateway logs contain only bounded diagnostics: readiness, fixed reason codes,
+allowlisted method names, counts, routing attempts, HTTP status and duration.
+They never include parameters, caller RPC IDs, addresses, transaction payloads,
+headers, endpoint URLs or parser/provider error messages.
+
+Every gateway still probes chain ID, sync status and latest/safe/finalized heads
+every five seconds, requires a recent latest head, compares canonical hashes at
+all three common heights, and requires two passing probes before promotion.
+Fresh tagged blocks are reused for comparison only within the same probe. A
+numeric lookup is made only when the common height was not fetched already on
+that upstream. Equal-height conflicting tagged responses fail closed. There is
+no cross-probe cache or shared verification state between gateway replicas.
+When all tagged heights align, this reduces each reference probe from eight RPC
+calls to five (six block calls to three); unequal heights may need extra reads.
+
+`rpc_request` retains `upstream` and `duration_ms` and adds:
+
+| Field | Meaning |
+| --- | --- |
+| `route_reason` | `primary_healthy`, planned `managed_method`/`historical_state`, availability fallback `primary_unhealthy`, retry fallback `primary_upstream_failure`, or an unselected/strict-primary route |
+| `failover` | True only when a non-managed request selects backup because primary is unavailable or a retryable primary call failed; includes failed backup attempts |
+| `attempts` | Upstreams attempted, including any latest-log normalization lookup; empty for requests rejected before upstream access |
+| `status`, `outcome` | HTTP status and `success`, `rpc_error`, `rejected` or `upstream_error`; HTTP 200 alone does not imply RPC success |
+| `rejection_reason`, `stage` | Fixed rejection code and stage, including authentication, validation, concurrency limits, stale health and log-range normalization |
+| `methods`, `batch_size` | Up to 20 allowlisted names (`unsupported` for unknown names), with oversized batch size capped at 21 |
+| `primary_error`, `upstream_error` | Internal error category, never provider response text |
+
+Successful GET `/healthz` requests stay outside application request counts.
+Other route/authentication/admission rejections now produce `rpc_request` too;
+compare rejection rates across releases with that expanded coverage in mind.
+`rpc_probe` adds a readiness `reason`, `checkpoint_fetches` and
+`checkpoint_reuses` to make the optimization and unready periods observable.
+
+CloudWatch Logs Insights examples for `/plether/sepolia/rpc-gateway`:
+
+```text
+filter event = "rpc_request"
+| stats count(*) as requests by route_reason, failover, status, outcome
+
+filter event = "rpc_request" and outcome = "rejected"
+| stats count(*) as requests by rejection_reason, stage, upstream
+
+filter event = "rpc_probe"
+| stats count(*) as probes, sum(checkpoint_fetches) as fetched,
+    sum(checkpoint_reuses) as reused by reason
+```
 
 The initial deployed identifiers and reviewed pins are recorded in
 `infra/terraform-rpc/sepolia.tfvars.json`; it contains only non-secret context
