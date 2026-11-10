@@ -1,7 +1,7 @@
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsContractErrorCode } from './perpsErrors'
 
 export type PreparationStage = 'preflight' | 'deployment_verification' | 'context_read'
-  | 'max_size_quote' | 'order_assessment' | 'review_validation' | 'funding_check'
+  | 'max_size_quote' | 'margin_quote' | 'order_assessment' | 'review_validation' | 'funding_check'
   | 'commit_simulation' | 'preparation_timeout' | 'review_freshness'
 
 export type PreparationFunction = 'maxExecutionWindowSeconds' | 'currentExecutionConfigHash'

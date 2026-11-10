@@ -10,9 +10,14 @@ const wagmiMocks = vi.hoisted(() => ({
   prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
   maxQuote: vi.fn(),
+  openMargin: vi.fn(),
 }))
 
 // Keep the Max quote lifecycle independent from typed-size preview reads.
+vi.mock('../../hooks/usePerpsOpenMargin', () => ({
+  usePerpsOpenMargin: wagmiMocks.openMargin,
+}))
+
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: wagmiMocks.maxQuote,
 }))
@@ -142,6 +147,7 @@ function latestReadOptions(): ReadContractsOptions {
 describe('Perps trade preview debounce', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    wagmiMocks.openMargin.mockReset().mockReturnValue({ preview: undefined, error: undefined, isPending: false })
     wagmiMocks.maxQuote.mockReset().mockReturnValue({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false })
     wagmiMocks.accountAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     wagmiMocks.useReadContracts.mockReset()
@@ -158,12 +164,66 @@ describe('Perps trade preview debounce', () => {
     vi.useRealTimers()
   })
 
+  describe('funded opening margin validation', () => {
+    const props = { enableLiveTrading: true, initialOrderQuantity: '100', initialLeverage: 10,
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n }
+
+    function maximum() {
+      wagmiMocks.maxQuote.mockReturnValue({ quote: { maxSizeDelta: 1_000n * 10n ** 18n, preview: { valid: true } },
+        marginDelta: 999_800_000n, isPending: false, isFetching: false })
+    }
+
+    it.each(['manual', '25%', '50%', '75%', '100%'])('uses the funded quote in the preview and review for %s', async size => {
+      maximum()
+      wagmiMocks.openMargin.mockImplementation(({ sizeDelta }: { sizeDelta: bigint }) => {
+        const equity = sizeDelta / 10n ** 13n
+        return { preview: { ...openPreviewResult, postSize: sizeDelta, postEquityAssets: equity,
+          marginDeltaAssets: equity + 10_500_000n, executionPrice: 100_000_000n }, isPending: false }
+      })
+      render(<PerpsTradeTicket {...props} />)
+      if (size !== 'manual') fireEvent.click(within(screen.getByRole('group', { name: 'Order quantity shortcuts' })).getByRole('button', { name: size === '100%' ? 'Max' : size }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      const quantity = size === 'manual' ? 100n : (1_000n * BigInt(size.slice(0, -1)) / 100n / 100n) * 100n
+      const margin = quantity * 100_000n + 10_500_000n
+      expect(latestReadOptions().contracts[0]?.args?.[3]).toBe(margin)
+      expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+      expect(wagmiMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
+        marginAssets: margin, sizeDelta: quantity * 10n ** 18n,
+      }))
+    })
+
+    it.each(['25%', '50%', '75%', '100%'])('blocks %s when its exact funded preview is rejected', async size => {
+      maximum()
+      wagmiMocks.useReadContracts.mockReturnValue({
+        data: [{ status: 'success', result: { ...openPreviewResult, valid: false, invalidReason: 9 } }],
+        isFetching: false, isLoading: false,
+      })
+      render(<PerpsTradeTicket {...props} />)
+      fireEvent.click(within(screen.getByRole('group', { name: 'Order quantity shortcuts' })).getByRole('button', { name: size === '100%' ? 'Max' : size }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      expect(screen.getByText(/cannot fund the required liquidation reserve/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+      expect(wagmiMocks.prepareOrder).not.toHaveBeenCalled()
+    })
+
+    it('keeps 100% disabled while margin is being quoted', async () => {
+      maximum()
+      wagmiMocks.openMargin.mockReturnValue({ preview: undefined, isPending: true })
+      render(<PerpsTradeTicket {...props} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Max' }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+      expect(wagmiMocks.prepareOrder).not.toHaveBeenCalled()
+    })
+  })
+
   describe('Order quantity shortcuts', () => {
     const props = { enableLiveTrading: true, initialLeverage: 10, oraclePriceRaw: 100_000_000n,
       oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n }
     const maximum = (tokens: bigint) => ({
       quote: { maxSizeDelta: tokens * 10n ** 18n, preview: { valid: true, executionPrice: 100_000_000n } },
-      marginDelta: 1_000_000_000n, isPending: false, isFetching: false,
+      marginDelta: 999_800_000n, isPending: false, isFetching: false,
     })
     const shortcuts = () => within(screen.getByRole('group', { name: 'Order quantity shortcuts' }))
 
@@ -327,7 +387,7 @@ describe('Perps trade preview debounce', () => {
   it('passes selected leverage to Max and updates a filled maximum when leverage changes', async () => {
     wagmiMocks.maxQuote.mockImplementation(({ selectedMaxLeverageBps }: { selectedMaxLeverageBps: number }) => ({
       quote: { maxSizeDelta: BigInt(selectedMaxLeverageBps) * 10n ** 17n, preview: { valid: true } },
-      marginDelta: 1_000_000_000n, isPending: false, isFetching: false,
+      marginDelta: 999_800_000n, isPending: false, isFetching: false,
     }))
     render(<PerpsTradeTicket enableLiveTrading initialLeverage={10} oraclePriceRaw={100_000_000n}
       oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
@@ -431,6 +491,7 @@ describe('Perps trade preview debounce', () => {
       oraclePriceRaw={100_000_000n} oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n}
       protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
+    await act(async () => { vi.advanceTimersByTime(300) })
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
     expect(screen.getByLabelText('Stop loss (USDG)')).toHaveValue('0.96') // 5 USDG loss / 20 USDG preview margin.
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
@@ -452,7 +513,7 @@ describe('Perps trade preview debounce', () => {
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
   })
 
-  it('revalidates the fixed reviewed stop when the opening preview liquidation changes', () => {
+  it('revalidates the fixed reviewed stop when the opening preview liquidation changes', async () => {
     wagmiMocks.useReadContracts.mockReturnValue({
       data: [{ status: 'success', result: { ...openPreviewResult, liquidationPrice: 110_000_000n } }],
       isFetching: false, isLoading: false,
@@ -462,6 +523,7 @@ describe('Perps trade preview debounce', () => {
       protectionCapPrice: 200_000_000n, protectionConfiguration: { enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n } }
     const view = render(<PerpsTradeTicket {...props} />)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
+    await act(async () => { vi.advanceTimersByTime(300) })
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ positionProtection: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 104_000_000n, closeLimits: relaxedProtectionCloseLimits() } }))

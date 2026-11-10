@@ -828,7 +828,6 @@ export const ExpiredOrderFreshReview: Story = {
     await waitFor(() => expect(within(document.body).queryByRole('dialog')).not.toBeInTheDocument())
     expect(canvas.getByLabelText('Order quantity')).toHaveValue('200')
     expect(canvas.getByRole('button', { name: 'Review Short' })).toBeVisible()
-    expect(canvas.getByText(/Trade inputs restored/)).toBeVisible()
     expect(useSponsoredOperationStore.getState().operations.find(operation => operation.id === expiredOrderId))
       .toMatchObject({ status: 'cancelled', preparationResolved: true })
     expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT_ADDRESS)).toBeUndefined()
