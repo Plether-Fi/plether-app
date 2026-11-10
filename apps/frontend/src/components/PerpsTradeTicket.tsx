@@ -3187,6 +3187,11 @@ export function PerpsTradeTicket({
     isMaxOpenIntent ? 'max' : isFullCloseIntent ? 'full-close' : orderSizeDelta,
     activeLeverage, slippageNumber, isProtectionEnabled, protectionDraft,
   ])
+  const quantityDraftKey = orderPreparationKey([
+    preparationIdentityKey, orderQuantity, isFullCloseIntent, isMaxOpenIntent,
+  ])
+  const quantityDraftKeyRef = useRef(quantityDraftKey)
+  quantityDraftKeyRef.current = quantityDraftKey
   const candidateSnapshot = useMemo(() => isReviewOpen && reviewSnapshot
     ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
@@ -3928,6 +3933,12 @@ export function PerpsTradeTicket({
     }
   }
 
+  function resetOrderQuantity() {
+    setOrderQuantity('0')
+    setIsFullCloseIntent(false)
+    setIsMaxOpenIntent(false)
+  }
+
   async function handleConfirmCommit() {
     if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
       document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase())) {
@@ -4018,12 +4029,19 @@ export function PerpsTradeTicket({
       setFinalReceiptEconomics(undefined)
       setFinalPostPositionSize(undefined)
       setFinalVpiAssets(undefined)
+      let includedDraftHandled = false
       const applyIncludedCommit = (result: {
         account: string
         clientOrderId: string
         hash?: string
         orderId: bigint
       }) => {
+        // Inclusion can arrive after the review is dismissed. Clear only the
+        // submitted draft, once; preserve a new quantity or account selection.
+        if (!includedDraftHandled) {
+          includedDraftHandled = true
+          if (readMutableRef(quantityDraftKeyRef) === quantityDraftKey) resetOrderQuantity()
+        }
         if (commitAttemptIdRef.current !== commitAttemptId) return
 
         const previousIdentity = includedCommitIdentityRef.current
@@ -4318,9 +4336,7 @@ export function PerpsTradeTicket({
     const shouldResetSize = lifecycleState === 'executed'
     resetReviewLifecycle()
     if (shouldResetSize) {
-      setOrderQuantity('0')
-      setIsFullCloseIntent(false)
-      setIsMaxOpenIntent(false)
+      resetOrderQuantity()
     }
     setIsReviewOpen(false)
   }
@@ -4887,6 +4903,7 @@ export function PerpsTradeTicket({
                   analyticsId="mock_commit_confirmed"
                   analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
+                    resetOrderQuantity()
                     setLifecycleState('revealPending')
                   }}
                 >

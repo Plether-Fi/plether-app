@@ -495,6 +495,7 @@ describe('perps lifecycle labels', () => {
     expectReward()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     expect(screen.getByText('Preparing sponsored transaction')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(quantity.toString())
     expectReward()
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0][0]
     act(() => commitInput.onStatus('awaiting-signature'))
@@ -504,10 +505,13 @@ describe('perps lifecycle labels', () => {
         hash: `0x${'ab'.repeat(32)}`, orderId: 42n })
     })
     expect(screen.getByText('Settlement Details')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('0')
+    expect(commitInput.sizeDelta).toBe(quantity * 10n ** 18n)
     expectReward()
     // Account polling can clear a closed position before its result is shown.
     view.rerender(<PerpsTradeTicket {...props} currentPosition={undefined} oraclePriceRaw={110_000_000n} />)
     expectReward()
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('0')
   })
 
   async function startDelayedSponsoredCommit() {
@@ -545,6 +549,42 @@ describe('perps lifecycle labels', () => {
     }
     return commitInput.onStatus
   }
+
+  it.each(['User rejected signature', 'Commit transaction failed'])('keeps the entered quantity when committing fails: %s', async message => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    perpsTradingMocks.commitOrder.mockRejectedValue(new Error(message))
+    render(<PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={1_000_000_000n} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await screen.findAllByText('Commit transaction failed')
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
+  })
+
+  it.each([
+    { nextQuantity: '100', expected: '0' },
+    { nextQuantity: '200', expected: '200' },
+  ])('handles inclusion after closing review with quantity $nextQuantity', async ({ nextQuantity, expected }) => {
+    await startDelayedSponsoredCommit()
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0][0]
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
+    if (nextQuantity !== '100') {
+      fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: nextQuantity } })
+    }
+    await act(async () => {
+      commitInput.onIncluded({ account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID,
+        hash: V2_RECEIPT_HASH, orderId: 42n })
+    })
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue(expected)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
 
   it('clears the delayed wallet warning when the signed operation starts submitting', async () => {
     vi.useFakeTimers()
@@ -1563,6 +1603,18 @@ describe('perps lifecycle labels', () => {
     expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({
       sizeDelta: 300n * 10n ** 18n, preparedOrder: prepared,
     }))
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0][0]
+    const included = { account: V2_ACCOUNT, clientOrderId: prepared.request.clientOrderId,
+      hash: V2_RECEIPT_HASH, orderId: 42n }
+    await act(async () => { commitInput.onIncluded(included) })
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('0')
+    expect(screen.getByRole('button', { name: 'Max' })).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('0')
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '200' } })
+    await act(async () => { commitInput.onIncluded(included) })
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('200')
   })
 
   it('clears Max intent when the quantity is edited manually', async () => {

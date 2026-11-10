@@ -302,8 +302,12 @@ async function signThroughBridge(page: Page) {
 async function previousPage(page: Page) {
   await page.getByRole('link', { name: 'Terms of Service', exact: true }).click()
   await expect(page).toHaveURL(/\/terms$/)
+  // The URL changes before React commits the route. Clicking the old Privacy
+  // link during that gap can replace the Terms entry instead of pushing one.
+  await expect(page.getByRole('heading', { name: 'Terms of Service', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Privacy Policy', exact: true }).click()
   await expect(page).toHaveURL(/\/privacy$/)
+  await expect(page.getByRole('heading', { name: 'Privacy Policy', exact: true })).toBeVisible()
 }
 
 for (const flow of ['wallet', 'email'] as const) {
