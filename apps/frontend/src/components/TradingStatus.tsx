@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { readinessChecks, readinessWorkers, readinessMessage, refreshReadiness, useTradingReadiness, type ReadinessAction } from '../perps-aa/readiness'
 
 export function TradingStatus({ action = 'open' }: { action?: ReadinessAction }) {
@@ -6,8 +7,10 @@ export function TradingStatus({ action = 'open' }: { action?: ReadinessAction })
   const issues = checks.filter(c => c.status !== 'ready' || c.reason === 'FUNDING_LOW')
   const blocked = issues.some(c => c.status === 'blocked')
   const fundingIssues = readinessWorkers(snapshot).filter(c => c.status !== 'ready' || c.reason !== 'READY')
+  // Status refreshes must not remount the panel or undo the user's toggle.
+  const [expanded, setExpanded] = useState(issues.length > 0 || fundingIssues.length > 0)
   const workerNames: Record<string, string> = { alto: 'Bundler executors', keeper: 'Trade keeper', oracle: 'Oracle updater', liquidation: 'Liquidation worker', protection: 'Protection worker', lp_settlement: 'LP settlement' }
-  return <details key={issues.length || fundingIssues.length ? 'issue' : 'healthy'} open={issues.length > 0 || fundingIssues.length > 0} className="border border-border p-3 text-sm" aria-live="polite">
+  return <details open={expanded} onToggle={event => { setExpanded(event.currentTarget.open) }} className="border border-border p-3 text-sm" aria-live="polite">
     <summary className="cursor-pointer font-semibold">Trading status — {blocked ? 'temporarily unavailable' : issues.length ? 'unverified' : fundingIssues.length ? 'ready (worker warnings)' : 'ready'}</summary>
     <div className="mt-2 space-y-2 text-content-secondary">
       {issues.length ? [...new Set(issues.map(c => c.reason))].map(reason => <p key={reason}>{readinessMessage(reason)}</p>) : <p>No known blocker. Readiness does not guarantee execution.</p>}

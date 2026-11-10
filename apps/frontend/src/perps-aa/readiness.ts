@@ -78,6 +78,11 @@ export function readinessWorkers(snapshot: ReadinessSnapshot | undefined, now = 
 let snapshot: ReadinessSnapshot | undefined
 let inflight: Promise<void> | undefined
 let lastStarted = -Infinity
+let nextRefreshAt = -Infinity
+const refreshInterval = 10_000
+// Leave room for the four-second request timeout and the one-second UI tick.
+const refreshHeadroom = 5_000
+const minimumRefreshInterval = 1_000
 let revision = 0
 const listeners = new Set<() => void>()
 let timer: ReturnType<typeof setInterval> | undefined
@@ -85,8 +90,10 @@ function publish() { revision++; listeners.forEach(fn => { fn() }) }
 export function currentReadiness() { return snapshot }
 export function refreshReadiness(force = false): Promise<void> {
   if (inflight) return inflight
-  if (!force && performance.now() - lastStarted < 10_000) return Promise.resolve()
+  if (!force && performance.now() < nextRefreshAt) return Promise.resolve()
   lastStarted = performance.now()
+  // Failures and already-expired responses retain the normal retry interval.
+  nextRefreshAt = lastStarted + refreshInterval
   inflight = (async () => {
     try {
       const response = await fetch('/api/perps/v1/readiness', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(4_000) })
@@ -95,6 +102,14 @@ export function refreshReadiness(force = false): Promise<void> {
       const clock = responseClock(response, lastStarted)
       snapshot = parseReadiness(value, clock.now())
       responseClocks.set(snapshot, clock)
+      const remaining = snapshot.expiresAt - clock.now()
+      if (remaining > 0) {
+        // The server caches observations. Refresh before this observation expires,
+        // rather than assuming every response has another full polling interval.
+        // Bound retries when the server returns the same nearly-expired cache.
+        nextRefreshAt = Math.max(lastStarted + minimumRefreshInterval,
+          Math.min(nextRefreshAt, performance.now() + remaining - refreshHeadroom))
+      }
       reportReadiness([...actions.flatMap(action => readinessChecks(snapshot, action)), ...(snapshot.workers ?? [])])
     } catch {
       // A stale response must not remain a hard blocker. Authorization is independent.
