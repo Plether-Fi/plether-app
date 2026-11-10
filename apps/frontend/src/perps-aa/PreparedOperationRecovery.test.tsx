@@ -133,7 +133,7 @@ describe('visible preparation recovery', () => {
     const saved = { ...operation, status: 'preparation-pending' as const, preparedOperation: undefined, reason: 'UNKNOWN' }
     const view = render(<PerpsAaRuntimeContext value={runtime}><PreparedOperationRecovery operation={saved} /></PerpsAaRuntimeContext>)
     await act(async () => {})
-    expect(screen.getByRole('button', { name: 'Checking recovery…' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Checking recovery automatically…')
     await act(async () => {
       view.rerender(<PerpsAaRuntimeContext value={runtime}><PreparedOperationRecovery operation={{ ...saved, reason: 'ACCOUNT_DEPLOYMENT_PENDING' }} /></PerpsAaRuntimeContext>)
     })

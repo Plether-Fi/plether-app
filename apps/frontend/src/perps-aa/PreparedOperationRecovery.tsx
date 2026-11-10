@@ -271,7 +271,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
           {operation.action === 'cancel-protection' && ' Discarding does not cancel TP/SL onchain.'}</p>)}
         {!safelyResolved && status?.reason === 'PREPARATION_UNUSABLE' && <p>{operation.userOperationHash
           ? 'This signed transaction cannot be resumed. Its outcome must be checked before another trade.'
-          : 'This preparation cannot be resumed. Check recovery to discard it when available.'}</p>}
+          : 'This preparation cannot be resumed. Recovery checks run automatically; discard will become available when it is safe.'}</p>}
         {status?.reason === 'INTENT_ALREADY_COMMITTED' && <p>This intent was already committed. Check order activity before reviewing a new action.</p>}
         {status?.phase === 'included' && <p>Included onchain. Waiting for safe confirmation.</p>}
         {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
@@ -279,7 +279,9 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       {walletStatus && !('recoveryState' in walletStatus) && !walletStatus.canRetire && walletStatus.retirementReason
         && <p>{recoveryMessage(walletStatus.retirementReason)}</p>}
       {displayedRecoveryError && <p role="alert">{displayedRecoveryError}</p>}
-      {(!deferStatusCheck || verified) && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus || outcomeCheck === 'checking'} onClick={() => {
+      {!operation.userOperationHash && checkingStatus && <p role="status">Checking recovery automatically…</p>}
+      {!operation.userOperationHash && statusError && !deferStatusCheck && <p>We’ll retry recovery automatically while this window is open.</p>}
+      {operation.userOperationHash && (!deferStatusCheck || verified) && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus || outcomeCheck === 'checking'} onClick={() => {
         setError(undefined)
         if (signedRecovery) { outcomeRequested.current = true; setOutcomeCheck('checking') }
         setStatusCheckRevision(value => value + 1)
