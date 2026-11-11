@@ -40,6 +40,8 @@ jobs:
         run: node scripts/install-foundry-ci.mjs
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
       - uses: haskell-actions/setup@v2
         with:

@@ -48,6 +48,8 @@ jobs:
       - name: Install dependencies used by Insights stories
         run: npm ci --no-audit --no-fund
         working-directory: apps/insights
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Run asserted browser coverage
