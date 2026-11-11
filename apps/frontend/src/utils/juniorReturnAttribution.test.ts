@@ -80,13 +80,27 @@ describe('junior diluted share-price attribution', () => {
     expect(buildJuniorReturnBreakdown(period, changed)?.bars).toBeNull()
   })
 
-  it('withholds stale, incomplete, empty-supply and discontinuous history', () => {
+  it('keeps the same reporting period across stale intermediate snapshots', () => {
+    const history = createVaultAssetHistory()
+    const fresh = juniorReturnPeriod(history)
+    history.junior.points[106].markFresh = false
+    history.junior.points[107].markFresh = false
+    expect(juniorReturnPeriod(history)).toEqual(fresh)
+  })
+
+  it.each([0, 168])('withholds history with a stale endpoint at index %s', (index) => {
+    const history = createVaultAssetHistory()
+    history.junior.points[index].markFresh = false
+    expect(juniorReturnPeriod(history)).toBeUndefined()
+  })
+
+  it('withholds incomplete, unknown-freshness, empty-supply and discontinuous history', () => {
     const history = createVaultAssetHistory()
     expect(juniorReturnPeriod(history)).toBeDefined()
     history.coverage.complete = false
     expect(juniorReturnPeriod(history)).toBeUndefined()
     history.coverage.complete = true
-    history.junior.points[2].markFresh = false
+    Reflect.deleteProperty(history.junior.points[2], 'markFresh')
     expect(juniorReturnPeriod(history)).toBeUndefined()
     history.junior.points[2].markFresh = true
     history.junior.points[2].totalSupply = '0'

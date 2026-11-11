@@ -122,7 +122,24 @@ test('stale intermediate pool fallbacks do not turn preview changes into trading
   const end = snap(3)
   const result = report(start, [{ snapshot: intermediate, events: [] }, { snapshot: end, events: [] }])
   near(sumPp(result), 0); assert.equal(result.netReturnUsdg, '0')
+  assert.ok(result.notes.some(note => note.includes('temporarily stale')))
   assert.throws(() => report(start, [{ snapshot: { ...intermediate, supply: 1099999000n }, events: [] }, { snapshot: { ...end, supply: 1099999000n }, events: [] }]), /Maintenance dilution requires fresh/)
+})
+
+test('consecutive stale previews preserve collected income without inventing a price loss', () => {
+  const start = snap(1), end = snap(4, 1009999n)
+  const result = report(start, [
+    { snapshot: snap(2, 799999n, 999999000n, { markFresh: false }), events: [] },
+    { snapshot: snap(3, 809999n, 999999000n, { markFresh: false }), events: [{ sources: { netVpi: 10000n } }] },
+    { snapshot: end, events: [] },
+  ])
+  near(sumPp(result), 1)
+  assert.equal(result.components.netVpi.amountUsdg, '10000')
+  assert.equal(result.components.settledTraderPnl.amountUsdg, '0')
+  assert.equal(result.components.openPositionValuation.amountUsdg, '0')
+  assert.equal(result.netReturnUsdg, '10000')
+  assert.equal(result.notes.length, 1)
+  assert.throws(() => report({ ...start, markFresh: false }, [{ snapshot: end, events: [] }]), /fresh period boundaries/)
 })
 
 test('trace-proven valuation before a deposit uses the shares outstanding before minting', () => {

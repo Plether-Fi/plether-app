@@ -157,8 +157,11 @@ export class ReturnAttributionWorker {
       (SELECT * FROM vault_performance_snapshots WHERE chain_id=$1 AND house_pool_address=$2 AND senior_vault_address=$3 AND junior_vault_address=$4
        AND epoch_timestamp <= $5 ORDER BY epoch_timestamp DESC LIMIT 169) AS recent ORDER BY epoch_timestamp`,
     [this.release.network.chainId, this.address.housePool, this.address.seniorVault, this.address.juniorVault, eligibleEpoch])).rows
-    if (rows.length !== 169 || Number(rows.at(-1).epoch_timestamp) !== eligibleEpoch || rows.some((row, index) => row.mark_fresh !== true || index > 0 && (Number(row.epoch_timestamp) - Number(rows[index - 1].epoch_timestamp) !== 3600 || BigInt(row.block_number) <= BigInt(rows[index - 1].block_number)))) return { ready: false, reason: 'hourly_history_incomplete' }
+    if (rows.length !== 169 || Number(rows.at(-1).epoch_timestamp) !== eligibleEpoch || rows.some((row, index) => typeof row.mark_fresh !== 'boolean' || index > 0 && (Number(row.epoch_timestamp) - Number(rows[index - 1].epoch_timestamp) !== 3600 || BigInt(row.block_number) <= BigInt(rows[index - 1].block_number)))) return { ready: false, reason: 'hourly_history_incomplete' }
     const first = rows[0], last = rows.at(-1)
+    // Intermediate stale previews telescope through the accounting engine.
+    // Only the reporting boundaries need fresh prices to define the return.
+    if (!first.mark_fresh || !last.mark_fresh) return { ready: false, reason: 'stale_period_boundaries' }
     const startNumber = BigInt(first.block_number), endNumber = BigInt(last.block_number)
     if ((await this.block(startNumber, true)).hash !== first.block_hash || (await this.block(endNumber, true)).hash !== last.block_hash) throw new AttributionError('History boundary no longer canonical')
     // Index validation precedes reuse of a published report, so a reorg causes

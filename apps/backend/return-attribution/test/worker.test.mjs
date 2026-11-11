@@ -66,3 +66,43 @@ test('a complete but obsolete history window cannot publish a current report', {
   assert.deepEqual(await worker.run(), { ready: false, reason: 'hourly_history_incomplete' })
   assert.equal((await db.query('SELECT count(*) FROM vault_return_reports')).rows[0].count, '0')
 }))
+
+async function currentHistory(db, worker, staleIndices) {
+  await db.query(`CREATE TABLE vault_performance_snapshots (
+    chain_id integer,house_pool_address text,senior_vault_address text,junior_vault_address text,
+    epoch_timestamp bigint,block_number numeric,block_hash text,block_timestamp bigint,
+    junior_share_price_wad numeric,mark_fresh boolean)`)
+  const eligible = Math.floor((Date.now() / 1000 - 120) / 3600) * 3600
+  for (let index = 0; index < 169; index++) {
+    const epoch = eligible - (168 - index) * 3600, block = index + 2
+    await db.query('INSERT INTO vault_performance_snapshots VALUES($1,$2,$3,$4,$5,$6,$7,$5,$8,$9)',
+      [release.network.chainId, worker.address.housePool, worker.address.seniorVault, worker.address.juniorVault,
+        epoch, block, hash(block), '1000000000000000000', !staleIndices.includes(index)])
+  }
+  const timestamp = number => BigInt(eligible) - (170n - number) * 3600n
+  worker.client.getBlock = async ({ blockNumber }) => ({ number: blockNumber, hash: hash(blockNumber), timestamp: timestamp(blockNumber) })
+  worker.snapshot = async block => {
+    const markFresh = !staleIndices.includes(Number(block - 2n))
+    const assets = markFresh ? 999999n : 799999n
+    return { block, blockHash: hash(block), timestamp: timestamp(block), assets, supply: 999999000n,
+      rawSupply: 999999000n, sharePrice: (assets + 1n) * 10n ** 21n / 1000000000n, rawSenior: 0n,
+      rawJunior: assets, highWaterMark: 0n, couponCheckpoint: 0n, seniorRateBps: 0n, terminalPnl: 0n, markFresh }
+  }
+}
+
+test('publishes a matching report across stale intermediate hours without attributing fallback losses', { skip: !url }, async () => fixture(async ({ db, worker }) => {
+  await currentHistory(db, worker, [106, 107])
+  assert.equal((await worker.run()).ready, true)
+  const [{ attribution }] = (await db.query('SELECT attribution FROM vault_return_reports')).rows
+  assert.equal(attribution.netReturnUsdg, '0')
+  assert.ok(Object.values(attribution.components).every(component => component.amountUsdg === '0' && component.contributionPp === 0))
+  assert.ok(attribution.notes.some(note => note.includes('temporarily stale')))
+  assert.equal((await worker.run()).cached, true)
+}))
+
+for (const index of [0, 168]) test(`rejects a stale reporting endpoint at index ${index}`, { skip: !url }, async () => fixture(async ({ db, worker }) => {
+  await currentHistory(db, worker, [index])
+  worker.client.getBlock = () => { throw new Error('Stale boundaries must be rejected before RPC evidence collection') }
+  assert.deepEqual(await worker.run(), { ready: false, reason: 'stale_period_boundaries' })
+  assert.equal((await db.query('SELECT count(*) FROM vault_return_reports')).rows[0].count, '0')
+}))
