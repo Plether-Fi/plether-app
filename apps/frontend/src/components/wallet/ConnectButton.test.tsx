@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   authenticated: true,
   ready: true,
   connectionPending: false,
+  connectionError: null as string | null,
+  retryConnection: vi.fn(),
   connect: vi.fn(),
   selectWallet: vi.fn(),
 }))
@@ -21,6 +23,7 @@ vi.mock('../../config/wagmi', () => ({ anvil: { id: 31337 } }))
 vi.mock('../../hooks', () => ({ useSwitchToArbitrumSepolia: () => ({ clearSwitchError: vi.fn() }) }))
 vi.mock('../../wallet/useWalletActions', () => ({ useWalletActions: () => ({
   ready: mocks.ready, configured: true, authenticated: mocks.authenticated, connectionPending: mocks.connectionPending,
+  connectionError: mocks.connectionError, retryConnection: mocks.retryConnection, error: mocks.connectionError,
   wallets: [{ address: emailAddress, embedded: true, name: 'Social wallet' }],
   selectWallet: mocks.selectWallet,
   connect: mocks.connect,
@@ -31,6 +34,8 @@ beforeEach(() => {
   mocks.authenticated = true
   mocks.ready = true
   mocks.connectionPending = false
+  mocks.connectionError = null
+  mocks.retryConnection.mockClear()
   mocks.selectWallet.mockClear()
   mocks.connect.mockClear()
 })
@@ -81,4 +86,17 @@ it('shows the wallet choice once initialization finishes with no selected owner'
   mocks.ready = true
   view.rerender(<MemoryRouter initialEntries={['/privacy']}><ConnectButton /></MemoryRouter>)
   expect(screen.getByRole('button', { name: 'Select Wallet' })).toBeEnabled()
+})
+
+it('replaces the spinner with an enabled retry when wallet initialization fails', () => {
+  mocks.ready = false
+  mocks.connectionPending = true
+  mocks.connectionError = 'We couldn’t connect to the wallet service.'
+  render(<MemoryRouter><ConnectButton /></MemoryRouter>)
+  expect(screen.queryByRole('button', { name: 'Connecting…' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Retry connection' })).toBeEnabled()
+  screen.getByRole('button', { name: 'Retry connection' }).click()
+  expect(mocks.retryConnection).toHaveBeenCalledOnce()
+  expect(mocks.connect).not.toHaveBeenCalled()
+  expect(screen.getByRole('alert')).toHaveTextContent(mocks.connectionError)
 })

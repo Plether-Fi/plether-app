@@ -19,7 +19,8 @@ const macMfaKey = Buffer.from('public-offline-mac-passkey').toString('base64url'
 const mobileMfaKey = Buffer.from('public-offline-mobile-passkey').toString('base64url')
 const securityMfaKey = Buffer.from('public-offline-security-passkey').toString('base64url')
 type MfaUpdateFixture = { names?: Record<string, string>; outcome: 'success' | 'submit-error'; verified: number; refreshed: number; submissions: string[][] }
-async function openApp(page: Page, selection = 'disconnected', hostname?: string, googleFixture: GoogleFixture = 'provider', passkeyFixture: PasskeyFixture = 'cancel', mfaSession: boolean | 'enrolled' = false, mfaUpdate?: MfaUpdateFixture): Promise<TestWalletController> {
+type InitializationFixture = { failing: boolean; mode: 'error' | 'hang'; requests: number; held: (() => Promise<void>)[] }
+async function openApp(page: Page, selection = 'disconnected', hostname?: string, googleFixture: GoogleFixture = 'provider', passkeyFixture: PasskeyFixture = 'cancel', mfaSession: boolean | 'enrolled' = false, mfaUpdate?: MfaUpdateFixture, initialization?: InitializationFixture): Promise<TestWalletController> {
   const wallet = await installTestWallet(page)
   let googleCancelUrl = ''
   const passkeyNames = mfaUpdate?.names ?? {}
@@ -149,6 +150,18 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
         'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '*',
       }
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers })
+      if (initialization) {
+        initialization.requests++
+        if (initialization.failing) {
+          if (initialization.mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Wallet service unavailable' } })
+          return new Promise<void>(resolve => {
+            initialization.held.push(async () => {
+              await route.abort().catch(() => { /* The old request may already have been cancelled. */ })
+              resolve()
+            })
+          })
+        }
+      }
       return route.fulfill({ headers, json: { token: mfaToken, privy_access_token: mfaToken,
         refresh_token: 'public-offline-refresh-token', user: sessionUser } })
     }
@@ -243,7 +256,7 @@ async function openApp(page: Page, selection = 'disconnected', hostname?: string
   const url = new URL('/privacy', test.info().project.use.baseURL)
   if (hostname) url.hostname = hostname
   await page.goto(url.href)
-  await expect(mfaSession ? selection === 'disconnected' ? selectButton(page) : accountButton(page) : connectButton(page)).toBeEnabled()
+  if (!initialization) await expect(mfaSession ? selection === 'disconnected' ? selectButton(page) : accountButton(page) : connectButton(page)).toBeEnabled()
   return wallet
 }
 
@@ -262,6 +275,31 @@ async function approveConnection(page: Page) {
 async function selectedOwner(page: Page) {
   return page.evaluate(key => sessionStorage.getItem(key), selectionKey)
 }
+
+for (const mode of ['error', 'hang'] as const) test(`wallet initialization ${mode} shows an error and retries the real SDK without clearing the session`, async ({ page }) => {
+  const initialization: InitializationFixture = { failing: true, mode, requests: 0, held: [] }
+  if (mode === 'hang') await page.clock.install()
+  await openApp(page, 'disconnected', undefined, 'provider', 'cancel', true, undefined, initialization)
+  if (mode === 'hang') {
+    await expect.poll(() => initialization.requests).toBeGreaterThan(0)
+    await page.clock.runFor(20_001)
+  }
+  const dialog = page.getByRole('dialog', { name: 'Wallet connection unavailable' })
+  await expect(dialog).toBeVisible({ timeout: 25_000 })
+  await expect(dialog.getByRole('button', { name: 'Retry connection' })).toBeEnabled()
+  await expect(page.getByRole('banner').getByRole('button', { name: 'Connecting…' })).not.toBeVisible()
+  const stored = await page.evaluate(key => ({ owner: sessionStorage.getItem(key), refresh: localStorage.getItem('privy:refresh_token') }), selectionKey)
+  const requestsBeforeRetry = initialization.requests
+  initialization.failing = false
+  if (mode === 'hang') await page.clock.resume()
+  await dialog.getByRole('button', { name: 'Retry connection' }).click()
+  await expect(selectButton(page)).toBeEnabled()
+  await expect(dialog).not.toBeVisible()
+  expect(initialization.requests).toBeGreaterThan(requestsBeforeRetry)
+  expect(await page.evaluate(key => ({ owner: sessionStorage.getItem(key), refresh: localStorage.getItem('privy:refresh_token') }), selectionKey)).toEqual(stored)
+  for (const release of initialization.held) await release()
+  await expect(selectButton(page)).toBeEnabled()
+})
 
 test('restored Google wallet shows loading then its address without flashing a wallet-choice button', async ({ page }) => {
   await page.addInitScript(() => {

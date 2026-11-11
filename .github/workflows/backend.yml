@@ -30,6 +30,8 @@ jobs:
           cache-dependency-path: apps/backend/oracle-worker/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: apps/backend/oracle-worker
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Verify Divisions handles match registrations and preserve standings
         run: node --test scripts/divisions-public-handles.test.mjs scripts/divisions-publications.test.mjs
@@ -117,6 +119,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
+
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
 
@@ -190,6 +195,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
 
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config postgresql-client
@@ -265,6 +273,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
 
       - name: Install native dependencies
         run: |

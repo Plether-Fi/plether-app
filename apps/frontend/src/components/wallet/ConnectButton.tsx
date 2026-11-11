@@ -18,7 +18,7 @@ const SWITCH_NETWORK_BUTTON_CLASS =
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
-  const { connect, openAccount, ready, configured, authenticated, connectionPending, error } = useWalletActions()
+  const { connect, openAccount, ready, configured, authenticated, connectionPending, connectionError, retryConnection, error } = useWalletActions()
   const {
     switchToArbitrumSepolia,
     isSwitching: isSwitchingNetwork,
@@ -50,11 +50,11 @@ export function ConnectButton() {
     || location.pathname === '/vaults'
     || location.pathname.startsWith('/vaults/')
   const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
-  if (!isConnected || connectionPending) {
+  if (!isConnected || connectionPending || connectionError) {
     // A restored Privy login can still need an explicit trading-wallet choice.
     // Keep that distinct from signing in; authentication alone is not a signer.
-    const pending = configured && (!ready || connectionPending)
-    const label = pending ? 'Connecting…' : authenticated ? 'Select Wallet' : 'Connect Wallet'
+    const pending = configured && !connectionError && (!ready || connectionPending)
+    const label = connectionError ? 'Retry connection' : pending ? 'Connecting…' : authenticated ? 'Select Wallet' : 'Connect Wallet'
     return (
       <div className="flex max-w-xs flex-col items-end gap-1">
         <button
@@ -63,13 +63,14 @@ export function ConnectButton() {
           aria-busy={pending}
           onClick={() => {
             clearSwitchError()
-            connect()
+            if (connectionError) retryConnection?.()
+            else connect()
           }}
-          disabled={pending || !ready || !configured}
+          disabled={connectionError ? !retryConnection : pending || !ready || !configured}
           className={`${WALLET_BUTTON_CLASS} text-xs font-medium sm:text-sm`}
         >
           <span className={`material-symbols-outlined text-lg${pending ? ' animate-spin' : ''}`} aria-hidden="true">
-            {pending ? 'progress_activity' : 'account_balance_wallet'}
+            {connectionError ? 'error' : pending ? 'progress_activity' : 'account_balance_wallet'}
           </span>
           <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[340px]:inline">
             {label}
