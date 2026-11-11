@@ -546,6 +546,8 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
   const readAccount = address ?? zeroAddress
   const depositReceiver = address ?? DEPOSIT_PROBE_ACCOUNT
   const { data, isLoading, refetch } = useReadContracts({
+    // Keep each multicall within the public RPC's default two-million-gas budget.
+    batchSize: 256,
     contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
