@@ -1012,3 +1012,35 @@ account count, and a heartbeat. Operations alarms fire at 300 seconds unresolved
 risk, 60 seconds without confirmed progress, 60 seconds without classification,
 and two missing one-minute heartbeat periods. The watchdog uses an additional
 pool connection, does not submit transactions, and is disabled for dry runs.
+
+## Sepolia keeper submission latency
+
+On chain 421614, the keeper overlaps fresh nonce, gas-estimate (when needed),
+gas-price and priority-fee reads. Signing still waits for all required inputs;
+the existing priority-fee fallback, fee/gas buffers, signer serialization,
+preflight and durable pre-broadcast journal remain authoritative. Other chains
+retain sequential reads. No nonce, gas estimate or fee result is cached across
+submissions.
+
+Sepolia receipt observation polls immediately, then every 50 ms during the first
+second, every 250 ms until five seconds, and every second thereafter. The
+120-second timeout, RPC-error behavior, receipt processing and confirmation
+requirements are unchanged. Other chains retain their previous polling cadence.
+Faster polling observes inclusion sooner; it does not reduce confirmation rules
+or authorize another nonce while a broadcast remains unresolved.
+
+`keeper_submission_timing` logs the transaction hash and monotonic
+`preparation_reads_ms`, `sign_duration_ms`, `journal_duration_ms` and
+`send_duration_ms`. `keeper_receipt_observed` adds `poll_count` and `duration_ms`
+after receipt retrieval. These optional observations cannot suppress receipt
+processing or cause another send. Raw signed bytes and signer credentials are
+never included. Match receipt/submit hashes and canonical order events when
+comparing timing cohorts; first global Pyth availability is a different metric.
+
+For a scoped rollout, the backend workflow accepts `deployment_scope=workers`
+only for Sepolia. It updates the existing consolidated `plether-workers` service
+and retains the existing approval, account, runtime-policy and singleton guards.
+Use `environment=sepolia`, `bootstrap=false`, and
+`close_assistance_mode=preserve`. This scope leaves API, Alto and other services
+on their existing revisions. Inspect all consolidated container settings and
+readiness before and after rolling the service.

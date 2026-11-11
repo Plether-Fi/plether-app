@@ -66,6 +66,7 @@ import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
 import Plether.Keeper.Broadcast (saveOrderBroadcast, markBroadcastSubmitted, clearBroadcast, reconcileBroadcast)
+import Plether.Keeper.Submission (readPreparationInputs, pollReceiptWith, ReceiptPollError (..))
 import Plether.Keeper.Reliability (runOrderReliabilityObserver)
 import Plether.Keeper.Wakeup
   ( WakeupMode (..), readWakeupMode, newWakeup
@@ -2762,13 +2763,16 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
       deriveAddress privateKey >>= \case
         Left err -> pure $ Left (False, err)
         Right fromAddr -> do
-          nonceResult <- ethGetTransactionCount client fromAddr
-          gasResult <-
-            case gasLimitOverride of
-              Nothing -> ethEstimateGas client fromAddr target value callData
-              Just gasLimit -> pure $ Right gasLimit
-          gasPriceResult <- ethGasPrice client
-          priorityResult <- ethMaxPriorityFeePerGas client
+          preparationStarted <- getMonotonicTimeNSec
+          (nonceResult, gasResult, gasPriceResult, priorityResult) <-
+            readPreparationInputs (cfgPerpsChainId cfg)
+              (ethGetTransactionCount client fromAddr)
+              (case gasLimitOverride of
+                Nothing -> ethEstimateGas client fromAddr target value callData
+                Just gasLimit -> pure $ Right gasLimit)
+              (ethGasPrice client)
+              (ethMaxPriorityFeePerGas client)
+          preparedAt <- getMonotonicTimeNSec
           case (nonceResult, gasResult, gasPriceResult) of
             (Right nonce, Right estimatedGas, Right gasPrice) -> do
               let priorityBase = fromRight gasPrice priorityResult
@@ -2794,6 +2798,7 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
               case signResult of
                 Left err -> pure $ Left (False, err)
                 Right signed -> do
+                  signedAt <- getMonotonicTimeNSec
                   beforeBroadcast signed
                   sendStarted <- getMonotonicTimeNSec
                   sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
@@ -2805,14 +2810,23 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
                       -- The mandatory journal is already durable. Optional UI
                       -- observation failures cannot skip the receipt wait or
                       -- cause a second send; cancellation still propagates.
-                      observed <- trySynchronous $ onAcknowledged txHash
-                        (fromIntegral (acknowledgedAt - sendStarted) / 1_000_000)
-                        (fromIntegral (acknowledgedAt - signStarted) / 1_000_000)
+                      observed <- trySynchronous $ do
+                        onAcknowledged txHash
+                          (fromIntegral (acknowledgedAt - sendStarted) / 1_000_000)
+                          (fromIntegral (acknowledgedAt - signStarted) / 1_000_000)
+                        when (cfgPerpsChainId cfg == 421614) $
+                          logInfo "keeper_submission_timing" "Keeper submission stages completed; receipt verification remains pending"
+                            [ field "transaction_hash" txHash
+                            , field "preparation_reads_ms" (fromIntegral (preparedAt - preparationStarted) / 1_000_000 :: Double)
+                            , field "sign_duration_ms" (fromIntegral (signedAt - signStarted) / 1_000_000 :: Double)
+                            , field "journal_duration_ms" (fromIntegral (sendStarted - signedAt) / 1_000_000 :: Double)
+                            , field "send_duration_ms" (fromIntegral (acknowledgedAt - sendStarted) / 1_000_000 :: Double)
+                            ]
                       case observed of
                         Left _ -> logWarnEvery 60 "keeper_submission_observation_unavailable"
                           "Keeper submission observation unavailable; durable receipt reconciliation continues" []
                         Right () -> pure ()
-                      receiptResult <- waitForReceipt client txHash
+                      receiptResult <- waitForReceipt (cfgPerpsChainId cfg) client txHash
                       pure $ either (\err -> Left (True, err)) Right receiptResult
             _ ->
               pure $
@@ -2827,22 +2841,23 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
                         ]
                   )
 
-waitForReceipt :: EthClient -> Text -> IO (Either Text TxReceipt)
-waitForReceipt client txHash = do
+waitForReceipt :: Integer -> EthClient -> Text -> IO (Either Text TxReceipt)
+waitForReceipt chainId client txHash = do
   started <- getMonotonicTimeNSec
-  let poll = do
-        now <- getMonotonicTimeNSec
-        if now - started >= 120_000_000_000
-          then pure $ Left $ "timed out waiting for receipt " <> txHash
-          else ethGetTransactionReceipt client txHash >>= \case
-            Left err -> pure $ Left $ rpcErrorText err
-            Right (Just receipt) -> pure $ Right receipt
-            Right Nothing -> do
-              -- Arbitrum normally includes quickly. Avoid adding two seconds
-              -- per batch, while reducing RPC pressure on delayed transactions.
-              threadDelay $ if now - started < 5_000_000_000 then 250_000 else 1_000_000
-              poll
-  poll
+  result <- pollReceiptWith chainId getMonotonicTimeNSec threadDelay (ethGetTransactionReceipt client txHash)
+  case result of
+    Left ReceiptPollTimeout -> pure $ Left $ "timed out waiting for receipt " <> txHash
+    Left (ReceiptReadFailed err) -> pure $ Left $ rpcErrorText err
+    Right (receipt, polls) -> do
+      finished <- getMonotonicTimeNSec
+      -- Optional timings cannot suppress receipt processing or cause a replay.
+      _ <- trySynchronous $ when (chainId == 421614) $
+        logInfo "keeper_receipt_observed" "Keeper receipt retrieved; canonical order outcomes will be checked"
+          [ field "transaction_hash" txHash
+          , field "poll_count" polls
+          , field "duration_ms" (fromIntegral (finished - started) / 1_000_000 :: Double)
+          ]
+      pure $ Right receipt
 
 applyReceipt :: Config -> Connection -> [Integer] -> TxReceipt -> IO ()
 applyReceipt cfg conn targetIds receipt = do
