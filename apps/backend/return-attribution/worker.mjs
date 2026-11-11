@@ -143,7 +143,7 @@ export class ReturnAttributionWorker {
       if (!receipt || receipt.transactionHash !== txHash || receipt.blockHash !== hash || BigInt(receipt.blockNumber) !== number || receipt.status !== '0x1') throw new AttributionError('Settlement receipt identity/status mismatch')
       const indices = receipt.logs.map(entry => entry.logIndex)
       if (new Set(indices).size !== indices.length || receipt.logs.some(entry => entry.transactionHash !== txHash || entry.blockHash !== hash || BigInt(entry.blockNumber) !== number)) throw new AttributionError('Receipt log identity mismatch')
-      const trace = await this.client.request({ method: 'debug_traceTransaction', params: [txHash, { tracer: 'callTracer', timeout: '30s' }] })
+      const trace = await this.client.request({ method: 'debug_traceTransaction', params: [txHash, { tracer: 'callTracer', timeout: '20s' }] })
       // Parse before caching, so failed/unsupported traces cannot poison a cache.
       decodeActions(trace, receipt.logs, this.release)
       if ((await this.block(number, true)).hash !== hash) throw new AttributionError('Settlement trace reorged')
