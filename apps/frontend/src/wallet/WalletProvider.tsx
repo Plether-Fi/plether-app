@@ -31,6 +31,7 @@ import { isPasskeyOriginSupported } from './passkeyOrigin'
 import { clearGoogleLoginIntent, isGoogleLoginReturn, saveGoogleLoginIntent } from './googleLoginIntent'
 import { useModalBackButton } from '../hooks/useModalBackButton'
 import { WalletModalHistory } from './WalletModalHistory'
+import { WalletConnectionError } from './WalletConnectionError'
 
 type LoginMethod = 'email' | 'google' | 'passkey'
 
@@ -82,8 +83,8 @@ function SyncedWalletActions({
   // disabled while it is still exposing the previous owner's signer.
   const signerReady = actions.ready && expectedAddress !== undefined && !isConnecting && !isReconnecting
     && address?.toLowerCase() === expectedAddress.toLowerCase()
-  const connectionPending = !actions.ready || isConnecting || isReconnecting
-    || (expectedAddress !== undefined && !signerReady)
+  const connectionPending = !actions.connectionError && (!actions.ready || isConnecting || isReconnecting
+    || (expectedAddress !== undefined && !signerReady))
   return (
     <WalletActionsContext value={{ ...actions, signerReady, connectionPending }}>
       {children}
@@ -92,7 +93,7 @@ function SyncedWalletActions({
 }
 
 function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
-  const { ready: authReady, authenticated, user, logout } = usePrivy()
+  const { ready: authReady, authenticated, user, logout, error: initializationError } = usePrivy()
   const closeWalletPicker = usePletherWalletPickerClose()
   const { isOpen: authModalOpen } = useModalStatus()
   useModalBackButton(authModalOpen, () => {
@@ -129,13 +130,41 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   const embeddedWalletCreation = useRef<{ userId: string; revision: number } | null>(null)
   const bridgeSelection = useMemo(() => ({ owner: selection, retry: bridgeRevision }), [selection, bridgeRevision])
   const [error, setError] = useState<string | null>(null)
-  const ready = authReady && walletsReady
+  const [retrying, setRetrying] = useState(false)
+  const ready = authReady && walletsReady && !retrying
+  const [initializationTimedOut, setInitializationTimedOut] = useState(false)
+  useEffect(() => {
+    if (ready) {
+      setInitializationTimedOut(false)
+      return
+    }
+    const timeout = window.setTimeout(() => { setInitializationTimedOut(true) }, 20_000)
+    return () => { window.clearTimeout(timeout) }
+  }, [ready])
+  const connectionError = !ready && (initializationError || initializationTimedOut)
+    ? 'We couldn’t connect to the wallet service. Please try again in a moment.'
+    : null
+  useEffect(() => {
+    if (!connectionError || !authModalOpen) return
+    // Replace a stalled SDK dialog with our recoverable error state.
+    void closeWalletPicker().catch(() => { /* The error and header retry remain available. */ })
+  }, [connectionError, authModalOpen, closeWalletPicker])
   const session = useRef({ ready, authenticated, userId: user?.id })
   useLayoutEffect(() => { session.current = { ready, authenticated, userId: user?.id } }, [ready, authenticated, user?.id])
   const availableOwner = selectedWallet(wallets, selection)?.address
   useLayoutEffect(() => {
     signingGuard.setReady(ready && availableOwner !== undefined)
+    return () => { signingGuard.setReady(false) }
   }, [ready, availableOwner, signingGuard])
+
+  const retryConnection = () => {
+    // A pending SDK session request can survive a provider remount. Reload to
+    // cancel it, keeping persisted login data and the selected owner intact.
+    signingGuard.setReady(false)
+    setRetrying(true)
+    config.setState(state => ({ ...state, connections: new Map(), current: null, status: 'disconnected' }))
+    window.location.reload()
+  }
 
   const updateSelection = useCallback((address: string | null) => {
     clearGoogleLoginIntent(selectionKey)
@@ -391,6 +420,8 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
     ready,
     signerReady: false,
     connectionPending: !ready,
+    connectionError,
+    retryConnection,
     authenticated,
     modalOpen: authModalOpen || accountOpen,
     wallets: wallets.map(wallet => ({
@@ -398,7 +429,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
       name: wallet.walletClientType === 'privy' ? 'Social wallet' : wallet.meta.name,
       embedded: wallet.walletClientType === 'privy',
     })),
-    error,
+    error: connectionError ?? error,
     connect: () => {
       if (!ready) return
       accountIntent.current = undefined
@@ -501,6 +532,7 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
             </div>
           </WalletModalHistory>} />
         {children}
+        {connectionError ? <WalletConnectionError message={connectionError} onRetry={retryConnection} /> : null}
       </SyncedWalletActions>
     </WagmiProvider>
   )

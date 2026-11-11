@@ -11,6 +11,8 @@ export interface WalletActions {
   ready: boolean
   signerReady: boolean
   connectionPending: boolean
+  connectionError?: string | null
+  retryConnection?: () => void
   authenticated: boolean
   modalOpen: boolean
   wallets: WalletOption[]

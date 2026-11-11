@@ -24,6 +24,7 @@ const sdk = vi.hoisted(() => {
   vi.stubEnv('VITE_PRIVY_APP_ID', 'bridge-integration')
   return {
     ready: true,
+    initializationError: null as Error | null,
     walletsReady: true,
     authenticated: false,
     user: null as { id?: string; mfaMethods?: string[]; linkedAccounts: unknown[] } | null,
@@ -69,7 +70,7 @@ vi.mock('@privy-io/react-auth', () => {
       // Match the SDK's stable user identity. Cloning it on each render makes
       // the real bridge reconnect unnecessarily because it observes user changes.
       if (sdk.user) sdk.user.mfaMethods ??= []
-      return { ready: sdk.ready, authenticated: sdk.authenticated, user: sdk.user, logout: sdk.logout }
+      return { ready: sdk.ready, authenticated: sdk.authenticated, user: sdk.user, logout: sdk.logout, error: sdk.initializationError }
     },
     useWallets: () => ({ ready: sdk.walletsReady, wallets: sdk.wallets }),
     useModalStatus: () => ({ isOpen: false }),
@@ -208,6 +209,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   sdk.events.clear()
   sdk.ready = true
+  sdk.initializationError = null
   sdk.walletsReady = true
   sdk.authenticated = false
   sdk.user = null
@@ -889,6 +891,40 @@ describe('WalletProvider and installed Privy/Wagmi bridge integration', () => {
     view.refresh()
     await expectConnected(next.account.address)
     expect(sessionStorage.getItem(selectionKey)).toBe(next.account.address.toLowerCase())
+  })
+
+  it('revokes cached signers during initialization recovery and restores the saved owner only through the fresh bridge', async () => {
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {})
+    const test = testWallet(0)
+    sdk.wallets = [test.wallet]
+    const view = mount(true)
+    await expectConnected(test.account.address)
+    const cachedClient = await getWalletClient(config)
+    sdk.ready = false
+    sdk.initializationError = new Error('Session refresh timed out')
+    view.refresh()
+    expect(screen.getByRole('dialog', { name: 'Wallet connection unavailable' })).toBeInTheDocument()
+    expect(actions.connectionPending).toBe(false)
+    expect(actions.signerReady).toBe(false)
+    await expect(cachedClient.signMessage({ message: 'Must not sign while restarting' })).rejects.toThrow(/not ready/)
+    act(() => { actions.retryConnection?.() })
+    expect(reload).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem(selectionKey)).toBe(test.account.address.toLowerCase())
+    expect(sdk.logout).not.toHaveBeenCalled()
+    sdk.ready = true
+    sdk.initializationError = null
+    view.refresh()
+    expect(actions.signerReady).toBe(false)
+    await expect(cachedClient.signMessage({ message: 'Late initialization cannot reactivate a retrying signer' })).rejects.toThrow(/not ready/)
+    view.unmount()
+    mount()
+    await expectConnected(test.account.address)
+    await expect(cachedClient.signMessage({ message: 'Old provider stays revoked after retry' })).rejects.toThrow(/not ready/)
+    const client = await getWalletClient(config)
+    const message = 'Fresh bridge after wallet recovery'
+    const signature = await client.signMessage({ message })
+    expect(await verifyMessage({ address: test.account.address, message, signature })).toBe(true)
+    reload.mockRestore()
   })
 
   it('disconnects synchronously, revokes a cached signer, stays disconnected after remount, and can reconnect', async () => {

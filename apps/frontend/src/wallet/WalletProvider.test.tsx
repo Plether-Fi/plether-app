@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient } from '@tanstack/react-query'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WalletActions } from './useWalletActions'
 
 interface MockWallet {
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
   vi.stubEnv('VITE_PRIVY_APP_ID', 'test-privy-app')
   return {
     ready: true,
+    initializationError: null as Error | null,
     walletsReady: true,
     authenticated: false,
     modalOpen: false,
@@ -42,7 +43,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('@privy-io/react-auth', () => ({
   PrivyProvider: ({ children }: { children: ReactNode }) => children,
   useActiveWallet: () => ({ wallet: mocks.nativeWallet, connect: mocks.openNative, setActiveWallet: mocks.setNative }),
-  usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated, logout: mocks.logout }),
+  usePrivy: () => ({ ready: mocks.ready, authenticated: mocks.authenticated, logout: mocks.logout, error: mocks.initializationError }),
   useModalStatus: () => ({ isOpen: mocks.modalOpen }),
   useWallets: () => ({ ready: mocks.walletsReady, wallets: mocks.wallets }),
   useLinkAccount: () => ({ linkGoogle: vi.fn(), linkPasskey: vi.fn() }),
@@ -106,6 +107,7 @@ describe('Privy wallet actions', () => {
     sessionStorage.clear()
   localStorage.clear()
     mocks.ready = true
+    mocks.initializationError = null
     mocks.walletsReady = true
     mocks.authenticated = false
     mocks.modalOpen = false
@@ -117,6 +119,44 @@ describe('Privy wallet actions', () => {
     mocks.logout.mockResolvedValue(undefined)
     mocks.exportWallet.mockResolvedValue(undefined)
     mocks.setRecovery.mockResolvedValue(undefined)
+  })
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+
+  it('shows a recoverable initialization error without exposing provider details or changing saved login data', () => {
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {})
+    mocks.ready = false
+    mocks.initializationError = new Error('private provider request details')
+    mocks.modalOpen = true
+    sessionStorage.setItem('plether.privy.test-privy-app.owner', ownerAddress)
+    localStorage.setItem('privy:refresh_token', 'public-test-refresh-token')
+    render(tree())
+    expect(screen.getByRole('dialog', { name: 'Wallet connection unavailable' })).toBeInTheDocument()
+    expect(screen.queryByText('private provider request details')).not.toBeInTheDocument()
+    expect(actions.ready).toBe(false)
+    expect(actions.connectionPending).toBe(false)
+    expect(actions.signerReady).toBe(false)
+    expect(mocks.closePicker).toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }))
+    expect(reload).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem('plether.privy.test-privy-app.owner')).toBe(ownerAddress)
+    expect(localStorage.getItem('privy:refresh_token')).toBe('public-test-refresh-token')
+    expect(mocks.logout).not.toHaveBeenCalled()
+  })
+
+  it('times out a hung initialization and returns to normal if it subsequently succeeds', () => {
+    vi.useFakeTimers()
+    mocks.ready = false
+    const view = render(tree())
+    act(() => { vi.advanceTimersByTime(19_999) })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(screen.getByRole('dialog', { name: 'Wallet connection unavailable' })).toBeInTheDocument()
+    expect(actions.connectionPending).toBe(false)
+    mocks.ready = true
+    view.rerender(tree())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(actions.connectionError).toBeNull()
+    expect(actions.ready).toBe(true)
   })
 
   it('connects an external wallet without requiring authenticated state', () => {

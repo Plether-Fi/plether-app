@@ -4641,7 +4641,7 @@ function VaultActionPanel({
   onRefreshRequests: () => void
   onViewRequests: () => void
 }) {
-  const { ready: walletReady, configured: walletConfigured } = useWalletActions()
+  const { ready: walletReady, configured: walletConfigured, connectionError: walletConnectionError } = useWalletActions()
   const [mode, setMode] = useState<ActionMode>('deposit')
   const [amount, setAmount] = useState('')
   const [showPreview, setShowPreview] = useState(false)
@@ -5064,7 +5064,7 @@ function VaultActionPanel({
           ) : null}
           {!isConnected && (!walletConfigured || !walletReady) ? (
             <p role="status" className="text-xs leading-5 text-content-secondary">
-              {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : 'Preparing wallet connection…'}
+              {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : walletConnectionError ?? 'Preparing wallet connection…'}
             </p>
           ) : null}
           {switchError ? <p className="text-xs leading-5 text-brand-orange">{switchError}</p> : null}

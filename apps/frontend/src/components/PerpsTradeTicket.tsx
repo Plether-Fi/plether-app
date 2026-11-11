@@ -1820,7 +1820,7 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
-  const { connect, ready: walletReady, configured: walletConfigured, modalOpen: walletModalOpen } = useWalletActions()
+  const { connect, ready: walletReady, configured: walletConfigured, modalOpen: walletModalOpen, connectionError: walletConnectionError } = useWalletActions()
   const openSepoliaWelcome = useSettingsStore(state => state.openSepoliaWelcome)
   const deploymentConfirmation = useAccountDeploymentConfirmation()
   const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
@@ -4786,7 +4786,7 @@ export function PerpsTradeTicket({
         </Button>
         {isConnectWalletCta && (!walletConfigured || !walletReady) ? (
           <p role="status" className="text-xs leading-4 text-content-secondary">
-            {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : 'Preparing wallet connection…'}
+            {!walletConfigured ? 'Wallet connection is not configured for this deployment.' : walletConnectionError ?? 'Preparing wallet connection…'}
           </p>
         ) : null}
         {isSwitchNetworkCta && networkSwitchError ? (
