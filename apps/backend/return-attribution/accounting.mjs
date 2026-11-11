@@ -100,6 +100,7 @@ export function buildAttribution(start, end, transitions) {
   }
   for (const { snapshot: current, events } of transitions) {
     if (current.block <= previous.block || current.timestamp < previous.timestamp || current.block > end.block) throw new AttributionError('Noncanonical transition order')
+    if (!current.markFresh) notes.add('Pricing was temporarily stale during this period. The start and end prices are fresh, and temporary pricing gaps are not counted as trading gains or losses.')
     // A non-coupon senior recovery/loss requires source-specific waterfall
     // allocation. Do not publish gross pool revenue as Junior-owned income.
     if (current.rawSenior < current.highWaterMark || previous.rawSenior < previous.highWaterMark) throw new AttributionError('Senior impairment requires separate waterfall allocation')

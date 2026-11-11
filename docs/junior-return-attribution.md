@@ -40,8 +40,9 @@ starting diluted share price and accumulated using integer fixed point.
 Deposits, funded redemptions and bootstrap assignments are capital flows,
 never earnings. There is no average-capital or ending-TVL denominator.
 
-Only a complete 169-point, fresh seven-day history can receive a report. Period
-boundaries must be fresh. Internal stale-mark pool previews cannot manufacture
+Only a complete 169-point seven-day history can receive a report. Period
+boundaries must be fresh; stale intermediate snapshots do not block publication
+and are disclosed in the chart's notes. Internal stale-mark pool previews cannot manufacture
 income: their changes telescope through the independently observed net asset
 change, while open valuation comes from the terminal book. A maintenance-fee
 change needing a stale valuation fails closed. Senior impairment, unsupported

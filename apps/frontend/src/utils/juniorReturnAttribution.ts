@@ -60,7 +60,8 @@ export function juniorReturnPeriod(history?: VaultHistory): JuniorReturnPeriod |
   const last = points.at(-1)
   if (!first || !last || points.length < 2
     || first.timestamp !== history.coverage.start || last.timestamp !== history.coverage.end
-    || points.some((point, index) => !Number.isSafeInteger(point.timestamp) || !point.markFresh || !unsignedInteger(point.totalSupply) || BigInt(point.totalSupply) <= 0n
+    || !first.markFresh || !last.markFresh
+    || points.some((point, index) => !Number.isSafeInteger(point.timestamp) || typeof point.markFresh !== 'boolean' || !unsignedInteger(point.totalSupply) || BigInt(point.totalSupply) <= 0n
       || !unsignedInteger(point.sharePrice) || (index > 0 && (point.timestamp <= points[index - 1].timestamp
         || point.timestamp - points[index - 1].timestamp > 5400)))) return undefined
   return {
