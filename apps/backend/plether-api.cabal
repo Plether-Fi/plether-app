@@ -40,6 +40,7 @@ library
         Plether.AA.OracleReadiness
         Plether.Keeper.Broadcast
         Plether.Keeper.Funding
+        Plether.Keeper.Submission
         Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
         Plether.Keeper.Wakeup
@@ -427,6 +428,7 @@ test-suite plether-api-test
         Plether.AA.ReadinessSpec
         Plether.AA.OracleReadinessSpec
         Plether.Keeper.FundingSpec
+        Plether.Keeper.SubmissionSpec
         Plether.Keeper.WakeupSpec
         Plether.Keeper.CommitmentHintsSpec
         Plether.Database.ExecutionProgressSpec

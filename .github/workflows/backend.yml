@@ -71,6 +71,9 @@ jobs:
           python3 -m unittest discover -s infra/rpc/ops -p 'test_alto_rpc_cutover.py'
           node --test infra/alto/rpc-auth.test.mjs infra/alto/qualify-rpc.test.mjs infra/alto/qualify-drain.test.mjs
 
+      - name: Test Sepolia workers-only deployment scope
+        run: node --test scripts/backend-workers-scope.test.mjs
+
       - name: Reject Blockscout runtime dependencies
         working-directory: .
         run: |

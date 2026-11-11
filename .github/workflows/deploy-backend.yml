@@ -25,13 +25,14 @@ on:
           - preserve
           - disabled
       deployment_scope:
-        description: Deploy every backend service or only the API
+        description: Deploy all backend services, only the API, or only Sepolia consolidated workers
         required: false
         default: all
         type: choice
         options:
           - all
           - api
+          - workers
 
 concurrency:
   # Shared with candle-admin.yml; never replace the deployed writer mode while
@@ -1055,6 +1056,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Validate Sepolia-only workers scope
+        env:
+          DEPLOYMENT_SCOPE: ${{ inputs.deployment_scope }}
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOYMENT_SCOPE" = workers ] && [ "$TARGET_ENV" != sepolia ]; then
+            echo "::error::The consolidated workers-only scope is restricted to Sepolia."
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
@@ -1150,7 +1161,7 @@ jobs:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
         # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"sepolia","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"},{"environment":"sepolia","task_suffix":"-protection-worker","service_name":"plether-position-protection-worker","container_name":"plether-position-protection-worker"}]')) }}
+        include: ${{ fromJson((inputs.deployment_scope == 'workers') && '[{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}]' || (inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"sepolia","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"},{"environment":"sepolia","task_suffix":"-protection-worker","service_name":"plether-position-protection-worker","container_name":"plether-position-protection-worker"}]')) }}
 
     steps:
       - name: Configure AWS credentials
