@@ -343,6 +343,64 @@ for (const action of ['attest-kms', 'resume-issuance']) {
   })
 }
 
+test('AA admin audit filters retain exact task scope and fixed-digest evidence', () => {
+  const scope = adminSource.match(/'(\[\.events\[\]\?[\s\S]*?)' \\\n\s+"\$log_events_file"/)?.[1]
+  const signature = adminSource.match(/'(any\(\.\[\];\n\s+\(\.signer_address[\s\S]*?)' \\\n\s+"\$evidence_file"/)?.[1]
+  assert.ok(scope && signature, 'execute actual CloudWatch scope and attestation matchers')
+  const args = {task: 'exact-task', container: 'plether-aa-admin', event: 'aa_admin_kms_attested', signer: '0x' + 'a'.repeat(40)}
+  const jq = (filter, value) => spawnSync('jq', ['-ce', ...Object.entries(args).flatMap(([k,v]) => ['--arg', k, v]), filter], {input: JSON.stringify(value), encoding: 'utf8'})
+  const record = {ecs_task_arn: args.task, container_name: args.container, event: args.event, log_schema_version: 1, level: 'INFO', signer_address: args.signer, signature_length: 65, recovery_parity: 0}
+  assert.equal(JSON.parse(jq(scope, {events: [{message: JSON.stringify(record)}]}).stdout).length, 1)
+  assert.equal(jq(signature, [record]).status, 0)
+  for (const [field, value] of Object.entries({signer_address: 'other', signature_length: 64, recovery_parity: 2})) {
+    assert.notEqual(jq(signature, [{...record, [field]: value}]).status, 0, field)
+  }
+})
+
+test('AA admin registration changes only command lifecycle while preserving the essential collector', () => {
+  const render = adminSource.match(/'(\.taskDefinition\n\s+\| del\([\s\S]*?)'\s+\\\n\s+"\$source_file" > "\$registration_file"/)?.[1]
+  const normalize = adminSource.match(/normalization_filter='([^']*)'/)?.[1]
+  const guard = adminSource.match(/'(\.family == \$family[\s\S]*?)'\s+\\\n\s+"\$registration_file"/)?.[1]
+  const readback = adminSource.match(/'(\.taskDefinition.taskDefinitionArn == \$arn[\s\S]*?)'\s+\\\n\s+"\$registered_file"/)?.[1]
+  assert.ok(render && normalize && guard && readback, 'execute actual registration and readback guards')
+  const fixture = JSON.parse(readFileSync(new URL('scripts/fixtures/aa-admin-kms-topology.json', root), 'utf8'))
+  const args = {
+    family: fixture.taskDefinition.family, app: 'plether-aa-admin', tmp: 'aa-admin-tmp-init', router: 'otel-log-router',
+    app_image: 'example/app@sha256:' + 'a'.repeat(64), router_image: 'example/router@sha256:' + 'b'.repeat(64),
+    owner: 'aa-admin-12345-1', capability: 'fixed-digest-kms-attestation',
+    arn: fixture.taskDefinition.taskDefinitionArn + '1', source: fixture.taskDefinition.taskDefinitionArn,
+  }
+  const command = ['/usr/local/bin/plether-aa-admin', 'attest-kms']
+  const jq = (filter, value) => {
+    const result = spawnSync('jq', ['-ce', ...Object.entries(args).flatMap(([k, v]) => ['--arg', k, v]), '--argjson', 'command', JSON.stringify(command), filter], {input: JSON.stringify(value), encoding: 'utf8'})
+    assert.ifError(result.error)
+    return result
+  }
+  const rendered = jq(render, fixture)
+  assert.equal(rendered.status, 0, rendered.stderr)
+  const registration = JSON.parse(rendered.stdout)
+  assert.equal(registration.containerDefinitions.find(v => v.name === args.app).essential, false)
+  assert.equal(registration.containerDefinitions.find(v => v.name === args.router).essential, true)
+  assert.equal(fixture.taskDefinition.containerDefinitions.find(v => v.name === args.app).essential, true)
+  assert.equal(jq(guard, registration).status, 0)
+  const normalizedSource = jq('.taskDefinition | ' + normalize, fixture).stdout
+  assert.deepEqual(JSON.parse(jq(normalize, registration).stdout), JSON.parse(normalizedSource))
+  for (const [label, mutate] of [
+    ['main made essential again', v => {v.containerDefinitions.find(c => c.name === args.app).essential = true}],
+    ['router made nonessential', v => {v.containerDefinitions.find(c => c.name === args.router).essential = false}],
+    ['unexpected task role', v => {v.taskRoleArn += '-other'}],
+    ['altered command', v => {v.containerDefinitions.find(c => c.name === args.app).command = ['sh']}],
+  ]) {
+    const value = structuredClone(registration); mutate(value)
+    const equivalent = JSON.stringify(JSON.parse(jq(normalize, value).stdout)) === JSON.stringify(JSON.parse(normalizedSource))
+    assert.equal(jq(guard, value).status === 0 && equivalent, false, label)
+  }
+  const registered = {tags: registration.tags, taskDefinition: {...registration, taskDefinitionArn: args.arn, status: 'ACTIVE'}}
+  assert.equal(jq(readback, registered).status, 0)
+  registered.taskDefinition.containerDefinitions.find(c => c.name === args.app).essential = true
+  assert.notEqual(jq(readback, registered).status, 0, 'ECS must preserve nonessential command lifecycle')
+})
+
 test('frontend health gate supports the exact legacy wrapper without accepting unhealthy bodies', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-frontend.yml', root), 'utf8')
   const filter = source.match(/! jq --exit-status '([\s\S]*?)' "\$health_body"/)?.[1]
