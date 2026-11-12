@@ -228,6 +228,33 @@ allowlisted methods are accepted; historical transaction traces and signing
 methods are excluded. Raw transaction sends, including mixed batches, are
 never automatically replayed after an ambiguous failure. Reverts are preserved.
 
+### Sequencer forwarding connection reuse
+
+The checked-in Sepolia configuration keeps forwarding connections idle for
+60 seconds and retains up to eight idle connections. These transport settings preserve Nitro's
+forwarding target, TLS verification, transaction prechecker, request timeout
+and retry behavior. They do not increase the keeper's transaction concurrency
+or alter signing, durable journaling, fees, gas limits or confirmation checks.
+
+The running pinned Nitro v3.12.2 defaults were verified on 2026-11-12: 15 seconds
+idle and one idle connection. In the measured 24-hour window, successful primary
+`eth_sendRawTransaction` requests following a gap under five seconds had a
+374 ms median (415 samples), versus 807 ms after at least 15 seconds idle
+(2,698 samples). Gaps were measured from the preceding request's completion to
+the next request's start. These include all callers and are observational,
+rather than a controlled keeper-only comparison. A read-only sequencer probe
+from the node measured 428 ms for TCP/TLS setup, then reused the same connection
+after 40 seconds idle for a 214 ms request. This supports avoiding a reconnection
+penalty; it does not establish a faster warm-broadcast baseline.
+
+Existing hosts keep their installed helper because bootstrap user data is
+create-only. Merging this configuration does not activate it on a running node.
+Activation requires a reviewed helper repair and guarded Nitro process restart,
+preserving the imported database and the existing Alchemy fallback. Repeat
+direct-primary qualification afterwards, then compare idle and warm broadcasts
+with the same timing definitions. Do not stop/start EC2 or reimport the database
+to apply transport tuning.
+
 ## Provisioning and publishing
 
 Use `infra/terraform-rpc` for the live pilot. Its separate backend key is
