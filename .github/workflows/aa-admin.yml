@@ -215,6 +215,12 @@ jobs:
             echo "::add-mask::$OPERATOR_NOTE"
           fi
 
+      - name: Check out reviewed audit lifecycle policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
@@ -959,6 +965,9 @@ jobs:
             }}' > "$network_file"
 
           registration_file="$RUNNER_TEMP/aa-admin-registration.json"
+          # Only the ephemeral command is nonessential. The reviewed essential
+          # FireLens router holds the task alive until CloudWatch evidence is
+          # verified; command and init exit codes remain mandatory success gates.
           jq \
             --arg app "$ADMIN_CONTAINER" \
             --arg tmp "$TMP_INIT_CONTAINER" \
@@ -972,7 +981,7 @@ jobs:
              | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
                    .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
              | .containerDefinitions |= map(
-                 if .name == $app then .image = $app_image | .command = $command
+                 if .name == $app then .image = $app_image | .command = $command | .essential = false
                  elif .name == $tmp then .image = $app_image
                  elif .name == $router then .image = $router_image
                  else . end)
@@ -990,6 +999,7 @@ jobs:
             | .containerDefinitions |= map(
                 if .name == "plether-aa-admin" then
                   .image = "<application-image>" | .command = ["<reviewed-command>"]
+                  | .essential = "<audit-managed-lifecycle>"
                 elif .name == "aa-admin-tmp-init" then
                   .image = "<application-image>"
                 elif .name == "otel-log-router" then
@@ -998,7 +1008,7 @@ jobs:
           if ! diff -u \
               <(jq -S ".taskDefinition | $normalization_filter" "$source_file") \
               <(jq -S "$normalization_filter" "$registration_file"); then
-            echo "::error title=Unsafe task registration::The generated task definition changed reviewed configuration outside the immutable images, exact command, and owner tags."
+            echo "::error title=Unsafe task registration::The generated task definition changed reviewed configuration outside the immutable images, exact command, command lifecycle, and owner tags."
             exit 1
           fi
           if ! jq --exit-status \
@@ -1012,7 +1022,7 @@ jobs:
               --arg owner "$REGISTRATION_OWNER" \
               --arg capability "$capability" \
               '.family == $family
-               and ([.containerDefinitions[] | select(.name == $app and .image == $app_image and .command == $command)] | length) == 1
+               and ([.containerDefinitions[] | select(.name == $app and .image == $app_image and .command == $command and .essential == false)] | length) == 1
                and ([.containerDefinitions[] | select(.name == $tmp and .image == $app_image)] | length) == 1
                and ([.containerDefinitions[] | select(.name == $router and .image == $router_image)] | length) == 1
                and ([.containerDefinitions[].image | test("@sha256:[0-9a-f]{64}$")] | all)
@@ -1063,7 +1073,7 @@ jobs:
                  "WorkflowOwner":$owner
                })
                and ([.taskDefinition.containerDefinitions[]
-                     | select(.name == $app and .image == $app_image and .command == $command)] | length) == 1
+                     | select(.name == $app and .image == $app_image and .command == $command and .essential == false)] | length) == 1
                and ([.taskDefinition.containerDefinitions[]
                      | select(.name == $tmp and .image == $app_image)] | length) == 1
                and ([.taskDefinition.containerDefinitions[]
@@ -1192,65 +1202,11 @@ jobs:
             echo "::add-mask::$OPERATOR_NOTE"
           fi
 
-          if ! aws ecs wait tasks-stopped \
-              --cluster "$ECS_CLUSTER" \
-              --tasks "$TASK_ARN" \
-              --no-cli-pager; then
-            echo "::error title=AA admin task did not stop::Cleanup will request a stop and verify its terminal state."
-            exit 1
-          fi
-
-          status_file="$RUNNER_TEMP/aa-admin-task-status.json"
-          aws ecs describe-tasks \
-            --cluster "$ECS_CLUSTER" \
-            --tasks "$TASK_ARN" \
-            --include TAGS \
-            --output json \
-            --no-cli-pager > "$status_file"
-          if ! jq --exit-status \
-              --arg arn "$TASK_ARN" \
-              --arg definition "$TASK_DEFINITION" \
-              --arg app "$ADMIN_CONTAINER" \
-              --arg init "$TMP_INIT_CONTAINER" \
-              --arg capability "$CAPABILITY" \
-              --arg owner "$REGISTRATION_OWNER" \
-              '# Apply the same no-effective-overrides boundary at terminal readback.
-               def no_effective_overrides:
-                 if (has("overrides") | not) then true
-                 else .overrides | if type != "object" then false
-                 else ((keys - ["containerOverrides", "inferenceAcceleratorOverrides"]) | length) == 0
-                   and (if has("inferenceAcceleratorOverrides") then .inferenceAcceleratorOverrides == [] else true end)
-                   and (if has("containerOverrides") then .containerOverrides |
-                     if type != "array" then false else
-                       all(.[]; if type != "object" then false else
-                         keys == ["name"]
-                         and (.name == "plether-aa-admin" or .name == "aa-admin-tmp-init" or .name == "otel-log-router")
-                       end)
-                       and ((map(.name) | unique | length) == length)
-                     end
-                   else true end)
-                 end end;
-               (.failures | length) == 0
-               and (.tasks | length) == 1
-               and .tasks[0].taskArn == $arn
-               and .tasks[0].taskDefinitionArn == $definition
-               and .tasks[0].desiredStatus == "STOPPED"
-               and .tasks[0].lastStatus == "STOPPED"
-               and .tasks[0].launchType == "FARGATE"
-               and .tasks[0].platformVersion == "1.4.0"
-               and (.tasks[0] | no_effective_overrides)
-               and ([.tasks[0].tags[]?
-                     | select(.key == "Capability" and .value == $capability)] | length) == 1
-               and ([.tasks[0].tags[]?
-                     | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1
-               and ([.tasks[0].containers[]
-                     | select(.name == $app and .lastStatus == "STOPPED" and .exitCode == 0)] | length) == 1
-               and ([.tasks[0].containers[]
-                     | select(.name == $init and .lastStatus == "STOPPED" and .exitCode == 0)] | length) == 1' \
-              "$status_file" >/dev/null; then
-            echo "::error title=AA admin operation failed::The exact one-off task did not reach a successful terminal state. Inspect its task-scoped restricted CloudWatch logs."
-            exit 1
-          fi
+          # An essential router keeps this task alive after the nonessential
+          # command exits. Success still requires the exact command's exit 0.
+          python3 .github/scripts/aa-admin-audit-lifecycle.py wait \
+            --task "$TASK_ARN" --definition "$TASK_DEFINITION" \
+            --owner "$REGISTRATION_OWNER" --capability "$CAPABILITY"
 
           started_ms=$(<"$RUNNER_TEMP/aa-admin-started-ms")
           log_events_file="$RUNNER_TEMP/aa-admin-log-events.json"
@@ -1311,7 +1267,71 @@ jobs:
             fi
             echo "The issuance breaker was cleared only after the exact expected-reason check, with task-scoped audit evidence."
           fi
+          # Audit evidence must be verified while the collector is alive. Only
+          # then stop the exact owned task and retain the full terminal checks.
+          python3 .github/scripts/aa-admin-audit-lifecycle.py stop \
+            --task "$TASK_ARN" --definition "$TASK_DEFINITION" \
+            --owner "$REGISTRATION_OWNER" --capability "$CAPABILITY"
 
+          if ! aws ecs wait tasks-stopped \
+              --cluster "$ECS_CLUSTER" \
+              --tasks "$TASK_ARN" \
+              --no-cli-pager; then
+            echo "::error title=AA admin task did not stop::Cleanup will request a stop and verify its terminal state."
+            exit 1
+          fi
+
+          status_file="$RUNNER_TEMP/aa-admin-task-status.json"
+          aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --include TAGS \
+            --output json \
+            --no-cli-pager > "$status_file"
+          if ! jq --exit-status \
+              --arg arn "$TASK_ARN" \
+              --arg definition "$TASK_DEFINITION" \
+              --arg app "$ADMIN_CONTAINER" \
+              --arg init "$TMP_INIT_CONTAINER" \
+              --arg capability "$CAPABILITY" \
+              --arg owner "$REGISTRATION_OWNER" \
+              '# Apply the same no-effective-overrides boundary at terminal readback.
+               def no_effective_overrides:
+                 if (has("overrides") | not) then true
+                 else .overrides | if type != "object" then false
+                 else ((keys - ["containerOverrides", "inferenceAcceleratorOverrides"]) | length) == 0
+                   and (if has("inferenceAcceleratorOverrides") then .inferenceAcceleratorOverrides == [] else true end)
+                   and (if has("containerOverrides") then .containerOverrides |
+                     if type != "array" then false else
+                       all(.[]; if type != "object" then false else
+                         keys == ["name"]
+                         and (.name == "plether-aa-admin" or .name == "aa-admin-tmp-init" or .name == "otel-log-router")
+                       end)
+                       and ((map(.name) | unique | length) == length)
+                     end
+                   else true end)
+                 end end;
+               (.failures | length) == 0
+               and (.tasks | length) == 1
+               and .tasks[0].taskArn == $arn
+               and .tasks[0].taskDefinitionArn == $definition
+               and .tasks[0].desiredStatus == "STOPPED"
+               and .tasks[0].lastStatus == "STOPPED"
+               and .tasks[0].launchType == "FARGATE"
+               and .tasks[0].platformVersion == "1.4.0"
+               and (.tasks[0] | no_effective_overrides)
+               and ([.tasks[0].tags[]?
+                     | select(.key == "Capability" and .value == $capability)] | length) == 1
+               and ([.tasks[0].tags[]?
+                     | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1
+               and ([.tasks[0].containers[]
+                     | select(.name == $app and .lastStatus == "STOPPED" and .exitCode == 0)] | length) == 1
+               and ([.tasks[0].containers[]
+                     | select(.name == $init and .lastStatus == "STOPPED" and .exitCode == 0)] | length) == 1' \
+              "$status_file" >/dev/null; then
+            echo "::error title=AA admin operation failed::The exact one-off task did not reach a successful terminal state. Inspect its task-scoped restricted CloudWatch logs."
+            exit 1
+          fi
       - name: Stop any owned task and deregister the temporary revision
         if: always()
         env:
