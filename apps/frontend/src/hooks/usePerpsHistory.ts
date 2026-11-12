@@ -9,6 +9,7 @@ import { formatDisplayDxyPrice, formatPerpsAssets, formatSignedPerpsAssets, perp
 export interface PerpsOrderHistoryRow {
   orderId: bigint
   time: string
+  terminalTimestampSeconds?: number
   market: string
   side: string
   type: string
@@ -331,6 +332,7 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   return {
     orderId,
     time: shortTime(row.terminalTimestamp ?? row.commitTimestamp),
+    terminalTimestampSeconds: row.terminalTimestamp,
     market: 'plDXY Perp',
     side: perpsSideLabel(row.side),
     type: orderKind(row),

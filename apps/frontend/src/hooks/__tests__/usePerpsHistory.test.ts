@@ -88,6 +88,7 @@ describe('waitForPerpsOrderTerminal', () => {
       timedOut: false,
       order: expect.objectContaining({
         orderId: 9202n,
+        terminalTimestampSeconds: 1_785_437_841,
         clientOrderId: `0x${'12'.repeat(32)}`,
         receiptHash: `0x${'34'.repeat(32)}`,
         terminalReason: 'Executed',

@@ -329,6 +329,7 @@ function LivePerps() {
             stopLossPriceRaw={perpsAccount.activePositionProtection?.stopLossTriggerPrice}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}
+            orderHistory={perpsHistory.orderHistory}
           />
         </div>
 

@@ -7,6 +7,8 @@ import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChar
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { liquidationDisplayPrice } from '../utils/perpsRisk'
 import { oraclePriceToDisplayDxyPrice } from '../utils/perps'
+import type { PerpsOrderHistoryRow } from '../hooks/usePerpsHistory'
+import { orderHistoryToMarkers } from '../tradingview/orderMarkers'
 
 export interface DxyBasketPanelProps {
   entryPriceRaw?: bigint
@@ -16,6 +18,7 @@ export interface DxyBasketPanelProps {
   stopLossPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
+  orderHistory?: PerpsOrderHistoryRow[]
 }
 
 export function DxyBasketPanel({
@@ -26,6 +29,7 @@ export function DxyBasketPanel({
   stopLossPriceRaw,
   marketPhase,
   marketCurrentDuration,
+  orderHistory = [],
 }: DxyBasketPanelProps) {
   const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>(
     DEFAULT_DXY_BASKET_CHART_INTERVAL
@@ -35,6 +39,7 @@ export function DxyBasketPanel({
     if (displayPrice === undefined || displayPrice < 0n) return undefined
     return Number(displayPrice) / 1e8
   }, [liquidationPriceRaw, capPrice])
+  const orderMarkers = useMemo(() => orderHistoryToMarkers(orderHistory), [orderHistory])
 
   return (
     <TradingViewAdvancedChart
@@ -45,6 +50,7 @@ export function DxyBasketPanel({
       stopLossPrice={stopLossPriceRaw ? Number(oraclePriceToDisplayDxyPrice(stopLossPriceRaw)) / 1e8 : undefined}
       marketPhase={marketPhase}
       marketCurrentDuration={marketCurrentDuration}
+      orderMarkers={orderMarkers}
       onIntervalChange={setChartInterval}
     />
   )
