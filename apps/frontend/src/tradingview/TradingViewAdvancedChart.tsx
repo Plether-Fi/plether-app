@@ -346,7 +346,10 @@ export function TradingViewAdvancedChart({
     for (const marker of orderMarkersRef.current) {
       const buy = marker.side === 'buy'
       void chart.createShape(
-        { time: Math.floor(marker.time / bucketSeconds) * bucketSeconds, price: marker.price },
+        {
+          time: Math.floor(marker.time / bucketSeconds) * bucketSeconds,
+          channel: buy ? 'low' : 'high',
+        },
         {
           shape: 'icon',
           icon: buy ? BUY_TRIANGLE_ICON : SELL_TRIANGLE_ICON,

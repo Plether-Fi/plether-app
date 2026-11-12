@@ -157,20 +157,20 @@ describe('TradingViewAdvancedChart', () => {
     )
     const view = render(content('1m', [buy]))
     await waitFor(() => expect(chart.createShape).toHaveBeenCalledWith(
-      { time: 1_800_000_120, price: 1.0161 },
+      { time: 1_800_000_120, channel: 'low' },
       expect.objectContaining({ shape: 'icon', icon: 0xf0d8, overrides: { color: '#00FF99', size: 14 } })
     ))
 
     view.rerender(content('1m', [buy, sell]))
     await waitFor(() => expect(chart.createShape).toHaveBeenCalledWith(
-      { time: 1_800_000_180, price: 1.0158 },
+      { time: 1_800_000_180, channel: 'high' },
       expect.objectContaining({ shape: 'icon', icon: 0xf0d7, overrides: { color: '#FF572D', size: 14 } })
     ))
     expect(chart.removeEntity).toHaveBeenCalledWith('marker-1')
 
     view.rerender(content('5m', [buy, sell]))
     await waitFor(() => expect(chart.createShape).toHaveBeenCalledWith(
-      { time: 1_800_000_000, price: 1.0161 },
+      { time: 1_800_000_000, channel: 'low' },
       expect.objectContaining({ shape: 'icon', icon: 0xf0d8 })
     ))
     view.rerender(content('5m', []))

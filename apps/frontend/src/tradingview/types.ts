@@ -237,6 +237,7 @@ export type TradingViewEntityId = string
 export interface TradingViewShapePoint {
   time?: number
   price?: number
+  channel?: 'low' | 'high'
 }
 
 export interface TradingViewCreateShapeOptions {

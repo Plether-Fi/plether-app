@@ -32,6 +32,15 @@ const config: StorybookConfig = {
       // both apps to share the same React and router contexts in Storybook.
       dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
     },
+    server: {
+      proxy: {
+        '/api/perps/v1': {
+          target: process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:3001',
+          changeOrigin: true,
+          rewrite: (url) => url.replace(/^\/api\/perps\/v1/, '/api'),
+        },
+      },
+    },
     });
   },
 };
