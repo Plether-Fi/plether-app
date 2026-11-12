@@ -309,6 +309,9 @@ export interface TradingViewPane {
   hasMainSeries: () => boolean
   getHeight: () => number
   setHeight: (height: number) => void
+  getMainSourcePriceScale?: () => {
+    getVisiblePriceRange: () => { from: number, to: number } | null
+  } | null
 }
 
 export interface TradingViewChart {

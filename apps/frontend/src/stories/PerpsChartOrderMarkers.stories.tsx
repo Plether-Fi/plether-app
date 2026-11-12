@@ -28,7 +28,7 @@ function OrderMarkerPreview() {
         setMessage('There are not enough recent candles for this preview.')
         return
       }
-      setOrders(samples.map((candle, index) => ({
+      const sampleOrders = samples.map((candle, index): PerpsOrderHistoryRow => ({
         orderId: BigInt(index + 1),
         time: new Date(candle!.timestamp * 1000).toLocaleString(),
         terminalTimestampSeconds: candle!.timestamp + 30,
@@ -41,8 +41,13 @@ function OrderMarkerPreview() {
         account: SAMPLE_ACCOUNT,
         clientOrderId: `0x${String(index + 1).padStart(64, '0')}`,
         executionPriceRaw: BigInt(candle!.rawClosePrice),
-      })))
-      setMessage('Illustrative buy and sell markers on real candles. These are sample orders, not account trades.')
+      }))
+      setOrders([
+        ...sampleOrders,
+        { ...sampleOrders[0], orderId: 3n, terminalTimestampSeconds: samples[0]!.timestamp + 60 },
+        { ...sampleOrders[1], orderId: 4n, terminalTimestampSeconds: samples[1]!.timestamp + 60 },
+      ])
+      setMessage('Illustrative: two buys and two sells on real candles. These are sample orders, not account trades.')
     }).catch(() => {
       if (!cancelled) setMessage('Sample markers could not load from the candle API.')
     })
