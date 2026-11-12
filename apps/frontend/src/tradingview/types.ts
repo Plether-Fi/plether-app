@@ -237,10 +237,12 @@ export type TradingViewEntityId = string
 export interface TradingViewShapePoint {
   time?: number
   price?: number
+  channel?: 'low' | 'high'
 }
 
 export interface TradingViewCreateShapeOptions {
-  shape: 'horizontal_line'
+  shape: 'horizontal_line' | 'icon'
+  icon?: number
   text?: string
   lock?: boolean
   disableSelection?: boolean
@@ -249,6 +251,8 @@ export interface TradingViewCreateShapeOptions {
   showInObjectsTree?: boolean
   zOrder?: 'top' | 'bottom'
   overrides?: {
+    color?: string
+    size?: number
     linecolor?: string
     linestyle?: number
     linewidth?: number
@@ -296,10 +300,18 @@ export interface TradingViewVisibleRangeSubscription {
   unsubscribe: (context: object | null, callback: TradingViewVisibleRangeChangedCallback) => void
 }
 
+export interface TradingViewDataLoadedSubscription {
+  subscribe: (context: object | null, callback: () => void) => void
+  unsubscribe: (context: object | null, callback: () => void) => void
+}
+
 export interface TradingViewPane {
   hasMainSeries: () => boolean
   getHeight: () => number
   setHeight: (height: number) => void
+  getMainSourcePriceScale?: () => {
+    getVisiblePriceRange: () => { from: number, to: number } | null
+  } | null
 }
 
 export interface TradingViewChart {
@@ -311,6 +323,8 @@ export interface TradingViewChart {
   setResolution: (resolution: TradingViewResolution) => Promise<boolean>
   onIntervalChanged: () => TradingViewIntervalSubscription
   onVisibleRangeChanged: () => TradingViewVisibleRangeSubscription
+  onDataLoaded: () => TradingViewDataLoadedSubscription
+  dataReady: (callback: () => void) => boolean
   createShape: (
     point: TradingViewShapePoint,
     options: TradingViewCreateShapeOptions

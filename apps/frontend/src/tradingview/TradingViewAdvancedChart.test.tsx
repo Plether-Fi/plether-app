@@ -2,8 +2,9 @@ import { act, render, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TradingViewAdvancedChart } from './TradingViewAdvancedChart'
+import type { OrderMarker } from './orderMarkers'
 import { PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME } from './pletherDirectionalVolumeStudy'
-import type { PletherDxyDatafeedOptions } from './pletherDatafeed'
+import { PletherDxyDatafeed, type PletherDxyDatafeedOptions } from './pletherDatafeed'
 import type {
   TradingViewChart,
   TradingViewCustomStatusDropDownContent,
@@ -20,6 +21,8 @@ import type {
 
 const datafeedHarness = vi.hoisted(() => ({
   onVolumeCoverageChange: undefined as PletherDxyDatafeedOptions['onVolumeCoverageChange'],
+  barHigh: 1.0165,
+  barAvailable: true,
 }))
 
 vi.mock('./pletherDatafeed', async (importOriginal) => {
@@ -47,14 +50,22 @@ function deferred() {
 
 afterEach(() => {
   datafeedHarness.onVolumeCoverageChange = undefined
+  datafeedHarness.barHigh = 1.0165
+  datafeedHarness.barAvailable = true
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   delete window.TradingView
 })
 
 function installReadyFakeTradingView() {
+  vi.spyOn(PletherDxyDatafeed.prototype, 'getLoadedPriceBar').mockImplementation((_resolution, time) => (
+    datafeedHarness.barAvailable
+      ? { time: time * 1000, open: 1.016, high: datafeedHarness.barHigh, low: 1.0155, close: 1.016 }
+      : undefined
+  ))
   let widgetOptions: TradingViewWidgetOptions | undefined
   let resolution: TradingViewResolution = '1'
+  let dataLoadedCallback: (() => void) | undefined
   const subscription = {
     subscribe: vi.fn(),
     unsubscribe: vi.fn(),
@@ -88,6 +99,11 @@ function installReadyFakeTradingView() {
     }),
     onIntervalChanged: () => subscription,
     onVisibleRangeChanged: () => subscription,
+    onDataLoaded: () => ({
+      subscribe: (_context, callback) => { dataLoadedCallback = callback },
+      unsubscribe: vi.fn(),
+    }),
+    dataReady: (callback) => { callback(); return true },
     createShape: vi.fn(async () => 'liquidation-line'),
     createStudy: vi.fn(async () => 'directional-volume-study'),
     removeEntity: vi.fn(),
@@ -109,10 +125,98 @@ function installReadyFakeTradingView() {
   window.TradingView = {
     widget: FakeWidget as unknown as TradingViewNamespace['widget'],
   }
-  return { chart, directionalVolumePane, widgetOptions: () => widgetOptions }
+  return { chart, directionalVolumePane, widgetOptions: () => widgetOptions, emitDataLoaded: () => dataLoadedCallback?.() }
 }
 
 describe('TradingViewAdvancedChart', () => {
+  it('waits for candle data and reanchors markers after more history loads', async () => {
+    const { chart } = installReadyFakeTradingView()
+    datafeedHarness.barAvailable = false
+    let dataReadyCallback: (() => void) | undefined
+    let dataLoadedCallback: (() => void) | undefined
+    chart.dataReady = (callback) => { dataReadyCallback = callback; return false }
+    chart.onDataLoaded = () => ({
+      subscribe: (_context, callback) => { dataLoadedCallback = callback },
+      unsubscribe: vi.fn(),
+    })
+    let nextId = 0
+    vi.mocked(chart.createShape).mockImplementation(async () => `marker-${++nextId}`)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}>
+      <TradingViewAdvancedChart interval="1m" orderMarkers={[
+        { key: 'account:1', time: 1_800_000_131, price: 1.0161, side: 'buy' },
+      ]} />
+    </QueryClientProvider>)
+    await waitFor(() => expect(dataReadyCallback).toBeDefined())
+    expect(chart.createShape).not.toHaveBeenCalled()
+
+    act(() => { dataReadyCallback?.() })
+    expect(chart.createShape).not.toHaveBeenCalled()
+    datafeedHarness.barAvailable = true
+    act(() => { dataLoadedCallback?.() })
+    await waitFor(() => expect(chart.createShape).toHaveBeenCalledTimes(1))
+    datafeedHarness.barHigh = 1.0166
+    act(() => { dataLoadedCallback?.() })
+    await waitFor(() => expect(chart.removeEntity).toHaveBeenCalledWith('marker-1'))
+    expect(chart.createShape).toHaveBeenCalledTimes(2)
+  })
+
+  it('draws small buy and sell triangles on execution candles and refreshes them with history and interval changes', async () => {
+    const { chart, emitDataLoaded } = installReadyFakeTradingView()
+    let nextId = 0
+    vi.mocked(chart.createShape).mockImplementation(async () => `marker-${++nextId}`)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const buy = { key: 'account:1', time: 1_800_000_131, price: 1.0161, side: 'buy' as const }
+    const sell = { key: 'account:2', time: 1_800_000_191, price: 1.0158, side: 'sell' as const }
+    const content = (interval: '1m' | '5m', orderMarkers: OrderMarker[]) => (
+      <QueryClientProvider client={queryClient}>
+        <TradingViewAdvancedChart interval={interval} orderMarkers={orderMarkers} />
+      </QueryClientProvider>
+    )
+    const view = render(content('1m', [buy]))
+    await waitFor(() => expect(chart.createShape).toHaveBeenCalledWith(
+      { time: 1_800_000_120, price: expect.closeTo(1.0154) },
+      expect.objectContaining({ shape: 'icon', icon: 0xf0d8, overrides: { color: '#00FF99', size: 14 } })
+    ))
+
+    view.rerender(content('1m', [buy, sell]))
+    await waitFor(() => expect(chart.createShape).toHaveBeenCalledWith(
+      { time: 1_800_000_180, price: expect.closeTo(1.0166) },
+      expect.objectContaining({ shape: 'icon', icon: 0xf0d7, overrides: { color: '#FF572D', size: 14 } })
+    ))
+    expect(chart.removeEntity).toHaveBeenCalledWith('marker-1')
+
+    view.rerender(content('5m', [buy, sell]))
+    act(() => { emitDataLoaded() })
+    await waitFor(() => expect(chart.createShape).toHaveBeenCalledWith(
+      { time: 1_800_000_000, price: expect.closeTo(1.0154) },
+      expect.objectContaining({ shape: 'icon', icon: 0xf0d8 })
+    ))
+    view.rerender(content('5m', []))
+    await waitFor(() => expect(chart.removeEntity).toHaveBeenCalledWith('marker-5'))
+  })
+
+  it('stacks multiple buys and sells beyond the candle wicks', async () => {
+    const { chart } = installReadyFakeTradingView()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}>
+      <TradingViewAdvancedChart interval="1m" orderMarkers={[
+        { key: 'account:1', time: 1_800_000_131, price: 1.0161, side: 'buy' },
+        { key: 'account:2', time: 1_800_000_151, price: 1.0162, side: 'buy' },
+        { key: 'account:3', time: 1_800_000_141, price: 1.0160, side: 'sell' },
+        { key: 'account:4', time: 1_800_000_159, price: 1.0159, side: 'sell' },
+      ]} />
+    </QueryClientProvider>)
+
+    await waitFor(() => expect(chart.createShape).toHaveBeenCalledTimes(4))
+    for (const price of [1.0154, 1.0153, 1.0166, 1.0167]) {
+      expect(chart.createShape).toHaveBeenCalledWith(
+        { time: 1_800_000_120, price: expect.closeTo(price) },
+        expect.objectContaining({ shape: 'icon' })
+      )
+    }
+  })
+
   it('draws read-only TP/SL lines and removes them when protection is cleared', async () => {
     const { chart } = installReadyFakeTradingView()
     vi.mocked(chart.createShape).mockImplementation(async (_point, options) => options.text === 'Take profit' ? 'tp-line' : 'sl-line')
@@ -278,6 +382,8 @@ describe('TradingViewAdvancedChart', () => {
       }),
       onIntervalChanged: () => subscription,
       onVisibleRangeChanged: () => visibleRangeSubscription,
+      onDataLoaded: () => ({ subscribe: vi.fn(), unsubscribe: vi.fn() }),
+      dataReady: (callback) => { callback(); return true },
       createShape: vi.fn(async () => 'liquidation-line'),
       createStudy: vi.fn(async () => 'directional-volume-study'),
       removeEntity: vi.fn(),

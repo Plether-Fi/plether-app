@@ -142,6 +142,37 @@ describe('Plether TradingView datafeed', () => {
     }])
   })
 
+  it('exposes loaded price candles for order marker placement', async () => {
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getCandlePage: async () => candlePage(90_000, [rawCandle(64_920)], {
+          hasEarlier: false,
+          previousCursor: null,
+        }),
+      }),
+    })
+
+    try {
+      expect(feed.getLoadedPriceBar('1', 64_920)).toBeUndefined()
+      await new Promise<TradingViewBar[]>((resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
+          resolve,
+          reject
+        )
+      })
+      expect(feed.getLoadedPriceBar('1', 64_920)).toMatchObject({
+        time: 64_920_000,
+        high: 1.03,
+        low: 0.99,
+      })
+    } finally {
+      feed.destroy()
+    }
+  })
+
   it('encodes long- and short-direction notional as a separate TradingView series', () => {
     expect(perpsBasketCandlesToDirectionalVolumeBars(
       [

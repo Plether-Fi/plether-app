@@ -10,6 +10,7 @@ import {
   PLDXY_TRADINGVIEW_SYMBOL,
   PletherDxyDatafeed,
   TRADINGVIEW_FAVORITE_RESOLUTIONS,
+  TRADINGVIEW_RESOLUTIONS,
   chartIntervalForTradingViewResolution,
   secondsForTradingViewResolution,
   tradingViewResolutionForInterval,
@@ -20,14 +21,17 @@ import type {
   TradingViewNamespace,
   TradingViewCustomSymbolStatusAdapter,
   TradingViewChart,
+  TradingViewDataLoadedSubscription,
   TradingViewEntityId,
   TradingViewIntervalChangedCallback,
+  TradingViewResolution,
   TradingViewVisibleRangeChangedCallback,
   TradingViewVisibleRangeSubscription,
   TradingViewVisibleTimeRange,
   TradingViewWidget,
 } from './types'
 import { PLETHER_TRADINGVIEW_CUSTOM_THEMES } from './pletherTheme'
+import type { OrderMarker } from './orderMarkers'
 import {
   PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
   getPletherCustomIndicators,
@@ -41,6 +45,11 @@ const TEXT_COLOR = '#D8CBD0'
 const BRAND_PEACH = '#FFAB96'
 const BRAND_ORANGE = '#FF572D'
 const POSITIVE_COLOR = '#00FF99'
+// Font Awesome caret icons supported by TradingView's single-point icon drawing.
+const BUY_TRIANGLE_ICON = 0xf0d8
+const SELL_TRIANGLE_ICON = 0xf0d7
+const ORDER_MARKER_MIN_PRICE_GAP = 0.0001
+const ORDER_MARKER_PIXEL_GAP = 18
 const LIQUIDATION_COLOR = '#F7D977'
 // TradingView's `small` pane uses a 0.3:1 volume-to-price stretch ratio, making
 // its original share 3/13 of the plot area. Half that absolute height is 3/26.
@@ -219,6 +228,7 @@ export interface TradingViewAdvancedChartProps {
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
   onIntervalChange?: (interval: DxyBasketChartInterval) => void
+  orderMarkers?: OrderMarker[]
 }
 
 export function TradingViewAdvancedChart({
@@ -230,8 +240,10 @@ export function TradingViewAdvancedChart({
   marketPhase = 'open',
   marketCurrentDuration,
   onIntervalChange,
+  orderMarkers = [],
 }: TradingViewAdvancedChartProps) {
   const queryClient = useQueryClient()
+  const orderMarkerSignature = JSON.stringify(orderMarkers)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const widgetRef = useRef<TradingViewWidget | null>(null)
   const marketStatusAdapterRef = useRef<TradingViewCustomSymbolStatusAdapter | null>(null)
@@ -247,6 +259,13 @@ export function TradingViewAdvancedChart({
   const positionPricesRef = useRef({ entryPrice, takeProfitPrice, stopLossPrice })
   const positionLinesRef = useRef<TradingViewEntityId[]>([])
   const positionRevisionRef = useRef(0)
+  const orderMarkersRef = useRef(orderMarkers)
+  const datafeedRef = useRef<PletherDxyDatafeed | null>(null)
+  const orderMarkerSignatureRef = useRef(orderMarkerSignature)
+  const orderMarkerStateRef = useRef<string | null>(null)
+  const orderMarkerIdsRef = useRef<TradingViewEntityId[]>([])
+  const orderMarkerRevisionRef = useRef(0)
+  const orderMarkerDataReadyRef = useRef(false)
   const onIntervalChangeRef = useRef(onIntervalChange)
   const [unavailable, setUnavailable] = useState(false)
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000)
@@ -317,6 +336,73 @@ export function TradingViewAdvancedChart({
       }).catch(() => { /* The account panel remains authoritative if a chart drawing fails. */ })
     }
   }, [])
+  const syncOrderMarkers = useCallback((chart: TradingViewChart, resolution: string) => {
+    if (!TRADINGVIEW_RESOLUTIONS.includes(resolution as TradingViewResolution)) return
+    const typedResolution = resolution as TradingViewResolution
+    const bucketSeconds = secondsForTradingViewResolution(typedResolution)
+    const markers = [...orderMarkersRef.current]
+      .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+      .map((marker) => {
+        const time = Math.floor(marker.time / bucketSeconds) * bucketSeconds
+        // Wait for the candle itself so the icon stays beyond its wick and
+        // TradingView does not snap older orders to an unrelated loaded bar.
+        const bar = datafeedRef.current?.getLoadedPriceBar(typedResolution, time)
+        return bar ? { marker, time, bar } : null
+      })
+      .filter((entry) => entry !== null)
+    const state = `${resolution}:${orderMarkerSignatureRef.current}:${JSON.stringify(markers.map(({ time, bar }) => [time, bar.low, bar.high]))}`
+    if (orderMarkerStateRef.current === state) return
+    orderMarkerStateRef.current = state
+    const revision = ++orderMarkerRevisionRef.current
+    for (const id of orderMarkerIdsRef.current) chart.removeEntity(id)
+    orderMarkerIdsRef.current = []
+
+    const mainPane = chart.getPanes().find((pane) => pane.hasMainSeries())
+    const priceRange = mainPane?.getMainSourcePriceScale?.()?.getVisiblePriceRange()
+    const priceGap = priceRange && mainPane && mainPane.getHeight() > 0
+      ? Math.max(ORDER_MARKER_MIN_PRICE_GAP, Math.abs(priceRange.to - priceRange.from) / mainPane.getHeight() * ORDER_MARKER_PIXEL_GAP)
+      : ORDER_MARKER_MIN_PRICE_GAP
+    const sideCountsByCandle = new Map<string, number>()
+    for (const { marker, time, bar } of markers) {
+      const buy = marker.side === 'buy'
+      const countKey = `${String(time)}:${marker.side}`
+      const stackIndex = sideCountsByCandle.get(countKey) ?? 0
+      sideCountsByCandle.set(countKey, stackIndex + 1)
+      void chart.createShape(
+        {
+          time,
+          price: buy
+            ? bar.low - priceGap * (stackIndex + 1)
+            : bar.high + priceGap * (stackIndex + 1),
+        },
+        {
+          shape: 'icon',
+          icon: buy ? BUY_TRIANGLE_ICON : SELL_TRIANGLE_ICON,
+          lock: true,
+          disableSelection: true,
+          disableSave: true,
+          disableUndo: true,
+          showInObjectsTree: false,
+          zOrder: 'top',
+          overrides: { color: buy ? POSITIVE_COLOR : BRAND_ORANGE, size: 14 },
+        }
+      ).then(id => {
+        if (revision !== orderMarkerRevisionRef.current) {
+          if (readyRef.current) chart.removeEntity(id)
+          return
+        }
+        if (readyRef.current) orderMarkerIdsRef.current.push(id)
+      }).catch(() => { /* Order history remains available in the account panel. */ })
+    }
+  }, [])
+  useEffect(() => {
+    orderMarkersRef.current = orderMarkers
+    orderMarkerSignatureRef.current = orderMarkerSignature
+    if (readyRef.current && orderMarkerDataReadyRef.current && widgetRef.current) {
+      const chart = widgetRef.current.activeChart()
+      syncOrderMarkers(chart, chart.resolution())
+    }
+  }, [orderMarkers, orderMarkerSignature, syncOrderMarkers])
   useEffect(() => {
     positionPricesRef.current = { entryPrice, takeProfitPrice, stopLossPrice }
     if (readyRef.current && widgetRef.current) syncPositionLines(widgetRef.current.activeChart(), positionPricesRef.current)
@@ -350,6 +436,8 @@ export function TradingViewAdvancedChart({
     let handleIntervalChange: TradingViewIntervalChangedCallback | undefined
     let visibleRangeSubscription: TradingViewVisibleRangeSubscription | undefined
     let handleVisibleRangeChange: TradingViewVisibleRangeChangedCallback | undefined
+    let dataLoadedSubscription: TradingViewDataLoadedSubscription | undefined
+    let handleDataLoaded: (() => void) | undefined
     let lastStableVisibleRange: TradingViewVisibleTimeRange | undefined
     const libraryPath = normalizeLibraryPath()
     const datafeed = new PletherDxyDatafeed({
@@ -379,6 +467,7 @@ export function TradingViewAdvancedChart({
         ))
       },
     })
+    datafeedRef.current = datafeed
 
     void loadTradingViewLibrary(libraryPath)
       .then((tradingView) => {
@@ -462,6 +551,13 @@ export function TradingViewAdvancedChart({
             visibleRangeSubscription.subscribe(null, handleVisibleRangeChange)
 
             intervalSubscription = chart.onIntervalChanged()
+            dataLoadedSubscription = chart.onDataLoaded()
+            handleDataLoaded = () => {
+              if (cancelled) return
+              orderMarkerDataReadyRef.current = true
+              syncOrderMarkers(chart, chart.resolution())
+            }
+            dataLoadedSubscription.subscribe(null, handleDataLoaded)
             handleIntervalChange = (resolution, parameters = {}) => {
               if (parameters.timeframe === undefined) {
                 const visibleRange = lastStableVisibleRange ?? chart.getVisibleRange()
@@ -483,6 +579,7 @@ export function TradingViewAdvancedChart({
               }
 
               const nextInterval = chartIntervalForTradingViewResolution(resolution)
+              orderMarkerDataReadyRef.current = false
               if (!nextInterval || nextInterval === intervalRef.current) return
 
               intervalRef.current = nextInterval
@@ -497,6 +594,11 @@ export function TradingViewAdvancedChart({
             readyRef.current = true
             syncLiquidationLine(widget.activeChart(), liquidationPriceRef.current)
             syncPositionLines(widget.activeChart(), positionPricesRef.current)
+            chart.dataReady(() => {
+              if (cancelled) return
+              orderMarkerDataReadyRef.current = true
+              syncOrderMarkers(chart, chart.resolution())
+            })
 
             const desiredResolution = tradingViewResolutionForInterval(intervalRef.current)
             if (widget.activeChart().resolution() !== desiredResolution) {
@@ -520,6 +622,10 @@ export function TradingViewAdvancedChart({
       readyRef.current = false
       liquidationLineRevisionRef.current += 1
       positionRevisionRef.current += 1
+      orderMarkerRevisionRef.current += 1
+      orderMarkerDataReadyRef.current = false
+      orderMarkerStateRef.current = null
+      orderMarkerIdsRef.current = []
       positionLinesRef.current = []
       if (intervalSubscription && handleIntervalChange) {
         intervalSubscription.unsubscribe(null, handleIntervalChange)
@@ -527,14 +633,18 @@ export function TradingViewAdvancedChart({
       if (visibleRangeSubscription && handleVisibleRangeChange) {
         visibleRangeSubscription.unsubscribe(null, handleVisibleRangeChange)
       }
+      if (dataLoadedSubscription && handleDataLoaded) {
+        dataLoadedSubscription.unsubscribe(null, handleDataLoaded)
+      }
       marketStatusAdapterRef.current?.setVisible(false)
       marketStatusAdapterRef.current = null
       liquidationLineRef.current = null
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeed.destroy()
+      if (datafeedRef.current === datafeed) datafeedRef.current = null
     }
-  }, [queryClient, syncLiquidationLine, syncPositionLines])
+  }, [queryClient, syncLiquidationLine, syncOrderMarkers, syncPositionLines])
 
   useEffect(() => {
     intervalRef.current = interval
@@ -544,7 +654,7 @@ export function TradingViewAdvancedChart({
     const resolution = tradingViewResolutionForInterval(interval)
     if (widget.activeChart().resolution() === resolution) return
     void widget.activeChart().setResolution(resolution)
-  }, [interval])
+  }, [interval, syncOrderMarkers])
 
   const activeCandleInterval = secondsForTradingViewResolution(
     tradingViewResolutionForInterval(interval)

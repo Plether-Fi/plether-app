@@ -553,6 +553,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     ((update: PletherVolumeCoverageUpdate) => void) | undefined
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
+  private readonly loadedPriceBars = new Map<TradingViewResolution, Map<number, TradingViewBar>>()
   private readonly requestControllers = new Set<AbortController>()
   private readonly visibilityWaiters = new Set<() => void>()
   private readonly visibilityPauseReason = new DOMException('Chart loading paused', 'AbortError')
@@ -598,6 +599,21 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
     }
+  }
+
+  getLoadedPriceBar(resolution: TradingViewResolution, timeSeconds: number): TradingViewBar | undefined {
+    return this.loadedPriceBars.get(resolution)?.get(timeSeconds * 1000)
+  }
+
+  private recordPriceBars(resolution: TradingViewResolution, bars: TradingViewBar[]): void {
+    const loaded = this.loadedPriceBars.get(resolution) ?? new Map<number, TradingViewBar>()
+    for (const bar of bars) loaded.set(bar.time, { ...bar })
+    while (loaded.size > 10_000) {
+      const oldest = loaded.keys().next().value
+      if (oldest === undefined) break
+      loaded.delete(oldest)
+    }
+    this.loadedPriceBars.set(resolution, loaded)
   }
 
   onReady(callback: (configuration: TradingViewDatafeedConfiguration) => void): void {
@@ -647,6 +663,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       .then((bars) => {
         setTimeout(() => {
           if (!this.destroyed) {
+            if (seriesKind === 'price') this.recordPriceBars(resolution, bars)
             onResult(bars.map((bar) => ({ ...bar })), { noData: bars.length === 0 })
           }
         }, 0)
@@ -1121,6 +1138,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     current.currentBar = { ...bar }
     if (current.seriesKind === 'price') {
       this.lastBars.set(current.resolution, { ...bar })
+      this.recordPriceBars(current.resolution, [bar])
     }
     this.scheduleTick(current, bar)
   }
@@ -1348,6 +1366,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     for (const resolution of TRADINGVIEW_RESOLUTIONS) {
       if (secondsForTradingViewResolution(resolution) !== intervalSeconds) continue
       this.lastBars.delete(resolution)
+      this.loadedPriceBars.delete(resolution)
       this.primedCurrentCandles.delete(resolution)
     }
     for (const subscription of this.subscriptions.values()) {
