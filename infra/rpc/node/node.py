@@ -124,8 +124,15 @@ def nitro_config(config, parent):
         },
         # archive enables the historical RPC index, while this finite window
         # still prunes state online. Never use the unbounded archive default.
-        'execution': {'caching': {'state-scheme': 'path', 'archive': True,
-                                  'state-history': config['state_history_blocks']}},
+        'execution': {
+            'caching': {'state-scheme': 'path', 'archive': True,
+                        'state-history': config['state_history_blocks']},
+            # Reuse verified TLS connections across normal gaps between writes.
+            # These are idle-pool settings, not a transaction concurrency limit;
+            # forwarding targets, checks, request timeouts and retries retain
+            # their existing behavior.
+            'forwarder': {'idle-connection-timeout': '1m', 'max-idle-connections': 8},
+        },
         'persistent': {'chain': '/home/user/.arbitrum'},
         'http': {'addr': '0.0.0.0', 'port': 8547, 'api': ['net', 'web3', 'eth', 'debug'], 'vhosts': ['*']},
         'metrics': True,
