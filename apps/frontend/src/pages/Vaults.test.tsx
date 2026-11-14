@@ -446,6 +446,96 @@ describe('Vaults page', () => {
     mocks.vaultHistory = undefined
   })
 
+  it('shows current Senior limit usage including protected capital and pending deposits', () => {
+    const data = liveReadFixture()
+    data[29] = success(assets(23_000_000))
+    mocks.readContractsData = data
+    const seniorDetail = renderVaults('/vaults/senior')
+
+    const limits = screen.getByRole('heading', { name: 'Senior deposit limits' })
+      .closest('section') as HTMLElement
+    const absoluteUsage = within(limits).getByRole('meter', { name: 'Absolute limit usage' })
+    expect(absoluteUsage).toHaveAttribute('aria-valuenow', '77')
+    expect(absoluteUsage).toHaveAttribute('aria-valuemin', '0')
+    expect(absoluteUsage).toHaveAttribute('aria-valuemax', '100')
+    expect(within(limits).getByRole('meter', { name: 'Senior share limit usage' }))
+      .toHaveAttribute('aria-valuenow', '80.84')
+    expect(within(limits).getByText('100M')).toBeInTheDocument()
+    expect(within(limits).getByText('Cap: 75% of pool capital')).toBeInTheDocument()
+    expect(within(limits).getByText('or')).toBeInTheDocument()
+
+    seniorDetail.unmount()
+    renderVaults('/vaults/junior')
+    expect(screen.queryByRole('heading', { name: 'Senior deposit limits' })).not.toBeInTheDocument()
+  })
+
+  it('withholds usage charts when projected capital is unavailable', () => {
+    const data = liveReadFixture()
+    data[26] = { status: 'failure' }
+    mocks.readContractsData = data
+    renderVaults('/vaults/senior')
+
+    const limits = screen.getByRole('region', { name: 'Senior deposit limits' })
+    expect(within(limits).getAllByText('Usage unavailable')).toHaveLength(2)
+    expect(within(limits).queryByRole('meter')).not.toBeInTheDocument()
+  })
+
+  it('keeps breached limit charts within the 0–100% scale', () => {
+    const data = liveReadFixture()
+    data[27] = success(assets(50_000_000))
+    data[28] = success(5_000n)
+    mocks.readContractsData = data
+    renderVaults('/vaults/senior')
+
+    const limits = screen.getByRole('region', { name: 'Senior deposit limits' })
+    expect(within(limits).getAllByText('Limit exceeded')).toHaveLength(2)
+    for (const meter of within(limits).getAllByRole('meter')) {
+      expect(meter).toHaveAttribute('aria-valuenow', '100')
+      expect(meter).toHaveAttribute('aria-valuetext', 'Limit exceeded')
+    }
+  })
+
+  it.each([
+    [84_990_000, 'text-content-primary', '84.99% used'],
+    [85_000_000, 'text-warning', '85% used; near limit'],
+    [99_990_000, 'text-warning', '99.99% used; near limit'],
+    [100_000_000, 'text-brand-orange', '100% used; at limit'],
+  ] as const)('colors absolute limit usage at %i committed assets', (committed, color, description) => {
+    const data = liveReadFixture()
+    data[26] = success([assets(committed - 5_000_000), assets(50_000_000), assets(70_000_000), assets(20_000_000)])
+    mocks.readContractsData = data
+    renderVaults('/vaults/senior')
+
+    const meter = screen.getByRole('meter', { name: 'Absolute limit usage' })
+    expect(meter).toHaveClass(color)
+    expect(meter).toHaveAttribute('aria-valuetext', description)
+  })
+
+  it('applies the share warning independently of absolute usage', () => {
+    const data = liveReadFixture()
+    data[28] = success(7_000n)
+    mocks.readContractsData = data
+    renderVaults('/vaults/senior')
+
+    expect(screen.getByRole('meter', { name: 'Absolute limit usage' })).toHaveClass('text-content-primary')
+    const share = screen.getByRole('meter', { name: 'Senior share limit usage' })
+    expect(share).toHaveClass('text-warning')
+    expect(share).toHaveAttribute('aria-valuetext', '86.61% used; near limit')
+  })
+
+  it('marks an exactly full share limit as red before it is exceeded', () => {
+    const data = liveReadFixture()
+    data[26] = success([assets(145_000_000), assets(50_000_000), assets(70_000_000), assets(20_000_000)])
+    data[27] = success(assets(200_000_000))
+    mocks.readContractsData = data
+    renderVaults('/vaults/senior')
+
+    expect(screen.getByRole('meter', { name: 'Absolute limit usage' })).toHaveClass('text-content-primary')
+    const share = screen.getByRole('meter', { name: 'Senior share limit usage' })
+    expect(share).toHaveClass('text-brand-orange')
+    expect(share).toHaveAttribute('aria-valuetext', '100% used; at limit')
+  })
+
   it('shows both tranche choices and opens the Senior detail route', () => {
     renderVaults()
 

@@ -42,6 +42,8 @@ const snapshot = {
     pendingTradingRevenueAssets: assets(480_000),
     seniorPrincipalAssets: assets(70_000_000),
     juniorPrincipalAssets: assets(50_000_000),
+    pendingSeniorPrincipalAssets: assets(70_000_000),
+    pendingJuniorPrincipalAssets: assets(50_000_000),
     seniorHighWaterMarkAssets: assets(70_000_000),
     currentTerminalDeficitAssets: 0n,
     markFresh: true,
@@ -414,6 +416,32 @@ export const SeniorOverviewSection: Story = {
         tranche={VAULT_TRANCHES.senior}
         liveData={snapshot.tranches.senior}
         snapshot={snapshot}
+        isConnected
+        epochCountdownSeconds={FIXED_EPOCH_COUNTDOWN_SECONDS}
+      />
+    </PageFrame>
+  ),
+}
+
+export const SeniorLimitThresholds: Story = {
+  render: () => (
+    <PageFrame maxWidth="max-w-6xl">
+      <OverviewTab
+        tranche={VAULT_TRANCHES.senior}
+        liveData={{ ...snapshot.tranches.senior, totalAssets: assets(80_000_000), maxRequestDeposit: 0n }}
+        snapshot={{
+          ...snapshot,
+          pool: {
+            ...snapshot.pool,
+            seniorPrincipalAssets: assets(80_000_000),
+            juniorPrincipalAssets: assets(15_000_000),
+            pendingSeniorPrincipalAssets: assets(80_000_000),
+            pendingJuniorPrincipalAssets: assets(15_000_000),
+            seniorHighWaterMarkAssets: assets(80_000_000),
+            maxSeniorShareBps: 8_500n,
+            seniorDepositCapacityAssets: 0n,
+          },
+        }}
         isConnected
         epochCountdownSeconds={FIXED_EPOCH_COUNTDOWN_SECONDS}
       />

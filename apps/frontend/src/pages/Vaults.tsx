@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -59,6 +60,7 @@ import {
   type VaultRedeemRequest,
 } from '../hooks'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
+import { calculateSeniorDepositUsage } from '../utils/seniorDepositUsage'
 
 type TrancheId = 'senior' | 'junior'
 type DetailSectionId = 'overview' | 'market-exposure' | 'performance' | 'position' | 'activity'
@@ -285,6 +287,8 @@ interface PoolSnapshot {
   pendingTradingRevenueAssets?: bigint
   seniorPrincipalAssets?: bigint
   juniorPrincipalAssets?: bigint
+  pendingSeniorPrincipalAssets?: bigint
+  pendingJuniorPrincipalAssets?: bigint
   seniorHighWaterMarkAssets?: bigint
   currentTerminalDeficitAssets?: bigint
   markFresh?: boolean
@@ -942,6 +946,8 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         pendingTradingRevenueAssets,
         seniorPrincipalAssets,
         juniorPrincipalAssets,
+        pendingSeniorPrincipalAssets: pendingTrancheState?.seniorPrincipalAssets,
+        pendingJuniorPrincipalAssets: pendingTrancheState?.juniorPrincipalAssets,
         seniorHighWaterMarkAssets,
         currentTerminalDeficitAssets,
         markFresh,
@@ -1871,17 +1877,30 @@ function AddressAvatar({ address }: { address: Address }) {
   )
 }
 
-function DistributionRing({ percentage }: { percentage: number }) {
+function DistributionRing({
+  percentage,
+  large = false,
+  tone = 'default',
+  children,
+}: {
+  percentage: number
+  large?: boolean
+  tone?: 'default' | 'warning' | 'danger'
+  children?: ReactNode
+}) {
   const boundedPercentage = Math.max(0, Math.min(100, percentage))
+  const color = tone === 'danger' ? '#FF572D' : tone === 'warning' ? '#F7D977' : '#FFAB96'
   return (
     <span
       aria-hidden="true"
-      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full"
+      className={`inline-flex shrink-0 items-center justify-center rounded-full ${large ? 'size-28' : 'size-7'}`}
       style={{
-        background: `conic-gradient(#FFAB96 ${String(boundedPercentage)}%, rgba(255, 171, 150, 0.16) 0)`,
+        background: `conic-gradient(${color} ${String(boundedPercentage)}%, rgba(255, 171, 150, 0.16) 0)`,
       }}
     >
-      <span className="size-4 rounded-full bg-surface-panel" />
+      <span className={`inline-flex items-center justify-center rounded-full bg-surface-panel ${large ? 'size-20' : 'size-4'}`}>
+        {children}
+      </span>
     </span>
   )
 }
@@ -2453,6 +2472,76 @@ function DetailMetric({
   )
 }
 
+function SeniorDepositLimitsPanel({ pool }: { pool: PoolSnapshot }) {
+  const usage = calculateSeniorDepositUsage(pool)
+  const limits = [
+    {
+      label: 'Absolute limit',
+      cap: pool.maxSeniorExposureAssets === undefined ? 'Limit unavailable'
+        : pool.maxSeniorExposureAssets >= 2n ** 255n ? 'No fixed limit'
+          : <>Cap: {formatCompactUsd(pool.maxSeniorExposureAssets)}</>,
+      percentage: usage?.absoluteUsagePercent,
+      exceeded: usage?.absoluteLimitExceeded === true,
+      fallback: pool.maxSeniorExposureAssets === 0n ? 'No capacity'
+        : pool.maxSeniorExposureAssets !== undefined && pool.maxSeniorExposureAssets >= 2n ** 255n
+          ? 'No fixed limit' : 'Usage unavailable',
+    },
+    {
+      label: 'Senior share limit',
+      cap: pool.maxSeniorShareBps === undefined ? 'Limit unavailable'
+        : `Cap: ${(Number(pool.maxSeniorShareBps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}% of pool capital`,
+      percentage: usage?.shareUsagePercent,
+      exceeded: usage?.shareLimitExceeded === true,
+      fallback: pool.maxSeniorShareBps === 0n ? 'No capacity'
+        : pool.maxSeniorShareBps !== undefined && pool.maxSeniorShareBps >= 10_000n
+          ? 'No share limit' : 'Usage unavailable',
+    },
+  ]
+
+  return (
+    <section className="border border-brand-border/30 bg-surface-panel panel-padding" aria-labelledby="senior-deposit-limits">
+      <h3 id="senior-deposit-limits" className="text-lg font-semibold text-content-primary">Senior deposit limits</h3>
+      <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-4">
+        {limits.map(({ label, cap, percentage, exceeded, fallback }, index) => {
+          const boundedPercentage = percentage === undefined ? undefined : Math.max(0, Math.min(100, percentage))
+          const tone = exceeded || (percentage !== undefined && percentage >= 100) ? 'danger'
+            : percentage !== undefined && percentage >= 85 ? 'warning' : 'default'
+          const toneClassName = tone === 'danger' ? 'text-brand-orange'
+            : tone === 'warning' ? 'text-warning' : 'text-content-primary'
+          const valueText = exceeded ? 'Limit exceeded' : percentage === undefined ? fallback
+            : `${String(percentage)}% used${tone === 'danger' ? '; at limit' : tone === 'warning' ? '; near limit' : ''}`
+          const value = exceeded ? 'Limit exceeded'
+            : boundedPercentage === undefined ? fallback
+              : `${boundedPercentage.toLocaleString('en-US', { maximumFractionDigits: 1 })}%`
+
+          return (
+            <Fragment key={label}>
+              <div className="flex flex-col items-center gap-3 text-center">
+                {boundedPercentage !== undefined ? (
+                  <div role="meter" className={toneClassName}
+                    aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100}
+                    aria-valuenow={boundedPercentage} aria-valuetext={valueText}>
+                    <DistributionRing percentage={boundedPercentage} large tone={tone}>
+                      <span className={`px-1 font-semibold ${exceeded ? 'text-xs' : 'text-xl'}`}>{value}</span>
+                    </DistributionRing>
+                  </div>
+                ) : (
+                  <p className={`flex h-28 items-center text-sm ${exceeded ? 'text-brand-orange' : 'text-content-secondary'}`}>{value}</p>
+                )}
+                <div>
+                  <p className="text-sm text-content-secondary">{label}</p>
+                  <p className="mt-1 text-xs text-content-secondary">{cap}</p>
+                </div>
+              </div>
+              {index === 0 ? <span className="mt-12 text-sm text-content-secondary">or</span> : null}
+            </Fragment>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function RequestMetric({
   label,
   value,
@@ -2576,6 +2665,10 @@ export function OverviewTab({
         />
       </div>
 
+      {tranche.id === 'senior' ? (
+        <SeniorDepositLimitsPanel pool={pool} />
+      ) : null}
+
       <div className="grid gap-x-3 gap-y-6 xl:grid-cols-2">
         <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
@@ -2650,41 +2743,12 @@ export function OverviewTab({
               </>
             ) : null}
             {tranche.id === 'senior' ? (
-              <>
-                <DetailRow
-                  label="Target nominal APR"
-                  value={pool.seniorRateBps === undefined
-                    ? 'Unavailable'
-                    : `${(Number(pool.seniorRateBps) / 100).toFixed(2)}%`}
-                />
-                <DetailRow
-                  label="Remaining Senior capacity"
-                  value={formatVaultLimit(pool.seniorDepositCapacityAssets)}
-                />
-                <DetailRow
-                  label="Maximum Senior value"
-                  value={formatVaultLimit(pool.maxSeniorExposureAssets)}
-                />
-                <DetailRow
-                  label="Maximum Senior share of pool capital"
-                  value={pool.maxSeniorShareBps === undefined
-                    ? 'Unavailable'
-                    : `${(Number(pool.maxSeniorShareBps) / 100).toFixed(2)}%`}
-                />
-                <DetailRow
-                  label="Amount reserved for pending deposits"
-                  value={formatFullUsd(pool.reservedSeniorDepositAssets)}
-                />
-                <DetailRow
-                  label="Pending deposits within current limits"
-                  value={pool.seniorReservationsWithinLimits === undefined
-                    ? 'Unavailable'
-                    : pool.seniorReservationsWithinLimits ? 'Yes' : 'No'}
-                  valueClassName={pool.seniorReservationsWithinLimits === undefined
-                    ? 'text-content-secondary'
-                    : pool.seniorReservationsWithinLimits ? 'text-positive' : 'text-brand-orange'}
-                />
-              </>
+              <DetailRow
+                label="Target nominal APR"
+                value={pool.seniorRateBps === undefined
+                  ? 'Unavailable'
+                  : `${(Number(pool.seniorRateBps) / 100).toFixed(2)}%`}
+              />
             ) : null}
             <DetailRow
               label="Deposits past their expected processing time"
