@@ -81,6 +81,10 @@ run "enabled_observer_is_scoped_and_fail_closed" {
   command = plan
   variables { enable_incident_observer = true }
   assert {
+    condition = aws_lambda_function.incident_observer[0].reserved_concurrent_executions == -1
+    error_message = "The observer must use unreserved account concurrency by default, including accounts unable to allocate a reservation."
+  }
+  assert {
     condition = aws_cloudwatch_log_group.ecs_incident_evidence[0].retention_in_days == 90 && aws_cloudwatch_log_group.incident_observer_runtime[0].retention_in_days == 90
     error_message = "Sanitized evidence must survive the short ECS stopped-task window."
   }
@@ -100,6 +104,25 @@ run "enabled_observer_is_scoped_and_fail_closed" {
     condition = aws_cloudwatch_metric_alarm.incident_observer_missing[0].treat_missing_data == "breaching" && aws_cloudwatch_metric_alarm.incident_observer_events_dropped[0].metric_name == "AsyncEventsDropped" && length(aws_cloudwatch_metric_alarm.incident_event_delivery_failed) == 2
     error_message = "Observer silence and both delivery failure paths must be monitored."
   }
+}
+run "explicit_reservation_is_preserved" {
+  command = plan
+  variables {
+    enable_incident_observer = true
+    incident_observer_reserved_concurrent_executions = 2
+  }
+  assert {
+    condition = aws_lambda_function.incident_observer[0].reserved_concurrent_executions == 2
+    error_message = "An explicitly reviewed reservation must be passed to Lambda unchanged."
+  }
+}
+run "zero_concurrency_cannot_disable_observation" {
+  command = plan
+  variables {
+    enable_incident_observer = true
+    incident_observer_reserved_concurrent_executions = 0
+  }
+  expect_failures = [var.incident_observer_reserved_concurrent_executions]
 }
 run "notifications_cannot_be_silently_disabled" {
   command = plan

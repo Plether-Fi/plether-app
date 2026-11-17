@@ -6,6 +6,16 @@ variable "enable_incident_observer" {
   description = "Enable sanitized ECS stop evidence and independent desired/running service checks. Requires the reviewed observer package and an operations notification topic."
 }
 
+variable "incident_observer_reserved_concurrent_executions" {
+  type        = number
+  default     = -1
+  description = "Use -1 for the account's unreserved Lambda concurrency pool (default), or explicitly reserve one or two executions after verifying account quota. Zero is prohibited because it disables the observer."
+  validation {
+    condition     = contains([-1, 1, 2], var.incident_observer_reserved_concurrent_executions)
+    error_message = "incident_observer_reserved_concurrent_executions must be -1 (unreserved), 1 or 2; zero would disable incident observation."
+  }
+}
+
 variable "incident_observer_package_path" {
   type        = string
   default     = ""
@@ -110,7 +120,7 @@ resource "aws_lambda_function" "incident_observer" {
   architectures                  = ["arm64"]
   timeout                        = 25
   memory_size                    = 128
-  reserved_concurrent_executions = 2
+  reserved_concurrent_executions = var.incident_observer_reserved_concurrent_executions
   environment {
     variables = {
       EXPECTED_ACCOUNT_ID  = data.aws_caller_identity.current.account_id

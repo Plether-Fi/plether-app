@@ -85,6 +85,21 @@ incident_observer_package_path  = "/tmp/plether-incident-observer.zip"
 # Leave incident_escalation_sns_topic_arn empty until a real pager exists.
 ```
 
+The observer uses the account's unreserved Lambda concurrency pool by default
+(`incident_observer_reserved_concurrent_executions = -1`). This avoids requiring
+an additional reservation in accounts whose quota only provides AWS's minimum
+unreserved pool. It does not guarantee spare capacity: observer silence and
+async-event-drop alarms remain necessary. After verifying account quota, an
+operator may explicitly reserve `1` or `2` executions through a reviewed plan.
+Zero is rejected because it would disable the observer. A reservation can be
+rejected by AWS if it would reduce the remaining unreserved pool below its
+required minimum; check account limits before requesting it:
+
+```bash
+aws --profile plether --region ap-southeast-1 lambda get-account-settings \
+  --query 'AccountLimit'
+```
+
 The plan records the package hash and requires an operations topic in the same
 account/region. Rebuild the package from the reviewed source for every plan;
 do not substitute a zip from another release. Review that the plan adds only
