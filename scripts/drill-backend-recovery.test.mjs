@@ -6,7 +6,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { runImageRecovery } from './backend-recovery-engine.mjs'
 import { ACCOUNT, REGION, SERVICES, configurationFingerprint, verifyRunningTask } from './recover-backend.mjs'
-import { DRILL, DRILL_POLICY, validateDrillConfig, validateDrillInputs, validateDrillSnapshot, validateDrillTask, drillInputFingerprint, drillProgressEvidence, drillSnapshotEvidence, validateRuntimeAuditIdentity, diagnoseDrillBaseline } from './drill-backend-recovery.mjs'
+import { DRILL, DRILL_POLICY, validateDrillConfig, validateDrillInputs, validateDrillSnapshot, validateDrillTask, drillInputFingerprint, drillProgressEvidence, drillSnapshotEvidence, validateRuntimeAuditIdentity, diagnoseDrillBaseline, validDrillCircuitBreaker } from './drill-backend-recovery.mjs'
 
 const clone = value => structuredClone(value)
 const oldArn = `arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/${DRILL.family}:1`
@@ -83,6 +83,33 @@ test('the drill fingerprint binds its disjoint capability and fixed non-signing 
   ]) { const value = clone(DRILL); mutate(value); assert.throws(() => validateDrillConfig(value)) }
   const production = input(); production.expectedTaskDefinition = production.expectedTaskDefinition.replace(DRILL.family, 'plether-sepolia-aa-reconciler')
   assert.throws(() => validateDrillInputs(production))
+})
+
+test('circuit-breaker compatibility accepts only the known legacy policy and documented new defaults', () => {
+  const legacy = { enable: true, rollback: false }
+  const current = { ...legacy, resetOnHealthyTask: true, thresholdConfiguration: { type: 'BOUNDED_PERCENT', value: 50 } }
+  for (const value of [legacy, current]) {
+    assert.equal(validDrillCircuitBreaker(value), true)
+    const service = fixtureService(); service.deploymentConfiguration.deploymentCircuitBreaker = value
+    validateDrillSnapshot({ failures: [], services: [service] }, input())
+    assert.equal(drillSnapshotEvidence({ failures: [], services: [service] }, input()).checks.exactCircuitBreaker, true)
+  }
+  for (const value of [
+    undefined, null, [], true, {}, { enable: true }, { ...legacy, enable: false }, { ...legacy, rollback: true },
+    { ...current, resetOnHealthyTask: false }, { ...current, resetOnHealthyTask: 'true' },
+    { ...current, thresholdConfiguration: null }, { ...current, thresholdConfiguration: [] },
+    { ...current, thresholdConfiguration: { type: 'BOUNDED_PERCENT', value: 51 } },
+    { ...current, thresholdConfiguration: { type: 'BOUNDED_PERCENT', value: '50' } },
+    { ...current, thresholdConfiguration: { type: 'OTHER', value: 50 } },
+    { ...current, thresholdConfiguration: { type: 'BOUNDED_PERCENT' } },
+    { ...current, thresholdConfiguration: { type: 'BOUNDED_PERCENT', value: 50, unreviewed: true } },
+    { ...current, futureControl: true },
+  ]) {
+    assert.equal(validDrillCircuitBreaker(value), false)
+    const service = fixtureService(); service.deploymentConfiguration.deploymentCircuitBreaker = value
+    assert.throws(() => validateDrillSnapshot({ failures: [], services: [service] }, input()))
+    assert.equal(drillSnapshotEvidence({ failures: [], services: [service] }, input()).checks.exactCircuitBreaker, false)
+  }
 })
 
 test('isolated progress requires real-time non-signing heartbeats over two minutes', () => {
@@ -173,12 +200,16 @@ test('pre-approval diagnosis uses only the exact read-only role and fixed fixtur
     const result = diagnoseDrillBaseline(args => {
       calls.push(args)
       if (args[0] === 'sts') return identity
+      if (args[1] === 'describe-task-definition') return { taskDefinition: fixtureTask() }
       assert.deepEqual(args, ['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service])
       return response
     }, input())
-    assert.deepEqual(calls, [['sts', 'get-caller-identity'], ['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service]])
+    const expected = [['sts', 'get-caller-identity'], ['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service]]
+    if (result.baselineChecksPassed) expected.push(['ecs', 'describe-task-definition', '--task-definition', oldArn])
+    assert.deepEqual(calls, expected)
     assert.equal(result.evidenceSource, 'read-only-runtime-image-audit')
     assert.equal(result.baselineChecksPassed, Array.isArray(response.failures) && response.failures.length === 0 && response.services.length === 1)
+    assert.equal(result.preflightPassed, result.baselineChecksPassed)
     assert.ok(!JSON.stringify(result).includes('do-not-retain'))
   }
   let describeCalled = false
@@ -187,6 +218,35 @@ test('pre-approval diagnosis uses only the exact read-only role and fixed fixtur
     describeCalled = true
   }, input()))
   assert.equal(describeCalled, false)
+})
+
+test('Linux preflight hashes every new safety field and refuses the older CLI baseline before approval', () => {
+  const identity = { Account: ACCOUNT, Arn: `arn:aws:sts::${ACCOUNT}:assumed-role/plether-sepolia-runtime-image-audit/readonly-inspect` }
+  const service = fixtureService()
+  service.deploymentConfiguration.deploymentCircuitBreaker = {
+    enable: true, rollback: false, resetOnHealthyTask: true,
+    thresholdConfiguration: { type: 'BOUNDED_PERCENT', value: 50 },
+  }
+  const completeHash = configurationFingerprint(service, fixtureTask())
+  const approved = input(), originalInput = clone(approved)
+  assert.notEqual(completeHash, approved.expectedConfigurationSha256)
+  const reader = args => args[0] === 'sts' ? identity : args[1] === 'describe-services'
+    ? { failures: [], services: [service] } : { taskDefinition: fixtureTask() }
+  const mismatch = diagnoseDrillBaseline(reader, approved)
+  assert.equal(mismatch.baselineChecksPassed, true)
+  assert.equal(mismatch.taskDefinitionChecksPassed, true)
+  assert.equal(mismatch.actualConfigurationSha256, completeHash)
+  assert.equal(mismatch.expectedFingerprintMatches, false)
+  assert.equal(mismatch.preflightPassed, false)
+  assert.deepEqual(approved, originalInput, 'Never auto-adopt the discovered hash')
+  const reviewed = { ...approved, expectedConfigurationSha256: completeHash }
+  assert.equal(diagnoseDrillBaseline(reader, reviewed).preflightPassed, true)
+  const badTask = fixtureTask(); badTask.taskRoleArn = 'secret-token-must-not-appear'
+  const refused = diagnoseDrillBaseline(args => args[1] === 'describe-task-definition' ? { taskDefinition: badTask } : reader(args), reviewed)
+  assert.equal(refused.taskDefinitionChecksPassed, false)
+  assert.equal(refused.preflightPassed, false)
+  assert.equal(refused.actualConfigurationSha256, null)
+  assert.ok(!JSON.stringify(refused).includes('secret-token'))
 })
 
 const manifest = value => {

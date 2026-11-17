@@ -55,6 +55,20 @@ export function drillInputFingerprint(input, config = DRILL) {
   return hash({ schemaVersion: 1, capability: config.capability, input, reviewedFixture: config })
 }
 
+export function validDrillCircuitBreaker(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (Object.keys(value).some(key => !['enable', 'rollback', 'resetOnHealthyTask', 'thresholdConfiguration'].includes(key))) return false
+  if (value.enable !== true || value.rollback !== false) return false
+  if (Object.hasOwn(value, 'resetOnHealthyTask') && value.resetOnHealthyTask !== true) return false
+  if (Object.hasOwn(value, 'thresholdConfiguration')) {
+    const threshold = value.thresholdConfiguration
+    if (!threshold || typeof threshold !== 'object' || Array.isArray(threshold)) return false
+    if (Object.keys(threshold).length !== 2 || !Object.hasOwn(threshold, 'type') || !Object.hasOwn(threshold, 'value')) return false
+    if (threshold.type !== 'BOUNDED_PERCENT' || threshold.value !== 50) return false
+  }
+  return true
+}
+
 export function drillSnapshotEvidence(response, input) {
   // Only fixed guard names, booleans, bounded counts and closed failure codes
   // leave this callback. Never retain API detail strings or service objects.
@@ -92,7 +106,7 @@ export function drillSnapshotEvidence(response, input) {
       execDisabled: service.enableExecuteCommand === false,
       minimumHealthyZero: deployment.minimumHealthyPercent === 0,
       maximumPercentHundred: deployment.maximumPercent === 100,
-      exactCircuitBreaker: equal(deployment.deploymentCircuitBreaker, { enable: true, rollback: false }),
+      exactCircuitBreaker: validDrillCircuitBreaker(deployment.deploymentCircuitBreaker),
       exactlyOneDeployment: Array.isArray(deployments) && deployments.length === 1,
       primaryStatus: primary.status === 'PRIMARY',
       failedRollout: primary.rolloutState === 'FAILED',
@@ -115,11 +129,28 @@ export function diagnoseDrillBaseline(readAws, input) {
   validateRuntimeAuditIdentity(readAws(['sts', 'get-caller-identity']))
   const response = readAws(['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service])
   const serviceBaseline = drillSnapshotEvidence(response, input)
-  return {
+  const result = {
     schemaVersion: 1, capability: DRILL.capability, evidenceSource: 'read-only-runtime-image-audit',
     baselineChecksPassed: Object.values(serviceBaseline.checks).every(value => value === true),
-    serviceBaseline,
+    serviceBaseline, taskDefinitionChecksPassed: false, actualConfigurationSha256: null,
+    expectedFingerprintMatches: false, preflightPassed: false,
   }
+  if (!result.baselineChecksPassed) return result
+  const service = validateDrillSnapshot(response, input)
+  try {
+    const task = readAws(['ecs', 'describe-task-definition', '--task-definition', input.expectedTaskDefinition]).taskDefinition
+    assert.equal(task?.taskDefinitionArn, input.expectedTaskDefinition)
+    validateDrillTask(task)
+    result.taskDefinitionChecksPassed = true
+    // Hash the complete wire-visible configuration. In particular, never strip
+    // newly exposed ECS safety controls to make an older CLI's hash match.
+    result.actualConfigurationSha256 = configurationFingerprint(service, task)
+    result.expectedFingerprintMatches = result.actualConfigurationSha256 === input.expectedConfigurationSha256
+    result.preflightPassed = result.expectedFingerprintMatches
+  } catch {
+    result.taskDefinitionFailure = 'LOOKUP_OR_POLICY_REFUSED'
+  }
+  return result
 }
 
 export function validateDrillSnapshot(response, input) {
@@ -140,7 +171,7 @@ export function validateDrillSnapshot(response, input) {
   assert.equal(service.enableExecuteCommand, false)
   assert.equal(service.deploymentConfiguration.minimumHealthyPercent, 0)
   assert.equal(service.deploymentConfiguration.maximumPercent, 100)
-  assert.deepEqual(service.deploymentConfiguration.deploymentCircuitBreaker, { enable: true, rollback: false })
+  assert.ok(validDrillCircuitBreaker(service.deploymentConfiguration.deploymentCircuitBreaker), 'Unexpected circuit-breaker policy')
   const primary = one(service.deployments, 'An overlapping fixture rollout is unsupported')
   assert.equal(primary.status, 'PRIMARY')
   assert.equal(primary.rolloutState, 'FAILED', 'Missing-image failure must be observed before recovery')
@@ -246,7 +277,7 @@ async function main() {
     assert.equal(process.env.GITHUB_REPOSITORY, 'Plether-Fi/plether-app')
     const result = diagnoseDrillBaseline(aws, input)
     console.log(JSON.stringify(result, null, 2))
-    if (!result.baselineChecksPassed) process.exitCode = 1
+    if (!result.preflightPassed) process.exitCode = 1
     return
   }
   if (mode === 'inspect') {
