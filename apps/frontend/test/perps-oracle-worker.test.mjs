@@ -23,7 +23,7 @@ function fixture() {
   const state = { now: 1_000_000, mark: 990n, stored: 980n, publishes: Array(6).fill(990), writes: 0,
     accepted: 980n, acceptedTimes: Array(6).fill(980n), hasAccepted: true, frozen: false, timestamp: 1000n,
     markPrice: 100_000_000n, acceptedPrice: 100_000_000n, healthError: undefined,
-    reads: [], logs: [], waitError: undefined, simulationError: undefined, reverted: false, pendingWait: undefined }
+    reads: [], logs: [], freshFetches: 0, waitError: undefined, simulationError: undefined, reverted: false, pendingWait: undefined }
   const publicClient = {
     getBlock: async () => ({ number: 42n, timestamp: 1000n }),
     readContract: async input => {
@@ -72,6 +72,7 @@ function fixture() {
   const options = { publicClient, walletClient: { writeContract: async () => { state.writes++; return '0x1234' } },
     account: { address: feeds.pyth }, now: () => state.now,
     fetchPayload: async () => ({ updateData: ['0xabcd'], publishTimes: state.publishes }),
+    fetchFreshPayload: async () => { state.freshFetches++; return { updateData: ['0xabcd'], publishTimes: state.publishes } },
     log: (...args) => state.logs.push(args), logEvery: (...args) => state.logs.push(args) }
   return { state, publicClient, options, iterate: createOracleWorker(options) }
 }
@@ -396,6 +397,184 @@ test('same-block freshness checks reuse health reads, but same-height reorgs do 
   f.publicClient.getBalance = async () => { hash = '0xbbb'; f.state.mark = 999n; return 1000n }
   assert.equal((await f.iterate()).status, 'waiting_for_payload')
   assert.equal(f.state.writes, 1)
+})
+
+test('an engine ahead of the DB cache is repaired with one newer admitted payload', async () => {
+  const f = fixture(); f.state.mark = 995n
+  let freshFetches = 0
+  const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => {
+    freshFetches++
+    f.state.publishes.fill(995)
+    return f.options.fetchPayload()
+  } })
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(freshFetches, 1)
+  assert.equal(f.state.writes, 1)
+  assert.equal(f.state.accepted, 995n)
+  assert.ok(f.state.logs.some(args => args.includes('oracle_repair_payload_refreshed')))
+})
+
+test('equal-time repairs and healthy ordinary refreshes do not request a fresh fallback', async () => {
+  for (const healthy of [false, true]) {
+    const f = fixture()
+    if (healthy) { f.state.accepted = f.state.mark; f.state.publishes.fill(995) }
+    assert.equal((await f.iterate()).status, 'synchronized')
+    assert.equal(f.state.freshFetches, 0)
+    assert.equal(f.state.writes, 1)
+  }
+})
+
+test('a fresh payload still behind the mark waits without looping or spending', async () => {
+  const f = fixture(); f.state.mark = 995n
+  assert.equal((await f.iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.freshFetches, 1)
+  assert.equal(f.state.writes, 0)
+  // Repeated callers cannot amplify fresh provider traffic beyond five seconds.
+  f.state.now += 4999
+  assert.equal((await f.iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.freshFetches, 1)
+  f.state.now++
+  assert.equal((await f.iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.freshFetches, 2)
+  assert.equal(f.state.writes, 0)
+})
+
+test('malformed, future and stale fresh payloads cannot authorize a repair', async () => {
+  for (const kind of ['malformed', 'future', 'stale']) {
+    const f = fixture(); f.state.mark = 995n
+    const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => ({
+      updateData: ['0xabcd'],
+      publishTimes: kind === 'malformed' ? [] : kind === 'future' ? Array(6).fill(1001) : [949, 995, 995, 995, 995, 995],
+    }) })
+    if (kind === 'malformed') await assert.rejects(iterate(), /six feed publish times/)
+    else assert.equal((await iterate()).status, 'stale_payload')
+    assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+    assert.equal(f.state.writes, 0)
+  }
+})
+
+test('fresh provider failure uses existing backoff and never submits', async () => {
+  const f = fixture(); f.state.mark = 995n
+  let freshFetches = 0
+  const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => {
+    freshFetches++; throw new Error('fresh provider unavailable')
+  } })
+  await assert.rejects(iterate(), /fresh provider unavailable/)
+  f.state.now += 4999
+  assert.equal((await iterate()).status, 'backoff')
+  assert.equal(freshFetches, 1)
+  assert.equal(f.state.writes, 0)
+})
+
+test('a failed cached request or unknown health failure never triggers fresh fallback', async () => {
+  for (const failure of ['cache', 'health']) {
+    const f = fixture(); f.state.mark = 995n
+    if (failure === 'health') f.state.healthError = new Error('RPC unavailable')
+    const iterate = createOracleWorker({ ...f.options,
+      ...(failure === 'cache' ? { fetchPayload: async () => { throw new Error('cache unavailable') } } : {}),
+    })
+    await assert.rejects(iterate(), /unavailable/)
+    assert.equal(f.state.freshFetches, 0)
+    assert.equal(f.state.writes, 0)
+  }
+})
+
+test('fresh fallback rechecks mark and frozen transitions before spending', async () => {
+  for (const change of ['mark', 'frozen']) {
+    const f = fixture(); f.state.mark = 995n
+    const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => {
+      f.state.publishes.fill(996)
+      if (change === 'mark') f.state.mark = 999n
+      else f.state.frozen = true
+      return f.options.fetchPayload()
+    } })
+    assert.equal((await iterate()).status, change === 'mark' ? 'waiting_for_payload' : 'healthy')
+    assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+    assert.equal(f.state.writes, 0)
+  }
+})
+
+test('same-height reorg during fresh fetch invalidates earlier health evidence', async () => {
+  const f = fixture(); f.state.mark = 995n
+  let hash = '0xaaa'
+  f.publicClient.getBlock = async () => ({ number: 42n, hash, timestamp: 1000n })
+  const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => {
+    f.state.publishes.fill(996); hash = '0xbbb'; f.state.mark = 999n
+    return f.options.fetchPayload()
+  } })
+  assert.equal((await iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.reads.filter(read => read.functionName === 'getLatestPrice').length, 2)
+  assert.equal(f.state.writes, 0)
+})
+
+test('mark advancement after the fresh fetch is checked again after the fee read', async () => {
+  const f = fixture(); f.state.mark = 995n
+  const read = f.publicClient.readContract
+  f.publicClient.readContract = async input => {
+    const result = await read(input)
+    if (input.functionName === 'getUpdateFee') f.state.mark = 999n
+    return result
+  }
+  const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => {
+    f.state.publishes.fill(996); return f.options.fetchPayload()
+  } })
+  assert.equal((await iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.writes, 0)
+})
+
+test('receipt uncertainty after a fresh repair retains one hash and does not fetch or submit again', async () => {
+  const f = fixture(); f.state.mark = 995n; f.state.waitError = new Error('receipt timeout')
+  let freshFetches = 0
+  const iterate = createOracleWorker({ ...f.options, fetchFreshPayload: async () => {
+    freshFetches++; f.state.publishes.fill(996); return f.options.fetchPayload()
+  } })
+  await assert.rejects(iterate(), /receipt timeout/)
+  await assert.rejects(iterate(), /receipt timeout/)
+  assert.equal(f.state.writes, 1)
+  assert.equal(freshFetches, 1)
+  f.state.waitError = undefined
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
+  assert.equal(freshFetches, 1)
+})
+
+test('default fresh fallback uses the admitted API endpoint with a bounded timeout', async () => {
+  const f = fixture(); f.state.mark = 995n
+  const originalFetch = globalThis.fetch
+  let freshFetches = 0
+  globalThis.fetch = async (url, options) => {
+    freshFetches++
+    assert.equal(String(url), 'http://127.0.0.1:3001/api/perps/pyth/update')
+    assert.ok(options.signal instanceof AbortSignal)
+    f.state.publishes.fill(996)
+    return { ok: true, json: async () => ({ data: await f.options.fetchPayload() }) }
+  }
+  try {
+    const iterate = createOracleWorker({ ...f.options, backendUrl: 'http://127.0.0.1:3001', fetchFreshPayload: undefined })
+    assert.equal((await iterate()).status, 'synchronized')
+    assert.equal(freshFetches, 1)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('fresh API rate limits and HTTP failures back off without parsing or submitting', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    for (const status of [429, 503]) {
+      const f = fixture(); f.state.mark = 995n
+      let requests = 0
+      globalThis.fetch = async () => {
+        requests++
+        return { ok: false, status, json: async () => { throw new Error('must not parse error body') } }
+      }
+      const iterate = createOracleWorker({ ...f.options, backendUrl: 'http://127.0.0.1:3001', fetchFreshPayload: undefined })
+      await assert.rejects(iterate(), new RegExp(`HTTP ${status}`))
+      f.state.now += 4999
+      assert.equal((await iterate()).status, 'backoff')
+      assert.equal(requests, 1)
+      assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+      assert.equal(f.state.writes, 0)
+    }
+  } finally { globalThis.fetch = originalFetch }
 })
 
 test('fetch errors back off 5/10/20/30 seconds without RPC work and recover before normal cadence', async () => {

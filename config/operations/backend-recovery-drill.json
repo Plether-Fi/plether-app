@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "capability": "isolated-non-signing-recovery-drill",
+  "accountId": "932542905614",
+  "region": "ap-southeast-1",
+  "cluster": "plether-sepolia-recovery-drill",
+  "service": "plether-image-recovery-drill",
+  "family": "plether-sepolia-image-recovery-drill",
+  "executionRole": "plether-sepolia-image-recovery-drill-execution",
+  "deploymentRole": "plether-sepolia-image-recovery-drill-deploy",
+  "logGroup": "/ecs/plether-sepolia-recovery-drill",
+  "logStreamPrefix": "drill",
+  "missingApplicationImage": "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "release": {
+    "id": "isolated-node-runtime-2dc622ac",
+    "sourceCommit": "2dc622ac9dcfc3cc35ae3aa91df9d3a26ba3549e",
+    "routerSourceCommit": "2dc622ac9dcfc3cc35ae3aa91df9d3a26ba3549e",
+    "applicationImage": "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia@sha256:eb508b1d49c9e4b9c55c60927d57f5b9025a8457c318454c9e6e3b7b860a80b8",
+    "routerImage": "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-otel-log-router-sepolia@sha256:0d73648aa212540a743844179ca40a42806b9c001714ddfd1a8c786d96148ea1",
+    "qualificationScope": "Only the built-in Node heartbeat, successful Node init and idle sleep commands below. This record does not qualify a financial service or expand the production recovery catalog.",
+    "buildRun": "https://github.com/Plether-Fi/plether-app/actions/runs/44074217508"
+  },
+  "containers": {
+    "main": {
+      "name": "plether-image-recovery-drill",
+      "command": ["node", "-e", "const emit=()=>console.log(JSON.stringify({event:'recovery_drill_heartbeat',level:'INFO',container_name:'plether-image-recovery-drill',signingEnabled:false}));emit();setInterval(emit,15000)"],
+      "environment": [{"name": "RECOVERY_DRILL_MODE", "value": "non-signing"}],
+      "dependsOn": [{"containerName": "image-drill-init", "condition": "SUCCESS"}, {"containerName": "otel-log-router", "condition": "START"}]
+    },
+    "init": {
+      "name": "image-drill-init",
+      "command": ["node", "-e", "process.exit(0)"]
+    },
+    "router": {
+      "name": "otel-log-router",
+      "entryPoint": ["/bin/sh", "-c"],
+      "command": ["exec sleep 86400"]
+    }
+  }
+}

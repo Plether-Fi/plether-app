@@ -267,12 +267,25 @@ async function fetchCachedPythUpdate(backendUrl) {
   return validatePythPayload((await response.json())?.data)
 }
 
+async function fetchFreshPythUpdate(backendUrl) {
+  // This endpoint performs signed-payload admission on the backend and shares
+  // its short single-flight cache and provider rate-limit cooldown. The worker
+  // never accepts a raw/unvalidated Hermes response as repair evidence.
+  const response = await fetch(new URL('/api/perps/pyth/update', backendUrl), {
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error(`Fresh Pyth request failed with HTTP ${response.status}`)
+  return validatePythPayload((await response.json())?.data)
+}
+
 /** One serial worker instance retains an unresolved transaction across health ticks. */
 export function createOracleWorker({ account, backendUrl, dryRun = false, maxPayloadAgeSeconds = 50,
   publicClient, walletClient, pollSeconds = 30, now = Date.now,
-  fetchPayload = () => fetchCachedPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
+  fetchPayload = () => fetchCachedPythUpdate(backendUrl),
+  fetchFreshPayload = () => fetchFreshPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
 }) {
   let nextRefreshAt = 0
+  let nextFreshPayloadAt = 0
   let retryAt = 0
   let failures = 0
   let pending
@@ -298,7 +311,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     // Core v2 orders by the newest component, while validating all components
     // independently in simulation. The oldest need not cover the engine mark.
     if (BigInt(maxPublishTime) < markTime || (!repair && BigInt(maxPublishTime) === markTime)) {
-      logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
+      logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Admitted payload cannot advance or repair this mark', {
         min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
         lag_seconds: Number(health.lag),
       })
@@ -309,7 +322,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     }
     const ageSeconds = Number(health.block.timestamp) - minPublishTime
     if (ageSeconds > maxPayloadAgeSeconds || BigInt(maxPublishTime) > health.block.timestamp) {
-      logEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is outside the submission age window', {
+      logEvery(60, 'WARN', 'oracle_update_payload_stale', 'Admitted Pyth payload is outside the submission age window', {
         min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
         payload_age_seconds: ageSeconds, max_payload_age_seconds: maxPayloadAgeSeconds,
       })
@@ -357,10 +370,29 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, accepted_publish_time: before.acceptedPublishTime,
       })
       if (!repair && now() < nextRefreshAt) return { status: 'healthy' }
-      const payload = validatePythPayload(await fetchPayload())
+      let payload = validatePythPayload(await fetchPayload())
+      before = await refreshHealth(before)
+      const requiredMarkTime = before.status.lastMarkTime > before.acceptedPublishTime
+        ? before.status.lastMarkTime : before.acceptedPublishTime
+      // Historical order execution may advance the engine without replacing the
+      // accepted live basket. The five-second DB poll can then lag that mark.
+      // Only a decoded repair with an insufficient cached payload may request a
+      // fresh admitted payload, once per tick and at most once per five seconds.
+      // All chain, age, future-time and simulation checks still follow below.
+      if (!before.valid && !before.status.oracleFrozen &&
+          BigInt(Math.max(...payload.publishTimes)) < requiredMarkTime && now() >= nextFreshPayloadAt) {
+        nextFreshPayloadAt = now() + 5000
+        const cachedMaxPublishTime = Math.max(...payload.publishTimes)
+        payload = validatePythPayload(await fetchFreshPayload())
+        before = await refreshHealth(before)
+        logEvery(60, 'INFO', 'oracle_repair_payload_refreshed', 'Fetched an admitted latest payload for accepted-basket repair', {
+          cached_max_publish_time: cachedMaxPublishTime,
+          min_publish_time: Math.min(...payload.publishTimes), max_publish_time: Math.max(...payload.publishTimes),
+          mark_time: before.status.lastMarkTime, accepted_publish_time: before.acceptedPublishTime,
+        })
+      }
       const minPublishTime = Math.min(...payload.publishTimes)
       const maxPublishTime = Math.max(...payload.publishTimes)
-      before = await refreshHealth(before)
       let rejection = checkPayload(before, minPublishTime, maxPublishTime)
       if (rejection) return { status: rejection }
       const fee = await publicClient.readContract({ address: ADDRESSES.pletherOracle, abi: PLETHER_ORACLE_ABI,
