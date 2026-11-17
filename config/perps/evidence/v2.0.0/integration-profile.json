@@ -4,7 +4,7 @@
     "aaManifestVersion": "perps-aa-arbitrum-sepolia-usdg-200-v2",
     "volumeHistoryStartTimestamp": 1793185200
   },
-  "bundleSha256": "d5dc852b55e9b3eed591b17a112e2aadead1fecf263a6052f1eaaae560fd2b72",
+  "bundleSha256": "3ea6e372776abb4fe6b7f3c6b2914b381f4f3da3e71b28872a293d6d32cc8ba7",
   "aa": {
     "entryPoint": "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
     "entryPointVersion": "0.8",

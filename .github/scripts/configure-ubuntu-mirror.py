@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Use a signed Ubuntu archive mirror when the runner's default hosts fail DNS."""
+"""Use the official signed Ubuntu archive with a fallback for runner mirror lists."""
 
 import re
 from pathlib import Path
@@ -14,10 +14,13 @@ def configure(root: Path) -> None:
             continue
         original = path.read_text()
         updated = re.sub(
-            r"https?://(?:azure\.archive|archive|security)\.ubuntu\.com/ubuntu(?=/|\s|$)",
-            "https://mirrors.edge.kernel.org/ubuntu",
+            r"https?://(?:(?:azure\.archive|archive|security)\.ubuntu\.com|mirrors\.edge\.kernel\.org)/ubuntu(?=/|\s|$)",
+            "https://archive.ubuntu.com/ubuntu",
             original,
         )
+        if path.name.endswith("mirrors.txt") and "https://archive.ubuntu.com/ubuntu" in updated:
+            # APT can try the next signed archive if one endpoint times out.
+            updated = "\n".join(dict.fromkeys(updated.splitlines())).rstrip() + "\nhttps://mirrors.edge.kernel.org/ubuntu\n"
         if updated != original:
             # Keep suites, components, Signed-By and all apt verification settings.
             path.write_text(updated)

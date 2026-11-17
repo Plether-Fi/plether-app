@@ -300,7 +300,7 @@ export const LongHeavyWithLimitedShortCapacity: Story = {
     const trigger = canvas.getByRole('button', { name: 'Directional limit used details' })
     trigger.focus()
     const capacity = await canvas.findByRole('group', { name: 'Estimated pool capacity' })
-    await expect(within(capacity).getByText('3 802 100')).toBeVisible()
+    await waitFor(() => expect(within(capacity).getByText('3 802 100')).toBeVisible())
     await expect(within(capacity).getByText('86 000')).toBeVisible()
     trigger.blur()
     await waitFor(() => expect(canvas.queryByRole('group', { name: 'Estimated pool capacity' })).not.toBeInTheDocument())
@@ -501,9 +501,15 @@ export const HoverOverlayOnChart: Story = {
     const panelStyle = getComputedStyle(panel)
     const overlayStyle = getComputedStyle(overlay)
 
-    expect(overlayRect.left).toBe(panelRect.left)
-    expect(overlayRect.right).toBe(panelRect.right)
-    expect(overlayRect.width).toBe(panelRect.width)
+    const metric = trigger.closest('[data-perps-instrument-stat]')
+    if (!metric) throw new Error('Directional metric not found')
+    const metricRect = metric.getBoundingClientRect()
+    const expectedLeft = Math.max(12, Math.min(
+      metricRect.left + metricRect.width / 2 - overlayRect.width / 2,
+      canvasElement.ownerDocument.documentElement.clientWidth - overlayRect.width - 12,
+    ))
+    expect(Math.abs(overlayRect.left - expectedLeft)).toBeLessThan(1)
+    expect(overlayRect.width).toBeLessThanOrEqual(672)
     expect(overlayRect.top).toBe(panelRect.bottom - 1)
     expect(overlayStyle.backgroundColor).toBe(panelStyle.backgroundColor)
     expect(overlayStyle.borderLeftWidth).toBe(panelStyle.borderLeftWidth)
