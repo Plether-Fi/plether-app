@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { createGateway, configFromEnv, validateRequest, requiresManagedProvider } from './server.mjs'
+import { createGateway, configFromEnv, validateRequest, requiresManagedProvider, RPC_LOG_RANGE_POLICY } from './server.mjs'
 
 const token = 'qualification-only-token-never-used-in-aws'
 const hash = `0x${'a'.repeat(64)}`
@@ -94,6 +94,25 @@ test('allowlist rejects signing, invalid traces, notifications, duplicate IDs an
   assert.throws(() => validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: 'earliest', toBlock: 'latest' }] }))
   assert.throws(() => validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: '0x1', toBlock: '0xffff' }] }))
   validateRequest({ ...request('eth_getLogs'), params: [{ fromBlock: '0x100', toBlock: '0x200' }] })
+})
+
+test('numeric log ranges use the shared inclusive block limit and expose only its fixed rejection code', async () => {
+  assert.equal(RPC_LOG_RANGE_POLICY.version, 1)
+  const f = await fixture()
+  const logs = count => ({ ...request('eth_getLogs'), params: [{
+    address: `0x${'1'.repeat(40)}`, fromBlock: '0x1', toBlock: `0x${count.toString(16)}`,
+  }] })
+  const allowed = await f.send(logs(RPC_LOG_RANGE_POLICY.maxLogRangeBlocks))
+  assert.equal(allowed.status, 200)
+  await allowed.body.cancel()
+  const before = calls.length
+  const denied = await f.send(logs(RPC_LOG_RANGE_POLICY.maxLogRangeBlocks + 1))
+  assert.equal(denied.status, 400)
+  assert.deepEqual(await denied.json(), { error: 'log_range_requires_explicit_bounded_blocks' })
+  assert.equal(calls.length, before)
+  assert.equal(f.state.primary, true)
+  const generic = await f.send({ ...request('private-unrecognized-method'), params: ['private-value'] })
+  assert.deepEqual(await generic.json(), { error: 'invalid_request' })
 })
 
 test('Viem zero-argument requests may omit params on primary and fallback routes', async () => {

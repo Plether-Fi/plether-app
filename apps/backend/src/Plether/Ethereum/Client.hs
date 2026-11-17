@@ -23,6 +23,7 @@ module Plether.Ethereum.Client
   , BlockTag (..)
   , renderBlockTag
   , decodeRpcResponseEnvelope
+  , decodeRpcHttpFailure
   ) where
 
 import Control.Exception
@@ -260,13 +261,23 @@ rpcCall client method params = do
             pure $ Left $ RpcHttpError "response timeout"
           Right (Just (_, Left err)) ->
             pure $ Left $ RpcHttpError err
-          Right (Just (httpStatus, Right _))
+          Right (Just (httpStatus, Right body))
             | httpStatus < 200 || httpStatus >= 300 ->
-                pure $ Left $ RpcHttpError $ "statusCode = " <> T.pack (show httpStatus)
+                pure $ Left $ decodeRpcHttpFailure httpStatus body
           Right (Just (_, Right body)) -> pure $ decodeRpcResponseEnvelope reqId body
   finishedAt <- getMonotonicTimeNSec
   recordRpcCall client method (finishedAt - startedAt) (either (const True) (const False) outcome)
   pure outcome
+
+-- Preserve only the gateway's fixed range category. Arbitrary non-2xx bodies
+-- can contain provider URLs, credentials or request payloads and are discarded.
+decodeRpcHttpFailure :: Int -> ByteString -> RpcError
+decodeRpcHttpFailure httpStatus body
+  | httpStatus == 400
+  , Right (Object fields) <- Aeson.eitherDecodeStrict' body
+  , KM.lookup "error" fields == Just (String "log_range_requires_explicit_bounded_blocks") =
+      RpcHttpError "RPC_RANGE_LIMIT"
+  | otherwise = RpcHttpError $ "statusCode = " <> T.pack (show httpStatus)
 
 -- Keep provider diagnostics useful without ever rendering a Request, whose
 -- headers may contain bearer credentials. Status codes are sufficient for

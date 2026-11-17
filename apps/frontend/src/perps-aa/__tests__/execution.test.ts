@@ -420,15 +420,15 @@ describe('executeSponsoredPerpsAction', () => {
     serverTime: String(Math.floor(Date.now() / 1000)), safeBlockTimestamp: null, phase: 'prepared' as const, reason: 'RESUMABLE',
     recoverable: true, freshReviewAllowed: true, userOperationHash: USER_OPERATION_HASH, transactionHash: null }
 
-  it('rejects a known pause before preparing, signing, submitting or journaling a new operation', async () => {
-    readinessMocks.blocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
+  it.each(['PAYMASTER_PAUSED', 'RECONCILIATION_STALE'])('rejects %s before preparing, signing, submitting or journaling a new operation', async reason => {
+    readinessMocks.blocker.mockReturnValue({ component: reason === 'PAYMASTER_PAUSED' ? 'sponsorship' : 'reconciliation', status: 'blocked', reason })
     const prepare = vi.fn(async () => pletherOperation())
     const sign = vi.fn(async () => SIGNATURE)
     const send = vi.fn(async () => USER_OPERATION_HASH)
     await expect(executeSponsoredPerpsAction({
       manifest: v2Manifest(), ownerAddress: OWNER, action,
       runtime: runtime({ prepareUserOperation: prepare, signUserOperation: sign, sendUserOperation: send }),
-    })).rejects.toMatchObject({ reason: 'PAYMASTER_PAUSED' })
+    })).rejects.toMatchObject({ reason })
     expect(prepare).not.toHaveBeenCalled()
     expect(sign).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
@@ -543,6 +543,29 @@ describe('executeSponsoredPerpsAction', () => {
     await resumeSponsoredPerpsAction(saved, managed)
     expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: saved.id }))
     expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+  })
+
+  it.each(['RECONCILER_STALE', 'RECONCILIATION_STALE'])('preserves an earlier uncertain preparation when the retry receives %s', async reason => {
+    const refusal = Object.assign(new Error('RPC preparation refused'), { cause: { data: { reason, retryable: true } } })
+    const prepare = vi.fn(async () => pletherOperation())
+      .mockRejectedValueOnce(new Error('preparation response lost'))
+      .mockRejectedValueOnce(refusal)
+    const managed = runtime({ prepareUserOperation: prepare })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow('preparation response lost')
+    const original = useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)!
+    await expect(resumeSponsoredPerpsAction(original, managed)).rejects.toMatchObject({ reason: 'RECONCILIATION_STALE' })
+    await useSponsoredOperationStore.persist.rehydrate()
+    const saved = useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)!
+    expect(saved).toMatchObject({ id: original.id, status: 'preparation-pending', reason: 'RECONCILIATION_STALE' })
+    expect(saved.nativePreparation).toEqual(original.nativePreparation)
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+    expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: original.id }))
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
+    expect(reportAttemptStage).toHaveBeenCalledWith(original.id, 'execution_interrupted', {
+      failureStep: 'sponsorship', reasonCode: 'RECONCILIATION_STALE',
+    })
   })
 
   it('keeps ambiguous wallet errors separate from confirmed rejection', async () => {

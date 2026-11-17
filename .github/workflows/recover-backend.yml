@@ -1,0 +1,163 @@
+name: Recover Sepolia backend image
+run-name: Recover ${{ inputs.service }} / ${{ inputs.release_id }} / ${{ github.sha }}
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/recover-backend.yml
+      - scripts/recover-backend*
+      - scripts/validate-perps-deployment.mjs
+      - config/operations/backend-recovery-releases.json
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Existing singleton service to recover
+        required: true
+        type: choice
+        options:
+          - plether-aa-reconciler
+          - plether-liquidation-worker
+          - plether-position-protection-worker
+      release_id:
+        description: Reviewed release ID in config/operations/backend-recovery-releases.json
+        required: true
+        type: string
+      expected_task_definition:
+        description: Exact currently selected task-definition ARN from read-only inspect
+        required: true
+        type: string
+      expected_configuration_sha256:
+        description: Configuration fingerprint from read-only inspect
+        required: true
+        type: string
+      operator_note:
+        description: Non-secret incident note (1-512 printable ASCII characters)
+        required: true
+        type: string
+      confirmation:
+        description: Type RECOVER BACKEND ON SEPOLIA
+        required: true
+        type: string
+
+concurrency:
+  # The same lock as normal backend/admin mutations; no overlapping promotions.
+  group: ${{ github.event_name == 'workflow_dispatch' && 'plether-backend-mutation-sepolia' || format('backend-recovery-tests-{0}', github.ref) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  AWS_PAGER: ''
+  AWS_MAX_ATTEMPTS: '3'
+  RECOVERY_SERVICE: ${{ inputs.service }}
+  RECOVERY_RELEASE: ${{ inputs.release_id }}
+  EXPECTED_TASK_DEFINITION: ${{ inputs.expected_task_definition }}
+  EXPECTED_CONFIGURATION_SHA256: ${{ inputs.expected_configuration_sha256 }}
+  OPERATOR_NOTE: ${{ inputs.operator_note }}
+  CONFIRMATION: ${{ inputs.confirmation }}
+
+jobs:
+  policy-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: node --test scripts/recover-backend.test.mjs
+
+  preflight:
+    if: github.event_name == 'workflow_dispatch'
+    needs: policy-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
+    outputs:
+      fingerprint: ${{ steps.inputs.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Require the protected master-only backend environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/recover-backend.mjs environment
+      - name: Record exact recovery inputs before approval
+        id: inputs
+        run: |
+          set -euo pipefail
+          result="$(node scripts/recover-backend.mjs fingerprint)"
+          fingerprint="${result##*:}"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
+          echo "$result"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "Recovery input fingerprint: \`sha256:$fingerprint\`" >> "$GITHUB_STEP_SUMMARY"
+
+  recover:
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: backend-admin-sepolia
+    permissions:
+      contents: read
+      deployments: read
+      id-token: write
+    env:
+      EXPECTED_INPUT_FINGERPRINT: ${{ needs.preflight.outputs.fingerprint }}
+    steps:
+      - name: Check out the exact reviewed recovery policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Revalidate protected policy before credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/recover-backend.mjs environment
+      - name: Set private recovery evidence directory
+        run: echo "RECOVERY_EVIDENCE_DIR=$RUNNER_TEMP/backend-recovery" >> "$GITHUB_ENV"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+          allowed-account-ids: '932542905614'
+          role-session-name: backend-recovery-${{ github.run_id }}
+      - name: Recover the approved image and verify worker progress
+        run: node scripts/recover-backend.mjs recover
+      - name: Smoke check public API bindings
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 https://api.sepolia.plether.com/api/health >/dev/null
+          curl --fail --silent --show-error --max-time 20 https://api.sepolia.plether.com/api/aa/status > "$RUNNER_TEMP/recovery-aa-status.json"
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; const x=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/recovery-aa-status.json')); assert.equal(x.chainId,421614); assert.equal(x.bindingsVerified,true);"
+      - name: Preserve credential-free recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-recovery/recovery.json
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Remove private task-definition scratch file
+        if: always()
+        run: |
+          if [ -n "${RECOVERY_EVIDENCE_DIR:-}" ]; then
+            rm -f "$RECOVERY_EVIDENCE_DIR/task-definition.private.json"
+          fi
+          rm -f "$RUNNER_TEMP/recovery-aa-status.json"

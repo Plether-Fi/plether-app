@@ -531,7 +531,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
         && can(regex("^[1-9][0-9]*$", var.aa_reconciler_poll_seconds))
         && tonumber(var.aa_reconciler_poll_seconds) <= 60
         && can(regex("^[1-9][0-9]*$", var.aa_reconciler_batch_blocks))
-        && tonumber(var.aa_reconciler_batch_blocks) <= 10000
+        && tonumber(var.aa_reconciler_batch_blocks) <= local.rpc_log_range_policy.maxLogRangeBlocks
         && can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
         && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
         && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 1800

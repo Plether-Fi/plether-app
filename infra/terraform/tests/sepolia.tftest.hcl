@@ -41,8 +41,20 @@ mock_provider "aws" {
     override_during = plan
     defaults        = { id = "sg-0123456789abcdef0" }
   }
+  override_resource {
+    override_during = plan
+    target          = aws_ecr_repository.api
+    values          = { repository_url = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia" }
+  }
+  override_resource {
+    override_during = plan
+    target          = aws_ecr_repository.otel_log_router
+    values          = { repository_url = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-otel-log-router-sepolia" }
+  }
 }
 variables {
+  api_image_digest                       = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  log_router_image_digest                = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   db_allocated_storage                   = 20
   db_storage_type                        = "gp3"
   db_final_snapshot_identifier           = "synthetic-test-final-snapshot"
@@ -65,6 +77,23 @@ variables {
   aa_reconciler_start_block_hash         = "0x64210ad75de20ddd2ccf494e7c4d042447f4ea48119419945637f17c271904fe"
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
+}
+
+run "runtime_images_are_pinned_by_reviewed_digest" {
+  command = plan
+  assert {
+    condition     = endswith(local.api_image, "@${var.api_image_digest}") && endswith(local.log_router_image, "@${var.log_router_image_digest}")
+    error_message = "Application and FireLens task images must use immutable digests."
+  }
+}
+
+run "running_services_reject_unqualified_bootstrap_images" {
+  command = plan
+  variables {
+    api_image_digest        = ""
+    log_router_image_digest = ""
+  }
+  expect_failures = [terraform_data.runtime_image_guard]
 }
 run "commitment_wakeups_are_off_by_default" {
   command = plan

@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { reportReadiness } from '../analytics/readiness'
 import { responseClock } from './responseClock'
+import { normalizeTransactionFailureCode, TRANSACTION_FAILURE_MESSAGES } from '../utils/transactionFailure'
 
 export type ReadinessStatus = 'ready' | 'blocked' | 'unknown'
 export type ReadinessAction = 'deposit' | 'open' | 'close' | 'protection'
@@ -38,7 +39,7 @@ export function parseReadiness(value: unknown, now = Date.now()): ReadinessSnaps
       if (typeof check.status !== 'string' || !statuses.includes(check.status)
         || typeof check.component !== 'string' || !/^[a-z_]{1,40}$/.test(check.component)
         || typeof check.reason !== 'string' || !/^[A-Z_]{1,64}$/.test(check.reason)) throw new Error('Invalid readiness')
-      return { component: check.component, status: check.status as ReadinessStatus, reason: check.reason }
+      return { component: check.component, status: check.status as ReadinessStatus, reason: normalizeTransactionFailureCode(check.reason) }
     })
   }
   let workers: ReadinessCheck[] | undefined
@@ -63,10 +64,11 @@ export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action:
     : snapshot.actions[action]
 }
 export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = readinessNow(snapshot)): ReadinessCheck | undefined {
-  // A confirmed sponsorship pause is authoritative even while broader worker
-  // readiness remains observation-only. Unknown/stale observations never block.
+  // Confirmed sponsorship/reconciliation outages are authoritative while broader
+  // worker readiness remains observation-only. Unknown/stale observations never block.
   return readinessChecks(snapshot, action, now).find(c => c.status === 'blocked' && (
     snapshot?.enforcementEnabled === true ||
+    (c.component === 'reconciliation' && normalizeTransactionFailureCode(c.reason) === 'RECONCILIATION_STALE') ||
     ((c.component === 'sponsorship' || c.component === 'paymaster') &&
       (c.reason === 'PAYMASTER_PAUSED' || c.reason === 'SPONSORSHIP_DISABLED'))
   ))
@@ -143,7 +145,7 @@ const messages: Record<string, string> = {
   PREPARATION_UNUSABLE: 'The saved preparation can no longer be signed. Check recovery to discard it when available.',
   SPONSORSHIP_DISABLED: 'Gas sponsorship is temporarily disabled.',
   PAYMASTER_PAUSED: 'Gas sponsorship is temporarily paused. New sponsored transactions are unavailable until service resumes.',
-  RECONCILIATION_STALE: 'Sponsorship accounting is catching up.',
+  RECONCILIATION_STALE: TRANSACTION_FAILURE_MESSAGES.RECONCILIATION_STALE,
   BUNDLER_UNAVAILABLE: 'Transaction submission could not be verified.',
   KEEPER_INSUFFICIENT_FUNDS: 'The trade execution worker needs funding.',
   WORKER_INSUFFICIENT_FUNDS: 'This worker has no execution funds available.',
@@ -160,4 +162,4 @@ const messages: Record<string, string> = {
   USER_OPERATION_REVERTED: 'The operation reverted onchain. A more specific historical cause could not be verified.',
   READINESS_UNAVAILABLE: 'Trading status is unavailable. Existing transaction security checks still apply.',
 }
-export function readinessMessage(reason: string) { return messages[reason] ?? 'A trading dependency could not be verified.' }
+export function readinessMessage(reason: string) { return messages[normalizeTransactionFailureCode(reason)] ?? 'A trading dependency could not be verified.' }

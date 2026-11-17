@@ -1037,9 +1037,17 @@ jobs:
               application/vnd.docker.distribution.manifest.v2+json \
             --output json \
             --no-cli-pager)
-          if ! jq -e '.failures == [] and (.images | length) == 1' \
+          if ! jq -e --arg digest "$mirrored_digest" '
+              . as $response
+              | .failures == []
+                and (.images | type == "array" and length > 0)
+                and all(.images[];
+                  .imageId.imageDigest == $digest
+                  and (.imageManifest | type == "string" and length > 0)
+                  and .imageManifest == $response.images[0].imageManifest
+                  and .imageManifestMediaType == $response.images[0].imageManifestMediaType)' \
               <<< "$ecr_manifest_response" >/dev/null; then
-            echo "::error::ECR did not return exactly one image manifest for the immutable Alto tag."
+            echo "::error::ECR did not return one unambiguous manifest identity for the immutable Alto digest."
             exit 1
           fi
           ecr_image_manifest="$RUNNER_TEMP/alto-ecr-image-manifest.json"

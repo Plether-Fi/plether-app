@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "accountId": "932542905614",
+  "region": "ap-southeast-1",
+  "releases": [
+    {
+      "id": "sepolia-recovery-2026-11-17",
+      "sourceCommit": "0713acef754f1413352bcf1ece9d350ee717dd17",
+      "routerSourceCommit": "9544dbdd05e9b31c43476f216065f647ea821cf7",
+      "coreManifestSha256": "584cdacada35f8225d2a88811edfbd9622764fe0e6da4b275ba8f33d6f8c0c74",
+      "services": ["plether-aa-reconciler", "plether-liquidation-worker", "plether-position-protection-worker"],
+      "applicationImage": "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia@sha256:b901c9b3c7a9d0db811659de396f4032409621089150d6e2f39e1026cdadf8e5",
+      "routerImage": "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-otel-log-router-sepolia@sha256:f53da6025c098fe71b84b2954688576b0b7fb1e7bb7ed0dd1a7ba2d8e6dbc50e",
+      "qualificationEvidence": [
+        "2026-11-17 incident recovery: reconciler revision 69, liquidation revision 100 and protection revision 70 ran these image digests.",
+        "Reconciler caught up and published fresh heartbeats; liquidation sweeps completed; protection reported caughtUp=true and lagBlocks=0.",
+        "Source comparison with 9544dbdd: service implementations, dependency locks, Core manifest and schema are unchanged; the only backend runtime change is the unused public RPC handler.",
+        "Sponsorship was explicitly resumed by https://github.com/Plether-Fi/plether-app/actions/runs/44056561704."
+      ]
+    }
+  ]
+}

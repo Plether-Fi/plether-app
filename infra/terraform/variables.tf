@@ -897,7 +897,7 @@ variable "aa_reconciler_poll_seconds" {
 variable "aa_reconciler_batch_blocks" {
   type        = string
   default     = "1000"
-  description = "Maximum EntryPoint log block range processed per native-AA reconciliation batch."
+  description = "Maximum inclusive EntryPoint log block count per reconciliation batch; bounded by config/rpc-log-range-policy.json."
 }
 
 variable "aa_reconciler_max_safe_lag_seconds" {

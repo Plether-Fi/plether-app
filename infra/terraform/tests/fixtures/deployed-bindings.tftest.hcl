@@ -35,6 +35,8 @@ mock_provider "aws" {
   }
 }
 variables {
+  api_image_digest                       = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  log_router_image_digest                = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   db_allocated_storage                   = 20
   db_storage_type                        = "gp3"
   db_final_snapshot_identifier           = "synthetic-test-final-snapshot"

@@ -30,6 +30,7 @@ COPY apps/backend/src/ src/
 COPY apps/backend/schema.sql schema.sql
 COPY apps/backend/config/migrations/ config/migrations/
 COPY config/perps/arbitrum-sepolia-v2.0.0.json config/perps/arbitrum-sepolia-v2.0.0.json
+COPY config/rpc-log-range-policy.json config/rpc-log-range-policy.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \

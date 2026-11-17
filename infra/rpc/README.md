@@ -223,7 +223,13 @@ future plan does not recreate a temporary import volume.
 
 The gateway caps requests at 512 KiB, responses at 8 MiB, batches at 20 calls,
 and each task at 16 concurrent requests / two trace simulations. Log scans
-require an explicit block hash or numeric range of at most 2,001 blocks. Only
+require an explicit block hash or numeric range of at most 5,000 inclusive
+blocks (`toBlock - fromBlock + 1`). The versioned contract in
+`config/rpc-log-range-policy.json` is shared with the reconciler and Terraform;
+the reconciler defaults to 1,000 blocks and oversized configured batches are
+rejected before startup/deployment. A range rejection returns the fixed
+`log_range_requires_explicit_bounded_blocks` code to authenticated callers so
+bounded reads can be subdivided without retrying a write. Only
 allowlisted methods are accepted; historical transaction traces and signing
 methods are excluded. Raw transaction sends, including mixed batches, are
 never automatically replayed after an ambiguous failure. Reverts are preserved.

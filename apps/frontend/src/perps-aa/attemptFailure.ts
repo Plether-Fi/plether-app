@@ -1,3 +1,5 @@
+import { normalizeTransactionFailureCode } from '../utils/transactionFailure'
+
 /** Closed telemetry vocabulary. Never inspect messages, stacks, URLs or payloads. */
 export const failureSteps = [
   'preflight', 'review_read', 'preparation_journal', 'review_clock', 'review_deadline',
@@ -17,7 +19,7 @@ export const failureReasons = [
   'EXECUTION_GAS_CAP_EXCEEDED', 'RESTART_ESTIMATION', 'SECURITY_ATTESTATION_UNAVAILABLE',
   'SUBMISSION_PAUSED', 'SPONSORSHIP_NOT_AUTHORIZED', 'DATABASE_UNAVAILABLE',
   'BUNDLER_UNAVAILABLE', 'SUBMISSION_OUTCOME_UNKNOWN', 'SUBMISSION_HASH_MISMATCH',
-  'RECEIPT_TIMEOUT', 'USER_OPERATION_REVERTED', 'READINESS_UNAVAILABLE',
+  'RECEIPT_TIMEOUT', 'USER_OPERATION_REVERTED', 'READINESS_UNAVAILABLE', 'RECONCILIATION_STALE',
   'OPEN_EXECUTION_UNAVAILABLE', 'PROTECTION_TRIGGER_UNAVAILABLE',
 ] as const
 export type FailureReason = typeof failureReasons[number]
@@ -33,8 +35,9 @@ export class AttemptFailureError extends Error {
 }
 
 export function safeAttemptFailure(value: AttemptFailure | undefined): AttemptFailure | undefined {
-  if (value && failureSteps.includes(value.failureStep) && failureReasons.includes(value.reasonCode)) {
-    return { failureStep: value.failureStep, reasonCode: value.reasonCode }
+  const reasonCode = value && normalizeTransactionFailureCode(value.reasonCode)
+  if (value && failureSteps.includes(value.failureStep) && failureReasons.includes(reasonCode as FailureReason)) {
+    return { failureStep: value.failureStep, reasonCode: reasonCode as FailureReason }
   }
   return undefined
 }
@@ -49,7 +52,8 @@ export function classifyAttemptFailure(failureStep: FailureStep, error: unknown)
       seen.add(current)
       const value = current as Record<string, unknown>
       const data = value.data && typeof value.data === 'object' ? value.data as Record<string, unknown> : undefined
-      const code = value.diagnosticCode ?? value.reason ?? data?.reason
+      const rawCode = value.diagnosticCode ?? value.reason ?? data?.reason
+      const code = typeof rawCode === 'string' ? normalizeTransactionFailureCode(rawCode) : rawCode
       if (typeof code === 'string' && failureReasons.includes(code as FailureReason) && code !== 'UNKNOWN') {
         reasonCode = code as FailureReason
         if (code !== 'SUBMISSION_OUTCOME_UNKNOWN') break

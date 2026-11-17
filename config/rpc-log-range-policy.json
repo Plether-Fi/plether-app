@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "maxLogRangeBlocks": 5000,
+  "reconcilerDefaultBatchBlocks": 1000
+}

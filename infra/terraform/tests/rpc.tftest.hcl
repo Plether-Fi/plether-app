@@ -35,6 +35,8 @@ mock_provider "aws" {
 }
 
 variables {
+  api_image_digest               = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  log_router_image_digest        = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   db_allocated_storage           = 20
   db_storage_type                = "gp3"
   operations_alarm_sns_topic_arn = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"

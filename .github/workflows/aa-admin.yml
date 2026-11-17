@@ -16,6 +16,16 @@ on:
         required: false
         default: ''
         type: string
+      expected_pause_event_id:
+        description: Exact current pause audit event ID, obtained before dispatch (resume-issuance only)
+        required: false
+        default: ''
+        type: string
+      expected_paymaster:
+        description: Exact deployed paymaster address (resume-issuance only)
+        required: false
+        default: ''
+        type: string
       operator_note:
         description: Non-secret audit note (resume-issuance only; 1-512 printable ASCII characters)
         required: false
@@ -106,6 +116,8 @@ jobs:
           ACTION: ${{ inputs.action }}
           CONFIRMATION: ${{ inputs.confirmation }}
           EXPECTED_REASON: ${{ inputs.expected_reason }}
+          EXPECTED_PAUSE_EVENT_ID: ${{ inputs.expected_pause_event_id }}
+          EXPECTED_PAYMASTER: ${{ inputs.expected_paymaster }}
           OPERATOR_NOTE: ${{ inputs.operator_note }}
         run: |
           set -euo pipefail
@@ -114,9 +126,12 @@ jobs:
             --arg action "$ACTION" \
             --arg confirmation "$CONFIRMATION" \
             --arg expected_reason "$EXPECTED_REASON" \
+            --arg expected_pause_event_id "$EXPECTED_PAUSE_EVENT_ID" \
+            --arg expected_paymaster "$EXPECTED_PAYMASTER" \
             --arg operator_note "$OPERATOR_NOTE" \
-            '{schema:1, action:$action, confirmation:$confirmation,
-              expectedReason:$expected_reason, operatorNote:$operator_note}' \
+            '{schema:2, action:$action, confirmation:$confirmation,
+              expectedReason:$expected_reason, expectedPauseEventId:$expected_pause_event_id,
+              expectedPaymaster:$expected_paymaster, operatorNote:$operator_note}' \
             | sha256sum | cut -d' ' -f1)
           [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
           echo "Dispatch input fingerprint: sha256:$fingerprint"
@@ -172,6 +187,8 @@ jobs:
         env:
           ACTION: ${{ inputs.action }}
           EXPECTED_REASON: ${{ inputs.expected_reason }}
+          EXPECTED_PAUSE_EVENT_ID: ${{ inputs.expected_pause_event_id }}
+          EXPECTED_PAYMASTER: ${{ inputs.expected_paymaster }}
           OPERATOR_NOTE: ${{ inputs.operator_note }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
@@ -192,13 +209,15 @@ jobs:
           fi
 
           if [ "$ACTION" = "attest-kms" ]; then
-            if [ -n "$EXPECTED_REASON" ] || [ -n "$OPERATOR_NOTE" ]; then
-              echo "::error title=Unexpected inputs::attest-kms does not accept an expected reason or operator note."
+            if [ -n "$EXPECTED_REASON" ] || [ -n "$OPERATOR_NOTE" ] || [ -n "$EXPECTED_PAUSE_EVENT_ID" ] || [ -n "$EXPECTED_PAYMASTER" ]; then
+              echo "::error title=Unexpected inputs::attest-kms does not accept issuance recovery inputs."
               exit 1
             fi
           else
             if ! jq --exit-status -n \
                 --arg reason "$EXPECTED_REASON" \
+                --arg generation "$EXPECTED_PAUSE_EVENT_ID" \
+                --arg paymaster "$EXPECTED_PAYMASTER" \
                 --arg note "$OPERATOR_NOTE" \
                 'def safe:
                    type == "string"
@@ -207,8 +226,12 @@ jobs:
                    and test("^[ -~]+$")
                    and (startswith(" ") | not)
                    and (endswith(" ") | not);
-                 ($reason | safe) and ($note | safe)' >/dev/null; then
-              echo "::error title=Invalid recovery evidence::The expected reason and operator note must each contain 1-512 printable ASCII characters with no leading or trailing space."
+                 ($reason | safe) and ($note | safe)
+                 and ($generation | test("^[1-9][0-9]{0,18}$"))
+                 and (($generation | length) < 19 or $generation <= "9223372036854775807")
+                 and ($paymaster | test("^0x[0-9A-Fa-f]{40}$"))
+                 and ($paymaster | ascii_downcase) != "0x0000000000000000000000000000000000000000"' >/dev/null; then
+              echo "::error title=Invalid recovery evidence::Recovery requires printable reason/note, a canonical positive 64-bit pause event ID, and a nonzero paymaster address."
               exit 1
             fi
             echo "::add-mask::$EXPECTED_REASON"
@@ -234,6 +257,8 @@ jobs:
         env:
           ACTION: ${{ inputs.action }}
           EXPECTED_REASON: ${{ inputs.expected_reason }}
+          EXPECTED_PAUSE_EVENT_ID: ${{ inputs.expected_pause_event_id }}
+          EXPECTED_PAYMASTER: ${{ inputs.expected_paymaster }}
           OPERATOR_NOTE: ${{ inputs.operator_note }}
           REGISTRATION_OWNER: aa-admin-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_MAX_ATTEMPTS: '3'
@@ -262,8 +287,11 @@ jobs:
               expected_event="aa_admin_issuance_resumed"
               command_json=$(jq -cn \
                 --arg reason "$EXPECTED_REASON" \
+                --arg generation "$EXPECTED_PAUSE_EVENT_ID" \
+                --arg paymaster "$EXPECTED_PAYMASTER" \
                 --arg note "$OPERATOR_NOTE" \
                 '["/usr/local/bin/plether-aa-admin", "resume-issuance",
+                  "--expected-pause-event-id", $generation, "--paymaster", $paymaster,
                   "--expected-reason", $reason, "--operator-note", $note]')
               ;;
             *) exit 1 ;;
@@ -501,6 +529,18 @@ jobs:
                and ([.taskDefinition.containerDefinitions[] | select(.name == $app)] | length) == 0' \
               "$api_definition_file" >/dev/null; then
             echo "::error title=Unexpected API topology::The deployed API task cannot be used as the reviewed admin image source."
+            exit 1
+          fi
+
+          if [ "$ACTION" = "resume-issuance" ] && ! jq --exit-status \
+              --arg paymaster "${EXPECTED_PAYMASTER,,}" \
+              '[.taskDefinition.containerDefinitions[] | select(.name == "plether-api")
+                | (.environment // [])[] | select(.name == "AA_PAYMASTER_ADDRESS")
+                | (.value | ascii_downcase)] == [$paymaster]
+               and ([.taskDefinition.containerDefinitions[] | select(.name == "plether-api")
+                 | (.environment // [])[] | select(.name == "PERPS_CHAIN_ID") | .value] == ["421614"])' \
+              "$api_definition_file" >/dev/null; then
+            echo "::error title=Recovery scope mismatch::The approved paymaster must match the selected Sepolia API definition."
             exit 1
           fi
 
@@ -811,6 +851,8 @@ jobs:
                   or
                   ($action == "resume-issuance"
                    and $main.command == ["/usr/local/bin/plether-aa-admin", "resume-issuance",
+                                         "--expected-pause-event-id", "__WORKFLOW_REQUIRED__",
+                                         "--paymaster", "__WORKFLOW_REQUIRED__",
                                          "--expected-reason", "__WORKFLOW_REQUIRED__",
                                          "--operator-note", "__WORKFLOW_REQUIRED__"]
                    and $secret_map == {"DATABASE_URL":$database}
@@ -1185,6 +1227,8 @@ jobs:
         env:
           ACTION: ${{ inputs.action }}
           EXPECTED_REASON: ${{ inputs.expected_reason }}
+          EXPECTED_PAUSE_EVENT_ID: ${{ inputs.expected_pause_event_id }}
+          EXPECTED_PAYMASTER: ${{ inputs.expected_paymaster }}
           OPERATOR_NOTE: ${{ inputs.operator_note }}
           EXPECTED_EVENT: ${{ steps.target.outputs.expected_event }}
           EXPECTED_SIGNER: ${{ steps.target.outputs.expected_signer }}
@@ -1257,15 +1301,17 @@ jobs:
             operator_note_length=${#OPERATOR_NOTE}
             if ! jq --exit-status \
                 --arg reason "$EXPECTED_REASON" \
+                --arg generation "$EXPECTED_PAUSE_EVENT_ID" \
                 --argjson note_length "$operator_note_length" \
                 'any(.[];
                   .previous_reason == $reason
+                  and .previous_pause_event_id == $generation
                   and .operator_note_length == $note_length)' \
                 "$evidence_file" >/dev/null; then
-              echo "::error title=Invalid issuance-control evidence::The terminal audit event did not confirm the exact previous pause reason and operator-note length."
+              echo "::error title=Invalid issuance-control evidence::The terminal audit event did not confirm the exact pause event ID, reason and operator-note length."
               exit 1
             fi
-            echo "The issuance breaker was cleared only after the exact expected-reason check, with task-scoped audit evidence."
+            echo "The issuance breaker was cleared only after the exact pause generation, reason and fresh reconciliation checks, with task-scoped audit evidence."
           fi
           # Audit evidence must be verified while the collector is alive. Only
           # then stop the exact owned task and retain the full terminal checks.

@@ -65,6 +65,26 @@ describe('trading readiness', () => {
     paused.actions.deposit = [{ component, status: 'ready', reason: 'READY' }]
     expect(readinessBlocker(paused, 'deposit', 110_000)).toBeUndefined()
   })
+  it.each(['RECONCILIATION_STALE', 'RECONCILER_STALE'])('blocks only a fresh confirmed reconciliation outage (%s) while enforcement is off', reason => {
+    const outage = sample()
+    outage.enforcementEnabled = false
+    for (const action of ['deposit', 'open', 'close', 'protection'] as const) {
+      outage.actions[action] = [{ component: 'reconciliation', status: 'blocked', reason }]
+      expect(readinessBlocker(outage, action, 110_000)?.reason).toBe(reason)
+      expect(readinessBlocker(outage, action, 115_000)).toBeUndefined()
+      expect(readinessBlocker(outage, action, 90_000)).toBeUndefined()
+      outage.actions[action][0].status = 'unknown'
+      expect(readinessBlocker(outage, action, 110_000)).toBeUndefined()
+    }
+    const parsed = parseReadiness(outage, 110_000)
+    expect(parsed.actions.deposit[0].reason).toBe('RECONCILIATION_STALE')
+    expect(readinessMessage(reason)).toContain('Gas sponsorship is temporarily unavailable')
+  })
+  it('does not promote unrelated reconciliation observations into a blocker while enforcement is off', () => {
+    const advisory = { ...sample(), enforcementEnabled: false }
+    advisory.actions.deposit = [{ component: 'reconciliation', status: 'blocked', reason: 'READINESS_UNAVAILABLE' }]
+    expect(readinessBlocker(advisory, 'deposit', 110_000)).toBeUndefined()
+  })
   it('rejects malformed, future-dated and overlong snapshots', () => {
     expect(parseReadiness(sample(), 110_000)).toEqual(sample())
     expect(() => parseReadiness({ ...sample(), expiresAt: 116_000 }, 110_000)).toThrow()

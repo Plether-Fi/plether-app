@@ -158,8 +158,9 @@ parseBrowserStage (Object fields)
   , validAttemptId attempt, stage `elem` browserStages =
       if KM.size fields == 2 then Just (T.toLower attempt, stage, Nothing)
       else case (KM.size fields, KM.lookup "failureStep" fields, KM.lookup "reasonCode" fields) of
-        (4, Just (String step), Just (String reason))
-          | validBrowserFailure stage (BrowserFailure step reason) ->
+        (4, Just (String step), Just (String rawReason))
+          | let reason = if rawReason == "RECONCILER_STALE" then "RECONCILIATION_STALE" else rawReason
+          , validBrowserFailure stage (BrowserFailure step reason) ->
               Just (T.toLower attempt, stage, Just $ BrowserFailure step reason)
         _ -> Nothing
 parseBrowserStage _ = Nothing
@@ -187,7 +188,7 @@ failureReasons =
   , "ACCOUNT_DEPLOYMENT_PENDING", "INSUFFICIENT_FREE_EQUITY", "MUST_CLOSE_OPPOSING", "EXECUTION_GAS_CAP_EXCEEDED"
   , "RESTART_ESTIMATION", "SECURITY_ATTESTATION_UNAVAILABLE", "SUBMISSION_PAUSED", "SPONSORSHIP_NOT_AUTHORIZED"
   , "DATABASE_UNAVAILABLE", "BUNDLER_UNAVAILABLE", "SUBMISSION_OUTCOME_UNKNOWN", "SUBMISSION_HASH_MISMATCH"
-  , "RECEIPT_TIMEOUT", "USER_OPERATION_REVERTED", "READINESS_UNAVAILABLE", "OPEN_EXECUTION_UNAVAILABLE"
+  , "RECEIPT_TIMEOUT", "USER_OPERATION_REVERTED", "READINESS_UNAVAILABLE", "RECONCILIATION_STALE", "OPEN_EXECUTION_UNAVAILABLE"
   , "PROTECTION_TRIGGER_UNAVAILABLE"
   ]
 

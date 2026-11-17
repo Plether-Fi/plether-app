@@ -1,6 +1,18 @@
 import http from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+
+// The inclusive range contract is shared with the reconciler and Terraform.
+// An unavailable or invalid contract must fail startup rather than relax it.
+const rangePolicy = JSON.parse(readFileSync(new URL('../../../config/rpc-log-range-policy.json', import.meta.url), 'utf8'))
+if (rangePolicy.version !== 1 || !Number.isSafeInteger(rangePolicy.maxLogRangeBlocks)
+  || rangePolicy.maxLogRangeBlocks < 1 || !Number.isSafeInteger(rangePolicy.reconcilerDefaultBatchBlocks)
+  || rangePolicy.reconcilerDefaultBatchBlocks < 1
+  || rangePolicy.reconcilerDefaultBatchBlocks > rangePolicy.maxLogRangeBlocks) {
+  throw new Error('invalid_rpc_log_range_policy')
+}
+export const RPC_LOG_RANGE_POLICY = Object.freeze(rangePolicy)
 
 const READS = new Set([
   'eth_chainId', 'net_version', 'web3_clientVersion', 'eth_syncing',
@@ -83,7 +95,7 @@ export function validateRequest(body) {
         latestLogs = true
       } else if (!HEX.test(filter.fromBlock) || !HEX.test(filter.toBlock)
         || BigInt(filter.toBlock) < BigInt(filter.fromBlock)
-        || BigInt(filter.toBlock) - BigInt(filter.fromBlock) >= 5000n) {
+        || BigInt(filter.toBlock) - BigInt(filter.fromBlock) + 1n > BigInt(RPC_LOG_RANGE_POLICY.maxLogRangeBlocks)) {
         throw new Error('log_range_requires_explicit_bounded_blocks')
       }
     }
@@ -108,7 +120,7 @@ async function pinLatestLogRanges(body, upstream, signal) {
   const pinned = calls.map(call => call.method === 'eth_getLogs' && call.params[0].toBlock === 'latest'
     ? { ...call, params: [{ ...call.params[0], toBlock: height }, ...call.params.slice(1)] } : call)
   const request = Array.isArray(body) ? pinned : pinned[0]
-  // The original 5,000-block bound applies to the resolved head. An oversized
+  // The shared inclusive block bound applies to the resolved head. An oversized
   // range remains a caller error, rather than a reason to fail over providers.
   validateRequest(request)
   return request
@@ -393,7 +405,9 @@ export function createGateway(config, dependencies = {}) {
       } else {
         const reason = error instanceof SyntaxError ? 'invalid_json'
           : REJECTIONS.has(error.message) ? error.message : 'invalid_request'
-        reject(400, reason, 'invalid_request')
+        // Only this fixed contract error is exposed for bounded read splitting.
+        // Other parser/validation failures retain the generic public response.
+        reject(400, reason, reason === 'log_range_requires_explicit_bounded_blocks' ? reason : 'invalid_request')
       }
     } finally {
       if (admitted) active--

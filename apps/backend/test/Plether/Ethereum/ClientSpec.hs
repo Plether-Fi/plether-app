@@ -4,6 +4,7 @@ import Data.Aeson (Value (..))
 import Plether.Ethereum.Client
   ( RpcError (..)
   , decodeRpcResponseEnvelope
+  , decodeRpcHttpFailure
   , directSecurityRpcEndpoint
   )
 import Test.Hspec
@@ -11,6 +12,13 @@ import Test.Hspec
 spec :: Spec
 spec =
   describe "strict JSON-RPC response correlation" $ do
+    it "retains only the gateway's fixed range failure from HTTP bodies" $ do
+      decodeRpcHttpFailure 400 "{\"error\":\"log_range_requires_explicit_bounded_blocks\"}"
+        `shouldBe` RpcHttpError "RPC_RANGE_LIMIT"
+      decodeRpcHttpFailure 400 "{\"error\":\"https://private.invalid/token\"}"
+        `shouldBe` RpcHttpError "statusCode = 400"
+      decodeRpcHttpFailure 401 "{\"error\":\"log_range_requires_explicit_bounded_blocks\"}"
+        `shouldBe` RpcHttpError "statusCode = 401"
     it "pins Sepolia AA to direct primary and leaves unrelated providers unchanged" $ do
       directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com/" `shouldBe` "https://rpc-internal.sepolia.plether.com/primary"
       directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com" `shouldBe` "https://rpc-internal.sepolia.plether.com/primary"
