@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/recover-backend.yml
       - scripts/recover-backend*
+      - scripts/backend-recovery-engine*
       - scripts/validate-perps-deployment.mjs
       - config/operations/backend-recovery-releases.json
   workflow_dispatch:
