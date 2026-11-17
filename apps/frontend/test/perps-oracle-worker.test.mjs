@@ -70,7 +70,7 @@ function fixture() {
     },
   }
   const options = { publicClient, walletClient: { writeContract: async () => { state.writes++; return '0x1234' } },
-    account: { address: feeds.pyth }, now: () => state.now,
+    account: { address: feeds.pyth }, now: () => state.now, pause: async () => {},
     fetchPayload: async () => ({ updateData: ['0xabcd'], publishTimes: state.publishes }),
     fetchFreshPayload: async () => { state.freshFetches++; return { updateData: ['0xabcd'], publishTimes: state.publishes } },
     log: (...args) => state.logs.push(args), logEvery: (...args) => state.logs.push(args) }
@@ -575,6 +575,127 @@ test('fresh API rate limits and HTTP failures back off without parsing or submit
       assert.equal(f.state.writes, 0)
     }
   } finally { globalThis.fetch = originalFetch }
+})
+
+test('a same-payload one-second header race catches up before fee lookup and repair', async () => {
+  const f = fixture(); f.state.now = 1_001_000; f.state.publishes.fill(1001)
+  let timestamp = 1000n
+  const pauses = []
+  f.publicClient.getBlock = async () => ({ number: timestamp, hash: `0x${timestamp}`, timestamp })
+  const iterate = createOracleWorker({ ...f.options, pause: async ms => {
+    pauses.push(ms); f.state.now += ms; timestamp = 1001n; f.state.timestamp = timestamp
+  } })
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.deepEqual(pauses, [1000])
+  assert.equal(f.state.freshFetches, 0)
+  assert.equal(f.state.accepted, 1001n)
+  assert.equal(f.state.writes, 1)
+})
+
+test('a fresh admitted payload waits at most two head reads without fetching it again', async () => {
+  const f = fixture(); f.state.now = 1_002_000; f.state.mark = 995n
+  let timestamp = 1000n
+  let freshFetches = 0
+  const pauses = []
+  f.publicClient.getBlock = async () => ({ number: timestamp, hash: `0x${timestamp}`, timestamp })
+  const iterate = createOracleWorker({ ...f.options,
+    fetchFreshPayload: async () => {
+      freshFetches++; f.state.publishes.fill(1002); return f.options.fetchPayload()
+    },
+    pause: async ms => {
+      pauses.push(ms); f.state.now += ms; timestamp++; f.state.timestamp = timestamp
+    },
+  })
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.deepEqual(pauses, [1000, 1000])
+  assert.equal(freshFetches, 1)
+  assert.equal(f.state.writes, 1)
+  const observed = f.state.logs.find(args => args.includes('oracle_payload_head_reobserved'))
+  assert.equal(observed[4].head_reads, 2)
+  assert.equal(observed[4].caught_up, true)
+})
+
+test('genuinely future, far-ahead and already-stale payloads do not wait for a header', async () => {
+  for (const kind of ['future_wall_clock', 'far_ahead', 'stale']) {
+    const f = fixture()
+    f.state.now = kind === 'future_wall_clock' ? 1_000_000 : 1_003_000
+    f.state.publishes = kind === 'stale' ? [949, 1001, 1001, 1001, 1001, 1001] : Array(6).fill(kind === 'far_ahead' ? 1003 : 1001)
+    let pauses = 0
+    const iterate = createOracleWorker({ ...f.options, pause: async () => { pauses++ } })
+    assert.equal((await iterate()).status, 'stale_payload', kind)
+    assert.equal(pauses, 0, kind)
+    assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+    assert.equal(f.state.writes, 0)
+  }
+})
+
+test('a head that never catches the payload stops after two reads and backs off', async () => {
+  const f = fixture(); f.state.now = 1_002_000; f.state.publishes.fill(1001)
+  f.publicClient.getBlock = async () => ({ number: 42n, hash: '0xaaa', timestamp: 1000n })
+  let pauses = 0
+  const iterate = createOracleWorker({ ...f.options, pause: async ms => { pauses++; f.state.now += ms } })
+  assert.equal((await iterate()).status, 'stale_payload')
+  assert.equal(pauses, 2)
+  const observed = f.state.logs.find(args => args.includes('oracle_payload_head_reobserved'))
+  assert.equal(observed[4].caught_up, false)
+  f.state.now += 4999
+  assert.equal((await iterate()).status, 'backoff')
+  assert.equal(pauses, 2)
+  assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+  assert.equal(f.state.writes, 0)
+})
+
+test('head reobservation revalidates same-height reorgs and market transitions before spending', async () => {
+  for (const change of ['reorg_mark_advanced', 'frozen']) {
+    const f = fixture(); f.state.now = 1_001_000; f.state.publishes.fill(1001)
+    let hash = '0xaaa'
+    let timestamp = 1000n
+    f.publicClient.getBlock = async () => ({ number: 42n, hash, timestamp })
+    const iterate = createOracleWorker({ ...f.options, pause: async ms => {
+      f.state.now += ms; hash = '0xbbb'; timestamp = 1001n; f.state.timestamp = timestamp
+      if (change === 'frozen') f.state.frozen = true
+      else f.state.mark = 1002n
+    } })
+    assert.equal((await iterate()).status, change === 'frozen' ? 'healthy' : 'waiting_for_payload')
+    assert.equal(f.state.reads.filter(read => read.functionName === 'getLatestPrice').length, 2)
+    assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+    assert.equal(f.state.writes, 0)
+  }
+})
+
+test('RPC failure during head reobservation fails closed and retains ordinary backoff', async () => {
+  const f = fixture(); f.state.now = 1_001_000; f.state.publishes.fill(1001)
+  let paused = false
+  f.publicClient.getBlock = async () => {
+    if (paused) throw new Error('head RPC unavailable')
+    return { number: 42n, hash: '0xaaa', timestamp: 1000n }
+  }
+  const iterate = createOracleWorker({ ...f.options, pause: async ms => { paused = true; f.state.now += ms } })
+  await assert.rejects(iterate(), /head RPC unavailable/)
+  f.state.now += 4999
+  assert.equal((await iterate()).status, 'backoff')
+  assert.equal(f.state.writes, 0)
+})
+
+test('the final post-fee mark guard still applies after the head catches up', async () => {
+  const f = fixture(); f.state.now = 1_001_000; f.state.publishes.fill(1001)
+  let timestamp = 1000n
+  f.publicClient.getBlock = async () => ({ number: timestamp, hash: `0x${timestamp}`, timestamp })
+  const read = f.publicClient.readContract
+  f.publicClient.readContract = async input => {
+    const result = await read(input)
+    if (input.functionName === 'getUpdateFee') {
+      timestamp = 1002n; f.state.timestamp = timestamp; f.state.mark = 1002n
+    }
+    return result
+  }
+  let pauses = 0
+  const iterate = createOracleWorker({ ...f.options, pause: async ms => {
+    pauses++; f.state.now += ms; timestamp = 1001n; f.state.timestamp = timestamp
+  } })
+  assert.equal((await iterate()).status, 'waiting_for_payload')
+  assert.equal(pauses, 1)
+  assert.equal(f.state.writes, 0)
 })
 
 test('fetch errors back off 5/10/20/30 seconds without RPC work and recover before normal cadence', async () => {
