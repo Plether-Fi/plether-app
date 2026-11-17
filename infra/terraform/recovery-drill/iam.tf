@@ -28,7 +28,8 @@ resource "aws_iam_role_policy" "recovery_workflow" {
   role = aws_iam_role.recovery_workflow.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Sid = "ReadUnscopableEcsMetadata", Effect = "Allow", Action = ["ecs:DescribeTaskDefinition", "ecs:ListTaskDefinitions"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } } },
-    { Sid = "ReadFixtureCluster", Effect = "Allow", Action = ["ecs:DescribeClusters", "ecs:ListTasks"], Resource = aws_ecs_cluster.drill.arn },
+    { Sid = "ReadFixtureCluster", Effect = "Allow", Action = "ecs:DescribeClusters", Resource = aws_ecs_cluster.drill.arn },
+    { Sid = "ListOnlyFixtureTasks", Effect = "Allow", Action = "ecs:ListTasks", Resource = "*", Condition = { ArnEquals = { "ecs:cluster" = aws_ecs_cluster.drill.arn }, StringEquals = { "aws:RequestedRegion" = var.aws_region } } },
     { Sid = "ReadFixtureTasks", Effect = "Allow", Action = "ecs:DescribeTasks", Resource = "arn:aws:ecs:${var.aws_region}:${local.account_id}:task/${local.name}/*" },
     { Sid = "ReadOnlyFixtureService", Effect = "Allow", Action = "ecs:DescribeServices", Resource = local.fixture_service_arn },
     { Sid = "UpdateOnlyFixtureFamily", Effect = "Allow", Action = "ecs:UpdateService", Resource = local.fixture_service_arn, Condition = { ArnLike = { "ecs:task-definition" = local.family_arn } } },
