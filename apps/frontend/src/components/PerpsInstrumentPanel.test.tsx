@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PerpsInstrumentPanel } from './PerpsInstrumentPanel'
 
@@ -174,7 +174,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
     expect(screen.getByText('Net LONG exposure')).toBeVisible()
     expect(screen.getByText('882.9M USDG')).toBeVisible()
     expect(screen.getByText(
-      'Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs, can change before execution, and other checks apply.'
+      'Position imbalance affects VPI. Payout backing also limits new positions.'
     )).toBeVisible()
     const learnMoreLink = screen.getByRole('link', { name: 'Read: Virtual Price Impact' })
     expect(learnMoreLink).toHaveTextContent('Learn more')
@@ -248,5 +248,55 @@ describe('PerpsInstrumentPanel directional limit', () => {
     expect(screen.getByText('Exposure per side')).toBeVisible()
     expect(screen.getByText('Net exposure')).toBeVisible()
     expect(screen.queryByText('Total SHORT exposure')).not.toBeInTheDocument()
+  })
+})
+
+describe('PerpsInstrumentPanel pool capacity', () => {
+  it('shows capacity only inside the directional-limit dropdown', () => {
+    vi.useFakeTimers()
+    render(
+      <PerpsInstrumentPanel
+        stats={[{
+          label: 'Directional limit used',
+          directionalLimit: { usagePercent: 16, side: 'long' },
+        }]}
+        poolCapacity={{ long: '3.802M', short: '86K' }}
+      />
+    )
+
+    expect(screen.getByText('LONG-HEAVY')).toBeVisible()
+    expect(screen.queryByRole('group', { name: 'Estimated pool capacity' })).not.toBeInTheDocument()
+    const trigger = screen.getByRole('button', { name: 'Directional limit used details' })
+    fireEvent.focus(trigger)
+
+    const capacity = screen.getByRole('group', { name: 'Estimated pool capacity' })
+    expect(capacity.closest('[aria-hidden]')).toHaveAttribute('id', trigger.getAttribute('aria-controls'))
+    expect(within(capacity).getByText('Long capacity')).toBeVisible()
+    expect(within(capacity).getByText('3.802M')).toBeVisible()
+    expect(within(capacity).getByText('Short capacity')).toBeVisible()
+    expect(within(capacity).getByText('86K')).toBeVisible()
+    expect(within(capacity).getAllByText('plDXY', { exact: true })).toHaveLength(2)
+
+    expect(capacity.closest('[aria-hidden]')).toHaveTextContent('before VPI and fees. Your Max may be lower.')
+
+    fireEvent.blur(trigger)
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(screen.queryByRole('group', { name: 'Estimated pool capacity' })).not.toBeInTheDocument()
+  })
+
+  it('distinguishes zero capacity from missing and loading data', () => {
+    const { rerender } = render(<PerpsInstrumentPanel directionalLimitDetailsExpanded poolCapacity={{ long: '0' }} />)
+
+    const capacity = screen.getByRole('group', { name: 'Estimated pool capacity' })
+    expect(within(capacity).getByText('0', { exact: true })).toBeVisible()
+    expect(within(capacity).getByLabelText('Short capacity unavailable')).toHaveTextContent('--')
+    expect(within(capacity).queryByLabelText('Long capacity unavailable')).not.toBeInTheDocument()
+
+    rerender(<PerpsInstrumentPanel directionalLimitDetailsExpanded poolCapacity={{ isLoading: true }} />)
+    expect(screen.getByLabelText('Loading long capacity')).toHaveTextContent('...')
+    expect(screen.getByLabelText('Loading short capacity')).toHaveTextContent('...')
+
+    rerender(<PerpsInstrumentPanel />)
+    expect(screen.queryByRole('group', { name: 'Estimated pool capacity' })).not.toBeInTheDocument()
   })
 })

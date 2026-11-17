@@ -14,31 +14,37 @@ const HEALTHY_PROPS = {
 
 describe('PerpsPoolLiquidityDetails', () => {
   it('distinguishes pool assets and free liquidity from tranche accounting capital', () => {
-    render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} />)
+    render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} docsLink={{
+      href: 'https://docs.plether.com/providing-liquidity', title: 'Pool liquidity',
+    }} />)
 
     expect(screen.getByText('Total pool USDG')).toBeVisible()
     expect(screen.getByText('10 000 000')).toBeVisible()
     expect(screen.getByText('Reserved pool USDG')).toBeVisible()
     expect(screen.getByText('3 700 000')).toBeVisible()
     expect(screen.getByText('37.0%')).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'What this means for trading' })).toBeVisible()
-    expect(screen.getByText(/New orders must satisfy both/)).toBeVisible()
-    expect(screen.getByText(/Use Max in the trade ticket/)).toBeVisible()
-    expect(screen.getByText(/Tranche balances are accounting values/)).toBeVisible()
-    expect(screen.queryByText(/trading capacity/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Free liquidity')).toBeVisible()
+    expect(screen.getByText('6 300 000')).toBeVisible()
+    expect(screen.getByText('63.0%')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Pool USDG' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Vault capital' })).toBeVisible()
+    expect(screen.getByText(/Free liquidity alone does not set trade size/)).toBeVisible()
+    expect(screen.getByText(/Vault balances are accounting values/)).toBeVisible()
     expect(screen.getByRole('img', {
-      name: 'Vault capital: Senior 68%; Junior 32%',
+      name: 'Pool USDG: 37.0% reserved; 63.0% free',
     })).toBeVisible()
-    expect(screen.getByText('Junior · 32%').parentElement).toHaveStyle({ width: '32%' })
-    expect(screen.getByText('Senior · 68%').parentElement).toHaveStyle({ width: '68%' })
-    expect(screen.queryByText('(32%)')).not.toBeInTheDocument()
-    expect(screen.queryByText('(68%)')).not.toBeInTheDocument()
+    const composition = screen.getByRole('img', { name: 'Vault capital: Senior 68%; Junior 32%' })
+    expect(composition).toBeVisible()
+    expect(composition.children[0]).toHaveStyle({ width: '68%' })
+    expect(composition.children[1]).toHaveStyle({ width: '32%' })
+    expect(screen.getByText('68%')).toBeVisible()
+    expect(screen.getByText('32%')).toBeVisible()
+    expect(screen.getAllByText('3.2M USDG')).toHaveLength(1)
+    expect(screen.getAllByText('6.8M USDG')).toHaveLength(1)
     expect(screen.getByText('Senior is at its protected balance')).toBeVisible()
-    expect(screen.getByText(/Junior protects Senior from the first/)).toHaveTextContent(
-      'Junior protects Senior from the first 3.2M USDG of pool losses'
-    )
-    expect(screen.getByText(/Withdrawals depend on the liquidity available/)).toHaveTextContent(
-      'Withdrawals depend on the liquidity available at each hourly processing time.'
+    expect(screen.getByText(/Withdrawals depend on liquidity at hourly processing/)).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Read: Pool liquidity' })).toHaveAttribute(
+      'href', 'https://docs.plether.com/providing-liquidity'
     )
   })
 
@@ -54,7 +60,9 @@ describe('PerpsPoolLiquidityDetails', () => {
     expect(screen.getByText('590 098 900')).toBeVisible()
     expect(screen.queryByText('1.1K')).not.toBeInTheDocument()
     expect(screen.getByText('>99.9%')).toBeVisible()
-    expect(screen.getByText(/some orders may still fit/)).toBeVisible()
+    expect(screen.getByText('<0.1%')).toBeVisible()
+    expect(screen.getByText('1 100')).toBeVisible()
+    expect(screen.getByText(/Free liquidity alone does not set trade size/)).toBeVisible()
     expect(screen.queryByText(/trading capacity/i)).not.toBeInTheDocument()
   })
 
@@ -69,7 +77,7 @@ describe('PerpsPoolLiquidityDetails', () => {
   ])('handles reserved share for $assets assets and $free free USDG', ({ assets, free, share }) => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssets={assets} freeAssets={free} />)
     if (share) expect(screen.getByText(share)).toBeVisible()
-    else expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
+    else expect(screen.queryByRole('img', { name: /^Pool USDG:/ })).not.toBeInTheDocument()
     const amounts = screen.getAllByRole('definition').slice(0, 4)
     if (assets === undefined || free === undefined || free > assets) {
       expect(amounts.some((amount) => amount.textContent === '--')).toBe(true)
@@ -78,9 +86,12 @@ describe('PerpsPoolLiquidityDetails', () => {
 
   it('shows loading placeholders instead of previous liquidity or a percentage', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} isLoading />)
-    expect(screen.getAllByText('...')).toHaveLength(2)
+    expect(screen.getAllByText('...')).toHaveLength(5)
     expect(screen.queryByText('3 700 000')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
+    expect(screen.queryByText('3.2M USDG')).not.toBeInTheDocument()
+    expect(screen.queryByText('68%')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /^Vault capital:/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /^Pool USDG:/ })).not.toBeInTheDocument()
   })
 
   it('keeps a tiny positive reserve distinct from zero', () => {
@@ -91,9 +102,9 @@ describe('PerpsPoolLiquidityDetails', () => {
 
   it('shows an empty pool without a percentage', () => {
     render(<PerpsPoolLiquidityDetails poolAssets={0n} freeAssets={0n} isEmpty />)
-    expect(screen.getAllByText('0')).toHaveLength(2)
+    expect(screen.getAllByText('0')).toHaveLength(3)
     expect(screen.getByText('No vault capital yet')).toBeVisible()
-    expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /^Pool USDG:/ })).not.toBeInTheDocument()
   })
 
   it('shows factual exhausted and impaired states', () => {

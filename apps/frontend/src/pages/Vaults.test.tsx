@@ -779,8 +779,10 @@ describe('Vaults page', () => {
     expect(screen.getByText('Total pool USDG')).toBeInTheDocument()
     expect(screen.getByText('Reserved pool USDG')).toBeInTheDocument()
     expect(screen.queryByText(/Estimated (LONG|SHORT) trading capacity/)).not.toBeInTheDocument()
-    expect(screen.getByText('Junior · absorbs losses first')).toBeInTheDocument()
-    expect(screen.getByText('Senior · protected by Junior')).toBeInTheDocument()
+    const capitalDetails = screen.getByRole('heading', { name: 'Vault capital' }).parentElement!
+    expect(within(capitalDetails).getByText('Junior')).toBeInTheDocument()
+    expect(within(capitalDetails).getByText('Senior')).toBeInTheDocument()
+    expect(screen.getByText(/Junior absorbs losses first/)).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'One pool, two economic claims' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'When the pool loses' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'When the pool earns' })).not.toBeInTheDocument()

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   refetchDynamic: vi.fn(),
   refetchRiskParams: vi.fn(),
   refetchConfiguration: vi.fn(),
+  refetchCapacityConfiguration: vi.fn(),
   refetchLatestBasket: vi.fn(),
   refetchBasketHistory: vi.fn(),
   refetchBasketComponentHistory: vi.fn(),
@@ -15,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   usePerpsBasketHistory: vi.fn(),
   usePerpsMarketStats: vi.fn(),
   useReadContracts: vi.fn(),
+  dynamicData: undefined as unknown[] | undefined,
+  dynamicError: undefined as Error | undefined,
 }))
 
 vi.mock('wagmi', () => ({
@@ -30,6 +33,8 @@ vi.mock('../../api', () => ({
 describe('usePerpsMarket', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.dynamicData = undefined
+    mocks.dynamicError = undefined
     mocks.usePerpsBasketLatest.mockReturnValue({
       data: undefined,
       isLoading: false,
@@ -60,7 +65,9 @@ describe('usePerpsMarket', () => {
         ? mocks.refetchDynamic
         : firstFunctionName === 'riskParams'
           ? mocks.refetchRiskParams
-          : mocks.refetchConfiguration
+          : firstFunctionName === 'CAP_PRICE'
+            ? mocks.refetchCapacityConfiguration
+            : mocks.refetchConfiguration
       const data = firstFunctionName === 'riskParams'
         ? [
             {
@@ -83,12 +90,17 @@ describe('usePerpsMarket', () => {
               { status: 'success', result: 10n },
               { status: 'success', result: 300n },
             ]
-          : undefined
+          : firstFunctionName === 'CAP_PRICE'
+            ? [
+                { status: 'success', result: 200_000_000n },
+                { status: 'success', result: 25n },
+              ]
+            : mocks.dynamicData
 
       return {
         data,
         isLoading: false,
-        error: undefined,
+        error: firstFunctionName === 'getProtocolStatus' ? mocks.dynamicError : undefined,
         refetch,
       }
     })
@@ -106,6 +118,7 @@ describe('usePerpsMarket', () => {
       'getPoolLiquidityView',
       'sides',
       'sides',
+      'totalTraderClaimBalanceAssets',
     ])
     expect(dynamicCall?.query).toMatchObject({ refetchInterval: 2_000 })
     expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
@@ -145,6 +158,7 @@ describe('usePerpsMarket', () => {
     expect(mocks.refetchDynamic).toHaveBeenCalledOnce()
     expect(mocks.refetchRiskParams).not.toHaveBeenCalled()
     expect(mocks.refetchConfiguration).not.toHaveBeenCalled()
+    expect(mocks.refetchCapacityConfiguration).not.toHaveBeenCalled()
 
     act(() => {
       result.current.refetch()
@@ -153,10 +167,56 @@ describe('usePerpsMarket', () => {
     expect(mocks.refetchDynamic).toHaveBeenCalledTimes(2)
     expect(mocks.refetchRiskParams).toHaveBeenCalledOnce()
     expect(mocks.refetchConfiguration).toHaveBeenCalledOnce()
+    expect(mocks.refetchCapacityConfiguration).toHaveBeenCalledOnce()
     expect(mocks.refetchLatestBasket).toHaveBeenCalledOnce()
     expect(mocks.refetchBasketHistory).not.toHaveBeenCalled()
     expect(mocks.refetchBasketComponentHistory).toHaveBeenCalledOnce()
     expect(mocks.refetchMarketStats).toHaveBeenCalledOnce()
+  })
+
+  function setCapacityMarket(status: Record<string, unknown> = {}) {
+    mocks.dynamicData = [
+      { status: 'success', result: {
+        phase: 1, lastMarkPrice: 94_979_211n, lastMarkTime: 1_794_904_857n,
+        tradingActive: true, oracleFrozen: false, fadWindow: false, ...status,
+      } },
+      { status: 'success', result: { totalAssets: 114_049_580_735_546n, freeAssets: 90_585_761_984n } },
+      { status: 'success', result: { maxProfitAssets: 110_153_929_844_291n, openInterest: 115_767_900n * 10n ** 18n } },
+      { status: 'success', result: { maxProfitAssets: 113_674_807_953_677n, openInterest: 108_276_900n * 10n ** 18n } },
+      { status: 'success', result: 0n },
+    ]
+  }
+
+  it('exposes pool-wide units constrained by payout backing even when the market is long-heavy', () => {
+    setCapacityMarket()
+    const { result } = renderHook(() => usePerpsMarket())
+
+    expect(result.current.directionalLimit?.side).toBe('long')
+    expect(result.current.poolCapacity).toEqual({ long: '3 802 100', short: '86 000', isLoading: false })
+  })
+
+  it.each([
+    { tradingActive: false }, { oracleFrozen: true }, { fadWindow: true }, { phase: 2 },
+  ])('shows no opening capacity when the market disallows new exposure: %j', (status) => {
+    setCapacityMarket(status)
+    const { result } = renderHook(() => usePerpsMarket())
+    expect(result.current.poolCapacity).toMatchObject({ long: '0', short: '0' })
+  })
+
+  it('shows unavailable capacity when a claim read or market state is missing, or refresh fails', () => {
+    setCapacityMarket()
+    mocks.dynamicData![4] = { status: 'failure', error: new Error('read failed') }
+    const { result, rerender } = renderHook(() => usePerpsMarket())
+    expect(result.current.poolCapacity).toMatchObject({ long: undefined, short: undefined })
+
+    setCapacityMarket({ tradingActive: undefined })
+    rerender()
+    expect(result.current.poolCapacity.long).toBeUndefined()
+
+    setCapacityMarket()
+    mocks.dynamicError = new Error('refresh failed')
+    rerender()
+    expect(result.current.poolCapacity).toMatchObject({ long: undefined, short: undefined })
   })
 
   it('uses a five-minute component-history cadence without an immediate error retry', () => {

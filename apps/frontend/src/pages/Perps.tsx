@@ -258,7 +258,7 @@ function LivePerps() {
       ) : null}
       <div className="flex flex-col gap-4 sm:gap-6 xl:flow-root">
         <div className="min-w-0 xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
-          <PerpsInstrumentPanel stats={instrumentStats} />
+          <PerpsInstrumentPanel stats={instrumentStats} poolCapacity={perpsMarket.poolCapacity} />
         </div>
 
         <div className="min-w-0 xl:float-right xl:w-[clamp(340px,28vw,380px)]">
