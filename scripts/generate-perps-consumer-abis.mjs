@@ -122,6 +122,8 @@ const consumers =
       "sides",
       "riskParams",
       "CAP_PRICE",
+      "settlementBufferBps",
+      "totalTraderClaimBalanceAssets",
       "lastMarkPrice",
       "clearinghouse",
       "pool",

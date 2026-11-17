@@ -267,6 +267,60 @@ export const WideDesktop: Story = {
   ),
 }
 
+export const LongHeavyWithLimitedShortCapacity: Story = {
+  args: {
+    poolCapacity: { long: '3 802 100', short: '86 000' },
+    stats: instrumentStats({
+      price: '1.0503',
+      directionalLimit: {
+        usagePercent: 16,
+        side: 'long',
+        totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="109.9M" />,
+        netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="7.1M" />,
+        limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="45.6M" />,
+      },
+      liquidity: '90.6K',
+      poolCapital: {
+        ...HEALTHY_POOL_CAPITAL,
+        poolAssets: 114_049_580_735546n,
+        freeAssets: 90_585_761984n,
+        juniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="102M" />,
+        seniorPrincipal: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="11.1M" />,
+        juniorSharePercent: 90.2,
+        seniorSharePercent: 9.8,
+      },
+      costOfCarry: '5%',
+    }),
+  },
+  render: Default.render,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('LONG-HEAVY')).toBeVisible()
+    await expect(canvas.queryByRole('group', { name: 'Estimated pool capacity' })).not.toBeInTheDocument()
+    const trigger = canvas.getByRole('button', { name: 'Directional limit used details' })
+    trigger.focus()
+    const capacity = await canvas.findByRole('group', { name: 'Estimated pool capacity' })
+    await expect(within(capacity).getByText('3 802 100')).toBeVisible()
+    await expect(within(capacity).getByText('86 000')).toBeVisible()
+    trigger.blur()
+    await waitFor(() => expect(canvas.queryByRole('group', { name: 'Estimated pool capacity' })).not.toBeInTheDocument())
+  },
+}
+
+export const PoolCapacityNarrow: Story = {
+  args: {
+    ...LongHeavyWithLimitedShortCapacity.args,
+    poolCapacity: { long: '3 802 100', short: '86 000' },
+  },
+  render: (args) => (
+    <div className="min-h-screen bg-app-bg p-3">
+      <div className="w-[360px] max-w-full">
+        <PerpsInstrumentPanel {...args} />
+      </div>
+    </div>
+  ),
+}
+
 export const PriceDetailsVisible: Story = {
   args: {
     priceDetailsExpanded: true,
@@ -648,6 +702,19 @@ export const PoolLiquidityDetailsVisible: Story = {
   render: Default.render,
 }
 
+export const PoolLiquidityNarrow: Story = {
+  args: {
+    poolLiquidityDetailsExpanded: true,
+  },
+  render: (args) => (
+    <div className="min-h-screen bg-app-bg p-3">
+      <div className="w-[360px] max-w-full">
+        <PerpsInstrumentPanel {...args} />
+      </div>
+    </div>
+  ),
+}
+
 export const PoolLiquidityNearlyReserved: Story = {
   args: {
     stats: instrumentStats({
@@ -678,7 +745,7 @@ export const PoolLiquidityNearlyReserved: Story = {
     await expect(within(total.parentElement!).getByText('USDG', { exact: true })).toBeVisible()
     await expect(within(reserved.parentElement!).getByText('590 098 900')).toBeVisible()
     await expect(within(reserved.parentElement!).getByText('USDG', { exact: true })).toBeVisible()
-    await expect(canvas.getByText('What this means for trading')).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Pool USDG' })).toBeVisible()
     await expect(canvas.queryByText(/trading capacity/i)).not.toBeInTheDocument()
   },
 }

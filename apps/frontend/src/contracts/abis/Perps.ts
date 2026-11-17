@@ -3703,6 +3703,18 @@ export const PERPS_CFD_ENGINE_ABI = [
   },
   {
     "type": "function",
+    "name": "settlementBufferBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "sideBorrowBaseAssets",
     "inputs": [
       {
@@ -3776,6 +3788,18 @@ export const PERPS_CFD_ENGINE_ABI = [
       },
       {
         "name": "totalMargin",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalTraderClaimBalanceAssets",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256"
       }
     ],

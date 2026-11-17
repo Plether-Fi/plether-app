@@ -2,6 +2,7 @@ import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FocusEventHandler,
@@ -63,6 +64,11 @@ export interface PerpsInstrumentPanelProps {
   priceDetailsExpanded?: boolean
   poolLiquidityDetailsExpanded?: boolean
   directionalLimitDetailsExpanded?: boolean
+  poolCapacity?: {
+    long?: string
+    short?: string
+    isLoading?: boolean
+  }
 }
 
 const DEFAULT_STATS: PerpsInstrumentStat[] = [
@@ -177,6 +183,8 @@ interface InstrumentDetailsOverlayProps {
   label: string
   isExpanded: boolean
   interactive?: boolean
+  compact?: boolean
+  anchorRef?: RefObject<HTMLDivElement | null>
   overlayRef?: RefObject<HTMLDivElement | null>
   onMouseEnter?: MouseEventHandler<HTMLDivElement>
   onMouseLeave?: MouseEventHandler<HTMLDivElement>
@@ -190,6 +198,8 @@ function InstrumentDetailsOverlay({
   label,
   isExpanded,
   interactive = false,
+  compact = false,
+  anchorRef,
   overlayRef,
   onMouseEnter,
   onMouseLeave,
@@ -197,10 +207,47 @@ function InstrumentDetailsOverlay({
   onBlurCapture,
   children,
 }: InstrumentDetailsOverlayProps) {
+  const localOverlayRef = useRef<HTMLDivElement>(null)
+  const resolvedOverlayRef = overlayRef ?? localOverlayRef
+  const [anchorLeft, setAnchorLeft] = useState<number>()
+
+  useLayoutEffect(() => {
+    if (!compact || !anchorRef?.current || !resolvedOverlayRef.current) return
+    const anchor = anchorRef.current
+    const overlay = resolvedOverlayRef.current
+    const parent = overlay.offsetParent
+    if (!(parent instanceof HTMLElement)) return
+
+    const updatePosition = () => {
+      const anchorBounds = anchor.getBoundingClientRect()
+      const parentBounds = parent.getBoundingClientRect()
+      const overlayWidth = overlay.getBoundingClientRect().width
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth
+      const centeredLeft = anchorBounds.left + anchorBounds.width / 2 - overlayWidth / 2
+      const viewportLeft = Math.max(12, Math.min(centeredLeft, viewportWidth - overlayWidth - 12))
+      const left = viewportLeft - parentBounds.left - parent.clientLeft + parent.scrollLeft
+      setAnchorLeft((previous) => previous !== undefined && Math.abs(previous - left) < 0.5 ? previous : left)
+    }
+
+    updatePosition()
+    const observer = new ResizeObserver(updatePosition)
+    observer.observe(anchor)
+    observer.observe(overlay)
+    observer.observe(parent)
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [anchorRef, compact, isExpanded, resolvedOverlayRef])
+
   return (
     <div
-      ref={overlayRef}
-      className={`${interactive && isExpanded ? 'pointer-events-auto' : 'pointer-events-none'} absolute -inset-x-px top-full z-20 grid min-w-0 overflow-hidden border-x border-b bg-surface-panel panel-padding-x transition-[grid-template-rows,opacity,transform,box-shadow,border-color,padding-bottom] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none ${
+      ref={resolvedOverlayRef}
+      style={anchorRef && anchorLeft !== undefined ? { left: anchorLeft } : undefined}
+      className={`${interactive && isExpanded ? 'pointer-events-auto' : 'pointer-events-none'} absolute ${compact ? `w-[calc(100%+2px)] max-w-[min(42rem,calc(100vw-1.5rem))] border ${anchorRef ? 'left-0' : 'left-1/2 -translate-x-1/2'}` : '-inset-x-px border-x border-b'} top-full z-20 grid min-w-0 overflow-hidden bg-surface-panel panel-padding-x transition-[grid-template-rows,opacity,transform,box-shadow,border-color,padding-bottom] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none ${
         isExpanded
           ? 'grid-rows-[1fr] translate-y-0 border-brand-border/30 pb-3 opacity-100 shadow-[0_20px_32px_-16px_rgba(0,0,0,0.8)] sm:pb-4'
           : 'grid-rows-[0fr] -translate-y-1 border-transparent pb-0 opacity-0 shadow-none'
@@ -344,6 +391,8 @@ function HoverDetailsStat({
         label={detailsLabel}
         isExpanded={isExpanded}
         interactive
+        compact={stat.hoverDetailsType === 'pool-liquidity'}
+        anchorRef={stat.hoverDetailsType === 'pool-liquidity' ? metricRef : undefined}
         overlayRef={overlayRef}
         onMouseEnter={openFromPointer}
         onMouseLeave={leaveFromPointer}
@@ -400,22 +449,25 @@ function directionalConstraintText(
 
   const heavySide = details.side.toUpperCase()
   const rebalancingSide = details.side === 'long' ? 'SHORT' : 'LONG'
-  return `New ${heavySide}s are unavailable. ${rebalancingSide}s can still rebalance the market.`
+  return `New ${heavySide}s are unavailable. ${rebalancingSide}s reduce imbalance but still require payout backing.`
 }
 
 function DirectionalLimitStat({
   stat,
+  poolCapacity,
   forceExpanded = false,
   isSuppressed = false,
   onActivate,
 }: {
   stat: PerpsInstrumentStat
+  poolCapacity?: PerpsInstrumentPanelProps['poolCapacity']
   forceExpanded?: boolean
   isSuppressed?: boolean
   onActivate: () => void
 }) {
   const details = stat.directionalLimit
   const detailsId = useId()
+  const metricRef = useRef<HTMLDivElement>(null)
   const closeTimerRef = useRef<number | undefined>(undefined)
   const isPointerInsideRef = useRef(false)
   const isFocusInsideRef = useRef(false)
@@ -486,6 +538,7 @@ function DirectionalLimitStat({
   return (
     <>
       <div
+        ref={metricRef}
         className="min-w-0"
         data-perps-instrument-stat
         onMouseEnter={openFromPointer}
@@ -523,65 +576,71 @@ function DirectionalLimitStat({
         label={`${stat.label} details`}
         isExpanded={isExpanded}
         interactive
+        compact
+        anchorRef={metricRef}
         onMouseEnter={openFromPointer}
         onMouseLeave={leaveFromPointer}
         onFocusCapture={openFromFocus}
         onBlurCapture={leaveFromFocus}
       >
-        <div
-          className="flex h-6 w-full overflow-hidden bg-app-bg/70"
-          role="img"
-          aria-label={displayUsagePercent === undefined
-            ? 'Directional limit usage unavailable'
-            : `${usedLabel}; ${remainingLabel}`}
-        >
-          <div
-            className={`flex min-w-0 items-center justify-center overflow-hidden text-[10px] font-semibold text-app-bg transition-[width] duration-200 motion-reduce:transition-none ${directionalBarClass(details.usagePercent)}`}
-            style={{ width: `${progressPercent.toString()}%` }}
-            title={usedLabel}
-          >
-            <span className="block w-full min-w-0 truncate px-2 text-center">{usedLabel}</span>
+        <div className="@container" data-perps-directional-details>
+          <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+            <span className="font-medium text-content-primary">{usedLabel}</span>
+            <span className="text-content-secondary">{remainingLabel}</span>
           </div>
           <div
-            className="flex min-w-0 items-center justify-center overflow-hidden text-[10px] font-semibold text-content-secondary transition-[width] duration-200 motion-reduce:transition-none"
-            style={{ width: `${(100 - progressPercent).toString()}%` }}
-            title={remainingLabel}
+            className="mt-2 h-1.5 overflow-hidden bg-app-bg/70"
+            role="img"
+            aria-label={displayUsagePercent === undefined
+              ? 'Directional limit usage unavailable'
+              : `${usedLabel}; ${remainingLabel}`}
           >
-            <span className="block w-full min-w-0 truncate px-2 text-center">{remainingLabel}</span>
+            <div
+              className={`h-full transition-[width] duration-200 motion-reduce:transition-none ${directionalBarClass(details.usagePercent)}`}
+              style={{ width: `${progressPercent.toString()}%` }}
+            />
           </div>
-        </div>
 
-        <dl className="mt-3 grid grid-cols-1 gap-3 text-xs sm:grid-cols-3 sm:gap-4">
-          <div className="min-w-0">
-            <dt className="text-content-secondary">{totalSideLabel}</dt>
-            <dd className="mt-0.5 font-semibold text-content-primary">{details.totalExposure ?? '--'}</dd>
-          </div>
-          <div className="min-w-0 sm:text-center">
-            <dt className="text-content-secondary">{sideLabel}</dt>
-            <dd className="mt-0.5 font-semibold text-content-primary">{details.netExposure ?? '--'}</dd>
-          </div>
-          <div className="min-w-0 sm:text-right">
-            <dt className="text-content-secondary">Directional limit</dt>
-            <dd className="mt-0.5 font-semibold text-content-primary">{details.limit ?? '--'}</dd>
-          </div>
-        </dl>
+          <div className={`mt-4 grid min-w-0 gap-4 ${poolCapacity ? '@min-[30rem]:grid-cols-2 @min-[30rem]:gap-6' : ''}`}>
+            <div className="min-w-0">
+              <h3 className="text-[11px] font-medium text-content-secondary">Directional exposure</h3>
+              <dl className="mt-2 space-y-2 text-xs">
+                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                  <dt className="text-content-secondary">{totalSideLabel}</dt>
+                  <dd className="shrink-0 font-medium tabular-nums text-content-primary">{details.totalExposure ?? '--'}</dd>
+                </div>
+                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                  <dt className="text-content-secondary">{sideLabel}</dt>
+                  <dd className="shrink-0 font-medium tabular-nums text-content-primary">{details.netExposure ?? '--'}</dd>
+                </div>
+                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                  <dt className="text-content-secondary">Directional limit</dt>
+                  <dd className="shrink-0 font-medium tabular-nums text-content-primary">{details.limit ?? '--'}</dd>
+                </div>
+              </dl>
+            </div>
 
-        {constraintText ? (
-          <p className="mt-3 text-xs leading-5 text-content-secondary">{constraintText}</p>
-        ) : null}
+            {poolCapacity ? <PoolCapacityDetails capacity={poolCapacity} /> : null}
+          </div>
 
-        <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
-          <p className="min-w-0 flex-1">
-            Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs,
-            can change before execution, and other checks apply.
-          </p>
-          <DocsLink
-            href={DOCS_LINKS.virtualPriceImpact.href}
-            title={DOCS_LINKS.virtualPriceImpact.title}
-            className="shrink-0"
-          >
-            Learn more
-          </DocsLink>
+          {constraintText ? (
+            <p className="mt-3 text-xs leading-5 text-content-secondary">{constraintText}</p>
+          ) : null}
+
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
+            <p className="min-w-0 flex-1">
+              {poolCapacity
+                ? 'Capacity at the latest mark, before VPI and fees. Your Max may be lower.'
+                : 'Position imbalance affects VPI. Payout backing also limits new positions.'}
+            </p>
+            <DocsLink
+              href={DOCS_LINKS.virtualPriceImpact.href}
+              title={DOCS_LINKS.virtualPriceImpact.title}
+              className="shrink-0"
+            >
+              Learn more
+            </DocsLink>
+          </div>
         </div>
       </InstrumentDetailsOverlay>
     </>
@@ -601,6 +660,42 @@ function DxyInstrumentMark() {
   )
 }
 
+function PoolCapacityDetails({ capacity }: { capacity: NonNullable<PerpsInstrumentPanelProps['poolCapacity']> }) {
+  const headingId = useId()
+
+  return (
+    <div
+      role="group"
+      aria-labelledby={headingId}
+      className="min-w-0 border-t border-brand-border/20 pt-3 @min-[30rem]:border-l @min-[30rem]:border-t-0 @min-[30rem]:pl-6 @min-[30rem]:pt-0"
+      data-perps-pool-capacity
+    >
+      <h3 id={headingId} className="text-[11px] font-medium text-content-secondary">Estimated pool capacity</h3>
+      <dl className="mt-2 space-y-2 text-xs">
+        {(['long', 'short'] as const).map((side) => {
+          const label = side === 'long' ? 'Long capacity' : 'Short capacity'
+          const amount = capacity[side]
+          return (
+            <div key={side} className="flex min-w-0 items-baseline justify-between gap-3" data-perps-pool-capacity-side={side}>
+              <dt className="inline-flex items-center gap-2 text-content-secondary">
+                <span className={`h-1.5 w-1.5 shrink-0 ${side === 'long' ? 'bg-positive' : 'bg-brand-orange'}`} aria-hidden="true" />
+                {label}
+              </dt>
+              <dd className="min-w-0 text-right font-medium tabular-nums text-content-primary">
+                {amount !== undefined ? <TokenAmount token="plDXY" amount={amount} wrap /> : (
+                  <span aria-label={capacity.isLoading ? `Loading ${label.toLowerCase()}` : `${label} unavailable`}>
+                    {capacity.isLoading ? '...' : '--'}
+                  </span>
+                )}
+              </dd>
+            </div>
+          )
+        })}
+      </dl>
+    </div>
+  )
+}
+
 export function PerpsInstrumentPanel({
   name = 'plDXY Perp',
   description = 'Dollar Index Perpetual',
@@ -608,6 +703,7 @@ export function PerpsInstrumentPanel({
   priceDetailsExpanded = false,
   poolLiquidityDetailsExpanded = false,
   directionalLimitDetailsExpanded = false,
+  poolCapacity,
 }: PerpsInstrumentPanelProps) {
   const [activeDetails, setActiveDetails] = useState<'price' | 'pool-liquidity' | 'directional' | undefined>(undefined)
   const hasDirectionalLimit = stats.some((stat) => stat.directionalLimit !== undefined)
@@ -635,6 +731,7 @@ export function PerpsInstrumentPanel({
                   <DirectionalLimitStat
                     key={stat.label}
                     stat={stat}
+                    poolCapacity={poolCapacity}
                     forceExpanded={directionalLimitDetailsExpanded}
                     isSuppressed={activeDetails !== undefined && activeDetails !== 'directional'}
                     onActivate={() => { setActiveDetails('directional') }}
