@@ -98,108 +98,113 @@ export function PerpsPoolLiquidityDetails({
   isLoading = false,
   docsLink,
 }: PerpsPoolLiquidityDetailsProps) {
-  const hasCapitalComposition = juniorSharePercent !== undefined && seniorSharePercent !== undefined
-  const juniorLabel = displayPercent(juniorSharePercent)
-  const seniorLabel = displayPercent(seniorSharePercent)
+  const hasCapitalComposition = !isLoading && !isEmpty
+    && juniorSharePercent !== undefined && Number.isFinite(juniorSharePercent)
+    && seniorSharePercent !== undefined && Number.isFinite(seniorSharePercent)
+    && juniorSharePercent >= 0 && juniorSharePercent <= 100
+    && seniorSharePercent >= 0 && seniorSharePercent <= 100
+  const juniorLabel = hasCapitalComposition ? displayPercent(juniorSharePercent) : '--'
+  const seniorLabel = hasCapitalComposition ? displayPercent(seniorSharePercent) : '--'
   const reservedAssets = poolAssets !== undefined && freeAssets !== undefined
     && freeAssets >= 0n && poolAssets >= freeAssets
     ? poolAssets - freeAssets
     : undefined
   const reservedShareLabel = isLoading ? undefined : reservedShare(poolAssets, reservedAssets)
+  const freeShareLabel = isLoading ? undefined : reservedShare(poolAssets, reservedAssets === undefined ? undefined : freeAssets)
+  const reservedPercent = reservedShareLabel !== undefined && poolAssets !== undefined && reservedAssets !== undefined
+    ? Number(reservedAssets * 1_000_000n / poolAssets) / 10_000
+    : undefined
   const barLabel = hasCapitalComposition
     ? `Vault capital: Senior ${seniorLabel}; Junior ${juniorLabel}`
     : 'Vault capital breakdown unavailable'
 
   return (
-    <div className="w-full text-left">
-      <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2 sm:gap-6">
-        <div className="grid min-w-0 grid-cols-[1fr_auto] content-start items-baseline gap-x-3">
-          <dt className="text-content-secondary">Total pool USDG</dt>
-          <dd className="font-semibold text-content-primary">{poolAmount(poolAssets, isLoading)}</dd>
-          <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">Pool USDG reported by the protocol.</dd>
-        </div>
-        <div className="grid min-w-0 grid-cols-[1fr_auto] content-start items-baseline gap-x-3 sm:border-l sm:border-brand-border/20 sm:pl-6">
-          <dt className="text-content-secondary">Reserved pool USDG</dt>
-          <dd className="font-semibold text-content-primary">{poolAmount(reservedAssets, isLoading)}</dd>
-          <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">
-            Total pool USDG minus free liquidity: USDG backing existing positions and other protocol obligations.
-            {reservedShareLabel !== undefined ? <span className="mt-1 block">Share of pool USDG reserved: <span className="font-semibold text-content-primary">{reservedShareLabel}</span></span> : null}
-          </dd>
-        </div>
-      </dl>
-
-      <div className="mt-4 space-y-2 border-y border-brand-border/20 py-3 text-xs leading-5 text-content-secondary">
-        <h3 className="font-semibold text-content-primary">What this means for trading</h3>
-        <p>Existing positions can reserve most of the pool’s USDG. New orders must satisfy both the directional limit and payout-backing requirements. Low free liquidity can restrict new exposure; some orders may still fit without increasing the pool’s maximum payout obligation.</p>
-        <p>Use Max in the trade ticket to check your current estimated order size. Final acceptance depends on conditions when the order executes.</p>
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold text-content-primary">LP capital and loss protection</h3>
-        <p className="text-[11px] text-content-secondary">Losses affect Junior before Senior</p>
-      </div>
-      <p className="mt-1 text-[11px] leading-4 text-content-secondary">Tranche balances are accounting values, not available trading liquidity.</p>
-
-      <div
-        className="mt-3 flex h-6 w-full overflow-hidden bg-app-bg/70"
-        role="img"
-        aria-label={barLabel}
-      >
-        <div
-          className="flex min-w-0 items-center justify-center overflow-hidden bg-[#FFAB96] text-[10px] font-semibold text-app-bg transition-[width] duration-200 motion-reduce:transition-none"
-          style={{ width: barWidth(seniorSharePercent) }}
-        >
-          {seniorSharePercent !== undefined && seniorSharePercent >= 16 ? (
-            <span className="block w-full min-w-0 truncate px-1 text-center">Senior · {seniorLabel}</span>
+    <div className="@container w-full min-w-0 text-left">
+      <div className="grid min-w-0 gap-4 @min-[30rem]:grid-cols-2 @min-[30rem]:gap-6">
+        <div className="min-w-0">
+          <h3 className="text-[11px] font-medium text-content-secondary">Pool USDG</h3>
+          <dl className="mt-2 space-y-2 text-xs">
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="text-content-secondary">Total pool USDG</dt>
+              <dd className="shrink-0 font-medium tabular-nums text-content-primary">{poolAmount(poolAssets, isLoading)}</dd>
+            </div>
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="text-content-secondary">Reserved pool USDG</dt>
+              <dd className="shrink-0 font-medium tabular-nums text-content-primary">{poolAmount(reservedAssets, isLoading)}</dd>
+            </div>
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="text-content-secondary">Free liquidity</dt>
+              <dd className="shrink-0 font-medium tabular-nums text-content-primary">{poolAmount(freeAssets, isLoading)}</dd>
+            </div>
+          </dl>
+          {reservedShareLabel !== undefined && freeShareLabel !== undefined && reservedPercent !== undefined ? (
+            <div className="mt-3">
+              <div className="flex justify-between gap-3 text-[11px] leading-4 text-content-secondary">
+                <span>Reserved <span className="text-content-primary">{reservedShareLabel}</span></span>
+                <span>Free <span className="text-content-primary">{freeShareLabel}</span></span>
+              </div>
+              <div
+                className="mt-2 flex h-1.5 overflow-hidden bg-app-bg/70"
+                role="img"
+                aria-label={`Pool USDG: ${reservedShareLabel} reserved; ${freeShareLabel} free`}
+              >
+                <div className="h-full bg-content-secondary/50" style={{ width: barWidth(reservedPercent) }} />
+                <div className="h-full bg-positive/70" style={{ width: barWidth(100 - reservedPercent) }} />
+              </div>
+            </div>
           ) : null}
         </div>
-        <div
-          className="flex min-w-0 items-center justify-center overflow-hidden bg-brand-orange text-[10px] font-semibold text-content-primary transition-[width] duration-200 motion-reduce:transition-none"
-          style={{ width: barWidth(juniorSharePercent) }}
-        >
-          {juniorSharePercent !== undefined && juniorSharePercent >= 16 ? (
-            <span className="block w-full min-w-0 truncate px-1 text-center">Junior · {juniorLabel}</span>
+
+        <div className="min-w-0 border-t border-brand-border/20 pt-3 @min-[30rem]:border-l @min-[30rem]:border-t-0 @min-[30rem]:pl-6 @min-[30rem]:pt-0">
+          <h3 className="text-[11px] font-medium text-content-secondary">Vault capital</h3>
+          <dl className="mt-2 space-y-2 text-xs">
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="inline-flex min-w-0 flex-wrap items-center gap-x-2 text-content-secondary">
+                <span className="h-1.5 w-1.5 shrink-0 bg-[#FFAB96]" aria-hidden="true" />
+                <span>Senior</span>
+                {hasCapitalComposition ? <span className="text-[11px]">{seniorLabel}</span> : null}
+              </dt>
+              <dd className="shrink-0 font-medium tabular-nums text-content-primary">{isLoading ? '...' : seniorPrincipal ?? '--'}</dd>
+            </div>
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="inline-flex min-w-0 flex-wrap items-center gap-x-2 text-content-secondary">
+                <span className="h-1.5 w-1.5 shrink-0 bg-brand-orange" aria-hidden="true" />
+                <span>Junior</span>
+                {hasCapitalComposition ? <span className="text-[11px]">{juniorLabel}</span> : null}
+              </dt>
+              <dd className="shrink-0 font-medium tabular-nums text-content-primary">{isLoading ? '...' : juniorPrincipal ?? '--'}</dd>
+            </div>
+          </dl>
+          {hasCapitalComposition ? (
+            <div
+              className="mt-3 flex h-1.5 overflow-hidden bg-app-bg/70"
+              role="img"
+              aria-label={barLabel}
+            >
+              <div className="h-full bg-[#FFAB96]" style={{ width: barWidth(seniorSharePercent) }} />
+              <div className="h-full bg-brand-orange" style={{ width: barWidth(juniorSharePercent) }} />
+            </div>
           ) : null}
+          <div className="mt-3 text-[11px] leading-4">
+            <CapitalStatus
+              seniorStatus={seniorStatus}
+              seniorImpairment={seniorImpairment}
+              isJuniorExhausted={isJuniorExhausted}
+              isEmpty={isEmpty}
+              isLoading={isLoading}
+            />
+            {!isLoading && !isEmpty && seniorStatus !== 'impaired' && isJuniorExhausted ? (
+              <p className="mt-1 text-content-secondary">Further pool losses would reduce Senior's value</p>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <dl className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2 sm:gap-6">
-        <div className="flex min-w-0 items-baseline justify-between gap-3">
-          <dt className="flex min-w-0 items-center gap-2 text-content-secondary">
-            <span className="h-2 w-2 shrink-0 bg-[#FFAB96]" aria-hidden="true" />
-            <span>Senior · protected by Junior</span>
-          </dt>
-          <dd className="shrink-0 font-semibold text-content-primary">{seniorPrincipal ?? '--'}</dd>
-        </div>
-        <div className="flex min-w-0 items-baseline justify-between gap-3 sm:border-l sm:border-brand-border/20 sm:pl-6">
-          <dt className="flex min-w-0 items-center gap-2 text-content-secondary">
-            <span className="h-2 w-2 shrink-0 bg-brand-orange" aria-hidden="true" />
-            <span>Junior · absorbs losses first</span>
-          </dt>
-          <dd className="shrink-0 font-semibold text-content-primary">{juniorPrincipal ?? '--'}</dd>
-        </div>
-      </dl>
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-brand-border/20 pt-3 text-xs">
-        <CapitalStatus
-          seniorStatus={seniorStatus}
-          seniorImpairment={seniorImpairment}
-          isJuniorExhausted={isJuniorExhausted}
-          isEmpty={isEmpty}
-          isLoading={isLoading}
-        />
-        {!isLoading && !isEmpty && seniorStatus !== 'impaired' && !isJuniorExhausted ? (
-          <span className="text-content-secondary">
-            Junior protects Senior from the first <span className="font-semibold text-content-primary">{juniorPrincipal ?? '--'}</span> of pool losses
-          </span>
-        ) : null}
-        {!isLoading && !isEmpty && seniorStatus !== 'impaired' && isJuniorExhausted ? (
-          <span className="text-content-secondary">Further pool losses would reduce Senior's value</span>
-        ) : null}
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
-        <p>Withdrawals depend on the liquidity available at each hourly processing time.</p>
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
+        <p className="min-w-0 flex-1">
+          Free liquidity alone does not set trade size. Vault balances are accounting values;
+          Junior absorbs losses first. Withdrawals depend on liquidity at hourly processing.
+        </p>
         {docsLink ? (
           <DocsLink
             href={docsLink.href}

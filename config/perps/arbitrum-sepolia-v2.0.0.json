@@ -18,7 +18,7 @@
     "deploymentTimeProtocolTreasury": "0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B",
     "pyth": "0x0B73614636C855Bf23F342F307FB981A3e47f42B",
     "manifestSha256": "584cdacada35f8225d2a88811edfbd9622764fe0e6da4b275ba8f33d6f8c0c74",
-    "bundleSha256": "d5dc852b55e9b3eed591b17a112e2aadead1fecf263a6052f1eaaae560fd2b72"
+    "bundleSha256": "3ea6e372776abb4fe6b7f3c6b2914b381f4f3da3e71b28872a293d6d32cc8ba7"
   },
   "contracts": {
     "settlementToken": {

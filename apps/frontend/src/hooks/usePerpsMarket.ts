@@ -10,7 +10,7 @@ import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PER
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_ASSETS_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
-import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsPositionSize, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
 import {
   computeBasketComponentPriceChanges,
   computeBasketDisplayPriceChange,
@@ -18,6 +18,7 @@ import {
 import { formatCompactNumber } from '../utils/formatters'
 import { calculatePerpsDirectionalLimit } from '../utils/perpsDirectionalLimit'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
+import { calculatePerpsPoolCapacity } from '../utils/perpsPoolCapacity'
 import { DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS } from '../components/dxyBasketChartConfig'
 
 const WAD = 10n ** 18n
@@ -189,9 +190,42 @@ export function usePerpsMarket() {
         functionName: 'sides',
         args: [1n],
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'totalTraderClaimBalanceAssets',
+      },
     ],
     query: {
       refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
+    },
+  })
+  const {
+    data: capacityConfigurationData,
+    isLoading: isCapacityConfigurationLoading,
+    error: capacityConfigurationError,
+    refetch: refetchCapacityConfiguration,
+  } = useReadContracts({
+    contracts: [
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'CAP_PRICE',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'settlementBufferBps',
+      },
+    ],
+    query: {
+      staleTime: PERPS_CONFIG_STALE_TIME_MS,
+      gcTime: PERPS_CONFIG_GC_TIME_MS,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     },
   })
   // Engine configuration changes atomically behind a 72-hour timelock. Keep
@@ -271,6 +305,9 @@ export function usePerpsMarket() {
     const poolLiquidity = readResult(dynamicContractData, 1)
     const bullSide = readResult(dynamicContractData, 2)
     const bearSide = readResult(dynamicContractData, 3)
+    const totalTraderClaimBalanceAssets = readResult(dynamicContractData, 4) as bigint | undefined
+    const capPrice = readResult(capacityConfigurationData, 0) as bigint | undefined
+    const settlementBufferBps = readResult(capacityConfigurationData, 1) as bigint | undefined
     const riskParams = readResult(engineConfigurationData, 0)
     const executionFeeBps = readResult(engineConfigurationData, 1) as bigint | undefined
     const minOpenNotionalAssets = readResult(routerConfigurationData, 0) as bigint | undefined
@@ -288,6 +325,8 @@ export function usePerpsMarket() {
     const seniorHighWaterMarkAssets = tupleValue(poolLiquidity, 7, 'seniorHighWaterMarkAssets') as bigint | undefined
     const bullOpenInterest = tupleValue(bullSide, 1, 'openInterest') as bigint | undefined
     const bearOpenInterest = tupleValue(bearSide, 1, 'openInterest') as bigint | undefined
+    const longMaxProfitAssets = tupleValue(bullSide, 0, 'maxProfitAssets') as bigint | undefined
+    const shortMaxProfitAssets = tupleValue(bearSide, 0, 'maxProfitAssets') as bigint | undefined
     const maxSkewRatio = tupleValue(riskParams, 1, 'maxSkewRatio') as bigint | undefined
     const maintMarginBps = tupleValue(riskParams, 2, 'maintMarginBps') as bigint | undefined
     const initialMarginBps = tupleValue(riskParams, 3, 'initMarginBps') as bigint | undefined
@@ -336,6 +375,30 @@ export function usePerpsMarket() {
 
     const phase = phaseValue === undefined ? undefined : Number(phaseValue)
     const marketPhase = protocolPhaseToMarketPhase(phase, tradingActive, oracleFrozen, fadWindow)
+    const effectiveSolvencyAssets = poolAssets === undefined || totalTraderClaimBalanceAssets === undefined
+      ? undefined
+      : poolAssets > totalTraderClaimBalanceAssets ? poolAssets - totalTraderClaimBalanceAssets : 0n
+    // Pool-wide risk headroom is independent of a trader's margin budget.
+    // Trade-specific VPI/carry and account checks remain in the canonical Max quote.
+    const poolCapacity = dynamicContractsError || engineConfigurationError || capacityConfigurationError
+      ? undefined
+      : calculatePerpsPoolCapacity({
+          rawPrice: markPrice,
+          capPrice,
+          poolAssets,
+          totalTraderClaimBalanceAssets,
+          effectiveSolvencyAssets,
+          longOpenInterest: bullOpenInterest,
+          shortOpenInterest: bearOpenInterest,
+          longMaxProfitAssets,
+          shortMaxProfitAssets,
+          maxSkewRatio,
+          settlementBufferBps,
+        })
+    const isPoolCapacityLoading = isDynamicContractsLoading || isEngineConfigurationLoading || isCapacityConfigurationLoading
+    const hasMarketState = phaseValue !== undefined && tradingActive !== undefined
+      && oracleFrozen !== undefined && fadWindow !== undefined
+    const canOpen = marketPhase === 'open'
     const {
       freshness: oracleFreshness,
       publishTime: oracleFreshnessTime,
@@ -395,6 +458,11 @@ export function usePerpsMarket() {
       priceChange24hTone: percentChangeTone(priceChange24hValue),
       volume24h: formatCompactAssets(volume24hAssets),
       availableLiquidity: formatCompactAssets(freeAssets),
+      poolCapacity: {
+        long: poolCapacity && hasMarketState ? formatPerpsPositionSize(canOpen ? poolCapacity.longSize : 0n, 0) : undefined,
+        short: poolCapacity && hasMarketState ? formatPerpsPositionSize(canOpen ? poolCapacity.shortSize : 0n, 0) : undefined,
+        isLoading: isPoolCapacityLoading,
+      },
       poolCapital: poolCapital
         ? {
             ...poolCapital,
@@ -416,6 +484,7 @@ export function usePerpsMarket() {
       refetch: () => {
         void refetchDynamicContracts()
         void refetchEngineConfiguration()
+        void refetchCapacityConfiguration()
         void refetchRouterConfiguration()
         void refetchLatestBasket()
         void refetchBasketComponentHistory24h()
@@ -424,10 +493,17 @@ export function usePerpsMarket() {
     }
   }, [
     basketComponentHistory24h,
+    capacityConfigurationData,
+    capacityConfigurationError,
     dynamicContractData,
+    dynamicContractsError,
     engineConfigurationData,
+    engineConfigurationError,
     error,
     isBasketComponentHistory24hLoading,
+    isCapacityConfigurationLoading,
+    isDynamicContractsLoading,
+    isEngineConfigurationLoading,
     isLatestBasketError,
     isLatestBasketLoading,
     isLoading,
@@ -436,6 +512,7 @@ export function usePerpsMarket() {
     marketStats,
     refetchBasketComponentHistory24h,
     refetchDynamicContracts,
+    refetchCapacityConfiguration,
     refetchEngineConfiguration,
     refetchLatestBasket,
     refetchMarketStats,

@@ -8,7 +8,7 @@
     "config/perps/evidence/v2.0.0/runtime-verification.json": "b9c77b20ec462c9f1e07452fa7ec673bc2316836a0c92e0ef6bb5dddec86ec22",
     "apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-source-abis.json": "bfc1dca9bd2fc1b6c35bbab3eb1f05152f077ddeb9664b92318f96d4240e153e",
     "apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-source-abis.provenance.json": "7ab8c96f23e094a004abf93a05cbba81905acd3af34ed42d293e5244bc4ee118",
-    "apps/frontend/src/contracts/abis/Perps.ts": "5052a6ecdd8623d101d36ec89240b747dc45f2e5eadc32a898658c3d171301f1",
+    "apps/frontend/src/contracts/abis/Perps.ts": "3a3ed5217e089de2b3b085daa03c92585aaa229de5cde14d9c3fe69f1316c5c1",
     "apps/frontend/src/contracts/abis/TrancheVault.ts": "c0c0f8ce3f5c1c2014ed799956b9a14e9fc3904c6a3f3090d976fe9205aa7da6",
     "apps/frontend/src/contracts/abis/CfdClosePreview.ts": "efe90f34e6b23d942891fe9c4fe689d7845ff6a3ed4db6d05192175272cc8806",
     "apps/backend/protection-worker/abi.mjs": "39fb8b98a220f822f582c6c09ede9a9881da456cb994fbdbb581b62412fd17cb",
