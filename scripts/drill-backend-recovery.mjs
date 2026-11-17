@@ -55,6 +55,56 @@ export function drillInputFingerprint(input, config = DRILL) {
   return hash({ schemaVersion: 1, capability: config.capability, input, reviewedFixture: config })
 }
 
+export function drillSnapshotEvidence(response, input) {
+  // Only fixed guard names, booleans, bounded counts and closed failure codes
+  // leave this callback. Never retain API detail strings or service objects.
+  const failures = response?.failures, services = response?.services
+  const service = Array.isArray(services) && services.length === 1 && services[0] && typeof services[0] === 'object' ? services[0] : {}
+  const deployments = service.deployments
+  const primary = Array.isArray(deployments) && deployments.length === 1 && deployments[0] && typeof deployments[0] === 'object' ? deployments[0] : {}
+  const deployment = service.deploymentConfiguration ?? {}
+  const network = service.networkConfiguration?.awsvpcConfiguration ?? {}
+  const equal = (actual, expected) => { try { assert.deepEqual(actual, expected); return true } catch { return false } }
+  const failureCodes = Array.isArray(failures) ? [...new Set(failures.slice(0, 10).map(failure =>
+    ['MISSING', 'ACCESS_DENIED'].includes(failure?.reason) ? failure.reason : 'OTHER'))].sort() : []
+  return {
+    schemaVersion: 1,
+    failureList: failures === undefined ? 'ABSENT' : Array.isArray(failures) ? 'ARRAY' : 'INVALID',
+    serviceList: services === undefined ? 'ABSENT' : Array.isArray(services) ? 'ARRAY' : 'INVALID',
+    failureCount: Array.isArray(failures) ? Math.min(failures.length, 100) : null,
+    serviceCount: Array.isArray(services) ? Math.min(services.length, 100) : null,
+    failureCodes,
+    checks: {
+      emptyFailureList: equal(failures, []),
+      exactlyOneService: Array.isArray(services) && services.length === 1,
+      serviceName: service.serviceName === DRILL.service,
+      serviceArn: service.serviceArn === `arn:aws:ecs:${REGION}:${ACCOUNT}:service/${DRILL.cluster}/${DRILL.service}`,
+      clusterArn: service.clusterArn === `arn:aws:ecs:${REGION}:${ACCOUNT}:cluster/${DRILL.cluster}`,
+      activeStatus: service.status === 'ACTIVE',
+      selectedTaskDefinition: service.taskDefinition === input.expectedTaskDefinition,
+      fargateLaunchType: service.launchType === 'FARGATE',
+      platformVersion: service.platformVersion === '1.4.0',
+      ecsDeploymentController: service.deploymentController?.type === 'ECS',
+      replicaScheduling: service.schedulingStrategy === 'REPLICA',
+      desiredOne: service.desiredCount === 1,
+      runningZero: service.runningCount === 0,
+      pendingZero: service.pendingCount === 0,
+      execDisabled: service.enableExecuteCommand === false,
+      minimumHealthyZero: deployment.minimumHealthyPercent === 0,
+      maximumPercentHundred: deployment.maximumPercent === 100,
+      exactCircuitBreaker: equal(deployment.deploymentCircuitBreaker, { enable: true, rollback: false }),
+      exactlyOneDeployment: Array.isArray(deployments) && deployments.length === 1,
+      primaryStatus: primary.status === 'PRIMARY',
+      failedRollout: primary.rolloutState === 'FAILED',
+      primaryTaskDefinition: primary.taskDefinition === input.expectedTaskDefinition,
+      publicIpEnabled: network.assignPublicIp === 'ENABLED',
+      boundedSubnetIdentifiers: Array.isArray(network.subnets) && network.subnets.length > 0 && network.subnets.every(value => typeof value === 'string' && /^subnet-[0-9a-f]+$/.test(value)),
+      exactlyOneSecurityGroup: Array.isArray(network.securityGroups) && network.securityGroups.length === 1,
+      securityGroupIdentifier: Array.isArray(network.securityGroups) && network.securityGroups.length === 1 && typeof network.securityGroups[0] === 'string' && /^sg-[0-9a-f]+$/.test(network.securityGroups[0]),
+    },
+  }
+}
+
 export function validateDrillSnapshot(response, input) {
   assert.deepEqual(response.failures, [])
   const service = one(response.services, 'Expected only the isolated fixture')
@@ -146,6 +196,7 @@ export const DRILL_POLICY = Object.freeze({
   name: DRILL.capability, cluster: DRILL.cluster, logGroup: DRILL.logGroup,
   applicationRepository: 'plether-api-sepolia', routerRepository: 'plether-otel-log-router-sepolia',
   validateSnapshot: validateDrillSnapshot, validateTask: validateDrillTask,
+  snapshotEvidence: drillSnapshotEvidence,
   configurationFingerprint, manifestResponse: manifestFromBatchGetImage, verifyImageGraph,
   render: renderRecoveredTaskDefinition, validateImageOnlyChange,
   registeredRevisionPattern: new RegExp(`^arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/${DRILL.family}:[1-9][0-9]*$`),

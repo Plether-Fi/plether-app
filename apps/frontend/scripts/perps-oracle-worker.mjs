@@ -280,7 +280,7 @@ async function fetchFreshPythUpdate(backendUrl) {
 
 /** One serial worker instance retains an unresolved transaction across health ticks. */
 export function createOracleWorker({ account, backendUrl, dryRun = false, maxPayloadAgeSeconds = 50,
-  publicClient, walletClient, pollSeconds = 30, now = Date.now,
+  publicClient, walletClient, pollSeconds = 30, now = Date.now, pause = sleep,
   fetchPayload = () => fetchCachedPythUpdate(backendUrl),
   fetchFreshPayload = () => fetchFreshPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
 }) {
@@ -299,6 +299,33 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     // Normally this adds one block lookup, not another three contract reads.
     if (block.hash && block.hash === previous.block.hash) return previous
     return readHealth(publicClient, block)
+  }
+  const catchUpPayloadHead = async (health, minPublishTime, maxPublishTime) => {
+    const ahead = BigInt(maxPublishTime) - health.block.timestamp
+    // A newly admitted payload can reach us just before the chain's next second.
+    // Reobserve the same payload only for a decoded repair and a <=2s header
+    // lag, never for a future wall-clock timestamp or an already expired feed.
+    // The wait budget is two seconds/two head reads; RPCs retain their normal
+    // transport timeout. No freshness or simulation condition is relaxed.
+    if (health.valid || health.status.oracleFrozen || ahead <= 0n || ahead > 2n ||
+        maxPublishTime > Math.floor(now() / 1000) ||
+        Number(health.block.timestamp) - minPublishTime > maxPayloadAgeSeconds) return health
+    const initialTimestamp = health.block.timestamp
+    let reads = 0
+    while (reads < 2) {
+      await pause(1000)
+      health = await refreshHealth(health)
+      reads++
+      const remaining = BigInt(maxPublishTime) - health.block.timestamp
+      if (health.valid || health.status.oracleFrozen || remaining <= 0n || remaining > 2n ||
+          Number(health.block.timestamp) - minPublishTime > maxPayloadAgeSeconds) break
+    }
+    logEvery(60, 'INFO', 'oracle_payload_head_reobserved', 'Reobserved the chain head for the same admitted repair payload', {
+      initial_block_timestamp: initialTimestamp, block_timestamp: health.block.timestamp,
+      max_publish_time: maxPublishTime, head_reads: reads,
+      caught_up: BigInt(maxPublishTime) <= health.block.timestamp,
+    })
+    return health
   }
   const checkPayload = (health, minPublishTime, maxPublishTime) => {
     if (health.status.oracleFrozen) {
@@ -393,6 +420,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       }
       const minPublishTime = Math.min(...payload.publishTimes)
       const maxPublishTime = Math.max(...payload.publishTimes)
+      before = await catchUpPayloadHead(before, minPublishTime, maxPublishTime)
       let rejection = checkPayload(before, minPublishTime, maxPublishTime)
       if (rejection) return { status: rejection }
       const fee = await publicClient.readContract({ address: ADDRESSES.pletherOracle, abi: PLETHER_ORACLE_ABI,

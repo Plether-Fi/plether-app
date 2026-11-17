@@ -26,8 +26,15 @@ export async function runImageRecovery({ input, release, inputFingerprint, direc
   persist()
   try {
     evidence.check = 'service-baseline'; persist()
-    const snapshot = policy.validateSnapshot(responseService(), input)
+    const initialResponse = responseService()
+    if (policy.snapshotEvidence) {
+      evidence.serviceBaseline = policy.snapshotEvidence(initialResponse, input)
+      persist()
+    }
+    const snapshot = policy.validateSnapshot(initialResponse, input)
+    evidence.check = 'task-definition-lookup'; persist()
     const previous = definition(input.expectedTaskDefinition)
+    evidence.check = 'task-definition-identity'; persist()
     assert.equal(previous.taskDefinitionArn, input.expectedTaskDefinition)
     evidence.check = 'task-configuration'; persist()
     await policy.validateTask(previous)

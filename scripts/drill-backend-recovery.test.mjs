@@ -6,7 +6,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { runImageRecovery } from './backend-recovery-engine.mjs'
 import { ACCOUNT, REGION, SERVICES, configurationFingerprint, verifyRunningTask } from './recover-backend.mjs'
-import { DRILL, DRILL_POLICY, validateDrillConfig, validateDrillInputs, validateDrillSnapshot, validateDrillTask, drillInputFingerprint, drillProgressEvidence } from './drill-backend-recovery.mjs'
+import { DRILL, DRILL_POLICY, validateDrillConfig, validateDrillInputs, validateDrillSnapshot, validateDrillTask, drillInputFingerprint, drillProgressEvidence, drillSnapshotEvidence } from './drill-backend-recovery.mjs'
 
 const clone = value => structuredClone(value)
 const oldArn = `arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/${DRILL.family}:1`
@@ -94,6 +94,68 @@ test('isolated progress requires real-time non-signing heartbeats over two minut
   assert.equal(drillProgressEvidence([heartbeat(now - 200_000), heartbeat(now - 60_000)], DRILL.service, now), undefined)
 })
 
+test('bounded snapshot evidence identifies each strict refusal without changing any guard', () => {
+  const response = () => ({ failures: [], services: [fixtureService()] })
+  const good = drillSnapshotEvidence(response(), input())
+  assert.equal(good.failureList, 'ARRAY')
+  assert.equal(good.serviceCount, 1)
+  assert.ok(Object.values(good.checks).every(value => value === true))
+  const cases = [
+    ['emptyFailureList', value => { value.failures = [{ reason: 'MISSING' }] }],
+    ['exactlyOneService', value => { value.services = [] }],
+    ['serviceName', value => { value.services[0].serviceName = 'other' }],
+    ['serviceArn', value => { value.services[0].serviceArn = 'other' }],
+    ['clusterArn', value => { value.services[0].clusterArn = 'other' }],
+    ['activeStatus', value => { value.services[0].status = 'INACTIVE' }],
+    ['selectedTaskDefinition', value => { value.services[0].taskDefinition = 'other' }],
+    ['fargateLaunchType', value => { delete value.services[0].launchType }],
+    ['platformVersion', value => { delete value.services[0].platformVersion }],
+    ['ecsDeploymentController', value => { delete value.services[0].deploymentController }],
+    ['replicaScheduling', value => { delete value.services[0].schedulingStrategy }],
+    ['desiredOne', value => { value.services[0].desiredCount = 0 }],
+    ['runningZero', value => { value.services[0].runningCount = 1 }],
+    ['pendingZero', value => { value.services[0].pendingCount = 1 }],
+    ['execDisabled', value => { delete value.services[0].enableExecuteCommand }],
+    ['minimumHealthyZero', value => { value.services[0].deploymentConfiguration.minimumHealthyPercent = 100 }],
+    ['maximumPercentHundred', value => { value.services[0].deploymentConfiguration.maximumPercent = 200 }],
+    ['exactCircuitBreaker', value => { value.services[0].deploymentConfiguration.deploymentCircuitBreaker.rollback = true }],
+    ['exactlyOneDeployment', value => { value.services[0].deployments.push({ status: 'ACTIVE' }) }],
+    ['primaryStatus', value => { value.services[0].deployments[0].status = 'ACTIVE' }],
+    ['failedRollout', value => { value.services[0].deployments[0].rolloutState = 'IN_PROGRESS' }],
+    ['primaryTaskDefinition', value => { value.services[0].deployments[0].taskDefinition = 'other' }],
+    ['publicIpEnabled', value => { value.services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp = 'DISABLED' }],
+    ['boundedSubnetIdentifiers', value => { value.services[0].networkConfiguration.awsvpcConfiguration.subnets = ['private-marker'] }],
+    ['exactlyOneSecurityGroup', value => { value.services[0].networkConfiguration.awsvpcConfiguration.securityGroups = [] }],
+    ['securityGroupIdentifier', value => { value.services[0].networkConfiguration.awsvpcConfiguration.securityGroups = ['private-marker'] }],
+  ]
+  for (const [guard, mutate] of cases) {
+    const value = response(); mutate(value)
+    assert.equal(drillSnapshotEvidence(value, input()).checks[guard], false, guard)
+    assert.throws(() => validateDrillSnapshot(value, input()), undefined, guard)
+  }
+})
+
+test('snapshot diagnostics distinguish absent failures and API denial while never retaining credential strings', () => {
+  const secret = 'https://private.invalid/rpc?token=must-never-appear'
+  const absent = drillSnapshotEvidence({ services: [fixtureService()] }, input())
+  assert.equal(absent.failureList, 'ABSENT')
+  assert.equal(absent.failureCount, null)
+  assert.equal(absent.checks.emptyFailureList, false)
+  assert.throws(() => validateDrillSnapshot({ services: [fixtureService()] }, input()))
+  const denied = drillSnapshotEvidence({ services: [], failures: [
+    { reason: 'ACCESS_DENIED', arn: secret, detail: secret },
+    { reason: 'MISSING', arn: secret }, { reason: secret, detail: secret },
+  ] }, input())
+  assert.deepEqual(denied.failureCodes, ['ACCESS_DENIED', 'MISSING', 'OTHER'])
+  assert.equal(denied.failureCount, 3)
+  assert.equal(denied.serviceCount, 0)
+  assert.ok(!JSON.stringify(denied).includes(secret))
+  const malformed = drillSnapshotEvidence({ failures: secret, services: secret }, input())
+  assert.equal(malformed.failureList, 'INVALID')
+  assert.equal(malformed.serviceList, 'INVALID')
+  assert.ok(!JSON.stringify(malformed).includes(secret))
+})
+
 const manifest = value => {
   const raw = JSON.stringify(value)
   return { raw, digest: `sha256:${createHash('sha256').update(raw).digest('hex')}` }
@@ -167,6 +229,8 @@ test('the actual shared engine recovers only the isolated service and preserves 
       }
       const evidence = JSON.parse(fs.readFileSync(path.join(directory, 'recovery.json')))
       assert.equal(evidence.capability, DRILL.capability)
+      assert.equal(evidence.serviceBaseline.serviceCount, 1)
+      assert.ok(Object.values(evidence.serviceBaseline.checks).every(value => value === true))
       assert.equal(fs.existsSync(path.join(directory, 'task-definition.private.json')), false)
       assert.ok(runtime.calls.every(args => !['stop-task', 'run-task', 'delete-repository', 'batch-delete-image'].includes(args[1])))
     } finally { fs.rmSync(directory, { recursive: true, force: true }) }
@@ -179,6 +243,7 @@ test('production and drill entrypoints use the same engine with disjoint workflo
   const workflow = fs.readFileSync(new URL('../.github/workflows/drill-backend-recovery.yml', import.meta.url), 'utf8')
   for (const source of [production, drill]) assert.match(source, /await runImageRecovery\(/)
   assert.doesNotMatch(production, /DRILL_POLICY|backend-recovery-drill.json/)
+  assert.doesNotMatch(production, /snapshotEvidence/)
   assert.match(workflow, /environment: backend-admin-sepolia/)
   assert.match(workflow, /plether-backend-recovery-drill/)
   assert.match(workflow, /AWS_RECOVERY_DRILL_ROLE_ARN/)
