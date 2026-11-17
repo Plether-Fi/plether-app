@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { validateBackendDeployment } from './validate-perps-deployment.mjs'
+import { runImageRecovery } from './backend-recovery-engine.mjs'
 
 export const ACCOUNT = '932542905614'
 export const REGION = 'ap-southeast-1'
@@ -222,10 +223,14 @@ export function manifestFromBatchGetImage(response, digest) {
 }
 
 export function verifyRunningTask(task, service, selectedRevision, release, applicationGraph, routerGraph) {
+  assert.ok(Object.hasOwn(SERVICES, service), 'Unknown production recovery service')
+  return verifyRunningTaskForPolicy(task, service, selectedRevision, release, applicationGraph, routerGraph, SERVICES[service])
+}
+
+export function verifyRunningTaskForPolicy(task, service, selectedRevision, release, applicationGraph, routerGraph, policy) {
   assert.equal(task.taskDefinitionArn, selectedRevision)
   assert.equal(task.lastStatus, 'RUNNING')
   assert.equal(task.desiredStatus, 'RUNNING')
-  const policy = SERVICES[service]
   assert.deepEqual(task.containers.map(container => container.name).sort(), [service, 'otel-log-router', ...(policy.init ? [policy.init] : [])].sort())
   for (const container of task.containers) {
     const graph = container.name === 'otel-log-router' ? routerGraph : applicationGraph
@@ -252,7 +257,7 @@ export function progressEvidence(events, service, now = Date.now()) {
   return { event: event.event, timestamp: event.timestamp }
 }
 
-function aws(args) {
+export function aws(args) {
   try {
     const mutation = args[0] === 'ecs' && ['register-task-definition', 'update-service'].includes(args[1])
     return JSON.parse(execFileSync('aws', ['--region', REGION, ...args, '--output', 'json', '--no-cli-pager', '--cli-connect-timeout', '10', '--cli-read-timeout', '20'], {
@@ -261,7 +266,6 @@ function aws(args) {
     }))
   } catch { throw Error(`AWS ${args[0]} ${args[1]} failed; inspect restricted operator evidence`) }
 }
-const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 const responseService = name => aws(['ecs', 'describe-services', '--cluster', CLUSTER, '--services', name])
 const definition = arn => aws(['ecs', 'describe-task-definition', '--task-definition', arn]).taskDefinition
 const readJson = filename => JSON.parse(fs.readFileSync(filename, 'utf8'))
@@ -304,94 +308,27 @@ async function main() {
   assert.equal(process.env.GITHUB_REF, 'refs/heads/master')
   assert.equal(process.env.EXPECTED_INPUT_FINGERPRINT, fingerprint, 'Inputs or qualification changed after preflight approval')
   assert.equal(aws(['sts', 'get-caller-identity']).Account, ACCOUNT)
-  const directory = process.env.RECOVERY_EVIDENCE_DIR
-  assert.ok(directory && path.isAbsolute(directory), 'An absolute evidence directory is required')
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
-  const evidenceFile = path.join(directory, 'recovery.json')
-  const evidence = { schemaVersion: 1, inputFingerprint: fingerprint, service: input.service, releaseId: release.id, previousTaskDefinition: input.expectedTaskDefinition, operatorNoteLength: input.operatorNote.length, applicationImage: release.applicationImage, routerImage: release.routerImage, outcome: 'preflight' }
-  const persist = () => fs.writeFileSync(evidenceFile, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
-  persist()
-  evidence.check = 'service-baseline'; persist()
-  const snapshot = validateServiceSnapshot(responseService(input.service), input)
-  const previous = definition(input.expectedTaskDefinition)
-  assert.equal(previous.taskDefinitionArn, input.expectedTaskDefinition)
-  const apiResponse = responseService('plether-api')
-  assert.deepEqual(apiResponse.failures, [])
-  const api = one(apiResponse.services, 'Canonical API is unavailable')
-  const canonical = definition(api.taskDefinition)
-  evidence.check = 'task-configuration'; persist()
-  validateTaskDefinition(previous, input.service, core, canonical)
-  assert.equal(configurationFingerprint(snapshot, previous), input.expectedConfigurationSha256, 'Approved configuration fingerprint changed')
-  const manifestReader = async (repository, digest) => {
-    const response = aws(['ecr', 'batch-get-image', '--repository-name', repository, '--image-ids', `imageDigest=${digest}`])
-    return manifestFromBatchGetImage(response, digest)
-  }
-  evidence.check = 'qualified-image-manifests'; persist()
-  const applicationGraph = await verifyImageGraph(release.applicationImage, 'plether-api-sepolia', manifestReader)
-  const routerGraph = await verifyImageGraph(release.routerImage, 'plether-otel-log-router-sepolia', manifestReader)
-  evidence.verifiedManifests = { application: applicationGraph.allManifestDigests, router: routerGraph.allManifestDigests }
-  const rendered = renderRecoveredTaskDefinition(previous, input.service, release)
-  const taskFile = path.join(directory, 'task-definition.private.json')
-  let newRevision
-  try {
-    fs.writeFileSync(taskFile, JSON.stringify(rendered), { mode: 0o600 })
-    const registered = aws(['ecs', 'register-task-definition', '--cli-input-json', `file://${taskFile}`]).taskDefinition
-    newRevision = registered.taskDefinitionArn
-    assert.match(newRevision, new RegExp(`^arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/${SERVICES[input.service].family}:[1-9][0-9]*$`))
-    validateImageOnlyChange(previous, registered, input.service, release)
-    evidence.newTaskDefinition = newRevision
-    evidence.outcome = 'registered'
-    persist() // Retain a recovery handle before the ambiguous service mutation.
-    const current = validateServiceSnapshot(responseService(input.service), input)
-    assert.equal(configurationFingerprint(current, definition(current.taskDefinition)), input.expectedConfigurationSha256, 'Service/configuration changed before promotion')
-    evidence.updateRequestedAt = Date.now()
-    evidence.outcome = 'update-requested'
-    evidence.check = 'stable-worker-progress'
-    persist()
-    // ECS has no compare-and-swap parameter. All normal/recovery mutations use
-    // the same workflow concurrency group; the final read detects intervening
-    // changes before this single update. Do not retry an ambiguous update.
-    aws(['ecs', 'update-service', '--cluster', CLUSTER, '--service', input.service, '--task-definition', newRevision])
-    const deadline = Date.now() + 15 * 60_000
-    let completed
-    while (Date.now() < deadline) {
-      const response = responseService(input.service)
+  const policy = Object.freeze({
+    name: 'production-backend-image-recovery', cluster: CLUSTER,
+    logGroup: '/ecs/plether-sepolia',
+    applicationRepository: 'plether-api-sepolia', routerRepository: 'plether-otel-log-router-sepolia',
+    validateSnapshot: validateServiceSnapshot,
+    validateTask: task => {
+      const response = responseService('plether-api')
       assert.deepEqual(response.failures, [])
-      const service = one(response.services, 'Recovery service disappeared')
-      assert.equal(service.taskDefinition, newRevision, 'Another mutation selected a different task definition')
-      assert.equal(service.desiredCount, 1)
-      assert.equal(service.deploymentConfiguration.minimumHealthyPercent, 0)
-      assert.equal(service.deploymentConfiguration.maximumPercent, 100)
-      const primary = one(service.deployments.filter(deployment => deployment.status === 'PRIMARY'), 'Missing PRIMARY deployment')
-      assert.notEqual(primary.rolloutState, 'FAILED', 'Recovery deployment failed')
-      if (service.runningCount === 1 && service.pendingCount === 0 && service.deployments.length === 1 && primary.rolloutState === 'COMPLETED') {
-        const listing = aws(['ecs', 'list-tasks', '--cluster', CLUSTER, '--service-name', input.service, '--desired-status', 'RUNNING'])
-        const taskArn = one(listing.taskArns, 'Expected one running task')
-        const tasks = aws(['ecs', 'describe-tasks', '--cluster', CLUSTER, '--tasks', taskArn])
-        assert.deepEqual(tasks.failures, [])
-        const task = one(tasks.tasks, 'Expected one task')
-        verifyRunningTask(task, input.service, newRevision, release, applicationGraph, routerGraph)
-        const stream = `firelens-cloudwatch.${input.service}-firelens-${taskArn.split('/').at(-1)}`
-        const logs = aws(['logs', 'filter-log-events', '--log-group-name', '/ecs/plether-sepolia', '--log-stream-names', stream, '--start-time', String(evidence.updateRequestedAt)])
-        const progress = progressEvidence(logs.events, input.service)
-        if (progress) { completed = { taskArn, taskDefinition: newRevision, progress }; break }
-      }
-      await sleep(15_000)
-    }
-    assert.ok(completed, 'Recovery timed out without stable worker progress')
-    evidence.outcome = 'recovered'
-    evidence.completed = completed
-    persist()
-    console.log(JSON.stringify(completed))
-    console.log('Image recovery complete. This workflow never resumes sponsorship.')
-  } catch (error) {
-    evidence.outcome = 'failed-inspect-required'
-    evidence.failureClass = error?.code === 'ERR_ASSERTION' ? 'POLICY_CHECK_FAILED' : 'OPERATION_FAILED'
-    persist()
-    // A prior image may be unavailable. Never roll back blindly, stop a possibly
-    // accepted task, deregister its revision, or clear the financial breaker.
-    throw error
-  } finally { fs.rmSync(taskFile, { force: true }) }
+      const api = one(response.services, 'Canonical API is unavailable')
+      validateTaskDefinition(task, input.service, core, definition(api.taskDefinition))
+    },
+    configurationFingerprint, manifestResponse: manifestFromBatchGetImage, verifyImageGraph,
+    render: renderRecoveredTaskDefinition, validateImageOnlyChange, verifyRunningTask,
+    registeredRevisionPattern: new RegExp(`^arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/${SERVICES[input.service].family}:[1-9][0-9]*$`),
+    logStream: taskArn => `firelens-cloudwatch.${input.service}-firelens-${taskArn.split('/').at(-1)}`,
+    progressEvidence,
+  })
+  const completed = await runImageRecovery({ input, release, inputFingerprint: fingerprint,
+    directory: process.env.RECOVERY_EVIDENCE_DIR, policy, aws })
+  console.log(JSON.stringify(completed))
+  console.log('Image recovery complete. This workflow never resumes sponsorship.')
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
