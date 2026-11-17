@@ -3,7 +3,7 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently, withAsync, wait)
 import Control.Exception (bracket, finally)
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Data.Aeson (Value(..), object, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import Data.Int (Int64)
@@ -33,6 +33,7 @@ import Plether.Database.AaPreparation
 import qualified Plether.Database.AaPreparationRecovery as Recovery
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
+  , AaIssuanceResumeRequest (..)
   , SponsorshipAuthorization (..)
   , SponsorshipDraft (..)
   , advanceAaReconcilerCursor
@@ -361,11 +362,66 @@ aaIntegrationSpec databaseUrl =
       withFixture databaseUrl $ \conn -> do
         getAaIssuancePause conn `shouldReturn` Just controlBootstrapReason
         initializeReconciler conn
-        resumeAaIssuance conn "wrong reason" "integration test"
+        request <- resumeRequest conn controlBootstrapReason "integration test setup"
+        resumeAaIssuance conn (request { airExpectedReason = "wrong reason" })
           `shouldReturn` Left "The expected pause reason does not match the current circuit breaker"
-        resumeAaIssuance conn controlBootstrapReason "integration test setup"
+        resumeAaIssuance conn request
           `shouldReturn` Right ()
         getAaIssuancePause conn `shouldReturn` Nothing
+
+    it "keeps repeated pause reports in one generation and rejects a later incident with the same reason" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        pauseAaIssuance conn "integration incident"
+        approved <- resumeRequest conn "integration incident" "approved first incident"
+        pauseAaIssuance conn "integration incident"
+        repeated <- resumeRequest conn "integration incident" "same incident"
+        airExpectedPauseEventId repeated `shouldBe` airExpectedPauseEventId approved
+        resumeAaIssuance conn approved `shouldReturn` Right ()
+        pauseAaIssuance conn "integration incident"
+        newer <- resumeRequest conn "integration incident" "approved second incident"
+        airExpectedPauseEventId newer `shouldSatisfy` (> airExpectedPauseEventId approved)
+        resumeAaIssuance conn approved
+          `shouldReturn` Left "The expected pause generation does not match the current circuit breaker"
+        getAaIssuancePause conn `shouldReturn` Just "integration incident"
+        resumeAaIssuance conn newer `shouldReturn` Right ()
+
+    forM_ ["missing", "stale", "future", "cursor mismatch", "different paymaster"] $ \failure ->
+      it ("refuses operator resume with " <> failure <> " reconciliation evidence") $
+        withFixture databaseUrl $ \conn -> do
+          initializeReconciler conn
+          request <- resumeRequest conn controlBootstrapReason "operator approved exact incident"
+          case failure of
+            "missing" -> void $ execute_ conn "DELETE FROM aa_reconciler_health"
+            "stale" -> void $ execute_ conn "UPDATE aa_reconciler_health SET last_success_at=clock_timestamp()-INTERVAL '121 seconds'"
+            "future" -> void $ execute_ conn "UPDATE aa_reconciler_health SET last_success_at=clock_timestamp()+INTERVAL '60 seconds'"
+            "cursor mismatch" -> void $ execute conn "UPDATE aa_reconciler_cursor SET safe_block_hash=?" (Only $ hashOf 'f')
+            _ -> pure ()
+          let scoped = if failure == "different paymaster" then request { airPaymaster = addressOf 'f' } else request
+          resumeAaIssuance conn scoped
+            `shouldReturn` Left "The configured paymaster reconciliation is not fresh and caught up"
+          getAaIssuancePause conn `shouldReturn` Just controlBootstrapReason
+          (query_ conn "SELECT count(*) FROM aa_sponsorship_control_events WHERE action='resume'" :: IO [Only Int64])
+            `shouldReturn` [Only 0]
+
+    it "refuses a resume request for a different chain without clearing the pause" $
+      withFixture databaseUrl $ \conn -> do
+        initializeReconciler conn
+        request <- resumeRequest conn controlBootstrapReason "approved incident"
+        resumeAaIssuance conn (request { airChainId = 1 })
+          `shouldReturn` Left "The expected reconciliation scope is invalid"
+        getAaIssuancePause conn `shouldReturn` Just controlBootstrapReason
+
+    it "serializes concurrent approvals and emits exactly one resume audit event" $
+      withFixture databaseUrl $ \conn -> do
+        initializeReconciler conn
+        request <- resumeRequest conn controlBootstrapReason "approved incident"
+        withPeerConnection databaseUrl $ \peer -> do
+          (first, second) <- concurrently (resumeAaIssuance conn request) (resumeAaIssuance peer request)
+          length [() | Right () <- [first, second]] `shouldBe` 1
+          length [() | Left "AA issuance is not paused" <- [first, second]] `shouldBe` 1
+        (query_ conn "SELECT count(*) FROM aa_sponsorship_control_events WHERE action='resume'" :: IO [Only Int64])
+          `shouldReturn` [Only 1]
 
     it "keeps exact rolling budget totals while ignoring history outside each window" $
       withFixture databaseUrl $ \conn -> do
@@ -938,8 +994,21 @@ cleanupSchema conn = do
 readyDatabase :: Connection -> IO ()
 readyDatabase conn = do
   initializeReconciler conn
-  resumed <- resumeAaIssuance conn controlBootstrapReason "integration test setup"
+  request <- resumeRequest conn controlBootstrapReason "integration test setup"
+  resumed <- resumeAaIssuance conn request
   resumed `shouldBe` Right ()
+
+resumeRequest :: Connection -> Text -> Text -> IO AaIssuanceResumeRequest
+resumeRequest conn reason note = do
+  [Only generation] <- query_ conn
+    "SELECT id FROM aa_sponsorship_control_events WHERE action='pause' ORDER BY id DESC LIMIT 1"
+  pure AaIssuanceResumeRequest
+    { airExpectedPauseEventId = generation
+    , airExpectedReason = reason
+    , airChainId = chainId
+    , airPaymaster = paymasterAddress
+    , airOperatorNote = note
+    }
 
 initializeReconciler :: Connection -> IO ()
 initializeReconciler conn = do

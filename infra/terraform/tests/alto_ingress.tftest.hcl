@@ -21,6 +21,8 @@ mock_provider "aws" {
 }
 
 variables {
+  api_image_digest               = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  log_router_image_digest        = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   existing_vpc_id                = "vpc-0123456789abcdef0"
   existing_public_subnet_ids     = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
   existing_ecs_cluster_name      = "plether-sepolia"

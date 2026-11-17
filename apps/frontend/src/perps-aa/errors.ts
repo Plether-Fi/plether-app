@@ -1,4 +1,4 @@
-import { transactionFailureCode, TRANSACTION_FAILURE_MESSAGES } from '../utils/transactionFailure'
+import { normalizeTransactionFailureCode, transactionFailureCode, TRANSACTION_FAILURE_MESSAGES } from '../utils/transactionFailure'
 
 export type StableSponsorReason =
   | 'RESTART_ESTIMATION'
@@ -76,7 +76,7 @@ export class SponsorRequestError extends Error {
   }) {
     super(input.message)
     this.name = 'SponsorRequestError'
-    this.reason = input.reason
+    this.reason = normalizeTransactionFailureCode(input.reason)
     this.retryable = input.retryable
     this.callIndex = input.callIndex
     this.rpcCode = input.rpcCode
@@ -143,7 +143,7 @@ function sponsorMetadata(error: unknown): {
     const currentCallIndex = data?.callIndex ?? record.callIndex
     const currentRpcCode = record.code ?? record.rpcCode
     if (reason === undefined && typeof currentReason === 'string') {
-      reason = currentReason
+      reason = normalizeTransactionFailureCode(currentReason)
     }
     if (retryable === undefined && typeof currentRetryable === 'boolean') {
       retryable = currentRetryable

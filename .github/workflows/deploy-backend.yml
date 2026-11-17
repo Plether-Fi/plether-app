@@ -1050,8 +1050,8 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      image: ${{ steps.images.outputs.image }}
-      log_router_image: ${{ steps.images.outputs.log_router_image }}
+      image: ${{ steps.verified_images.outputs.image }}
+      log_router_image: ${{ steps.verified_images.outputs.log_router_image }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -1111,35 +1111,79 @@ jobs:
           fi
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
-          echo "image_latest=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
           echo "log_router_image=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
-          echo "log_router_image_latest=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve existing immutable release tags
+        id: release_lookup
+        env:
+          APPLICATION_REPOSITORY: ${{ steps.images.outputs.image }}
+          ROUTER_REPOSITORY: ${{ steps.images.outputs.log_router_image }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_SOURCE: https://github.com/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/runtime-release.mjs lookup --repository "${APPLICATION_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --prefix application --output "$GITHUB_OUTPUT"
+          node scripts/runtime-release.mjs lookup --repository "${ROUTER_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --prefix router --output "$GITHUB_OUTPUT"
 
       - name: Build and push application image
+        id: application_build
+        if: steps.release_lookup.outputs.application_exists != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: apps/backend/Dockerfile
           platforms: linux/arm64
           push: true
-          tags: |
-            ${{ steps.images.outputs.image }}
-            ${{ steps.images.outputs.image_latest }}
+          tags: ${{ steps.images.outputs.image }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            io.plether.build.run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            io.plether.build.attempt=${{ github.run_attempt }}
           cache-from: type=gha,scope=plether-backend-linux-arm64
           cache-to: type=gha,mode=max,scope=plether-backend-linux-arm64,ignore-error=true
 
       - name: Build and push log router image
+        id: router_build
+        if: steps.release_lookup.outputs.router_exists != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: apps/backend/otel-log-router/Dockerfile
           platforms: linux/arm64
           push: true
-          tags: |
-            ${{ steps.images.outputs.log_router_image }}
-            ${{ steps.images.outputs.log_router_image_latest }}
+          tags: ${{ steps.images.outputs.log_router_image }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            io.plether.build.run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            io.plether.build.attempt=${{ github.run_attempt }}
           cache-from: type=gha,scope=plether-otel-log-router-linux-arm64
           cache-to: type=gha,mode=max,scope=plether-otel-log-router-linux-arm64,ignore-error=true
+
+      - name: Verify immutable release manifests and source identity
+        id: verified_images
+        env:
+          APPLICATION_REPOSITORY: ${{ steps.images.outputs.image }}
+          ROUTER_REPOSITORY: ${{ steps.images.outputs.log_router_image }}
+          APPLICATION_DIGEST: ${{ steps.application_build.outputs.digest || steps.release_lookup.outputs.application_digest }}
+          ROUTER_DIGEST: ${{ steps.router_build.outputs.digest || steps.release_lookup.outputs.router_digest }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_SOURCE: https://github.com/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/runtime-release.mjs verify --repository "${APPLICATION_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --digest "$APPLICATION_DIGEST" --prefix application --output "$GITHUB_OUTPUT" --record application-release.json
+          node scripts/runtime-release.mjs verify --repository "${ROUTER_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --digest "$ROUTER_DIGEST" --prefix router --output "$GITHUB_OUTPUT" --record router-release.json
+
+      - name: Retain verified release provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-release-${{ inputs.environment }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            application-release.json
+            router-release.json
+          if-no-files-found: error
+          retention-days: 90
 
   deploy:
     needs:
@@ -1262,6 +1306,51 @@ jobs:
             exit 1
           fi
 
+      - name: Read the task definition currently selected by the service
+        if: steps.task-definition-status.outputs.exists == 'true'
+        id: selected_task
+        env:
+          ECS_SERVICE: ${{ matrix.service_name }}
+          TASK_FAMILY: plether-${{ matrix.environment }}${{ matrix.task_suffix }}
+        run: |
+          set -euo pipefail
+          selected=$(jq -er '.services[0].taskDefinition' "$RUNNER_TEMP/service-$ECS_SERVICE.json")
+          aws ecs describe-task-definition --task-definition "$selected" --query taskDefinition --output json --no-cli-pager > task-def.json
+          jq -e --arg family "$TASK_FAMILY" '.family == $family and .status == "ACTIVE"' task-def.json >/dev/null
+          echo "arn=$selected" >> "$GITHUB_OUTPUT"
+
+      - name: Check out reviewed image qualification policy
+        if: steps.task-definition-status.outputs.exists == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/runtime-release.mjs
+          sparse-checkout-cone-mode: false
+          path: image-policy
+
+      - name: Require current active images to remain rollback capable
+        if: steps.task-definition-status.outputs.exists == 'true' && steps.task-definition-status.outputs.desired_count != '0'
+        env:
+          EXPECTED_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node image-policy/scripts/runtime-release.mjs verify-task --task-definition task-def.json --account "$EXPECTED_ACCOUNT" --region "$AWS_REGION"
+
+      - name: Check out reviewed public AA deployment policy
+        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            apps/backend/deployments
+            scripts
+            config/perps
+            config/rpc-log-range-policy.json
+          path: deployment-policy
+
       - name: Validate AA reconciler task topology
         if: matrix.task_suffix == '-aa-reconciler' && steps.task-definition-status.outputs.exists == 'true'
         env:
@@ -1271,10 +1360,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          max_log_range=$(jq -er 'select(.version == 1 and (.maxLogRangeBlocks | type == "number" and floor == . and . > 0)) | .maxLogRangeBlocks' deployment-policy/config/rpc-log-range-policy.json)
+
           if ! jq -e \
               --arg family "$TASK_FAMILY" \
               --arg reconciler "$RECONCILER_CONTAINER" \
               --arg desired_count "$RECONCILER_DESIRED_COUNT" \
+              --argjson max_log_range "$max_log_range" \
               '
               def container($name): [.containerDefinitions[] | select(.name == $name)];
               def envmap($container):
@@ -1369,7 +1461,7 @@ jobs:
                         end
                       )
                       and ($environment.AA_RECONCILER_POLL_SECONDS | canonical_positive_decimal and (tonumber <= 60))
-                      and ($environment.AA_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= 10000))
+                      and ($environment.AA_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= $max_log_range))
                       and ($environment.AA_RECONCILER_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 1800))
                       and ($environment.AA_PAYMASTER_MIN_DEPOSIT_WEI | canonical_positive_decimal)
                   )
@@ -1416,18 +1508,6 @@ jobs:
               )] | length) == 1
             ' task-def.json > /dev/null
 
-      - name: Check out reviewed public AA deployment policy
-        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            .github/scripts
-            apps/backend/deployments
-            scripts
-            config/perps
-          path: deployment-policy
 
       - name: Configure exact Sepolia close assistance release
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
@@ -1570,6 +1650,17 @@ jobs:
           task-definition: task-def.json
           container-name: otel-log-router
           image: ${{ needs.build.outputs.log_router_image }}
+
+      - name: Refuse a concurrently changed service revision
+        if: steps.task-definition-status.outputs.exists == 'true'
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
+          ECS_SERVICE: ${{ matrix.service_name }}
+          EXPECTED_TASK: ${{ steps.selected_task.outputs.arn }}
+        run: |
+          set -euo pipefail
+          actual=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text --no-cli-pager)
+          test "$actual" = "$EXPECTED_TASK"
 
       - name: Ensure API health check grace period
         if: matrix.service_name == 'plether-api' && steps.task-definition-status.outputs.exists == 'true'

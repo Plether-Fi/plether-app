@@ -3,6 +3,7 @@ module Plether.Database.AaSponsorship
   , SponsorshipAuthorization (..)
   , SubmittedAuthorization (..)
   , AaReconcilerCursor (..)
+  , AaIssuanceResumeRequest (..)
   , ensureAaSponsorshipSchema
   , reserveSponsorship
   , reserveSponsorshipWithAssistance
@@ -1335,41 +1336,77 @@ pauseAaIssuance conn reason = withTransaction conn $ do
  where
   normalizedReason = nonBlankLimited "unspecified circuit breaker" reason
 
--- | Clear the breaker only when an operator proves it observed the exact
--- current reason and supplies an audit note. There is intentionally no
--- automatic unpause path.
-resumeAaIssuance :: Connection -> Text -> Text -> IO (Either Text ())
-resumeAaIssuance conn expectedReason operatorNote = withTransaction conn $ do
+-- | The append-only pause event id is the pause generation. Repeated reports
+-- of the same active pause do not create events; a new incident (even with the
+-- same reason) always gets a different id. No schema migration or relabelling
+-- of historical events is required.
+data AaIssuanceResumeRequest = AaIssuanceResumeRequest
+  { airExpectedPauseEventId :: Int64
+  , airExpectedReason :: Text
+  , airChainId :: Integer
+  , airPaymaster :: Text
+  , airOperatorNote :: Text
+  }
+  deriving stock (Eq, Show)
+
+-- | Human approval is necessary but insufficient: clear only the approved
+-- pause generation, for the configured Sepolia paymaster, while the verified
+-- reconciliation health still matches its persisted cursor. The shared budget
+-- lock serializes this check with pauses and atomic progress publication; row
+-- locks also protect against standalone cursor/heartbeat updates.
+resumeAaIssuance :: Connection -> AaIssuanceResumeRequest -> IO (Either Text ())
+resumeAaIssuance conn request = withTransaction conn $ do
   acquireAaBudgetLock conn
   current <- query_ conn
     "SELECT issuance_paused,paused_reason FROM aa_sponsorship_control \
     \WHERE singleton=TRUE FOR UPDATE" :: IO [(Bool, Maybe Text)]
+  latest <- query_ conn
+    "SELECT id,action,reason FROM aa_sponsorship_control_events ORDER BY id DESC LIMIT 1"
+      :: IO [(Int64, Text, Text)]
   case current of
     [(False, _)] -> pure $ Left "AA issuance is not paused"
     [(True, Just actualReason)]
-      | actualReason /= normalizedExpected ->
+      | actualReason /= airExpectedReason request ->
           pure $ Left "The expected pause reason does not match the current circuit breaker"
-      | T.null normalizedNote ->
-          pure $ Left "An operator note is required"
+      | airExpectedPauseEventId request <= 0
+          || latest /= [(airExpectedPauseEventId request, "pause", actualReason)] ->
+          pure $ Left "The expected pause generation does not match the current circuit breaker"
+      | airChainId request /= 421614 || not validPaymaster ->
+          pure $ Left "The expected reconciliation scope is invalid"
+      | T.null normalizedNote -> pure $ Left "An operator note is required"
       | T.length normalizedNote > 512 ->
           pure $ Left "The operator note must not exceed 512 characters"
       | otherwise -> do
-          affected <- execute conn
-            "UPDATE aa_sponsorship_control SET issuance_paused=FALSE,paused_reason=NULL,updated_at=clock_timestamp() \
-            \WHERE singleton=TRUE AND issuance_paused AND paused_reason=?"
-            (Only normalizedExpected)
-          if affected /= (1 :: Int64)
-            then pure $ Left "The circuit breaker changed concurrently"
+          fresh <- query conn
+            "SELECT h.safe_block=c.safe_block AND h.safe_block_hash=c.safe_block_hash \
+            \AND h.last_success_at >= clock_timestamp()-INTERVAL '120 seconds' \
+            \AND h.last_success_at <= clock_timestamp() \
+            \FROM aa_reconciler_health h JOIN aa_reconciler_cursor c USING (chain_id,paymaster) \
+            \WHERE h.chain_id=? AND h.paymaster=? FOR SHARE OF h,c"
+            (airChainId request, normalizedPaymaster) :: IO [Only Bool]
+          if fresh /= [Only True]
+            then pure $ Left "The configured paymaster reconciliation is not fresh and caught up"
             else do
-              void $ execute conn
-                "INSERT INTO aa_sponsorship_control_events (action,reason,operator_note,created_at) \
-                \VALUES ('resume',?,?,clock_timestamp())"
-                (normalizedExpected, normalizedNote)
-              pure $ Right ()
+              affected <- execute conn
+                "UPDATE aa_sponsorship_control SET issuance_paused=FALSE,paused_reason=NULL,updated_at=clock_timestamp() \
+                \WHERE singleton=TRUE AND issuance_paused AND paused_reason=?"
+                (Only $ airExpectedReason request)
+              if affected /= (1 :: Int64)
+                then pure $ Left "The circuit breaker changed concurrently"
+                else do
+                  void $ execute conn
+                    "INSERT INTO aa_sponsorship_control_events (action,reason,operator_note,created_at) \
+                    \VALUES ('resume',?,?,clock_timestamp())"
+                    (airExpectedReason request, normalizedNote)
+                  pure $ Right ()
     _ -> pure $ Left "The AA sponsorship control row is missing or invalid"
  where
-  normalizedExpected = expectedReason
-  normalizedNote = T.strip operatorNote
+  normalizedNote = T.strip $ airOperatorNote request
+  normalizedPaymaster = T.toLower $ airPaymaster request
+  validPaymaster = T.length normalizedPaymaster == 42
+    && T.take 2 normalizedPaymaster == "0x"
+    && T.all (`elem` ("0123456789abcdef" :: String)) (T.drop 2 normalizedPaymaster)
+    && T.drop 2 normalizedPaymaster /= T.replicate 40 "0"
 
 getAaReconcilerCursor
   :: Connection

@@ -1,4 +1,4 @@
-import { asSponsorRequestError, isDefinitiveSponsorshipRefusal, isRecoveryUnauthorized, submissionFailureReason } from './errors'
+import { asSponsorRequestError, isDefinitiveSponsorshipRefusal, isRecoveryUnauthorized, sponsorReasonMessage, submissionFailureReason } from './errors'
 
 describe('recovery and submission metadata', () => {
   it('recognizes nested authorization denial without guessing from error text', () => {
@@ -17,6 +17,13 @@ describe('asSponsorRequestError', () => {
   it('distinguishes explicit simulation refusals from an ambiguous provider outage', () => {
     for (const reason of ['INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','SIMULATION_FAILED','MUST_CLOSE_OPPOSING']) expect(isDefinitiveSponsorshipRefusal(reason)).toBe(true)
     expect(isDefinitiveSponsorshipRefusal('BUNDLER_UNAVAILABLE')).toBe(false)
+  })
+  it.each(['RECONCILER_STALE', 'RECONCILIATION_STALE'])('keeps %s explicit without declaring earlier authorization safely refused', reason => {
+    const error = asSponsorRequestError({ cause: { data: { reason, retryable: true } } })
+    expect(error.reason).toBe('RECONCILIATION_STALE')
+    expect(sponsorReasonMessage(error)).toContain('Gas sponsorship is temporarily unavailable while accounting catches up')
+    expect(sponsorReasonMessage(error)).not.toMatch(/could not confirm|was not sent/)
+    expect(isDefinitiveSponsorshipRefusal(error.reason)).toBe(false)
   })
   it('collects JSON-RPC policy metadata through viem error wrappers', () => {
     const rpcCause = Object.assign(new Error('rate limited'), {

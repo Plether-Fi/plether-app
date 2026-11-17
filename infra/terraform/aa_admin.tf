@@ -377,6 +377,10 @@ resource "aws_ecs_task_definition" "aa_admin_resume_issuance" {
       command = [
         "/usr/local/bin/plether-aa-admin",
         "resume-issuance",
+        "--expected-pause-event-id",
+        "__WORKFLOW_REQUIRED__",
+        "--paymaster",
+        "__WORKFLOW_REQUIRED__",
         "--expected-reason",
         "__WORKFLOW_REQUIRED__",
         "--operator-note",

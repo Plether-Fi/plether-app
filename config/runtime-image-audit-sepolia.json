@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "accountId": "932542905614",
+  "region": "ap-southeast-1",
+  "clusters": ["plether-sepolia"],
+  "repositories": ["plether-api-sepolia", "plether-otel-log-router-sepolia", "plether-alto-sepolia", "plether-rpc-gateway-sepolia"],
+  "taskDefinitionFamilies": [
+    "plether-sepolia-aa-admin-kms-attest",
+    "plether-sepolia-aa-admin-resume-issuance"
+  ],
+  "rollbackTaskDefinitions": [],
+  "eventBuses": ["default"],
+  "schedulerGroups": ["default"],
+  "rollbackCatalog": "operations/backend-recovery-releases.json"
+}

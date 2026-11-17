@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpRequestError } from 'viem'
+import { asSponsorRequestError, sponsorReasonMessage } from '../perps-aa/errors'
 import { reportTransactionFailure, reportedTransactionError } from './transactionErrors'
 import { captureAnalyticsEvent, captureFrontendLog, sanitizeAnalyticsProperties } from './client'
 
@@ -29,6 +30,21 @@ describe('transaction failure reporting', () => {
     expect(captureFrontendLog).toHaveBeenCalledOnce()
   })
 
+  it.each(['RECONCILER_STALE', 'RECONCILIATION_STALE'])('reports %s from the gateway with clear copy and a stable diagnostic', reason => {
+    const attemptId = crypto.randomUUID()
+    const original = { cause: { data: { reason, retryable: true, signature: 'private-signature' } } }
+    const sponsorError = asSponsorRequestError(original)
+    const failure = reportTransactionFailure(original, sponsorReasonMessage(sponsorError), {
+      ...context, stage: 'requesting-sponsorship', attemptId,
+    })
+    expect(failure).toMatchObject({ supportReference: attemptId, errorCode: 'RECONCILIATION_STALE' })
+    expect(failure.message).toContain('Gas sponsorship is temporarily unavailable')
+    expect(failure.message).not.toContain('could not confirm')
+    expect(captureAnalyticsEvent).toHaveBeenCalledWith('transaction failed', expect.objectContaining({
+      attempt_id: attemptId, reason_code: 'RECONCILIATION_STALE', stage: 'requesting-sponsorship',
+    }))
+    expect(JSON.stringify(vi.mocked(captureAnalyticsEvent).mock.calls)).not.toContain('private-signature')
+  })
   it('keeps a transaction hash in the UI only and reports new failures with different references', () => {
     const hash = `0x${'ab'.repeat(32)}`
     const error = Object.assign(new Error('provider dump'), { transactionHash: hash })

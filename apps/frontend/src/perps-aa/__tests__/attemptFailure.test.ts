@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AttemptFailureError, classifyAttemptFailure } from '../attemptFailure'
+import { AttemptFailureError, classifyAttemptFailure, safeAttemptFailure, type AttemptFailure } from '../attemptFailure'
 import { BundlerRequestError } from '../errors'
 
 describe('safe interrupted-attempt classification', () => {
@@ -7,6 +7,12 @@ describe('safe interrupted-attempt classification', () => {
     expect(classifyAttemptFailure('submission', { cause: { data: {
       reason: 'SECURITY_ATTESTATION_UNAVAILABLE', signature: 'secret', message: 'private URL',
     } } })).toEqual({ failureStep: 'submission', reasonCode: 'SECURITY_ATTESTATION_UNAVAILABLE' })
+  })
+  it.each(['RECONCILER_STALE', 'RECONCILIATION_STALE'])('normalizes %s into the stable reconciliation diagnostic', reason => {
+    expect(classifyAttemptFailure('sponsorship', { cause: { data: { reason, message: 'private URL' } } }))
+      .toEqual({ failureStep: 'sponsorship', reasonCode: 'RECONCILIATION_STALE' })
+    expect(safeAttemptFailure({ failureStep: 'sponsorship', reasonCode: reason } as AttemptFailure))
+      .toEqual({ failureStep: 'sponsorship', reasonCode: 'RECONCILIATION_STALE' })
   })
   it('distinguishes explicit wallet refusal from generic wallet errors', () => {
     expect(classifyAttemptFailure('wallet_approval', { cause: { code: 4001 } }).reasonCode).toBe('WALLET_DECLINED')

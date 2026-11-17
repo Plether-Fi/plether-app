@@ -274,8 +274,11 @@ aa_admin_dispatch_fingerprint() {
     --arg confirmation "$2" \
     --arg expected_reason "$3" \
     --arg operator_note "$4" \
-    '{schema:1, action:$action, confirmation:$confirmation,
-      expectedReason:$expected_reason, operatorNote:$operator_note}' |
+    --arg expected_pause_event_id "${5:-}" \
+    --arg expected_paymaster "${6:-}" \
+    '{schema:2, action:$action, confirmation:$confirmation,
+      expectedReason:$expected_reason, expectedPauseEventId:$expected_pause_event_id,
+      expectedPaymaster:$expected_paymaster, operatorNote:$operator_note}' |
     shasum -a 256 | awk '{print $1}'
 }
 
@@ -1073,9 +1076,13 @@ must compare STS identity to the account value before its topology or mutation
 work.
 
 The workflow accepts only `action=attest-kms` or
-`action=resume-issuance`. `expected_reason` and `operator_note` must both be
-empty for attestation; for resume they must be printable ASCII strings of
-1–512 characters and the reason must exactly match the active database pause.
+`action=resume-issuance`. All recovery inputs must be empty for attestation.
+For resume, `expected_reason` and `operator_note` must be printable ASCII
+strings of 1–512 characters. `expected_pause_event_id` must be the exact
+current pause audit event ID, represented as a canonical positive PostgreSQL
+BIGINT decimal string. `expected_paymaster` must match the selected deployed
+Sepolia API definition. All four values are bound into the fingerprint before
+human approval; never discover or substitute a newer pause ID after approval.
 Never put a secret, token, RPC URL, signed operation, or KMS response in either
 free-form input.
 
@@ -1906,6 +1913,15 @@ patching a task definition.
 Different valid observations are not treated as a transient outage: provider
 disagreement is immediately fatal and fail-closed.
 
+The shared range contract is `config/rpc-log-range-policy.json`: at most
+5,000 inclusive blocks, with a 1,000-block reconciler default. Backend startup
+and Terraform reject an oversized configured batch. Recognized range/response
+size refusals may subdivide within the bounded scan budget; rate limits,
+timeouts and provider unavailability use bounded backoff instead. Subdivision
+never advances the cursor until the full range agrees and its canonical
+headers are reverified. A progressing catch-up scan is not a fresh caught-up
+heartbeat and does not authorize resume.
+
 All configuration below except the desired count must already have been
 applied while the service remained stopped. The start block is the paymaster
 deployment block, not the current head and not an estimate. On first run the
@@ -2167,19 +2183,44 @@ an explicit database command:
 
 ```text
 /usr/local/bin/plether-aa-admin resume-issuance \
+  --expected-pause-event-id '<exact current pause audit event id>' \
+  --paymaster '<configured deployed paymaster address>' \
   --expected-reason '<exact current paused_reason>' \
   --operator-note '<incident/change reference and evidence summary>'
 ```
 
-It requires `DATABASE_URL`, validates the schema, takes the sponsorship budget
-advisory lock, refuses a stale or mismatched reason, clears the breaker with a
-compare-and-set update, and appends an `aa_sponsorship_control_events` audit
-row. The command does not itself prove chain cursor continuity or recompute the
-ledger invariant. Before invoking it, independently verify the current/safe
-block hashes, continuous scan, heartbeat age, all affected operations, and
-ledger/deposit reconciliation; afterwards read back both the control and event
-rows. A trip remains fail-closed and must never be cleared with an ad hoc SQL
-`UPDATE`.
+It requires `DATABASE_URL`, validates the schema and takes the sponsorship
+budget advisory lock. It refuses a mismatched pause event ID/reason, stale or
+future reconciliation health, or health whose block/hash does not match the
+configured paymaster's cursor. The append-only pause event ID is the incident
+generation: repeating one active pause keeps the same ID, but a new pause with
+the same reason gets a new ID. A successful guarded update appends a resume
+audit row; refusals are logged as `aa_admin_resume_refused` without clearing the
+control row. It does not independently re-read the chain or recompute ledger
+invariants, so still verify canonical continuity, affected operations and
+ledger/deposit reconciliation before dispatch. Never clear a trip with ad hoc
+SQL, advance the cursor manually, or reuse approval for a newer event.
+
+Read the exact current incident through the approved read-only database path:
+
+```sql
+SELECT c.issuance_paused, c.paused_reason,
+       e.id::text AS expected_pause_event_id, e.action, e.created_at
+FROM aa_sponsorship_control c
+CROSS JOIN LATERAL (
+  SELECT id, action, reason, created_at
+  FROM aa_sponsorship_control_events ORDER BY id DESC LIMIT 1
+) e
+WHERE c.singleton AND c.issuance_paused AND e.action='pause'
+  AND e.reason=c.paused_reason;
+```
+
+Require exactly one row. A missing row is invalid evidence, not permission to
+pick a historical pause. Save the ID as text; converting BIGINT IDs to floating
+point can silently approve a different event. Before using this revised
+workflow, apply the reviewed admin placeholder-command Terraform change and
+deploy the backend containing the guarded CLI. Older binaries reject the new
+mandatory arguments; do not fall back to the old command.
 
 After the full Gate 8 observation window and invariant checks pass, explicitly
 clear the initial bootstrap pause while the environment sponsorship flag is
@@ -2190,15 +2231,20 @@ dispatch the capability-separated protected workflow:
 
 ```bash
 export EXPECTED_PAUSE_REASON='uninitialized or control row recreated'
+export EXPECTED_PAUSE_EVENT_ID=REPLACE_WITH_CURRENT_PAUSE_EVENT_ID
+export EXPECTED_RESUME_PAYMASTER="$PAYMASTER"
 export ISSUANCE_OPERATOR_NOTE='CHANGE_RECORD: dual-provider continuity, freshness, and per-digest ledger/deposit checks passed'
 export EXPECTED_AA_ADMIN_INPUT_FINGERPRINT="$(aa_admin_dispatch_fingerprint \
   resume-issuance 'RUN RESUME-ISSUANCE ON SEPOLIA' \
-  "$EXPECTED_PAUSE_REASON" "$ISSUANCE_OPERATOR_NOTE")"
+  "$EXPECTED_PAUSE_REASON" "$ISSUANCE_OPERATOR_NOTE" \
+  "$EXPECTED_PAUSE_EVENT_ID" "$EXPECTED_RESUME_PAYMASTER")"
 gh workflow run aa-admin.yml \
   --repo "$APP_REPOSITORY" \
   --ref master \
   -f action=resume-issuance \
   -f expected_reason="$EXPECTED_PAUSE_REASON" \
+  -f expected_pause_event_id="$EXPECTED_PAUSE_EVENT_ID" \
+  -f expected_paymaster="$EXPECTED_RESUME_PAYMASTER" \
   -f operator_note="$ISSUANCE_OPERATOR_NOTE" \
   -f confirmation='RUN RESUME-ISSUANCE ON SEPOLIA'
 ```
@@ -2211,8 +2257,8 @@ and approve it with the exact `gh api --method POST .../pending_deployments`
 command above; sole-maintainer self-approval is permitted only for Sepolia.
 Do not auto-approve a pending run. Watch the run with `gh run watch
 --exit-status`. Require exit zero and the workflow's task-scoped
-`aa_admin_issuance_resumed` readback with the exact previous reason and supplied
-note length, then query the database and require `issuance_paused=false`, a null
+`aa_admin_issuance_resumed` readback with the exact previous reason, pause event
+ID string and supplied note length, then query the database and require `issuance_paused=false`, a null
 reason, and exactly one corresponding `resume` audit row containing the
 supplied note. Verify neither AA-admin family has a PENDING/RUNNING task and
 its temporary revision was deregistered.

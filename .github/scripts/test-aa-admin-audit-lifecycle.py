@@ -18,6 +18,9 @@ PREFIX = 'arn:aws:ecs:ap-southeast-1:932542905614:'
 TASK = PREFIX + 'task/plether-sepolia/' + 'a' * 32
 DEFINITION = PREFIX + 'task-definition/plether-sepolia-aa-admin-resume-issuance:99'
 OWNER, CAPABILITY = 'aa-admin-12345-1', 'resume-aa-issuance'
+# Keep pause generations lossless across the real shell/jq readback contract.
+PAUSE_EVENT_ID = '9007199254740993'
+PAYMASTER = '0x' + 'a' * 40
 CONTEXT = (TASK, DEFINITION, OWNER, CAPABILITY)
 SOURCE = (ROOT / '.github/workflows/aa-admin.yml').read_text()
 
@@ -41,7 +44,8 @@ def evidence():
     return {'events': [{'message': json.dumps({
         'ecs_task_arn': TASK, 'container_name': LIFECYCLE.APP,
         'event': 'aa_admin_issuance_resumed', 'log_schema_version': 1, 'level': 'INFO',
-        'previous_reason': 'fixture pause reason', 'operator_note_length': len('fixture note'),
+        'previous_reason': 'fixture pause reason', 'previous_pause_event_id': PAUSE_EVENT_ID,
+        'operator_note_length': len('fixture note'),
     })}]}
 
 
@@ -180,6 +184,7 @@ class WorkflowTests(unittest.TestCase):
             env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
                    'RUNNER_TEMP': directory, 'ACTION': 'resume-issuance',
                    'EXPECTED_REASON': 'fixture pause reason', 'OPERATOR_NOTE': 'fixture note',
+                   'EXPECTED_PAUSE_EVENT_ID': PAUSE_EVENT_ID, 'EXPECTED_PAYMASTER': PAYMASTER,
                    'EXPECTED_EVENT': 'aa_admin_issuance_resumed', 'EXPECTED_SIGNER': '',
                    'CAPABILITY': CAPABILITY, 'REGISTRATION_OWNER': OWNER,
                    'TASK_DEFINITION': DEFINITION, 'TASK_ARN': TASK,
@@ -206,12 +211,20 @@ class WorkflowTests(unittest.TestCase):
         cases = [('missing event', {'events': []}), ('malformed JSON', {'events': [{'message': '{'}]})]
         for field, value in [('ecs_task_arn', TASK + 'b'), ('container_name', 'other'),
                              ('event', 'other'), ('log_schema_version', 2), ('level', 'DEBUG'),
-                             ('previous_reason', 'other'), ('operator_note_length', 0)]:
+                             ('previous_reason', 'other'), ('operator_note_length', 0),
+                             ('previous_pause_event_id', '9007199254740994'),
+                             ('previous_pause_event_id', int(PAUSE_EVENT_ID)),
+                             ('previous_pause_event_id', '')]:
             event = evidence()
             message = json.loads(event['events'][0]['message'])
             message[field] = value
             event['events'][0]['message'] = json.dumps(message)
             cases.append((field, event))
+        missing_generation = evidence()
+        message = json.loads(missing_generation['events'][0]['message'])
+        del message['previous_pause_event_id']
+        missing_generation['events'][0]['message'] = json.dumps(message)
+        cases.append(('missing pause generation', missing_generation))
         for label, events in cases:
             with self.subTest(label=label):
                 result, calls = self.execute(events=events)

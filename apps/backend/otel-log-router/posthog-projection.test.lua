@@ -1,4 +1,10 @@
 dofile('posthog-projection.lua')
+
+for _, reason in ipairs({'RPC_RANGE_LIMIT', 'RPC_RATE_LIMIT', 'RPC_TIMEOUT', 'RPC_INVALID_RESPONSE', 'RPC_UNAVAILABLE'}) do
+  local _,_,safe = project_posthog('test',0,{event='aa_reconciler_rpc_unavailable',reason_code=reason,
+    reason='https://private.invalid/token',error='signed private calldata',rpc_url='secret'})
+  assert(safe.reason_code==reason and safe.reason==nil and safe.error==nil and safe.rpc_url==nil)
+end
 local _,_,timing=project_posthog('test',0,{event='aa_preparation_timing',log_lock_wait_ms=12.5,log_write_ms=20,
   stages='private input',request_id='private input',token='secret'})
 assert(timing.log_lock_wait_ms==12.5 and timing.log_write_ms==20)

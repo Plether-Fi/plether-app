@@ -1,3 +1,8 @@
+/** Keep the legacy gateway reason compatible with the readiness/diagnostic code. */
+export function normalizeTransactionFailureCode(code: string): string {
+  return code === 'RECONCILER_STALE' ? 'RECONCILIATION_STALE' : code
+}
+
 /** Public failure copy and bounded inspection of error envelopes, never request payloads. */
 export const TRANSACTION_FAILURE_MESSAGES: Record<string, string> = {
   FUNDING_STEP_FAILED: 'Plether could not complete this funding step. Retry to resume the same allocation.',
@@ -19,6 +24,7 @@ export const TRANSACTION_FAILURE_MESSAGES: Record<string, string> = {
   SPONSOR_UNAVAILABLE: 'Gas sponsorship is temporarily unavailable. Check account activity before trying again.',
   SPONSOR_REQUEST_TIMEOUT: 'Gas sponsorship timed out. Check account activity before preparing another transaction.',
   PAYMASTER_PAUSED: 'Gas sponsorship is temporarily paused. Try again when service resumes.',
+  RECONCILIATION_STALE: 'Gas sponsorship is temporarily unavailable while accounting catches up. Check Trading Account activity before retrying.',
   POLICY_DENIED: 'This action is not eligible for sponsored gas. Review the action or contact support with your support reference.',
   SIMULATION_FAILED: 'The transaction could not pass the checks before submission. Refresh account state and review the action.',
   EXECUTION_GAS_CAP_EXCEEDED: 'This action exceeds the sponsored gas limit. Reduce its size or contact support.',
@@ -81,7 +87,8 @@ export function* transactionErrorRecords(error: unknown): Generator<object> {
 export function transactionFailureCode(error: unknown): string {
   let fallback = 'UNKNOWN'
   for (const record of transactionErrorRecords(error)) {
-    const reason = errorField(record, 'diagnosticCode') ?? errorField(record, 'reason')
+    const rawReason = errorField(record, 'diagnosticCode') ?? errorField(record, 'reason')
+    const reason = typeof rawReason === 'string' ? normalizeTransactionFailureCode(rawReason) : rawReason
     if (typeof reason === 'string' && Object.hasOwn(TRANSACTION_FAILURE_MESSAGES, reason) && reason !== 'UNKNOWN') {
       if (reason !== 'SUBMISSION_OUTCOME_UNKNOWN') return reason
       fallback = reason

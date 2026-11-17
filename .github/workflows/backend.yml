@@ -92,6 +92,19 @@ jobs:
           terraform -chdir=infra/terraform init -backend=false -input=false
           terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -filter=tests/alto_ingress.tftest.hcl -no-color
 
+      - name: Test retained artifacts, immutable releases and protected recovery
+        working-directory: .
+        run: |
+          node --test scripts/runtime-repository-policy.test.mjs scripts/runtime-release.test.mjs scripts/runtime-image-audit.test.mjs scripts/recover-backend.test.mjs scripts/aa-resume-guards.test.mjs
+
+      - name: Test sanitized incident evidence and service monitoring
+        working-directory: .
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 -m unittest discover -s infra/incident-observer -p 'test_*.py'
+          node scripts/test-incident-observer-terraform.mjs
+
       - name: Test AA RPC mode and recovery origin guards
         env:
           AA_TERRAFORM_TEST_REQUIRED: '1'

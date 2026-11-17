@@ -31,12 +31,14 @@ try {
     mkdirSync(join(module, 'tests'), { recursive: true })
     mkdirSync(join(tree, 'config/perps'), { recursive: true })
     copyFileSync(join(source, 'tests/fixtures/deployed-core.json'), join(tree, 'config/perps/arbitrum-sepolia-v2.0.0.json'))
+    copyFileSync(join(root, 'config/rpc-log-range-policy.json'), join(tree, 'config/rpc-log-range-policy.json'))
     if (scope === 'guard-unit') {
       // Execute the entire actual target guard, with only its AA activation
       // context stubbed inactive. Nonempty canonical bindings activate it.
       for (const file of ['variables.tf', 'deployment_target.tf']) copyFileSync(join(source, file), join(module, file))
       writeFileSync(join(module, 'context.tf'), 'locals { native_aa_backend_configured = false }\n')
       writeFileSync(join(module, 'tests/deployed-bindings.tftest.hcl'), suite.slice(suite.indexOf('variables {'))
+        .replace(/^  (?:api_image_digest|log_router_image_digest)\s*=.*\n/gm, '')
         .replace(', terraform_data.perps_candle_rollout_guard', '')
         .replace(', terraform_data.lp_settlement_keeper_guard', ''))
     } else {

@@ -56,19 +56,28 @@ terraform plan -var-file=terraform.tfvars.sepolia -out=sepolia.tfplan
 terraform show sepolia.tfplan
 ```
 
-## Shared log-router images
+## Retained runtime images
 
-The log-router repository has no automatic image-expiration policy. Alto and
-other AA services deploy independently of the backend and may still reference
-an older immutable digest after many backend releases. ECR age/count rules do
-not protect images referenced by ECS; applying such a rule can prevent a live
-service from restarting. Cleanup must first check all live task definitions and
-retained rollback definitions, including manifest-list references. Until that
-check is automated, retain the images and accept the additional storage cost.
+Application, log-router and Alto repositories have no automatic image-expiration
+policy. Their release tags are immutable, forced deletion is disabled, and
+Terraform refuses repository destruction. Independently deployed services can
+retain older digests across many releases. Digest pins and immutable tags do
+not protect an image from ECR lifecycle deletion.
+
+Supply qualified `api_image_digest` and `log_router_image_digest` values when
+planning a running stack. Never use a moving tag to initialize a service.
+The read-only runtime audit checks live, dormant, scheduled, administration and
+approved rollback dependencies, including OCI index children. Its report does
+not authorize deletion. Cleanup remains disabled until a separate reviewed
+collector can prove complete reference coverage and rollback/grace retention.
 
 Removing the old lifecycle policy preserves remaining images; it does not
 restore images that ECR already deleted. Affected services also need a reviewed
 deployment using an available image.
+
+Follow the staged [incident-hardening rollout](../../docs/runbooks/incident-hardening-rollout.md)
+and [runtime image availability](../../docs/runbooks/runtime-image-availability.md)
+instructions before enabling the new operational checks.
 
 ## Alchemy credential rollout
 

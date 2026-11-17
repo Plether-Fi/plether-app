@@ -58,6 +58,15 @@ import Plether.Ethereum.Client
   , ethCall
   , rpcCall
   )
+import Plether.Ethereum.LogRange
+  ( RpcFailureCategory (..)
+  , defaultReconcilerBatchBlocks
+  , maxLogRangeBlocks
+  , reconcilerRetryDelayMicros
+  , rpcFailureCategory
+  , rpcFailureCode
+  , scanLogRange
+  )
 import Plether.Logging
   ( LogField
   , field
@@ -134,7 +143,7 @@ loadAaReconcilerConfig = do
   mStartBlock <- lookupEnv "AA_RECONCILER_START_BLOCK"
   mStartBlockHash <- lookupEnv "AA_RECONCILER_START_BLOCK_HASH"
   pollRaw <- fromMaybe "5" <$> lookupEnv "AA_RECONCILER_POLL_SECONDS"
-  batchRaw <- fromMaybe "1000" <$> lookupEnv "AA_RECONCILER_BATCH_BLOCKS"
+  batchRaw <- fromMaybe (show defaultReconcilerBatchBlocks) <$> lookupEnv "AA_RECONCILER_BATCH_BLOCKS"
   minDepositRaw <-
     fromMaybe "50000000000000000" <$> lookupEnv "AA_PAYMASTER_MIN_DEPOSIT_WEI"
   failurePauseRaw <-
@@ -152,7 +161,8 @@ loadAaReconcilerConfig = do
     poll <- parseDecimal "AA_RECONCILER_POLL_SECONDS" pollRaw
     unless (poll >= 1 && poll <= 60) $ Left "AA_RECONCILER_POLL_SECONDS must be between 1 and 60"
     batch <- parseDecimal "AA_RECONCILER_BATCH_BLOCKS" batchRaw
-    unless (batch >= 1 && batch <= 10_000) $ Left "AA_RECONCILER_BATCH_BLOCKS must be between 1 and 10000"
+    unless (batch >= 1 && batch <= maxLogRangeBlocks) $
+      Left $ "AA_RECONCILER_BATCH_BLOCKS must be between 1 and " <> T.pack (show maxLogRangeBlocks)
     minDeposit <- parseDecimal "AA_PAYMASTER_MIN_DEPOSIT_WEI" minDepositRaw
     unless (minDeposit > 0) $ Left "AA_PAYMASTER_MIN_DEPOSIT_WEI must be positive"
     failurePause <- parseDecimal "AA_RECONCILER_FAILURE_PAUSE_SECONDS" failurePauseRaw
@@ -177,15 +187,24 @@ loadAaReconcilerConfig = do
 runAaReconciler :: DbPool -> EthClient -> EthClient -> AaReconcilerConfig -> IO ()
 runAaReconciler pool primaryClient secondaryClient cfg = do
   failureSince <- newIORef Nothing
+  consecutiveFailures <- newIORef (0 :: Int)
   withDb pool $ \leaderConnection ->
     withDbAdvisoryLock leaderConnection reconcilerLeaderLock $
       forever $ do
         assertLeaderLockHeld leaderConnection
         cycleResult <- reconcileCycle pool primaryClient secondaryClient cfg
-        case cycleResult of
-          Right () -> writeIORef failureSince Nothing
-          Left err -> handleTransientFailure pool cfg failureSince err
-        threadDelay $ arcPollSeconds cfg * 1_000_000
+        delay <- case cycleResult of
+          Right () -> do
+            writeIORef failureSince Nothing
+            writeIORef consecutiveFailures 0
+            pure $ arcPollSeconds cfg * 1_000_000
+          Left err -> do
+            handleTransientFailure pool cfg failureSince err
+            failures <- atomicModifyIORef' consecutiveFailures $ \n ->
+              let next = min 6 (n + 1) in (next, next)
+            jitter <- (`mod` 250_001) . floor . (* 1_000_000) <$> getPOSIXTime
+            pure $ reconcilerRetryDelayMicros (arcPollSeconds cfg) failures jitter err
+        threadDelay delay
 
 assertLeaderLockHeld :: Connection -> IO ()
 assertLeaderLockHeld connection = do
@@ -306,6 +325,7 @@ handleTransientFailure pool cfg failureSince reason = do
     "aa_reconciler_rpc_unavailable"
     "Dual-provider reconciliation could not complete"
     [ field "reason" reason
+    , field "reason_code" $ reconciliationFailureCode reason
     , field "unavailable_seconds" unavailableSeconds
     ]
   when (unavailableSeconds >= arcFailurePauseSeconds cfg) $ do
@@ -317,6 +337,17 @@ handleTransientFailure pool cfg failureSince reason = do
       [ field "unavailable_seconds" unavailableSeconds
       , field "threshold_seconds" $ arcFailurePauseSeconds cfg
       ]
+
+-- Only closed categories enter telemetry. Existing fixed validation messages
+-- and RPC method labels remain in the operational reason, never provider data.
+reconciliationFailureCode :: Text -> Text
+reconciliationFailureCode reason = fromMaybe "RPC_UNAVAILABLE" $
+  firstMatching ["RPC_RANGE_LIMIT", "RPC_RATE_LIMIT", "RPC_TIMEOUT", "RPC_INVALID_RESPONSE"]
+ where
+  firstMatching [] = Nothing
+  firstMatching (code : rest)
+    | code `T.isInfixOf` reason = Just code
+    | otherwise = firstMatching rest
 
 reconcileStep :: DbPool -> EthClient -> EthClient -> AaReconcilerConfig -> IO StepResult
 reconcileStep pool primaryClient secondaryClient cfg = do
@@ -820,27 +851,30 @@ readUserOperationLogs
   -> Integer
   -> IO (Either Text [UserOperationEvent])
 readUserOperationLogs client cfg fromBlock toBlock = do
-  result <- rpcCall client "eth_getLogs" $
-    toJSON
-      [ object
-          [ "address" .= entryPointAddress
-          , "fromBlock" .= quantity fromBlock
-          , "toBlock" .= quantity toBlock
-          , "topics"
-              .= [ String userOperationEventTopic
-                 , Null
-                 , Null
-                 , String $ addressTopic $ arcPaymaster cfg
-                 ]
-          ]
-      ]
-  pure $ case result of
-    Left _ -> Left "eth_getLogs RPC failed"
-    Right (Array values) ->
-      traverse
-        (parseUserOperationEvent (arcPaymaster cfg) fromBlock toBlock)
-        (V.toList values)
-    _ -> Left "eth_getLogs returned an invalid result"
+  result <- scanLogRange fetch fromBlock toBlock
+  pure $ either (Left . rpcFailureCode) Right result
+ where
+  fetch first lastBlock = do
+    result <- rpcCall client "eth_getLogs" $
+      toJSON
+        [ object
+            [ "address" .= entryPointAddress
+            , "fromBlock" .= quantity first
+            , "toBlock" .= quantity lastBlock
+            , "topics"
+                .= [ String userOperationEventTopic
+                   , Null
+                   , Null
+                   , String $ addressTopic $ arcPaymaster cfg
+                   ]
+            ]
+        ]
+    pure $ case result of
+      Left err -> Left $ rpcFailureCategory err
+      Right (Array values) ->
+        either (const $ Left RpcInvalidResponse) Right $
+          traverse (parseUserOperationEvent (arcPaymaster cfg) first lastBlock) (V.toList values)
+      _ -> Left RpcInvalidResponse
 
 parseUserOperationEvent :: Text -> Integer -> Integer -> Value -> Either Text UserOperationEvent
 parseUserOperationEvent expectedPaymaster fromBlock toBlock raw@(Object logObject) = do

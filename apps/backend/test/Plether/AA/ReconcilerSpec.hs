@@ -2,6 +2,7 @@
 
 module Plether.AA.ReconcilerSpec (spec) where
 
+import Control.Exception (bracket)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -12,6 +13,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.AA.Reconciler
   ( BlockHeader (..)
+  , AaReconcilerConfig (..)
   , UserOperationEvent (..)
   , agreeUserOperationLogs
   , boundariesRemainCanonical
@@ -20,14 +22,30 @@ import Plether.AA.Reconciler
   , validateSafeHeadFreshness
   , validateTargetTimestamp
   , validateDeploymentAnchor
+  , loadAaReconcilerConfig
   )
 import Plether.Ethereum.Abi (encodeUint256, keccak256)
 import Plether.AA.Gateway (SecurityBlockHeader (..), validateSecurityHeaderTime)
 import Test.Hspec
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 
 spec :: Spec
 spec =
   describe "safe UserOperationEvent validation" $ do
+    it "refuses a startup batch larger than the shared gateway contract" $ do
+      let required =
+            [("PERPS_CHAIN_ID", "421614"), ("AA_PAYMASTER_ADDRESS", T.unpack paymaster)
+            ,("AA_PAYMASTER_CODE_HASH", T.unpack blockHash), ("AA_RECONCILER_START_BLOCK", "1")
+            ,("AA_RECONCILER_START_BLOCK_HASH", T.unpack blockHash), ("AA_RECONCILER_POLL_SECONDS", "2")
+            ,("AA_RECONCILER_MAX_SAFE_LAG_SECONDS", "1800"), ("AA_PAYMASTER_MIN_DEPOSIT_WEI", "1")
+            ,("AA_RECONCILER_FAILURE_PAUSE_SECONDS", "30")]
+      withEnvironment required $ do
+        withEnvironment [("AA_RECONCILER_BATCH_BLOCKS", "5000")] $ do
+          result <- loadAaReconcilerConfig
+          fmap arcBatchBlocks result `shouldBe` Right 5000
+        withEnvironment [("AA_RECONCILER_BATCH_BLOCKS", "10000")] $
+          loadAaReconcilerConfig `shouldReturn` Left "AA_RECONCILER_BATCH_BLOCKS must be between 1 and 5000"
+
     it "publishes health only at the exact reverified safe tip" $ do
       let target = BlockHeader 101 blockHash 1000
       targetReachesSafeBoundary target target `shouldBe` Right True
@@ -181,3 +199,10 @@ expectRight = \case
     expectationFailure $ show err
     error "unreachable"
   Right value -> pure value
+
+withEnvironment :: [(String, String)] -> IO a -> IO a
+withEnvironment [] action = action
+withEnvironment ((name, value) : rest) action =
+  bracket (lookupEnv name <* setEnv name value)
+    (maybe (unsetEnv name) (setEnv name))
+    (const $ withEnvironment rest action)

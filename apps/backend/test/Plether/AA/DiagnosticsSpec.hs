@@ -17,6 +17,13 @@ spec = describe "Attempt timeline input" $ do
   it "rejects invalid identifiers" $
     parseBrowserStage (object ["attemptId" .= String "not-an-attempt", "stage" .= String "wallet_approved"]) `shouldBe` Nothing
 
+  it "accepts the reconciliation diagnostic and normalizes the legacy gateway alias" $
+    mapM_ (\reason ->
+      parseBrowserStage (object ["attemptId" .= attempt, "stage" .= String "execution_interrupted",
+        "failureStep" .= String "sponsorship", "reasonCode" .= String reason]) `shouldBe`
+          Just ("12345678-1234-4123-8123-123456789abc", "execution_interrupted", Just $ BrowserFailure "sponsorship" "RECONCILIATION_STALE"))
+      ["RECONCILIATION_STALE", "RECONCILER_STALE"]
+
   it "accepts only a complete safe failure pair on an interruption" $ do
     let report step reason = object ["attemptId" .= attempt, "stage" .= String "execution_interrupted",
           "failureStep" .= String step, "reasonCode" .= String reason]

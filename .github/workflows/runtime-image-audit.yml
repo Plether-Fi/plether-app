@@ -1,0 +1,63 @@
+name: Audit runtime image availability
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_run:
+    workflows: [Deploy Backend, Deploy Alto, Recover Sepolia backend image]
+    types: [completed]
+    branches: [master]
+
+concurrency:
+  group: runtime-image-audit-sepolia
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out reviewed audit policy from master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: master
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require the provisioned read-only audit role
+        env:
+          AUDIT_ROLE: ${{ vars.AWS_RUNTIME_IMAGE_AUDIT_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          test "$AUDIT_ROLE" = arn:aws:iam::932542905614:role/plether-sepolia-runtime-image-audit
+
+      - name: Configure read-only audit credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RUNTIME_IMAGE_AUDIT_ROLE_ARN }}
+          aws-region: ap-southeast-1
+          allowed-account-ids: '932542905614'
+          role-session-name: runtime-image-audit-${{ github.run_id }}
+
+      - name: Audit all configured runtime consumers
+        run: node scripts/runtime-image-audit.mjs --config config/runtime-image-audit-sepolia.json --output runtime-image-audit.json
+
+      - name: Retain audit evidence, including failed inventories
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-image-audit-${{ github.run_id }}
+          path: runtime-image-audit.json
+          if-no-files-found: warn
+          retention-days: 90

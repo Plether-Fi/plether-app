@@ -307,7 +307,7 @@ for (const action of ['attest-kms', 'resume-issuance']) {
       args.capability = 'issuance-control'
       fixture.tags.find(tag => tag.key === 'Capability').value = args.capability
       const main = fixture.taskDefinition.containerDefinitions.find(container => container.name === args.app)
-      main.command = ['/usr/local/bin/plether-aa-admin', 'resume-issuance', '--expected-reason', '__WORKFLOW_REQUIRED__', '--operator-note', '__WORKFLOW_REQUIRED__']
+      main.command = ['/usr/local/bin/plether-aa-admin', 'resume-issuance', '--expected-pause-event-id', '__WORKFLOW_REQUIRED__', '--paymaster', '__WORKFLOW_REQUIRED__', '--expected-reason', '__WORKFLOW_REQUIRED__', '--operator-note', '__WORKFLOW_REQUIRED__']
       main.environment = [{name: 'HOME', value: '/tmp'}, {name: 'TMPDIR', value: '/tmp'}]
       main.secrets = [{name: 'DATABASE_URL', valueFrom: args.database}]
     }
