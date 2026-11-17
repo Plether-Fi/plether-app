@@ -155,7 +155,7 @@ The **How this vault works** panel shows operational terms rather than a return 
 * **Deposits past their expected processing time** and **Withdrawals past their expected processing time** — whether a backlog is visible.
 * **Vault address** — the selected tranche vault's deployed contract address.
 
-Junior additionally shows **Annual vault fee**, **Accrued fee shares** and **Fee recipient**. Senior instead shows **Remaining Senior capacity**, **Maximum Senior value**, **Maximum Senior share of pool capital**, **Amount reserved for pending deposits** and whether pending deposits remain within current limits.
+Junior additionally shows **Annual vault fee**, **Accrued fee shares** and **Fee recipient**. Senior shows its **Target nominal APR** here. A separate **Senior deposit limits** panel shows two donut charts from 0–100%: **Absolute limit** usage and **Senior share limit** usage, with each configured cap below its label. Deposits are constrained when either limit is reached. Both include accepted pending deposits and the greater of projected Senior capital and its protected high-water mark. Share limit usage divides the current committed Senior share by its permitted maximum: a 60% share against a 75% cap uses 80% of that limit. Rings are peach below 85%, amber from 85% and red at 100%. A breached limit fills its ring and displays **Limit exceeded**.
 
 The **Shared pool status** panel uses these exact labels:
 
