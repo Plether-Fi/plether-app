@@ -81,8 +81,19 @@ aws --profile plether sts get-caller-identity
 AWS_PROFILE=plether node scripts/drill-backend-recovery.mjs inspect
 ```
 
-The output is an exact fixture task-definition ARN and configuration fingerprint.
-It cannot inspect a production service by input substitution.
+Use AWS CLI 2.40 or later with its current ECS service model for inspection.
+Earlier models can silently omit the circuit breaker's `resetOnHealthyTask` and
+`thresholdConfiguration` controls and therefore produce a different fingerprint.
+The output is an exact fixture task-definition ARN and a fingerprint of the
+complete model-visible configuration. It cannot inspect a production service by
+input substitution. Do not strip controls or automatically adopt a replacement
+hash to make an approved baseline match.
+
+The read-only Linux preflight independently reads the service and selected task
+definition, applies the strict non-signing policy and records the complete actual
+configuration fingerprint. If that differs from the supplied fingerprint, the
+run stops before requesting mutation approval. Review the difference and prepare
+a new explicit baseline; the preflight never updates the supplied input.
 
 ## Exercise protected compatible-image recovery
 
