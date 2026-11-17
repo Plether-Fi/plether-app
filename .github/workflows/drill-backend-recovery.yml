@@ -65,6 +65,7 @@ jobs:
     permissions:
       contents: read
       deployments: read
+      id-token: write
     outputs:
       fingerprint: ${{ steps.inputs.outputs.fingerprint }}
     steps:
@@ -89,6 +90,29 @@ jobs:
           echo "$result"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "Isolated drill input fingerprint: \`sha256:$fingerprint\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Require the existing read-only inventory role
+        env:
+          RUNTIME_AUDIT_ROLE: ${{ vars.AWS_RUNTIME_IMAGE_AUDIT_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          test "$RUNTIME_AUDIT_ROLE" = arn:aws:iam::932542905614:role/plether-sepolia-runtime-image-audit
+      - name: Configure read-only Linux baseline inspection
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RUNTIME_IMAGE_AUDIT_ROLE_ARN }}
+          aws-region: ap-southeast-1
+          allowed-account-ids: '932542905614'
+          role-session-name: isolated-drill-inspect-${{ github.run_id }}
+      - name: Diagnose fixed fixture baseline before mutation approval
+        run: node scripts/drill-backend-recovery.mjs diagnose > "$RUNNER_TEMP/drill-baseline.json"
+      - name: Preserve bounded read-only baseline evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: isolated-drill-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/drill-baseline.json
+          if-no-files-found: warn
+          retention-days: 90
 
   recover-isolated-fixture:
     needs: preflight

@@ -105,6 +105,23 @@ export function drillSnapshotEvidence(response, input) {
   }
 }
 
+export function validateRuntimeAuditIdentity(identity) {
+  assert.equal(identity.Account, ACCOUNT)
+  assert.ok(typeof identity.Arn === 'string' && identity.Arn.startsWith(`arn:aws:sts::${ACCOUNT}:assumed-role/plether-sepolia-runtime-image-audit/`), 'Use the existing read-only inventory capability')
+}
+
+export function diagnoseDrillBaseline(readAws, input) {
+  validateDrillInputs(input)
+  validateRuntimeAuditIdentity(readAws(['sts', 'get-caller-identity']))
+  const response = readAws(['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service])
+  const serviceBaseline = drillSnapshotEvidence(response, input)
+  return {
+    schemaVersion: 1, capability: DRILL.capability, evidenceSource: 'read-only-runtime-image-audit',
+    baselineChecksPassed: Object.values(serviceBaseline.checks).every(value => value === true),
+    serviceBaseline,
+  }
+}
+
 export function validateDrillSnapshot(response, input) {
   assert.deepEqual(response.failures, [])
   const service = one(response.services, 'Expected only the isolated fixture')
@@ -223,6 +240,14 @@ async function main() {
     expectedTaskDefinition: process.env.EXPECTED_TASK_DEFINITION,
     expectedConfigurationSha256: process.env.EXPECTED_CONFIGURATION_SHA256,
     confirmation: process.env.CONFIRMATION, operatorNote: process.env.OPERATOR_NOTE,
+  }
+  if (mode === 'diagnose') {
+    assert.equal(process.env.GITHUB_REF, 'refs/heads/master')
+    assert.equal(process.env.GITHUB_REPOSITORY, 'Plether-Fi/plether-app')
+    const result = diagnoseDrillBaseline(aws, input)
+    console.log(JSON.stringify(result, null, 2))
+    if (!result.baselineChecksPassed) process.exitCode = 1
+    return
   }
   if (mode === 'inspect') {
     assert.equal(aws(['sts', 'get-caller-identity']).Account, ACCOUNT)

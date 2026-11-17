@@ -6,7 +6,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { runImageRecovery } from './backend-recovery-engine.mjs'
 import { ACCOUNT, REGION, SERVICES, configurationFingerprint, verifyRunningTask } from './recover-backend.mjs'
-import { DRILL, DRILL_POLICY, validateDrillConfig, validateDrillInputs, validateDrillSnapshot, validateDrillTask, drillInputFingerprint, drillProgressEvidence, drillSnapshotEvidence } from './drill-backend-recovery.mjs'
+import { DRILL, DRILL_POLICY, validateDrillConfig, validateDrillInputs, validateDrillSnapshot, validateDrillTask, drillInputFingerprint, drillProgressEvidence, drillSnapshotEvidence, validateRuntimeAuditIdentity, diagnoseDrillBaseline } from './drill-backend-recovery.mjs'
 
 const clone = value => structuredClone(value)
 const oldArn = `arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/${DRILL.family}:1`
@@ -156,6 +156,39 @@ test('snapshot diagnostics distinguish absent failures and API denial while neve
   assert.ok(!JSON.stringify(malformed).includes(secret))
 })
 
+test('pre-approval diagnosis uses only the exact read-only role and fixed fixture metadata', () => {
+  const identity = { Account: ACCOUNT, Arn: `arn:aws:sts::${ACCOUNT}:assumed-role/plether-sepolia-runtime-image-audit/readonly-inspect` }
+  validateRuntimeAuditIdentity(identity)
+  for (const value of [
+    { ...identity, Account: '111111111111' },
+    { ...identity, Arn: `arn:aws:sts::${ACCOUNT}:assumed-role/${DRILL.deploymentRole}/mutator` },
+    { ...identity, Arn: `arn:aws:iam::${ACCOUNT}:user/plether-admin` },
+  ]) assert.throws(() => validateRuntimeAuditIdentity(value))
+  for (const response of [
+    { failures: [], services: [fixtureService()] },
+    { services: [fixtureService()] },
+    { failures: [{ reason: 'ACCESS_DENIED', detail: 'token=do-not-retain' }], services: [] },
+  ]) {
+    const calls = []
+    const result = diagnoseDrillBaseline(args => {
+      calls.push(args)
+      if (args[0] === 'sts') return identity
+      assert.deepEqual(args, ['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service])
+      return response
+    }, input())
+    assert.deepEqual(calls, [['sts', 'get-caller-identity'], ['ecs', 'describe-services', '--cluster', DRILL.cluster, '--services', DRILL.service]])
+    assert.equal(result.evidenceSource, 'read-only-runtime-image-audit')
+    assert.equal(result.baselineChecksPassed, Array.isArray(response.failures) && response.failures.length === 0 && response.services.length === 1)
+    assert.ok(!JSON.stringify(result).includes('do-not-retain'))
+  }
+  let describeCalled = false
+  assert.throws(() => diagnoseDrillBaseline(args => {
+    if (args[0] === 'sts') return { ...identity, Arn: `arn:aws:sts::${ACCOUNT}:assumed-role/${DRILL.deploymentRole}/mutator` }
+    describeCalled = true
+  }, input()))
+  assert.equal(describeCalled, false)
+})
+
 const manifest = value => {
   const raw = JSON.stringify(value)
   return { raw, digest: `sha256:${createHash('sha256').update(raw).digest('hex')}` }
@@ -247,5 +280,11 @@ test('production and drill entrypoints use the same engine with disjoint workflo
   assert.match(workflow, /environment: backend-admin-sepolia/)
   assert.match(workflow, /plether-backend-recovery-drill/)
   assert.match(workflow, /AWS_RECOVERY_DRILL_ROLE_ARN/)
+  const preflight = workflow.split('\n  preflight:\n')[1].split('\n  recover-isolated-fixture:\n')[0]
+  assert.match(preflight, /AWS_RUNTIME_IMAGE_AUDIT_ROLE_ARN/)
+  assert.match(preflight, /plether-sepolia-runtime-image-audit/)
+  assert.match(preflight, /drill-backend-recovery\.mjs diagnose/)
+  assert.match(preflight, /Preserve bounded read-only baseline evidence/)
+  assert.doesNotMatch(preflight, /AWS_RECOVERY_DRILL_ROLE_ARN|drill-backend-recovery\.mjs recover/)
   assert.doesNotMatch(workflow, /AWS_DEPLOY_ROLE_ARN|pending_deployments|--overrides|resume-issuance|SetAlarmState|PutMetricData/)
 })
