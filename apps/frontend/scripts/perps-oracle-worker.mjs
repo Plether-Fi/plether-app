@@ -1,9 +1,13 @@
+import { createSocket } from 'node:dgram'
 import { pathToFileURL } from 'node:url'
 import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
+const ORACLE_WAKE_PORT = 3017
+const ORACLE_WAKE_PACKET = Buffer.from('plether-oracle-wake-v1')
+const MIN_WAKE_INTERVAL_MS = 1000
 
 const ADDRESSES = {
   orderRouter: '0x918663d6da8cb33b325a04c4a5e8c51d42f3b444',
@@ -173,6 +177,62 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+/** A keeper hint only shortens idle time between serial health checks. */
+export function createOracleWakeupReceiver({
+  port = ORACLE_WAKE_PORT, socket = createSocket('udp4'), logEvery = emitLogEvery,
+} = {}) {
+  let pending = false
+  let lastWakeAt = -Infinity
+  let checkWaiter
+  let closed = false
+
+  function close() {
+    if (closed) return
+    closed = true
+    pending = false
+    checkWaiter?.()
+    socket.close()
+  }
+
+  socket.on('message', (message, peer) => {
+    if (closed || pending || peer.address !== '127.0.0.1' || !message.equals(ORACLE_WAKE_PACKET)) return
+    pending = true
+    checkWaiter?.()
+  })
+  socket.on('error', () => {
+    if (closed) return
+    close()
+    logEvery(60, 'WARN', 'oracle_wakeup_unavailable', 'Local keeper wake-up unavailable; ordinary polling continues')
+  })
+  socket.bind(port, '127.0.0.1')
+  socket.unref()
+
+  function wait(pollMs) {
+    const deadline = performance.now() + pollMs
+    return new Promise(resolve => {
+      let timer
+      checkWaiter = () => {
+        clearTimeout(timer)
+        const now = performance.now()
+        const wakeAt = lastWakeAt + MIN_WAKE_INTERVAL_MS
+        const woken = pending && now < deadline && now >= wakeAt
+        if (woken || now >= deadline) {
+          if (woken) lastWakeAt = now
+          // An ordinary poll also addresses any queued hint.
+          pending = false
+          checkWaiter = undefined
+          resolve(woken)
+          return
+        }
+        timer = setTimeout(checkWaiter, Math.min(deadline, pending ? wakeAt : deadline) - now)
+      }
+      checkWaiter()
+    })
+  }
+
+  return { wait, close }
 }
 
 const logRateState = new Map()
@@ -534,13 +594,16 @@ async function main() {
     updater_address: account?.address,
     backend_origin: new URL(backendUrl).origin,
   })
+  const wakeup = createOracleWakeupReceiver()
   while (true) {
     try {
       await run()
     } catch (error) {
       emitLogEvery(60, 'ERROR', 'oracle_worker_iteration_failed', 'Oracle updater iteration failed', errorAttributes(error))
     }
-    await sleep(Math.min(pollSeconds, healthPollSeconds) * 1000)
+    if (await wakeup.wait(Math.min(pollSeconds, healthPollSeconds) * 1000)) {
+      emitLogEvery(60, 'INFO', 'oracle_keeper_wakeup_received', 'Keeper receipt woke the oracle updater')
+    }
   }
 }
 

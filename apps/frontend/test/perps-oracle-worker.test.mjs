@@ -1,8 +1,10 @@
+import { createSocket } from 'node:dgram'
+import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ContractFunctionExecutionError, ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
-import { createOracleWorker, loadOracleFeeds, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
+import { createOracleWakeupReceiver, createOracleWorker, loadOracleFeeds, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
 
 const release = JSON.parse(readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
 const feeds = { pyth: `0x${'11'.repeat(20)}`, feedIds: Array.from({ length: 6 }, (_, i) => `0x${String(i + 1).padStart(64, '0')}`) }
@@ -76,6 +78,97 @@ function fixture() {
     log: (...args) => state.logs.push(args), logEvery: (...args) => state.logs.push(args) }
   return { state, publicClient, options, iterate: createOracleWorker(options) }
 }
+
+async function loopbackWakeup(t) {
+  const socket = createSocket('udp4')
+  const listening = once(socket, 'listening')
+  const receiver = createOracleWakeupReceiver({ port: 0, socket })
+  t.after(() => receiver.close())
+  await listening
+  assert.equal(socket.address().address, '127.0.0.1')
+  const sender = createSocket('udp4')
+  t.after(() => sender.close())
+  async function send(packet = 'plether-oracle-wake-v1') {
+    const received = once(socket, 'message')
+    await new Promise((resolve, reject) => {
+      sender.send(packet, socket.address().port, '127.0.0.1', error => error ? reject(error) : resolve())
+    })
+    await received
+  }
+  return { receiver, send }
+}
+
+test('only the exact keeper packet interrupts the normal poll', async t => {
+  const { receiver, send } = await loopbackWakeup(t)
+  const poll = receiver.wait(50)
+  await send('plether-oracle-wake-v1\n')
+  assert.equal(await poll, false)
+
+  const interrupted = receiver.wait(1000)
+  await send()
+  assert.equal(await interrupted, true)
+
+  const f = fixture()
+  assert.equal((await f.iterate()).status, 'synchronized')
+  f.state.now += 1000
+  f.state.publishes.fill(995)
+  assert.equal((await f.iterate()).status, 'healthy')
+  assert.equal(f.state.writes, 1)
+})
+
+test('keeper packets received during active work queue just one subsequent check', async t => {
+  const { receiver, send } = await loopbackWakeup(t)
+  const f = fixture()
+  let finishReceipt
+  f.state.pendingWait = new Promise(resolve => { finishReceipt = resolve })
+  const iteration = f.iterate()
+  try {
+    await send()
+    await send()
+    await send()
+    assert.equal(f.state.writes, 1)
+  } finally {
+    finishReceipt()
+    await iteration
+  }
+  assert.equal(await receiver.wait(1000), true)
+  assert.equal(await receiver.wait(1100), false)
+})
+
+test('keeper wake-ups are at least one second apart and cannot delay a due poll', async t => {
+  const { receiver, send } = await loopbackWakeup(t)
+  await send()
+  assert.equal(await receiver.wait(1000), true)
+  const firstWake = performance.now()
+
+  await send()
+  const pollStart = performance.now()
+  assert.equal(await receiver.wait(50), false)
+  assert.ok(performance.now() - pollStart < 900, 'ordinary poll waited for the wake-up throttle')
+
+  await send()
+  assert.equal(await receiver.wait(1500), true)
+  assert.ok(performance.now() - firstWake >= 999, 'keeper notification bypassed the throttle')
+})
+
+test('a bound wake-up port leaves ordinary polling available', async t => {
+  const occupied = createSocket('udp4')
+  t.after(() => occupied.close())
+  occupied.bind(0, '127.0.0.1')
+  await once(occupied, 'listening')
+
+  const socket = createSocket('udp4')
+  const disabled = new Promise(resolve => socket.once('close', resolve))
+  const logs = []
+  const receiver = createOracleWakeupReceiver({
+    socket, port: occupied.address().port, logEvery: (...args) => logs.push(args),
+  })
+  t.after(() => receiver.close())
+  await disabled
+  assert.equal(await receiver.wait(25), false)
+  assert.equal(logs.length, 1)
+  assert.deepEqual(logs[0].slice(0, 3), [60, 'WARN', 'oracle_wakeup_unavailable'])
+})
 
 test('startup discovers the configured Pyth endpoint and six distinct feeds at one block', async () => {
   const f = fixture()

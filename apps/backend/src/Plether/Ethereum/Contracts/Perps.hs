@@ -23,6 +23,7 @@ module Plether.Ethereum.Contracts.Perps
   , requireSingleLpEpochSettled
   , isNoLpEpochProgressRpcError
   , decodePerpsOrderEvent
+  , isHistoricalOrderFill
   , decodePositionOpenedAccount
   , decodePositionLiquidatedAccount
   , decodeLiquidationBatchItem
@@ -448,6 +449,17 @@ decodePerpsOrderEvent RpcLog {..} =
               , poeBlockNumber = rpcLogBlockNumber
               }
     _ -> Nothing
+
+-- | Core v2 finalized a fill in Live or FAD mode with an OracleExecution
+-- price (13), a publish time (17), and priceReachedEngine set (18).
+isHistoricalOrderFill :: RpcLog -> Bool
+isHistoricalOrderFill entry = case decodePerpsOrderEvent entry of
+  Just OrderFinalized {..} ->
+    poeLifecycleStatus == 2 && poeTerminalReason == 1 && poeExecutionMode `elem` [1, 2] &&
+    eventWord 13 == 1 && eventWord 17 > 0 && eventWord 18 == 1
+  _ -> False
+  where
+    eventWord index = wordAt index (rpcLogData entry)
 
 wordBytes :: Int -> ByteString -> ByteString
 wordBytes index = BS.take 32 . BS.drop (index * 32)
