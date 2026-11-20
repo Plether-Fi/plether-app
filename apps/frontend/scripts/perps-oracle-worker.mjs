@@ -173,6 +173,12 @@ function positiveInteger(value, label) {
   return parsed
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
 /** A keeper hint only shortens idle time between serial health checks. */
 export function createOracleWakeupReceiver({
   port = ORACLE_WAKE_PORT, socket = createSocket('udp4'), logEvery = emitLogEvery,
