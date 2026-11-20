@@ -1,4 +1,5 @@
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE, PERPS_SETTLEMENT_TOKEN } from '../contracts/perpsAddresses'
+import { getExplorerTxUrl, getExplorerUserOperationUrl } from '../utils/explorer'
 import { fetchKernelManifest } from './kernelRpc'
 import { KERNEL_DEPLOYMENT_PATTERN, KERNEL_MANIFEST_VERSION_PREFIX, type KernelPerpsAaDeploymentManifest } from './manifest'
 
@@ -32,8 +33,8 @@ export async function loadKernelTradingManifest(deployment: string, signal: Abor
     orderLifecycleBook: PERPS_ARBITRUM_SEPOLIA.orderLifecycleBook,
     positionProtectionBook: kernel.positionProtectionBook,
     policyEvaluator: PERPS_ARBITRUM_SEPOLIA.policyEvaluator,
-    userOperationExplorerUrlTemplate: 'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
-    transactionExplorerUrlTemplate: 'https://arbitrum-sepolia.blockscout.com/tx/{transactionHash}',
+    userOperationExplorerUrlTemplate: getExplorerUserOperationUrl(profile.chainId, '{userOperationHash}'),
+    transactionExplorerUrlTemplate: getExplorerTxUrl(profile.chainId, '{transactionHash}'),
     testnetFaucet: null,
     sponsorshipEnabled: kernel.readiness.sponsored,
   }

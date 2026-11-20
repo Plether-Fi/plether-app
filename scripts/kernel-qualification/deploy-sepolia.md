@@ -10,7 +10,7 @@ Use [`deploy-sepolia.mjs`](./deploy-sepolia.mjs) for the new Arbitrum Sepolia de
 | Validator repo | Clean checkout of `kernel-7579-plugins` at `332deed6eeef3d6279cde50aa1d51eff53728bd4`, including pinned dependencies. Build is reproduced with Solidity `0.8.30+commit.73712a01`; the script checks creation and runtime hashes. |
 | Core repo | Checkout of `plether-core` at the reviewed Staker-aware paymaster commit `469c40dd5757041dd57cafc35d0feb01d77a1aa2`. Build `packages/perps-aa` with Foundry and pass its `PletherKernelVerifyingPaymaster.json` artifact. The script checks the source Keccak, compiler, artifact source metadata and creation-code hash. |
 | Alto artifacts | Extract `EntryPointSimulations09.json` and `PimlicoSimulations.json` from the exact patched Alto image selected for the canary. The script pins both creation-code hashes, the Pimlico runtime hash, and the v0.9 runtime template outside its address-dependent immutable slots. |
-| Signers | Plether's existing Sepolia deployer `0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B` is a candidate. Its private key must come from the existing approved signer process, never from live Alto executor/utility SSM entries or the legacy paymaster KMS key. The dedicated canary Alto utility address and paymaster sponsor KMS address are public config fields. |
+| Signers | Plether's existing Sepolia deployer is `0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B`. Its address was derived from the existing ignored Core `TEST_PRIVATE_KEY` without printing the key, matching the checked-in release manifest. Use that local Core signer through the secure handoff below; never use live Alto executor/utility SSM entries or the legacy paymaster KMS key. The canary Alto utility address and paymaster sponsor KMS address are public config fields. |
 
 The pinned Staker uses generic ZeroDev release creation bytecode with the configured Plether deployer as constructor owner. Do not deploy the release's ZeroDev-owned Staker `init_code`. The script pins generic creation hash `0x89f185a3ea592ce85bf90f573b1864317505fa4d8d0906098645e1182f15b216`, release initialization hash `0x15ffa4371818c1b8e2ce98d157e1d6c0c2e230c7d473af14ddb621cd4cb09bae`, and locally reproduced runtime hash `0xc8c723ed62cabf8190cb76172e38d6d6c2e0b2b4d031fdcb89543d9b2682ced5`.
 
@@ -77,17 +77,27 @@ The no-broadcast plan reports the common safe block, exact code status, derived 
 
 With the default 2 ETH paymaster deposit, the script requires at least **4.5 ETH** in the deployer EOA immediately before any transaction: 1 ETH Staker stake, 1 ETH paymaster stake, 2 ETH deposit, and a 0.5 ETH gas reserve for all contract and simulator deployments. It also requires no pending deployer transaction. The observed 6.73 ETH balance passed this minimum on 2026-11-20, but recheck at broadcast time. This is *only* contract deployment funding. Fund the new canary Alto executor and utility EOAs separately for bundling, and fund each ETH-paid wallet's counterfactual Kernel account before its own first paid UserOperation. The sponsored account can remain unfunded. Keep the paymaster deposit above the separate `minDepositWei` budget floor after sponsorship gas starts; the initial deposit is not a perpetual floor.
 
-After the actual public utility/sponsor addresses, throwaway sample owner, image, signer route and deployment window are established, run the default read-only plan again. The broadcast call is:
+After the actual public utility/sponsor addresses, throwaway sample owner, image and deployment window are established, run the default read-only plan again. Confirm the deployer balance still covers the remaining stakes, deposit and 0.5 ETH gas reserve; confirm its pending and latest nonces match. The script repeats both checks immediately before its first send. Core's `packages/perps/DEPLOYMENT.md` uses `TEST_PRIVATE_KEY` from a local ignored environment file. Set `PLETHER_CORE_ROOT` to the same checkout as the config's `coreRepo`. For this canary, source that checkout's existing `.env` in a subshell, map the key to the deploy script's input, and let the script verify its public address matches `deployer` before broadcasting:
 
 ```sh
-# KERNEL_CANARY_DEPLOYER_PRIVATE_KEY is injected by Plether's approved signer process.
-# Do not pass it on the command line, print it, store it in the config, or reuse Alto/legacy keys.
-node scripts/kernel-qualification/deploy-sepolia.mjs \
-  --config "$PUBLIC_CONFIG" \
-  --manifest "$PUBLIC_MANIFEST" \
-  --broadcast --confirm kernel-sepolia-canary-20261120
-unset KERNEL_CANARY_DEPLOYER_PRIVATE_KEY
+(
+  set +x
+  set -e
+  set -a
+  source "$PLETHER_CORE_ROOT/.env"
+  set +a
+  test -n "${TEST_PRIVATE_KEY:-}"
+  KERNEL_CANARY_DEPLOYER_PRIVATE_KEY="$TEST_PRIVATE_KEY"
+  export KERNEL_CANARY_DEPLOYER_PRIVATE_KEY
+  unset TEST_PRIVATE_KEY
+  node scripts/kernel-qualification/deploy-sepolia.mjs \
+    --config "$PUBLIC_CONFIG" \
+    --manifest "$PUBLIC_MANIFEST" \
+    --broadcast --confirm kernel-sepolia-canary-20261120
+)
 ```
+
+Do not pass the key on the command line, print it, or put it in the JSON config or manifest. The subshell discards the sourced environment when it exits. This is a future broadcast procedure; the current qualification remains read-only.
 
 The script verifies the supplied key resolves to `deployer`, verifies chain ID `421614`, canonical EntryPoint/SenderCreator/CREATE2 code, pinned source and artifacts, both independent safe-block responses, the EOA owners, live deployer funding and pending nonce **before constructing a wallet client**. It then deploys missing pinned Kernel contracts, validator, simulators, Plether-owned Staker, sample proxy, and paused Staker-aware Core paymaster. It approves the factory from the Staker, stakes the Staker and paymaster 1 ETH with a one-day unstake delay, and deposits the configured amount to the paymaster. It never calls `unpause`. A public-values-only 0600 manifest records each nonce intent before a send, then its hash and confirmed receipt. On restart, a confirmed Staker/paymaster creation is recovered from its transaction receipt. An unresolved intent or unexpected deployer nonce stops for manual chain reconciliation rather than sending a second CREATE. The funding gate charges only remaining stake/deposit obligations plus the gas reserve on a clean resume.
 
