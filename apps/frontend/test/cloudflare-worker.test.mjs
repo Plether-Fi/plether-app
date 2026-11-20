@@ -78,6 +78,40 @@ describe('Trading readiness and diagnostics proxy authentication', () => {
     assert.equal(response.headers.get('X-Plether-AA-Proxy-Token'), null);
     assert.equal(response.headers.get('Cache-Control'), 'no-store');
   });
+  it('routes Kernel AA to the exact authenticated origin path with recovery credentials', async () => {
+    const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store' } }), 1);
+    const url = 'https://app.plether.com/api/perps/v1/aa/kernel/rpc';
+    const headers = {
+      'X-Plether-AA-Proxy-Token': 'browser-token',
+      'X-Plether-AA-Recovery': 'kernel-recovery',
+      'CF-Connecting-IP': '192.0.2.1',
+    };
+    const response = await worker.fetch(new Request(url, { method: 'POST', body: '{}', headers }), {
+      ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'legacy-only',
+      KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN: 'kernel-only',
+    });
+    const [origin, options] = fetchMock.mock.calls[0].arguments;
+    assert.equal(String(origin), 'https://sepolia-api.plether.test/api/aa/kernel/rpc');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.get('X-Plether-AA-Proxy-Token'), 'kernel-only');
+    assert.equal(options.headers.get('X-Plether-AA-Recovery'), 'kernel-recovery');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+
+    const unavailable = await worker.fetch(new Request(url, { method: 'POST', body: '{}', headers }), {
+      ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'legacy-only',
+    });
+    assert.equal(unavailable.status, 502);
+    assert.equal(fetchMock.mock.callCount(), 1);
+
+    const legacy = await worker.fetch(new Request('https://app.plether.com/api/perps/v1/aa/rpc', {
+      method: 'POST', body: '{}', headers,
+    }), {
+      ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'legacy-only',
+      KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN: 'kernel-only',
+    });
+    assert.equal(legacy.status, 200);
+    assert.equal(fetchMock.mock.calls[1].arguments[1].headers.get('X-Plether-AA-Proxy-Token'), 'legacy-only');
+  });
   it('passes recovery credentials only to AA and preserves the uncached response credential', async () => {
     const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store', 'X-Plether-AA-Recovery': 'scoped-response' } }), 1);
     const response = await worker.fetch(new Request('https://app.plether.com/api/perps/v1/aa/rpc', {

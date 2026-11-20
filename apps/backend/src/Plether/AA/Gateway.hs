@@ -15,6 +15,8 @@ module Plether.AA.Gateway
   , nativeStartupFailure
   , SecurityBlockHeader (..)
   , validateSecurityHeaderTime
+  , readAgreedSecurityBlock
+  , readAgreedSecurityHeaderAt
   , advanceEvidenceSnapshots
   , buildPreparedOperation
   , revalidateSecuritySnapshot

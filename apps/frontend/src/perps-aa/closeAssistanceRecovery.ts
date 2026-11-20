@@ -1,17 +1,17 @@
 import { isAddressEqual, type Hex } from 'viem'
 import type { SponsoredOperation } from './operationStore'
-import type { PerpsAaSmartAccountRuntime } from './runtimeContext'
+import type { SimplePerpsAaSmartAccountRuntime } from './runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import type { CloseAssistanceConfig } from './sponsoredClose'
 
 /** Recovery uses the journaled authority, independently of today's issuance flag. */
 export function withCloseAssistanceRecovery(
-  base: PerpsAaSmartAccountRuntime,
+  base: SimplePerpsAaSmartAccountRuntime,
   operations: () => SponsoredOperation[],
-  nativeRuntime: (config: Pick<CloseAssistanceConfig, 'paymasterAddress'>) => Promise<PerpsAaSmartAccountRuntime>,
-  preparedRuntime?: (manifest: PerpsAaDeploymentManifestV2) => Promise<PerpsAaSmartAccountRuntime>,
-): PerpsAaSmartAccountRuntime {
-  const cache = new Map<string, Promise<PerpsAaSmartAccountRuntime>>()
+  nativeRuntime: (config: Pick<CloseAssistanceConfig, 'paymasterAddress'>) => Promise<SimplePerpsAaSmartAccountRuntime>,
+  preparedRuntime?: (manifest: PerpsAaDeploymentManifestV2) => Promise<SimplePerpsAaSmartAccountRuntime>,
+): SimplePerpsAaSmartAccountRuntime {
+  const cache = new Map<string, Promise<SimplePerpsAaSmartAccountRuntime>>()
   const forPreparation = async (manifest: PerpsAaDeploymentManifestV2) => {
     if (!preparedRuntime) throw new Error('Native preparation recovery is unavailable')
     if (manifest.chainId !== base.chainId || !isAddressEqual(manifest.entryPoint, base.smartAccount.entryPoint)

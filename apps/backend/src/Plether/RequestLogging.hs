@@ -217,6 +217,7 @@ knownNormalizedRoutes =
   , ["api", "aa", "status"]
   , ["api", "aa", "pimlico"]
   , ["api", "aa", "rpc"]
+  , ["api", "aa", "kernel", "rpc"]
   , ["api", "protocol", "status"]
   , ["api", "protocol", "config"]
   , ["api", "user", ":address", "dashboard"]

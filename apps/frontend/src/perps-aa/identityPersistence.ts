@@ -4,8 +4,12 @@ import {
   isAddressEqual,
   type Address,
 } from 'viem'
+import { entryPoint09Address } from 'viem/account-abstraction'
 import {
+  KERNEL_DEPLOYMENT_PATTERN,
+  KERNEL_MANIFEST_VERSION_PREFIX,
   PERPS_AA_MANIFEST_SUPPORTED_PATTERN,
+  type PerpsEntryPointVersion,
   type PerpsSmartAccountMode,
 } from './manifest'
 
@@ -21,7 +25,7 @@ export interface PersistedPerpsIdentity {
   accountAddress: Address
   accountMode: PerpsAccountMode
   entryPoint: Address
-  entryPointVersion: '0.8'
+  entryPointVersion: PerpsEntryPointVersion
   factoryAddress: Address
   accountVersion: string
   accountIndex: string
@@ -137,12 +141,12 @@ function parseUnsignedDecimal(value: unknown, field: string): string {
 }
 
 function parseAccountMode(value: unknown): PerpsAccountMode {
-  if (value !== 'simple') {
+  if (value !== 'simple' && value !== 'kernel') {
     throw new PerpsIdentityValidationError(
       'Persisted Perps identity has an unsupported account mode'
     )
   }
-  return 'simple'
+  return value
 }
 
 export function parsePersistedPerpsIdentity(
@@ -174,9 +178,10 @@ export function parsePersistedPerpsIdentity(
   const accountAddress = parseAddress(value.accountAddress, 'accountAddress')
   const accountMode = parseAccountMode(value.accountMode)
   const entryPoint = parseAddress(value.entryPoint, 'entryPoint')
-  if (value.entryPointVersion !== '0.8') {
+  const entryPointVersion = accountMode === 'kernel' ? '0.9' : '0.8'
+  if (value.entryPointVersion !== entryPointVersion) {
     throw new PerpsIdentityValidationError(
-      'Persisted Perps identity entryPointVersion must be "0.8"'
+      'Persisted Perps identity EntryPoint version does not match the account mode'
     )
   }
   const factoryAddress = parseAddress(
@@ -197,14 +202,19 @@ export function parsePersistedPerpsIdentity(
   )
   const isSameAddress = isAddressEqual(ownerAddress, accountAddress)
 
-  if (!PERPS_AA_MANIFEST_SUPPORTED_PATTERN.test(manifestVersion)) {
+  if (accountMode === 'kernel') {
+    if (!kernelIdentityDeployment(manifestVersion) || !isAddressEqual(entryPoint, entryPoint09Address) ||
+        value.chainId !== 421614 || accountVersion !== 'kernel-v4-uups' || accountIndex !== '0') {
+      throw new PerpsIdentityValidationError('Invalid Kernel Trading Account profile')
+    }
+  } else if (!PERPS_AA_MANIFEST_SUPPORTED_PATTERN.test(manifestVersion)) {
     throw new PerpsIdentityValidationError(
       'Sponsored identity manifestVersion is unsupported'
     )
   }
   if (isSameAddress) {
     throw new PerpsIdentityValidationError(
-      'Simple Trading Account address must differ from ownerAddress'
+      'Trading Account address must differ from ownerAddress'
     )
   }
 
@@ -215,7 +225,7 @@ export function parsePersistedPerpsIdentity(
     accountAddress,
     accountMode,
     entryPoint,
-    entryPointVersion: '0.8',
+    entryPointVersion,
     factoryAddress,
     accountVersion,
     accountIndex,
@@ -234,25 +244,37 @@ export function createPersistedPerpsIdentity(
 
 export function perpsIdentityStorageKey(
   chainId: number,
-  ownerAddress: Address
+  ownerAddress: Address,
+  kernelDeployment?: string,
 ): string {
   if (!Number.isSafeInteger(chainId) || chainId <= 0) {
     throw new PerpsIdentityValidationError(
       'Perps identity storage key requires a positive chainId'
     )
   }
-  return `${PERPS_IDENTITY_STORAGE_PREFIX}:${String(chainId)}:${getAddress(ownerAddress).toLowerCase()}`
+  if (kernelDeployment !== undefined && !KERNEL_DEPLOYMENT_PATTERN.test(kernelDeployment)) {
+    throw new PerpsIdentityValidationError('Invalid Kernel Trading Account deployment')
+  }
+  const prefix = kernelDeployment === undefined ? PERPS_IDENTITY_STORAGE_PREFIX : `${PERPS_IDENTITY_STORAGE_PREFIX}:kernel:${kernelDeployment}`
+  return `${prefix}:${String(chainId)}:${getAddress(ownerAddress).toLowerCase()}`
+}
+
+function kernelIdentityDeployment(version: string): string | undefined {
+  if (!version.startsWith(KERNEL_MANIFEST_VERSION_PREFIX)) return undefined
+  const deployment = version.slice(KERNEL_MANIFEST_VERSION_PREFIX.length)
+  return KERNEL_DEPLOYMENT_PATTERN.test(deployment) ? deployment : undefined
 }
 
 export function readPersistedPerpsIdentity(
   storage: PerpsIdentityStorage,
   chainId: number,
-  ownerAddress: Address
+  ownerAddress: Address,
+  kernelDeployment?: string,
 ): ReadPersistedPerpsIdentityResult {
   let serialized: string | null
   try {
     serialized = storage.getItem(
-      perpsIdentityStorageKey(chainId, ownerAddress)
+      perpsIdentityStorageKey(chainId, ownerAddress, kernelDeployment)
     )
   } catch (error) {
     return {
@@ -272,6 +294,7 @@ export function readPersistedPerpsIdentity(
     )
     if (
       identity.chainId !== chainId ||
+      (identity.accountMode === 'kernel' ? kernelIdentityDeployment(identity.manifestVersion) : undefined) !== kernelDeployment ||
       !isAddressEqual(identity.ownerAddress, ownerAddress)
     ) {
       throw new PerpsIdentityValidationError(
@@ -299,10 +322,8 @@ export function writePersistedPerpsIdentity(
   try {
     parsedIdentity = parsePersistedPerpsIdentity(identity)
     storage.setItem(
-      perpsIdentityStorageKey(
-        parsedIdentity.chainId,
-        parsedIdentity.ownerAddress
-      ),
+      perpsIdentityStorageKey(parsedIdentity.chainId, parsedIdentity.ownerAddress,
+        parsedIdentity.accountMode === 'kernel' ? kernelIdentityDeployment(parsedIdentity.manifestVersion) : undefined),
       JSON.stringify(parsedIdentity)
     )
     return { ok: true }

@@ -12,7 +12,7 @@ import { reconcileUserOperation } from './operationReconciler'
 import { resumeSponsoredPerpsAction } from './execution'
 import { acquireSponsoredOperationBrowserLane } from './laneLock'
 import { hasSponsoredOperationSignal, isSponsoredOperationTerminal, restoreSponsoredOperationLane, useSponsoredOperationStore, type SponsoredOperation } from './operationStore'
-import { type PerpsAaSmartAccountRuntime } from './runtimeContext'
+import { type SimplePerpsAaSmartAccountRuntime } from './runtimeContext'
 import { useConfirmationStatus, useDeploymentConfirmationDetails } from './useAccountDeploymentConfirmation'
 import { confirmationPending } from './deploymentConfirmation'
 import { PreparationRecoveryError, recoveryMessage, recoveryReason, type WalletRecoveryResult } from './walletRecovery'
@@ -36,7 +36,7 @@ export function PreparedOperationRecovery({ operation, fallbackManifest }: { ope
 }
 
 function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
-  runtime: PerpsAaSmartAccountRuntime; operation: SponsoredOperation; fallbackManifest?: PerpsAaDeploymentManifestV2
+  runtime: SimplePerpsAaSmartAccountRuntime; operation: SponsoredOperation; fallbackManifest?: PerpsAaDeploymentManifestV2
 }) {
   const [checkedStatus, setStatus] = useState<PreparationStatusV1>()
   const [statusError, setStatusError] = useState<string>()

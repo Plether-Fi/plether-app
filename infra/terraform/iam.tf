@@ -10,6 +10,9 @@ locals {
     local.self_hosted_aa_resource_count == 1 ? [
       "repo:Plether-Fi/plether-app:environment:aa-admin-sepolia",
       "repo:Plether-Fi/plether-app:environment:alto-admin-sepolia",
+    ] : [],
+    local.kernel_canary_repository_count == 1 ? [
+      "repo:Plether-Fi/plether-app:environment:backend-admin-sepolia",
     ] : []
   )
 
@@ -20,6 +23,10 @@ locals {
     ],
     local.self_hosted_aa_resource_count == 1 ? [
       "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/plether-alto-${local.deployment_name}",
+    ] : [],
+    local.kernel_canary_repository_count == 1 ? [
+      aws_ecr_repository.kernel_canary_api[0].arn,
+      aws_ecr_repository.kernel_canary_alto[0].arn,
     ] : []
   )
 
@@ -427,6 +434,21 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
   })
 }
 
+resource "aws_iam_role_policy" "github_deploy_kernel_canary_ecr_scan" {
+  count = local.kernel_canary_repository_count
+
+  name = "plether-sepolia-kernel-canary-image-scan"
+  role = aws_iam_role.github_deploy.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ecr:DescribeImageScanFindings", "ecr:StartImageScan"]
+      Resource = [aws_ecr_repository.kernel_canary_api[0].arn, aws_ecr_repository.kernel_canary_alto[0].arn]
+    }]
+  })
+}
+
 resource "aws_iam_role" "ecs_execution" {
   name = "plether-${local.deployment_name}-ecs-execution"
 
@@ -547,7 +569,7 @@ resource "aws_iam_role_policy" "api_execution_ssm" {
 }
 
 resource "aws_iam_role_policy" "api_execution_aa_reconciler_secondary_rpc_kms" {
-  count = local.native_aa_backend_configured && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? 1 : 0
+  count = (local.native_aa_backend_configured || local.kernel_aa_backend_configured) && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? 1 : 0
 
   name = "aa-reconciler-secondary-rpc-kms-decrypt"
   role = aws_iam_role.api_execution.id
@@ -601,7 +623,7 @@ resource "aws_iam_role_policy" "api_task_firelens_cloudwatch" {
 }
 
 resource "aws_iam_role_policy" "api_paymaster_kms_key_metadata" {
-  count = local.native_aa_sponsorship_enabled ? 1 : 0
+  count = local.native_aa_sponsorship_enabled || local.kernel_aa_sponsorship_enabled ? 1 : 0
 
   name = "aa-paymaster-kms-key-metadata"
   role = aws_iam_role.api_task.id
@@ -618,7 +640,7 @@ resource "aws_iam_role_policy" "api_paymaster_kms_key_metadata" {
 }
 
 resource "aws_iam_role_policy" "api_paymaster_kms_signer" {
-  count = local.native_aa_sponsorship_enabled ? 1 : 0
+  count = local.native_aa_sponsorship_enabled || local.kernel_aa_sponsorship_enabled ? 1 : 0
 
   name = "aa-paymaster-kms-signer"
   role = aws_iam_role.api_task.id

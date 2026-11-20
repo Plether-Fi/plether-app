@@ -1,0 +1,472 @@
+import type { PerpsActionKind } from '@plether-fi/perps-aa-client'
+import { createStore, get, update } from 'idb-keyval'
+import { isAddressEqual, recoverMessageAddress, zeroAddress, type Address, type Hex } from 'viem'
+import type { UserOperationReceipt } from 'viem/account-abstraction'
+import { arbitrumSepolia } from 'viem/chains'
+import { trackPerpsKernelOutcome } from '../analytics/perps'
+import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
+import type { PersistedProtectionIntent } from '../contracts/positionProtection'
+import { clearDepositAuthorization } from './authorizationStore'
+import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
+import { encodeKernelCalls } from './kernelAccount'
+import {
+  assertKernelPreparedOperation,
+  getKernelOperationStatus,
+  sendKernelCancellation,
+  sendKernelOperation,
+  type KernelPreparedCancellation,
+  type KernelPreparedOperation,
+} from './kernelRpc'
+import {
+  acquireSponsoredOperationBrowserLane,
+  acquireSponsoredOperationBrowserRecoveryLock,
+} from './laneLock'
+import { SponsoredOperationLockedError } from './operationLockError'
+
+export interface KernelAttemptScope {
+  deployment: string
+  chainId: number
+  entryPoint: Address
+  sender: Address
+}
+
+export type KernelAttemptPhase =
+  | 'signed'
+  | 'sending'
+  | 'submitted'
+  | 'included'
+  | 'nonce_consumed'
+  | 'sponsorship_expired'
+  | 'cancelled'
+  | 'discarded'
+
+interface SignedKernelAttemptInput {
+  scope: KernelAttemptScope
+  ownerAddress: Address
+  action: PerpsActionKind
+  prepared: KernelPreparedOperation
+  signature: Hex
+  orderRequestV3?: PersistedPerpsOrderRequestV3
+  protectionIntent?: PersistedProtectionIntent
+  authorizationToken?: Address
+  authorizationNonce?: Hex
+}
+
+export interface KernelOperationAttempt extends SignedKernelAttemptInput {
+  version: 1
+  nonceKey: 0n
+  expectedPaymaster: Address
+  phase: KernelAttemptPhase
+  createdAt: number
+  updatedAt: number
+  receipt?: UserOperationReceipt<'0.9'>
+  cancellation?: {
+    prepared: KernelPreparedCancellation
+    signature: Hex
+    phase: 'signed' | 'sending' | 'submitted'
+  }
+}
+
+const journal = createStore('plether-perps-kernel-operations', 'attempts')
+const historyLimit = 100
+const attemptPhases: readonly KernelAttemptPhase[] = [
+  'signed', 'sending', 'submitted', 'included', 'nonce_consumed', 'sponsorship_expired', 'cancelled', 'discarded',
+]
+const updates = new EventTarget()
+
+let crossTabUpdates: BroadcastChannel | undefined
+
+function updateChannel(): BroadcastChannel | undefined {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return undefined
+  try {
+    crossTabUpdates ??= new BroadcastChannel('plether-perps-kernel-operation-changes')
+  } catch {
+    return undefined
+  }
+  return crossTabUpdates
+}
+
+export function kernelAttemptScopeKey(scope: KernelAttemptScope): string {
+  return `${scope.deployment}:${scope.chainId.toString()}:${scope.entryPoint.toLowerCase()}:${scope.sender.toLowerCase()}`
+}
+
+export function isKernelAttemptPending(attempt: KernelOperationAttempt): boolean {
+  return attempt.phase === 'signed' || attempt.phase === 'sending' || attempt.phase === 'submitted'
+}
+
+export function subscribeKernelAttemptUpdates(scope: KernelAttemptScope, notify: () => void): () => void {
+  const key = kernelAttemptScopeKey(scope)
+  const channel = updateChannel()
+  const onMessage = (event: MessageEvent<unknown>) => {
+    if (event.data === key) notify()
+  }
+  updates.addEventListener(key, notify)
+  channel?.addEventListener('message', onMessage)
+  return () => {
+    updates.removeEventListener(key, notify)
+    channel?.removeEventListener('message', onMessage)
+  }
+}
+
+function readAttemptList(key: string, stored: unknown): KernelOperationAttempt[] {
+  if (stored === undefined) return []
+  if (!Array.isArray(stored)) throw new Error('The Trading Account journal could not be read safely')
+  const attempts = stored as (Omit<KernelOperationAttempt, 'version'> & { version: unknown })[]
+  if (attempts.some(attempt =>
+    attempt.version !== 1 || kernelAttemptScopeKey(attempt.scope) !== key ||
+    !attemptPhases.includes(attempt.phase)
+  )) {
+    throw new Error('The Trading Account journal could not be read safely')
+  }
+  return attempts as KernelOperationAttempt[]
+}
+
+export async function listKernelAttempts(scope: KernelAttemptScope): Promise<KernelOperationAttempt[]> {
+  const key = kernelAttemptScopeKey(scope)
+  return readAttemptList(key, await get<KernelOperationAttempt[]>(key, journal))
+}
+
+export async function getActiveKernelAttempt(scope: KernelAttemptScope): Promise<KernelOperationAttempt | undefined> {
+  return (await listKernelAttempts(scope)).find(isKernelAttemptPending)
+}
+
+export async function getKernelAttempt(scope: KernelAttemptScope, hash: Hex): Promise<KernelOperationAttempt | undefined> {
+  return (await listKernelAttempts(scope)).find(attempt => attempt.prepared.userOperationHash === hash)
+}
+
+async function editJournal<T>(scope: KernelAttemptScope, edit: (attempts: KernelOperationAttempt[]) => {
+  attempts: KernelOperationAttempt[]
+  result: T
+}): Promise<T> {
+  const key = kernelAttemptScopeKey(scope)
+  // The IndexedDB read and write share a transaction. Keep the lane fenced
+  // even if the initiating tab closes or a stale tab writes new activity.
+  let editResult: { result: T } | undefined
+  await update<KernelOperationAttempt[]>(key, current => {
+    const { attempts, result } = edit(readAttemptList(key, current))
+    editResult = { result }
+    return attempts
+  }, journal)
+  if (!editResult) throw new Error('The Trading Account journal could not be saved')
+  updates.dispatchEvent(new Event(key))
+  try {
+    updateChannel()?.postMessage(key)
+  } catch {
+    // The committed journal remains the source of truth if live updates fail.
+  }
+  return editResult.result
+}
+
+function acquireKernelLane(scope: KernelAttemptScope) {
+  return acquireSponsoredOperationBrowserLane({
+    accountAddress: scope.sender,
+    chainId: scope.chainId,
+    lane: `kernel:${scope.deployment}:${scope.entryPoint.toLowerCase()}:0`,
+  })
+}
+
+/** The same browser and durable lane covers both gas payers. */
+export async function withKernelOperationLane<T>(scope: KernelAttemptScope, action: () => Promise<T>): Promise<T> {
+  const release = await acquireKernelLane(scope)
+  try {
+    const active = await getActiveKernelAttempt(scope)
+    if (active) throw new SponsoredOperationLockedError(active.prepared.preparationId)
+    return await action()
+  } finally {
+    await release()
+  }
+}
+
+async function assertSignedForScope(input: SignedKernelAttemptInput): Promise<void> {
+  const { prepared, scope, signature } = input
+  assertKernelPreparedOperation(prepared)
+  if (scope.chainId !== arbitrumSepolia.id || !isAddressEqual(prepared.entryPoint, scope.entryPoint) ||
+      !isAddressEqual(prepared.operation.sender, scope.sender) ||
+      prepared.operation.nonce >> 64n !== 0n ||
+      !/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+    throw new Error('The signed operation does not match this Trading Account')
+  }
+  const signer = await recoverMessageAddress({ message: { raw: prepared.userOperationHash }, signature })
+  if (!isAddressEqual(signer, input.ownerAddress)) {
+    throw new Error('The signed operation does not match the Trading Account owner')
+  }
+}
+
+/** Called after wallet signing and before any network submission. */
+export async function saveKernelSignedAttempt(input: SignedKernelAttemptInput): Promise<KernelOperationAttempt> {
+  await assertSignedForScope(input)
+  const now = Date.now()
+  const attempt: KernelOperationAttempt = {
+    ...input,
+    version: 1,
+    nonceKey: 0n,
+    expectedPaymaster: input.prepared.operation.paymaster ?? zeroAddress,
+    phase: 'signed',
+    createdAt: now,
+    updatedAt: now,
+  }
+  return editJournal(input.scope, attempts => {
+    const active = attempts.find(isKernelAttemptPending)
+    if (active) throw new SponsoredOperationLockedError(active.prepared.preparationId)
+    if (attempts.some(existing => existing.prepared.preparationId === input.prepared.preparationId)) {
+      throw new Error('This Trading Account preparation was already used')
+    }
+    return { attempts: [attempt, ...attempts.slice(0, historyLimit - 1)], result: attempt }
+  })
+}
+
+function editAttempt(attempt: KernelOperationAttempt, edit: (current: KernelOperationAttempt) => KernelOperationAttempt) {
+  return editJournal(attempt.scope, attempts => {
+    const current = attempts.find(item => item.prepared.preparationId === attempt.prepared.preparationId)
+    if (current?.prepared.userOperationHash !== attempt.prepared.userOperationHash ||
+        current.signature !== attempt.signature || current.prepared.mode !== attempt.prepared.mode) {
+      throw new Error('This signed Trading Account attempt is unavailable')
+    }
+    const next = edit(current)
+    return {
+      attempts: attempts.map(item => item === current ? next : item),
+      result: { attempt: next, changed: next !== current },
+    }
+  })
+}
+
+function reconcileLocator(attempt: KernelOperationAttempt) {
+  return {
+    preparationId: attempt.prepared.preparationId,
+    userOperationHash: attempt.prepared.userOperationHash,
+    recoveryToken: attempt.prepared.recoveryToken,
+    sender: attempt.scope.sender,
+    entryPoint: attempt.scope.entryPoint,
+    nonce: attempt.prepared.operation.nonce,
+    paymaster: attempt.expectedPaymaster,
+    cancellationHash: attempt.cancellation?.prepared.userOperationHash,
+  }
+}
+
+/**
+ * Called under the browser lane for the first send or an explicit exact retry.
+ * A failure after `sending` is durable leaves an unresolved attempt.
+ */
+export async function submitKernelAttempt(attempt: KernelOperationAttempt): Promise<Hex> {
+  await assertSignedForScope(attempt)
+  const { attempt: current } = await editAttempt(attempt, existing => {
+    if (!isKernelAttemptPending(existing)) throw new Error('This Trading Account attempt is already resolved')
+    if (!kernelAttemptCanRetry(existing)) throw new Error('The original gas quote expired')
+    return { ...existing, phase: 'sending', updatedAt: Date.now() }
+  })
+  const hash = await sendKernelOperation(current.prepared, current.signature)
+  if (hash.toLowerCase() !== current.prepared.userOperationHash.toLowerCase()) {
+    throw new Error('The Trading Account gateway returned a different operation hash')
+  }
+  await editAttempt(current, existing => isKernelAttemptPending(existing)
+    ? { ...existing, phase: 'submitted', updatedAt: Date.now() }
+    : existing)
+  return hash
+}
+
+function knownServerTime(): number | undefined {
+  try {
+    return deadlineNow()
+  } catch {
+    return undefined
+  }
+}
+
+export function kernelAttemptCanRetry(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
+  const orderDeadline = attempt.orderRequestV3?.submitBy
+  return now !== undefined && isKernelAttemptPending(attempt) && attempt.cancellation === undefined &&
+    now < attempt.prepared.expiresAt * 1_000 &&
+    (orderDeadline === undefined || BigInt(Math.floor(now / 1_000)) + 30n <= BigInt(orderDeadline))
+}
+
+/** Manual recovery preserves the originally signed fields and payer. */
+export async function retryKernelAttempt(attempt: KernelOperationAttempt): Promise<Hex> {
+  const release = await acquireKernelLane(attempt.scope)
+  try {
+    await refreshDeadlineClock()
+    return await submitKernelAttempt(attempt)
+  } finally {
+    await release()
+  }
+}
+
+export function kernelAttemptCanDiscard(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
+  return now !== undefined && attempt.phase === 'signed' && !kernelAttemptCanRetry(attempt, now)
+}
+
+export async function discardUnsentKernelAttempt(attempt: KernelOperationAttempt): Promise<void> {
+  const release = await acquireKernelLane(attempt.scope)
+  try {
+    await refreshDeadlineClock()
+    await editAttempt(attempt, current => {
+      if (!kernelAttemptCanDiscard(current)) {
+        throw new Error('Only an expired and unsent Trading Account attempt can be discarded')
+      }
+      return { ...current, phase: 'discarded', updatedAt: Date.now() }
+    })
+  } finally {
+    await release()
+  }
+}
+
+export function kernelAttemptCanCancel(attempt: KernelOperationAttempt): boolean {
+  return attempt.prepared.mode === 'eth' && attempt.cancellation === undefined &&
+    (attempt.phase === 'sending' || attempt.phase === 'submitted')
+}
+
+export function kernelCancellationCanRetry(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
+  const cancellation = attempt.cancellation
+  return isKernelAttemptPending(attempt) && cancellation !== undefined &&
+    (cancellation.phase !== 'signed' || now !== undefined && now < cancellation.prepared.expiresAt * 1_000)
+}
+
+export function kernelCancellationCanDiscard(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
+  const cancellation = attempt.cancellation
+  return now !== undefined && isKernelAttemptPending(attempt) && cancellation?.phase === 'signed' &&
+    now >= cancellation.prepared.expiresAt * 1_000
+}
+
+export async function discardUnsentKernelCancellation(attempt: KernelOperationAttempt): Promise<void> {
+  const release = await acquireKernelLane(attempt.scope)
+  try {
+    await refreshDeadlineClock()
+    await editAttempt(attempt, current => {
+      if (!kernelCancellationCanDiscard(current) ||
+          current.cancellation?.prepared.userOperationHash !== attempt.cancellation?.prepared.userOperationHash) {
+        throw new Error('Only an expired and unsent cancellation can be discarded')
+      }
+      const next = { ...current, updatedAt: Date.now() }
+      delete next.cancellation
+      return next
+    })
+  } finally {
+    await release()
+  }
+}
+
+function assertCancellationBinding(attempt: KernelOperationAttempt, cancellation: KernelPreparedOperation & { cancelsUserOperationHash: Hex }) {
+  assertKernelPreparedOperation(cancellation)
+  if (cancellation.mode !== 'eth' || cancellation.operation.paymaster !== undefined ||
+      cancellation.cancelsUserOperationHash !== attempt.prepared.userOperationHash ||
+      !isAddressEqual(cancellation.entryPoint, attempt.scope.entryPoint) ||
+      !isAddressEqual(cancellation.operation.sender, attempt.scope.sender) ||
+      cancellation.operation.nonce !== attempt.prepared.operation.nonce ||
+      cancellation.operation.callData.toLowerCase() !== encodeKernelCalls([{ to: attempt.scope.sender }]).toLowerCase() ||
+      cancellation.userOperationHash === attempt.prepared.userOperationHash) {
+    throw new Error('The cancellation quote does not match the pending Trading Account operation')
+  }
+}
+
+async function sendSavedCancellation(attempt: KernelOperationAttempt): Promise<Hex> {
+  const saved = attempt.cancellation
+  if (!saved) throw new Error('No signed cancellation is available')
+  assertCancellationBinding(attempt, saved.prepared)
+  await assertSignedForScope({ ...attempt, ...saved })
+  const { attempt: current } = await editAttempt(attempt, existing => {
+    const cancellation = existing.cancellation
+    if (cancellation?.prepared.userOperationHash !== saved.prepared.userOperationHash ||
+        cancellation.signature !== saved.signature || !kernelCancellationCanRetry(existing)) {
+      throw new Error('The original cancellation quote is unavailable or expired')
+    }
+    return { ...existing, cancellation: { ...cancellation, phase: 'sending' }, updatedAt: Date.now() }
+  })
+  const hash = await sendKernelCancellation(current.prepared, saved.prepared, saved.signature)
+  if (hash !== saved.prepared.userOperationHash) throw new Error('The gateway returned a different cancellation hash')
+  await editAttempt(current, existing => isKernelAttemptPending(existing) && existing.cancellation
+    ? { ...existing, cancellation: { ...existing.cancellation, phase: 'submitted' }, updatedAt: Date.now() }
+    : existing)
+  return hash
+}
+
+/** The wallet prompt runs only after explicit approval of the displayed cancellation quote. */
+export async function signAndSubmitKernelCancellation(
+  attempt: KernelOperationAttempt,
+  prepared: KernelPreparedCancellation,
+  sign: (prepared: KernelPreparedCancellation) => Promise<Hex>,
+): Promise<Hex> {
+  const release = await acquireKernelLane(attempt.scope)
+  try {
+    const current = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash)
+    assertCancellationBinding(attempt, prepared)
+    if (!current || !kernelAttemptCanCancel(current) || deadlineNow() >= prepared.expiresAt * 1_000) {
+      throw new Error('This cancellation quote is unavailable or expired')
+    }
+    const signature = await sign(prepared)
+    await assertSignedForScope({ ...current, prepared, signature })
+    await refreshDeadlineClock()
+    const { attempt: saved } = await editAttempt(current, existing => {
+      if (!kernelAttemptCanCancel(existing) || deadlineNow() >= prepared.expiresAt * 1_000) {
+        throw new Error('This cancellation quote is unavailable or expired')
+      }
+      return { ...existing, cancellation: { prepared, signature, phase: 'signed' }, updatedAt: Date.now() }
+    })
+    return await sendSavedCancellation(saved)
+  } finally {
+    await release()
+  }
+}
+
+export async function retryKernelCancellation(attempt: KernelOperationAttempt): Promise<Hex> {
+  const release = await acquireKernelLane(attempt.scope)
+  try {
+    if (attempt.cancellation?.phase === 'signed') await refreshDeadlineClock()
+    return await sendSavedCancellation(attempt)
+  } finally {
+    await release()
+  }
+}
+
+/** An ambiguous transport response, timeout, or elapsed quote leaves the lane held. */
+export async function reconcileKernelAttempt(attempt: KernelOperationAttempt): Promise<KernelOperationAttempt> {
+  if (!isKernelAttemptPending(attempt) || attempt.phase === 'signed') return attempt
+  assertKernelPreparedOperation(attempt.prepared)
+  if (!isAddressEqual(attempt.expectedPaymaster, attempt.prepared.operation.paymaster ?? zeroAddress)) {
+    throw new Error('The saved gas payer no longer matches the Trading Account operation')
+  }
+  const status = await getKernelOperationStatus(reconcileLocator(attempt))
+  if (status.state === 'pending') return attempt
+  if (status.state === 'sponsorship_expired' && attempt.prepared.mode !== 'sponsored') {
+    throw new Error('The Trading Account gateway returned an incompatible expiry')
+  }
+  const { attempt: resolved, changed } = await editAttempt(attempt, existing => {
+    if (!isKernelAttemptPending(existing)) return existing
+    return { ...existing, phase: status.state, ...(status.receipt ? { receipt: status.receipt } : {}), updatedAt: Date.now() }
+  })
+  if (!changed) return resolved
+  if (resolved.phase === 'included' && resolved.receipt?.success &&
+      resolved.authorizationToken && resolved.authorizationNonce) {
+    try {
+      clearDepositAuthorization({
+        chainId: resolved.scope.chainId,
+        ownerAddress: resolved.ownerAddress,
+        accountAddress: resolved.scope.sender,
+        token: resolved.authorizationToken,
+        expectedNonce: resolved.authorizationNonce,
+      })
+    } catch {
+      // The canonical outcome and unlocked lane survive a local cleanup failure.
+    }
+  }
+  trackPerpsKernelOutcome({
+    mode: resolved.prepared.mode,
+    outcome: status.state === 'included' && !status.receipt.success ? 'execution_reverted' : status.state,
+    maximum: status.state === 'cancelled' ? resolved.cancellation?.prepared.maxNetworkGasWei : resolved.prepared.maxNetworkGasWei,
+    actual: status.receipt?.actualGasCost,
+  })
+  return resolved
+}
+
+/** One tab per attempt polls at a time. Polling cannot send an operation. */
+export async function refreshKernelAttempt(attempt: KernelOperationAttempt): Promise<KernelOperationAttempt> {
+  if (!isKernelAttemptPending(attempt) || attempt.phase === 'signed') return attempt
+  const release = await acquireSponsoredOperationBrowserRecoveryLock({
+    chainId: attempt.scope.chainId,
+    accountAddress: attempt.scope.sender,
+    operationId: attempt.prepared.preparationId,
+  })
+  try {
+    return await reconcileKernelAttempt(attempt)
+  } finally {
+    await release()
+  }
+}

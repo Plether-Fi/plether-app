@@ -1,0 +1,729 @@
+# The Kernel v0.9 pilot is a second, normally dormant Sepolia stack. None of
+# these resources replace the EntryPoint v0.8 Alto, API, or reconciler.
+locals {
+  kernel_canary_repository_count = var.provision_kernel_canary_repositories ? 1 : 0
+  kernel_canary_count            = var.provision_kernel_canary ? 1 : 0
+  kernel_canary_ssm_prefix       = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter"
+  kernel_canary_rpc_arn          = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_rpc_url_ssm_parameter_name)}"
+  kernel_canary_rpc_token_arn    = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_rpc_token_ssm_parameter_name)}"
+  kernel_canary_executor_arn     = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_executor_keys_ssm_parameter_name)}"
+  kernel_canary_utility_arn      = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_utility_key_ssm_parameter_name)}"
+  kernel_canary_origin_arn       = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_origin_token_ssm_parameter_name)}"
+
+  kernel_canary_api_secret_arns = distinct(concat([
+    aws_ssm_parameter.rpc_url.arn,
+    aws_ssm_parameter.perps_rpc_url.arn,
+    aws_ssm_parameter.database_url.arn,
+    local.aa_reconciler_secondary_rpc_url_parameter_arn,
+    local.kernel_canary_origin_arn,
+    ], [for secret in local.rpc_auth_token_secret : secret.valueFrom],
+    [for secret in local.perps_rpc_auth_token_secret : secret.valueFrom],
+  [for secret in local.pyth_api_key_secret : secret.valueFrom]))
+
+  kernel_canary_execution_secret_arns = {
+    alto = [local.kernel_canary_rpc_arn, local.kernel_canary_rpc_token_arn, local.kernel_canary_executor_arn, local.kernel_canary_utility_arn]
+    api  = local.kernel_canary_api_secret_arns
+    reconciler = distinct(concat([
+      aws_ssm_parameter.database_url.arn,
+      aws_ssm_parameter.perps_rpc_url.arn,
+      local.aa_reconciler_secondary_rpc_url_parameter_arn,
+    ], [for secret in local.perps_rpc_auth_token_secret : secret.valueFrom]))
+  }
+
+  # Reuse reviewed release bindings without inheriting the live API's AA,
+  # faucet, registration, ingestion or background writer activation flags.
+  kernel_canary_api_base_environment_names = [
+    "PORT", "CHAIN_ID", "PERPS_CHAIN_ID",
+    "PERPS_SETTLEMENT_TOKEN", "PERPS_ORDER_ROUTER", "PERPS_ORDER_LIFECYCLE_BOOK",
+    "PERPS_HOUSE_POOL", "PERPS_SENIOR_VAULT", "PERPS_JUNIOR_VAULT",
+    "PERPS_SETTLEMENT_MONITOR_LENS", "PERPS_PLETHER_ORACLE", "PERPS_CFD_ENGINE",
+    "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", "PERPS_CFD_ENGINE_LENS",
+    "PERPS_MARGIN_CLEARINGHOUSE", "PERPS_ACCOUNT_LENS", "PERPS_INDEXER_START_BLOCK",
+    "VAULT_HISTORY_HOUSE_POOL_ADDRESS", "VAULT_HISTORY_SENIOR_VAULT_ADDRESS",
+    "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", "VAULT_HISTORY_DEPLOYMENT_BLOCK",
+    "VAULT_HISTORY_CONFIRMATIONS", "INDEXER_START_BLOCK",
+    "AA_IP_RATE_LIMIT_PER_MINUTE", "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE", "AA_MAX_REQUEST_BYTES",
+  ]
+  kernel_canary_api_base_environment = [
+    for setting in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].environment : setting
+    if contains(local.kernel_canary_api_base_environment_names, setting.name)
+  ]
+  kernel_canary_api_environment = concat(local.kernel_canary_api_base_environment, [
+    { name = "CORS_ORIGINS", value = var.kernel_canary_preview_origin },
+    { name = "KERNEL_CANARY_API_MODE", value = "true" },
+    { name = "API_BACKGROUND_WORKERS_ENABLED", value = "false" },
+    { name = "AA_RPC_MODE", value = "dual-independent" },
+    { name = "AA_SPONSORSHIP_ENABLED", value = "false" },
+    { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = "false" },
+    { name = "AA_NATIVE_SUBMISSION_ENABLED", value = "false" },
+    { name = "AA_NATIVE_PREPARATION_ENABLED", value = "false" },
+    { name = "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED", value = "false" },
+    { name = "TESTNET_MARGIN_FUNDING_ENABLED", value = "false" },
+    { name = "INSIGHTS_REGISTRATION_ENABLED", value = "false" },
+    { name = "PYTH_INGESTION_ENABLED", value = "false" },
+    { name = "PERPS_CANDLE_WRITE_MODE", value = "off" },
+    { name = "PERPS_CANDLE_READ_MODE", value = "legacy" },
+    { name = "AA_KERNEL_PROFILE_JSON", value = var.kernel_canary_profile_json },
+    { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = var.kernel_canary_owners_json },
+    { name = "AA_KERNEL_PUBLIC_ADMISSION", value = "false" },
+    { name = "AA_KERNEL_ETH_ENABLED", value = tostring(var.kernel_canary_eth_enabled) },
+    { name = "AA_KERNEL_SPONSORSHIP_ENABLED", value = tostring(var.kernel_canary_sponsorship_enabled) },
+    { name = "AA_KERNEL_PROTECTION_COMMITS_ENABLED", value = "false" },
+    { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },
+    { name = "AA_KERNEL_ALTO_RPC_URL", value = local.kernel_canary_count == 1 ? "http://${aws_lb.kernel_canary_alto[0].dns_name}" : "" },
+    { name = "AWS_REGION", value = var.aws_region },
+    ], var.kernel_canary_sponsorship_json == "" ? [] : [
+    { name = "AA_KERNEL_SPONSORSHIP_JSON", value = var.kernel_canary_sponsorship_json },
+    ], var.kernel_canary_sponsorship_enabled && local.kernel_canary_count == 1 ? [
+    { name = "AA_KERNEL_PAYMASTER_KMS_KEY_ID", value = aws_kms_key.kernel_canary_paymaster[0].arn },
+  ] : [])
+
+  kernel_canary_api_secrets = concat([
+    { name = "RPC_URL", valueFrom = aws_ssm_parameter.rpc_url.arn },
+    { name = "PERPS_RPC_URL", valueFrom = aws_ssm_parameter.perps_rpc_url.arn },
+    { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+    { name = "AA_SECURITY_RPC_URL", valueFrom = local.aa_reconciler_secondary_rpc_url_parameter_arn },
+    { name = "AA_PROXY_ORIGIN_TOKEN", valueFrom = local.kernel_canary_origin_arn },
+  ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret)
+
+  kernel_canary_alto_base_environment = local.self_hosted_aa_resource_count == 1 ? [
+    for setting in jsondecode(aws_ecs_task_definition.alto[0].container_definitions)[0].environment : setting
+    if !startswith(setting.name, "PLETHER_ALTO_")
+    && !startswith(setting.name, "ALTO_ENTRYPOINT")
+    && !contains(["ALTO_PIMLICO_SIMULATION_CONTRACT", "ALTO_SAFE_MODE", "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", "ALTO_DEPLOY_SIMULATIONS_CONTRACT", "ALTO_RPC_METHODS"], setting.name)
+  ] : []
+  kernel_canary_alto_environment = concat(local.kernel_canary_alto_base_environment, [
+    { name = "ALTO_ENTRYPOINTS", value = "0x433709009b8330fda32311df1c2afa402ed8d009" },
+    { name = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9", value = var.kernel_canary_entrypoint_simulation_contract_v9 },
+    { name = "ALTO_PIMLICO_SIMULATION_CONTRACT", value = var.kernel_canary_pimlico_simulation_contract },
+    { name = "ALTO_DEPLOY_SIMULATIONS_CONTRACT", value = "false" },
+    { name = "ALTO_RPC_METHODS", value = local.alto_allowed_rpc_methods },
+    { name = "ALTO_SAFE_MODE", value = "true" },
+    { name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false" },
+  ])
+
+  kernel_canary_awslogs = {
+    logDriver = "awslogs"
+    options = {
+      awslogs-group         = local.kernel_canary_count == 1 ? aws_cloudwatch_log_group.kernel_canary[0].name : ""
+      awslogs-region        = var.aws_region
+      awslogs-stream-prefix = "ecs"
+    }
+  }
+}
+
+resource "terraform_data" "kernel_canary_repository_guard" {
+  count = local.kernel_canary_repository_count
+
+  lifecycle {
+    precondition {
+      condition     = var.environment == "sepolia" && var.aws_region == "ap-southeast-1"
+      error_message = "Kernel canary image repositories may be provisioned only in Singapore Sepolia."
+    }
+  }
+}
+
+resource "terraform_data" "kernel_canary_guard" {
+  count = local.kernel_canary_count
+
+  lifecycle {
+    precondition {
+      condition = (
+        var.environment == "sepolia" && var.aws_region == "ap-southeast-1"
+        && var.perps_chain_id == "421614" && local.self_hosted_aa_resource_count == 1
+        && local.kernel_canary_repository_count == 1
+        && var.alto_entrypoint_version == "0.8"
+      )
+      error_message = "The isolated Kernel canary requires the existing Sepolia EntryPoint v0.8 stack to remain selected."
+    }
+    precondition {
+      condition = (
+        can(regex("^${data.aws_caller_identity.current.account_id}\\.dkr\\.ecr\\.${var.aws_region}\\.amazonaws\\.com/plether-kernel-alto-sepolia@sha256:[0-9a-f]{64}$", var.kernel_canary_alto_image))
+        && can(regex("^${data.aws_caller_identity.current.account_id}\\.dkr\\.ecr\\.${var.aws_region}\\.amazonaws\\.com/plether-kernel-api-sepolia@sha256:[0-9a-f]{64}$", var.kernel_canary_api_image))
+      )
+      error_message = "Canary Alto and API images must be reviewed account-local ECR sha256 digests, never tags or the live v0.8 Alto image."
+    }
+    precondition {
+      condition = (
+        alltrue([
+          for name in [
+            var.kernel_canary_alto_rpc_url_ssm_parameter_name,
+            var.kernel_canary_alto_rpc_token_ssm_parameter_name,
+            var.kernel_canary_alto_executor_keys_ssm_parameter_name,
+            var.kernel_canary_alto_utility_key_ssm_parameter_name,
+            var.kernel_canary_origin_token_ssm_parameter_name,
+          ] : startswith(trimspace(name), "/plether/sepolia/") && trimspace(name) == name
+          ]) && length(distinct([
+            var.kernel_canary_alto_rpc_url_ssm_parameter_name,
+            var.kernel_canary_alto_rpc_token_ssm_parameter_name,
+            var.kernel_canary_alto_executor_keys_ssm_parameter_name,
+            var.kernel_canary_alto_utility_key_ssm_parameter_name,
+            var.kernel_canary_origin_token_ssm_parameter_name,
+        ])) == 5
+        && var.kernel_canary_alto_executor_keys_ssm_parameter_name != var.alto_executor_private_keys_ssm_parameter_name
+        && var.kernel_canary_alto_utility_key_ssm_parameter_name != var.alto_utility_private_key_ssm_parameter_name
+        && var.kernel_canary_origin_token_ssm_parameter_name != "/plether/sepolia/aa-proxy-origin-token"
+      )
+      error_message = "Canary URL, token, executor, utility and origin parameters must be distinct Sepolia refs; signing and origin secrets cannot be shared with the v0.8 stack."
+    }
+    precondition {
+      condition = var.kernel_canary_alto_desired_count == 0 || (
+        local.rpc_gateway_count == 1
+        && var.kernel_canary_simulators_attested
+        && var.kernel_canary_alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
+        && var.kernel_canary_alto_rpc_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
+        && can(regex("^0x[0-9A-Fa-f]{40}$", var.kernel_canary_entrypoint_simulation_contract_v9))
+        && can(regex("^0x[0-9A-Fa-f]{40}$", var.kernel_canary_pimlico_simulation_contract))
+        && lower(var.kernel_canary_entrypoint_simulation_contract_v9) != "0x0000000000000000000000000000000000000000"
+        && lower(var.kernel_canary_pimlico_simulation_contract) != "0x0000000000000000000000000000000000000000"
+        && lower(var.kernel_canary_entrypoint_simulation_contract_v9) != lower(var.kernel_canary_pimlico_simulation_contract)
+      )
+      error_message = "Starting canary Alto requires explicit reviewed EntryPoint v0.9 and Pimlico simulation contract addresses."
+    }
+    precondition {
+      condition = var.kernel_canary_api_desired_count == 0 || (
+        var.kernel_canary_alto_desired_count == 1
+        && var.kernel_canary_db_schema_confirmed
+        && var.kernel_canary_profile_attested
+        && can(jsondecode(var.kernel_canary_profile_json))
+        && try(jsondecode(var.kernel_canary_profile_json).chainId, 0) == 421614
+        && try(lower(jsondecode(var.kernel_canary_profile_json).entryPoint), "") == "0x433709009b8330fda32311df1c2afa402ed8d009"
+        && try(jsondecode(var.kernel_canary_profile_json).entryPointVersion, "") == "0.9"
+      )
+      error_message = "Starting canary API requires the canary Alto and an attested Arbitrum Sepolia Kernel v0.9 profile."
+    }
+    precondition {
+      condition = !var.kernel_canary_route_enabled || (
+        var.kernel_canary_api_desired_count == 1
+        && var.kernel_canary_nitro_safemode_qualified
+        && trimspace(var.alb_certificate_arn) != ""
+        && trimspace(var.api_hostname) != ""
+        && can(regex("^https://[a-z0-9.-]+$", var.kernel_canary_preview_origin))
+        && var.kernel_canary_preview_origin != "https://plether.com"
+      )
+      error_message = "The canary public path may open only for a running API and an exact HTTPS preview origin."
+    }
+    precondition {
+      condition = !(var.kernel_canary_eth_enabled || var.kernel_canary_sponsorship_enabled) || (
+        var.kernel_canary_api_desired_count == 1 && var.kernel_canary_alto_desired_count == 1
+        && length(try(tolist(jsondecode(var.kernel_canary_owners_json)), [])) > 0
+        && alltrue([for owner in try(tolist(jsondecode(var.kernel_canary_owners_json)), []) : can(regex("^0x[0-9A-Fa-f]{40}$", owner))])
+      )
+      error_message = "Kernel payment choices require both canary API and Alto tasks running and an exact nonempty canary owner allowlist."
+    }
+    precondition {
+      condition = !var.kernel_canary_sponsorship_enabled || (
+        var.kernel_canary_reconciler_desired_count == 1 && can(jsondecode(var.kernel_canary_sponsorship_json))
+      )
+      error_message = "Canary sponsorship requires its own active reconciler and reviewed paymaster profile."
+    }
+    precondition {
+      condition     = var.kernel_canary_reconciler_desired_count == 0 || var.kernel_canary_sponsorship_enabled
+      error_message = "The canary reconciler may run only when its sponsorship profile is enabled."
+    }
+  }
+}
+
+resource "aws_kms_key" "kernel_canary_paymaster" {
+  count = local.kernel_canary_count
+
+  description                        = "Plether Sepolia Kernel canary ERC-4337 paymaster signer; isolated from EntryPoint v0.8"
+  key_usage                          = "SIGN_VERIFY"
+  customer_master_key_spec           = "ECC_SECG_P256K1"
+  deletion_window_in_days            = 30
+  multi_region                       = false
+  bypass_policy_lockout_safety_check = false
+  tags                               = { Name = "plether-sepolia-kernel-canary-paymaster", Purpose = "kernel-canary-paymaster-signing" }
+
+  lifecycle { prevent_destroy = true }
+}
+
+resource "aws_kms_alias" "kernel_canary_paymaster" {
+  count = local.kernel_canary_count
+
+  name          = "alias/plether-sepolia-kernel-canary-paymaster-signer"
+  target_key_id = aws_kms_key.kernel_canary_paymaster[0].key_id
+}
+
+resource "aws_cloudwatch_log_group" "kernel_canary" {
+  count = local.kernel_canary_count
+
+  name              = "/ecs/plether-sepolia-kernel-canary"
+  retention_in_days = 14
+}
+
+resource "aws_iam_role" "kernel_canary_execution" {
+  for_each = var.provision_kernel_canary ? toset(["alto", "api", "reconciler"]) : toset([])
+
+  name = "plether-sepolia-kernel-${each.key}-execution"
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "kernel_canary_execution" {
+  for_each = aws_iam_role.kernel_canary_execution
+
+  role       = each.value.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "kernel_canary_execution_secrets" {
+  for_each = aws_iam_role.kernel_canary_execution
+
+  name = "exact-canary-ssm-refs"
+  role = each.value.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat([{ Effect = "Allow", Action = ["ssm:GetParameter", "ssm:GetParameters"], Resource = local.kernel_canary_execution_secret_arns[each.key] }],
+      each.key == "alto" && var.kernel_canary_alto_secrets_kms_key_arn != "" ? [{
+        Effect = "Allow", Action = ["kms:Decrypt"], Resource = var.kernel_canary_alto_secrets_kms_key_arn
+      }] : [],
+      each.key != "alto" && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? [{
+        Effect = "Allow", Action = ["kms:Decrypt"], Resource = var.aa_reconciler_secondary_rpc_url_kms_key_arn,
+        Condition = { StringEquals = {
+          "kms:ViaService"                      = "ssm.${var.aws_region}.amazonaws.com"
+          "kms:EncryptionContext:PARAMETER_ARN" = local.aa_reconciler_secondary_rpc_url_parameter_arn
+        } }
+    }] : [])
+  })
+}
+
+resource "aws_iam_role" "kernel_canary_task" {
+  for_each = var.provision_kernel_canary ? toset(["alto", "api", "reconciler"]) : toset([])
+
+  name = "plether-sepolia-kernel-${each.key}-task"
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
+  })
+}
+
+resource "aws_iam_role_policy" "kernel_canary_paymaster_sign" {
+  count = local.kernel_canary_count == 1 && var.kernel_canary_sponsorship_enabled ? 1 : 0
+
+  name = "sign-canary-paymaster-digests"
+  role = aws_iam_role.kernel_canary_task["api"].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Effect = "Allow", Action = ["kms:DescribeKey", "kms:GetPublicKey"], Resource = aws_kms_key.kernel_canary_paymaster[0].arn },
+      {
+        Effect    = "Allow", Action = ["kms:Sign"], Resource = aws_kms_key.kernel_canary_paymaster[0].arn
+        Condition = { StringEquals = { "kms:SigningAlgorithm" = "ECDSA_SHA_256" } }
+      },
+    ]
+  })
+}
+
+resource "aws_security_group" "kernel_canary_task" {
+  for_each = var.provision_kernel_canary ? toset(["alto", "api", "reconciler"]) : toset([])
+
+  name_prefix = "plether-sepolia-kernel-${each.key}-task-"
+  description = "Isolated Kernel canary ${each.key} task"
+  vpc_id      = aws_vpc.main.id
+  lifecycle { create_before_destroy = true }
+}
+
+resource "aws_security_group" "kernel_canary_alto_alb" {
+  count = local.kernel_canary_count
+
+  name_prefix = "plether-sepolia-kernel-alto-alb-"
+  description = "Internal load balancer for the patched Kernel v0.9 Alto"
+  vpc_id      = aws_vpc.main.id
+  lifecycle { create_before_destroy = true }
+}
+
+resource "aws_security_group" "kernel_canary_api_alto_client" {
+  count = local.kernel_canary_count
+
+  name_prefix = "plether-sepolia-kernel-api-alto-client-"
+  description = "Allows only the canary API to call the canary Alto"
+  vpc_id      = aws_vpc.main.id
+  lifecycle { create_before_destroy = true }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "kernel_canary_alto_alb_from_api" {
+  count = local.kernel_canary_count
+
+  security_group_id            = aws_security_group.kernel_canary_alto_alb[0].id
+  referenced_security_group_id = aws_security_group.kernel_canary_api_alto_client[0].id
+  ip_protocol                  = "tcp"
+  from_port                    = 80
+  to_port                      = 80
+}
+
+resource "aws_vpc_security_group_egress_rule" "kernel_canary_alto_alb_to_task" {
+  count = local.kernel_canary_count
+
+  security_group_id            = aws_security_group.kernel_canary_alto_alb[0].id
+  referenced_security_group_id = aws_security_group.kernel_canary_task["alto"].id
+  ip_protocol                  = "tcp"
+  from_port                    = 3000
+  to_port                      = 3000
+}
+
+resource "aws_vpc_security_group_ingress_rule" "kernel_canary_alto_from_alb" {
+  count = local.kernel_canary_count
+
+  security_group_id            = aws_security_group.kernel_canary_task["alto"].id
+  referenced_security_group_id = aws_security_group.kernel_canary_alto_alb[0].id
+  ip_protocol                  = "tcp"
+  from_port                    = 3000
+  to_port                      = 3000
+}
+
+resource "aws_vpc_security_group_egress_rule" "kernel_canary_https" {
+  for_each = aws_security_group.kernel_canary_task
+
+  security_group_id = each.value.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}
+
+resource "aws_vpc_security_group_ingress_rule" "kernel_canary_api_from_alb" {
+  count = local.kernel_canary_count
+
+  security_group_id            = aws_security_group.kernel_canary_task["api"].id
+  referenced_security_group_id = aws_security_group.alb.id
+  ip_protocol                  = "tcp"
+  from_port                    = 3001
+  to_port                      = 3001
+}
+
+resource "aws_vpc_security_group_egress_rule" "kernel_canary_api_to_alto" {
+  count = local.kernel_canary_count
+
+  security_group_id            = aws_security_group.kernel_canary_task["api"].id
+  referenced_security_group_id = aws_security_group.kernel_canary_alto_alb[0].id
+  ip_protocol                  = "tcp"
+  from_port                    = 80
+  to_port                      = 80
+}
+
+resource "aws_vpc_security_group_egress_rule" "kernel_canary_postgres" {
+  for_each = var.provision_kernel_canary ? toset(["api", "reconciler"]) : toset([])
+
+  security_group_id            = aws_security_group.kernel_canary_task[each.key].id
+  referenced_security_group_id = aws_security_group.rds.id
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+}
+
+resource "aws_lb" "kernel_canary_alto" {
+  count = local.kernel_canary_count
+
+  name               = "plether-sepolia-kernel-alto"
+  internal           = true
+  load_balancer_type = "application"
+  idle_timeout       = 65
+  security_groups    = [aws_security_group.kernel_canary_alto_alb[0].id]
+  subnets            = aws_subnet.public[*].id
+}
+
+resource "aws_lb_target_group" "kernel_canary_alto" {
+  count = local.kernel_canary_count
+
+  name                 = "plether-sepolia-kernel-alto"
+  port                 = 3000
+  protocol             = "HTTP"
+  vpc_id               = aws_vpc.main.id
+  target_type          = "ip"
+  deregistration_delay = 30
+  health_check {
+    path                = "/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 15
+    matcher             = "200"
+  }
+}
+
+resource "aws_lb_listener" "kernel_canary_alto" {
+  count = local.kernel_canary_count
+
+  load_balancer_arn = aws_lb.kernel_canary_alto[0].arn
+  port              = 80
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.kernel_canary_alto[0].arn
+  }
+}
+
+resource "aws_lb_target_group" "kernel_canary_api" {
+  count = local.kernel_canary_count
+
+  name                 = "plether-sepolia-kernel-api"
+  port                 = 3001
+  protocol             = "HTTP"
+  vpc_id               = aws_vpc.main.id
+  target_type          = "ip"
+  deregistration_delay = 30
+  health_check {
+    path                = "/api/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 10
+    interval            = 30
+    matcher             = "200"
+  }
+}
+
+# The existing TLS certificate covers api.sepolia.plether.com. The Pages
+# Worker rewrites /api/perps/v1/aa/kernel/rpc to this exact backend path.
+resource "aws_lb_listener_rule" "kernel_canary_api" {
+  count = local.kernel_canary_count == 1 && var.kernel_canary_route_enabled ? 1 : 0
+
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 180
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.kernel_canary_api[0].arn
+  }
+  condition {
+    path_pattern { values = ["/api/aa/kernel/rpc"] }
+  }
+  condition {
+    host_header { values = [var.api_hostname] }
+  }
+  depends_on = [terraform_data.kernel_canary_guard]
+}
+
+resource "aws_ecs_task_definition" "kernel_canary_alto" {
+  count = local.kernel_canary_count
+
+  family                   = "plether-sepolia-kernel-alto"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.alto_container_cpu
+  memory                   = var.alto_container_memory
+  execution_role_arn       = aws_iam_role.kernel_canary_execution["alto"].arn
+  task_role_arn            = aws_iam_role.kernel_canary_task["alto"].arn
+  enable_fault_injection   = false
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+  volume { name = "alto-tmp" }
+
+  container_definitions = jsonencode([
+    merge(jsondecode(aws_ecs_task_definition.alto[0].container_definitions)[0], {
+      image            = var.kernel_canary_alto_image
+      dependsOn        = [{ containerName = "alto-tmp-init", condition = "SUCCESS" }]
+      logConfiguration = local.kernel_canary_awslogs
+      secrets = [
+        { name = "ALTO_RPC_URL", valueFrom = local.kernel_canary_rpc_arn },
+        { name = "PLETHER_ALTO_RPC_AUTH_TOKEN", valueFrom = local.kernel_canary_rpc_token_arn },
+        { name = "ALTO_EXECUTOR_PRIVATE_KEYS", valueFrom = local.kernel_canary_executor_arn },
+        { name = "ALTO_UTILITY_PRIVATE_KEY", valueFrom = local.kernel_canary_utility_arn },
+      ]
+      environment = local.kernel_canary_alto_environment
+    }),
+    merge(jsondecode(aws_ecs_task_definition.alto[0].container_definitions)[1], {
+      image = var.kernel_canary_alto_image
+    }),
+  ])
+  depends_on = [
+    aws_iam_role_policy.kernel_canary_execution_secrets,
+    aws_iam_role_policy_attachment.kernel_canary_execution,
+    terraform_data.kernel_canary_guard,
+  ]
+}
+
+resource "aws_ecs_service" "kernel_canary_alto" {
+  count = local.kernel_canary_count
+
+  name                               = "plether-kernel-canary-alto"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.kernel_canary_alto[0].arn
+  desired_count                      = var.kernel_canary_alto_desired_count
+  launch_type                        = "FARGATE"
+  platform_version                   = "1.4.0"
+  health_check_grace_period_seconds  = 120
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  enable_ecs_managed_tags            = true
+  propagate_tags                     = "SERVICE"
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.kernel_canary_task["alto"].id]
+    assign_public_ip = true
+  }
+  load_balancer {
+    target_group_arn = aws_lb_target_group.kernel_canary_alto[0].arn
+    container_name   = "plether-alto"
+    container_port   = 3000
+  }
+  depends_on = [
+    aws_lb_listener.kernel_canary_alto,
+    aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_api,
+    aws_vpc_security_group_egress_rule.kernel_canary_alto_alb_to_task,
+    aws_vpc_security_group_ingress_rule.kernel_canary_alto_from_alb,
+    aws_vpc_security_group_egress_rule.kernel_canary_https,
+    aws_vpc_security_group_ingress_rule.kernel_canary_rpc_gateway_from_alto,
+    terraform_data.kernel_canary_guard,
+  ]
+  lifecycle { ignore_changes = [task_definition] }
+}
+
+resource "aws_ecs_task_definition" "kernel_canary_api" {
+  count = local.kernel_canary_count
+
+  family                   = "plether-sepolia-kernel-api"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.api_container_cpu
+  memory                   = var.api_container_memory
+  execution_role_arn       = aws_iam_role.kernel_canary_execution["api"].arn
+  task_role_arn            = aws_iam_role.kernel_canary_task["api"].arn
+  enable_fault_injection   = false
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+  container_definitions = jsonencode([
+    merge(jsondecode(aws_ecs_task_definition.api.container_definitions)[0], {
+      image            = var.kernel_canary_api_image
+      logConfiguration = local.kernel_canary_awslogs
+      secrets          = local.kernel_canary_api_secrets
+      environment      = local.kernel_canary_api_environment
+    }),
+  ])
+  depends_on = [
+    aws_iam_role_policy.kernel_canary_execution_secrets,
+    aws_iam_role_policy_attachment.kernel_canary_execution,
+    aws_iam_role_policy.kernel_canary_paymaster_sign,
+    terraform_data.kernel_canary_guard,
+  ]
+}
+
+resource "aws_ecs_service" "kernel_canary_api" {
+  count = local.kernel_canary_count
+
+  name                               = "plether-kernel-canary-api"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.kernel_canary_api[0].arn
+  desired_count                      = var.kernel_canary_api_desired_count
+  launch_type                        = "FARGATE"
+  platform_version                   = "1.4.0"
+  health_check_grace_period_seconds  = var.kernel_canary_route_enabled ? 300 : null
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  enable_ecs_managed_tags            = true
+  propagate_tags                     = "SERVICE"
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.kernel_canary_task["api"].id, aws_security_group.kernel_canary_api_alto_client[0].id]
+    assign_public_ip = true
+  }
+  # Keep the API task dark while the worker and wallet checks are prepared.
+  # An ECS target group is attached only when the exact public path opens.
+  dynamic "load_balancer" {
+    for_each = var.kernel_canary_route_enabled ? [1] : []
+    content {
+      target_group_arn = aws_lb_target_group.kernel_canary_api[0].arn
+      container_name   = "plether-api"
+      container_port   = 3001
+    }
+  }
+  depends_on = [
+    aws_lb_listener_rule.kernel_canary_api,
+    aws_vpc_security_group_ingress_rule.kernel_canary_api_from_alb,
+    aws_vpc_security_group_egress_rule.kernel_canary_api_to_alto,
+    aws_vpc_security_group_egress_rule.kernel_canary_postgres,
+    terraform_data.kernel_canary_guard,
+  ]
+  lifecycle { ignore_changes = [task_definition] }
+}
+
+resource "aws_ecs_task_definition" "kernel_canary_reconciler" {
+  count = local.kernel_canary_count
+
+  family                   = "plether-sepolia-kernel-reconciler"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.aa_reconciler_container_cpu
+  memory                   = var.aa_reconciler_container_memory
+  execution_role_arn       = aws_iam_role.kernel_canary_execution["reconciler"].arn
+  task_role_arn            = aws_iam_role.kernel_canary_task["reconciler"].arn
+  enable_fault_injection   = false
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+  volume { name = "aa-reconciler-tmp" }
+  container_definitions = jsonencode([
+    merge(jsondecode(aws_ecs_task_definition.aa_reconciler[0].container_definitions)[0], {
+      image            = var.kernel_canary_api_image
+      logConfiguration = local.kernel_canary_awslogs
+      dependsOn        = [{ containerName = "aa-reconciler-tmp-init", condition = "SUCCESS" }]
+      secrets = concat([
+        { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+        { name = "PERPS_RPC_URL", valueFrom = aws_ssm_parameter.perps_rpc_url.arn },
+        { name = "AA_SECURITY_RPC_URL", valueFrom = local.aa_reconciler_secondary_rpc_url_parameter_arn },
+      ], local.perps_rpc_auth_token_secret)
+      environment = [
+        { name = "HOME", value = "/tmp" },
+        { name = "TMPDIR", value = "/tmp" },
+        { name = "PERPS_CHAIN_ID", value = "421614" },
+        { name = "AA_KERNEL_PROFILE_JSON", value = var.kernel_canary_profile_json },
+        { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = var.kernel_canary_owners_json },
+        { name = "AA_KERNEL_PUBLIC_ADMISSION", value = "false" },
+        { name = "AA_KERNEL_SPONSORSHIP_JSON", value = var.kernel_canary_sponsorship_json },
+        { name = "AA_KERNEL_SPONSORSHIP_ENABLED", value = tostring(var.kernel_canary_sponsorship_enabled) },
+        { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },
+        { name = "AA_KERNEL_RECONCILER_POLL_SECONDS", value = var.aa_reconciler_poll_seconds },
+        { name = "AA_KERNEL_RECONCILER_BATCH_BLOCKS", value = var.aa_reconciler_batch_blocks },
+        { name = "AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS", value = "60" },
+      ]
+    }),
+    merge(jsondecode(aws_ecs_task_definition.aa_reconciler[0].container_definitions)[1], {
+      image = var.kernel_canary_api_image
+    }),
+  ])
+  depends_on = [
+    aws_iam_role_policy.kernel_canary_execution_secrets,
+    aws_iam_role_policy_attachment.kernel_canary_execution,
+    terraform_data.kernel_canary_guard,
+  ]
+}
+
+resource "aws_ecs_service" "kernel_canary_reconciler" {
+  count = local.kernel_canary_count
+
+  name                               = "plether-kernel-canary-reconciler"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.kernel_canary_reconciler[0].arn
+  desired_count                      = var.kernel_canary_reconciler_desired_count
+  launch_type                        = "FARGATE"
+  platform_version                   = "1.4.0"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  enable_ecs_managed_tags            = true
+  propagate_tags                     = "SERVICE"
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.kernel_canary_task["reconciler"].id]
+    assign_public_ip = true
+  }
+  depends_on = [aws_vpc_security_group_egress_rule.kernel_canary_postgres, terraform_data.kernel_canary_guard]
+  lifecycle { ignore_changes = [task_definition] }
+}

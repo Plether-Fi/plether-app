@@ -69,6 +69,23 @@ test('deployment gate rejects accidental shared dual RPCs and non-primary single
   single.containerDefinitions[0].secrets[0].valueFrom = secondary
   assert.notEqual(validate(single).status, 0)
 })
+test('Kernel RPC boundaries require the separate authenticated verification route', () => {
+  const data = fixture()
+  const [container] = data.containerDefinitions
+  container.environment.push({ name: 'AA_KERNEL_PROFILE_JSON', value: '{}' })
+  const originalVerification = container.secrets[1]
+  assert.notEqual(validate(data).status, 0, 'Kernel cannot use the legacy verification secret')
+  container.secrets[1] = { name: 'AA_SECURITY_RPC_URL', valueFrom: secondary }
+  assert.equal(validate(data).stdout.trim(), 'dual-independent')
+  container.secrets[1].valueFrom = primary
+  assert.notEqual(validate(data).status, 0, 'Kernel requires an independent verification secret')
+  container.secrets[1].valueFrom = secondary
+  container.secrets.push(originalVerification)
+  assert.notEqual(validate(data).status, 0, 'mixed verification secret names are ambiguous')
+  container.secrets.pop()
+  container.environment[0].value = 'single-provider-sepolia'
+  assert.notEqual(validate(data).status, 0, 'the legacy single-provider exception does not apply to Kernel')
+})
 test('deployment gate rejects duplicate and missing security fields', () => {
   for (const kind of ['environment', 'secrets']) {
     const data = fixture('single-provider-sepolia')
@@ -105,7 +122,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
   const production = read('infra/terraform/rollout_guards.tf')
   const guards = [...production.matchAll(/    precondition \{[\s\S]*?\n    \}/g)]
     .map(match => match[0]).filter(block => block.includes('var.aa_rpc_mode'))
-  assert.equal(guards.length, 3)
+  assert.equal(guards.length, 4)
   const defaults = {
     aa_rpc_mode: 'dual-independent', environment: 'sepolia', perps_chain_id: '421614',
     perps_close_assistance_enabled: false, perps_close_assistance_lens: owner,
@@ -116,6 +133,8 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
     aa_reconciler_secondary_rpc_url_kms_key_arn: '',
     application_rpc_url_ssm_parameter_name: '',
     alto_rpc_url_ssm_parameter_name: '/plether/sepolia/perps-rpc-url', provision_self_hosted_aa: true,
+    alto_entrypoint_version: '0.8', alto_entrypoint_simulation_contract_v8: '',
+    alto_sepolia_safe_mode_exception: false, provision_aa_proxy: false,
   }
   const directory = mkdtempSync(join(tmpdir(), 'plether-aa-rpc-guards-'))
   const run = args => spawnSync(terraform, args, { cwd: directory, encoding: 'utf8',
@@ -128,6 +147,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
     assert.equal(init.status, 0, init.stderr)
     const single = { aa_rpc_mode: 'single-provider-sepolia',
       aa_reconciler_secondary_rpc_url_ssm_parameter_name: '/plether/sepolia/perps-rpc-url' }
+    const kernel = { alto_entrypoint_version: '0.9', configure_native_aa_backend: false }
     for (const [overrides, accepted] of [
       [{}, true], [{ perps_close_assistance_enabled: true }, true],
       [{ ...single, perps_close_assistance_enabled: true }, false],
@@ -142,6 +162,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
       [{ ...single, aa_reconciler_secondary_rpc_url_kms_key_arn: 'wrong' }, false],
       [{ aa_rpc_mode: 'single-provider-sepolia' }, false],
       [{ aa_reconciler_secondary_rpc_url_ssm_parameter_name: '/plether/sepolia/perps-rpc-url' }, false],
+      [kernel, true], [{ ...kernel, ...single }, false],
     ]) {
       writeFileSync(join(directory, 'case.auto.tfvars.json'), JSON.stringify(overrides))
       const result = run(['plan', '-input=false', '-lock=false', '-no-color'])

@@ -1,0 +1,71 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { parseEther, toHex, zeroAddress, type Hex } from 'viem'
+import { entryPoint09Address } from 'viem/account-abstraction'
+import { KernelAttemptRecoveryControls } from '../KernelAttemptRecoveryControls'
+import type { KernelOperationAttempt } from '../kernelOperationJournal'
+import type { KernelPreparedCancellation, KernelPreparedOperation } from '../kernelRpc'
+
+const { submit } = vi.hoisted(() => ({ submit: vi.fn() }))
+
+vi.mock('../kernelOperationJournal', () => ({
+  isKernelAttemptPending: () => true,
+  kernelAttemptCanCancel: () => true,
+  kernelAttemptCanDiscard: () => false,
+  kernelAttemptCanRetry: () => false,
+  kernelCancellationCanDiscard: () => false,
+  kernelCancellationCanRetry: () => false,
+  signAndSubmitKernelCancellation: submit,
+}))
+
+const sender = '0x0000000000000000000000000000000000000016' as const
+const signature = `0x${'a1'.repeat(65)}` as Hex
+const original: KernelPreparedOperation = {
+  version: 1,
+  preparationId: toHex(2n, { size: 32 }),
+  mode: 'eth',
+  entryPoint: entryPoint09Address,
+  operation: {
+    sender, nonce: 2n, callData: '0x1234', signature: '0x',
+    callGasLimit: 40_000n, verificationGasLimit: 75_000n, preVerificationGas: 50_000n,
+    maxFeePerGas: 1_000_000n, maxPriorityFeePerGas: 1_000n,
+  },
+  userOperationHash: toHex(3n, { size: 32 }),
+  maxNetworkGasWei: 165_000_000_000n,
+  expiresAt: 1_800_000_000,
+  recoveryToken: 'test-credential',
+}
+const attempt: KernelOperationAttempt = {
+  version: 1,
+  scope: { deployment: 'kernel-test', chainId: 421614, entryPoint: entryPoint09Address, sender },
+  ownerAddress: '0x0000000000000000000000000000000000000017',
+  action: 'place-order', prepared: original, signature, nonceKey: 0n,
+  expectedPaymaster: zeroAddress, phase: 'sending', createdAt: 0, updatedAt: 0,
+}
+
+describe('Kernel cancellation review', () => {
+  it('displays the ETH quote before approving the wallet signature', async () => {
+    const cancellation: KernelPreparedCancellation = {
+      ...original,
+      mode: 'eth',
+      cancelsUserOperationHash: original.userOperationHash,
+      userOperationHash: toHex(4n, { size: 32 }),
+      maxNetworkGasWei: parseEther('0.004'),
+      operation: { ...original.operation, factory: sender, factoryData: '0x1234' },
+    }
+    const quoteCancellation = vi.fn(async () => cancellation)
+    const signPrepared = vi.fn(async () => signature)
+    submit.mockImplementationOnce(async () => signPrepared())
+    render(<KernelAttemptRecoveryControls attempt={attempt} quoteCancellation={quoteCancellation} signPrepared={signPrepared} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review cancellation' }))
+    expect(await screen.findByText('0.004 ETH')).toBeInTheDocument()
+    expect(screen.getByText('The quote includes deployment of this Trading Account.')).toBeInTheDocument()
+    expect(quoteCancellation).toHaveBeenCalledExactlyOnceWith(original, signature)
+    expect(signPrepared).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve cancellation' }))
+    await waitFor(() => expect(signPrepared).toHaveBeenCalledTimes(1))
+    expect(submit).toHaveBeenCalledExactlyOnceWith(attempt, cancellation, signPrepared)
+  })
+})

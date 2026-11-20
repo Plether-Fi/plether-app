@@ -263,17 +263,17 @@ jobs:
               '[.containerDefinitions[]
                 | select(.name == $container)
                 | (.secrets // [])[]
-                | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL")] | length' \
+                | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL" or .name == "AA_SECURITY_RPC_URL")] | length' \
               "$definition_file")
             if [ "$requires_secret" = true ] && [ "$secret_count" -ne 1 ]; then
-              echo "::error title=Secondary RPC secret missing::${family}/${container} must contain exactly one AA_RECONCILER_SECONDARY_RPC_URL reference."
+              echo "::error title=Secondary RPC secret missing::${family}/${container} must contain exactly one AA secondary RPC reference."
               return 1
             fi
             if [ "$secret_count" -eq 0 ]; then
               return 0
             fi
             if [ "$secret_count" -ne 1 ]; then
-              echo "::error title=Secondary RPC secret ambiguous::${family}/${container} contains duplicate AA_RECONCILER_SECONDARY_RPC_URL references."
+              echo "::error title=Secondary RPC secret ambiguous::${family}/${container} contains duplicate AA secondary RPC references."
               return 1
             fi
 
@@ -291,7 +291,7 @@ jobs:
               '.containerDefinitions[]
                | select(.name == $container)
                | .secrets[]
-               | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL")
+               | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL" or .name == "AA_SECURITY_RPC_URL")
                | .valueFrom' "$definition_file")")
             execution_roles+=("$(jq -er '.executionRoleArn' "$definition_file")")
           }
@@ -1383,6 +1383,48 @@ jobs:
                 type == "string"
                 and test("^0x[0-9A-Fa-f]{40}$")
                 and ascii_downcase != "0x0000000000000000000000000000000000000000";
+              def kernel_configuration($main; $environment):
+                (($main.secrets // []) | map(.name) | sort) as $secrets
+                | ($secrets == ["AA_SECURITY_RPC_URL", "DATABASE_URL", "PERPS_RPC_URL"]
+                   or $secrets == ["AA_SECURITY_RPC_URL", "DATABASE_URL", "PERPS_RPC_AUTH_TOKEN", "PERPS_RPC_URL"])
+                and (($main.environment // []) | map(.name) | sort) == ([
+                      "AA_KERNEL_PROFILE_JSON",
+                      "AA_KERNEL_SPONSORSHIP_JSON",
+                      "AA_KERNEL_MAX_SAFE_LAG_SECONDS",
+                      "AA_KERNEL_RECONCILER_POLL_SECONDS",
+                      "AA_KERNEL_RECONCILER_BATCH_BLOCKS",
+                      "AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS",
+                      "HOME", "PERPS_CHAIN_ID", "TMPDIR"
+                    ] | sort)
+                and $environment.HOME == "/tmp"
+                and $environment.TMPDIR == "/tmp"
+                and $environment.PERPS_CHAIN_ID == "421614"
+                and ($environment.AA_KERNEL_RECONCILER_POLL_SECONDS | canonical_positive_decimal and (tonumber <= 60))
+                and ($environment.AA_KERNEL_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= 10000))
+                and ($environment.AA_KERNEL_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 600))
+                and $environment.AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS == "60"
+                and (
+                  if $desired_count == "0" and $environment.AA_KERNEL_PROFILE_JSON == "" then
+                    $environment.AA_KERNEL_SPONSORSHIP_JSON == ""
+                  else
+                    ($environment.AA_KERNEL_PROFILE_JSON | fromjson) as $profile
+                    | $profile.chainId == 421614
+                      and $profile.entryPointVersion == "0.9"
+                      and ($profile.entryPoint | ascii_downcase) == "0x433709009b8330fda32311df1c2afa402ed8d009"
+                      and $profile.accountVersion == "kernel-v4-uups"
+                      and (
+                        if $desired_count == "0" and $environment.AA_KERNEL_SPONSORSHIP_JSON == "" then true
+                        elif $desired_count == "0" or $desired_count == "1" then
+                          ($environment.AA_KERNEL_SPONSORSHIP_JSON | fromjson) as $sponsorship
+                          | ($sponsorship.paymaster | canonical_nonzero_address)
+                            and ($sponsorship.paymasterCodeHash | canonical_nonzero_hash)
+                            and ($sponsorship.deploymentBlock | tostring | canonical_positive_decimal)
+                            and ($sponsorship.deploymentBlockHash | canonical_nonzero_hash)
+                          else false
+                        end
+                      )
+                  end
+                );
               .family == $family
               and .status == "ACTIVE"
               and .networkMode == "awsvpc"
@@ -1413,10 +1455,15 @@ jobs:
                             {"containerName":"aa-reconciler-tmp-init","condition":"SUCCESS"},
                             {"containerName":"otel-log-router","condition":"START"}
                           ] | sort_by([.containerName, .condition]))
-                  and (($main.secrets // []) | map(select(.name != "PERPS_RPC_AUTH_TOKEN") | .name) | sort)
+                  and all(($main.secrets // [])[]; ((.valueFrom // "") | length) > 0)
+                  and (
+                    (envmap($main)) as $profile_environment
+                    | if $profile_environment | has("AA_KERNEL_PROFILE_JSON") then
+                      kernel_configuration($main; $profile_environment)
+                    else
+                      (($main.secrets // []) | map(select(.name != "PERPS_RPC_AUTH_TOKEN") | .name) | sort)
                       == (["AA_RECONCILER_SECONDARY_RPC_URL", "DATABASE_URL", "PERPS_RPC_URL"] | sort)
                   and ([($main.secrets // [])[] | select(.name == "PERPS_RPC_AUTH_TOKEN")] | length) <= 1
-                  and all(($main.secrets // [])[]; ((.valueFrom // "") | length) > 0)
                   and (($main.environment // []) | map(.name) | sort)
                       == ([
                             "AA_PAYMASTER_ADDRESS",
@@ -1464,6 +1511,8 @@ jobs:
                       and ($environment.AA_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= $max_log_range))
                       and ($environment.AA_RECONCILER_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 1800))
                       and ($environment.AA_PAYMASTER_MIN_DEPOSIT_WEI | canonical_positive_decimal)
+                  )
+                    end
                   )
                   and $tmp.essential == false
                   and $tmp.readonlyRootFilesystem == true

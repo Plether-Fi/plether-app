@@ -64,6 +64,115 @@ test('Alto checks out the exact reviewed policy before invoking repository files
   assert.match(step, /sparse-checkout: \.github\/scripts/)
 })
 
+test('Alto selects a single reviewed EntryPoint and its corresponding simulator and smoke route', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const selection = source.match(/^\s+case "\$ALTO_ENTRYPOINT_VERSION" in\n[\s\S]*?^\s+esac$/m)?.[0]
+  assert.ok(selection, 'execute the actual workflow profile selection')
+  const entrypointV8 = '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+  const entrypointV9 = '0x433709009B8330FDa32311DF1C2AFA402eD8D009'
+  const v9RuntimeHash = '0x' + 'ab'.repeat(32)
+  const cases = [
+    ['0.8', '', [entrypointV8, 'ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8', '/api/aa/rpc']],
+    ['0.9', v9RuntimeHash, [entrypointV9, 'ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9', '/api/aa/kernel/rpc']],
+    ['0.9', '', null],
+    ['0.9', '0x' + '0'.repeat(64), null],
+    ['0.9', '0x1234', null],
+    ['0.7', v9RuntimeHash, null],
+  ]
+  for (const [version, hash, expected] of cases) {
+    const result = spawnSync('bash', ['-euc', `${selection}\nprintf '%s\\n' "$expected_entrypoint" "$simulation_name" "$smoke_path"`], {
+      encoding: 'utf8',
+      env: {...process.env, ALTO_ENTRYPOINT_VERSION: version, ALTO_V09_ENTRYPOINT_RUNTIME_HASH: hash, ALTO_ENTRYPOINT_V8: entrypointV8, ALTO_ENTRYPOINT_V9: entrypointV9},
+    })
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected !== null, result.stderr + result.stdout)
+    if (expected) assert.deepEqual(result.stdout.trim().split('\n'), expected)
+  }
+})
+
+test('Alto smoke rejects ambiguous supported EntryPoint responses', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const smoke = source.split(/^\s+authenticated_status=\$\(curl/m)[1]?.split('gas_price_status=$(curl')[0]
+  const filter = smoke?.match(/'([^']+)' \\\n\s+"\$authenticated_body"/)?.[1]
+  assert.ok(filter, 'execute the actual workflow smoke filter')
+  const ep = '0x433709009b8330fda32311df1c2afa402ed8d009'
+  const other = '0x4337084d9e255ff0702461cf8895ce9e3b5ff108'
+  const cases = [
+    [{result: [ep.toUpperCase()]}, true],
+    [{result: [other]}, false],
+    [{result: [ep, other]}, false],
+    [{result: [ep, ep]}, false],
+    [{result: []}, false],
+    [{result: ep}, false],
+    [{result: {entrypoint: ep}}, false],
+    [{result: [null]}, false],
+    [{error: {code: -32602}, result: [ep]}, false],
+  ]
+  for (const [body, expected] of cases) {
+    const result = spawnSync('jq', ['-e', '--arg', 'entrypoint', ep, filter], {input: JSON.stringify(body), encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected, result.stderr + JSON.stringify(body))
+  }
+})
+
+test('new EntryPoint 0.9 Alto deployments require the actual custom JavaScript tracer response', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const traceProbe = source.match(/^([ \t]+)assert_v09_trace_capability\(\) \{\n[\s\S]*?^\1\}$/m)?.[0]
+  const traceGate = source.match(/^([ \t]+)if \[ "\$ALTO_ENTRYPOINT_VERSION" = "0.9" \] && \[ "\$ALTO_ACTION" != "rollback" \]; then\n\1  assert_v09_trace_capability\n\1fi$/m)?.[0]
+  assert.ok(traceProbe && traceGate, 'execute the actual workflow probe and gate')
+  const entrypoint = '0x433709009B8330FDa32311DF1C2AFA402eD8D009'
+  const word = '0'.repeat(64)
+  const valid = { jsonrpc: '2.0', id: 1, result: { probe: 'plether-v09', sawReturn: true, output: `0x${word}` } }
+  const cases = [
+    { label: 'valid 0.9 deploy tracer', reply: valid, requiresTrace: true, accepted: true },
+    { label: 'valid 0.9 bootstrap tracer', action: 'bootstrap-simulations', reply: valid, requiresTrace: true, accepted: true },
+    { label: 'legacy 0.8 unaffected', version: '0.8', requiresTrace: false, accepted: true },
+    { label: 'rollback unaffected', action: 'rollback', requiresTrace: false, accepted: true },
+    { label: 'debug disabled', reply: { error: { code: -32601 } }, requiresTrace: true, accepted: false },
+    { label: 'native tracer only', reply: { result: { type: 'CALL', output: `0x${word}` } }, requiresTrace: true, accepted: false },
+    { label: 'wrong request id', reply: { ...valid, id: 2 }, requiresTrace: true, accepted: false },
+    { label: 'missing return step', reply: { ...valid, result: { ...valid.result, sawReturn: false } }, requiresTrace: true, accepted: false },
+    { label: 'unexpected contract output', reply: { ...valid, result: { ...valid.result, output: '0x01' } }, requiresTrace: true, accepted: false },
+    { label: 'overlong valid prefix', raw: JSON.stringify(valid) + ' '.repeat(4096), requiresTrace: true, accepted: false },
+    { label: 'RPC transport error', reply: valid, transportError: true, requiresTrace: true, accepted: false },
+  ]
+  for (const { label, version = '0.9', action = 'deploy', reply, raw, transportError, requiresTrace, accepted } of cases) {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `
+      rpc_url='https://tracer.example.invalid'
+      entrypoint="$TEST_ENTRYPOINT"
+      exec 3>&1
+      rpc_call() {
+        [ "$1" = "$rpc_url" ] && [ "$2" = 'debug_traceCall' ] || return 1
+        # Log only the first line, with the JSON formatted on a single line by jq.
+        printf '%s\n' "$3" >&3
+        printf '%s' "$TEST_REPLY"
+        [ "$TEST_RPC_OK" = 'yes' ]
+      }
+      ${traceProbe}
+      ${traceGate}
+    `], {encoding: 'utf8', env: {
+      ...process.env, ALTO_ENTRYPOINT_VERSION: version, ALTO_ACTION: action, TEST_ENTRYPOINT: entrypoint,
+      TEST_REPLY: raw ?? JSON.stringify(reply ?? null), TEST_RPC_OK: transportError ? 'no' : 'yes',
+    }})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, accepted, `${label}: ${result.stdout} ${result.stderr}`)
+    const [params, ...messages] = result.stdout.trim().split('\n')
+    if (requiresTrace) {
+      const [transaction, block, options] = JSON.parse(params)
+      assert.deepEqual(transaction, {to: entrypoint, data: `0x35567e1a${word}${word}`})
+      assert.equal(block, 'latest')
+      assert.equal(options.timeout, '5s')
+      assert.match(options.tracer, /step: function\(log\)/)
+      assert.deepEqual(messages, accepted ? [] : [
+        '::error title=Alto RPC capability preflight failed::EntryPoint 0.9 requires ALTO_RPC_URL to execute a custom JavaScript debug_traceCall tracer.',
+      ])
+    } else {
+      assert.equal(result.stdout, '', label)
+    }
+    assert.equal(result.stderr, '', label)
+  }
+})
+
 test('backend public AA gate loads policy without cleaning generated task files', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
   const deploy = source.split('\n  deploy:\n')[1]

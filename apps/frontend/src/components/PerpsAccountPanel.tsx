@@ -1,6 +1,8 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
+import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
+import { useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import { usePerpsCloseMargin } from '../hooks/usePerpsCloseMargin'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
@@ -391,12 +393,14 @@ function PositionView({
   onClosePosition?: () => void
 }) {
   const { addPositionMargin } = usePerpsTrading()
+  const gasReview = usePerpsGasReview()
+  const gasApproval = useKernelGasApproval(gasReview)
   const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(
     initialPositionMarginModalOpen ?? false
   )
   const [positionMarginAmount, setPositionMarginAmount] = useState('')
   const [positionMarginStatus, setPositionMarginStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
-  const [positionMarginError, setPositionMarginError] = useState<string | undefined>()
+  const [positionMarginError, setPositionMarginError] = useState<Error>()
 
   if (isConnected === false) return <EmptyState label="connected wallet" />
   if (isLoading) return <LoadingState label="position data" />
@@ -413,6 +417,7 @@ function PositionView({
   const canSubmitPositionMargin =
     positionMarginAmountRaw > 0n &&
     !isPositionMarginTooHigh &&
+    gasReview?.available !== false &&
     positionMarginStatus !== 'pending'
 
   function handleClosePositionMarginModal() {
@@ -429,14 +434,15 @@ function PositionView({
     setPositionMarginStatus('pending')
     setPositionMarginError(undefined)
     try {
-      await addPositionMargin(positionMarginAmountRaw)
+      if (gasReview) await addPositionMargin(positionMarginAmountRaw, gasApproval.review)
+      else await addPositionMargin(positionMarginAmountRaw)
       onAccountRefresh?.()
       setIsPositionMarginModalOpen(false)
       setPositionMarginAmount('')
       setPositionMarginStatus('idle')
     } catch (error) {
       setPositionMarginStatus('failed')
-      setPositionMarginError(error instanceof Error ? error.message : 'Add position margin failed')
+      setPositionMarginError(error instanceof Error ? error : new Error('Add position margin failed'))
     }
   }
 
@@ -600,7 +606,7 @@ function PositionView({
         onClose={handleClosePositionMarginModal}
         title="Edit Position Margin"
         size="md"
-        footer={
+        footer={gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} /> : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               type="button"
@@ -620,10 +626,10 @@ function PositionView({
                 void handleAddPositionMargin()
               }}
             >
-              Add Margin
+              {gasReview ? 'Review network gas' : 'Add Margin'}
             </Button>
           </div>
-        }
+        )}
       >
         <div className="space-y-5">
           <p className="text-sm leading-5 text-content-secondary">
@@ -640,6 +646,7 @@ function PositionView({
               label="Add margin"
               inputMode="decimal"
               value={positionMarginAmount}
+              disabled={positionMarginStatus === 'pending'}
               placeholder="0"
               rightElement={<TokenLabel token={PERPS_SETTLEMENT_TOKEN_LABEL} />}
               error={isPositionMarginTooHigh ? 'Amount exceeds free USDG after accrued carry.' : undefined}
@@ -675,9 +682,14 @@ function PositionView({
             <AccountSummaryRow label="Resulting leverage" value={riskUnavailable ? 'Unavailable' : formatPositionLeverageForMargin(position, resultingPositionMargin)} />
           </dl>
 
+          <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={positionMarginError} showSettings={positionMarginStatus !== 'pending'} onOpenSettings={() => {
+            handleClosePositionMarginModal()
+            gasReview?.openActivity()
+          }} />
+
           {positionMarginError ? (
             <div className="whitespace-pre-line [overflow-wrap:anywhere] border border-[#FF572D]/40 bg-[#FF572D]/10 p-3 text-sm text-[#FFAB96]">
-              {positionMarginError}
+              {positionMarginError.message}
             </div>
           ) : null}
 
@@ -949,8 +961,10 @@ function TraderClaimCard({
   onAccountRefresh?: () => void
 }) {
   const { settleTraderClaim } = usePerpsTrading()
+  const gasReview = usePerpsGasReview()
+  const gasApproval = useKernelGasApproval(gasReview)
   const [status, setStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
-  const [error, setError] = useState<string | undefined>()
+  const [error, setError] = useState<Error>()
 
   if (amount === undefined || amount <= 0n) return null
 
@@ -958,12 +972,13 @@ function TraderClaimCard({
     setStatus('pending')
     setError(undefined)
     try {
-      await settleTraderClaim()
+      if (gasReview) await settleTraderClaim(gasApproval.review)
+      else await settleTraderClaim()
       setStatus('idle')
       onAccountRefresh?.()
     } catch (cause) {
       setStatus('failed')
-      setError(cause instanceof Error ? cause.message : 'Claim settlement failed')
+      setError(cause instanceof Error ? cause : new Error('Claim settlement failed'))
     }
   }
 
@@ -979,19 +994,26 @@ function TraderClaimCard({
             {hasPosition ? 'This claim supports position equity. Settlement converts it to position margin while the position is open.' : 'Settle the claim into account funds before withdrawing it.'}
           </p>
         </div>
-        <Button
+        {!gasApproval.quote ? <Button
           size="sm"
           className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
           isLoading={status === 'pending'}
+          disabled={gasReview?.available === false}
           onClick={() => {
             void handleSettleClaim()
           }}
         >
-          Settle Claim
-        </Button>
+          {gasReview ? 'Review Claim Settlement' : 'Settle Claim'}
+        </Button> : null}
       </div>
+      {gasReview ? (
+        <div className="mt-3 space-y-3">
+          <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={status !== 'pending'} />
+          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} /> : null}
+        </div>
+      ) : null}
       {error ? (
-        <p className="mt-3 whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{error}</p>
+        <p className="mt-3 whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{error.message}</p>
       ) : null}
     </div>
   )

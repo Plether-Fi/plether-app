@@ -1,10 +1,11 @@
 vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { renderHook } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, type Address, type Hex } from 'viem'
 import { ERC20_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI } from '../../contracts/abis'
+import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -12,6 +13,7 @@ const USER_OPERATION_HASH = `0x${'77'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 const SETTLEMENT_TOKEN = '0x0000000000000000000000000000000000000001' as const
 const CLEARINGHOUSE = '0x0000000000000000000000000000000000000002' as const
+const kernelScope = { deployment: 'test-kernel', chainId: 421614, sender: ACCOUNT }
 
 const mocks = vi.hoisted(() => ({
   executeSponsoredPerpsAction: vi.fn(),
@@ -20,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   waitForTransactionReceipt: vi.fn(),
   invalidateQueries: vi.fn(),
   readinessBlocker: vi.fn(),
+  quoteAction: vi.fn(),
+  useKernel: false,
 }))
 
 vi.mock('../../perps-aa/readiness', () => ({
@@ -83,8 +87,8 @@ vi.mock('../../perps-aa', async (importOriginal) => {
       accountAddress: '0x2222222222222222222222222222222222222222',
       chainId: 421614,
       isAaManifestConfigured: true,
-      sponsorshipEnabled: true,
-      manifest,
+      sponsorshipEnabled: !mocks.useKernel,
+      manifest: mocks.useKernel ? { ...manifest, smartAccountMode: 'kernel' } : manifest,
       identity: null,
       proposedIdentity: null,
       changedIdentityFields: [],
@@ -102,6 +106,10 @@ vi.mock('../../perps-aa', async (importOriginal) => {
         accountAddress: '0x2222222222222222222222222222222222222222',
         entryPoint: '0x3333333333333333333333333333333333333333',
       },
+      ...(mocks.useKernel ? {
+        kernel: { quoteAction: mocks.quoteAction },
+        gasPayment: { scope: kernelScope, readiness: { eth: true, sponsored: false } },
+      } : {}),
     }),
   }
 })
@@ -124,6 +132,8 @@ describe('usePerpsTrading sponsorship route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.readinessBlocker.mockReset()
+    mocks.useKernel = false
+    localStorage.clear()
     mocks.executeSponsoredPerpsAction.mockResolvedValue({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -226,6 +236,27 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(decodeFunctionData({ abi: ERC20_ABI, data: action.calls[1].data })).toEqual({
       functionName: 'transfer', args: [OWNER, 10_000_000n],
     })
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+  })
+
+  it('holds an ETH-paid Kernel withdrawal for approval of the exact quote even during a sponsorship outage', async () => {
+    mocks.useKernel = true
+    writeGasPaymentPreference(kernelScope, 'eth')
+    const quote = { mode: 'eth' as const, maxNetworkGasWei: 470_000_000n, expiresAt: Math.floor(Date.now() / 1_000) + 60 }
+    mocks.quoteAction.mockResolvedValueOnce(quote)
+    const approval = Promise.withResolvers<void>()
+    const review = vi.fn(() => approval.promise)
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    const withdrawing = result.current.withdrawMargin(10_000_000n, review)
+    await waitFor(() => { expect(review).toHaveBeenCalledExactlyOnceWith(quote) })
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    approval.resolve()
+    await expect(withdrawing).resolves.toBe(TRANSACTION_HASH)
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      action: mocks.quoteAction.mock.calls[0][0],
+      kernelQuote: quote,
+    }))
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 

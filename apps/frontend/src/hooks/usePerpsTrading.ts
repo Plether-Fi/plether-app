@@ -77,6 +77,10 @@ import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, g
 import { buildPlaceOrderV3Action } from '../perps-aa/orderActionV3'
 import { persistProtectionIntent, relaxedProtectionCloseLimits, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
 import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV3Bindings'
+import { readGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
+import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
+import type { PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import { kernelQuoteIsFresh } from './usePerpsGasReview'
 
 interface PrepareOrderInput {
   direction: PerpsDirection
@@ -90,6 +94,7 @@ interface PrepareOrderInput {
   positionProtection?: PositionProtectionParams
   maxSize?: boolean
   signal?: AbortSignal
+  reviewGas?: boolean
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
@@ -113,6 +118,16 @@ interface ExecuteOrderResult {
   hash: Hex
   executionPrice?: bigint
   failedReason?: number
+}
+
+export type ReviewKernelGas = (quote: KernelActionQuote) => Promise<void>
+
+async function approveKernelAction(runtime: PerpsAaSmartAccountRuntime, action: PerpsActionPlan, reviewGas?: ReviewKernelGas) {
+  if (!runtime.kernel) return undefined
+  if (!reviewGas) throw new Error('Review the network gas before approving this Trading Account action.')
+  const quote = await runtime.kernel.quoteAction(action)
+  await reviewGas(quote)
+  return quote
 }
 
 const PERPS_CONTRACT_ADDRESSES = new Set(
@@ -516,7 +531,7 @@ export function usePerpsTrading() {
     })
   }, [queryClient])
 
-  const requireSponsoredExecution = useCallback(() => {
+  const requireTradingExecution = useCallback((forWrite = true) => {
     if (!PERPS_RELEASE_IS_DEPLOYED) {
       throw new SponsoredPreflightError({ reason: 'MANIFEST_UNAVAILABLE', message: 'The perps release is prepared and has not been deployed.' })
     }
@@ -558,7 +573,7 @@ export function usePerpsTrading() {
           'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.',
       })
     }
-    if (!identity.sponsorshipEnabled) {
+    if (identity.manifest.smartAccountMode !== 'kernel' && !identity.sponsorshipEnabled) {
       throw new SponsoredPreflightError({
         reason: 'SPONSORSHIP_DISABLED',
         message:
@@ -571,6 +586,17 @@ export function usePerpsTrading() {
         message:
           'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.',
       })
+    }
+    if (identity.manifest.smartAccountMode === 'kernel') {
+      if (!aaRuntime.kernel) {
+        throw new Error('The Kernel Trading Account is unavailable.')
+      }
+      if (forWrite) {
+        const { mode } = readGasPaymentPreference(aaRuntime.gasPayment.scope)
+        if (!aaRuntime.gasPayment.readiness[mode]) {
+          throw new Error(mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.')
+        }
+      }
     }
 
     return {
@@ -594,9 +620,9 @@ export function usePerpsTrading() {
         throw new Error('Funding amount must be greater than zero')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       await refreshReadiness()
-      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, sponsored.runtime.kernel !== undefined)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const client = requireClient(publicClient)
       const hash = await writeContractAsync({
@@ -620,14 +646,15 @@ export function usePerpsTrading() {
   }, [
     invalidatePerpsReads,
     publicClient,
-    requireSponsoredExecution,
+    requireTradingExecution,
     writeContractAsync,
   ])
 
   const depositMargin = useCallback(async (
     amount: bigint,
     _allowance?: bigint,
-    source?: 'owner' | 'account'
+    source?: 'owner' | 'account',
+    reviewGas?: ReviewKernelGas,
   ) => {
     let executionStarted = false
     try {
@@ -644,9 +671,9 @@ export function usePerpsTrading() {
         })
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       await refreshReadiness()
-      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, sponsored.runtime.kernel !== undefined)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const useOwnerAuthorization = source === 'owner' || (
         source === undefined &&
@@ -717,12 +744,14 @@ export function usePerpsTrading() {
           })
         }
       }
+      const kernelQuote = await approveKernelAction(sponsored.runtime, action, reviewGas)
       executionStarted = true
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote,
         authorizationTokenToClearOnConfirmation: useOwnerAuthorization
           ? sponsored.manifest.settlementToken
           : undefined,
@@ -750,11 +779,11 @@ export function usePerpsTrading() {
     address,
     identity.manifest,
     invalidatePerpsReads,
-    requireSponsoredExecution,
+    requireTradingExecution,
     signTypedDataAsync,
   ])
 
-  const withdrawMargin = useCallback(async (amount: bigint) => {
+  const withdrawMargin = useCallback(async (amount: bigint, reviewGas?: ReviewKernelGas) => {
     try {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before withdrawing margin')
@@ -763,7 +792,7 @@ export function usePerpsTrading() {
         throw new Error('Withdraw amount must be greater than zero')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const action = buildWithdrawToOwnerAction({
         account: sponsored.accountAddress,
         owner: sponsored.ownerAddress,
@@ -776,6 +805,7 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, reviewGas),
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
@@ -785,9 +815,9 @@ export function usePerpsTrading() {
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'withdraw' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'withdraw'), { surface: 'perps', action: 'withdraw' })
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution])
+  }, [address, invalidatePerpsReads, requireTradingExecution])
 
-  const addPositionMargin = useCallback(async (amount: bigint) => {
+  const addPositionMargin = useCallback(async (amount: bigint, reviewGas?: ReviewKernelGas) => {
     try {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before adding position margin')
@@ -796,7 +826,7 @@ export function usePerpsTrading() {
         throw new Error('Position margin amount must be greater than zero')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const action = buildAddMarginAction({
         account: sponsored.accountAddress,
         cfdEngine: sponsored.manifest.cfdEngine,
@@ -807,6 +837,7 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, reviewGas),
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
@@ -816,7 +847,7 @@ export function usePerpsTrading() {
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'addPositionMargin' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'addPositionMargin'), { surface: 'perps', action: 'addPositionMargin' })
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution])
+  }, [address, invalidatePerpsReads, requireTradingExecution])
 
   const prepareOrder = useCallback(async ({
     direction,
@@ -830,6 +861,7 @@ export function usePerpsTrading() {
     positionProtection,
     maxSize,
     signal,
+    reviewGas = false,
   }: PrepareOrderInput): Promise<PreparedPerpsOrderV3> => {
     try {
       if (!address) {
@@ -850,7 +882,12 @@ export function usePerpsTrading() {
         throw new Error('Order size must use 100 plDXY increments')
       }
       const sizeDelta = requestedSizeDelta
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
+      if (sponsored.runtime.kernel) {
+        await refreshReadiness()
+        const blocker = readinessBlocker(currentReadiness(), isClose ? 'close' : 'open', undefined, true)
+        if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
+      }
       const activeOperation = useSponsoredOperationStore
         .getState()
         .getActiveOperation(sponsored.accountAddress)
@@ -861,12 +898,15 @@ export function usePerpsTrading() {
       }
       if (activeOperation?.protectionIntent) throw new Error('A protection operation is awaiting recovery. Resolve it in account activity before reviewing another order.')
       if (positionProtection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
+      if (positionProtection && sponsored.manifest.smartAccountMode === 'kernel' && !sponsored.manifest.kernel.protectionCommitsEnabled) {
+        throw new Error('New TP/SL protections are currently unavailable for this Trading Account.')
+      }
       if (activeOperation) {
         throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
       const closeAssistance = undefined
-      return await preparePerpsOrderV3(client, sponsored.manifest, {
+      const prepared = await preparePerpsOrderV3(client, sponsored.manifest, {
         closeAssistance,
         account: sponsored.accountAddress,
         direction,
@@ -880,13 +920,23 @@ export function usePerpsTrading() {
         maxSize,
         signal,
       })
+      if (sponsored.runtime.kernel && reviewGas) {
+        const request = await finalizeOrderDeadline(client, prepared)
+        signal?.throwIfAborted()
+        const protection = prepared.positionProtection
+        const action = protection
+          ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
+          : buildPlaceOrderV3Action({ account: address, orderRouter: prepared.orderRouter, request })
+        prepared.kernelQuote = await sponsored.runtime.kernel.quoteAction(action, signal, request.clientOrderId)
+      }
+      return prepared
     } catch (error) {
       if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'review' })
       throw new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
     }
-  }, [address, publicClient, requireSponsoredExecution])
+  }, [address, publicClient, requireTradingExecution])
 
   const commitOrder = useCallback(async ({
     direction,
@@ -949,7 +999,7 @@ export function usePerpsTrading() {
       const client = requireClient(publicClient)
       diagnosticClient = client
       debugPerpsCommit('client-ready')
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       if (
         sponsored.manifest.version !== preparedOrder.manifestVersion ||
         !isAddressEqual(sponsored.manifest.orderRouter, preparedOrder.orderRouter) ||
@@ -1026,6 +1076,9 @@ export function usePerpsTrading() {
       })
 
       const assisted = preparedOrder.sponsoredClose
+      if (sponsored.runtime.kernel && (assisted || !preparedOrder.kernelQuote || !kernelQuoteIsFresh(preparedOrder.kernelQuote))) {
+        throw new Error('Review a current network gas quote before committing this order.')
+      }
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
         : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
         : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
@@ -1064,6 +1117,7 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: executionRuntime,
+        kernelQuote: preparedOrder.kernelQuote,
         orderDraft,
         orderRequestV3: { ...persistPerpsOrderRequestV3(address, request),
           closeAssistance: assisted ? { amountAssets: assisted.amountAssets.toString(), lens: assisted.config.lens,
@@ -1124,7 +1178,7 @@ export function usePerpsTrading() {
 
       throw reportedTransactionError(error, message, { surface: 'perps', action: 'commit' })
     }
-  }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution, walletClient])
+  }, [address, invalidatePerpsReads, publicClient, requireTradingExecution, walletClient])
 
   const executeOrder = useCallback(async (orderId: bigint): Promise<ExecuteOrderResult> => {
     void orderId
@@ -1138,7 +1192,7 @@ export function usePerpsTrading() {
     candidate?: PerpsKeeperExecutionProgress & { observedInclusion?: { blockNumber: bigint; blockHash: Hex } },
   ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
     const client = requireClient(publicClient)
-    const sponsored = requireSponsoredExecution()
+    const sponsored = requireTradingExecution(false)
     if (candidate) {
       if (candidate.orderId !== orderId || !isAddressEqual(candidate.account, sponsored.accountAddress)
         || !isAddressEqual(candidate.orderRouter, sponsored.manifest.orderRouter)
@@ -1207,6 +1261,7 @@ export function usePerpsTrading() {
         receiptHash: verified.receiptHash, receipt: verified.receipt, transactionHash: transaction.transactionHash,
         transactionBlockNumber: transaction.blockNumber, transactionBlockHash: transaction.blockHash }
     }
+
     const safe = await client.getBlock({ blockTag: 'safe' })
     const terminal = await client.readContract({
       address: sponsored.manifest.orderLifecycleBook,
@@ -1264,7 +1319,7 @@ export function usePerpsTrading() {
       transactionBlockNumber: event.blockNumber,
       transactionBlockHash: event.blockHash,
     }
-  }, [publicClient, requireSponsoredExecution])
+  }, [publicClient, requireTradingExecution])
 
   const cleanupExpiredOrder = useCallback(async (
     orderId: bigint
@@ -1275,13 +1330,13 @@ export function usePerpsTrading() {
     )
   }, [])
 
-  const settleTraderClaim = useCallback(async () => {
+  const settleTraderClaim = useCallback(async (reviewGas?: ReviewKernelGas) => {
     try {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before settling a claim')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const action = buildSettleTraderClaimAction({
         account: sponsored.accountAddress,
         cfdEngine: sponsored.manifest.cfdEngine,
@@ -1291,6 +1346,7 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, reviewGas),
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
@@ -1300,7 +1356,7 @@ export function usePerpsTrading() {
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'settleClaim' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'settleClaim'), { surface: 'perps', action: 'settleClaim' })
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution])
+  }, [address, invalidatePerpsReads, requireTradingExecution])
 
   const abandonDepositAuthorization = useCallback(() => {
     if (
@@ -1325,11 +1381,15 @@ export function usePerpsTrading() {
     protectionId?: bigint
     params?: PositionProtectionParams
     onStatus?: (status: SponsoredExecutionStatus) => void
+    reviewGas?: ReviewKernelGas
   }) => {
     try {
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const client = requireClient(publicClient)
       if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
+      if (input.action !== 'cancel' && sponsored.manifest.smartAccountMode === 'kernel' && !sponsored.manifest.kernel.protectionCommitsEnabled) {
+        throw new Error('New TP/SL protections are currently unavailable for this Trading Account.')
+      }
       await verifyPerpsV3DeploymentBindings(client, sponsored.manifest)
       await verifyProtectionDeployment(client, sponsored.manifest)
       const book = sponsored.manifest.positionProtectionBook
@@ -1353,6 +1413,7 @@ export function usePerpsTrading() {
       }
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest, ownerAddress: sponsored.ownerAddress, runtime: sponsored.runtime, action,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, input.reviewGas),
         protectionIntent: persistProtectionIntent(book, params, input.protectionId),
         onStatus: input.onStatus,
       })
@@ -1366,7 +1427,7 @@ export function usePerpsTrading() {
       const sponsorError = findSponsorRequestError(error)
       throw reportedTransactionError(error, sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { surface: 'perps', action: 'protection' })
     }
-  }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
+  }, [invalidatePerpsReads, publicClient, requireTradingExecution])
 
   return {
     managePositionProtection,

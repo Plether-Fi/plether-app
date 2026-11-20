@@ -265,6 +265,65 @@ run "preserve_singapore_identity" {
     error_message = "Preparation must not start services or enable issuance."
   }
 }
+run "accept_explicit_kernel_alto_profile" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
+    alto_desired_count                     = 1
+  }
+  assert {
+    condition = local.alto_safe_mode && local.alto_entrypoint_simulation_environment == {
+      name  = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9"
+      value = "0x1111111111111111111111111111111111111111"
+    }
+    error_message = "Kernel Alto must use safe mode and the single v0.9 simulator binding."
+  }
+  assert {
+    condition     = !local.native_aa_backend_configured && !local.kernel_aa_backend_configured && !local.aa_gateway_enabled
+    error_message = "Selecting the v0.9 bundler by itself must not configure, expose, or fund execution."
+  }
+}
+run "reject_kernel_alto_with_v8_entrypoint" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_simulation_contract_v8 = ""
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_kernel_without_simulator" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_desired_count                     = 1
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_kernel_with_safe_mode_exception" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_sepolia_safe_mode_exception       = true
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_kernel_protection_without_payment_mode" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    enable_kernel_aa_protection_commits    = true
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
 run "deployment_metadata_permissions" {
   command = plan
   assert {
@@ -615,5 +674,175 @@ run "liquidation_backlog_monitoring" {
   assert {
     condition     = contains(aws_cloudwatch_metric_alarm.liquidation_backlog["without-progress"].alarm_actions, var.operations_alarm_sns_topic_arn)
     error_message = "Backlog alarms must reach the configured operations destination."
+  }
+}
+
+run "kernel_canary_is_absent_by_default" {
+  command = plan
+  assert {
+    condition = (length(aws_ecs_service.kernel_canary_alto) == 0
+      && length(aws_ecs_service.kernel_canary_api) == 0
+      && length(aws_ecs_service.kernel_canary_reconciler) == 0
+      && length(aws_lb_listener_rule.kernel_canary_api) == 0
+      && length(aws_ecr_repository.kernel_canary_api) == 0
+      && length(aws_ecr_repository.kernel_canary_alto) == 0
+    && length(aws_kms_key.kernel_canary_paymaster) == 0)
+    error_message = "Kernel canary must create no services, route or signing key by default."
+  }
+}
+
+run "kernel_canary_repositories_stage_without_services" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories = true
+  }
+  assert {
+    condition = (length(aws_ecr_repository.kernel_canary_api) == 1
+      && length(aws_ecr_repository.kernel_canary_alto) == 1
+      && length(aws_ecs_service.kernel_canary_api) == 0
+      && length(aws_lb_listener_rule.kernel_canary_api) == 0
+    && length(aws_iam_role_policy.github_deploy_kernel_canary_ecr_scan) == 1)
+    error_message = "Canary image repositories and exact scan permissions must stage before any ECS task or public path exists."
+  }
+  assert {
+    condition     = contains(local.github_actions_oidc_subjects, "repo:Plether-Fi/plether-app:environment:backend-admin-sepolia")
+    error_message = "The protected backend image workflow must be able to assume the scoped deployment role."
+  }
+}
+
+run "reject_kernel_canary_mutable_images" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories = true
+    provision_kernel_canary              = true
+    kernel_canary_alto_image             = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia:latest"
+    kernel_canary_api_image              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia:latest"
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "kernel_canary_stages_dark_with_isolated_roles" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories = true
+    provision_kernel_canary              = true
+    kernel_canary_alto_image             = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    kernel_canary_api_image              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+  assert {
+    condition = (aws_ecs_service.kernel_canary_alto[0].desired_count == 0
+      && aws_ecs_service.kernel_canary_api[0].desired_count == 0
+      && aws_ecs_service.kernel_canary_reconciler[0].desired_count == 0
+    && length(aws_lb_listener_rule.kernel_canary_api) == 0)
+    error_message = "Provisioning the canary skeleton must keep all tasks and the public path dark."
+  }
+  assert {
+    condition = (aws_iam_role.kernel_canary_task["alto"].name != aws_iam_role.alto_task[0].name
+      && aws_iam_role.kernel_canary_task["api"].name != aws_iam_role.api_task.name
+    && aws_kms_alias.kernel_canary_paymaster[0].name != aws_kms_alias.aa_paymaster_signer[0].name)
+    error_message = "Canary tasks and paymaster signer must not share live v0.8 IAM and KMS identities."
+  }
+}
+
+run "reject_kernel_canary_shared_executor" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories                = true
+    provision_kernel_canary                             = true
+    kernel_canary_alto_image                            = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    kernel_canary_api_image                             = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    kernel_canary_alto_executor_keys_ssm_parameter_name = "/plether/sepolia/alto-executor-private-keys"
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "reject_kernel_canary_premature_route" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories = true
+    provision_kernel_canary              = true
+    kernel_canary_alto_image             = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    kernel_canary_api_image              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    kernel_canary_route_enabled          = true
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "qualified_kernel_alto_remains_private" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories = true
+    provision_kernel_canary              = true
+    kernel_canary_alto_image             = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    kernel_canary_api_image              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    provision_sepolia_rpc                = true
+    sepolia_rpc = {
+      ami_id                   = "ami-0123456789abcdef0"
+      nitro_image              = "offchainlabs/nitro-node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      snapshot_url             = "https://snapshot.arbitrum.foundation/sepolia-rollup/2026-11-20-abcdef/"
+      snapshot_metadata_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      hostname                 = "rpc-internal.sepolia.example.com"
+      certificate_arn          = "arn:aws:acm:ap-southeast-1:932542905614:certificate/11111111-1111-1111-1111-111111111111"
+      parent_parameter         = "/plether/sepolia/rpc-parent-url"
+      gateway_token_parameter  = "/plether/sepolia/rpc-gateway-token"
+      backup_url_parameter     = "/plether/sepolia/rpc-backup-url"
+      gateway_image            = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-rpc-gateway-sepolia@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+    operations_alarm_sns_topic_arn                  = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"
+    kernel_canary_simulators_attested               = true
+    kernel_canary_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
+    kernel_canary_pimlico_simulation_contract       = "0x2222222222222222222222222222222222222222"
+    kernel_canary_alto_desired_count                = 1
+  }
+  assert {
+    condition = (aws_ecs_service.kernel_canary_alto[0].desired_count == 1
+      && aws_ecs_service.kernel_canary_api[0].desired_count == 0
+      && length(aws_lb_listener_rule.kernel_canary_api) == 0
+    && aws_vpc_security_group_ingress_rule.kernel_canary_rpc_gateway_from_alto[0].from_port == 443)
+    error_message = "Qualified Alto may reach only the private Nitro gateway while the canary API and public path remain dark."
+  }
+}
+
+run "qualified_kernel_route_targets_only_canary_api" {
+  command = plan
+  variables {
+    provision_kernel_canary_repositories = true
+    provision_kernel_canary              = true
+    kernel_canary_alto_image             = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    kernel_canary_api_image              = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    provision_sepolia_rpc                = true
+    sepolia_rpc = {
+      ami_id                   = "ami-0123456789abcdef0"
+      nitro_image              = "offchainlabs/nitro-node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      snapshot_url             = "https://snapshot.arbitrum.foundation/sepolia-rollup/2026-11-20-abcdef/"
+      snapshot_metadata_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      hostname                 = "rpc-internal.sepolia.example.com"
+      certificate_arn          = "arn:aws:acm:ap-southeast-1:932542905614:certificate/11111111-1111-1111-1111-111111111111"
+      parent_parameter         = "/plether/sepolia/rpc-parent-url"
+      gateway_token_parameter  = "/plether/sepolia/rpc-gateway-token"
+      backup_url_parameter     = "/plether/sepolia/rpc-backup-url"
+      gateway_image            = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-rpc-gateway-sepolia@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+    operations_alarm_sns_topic_arn                  = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"
+    kernel_canary_simulators_attested               = true
+    kernel_canary_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
+    kernel_canary_pimlico_simulation_contract       = "0x2222222222222222222222222222222222222222"
+    kernel_canary_alto_desired_count                = 1
+    kernel_canary_api_desired_count                 = 1
+    kernel_canary_db_schema_confirmed               = true
+    kernel_canary_profile_attested                  = true
+    kernel_canary_nitro_safemode_qualified          = true
+    kernel_canary_profile_json                      = "{\"chainId\":421614,\"entryPoint\":\"0x433709009b8330fda32311df1c2afa402ed8d009\",\"entryPointVersion\":\"0.9\"}"
+    kernel_canary_preview_origin                    = "https://kernel-preview.pages.dev"
+    kernel_canary_route_enabled                     = true
+    kernel_canary_eth_enabled                       = true
+    kernel_canary_owners_json                       = "[\"0x3333333333333333333333333333333333333333\"]"
+  }
+  assert {
+    condition = (aws_lb_listener_rule.kernel_canary_api[0].priority == 180
+      && toset(flatten([for c in aws_lb_listener_rule.kernel_canary_api[0].condition : [for p in c.path_pattern : p.values]])) == toset(["/api/aa/kernel/rpc"])
+      && toset(flatten([for c in aws_lb_listener_rule.kernel_canary_api[0].condition : [for h in c.host_header : h.values]])) == toset(["api.sepolia.example.com"])
+    && length(aws_ecs_service.kernel_canary_api[0].load_balancer) == 1)
+    error_message = "The qualified route must match only the exact Kernel backend path and existing API hostname, then attach only the canary API target."
   }
 }

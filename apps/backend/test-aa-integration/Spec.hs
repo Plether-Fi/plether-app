@@ -6,6 +6,7 @@ import Control.Exception (bracket, finally)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value(..), object, (.=))
 import qualified Data.Aeson.KeyMap as KM
+import Data.Either (partitionEithers)
 import Data.Int (Int64)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
@@ -24,6 +25,7 @@ import Database.PostgreSQL.Simple
   , execute_
   , query_
   )
+import KernelOperationSpec (kernelOperationSpec)
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.AA.Diagnostics (persistAttemptStage, persistBrowserStage, BrowserFailure(..))
 import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
@@ -31,6 +33,8 @@ import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.ExecutionDiagnostics (claimExecutionDiagnostics, completeExecutionDiagnostic)
 import Plether.Database.AaPreparation
 import qualified Plether.Database.AaPreparationRecovery as Recovery
+import Plether.Database.Schema (ensureTestnetFaucetSchema)
+import qualified Plether.Database.TestnetFunding as Funding
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , AaIssuanceResumeRequest (..)
@@ -77,7 +81,10 @@ main = do
   required <- (== Just "1") <$> lookupEnv "AA_INTEGRATION_REQUIRED"
   databaseUrl <- lookupEnv "AA_INTEGRATION_DATABASE_URL"
   case databaseUrl of
-    Just value -> hspec $ aaIntegrationSpec $ T.pack value
+    Just value -> hspec $ do
+      aaIntegrationSpec $ T.pack value
+      kernelOperationSpec $ withFixture $ T.pack value
+      kernelFundingSpec $ T.pack value
     Nothing
       | required ->
           die
@@ -87,6 +94,88 @@ main = do
           putStrLn
             "Native AA integration test not requested. Set \
             \AA_INTEGRATION_DATABASE_URL to run it."
+
+kernelFundingSpec :: Text -> Spec
+kernelFundingSpec databaseUrl = describe "Kernel welcome funding PostgreSQL reservation" $ do
+  it "allocates once for the program owner across concurrent differing beneficiaries" $
+    withFixture databaseUrl $ \conn -> withPeerConnection databaseUrl $ \peer -> do
+      ensureTestnetFaucetSchema conn
+      Funding.ensureMarginFundingSchema conn
+      let firstIntent = fundingClaim $ addressOf '1'
+          secondIntent = (fundingClaim $ addressOf '2') { Funding.fcOwner = addressOf 'A' }
+          program = "kernel-fresh"
+      (firstOutcome, secondOutcome) <- concurrently
+        (Funding.reserveKernelMarginFunding conn program firstIntent)
+        (Funding.reserveKernelMarginFunding peer program secondIntent)
+      case partitionEithers [firstOutcome, secondOutcome] of
+        ([Funding.KernelFundingBindingChanged], [saved]) -> do
+          Funding.getMarginFundingProgram conn (Funding.fcId saved) `shouldReturn` Just program
+          fmap (fmap Funding.fcId) (Funding.nextMarginFundingForProgram conn $ Just program)
+            `shouldReturn` Just (Funding.fcId saved)
+          fmap (fmap Funding.fcId) (Funding.nextMarginFundingForProgram conn Nothing)
+            `shouldReturn` Nothing
+          fmap (fmap Funding.fcId) (Funding.reserveKernelMarginFunding conn program saved)
+            `shouldReturn` Right (Funding.fcId saved)
+          markerAddresses <- query_ conn "SELECT address FROM testnet_faucet_claims" :: IO [Only Text]
+          markerAddresses `shouldBe` [Only $ Funding.fcAddress saved]
+          -- A separate program and a separate beneficiary have their own allocation.
+          fmap (fmap Funding.fcAddress) (Funding.reserveKernelMarginFunding conn "kernel-next" $ fundingClaim $ addressOf '3')
+            `shouldReturn` Right (addressOf '3')
+        _ -> expectationFailure "expected one allocation and one owner binding conflict"
+
+  it "lets other allocations proceed while an ownership verification retry is cooling" $
+    withFixture databaseUrl $ \conn -> do
+      ensureTestnetFaucetSchema conn
+      Funding.ensureMarginFundingSchema conn
+      let program = "kernel-fresh"
+          priorIntent = fundingClaim $ addressOf '1'
+          laterIntent = (fundingClaim $ addressOf '2') { Funding.fcOwner = addressOf 'e' }
+          nextClaimId = fmap (fmap Funding.fcId) $ Funding.nextMarginFundingForProgram conn (Just program)
+      prior <- Funding.reserveKernelMarginFunding conn program priorIntent
+      later <- Funding.reserveKernelMarginFunding conn program laterIntent
+      case (prior, later) of
+        (Right earlierClaim, Right laterClaim) -> do
+          let earlierId = Funding.fcId earlierClaim
+              laterId = Funding.fcId laterClaim
+          void $ execute conn "UPDATE testnet_margin_funding SET created_at=NOW()-INTERVAL '1 minute' WHERE id=?::uuid"
+            (Only earlierId)
+          nextClaimId `shouldReturn` Just earlierId
+          Funding.failMarginFunding conn earlierClaim "pending" "TRADING_ACCOUNT_VERIFICATION_UNAVAILABLE"
+          Funding.failMarginFunding conn laterClaim "pending" "RPC_UNAVAILABLE"
+          nextClaimId `shouldReturn` Just laterId
+          void $ execute conn "UPDATE testnet_margin_funding SET updated_at=NOW()-INTERVAL '16 seconds' WHERE id=?::uuid"
+            (Only earlierId)
+          nextClaimId `shouldReturn` Just earlierId
+        _ -> expectationFailure "expected two distinct owner allocations"
+
+  it "keeps an existing wallet allocation exclusive and preserves legacy funding rows" $
+    withFixture databaseUrl $ \conn -> do
+      ensureTestnetFaucetSchema conn
+      Funding.ensureMarginFundingSchema conn
+      let walletAddress = addressOf '1'
+          walletClaim = fundingClaim walletAddress
+          legacyClaim = fundingClaim $ addressOf '2'
+      void $ execute conn
+        "INSERT INTO testnet_faucet_claims(address,token_address,amount,status) VALUES (?,?,?,'minted')"
+        (walletAddress, Funding.fcToken walletClaim, Funding.fcAmount walletClaim)
+      legacyBefore <- fmap (fmap Funding.fcId) $ Funding.reserveMarginFunding conn legacyClaim
+      Funding.ensureMarginFundingSchema conn
+      legacyAfter <- fmap (fmap Funding.fcId) $ Funding.reserveMarginFunding conn legacyClaim
+      legacyAfter `shouldBe` legacyBefore
+      case legacyAfter of
+        Just identifier -> do
+          Funding.getMarginFundingProgram conn identifier `shouldReturn` Nothing
+          fmap (fmap Funding.fcId) (Funding.nextMarginFundingForProgram conn Nothing)
+            `shouldReturn` Just identifier
+        Nothing -> expectationFailure "expected a legacy direct margin claim"
+      fmap (fmap Funding.fcId) (Funding.reserveKernelMarginFunding conn "kernel-fresh" walletClaim)
+        `shouldReturn` Left Funding.KernelFundingAllocationExists
+      fmap (fmap Funding.fcId) (Funding.reserveKernelMarginFunding conn "kernel-fresh" legacyClaim)
+        `shouldReturn` Left Funding.KernelFundingAllocationExists
+
+  where
+    fundingClaim beneficiary = Funding.FundingClaim "" (addressOf 'a') beneficiary (addressOf 'b')
+      421614 (addressOf 'c') (addressOf 'd') "release" 100_000_000_000 "mint" "pending" Nothing Nothing Nothing
 
 aaIntegrationSpec :: Text -> Spec
 aaIntegrationSpec databaseUrl =

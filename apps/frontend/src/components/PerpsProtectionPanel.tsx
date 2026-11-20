@@ -4,7 +4,9 @@ import { formatUnits } from 'viem'
 import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
 import { EMPTY_PROTECTION_DRAFT, type ProtectionDraft, protectionParamsFromInputs, validateProtectionParams, type PositionProtection, type PositionProtectionParams } from '../contracts/positionProtection'
 import { useProtectionEvents, useProtectionHistory, useProtectionExecution, type ProtectionHistoryEvent, type ProtectionHistoryRecord } from '../hooks/useProtectionHistory'
-import { usePerpsTrading } from '../hooks/usePerpsTrading'
+import { usePerpsTrading, type ReviewKernelGas } from '../hooks/usePerpsTrading'
+import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
+import { useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import type { PerpsPosition } from '../hooks/usePerpsAccount'
 import { formatPerpsPositionSize, formatPerpsAssets, perpsSideToDirection } from '../utils/perps'
@@ -45,12 +47,18 @@ const STATE_CHANGED = 'Your account, position, or TP/SL changed. Go back and rev
 
 export function PerpsProtectionPanel(props: ProtectionPanelProps) {
   const { managePositionProtection } = usePerpsTrading()
-  const { accountAddress } = usePerpsIdentity()
+  const { accountAddress, manifest } = usePerpsIdentity()
+  const configuration = manifest?.smartAccountMode === 'kernel' && !manifest.kernel.protectionCommitsEnabled
+    ? { ...props.configuration, enabled: false }
+    : props.configuration
   const execution = useProtectionExecution(props.protection?.protectionId, [2, 8].includes(props.protection?.status ?? 0))
-  return <PositionProtectionManager {...props} accountAddress={accountAddress}
+  return <PositionProtectionManager {...props} accountAddress={accountAddress} configuration={configuration}
     executionReport={execution.data} executionLoading={execution.isFetching && !execution.data} executionError={execution.isError}
     onRefreshExecution={() => { void execution.refetch() }}
-    onManage={async request => { await managePositionProtection(request); props.onRefresh() }}
+    onManage={async (request, reviewGas) => {
+      await managePositionProtection(reviewGas ? { ...request, reviewGas } : request)
+      props.onRefresh()
+    }}
     history={<ProtectionHistory activeProtectionId={props.protection?.protectionId} />}
   />
 }
@@ -58,17 +66,19 @@ export function PerpsProtectionPanel(props: ProtectionPanelProps) {
 /** The same stateful UI is used by the app and the transaction-free Storybook demo. */
 export function PositionProtectionManager({ protection, position, rawMark, cap, configuration, pendingOrders, availableFreeSettlementAssets, accountAddress, onManage, history, executionReport, executionLoading, executionError, onRefreshExecution }: Omit<ProtectionPanelProps, 'onRefresh'> & {
   accountAddress?: string
-  onManage: (request: ProtectionManagementRequest) => Promise<void>
+  onManage: (request: ProtectionManagementRequest, reviewGas?: ReviewKernelGas) => Promise<void>
   history?: ReactNode
   executionReport?: ProtectionExecutionReport
   executionLoading?: boolean
   executionError?: boolean
   onRefreshExecution?: () => void
 }) {
+  const gasReview = usePerpsGasReview()
+  const gasApproval = useKernelGasApproval(gasReview)
   const [view, setView] = useState<'overview' | 'edit' | 'review' | 'remove'>('overview')
   const [draft, setDraft] = useState<ProtectionDraft>(EMPTY_PROTECTION_DRAFT)
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<Error>()
   const [success, setSuccess] = useState<string>()
   const [review, setReview] = useState<ProtectionReview>()
   const heading = useRef<HTMLHeadingElement>(null)
@@ -96,6 +106,8 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         ? `Deposit at least ${formatUnits(reward - availableFreeSettlementAssets, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL} into your perps account to fund the TP/SL execution reserve. Adding position margin does not fund this reserve.`
         : undefined
   const reviewChanged = targetChanged || (review?.action === 'create' && (review.reward !== reward || pendingOrders > 0))
+  const canConfirmReview = !reviewChanged && !reviewPriceError && !fundingError && configuration.enabled && gasReview?.available !== false
+  const canConfirmRemoval = !targetChanged && gasReview?.available !== false
   const delayed = protection?.status === 8
   const closing = protection?.status === 3 || delayed
   const currentSize = position?.exists ? position.size : protection?.size
@@ -124,7 +136,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
       const params = protectionParamsFromInputs({ ...draft, ...priceContext, rawMark, cap })
       setReview({ action: protection ? 'replace' : 'create', protectionId: protection?.protectionId, params, rawMark, cap, reward, position: priceContext.position })
       setView('review')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Check your TP/SL prices') }
+    } catch (cause) { setError(cause instanceof Error ? cause : new Error('Check your TP/SL prices')) }
   }
   async function submit(remove = false) {
     if (pending) return
@@ -143,11 +155,12 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         if (reviewPriceError) throw new Error(reviewPriceError)
         request = { action: review.action, protectionId: review.protectionId, params: review.params }
       }
-      await onManage(request)
+      if (gasReview) await onManage(request, gasApproval.review)
+      else await onManage(request)
       setView('overview')
       setReview(undefined)
       setSuccess(remove ? 'TP/SL removed. No position-close order was submitted.' : 'TP/SL saved.')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'We could not update your TP/SL. Please try again.') }
+    } catch (cause) { setError(cause instanceof Error ? cause : new Error('We could not update your TP/SL. Please try again.')) }
     finally { setPending(false) }
   }
 
@@ -205,17 +218,19 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Active from</dt><dd>{protection?.status === 1 ? 'Opening order execution' : 'Update confirmation'}</dd></div>
           </dl>
           <p className="text-xs leading-5 text-content-secondary">These trigger prices are fixed for confirmation. Reaching one queues a close; it does not guarantee that fill price.</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={reviewChanged || Boolean(reviewPriceError) || Boolean(fundingError) || !configuration.enabled} onClick={() => void submit()}>Confirm TP/SL</Button>
+          <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={!pending} />
+          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmReview} /> : <div className="flex flex-wrap gap-2">
+            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={!canConfirmReview} onClick={() => void submit()}>{gasReview ? 'Review network gas' : 'Confirm TP/SL'}</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('edit'); setError(undefined) }}>Back to edit</Button>
-          </div>
+          </div>}
         </> : view === 'remove' ? <>
           <p className="text-sm leading-6">{protection?.status === 1 ? 'Your opening order will remain committed and can still fill without TP/SL.' : 'Your position will stay open without take-profit or stop-loss triggers.'}</p>
           <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(reserve)} />.</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="danger" isLoading={pending} disabled={targetChanged} onClick={() => void submit(true)}>Confirm removal</Button>
+          <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={!pending} />
+          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmRemoval} /> : <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="danger" isLoading={pending} disabled={!canConfirmRemoval} onClick={() => void submit(true)}>{gasReview ? 'Review network gas' : 'Confirm removal'}</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('overview'); setError(undefined) }}>Keep TP/SL</Button>
-          </div>
+          </div>}
         </> : null}
         {!protection && (creatable || view === 'edit' || view === 'review') ? <div className="space-y-2 border-t border-brand-border/20 pt-3 text-xs">
           <dl className="space-y-2">
@@ -224,9 +239,9 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </dl>
           {fundingError ? <p role="alert" className="leading-5 text-brand-orange">{fundingError}</p> : null}
         </div> : null}
-        {pending ? <p role="status" className="text-xs text-content-secondary">Confirm in your wallet, then wait for the update.</p> : null}
+        {pending && !gasApproval.quote ? <p role="status" className="text-xs text-content-secondary">{gasReview ? 'Preparing your Trading Account action…' : 'Confirm in your wallet, then wait for the update.'}</p> : null}
         {view !== 'overview' && (targetChanged || (view === 'review' && reviewChanged)) ? <p role="alert" className="text-xs text-brand-orange">{STATE_CHANGED}</p> : null}
-        {error ? <p role="alert" className="whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{error}</p> : null}
+        {error ? <p role="alert" className="whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{error.message}</p> : null}
         {view === 'review' && reviewPriceError ? <p role="alert" className="text-sm text-brand-orange">{reviewPriceError}</p> : null}
         {success ? <p role="status" className="text-xs text-positive">{success}</p> : null}
       </div>

@@ -17,7 +17,9 @@ module Plether.Handlers.InsightsRegistration
   , XFollowFailureDisposition (..)
   , xFollowFailureDisposition
   , TradingAccountProof (..)
+  , TradingAccountVerifier
   , verifyOwnedTradingAccount
+  , verifyOwnedTradingAccountForDeployment
   , registrationHeaders
   , respondError
   , safeRegistrationIO
@@ -61,6 +63,7 @@ import Plether.Logging (logWarn, field)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Types.Status (status303)
 import qualified Network.Wai as Wai
+import Plether.AA.KernelGateway (KernelGatewayConfig, KernelTradingAccountProof (..), resolveOwnedKernelTradingAccount)
 import Plether.AA.Pimlico
   ( OwnedTradingAccountFailure (..)
   , resolveOwnedTradingAccountAtBlock
@@ -168,13 +171,15 @@ data TradingAccountProof = TradingAccountProof
   , tapBlockHash :: Text
   }
 
+type TradingAccountVerifier = Text -> IO (Either RegistrationError TradingAccountProof)
+
 registerInsightsRegistrationRoutes
   :: DbPool
-  -> EthClient
+  -> TradingAccountVerifier
   -> Config
   -> Manager
   -> ScottyM ()
-registerInsightsRegistrationRoutes pool perpsClient config manager =
+registerInsightsRegistrationRoutes pool verifyTradingAccount config manager =
   case cfgRegistrationConfig config of
     Nothing -> pure ()
     Just registrationConfig -> do
@@ -315,7 +320,7 @@ registerInsightsRegistrationRoutes pool perpsClient config manager =
               Left err -> respondError err
               Right walletRequest -> do
                 outcome <- safeRegistrationIO $
-                  verifyWallet pool perpsClient registrationConfig config slug waiRequest walletRequest
+                  verifyWallet pool verifyTradingAccount registrationConfig slug waiRequest walletRequest
                 either respondError (json . RegistrationResponse) outcome
 
       post "/api/insights/v1/competitions/:slug/registrations/complete" $ do
@@ -330,7 +335,7 @@ registerInsightsRegistrationRoutes pool perpsClient config manager =
               Left err -> respondError err
               Right completionRequest -> do
                 outcome <- safeRegistrationIO $
-                  finishRegistration pool perpsClient registrationConfig config slug authenticated completionRequest
+                  finishRegistration pool verifyTradingAccount registrationConfig slug authenticated completionRequest
                 either respondError (json . RegistrationResponse) outcome
 
 initializeInsightsRegistration :: DbPool -> EthClient -> Config -> IO (Either String ())
@@ -902,14 +907,13 @@ createWalletChallenge pool registrationConfig config slug authenticated ownerAdd
 
 verifyWallet
   :: DbPool
-  -> EthClient
+  -> TradingAccountVerifier
   -> RegistrationConfig
-  -> Config
   -> Text
   -> Wai.Request
   -> WalletVerifyRequest
   -> IO (Either RegistrationError RegistrationSessionView)
-verifyWallet pool perpsClient registrationConfig _config slug waiRequest walletRequest =
+verifyWallet pool verifyTradingAccount registrationConfig slug waiRequest walletRequest =
   case normalizeOwnerInput $ wvrOwnerAddress walletRequest of
     Nothing -> pure $ Left invalidWalletError
     Just normalizedOwner ->
@@ -938,7 +942,7 @@ verifyWallet pool perpsClient registrationConfig _config slug waiRequest walletR
                           | signer /= Db.wchrOwnerWallet challenge ->
                               pure $ Left $ registrationError InvalidSignature "Wallet signature is invalid"
                           | otherwise -> do
-                              verified <- verifyOwnedTradingAccount perpsClient signer
+                              verified <- verifyTradingAccount signer
                               case verified of
                                 Left err -> pure $ Left err
                                 Right proof -> do
@@ -958,14 +962,13 @@ verifyWallet pool perpsClient registrationConfig _config slug waiRequest walletR
 
 finishRegistration
   :: DbPool
-  -> EthClient
+  -> TradingAccountVerifier
   -> RegistrationConfig
-  -> Config
   -> Text
   -> AuthenticatedSession
   -> CompleteRegistrationRequest
   -> IO (Either RegistrationError RegistrationSessionView)
-finishRegistration pool perpsClient registrationConfig _config slug authenticated requestValue
+finishRegistration pool verifyTradingAccount registrationConfig slug authenticated requestValue
   | Db.rsrStatus row == "completed" = pure $ Right $ sessionView registrationConfig authenticated
   | otherwise = do
       completionState <- withDb pool $ \connection ->
@@ -986,7 +989,7 @@ finishRegistration pool perpsClient registrationConfig _config slug authenticate
       | otherwise =
           case (Db.rsrOwnerWallet row, Db.rsrTradingAccount row) of
             (Just owner, Just storedTradingAccount) -> do
-              verified <- verifyOwnedTradingAccount perpsClient owner
+              verified <- verifyTradingAccount owner
               case verified of
                 Left err -> pure $ Left err
                 Right proof
@@ -1030,10 +1033,20 @@ completionResultDecision = \case
 ownedAccountDecision
   :: Either OwnedTradingAccountFailure Text
   -> Either RegistrationError Text
-ownedAccountDecision = \case
-  Left OwnerWalletIsContract -> Left invalidWalletError
-  Left OwnedTradingAccountProofUnavailable -> Left providerUnavailableError
-  Right account -> Right account
+ownedAccountDecision = either (Left . ownedAccountError) Right
+
+ownedAccountError :: OwnedTradingAccountFailure -> RegistrationError
+ownedAccountError OwnerWalletIsContract = invalidWalletError
+ownedAccountError OwnedTradingAccountProofUnavailable = providerUnavailableError
+
+verifyOwnedTradingAccountForDeployment :: Maybe KernelGatewayConfig -> Config -> EthClient -> TradingAccountVerifier
+verifyOwnedTradingAccountForDeployment Nothing _ client = verifyOwnedTradingAccount client
+verifyOwnedTradingAccountForDeployment (Just kernel) config client = \owner ->
+  if not (isCanonicalOwner owner) then pure $ Left invalidWalletError else do
+    verified <- resolveOwnedKernelTradingAccount kernel config client owner
+    pure $ case verified of
+      Left failure -> Left $ ownedAccountError failure
+      Right proof -> Right $ TradingAccountProof (ktapAddress proof) (ktapBlockNumber proof) (ktapBlockHash proof)
 
 verifyOwnedTradingAccount
   :: EthClient

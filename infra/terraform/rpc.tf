@@ -146,6 +146,17 @@ resource "aws_vpc_security_group_ingress_rule" "rpc_alb_from_ecs" {
   to_port                      = 443
 }
 
+resource "aws_vpc_security_group_ingress_rule" "kernel_canary_rpc_gateway_from_alto" {
+  count = local.rpc_count == 1 && local.kernel_canary_count == 1 ? 1 : 0
+
+  security_group_id            = aws_security_group.rpc_alb[0].id
+  referenced_security_group_id = aws_security_group.kernel_canary_task["alto"].id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  description                  = "Patched Kernel canary Alto to the private authenticated Nitro gateway"
+}
+
 resource "aws_iam_role" "rpc_node" {
   count = local.rpc_count
   name  = "plether-sepolia-rpc-node"
