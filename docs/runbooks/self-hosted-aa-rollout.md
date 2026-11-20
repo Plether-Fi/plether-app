@@ -1783,9 +1783,10 @@ aws --profile plether cloudwatch describe-alarms \
     plether-sepolia-aa-paymaster-unstaked \
     plether-sepolia-aa-reconciler-rpc-unavailable \
     plether-sepolia-aa-native-api-fault \
+    plether-sepolia-aa-native-api-dependency-fault \
   --query '{Count:length(MetricAlarms),Alarms:MetricAlarms[].{Name:AlarmName,State:StateValue,Actions:AlarmActions}}' \
   --output json > "$AA_ALARM_EVIDENCE"
-test "$(jq -r .Count "$AA_ALARM_EVIDENCE")" = 17
+test "$(jq -r .Count "$AA_ALARM_EVIDENCE")" = 18
 jq -e --arg topic "$OPERATIONS_ALARM_SNS_TOPIC_ARN" \
   'all(.Alarms[]; .Actions == [$topic])' "$AA_ALARM_EVIDENCE"
 test "$(aws --profile plether sns list-subscriptions-by-topic \
@@ -1796,7 +1797,7 @@ rm -f -- "$AA_ALARM_EVIDENCE"
 unset AA_ALARM_EVIDENCE
 ```
 
-At this point the response count must be exactly `17`. The
+At this point the response count must be exactly `18`. The
 `aa-reconciler-task-missing` and `aa-reconciler-heartbeat-missing` alarms do not
 exist while `aa_reconciler_desired_count=0`; their absence is intentional, not
 evidence that `describe-alarms` validated them. Gate 8 creates and explicitly
@@ -1816,14 +1817,19 @@ aws --profile plether sns publish \
 Sepolia Terraform does not itself require a non-empty topic, so the exact
 action/subscription/delivery checks remain an operator gate.
 
-The aggregate `plether-sepolia-aa-native-api-fault` alarm must fire within one
-60-second period on any of the exact API events
-`aa_native_issuance_unavailable` (WARN), `aa_native_reconciler_stale`,
-`aa_native_signer_failure`, `aa_native_bundler_hash_mismatch`, or
-`aa_native_sponsorship_database_failure` (ERROR), or
-`aa_native_security_attestation_failure` (ERROR). Verify every metric filter
-matches the JSON `container_name`, `level`, and `event` emitted by the release,
-then test the alarm-to-on-call path without signing or submitting an operation.
+The `plether-sepolia-aa-native-api-fault` alarm must fire within one 60-second
+period on `aa_native_issuance_unavailable` (WARN), `aa_native_signer_failure`,
+`aa_native_bundler_hash_mismatch`, and `aa_native_sponsorship_database_failure`
+(ERROR). This alarm also covers `aa_native_security_attestation_failure` (ERROR)
+with disagreement, regression, or other reason codes, including missing codes.
+The two security RPC header-read errors (`PRIMARY_HEADER_READ_FAILED` and
+`SECONDARY_HEADER_READ_FAILED`) share the
+`plether-sepolia-aa-native-api-dependency-fault` alarm with
+`aa_native_reconciler_stale` (ERROR). This alarm fires when two of the latest
+three five-minute periods each contain a matching event. Verify every filter
+matches the release's JSON `container_name`, `level`, `event`, and any
+applicable `reason_code`. Test the alarm-to-on-call path without signing or
+submitting an operation.
 The startup event must use the exact message `Native AA startup attestation
 failed; affected methods remain fail-closed` and expose only
 `failure_class=startup-attestation`, never the raw profile/KMS error, RPC URL,

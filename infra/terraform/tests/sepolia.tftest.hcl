@@ -452,6 +452,47 @@ run "reject_public_without_funding" {
   }
   expect_failures = [terraform_data.self_hosted_aa_guard, terraform_data.deployment_target_guard]
 }
+run "native_aa_api_alarm_priorities" {
+  command = plan
+  variables {
+    operations_alarm_sns_topic_arn = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"
+  }
+  assert {
+    condition = (
+      length(aws_cloudwatch_log_metric_filter.aa_native_api_fault) == 7 &&
+      alltrue([
+        for key, filter in aws_cloudwatch_log_metric_filter.aa_native_api_fault :
+        filter.metric_transformation[0].name == (
+          contains(["reconciler_stale", "security_attestation_header_read"], key)
+          ? "AaNativeApiDependencyFault-sepolia"
+          : "AaNativeApiFault-sepolia"
+        )
+      ])
+    )
+    error_message = "Only stale reconciliation and security provider header read failures use the dependency metric."
+  }
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.aa_native_api_fault[0].period == 60 &&
+      aws_cloudwatch_metric_alarm.aa_native_api_fault[0].threshold == 1 &&
+      aws_cloudwatch_metric_alarm.aa_native_api_fault[0].evaluation_periods == 1 &&
+      contains(aws_cloudwatch_metric_alarm.aa_native_api_fault[0].alarm_actions, var.operations_alarm_sns_topic_arn)
+    )
+    error_message = "A single urgent native AA API fault must reach the existing operations destination."
+  }
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.aa_native_api_dependency_fault[0].period == 300 &&
+      aws_cloudwatch_metric_alarm.aa_native_api_dependency_fault[0].threshold == 1 &&
+      aws_cloudwatch_metric_alarm.aa_native_api_dependency_fault[0].evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.aa_native_api_dependency_fault[0].datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.aa_native_api_dependency_fault[0].treat_missing_data == "notBreaching" &&
+      contains(aws_cloudwatch_metric_alarm.aa_native_api_dependency_fault[0].alarm_actions, var.operations_alarm_sns_topic_arn)
+    )
+    error_message = "Repeated native AA dependency failures must reach operations after two of three five-minute periods."
+  }
+}
+
 run "reject_public_unconfigured" {
   command = plan
   variables { aa_native_global_rollout_enabled = true }
