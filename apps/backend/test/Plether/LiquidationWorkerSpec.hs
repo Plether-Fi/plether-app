@@ -2,12 +2,15 @@
 
 module Plether.LiquidationWorkerSpec (spec) where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Data.Aeson (toJSON)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
 import Plether.Config
   ( Config (..)
   , LpSettlementMode (..)
@@ -15,7 +18,7 @@ import Plether.Config
   , PerpsCandleWriteMode (..)
   )
 import Plether.Database.Schema (PythUpdatePayloadRow (..))
-import Plether.Ethereum.Abi (encodeAddress, encodeUint256)
+import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..))
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
@@ -52,6 +55,7 @@ import Plether.LiquidationWorker
   , isInsufficientFundsRpcError
   , isLiquidationReceiptFor
   , decodeLiquidationSnapshotResults
+  , decodeLiquidationOracleOrderingError
   , liquidationIndexRange
   , liquidationPayloadCircuitDecision
   , liquidationPayloadFingerprint
@@ -61,6 +65,7 @@ import Plether.LiquidationWorker
   , liquidationSnapshotCalls
   , liquidationTransactionGasLimit
   , loadFreshLiquidationExecutionPayload
+  , newLiquidationOrderingRetryBudget
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
   , sameNonceReplacementFees
@@ -74,6 +79,7 @@ import Plether.LiquidationWorker
   , sizeLiquidationBatchGas
   , waitForLiquidationConfirmation
   , retryLiquidationRiskInputs
+  , retryLiquidationRiskInputsWithOrdering
   , transactionMaximumCost
   , validateLiquidationExecutionPayload
   , validateLiquidationBatchReceipt
@@ -243,6 +249,103 @@ spec = do
         , ("snapshot-failed", Left "Multicall subcall failed")
         ]
         `shouldBe` ["risky"]
+
+  describe "exact-block retry for liquidation price ordering" $ do
+    let orderingError = LiquidationRiskInputPriceOutOfOrder 100 110
+        revertAt signature args = RpcNodeError 3 "execution reverted" $
+          Just $ "0x" <> TE.decodeUtf8 (B16.encode $ encodeCall signature (map encodeUint256 args))
+        orderingSignature = "PletherOracle__PriceOutOfOrder(uint64,uint64)"
+
+    it "recognizes the canonical revert and rejects malformed or unrelated data" $ do
+      decodeLiquidationOracleOrderingError (revertAt orderingSignature [100,110]) `shouldBe` Just orderingError
+      decodeLiquidationOracleOrderingError (revertAt orderingSignature [100]) `shouldBe` Nothing
+      decodeLiquidationOracleOrderingError (revertAt orderingSignature [100,2 ^ (64 :: Int)]) `shouldBe` Nothing
+      decodeLiquidationOracleOrderingError (revertAt orderingSignature [110,110]) `shouldBe` Nothing
+      decodeLiquidationOracleOrderingError (revertAt "PletherOracle__EqualTimeMarkMismatch(uint64,uint256,uint256)" [100,110,120])
+        `shouldBe` Nothing
+      decodeLiquidationOracleOrderingError (RpcNodeError 3 "PriceOutOfOrder" Nothing) `shouldBe` Nothing
+
+    it "skips re-quoting the same or a regressed head before recovering at a newer block" $ do
+      clock <- newIORef 0
+      (reserve, withinDeadline) <- newLiquidationOrderingRetryBudget (readIORef clock)
+      heads <- newIORef [100,99,101]
+      quoted <- newIORef []
+      let nextHead = do
+            ns <- readIORef heads
+            case ns of
+              [] -> pure $ Left "no block"
+              n : remaining -> writeIORef heads remaining >> pure (Right n)
+          quote blockNumber = do
+            modifyIORef' quoted (<> [blockNumber])
+            pure $ if blockNumber == 101 then Right () else Left orderingError
+          sleepSeconds s = modifyIORef' clock (+ fromIntegral s * 1_000_000_000)
+      (blockNumber, _, _, result) <- retryLiquidationRiskInputsWithOrdering
+        0 10 reserve withinDeadline (\_ _ _ _ -> pure ()) sleepSeconds nextHead (pure . quote) 100
+      result `shouldBe` Right ()
+      blockNumber `shouldBe` 101
+      readIORef quoted `shouldReturn` [100,101]
+
+    it "shares retry exhaustion across pages and continues the sweep" $ do
+      clock <- newIORef 0
+      (reserve, withinDeadline) <- newLiquidationOrderingRetryBudget (readIORef clock)
+      headBlock <- newIORef 100
+      attempts <- newIORef []
+      let advanceHead = do
+            modifyIORef' headBlock (+ 1)
+            Right <$> readIORef headBlock
+          sleepSeconds s = modifyIORef' clock (+ fromIntegral s * 1_000_000_000)
+          processPage page = do
+            initialBlock <- readIORef headBlock
+            let quote blockNumber = do
+                  modifyIORef' attempts (<> [(page,blockNumber)])
+                  pure (Left orderingError :: Either LiquidationRiskInputError ())
+            (_, _, _, result) <- retryLiquidationRiskInputsWithOrdering
+              0 10 reserve withinDeadline (\_ _ _ _ -> pure ()) sleepSeconds advanceHead (pure . quote) initialBlock
+            result `shouldBe` Left orderingError
+            pure True
+      runLiquidationSweep 1 ([1,2] :: [Int]) processPage `shouldReturn` True
+      readIORef attempts `shouldReturn` [([1],100),([1],101),([1],102),([1],103),([2],103)]
+
+    it "does not re-quote after a head read spends the remaining budget" $ do
+      clock <- newIORef 0
+      (reserve, withinDeadline) <- newLiquidationOrderingRetryBudget (readIORef clock)
+      quoted <- newIORef []
+      let sleepSeconds s = modifyIORef' clock (+ fromIntegral s * 1_000_000_000)
+          slowHead = writeIORef clock 12_000_000_000 >> pure (Right 101)
+          quote blockNumber = do
+            modifyIORef' quoted (<> [blockNumber])
+            pure (Left orderingError :: Either LiquidationRiskInputError ())
+      (blockNumber, _, _, result) <- retryLiquidationRiskInputsWithOrdering
+        0 10 reserve withinDeadline (\_ _ _ _ -> pure ()) sleepSeconds slowHead (pure . quote) 100
+      result `shouldBe` Left orderingError
+      blockNumber `shouldBe` 100
+      readIORef quoted `shouldReturn` [100]
+
+    it "bounds an optional ordering quote by the time remaining in the sweep" $ do
+      clock <- newIORef 0
+      (reserve, remaining) <- newLiquidationOrderingRetryBudget (readIORef clock)
+      let sleepSeconds _ = writeIORef clock 11_990_000_000
+          quote 100 = pure $ Left orderingError
+          quote _ = threadDelay 300_000 >> pure (Right ())
+      (blockNumber, _, _, result) <- retryLiquidationRiskInputsWithOrdering
+        0 10 reserve remaining (\_ _ _ _ -> pure ()) sleepSeconds (pure $ Right 101) (pure . quote) 100
+      result `shouldBe` Left orderingError
+      blockNumber `shouldBe` 100
+
+    it "lets the cache read complete and skips the quote if that read spends the deadline" $ do
+      clock <- newIORef 0
+      (reserve, remaining) <- newLiquidationOrderingRetryBudget (readIORef clock)
+      let sleepSeconds _ = writeIORef clock 11_990_000_000
+          prepareQuote 100 = pure $ pure (Left orderingError :: Either LiquidationRiskInputError ())
+          prepareQuote _ = do
+            threadDelay 30_000
+            writeIORef clock 12_010_000_000
+            pure $ expectationFailure "expired quote started" >> pure (Right ())
+      (blockNumber, _, _, result) <- retryLiquidationRiskInputsWithOrdering
+        0 10 reserve remaining (\_ _ _ _ -> pure ()) sleepSeconds (pure $ Right 101) prepareQuote 100
+      result `shouldBe` Left orderingError
+      blockNumber `shouldBe` 100
+      readIORef clock `shouldReturn` 12_010_000_000
 
   describe "future-publish exact-block retry" $ do
     it "waits for the measured skew and succeeds at a newer exact block" $ do

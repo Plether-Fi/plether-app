@@ -5,6 +5,8 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
+// Mined-block replays passed at this limit and reverted at the original limits.
+const MARK_REFRESH_GAS_LIMIT = 1_200_000n
 const ORACLE_WAKE_PORT = 3017
 const ORACLE_WAKE_PACKET = Buffer.from('plether-oracle-wake-v1')
 const MIN_WAKE_INTERVAL_MS = 1000
@@ -423,17 +425,27 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     // A timeout/RPC error retains the hash. Never send another transaction until resolved.
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: tx.hash, timeout: 10_000,
-      onReplaced: ({ transaction }) => { tx.hash = transaction.hash },
+      onReplaced: ({ transaction }) => {
+        tx.hash = transaction.hash
+        tx.gasLimit = transaction.gas
+      },
     })
     pending = undefined
-    if (receipt.status !== 'success') throw new Error(`updateMarkPrice tx failed: ${tx.hash}`)
+    const receiptFields = {
+      transaction_hash: tx.hash, block_number: receipt.blockNumber,
+      gas_limit: tx.gasLimit, gas_used: receipt.gasUsed, repair: tx.repair,
+    }
+    if (receipt.status !== 'success') {
+      logEvery(60, 'WARN', 'oracle_update_reverted', 'Oracle mark-price update reverted', receiptFields)
+      throw new Error(`updateMarkPrice tx failed: ${tx.hash}`)
+    }
     const after = await readHealth(publicClient)
     const recovered = after.valid
     log('INFO', 'oracle_update_mined', 'Oracle mark-price update was mined', {
-      transaction_hash: tx.hash, block_number: receipt.blockNumber, update_fee_wei: tx.fee,
+      ...receiptFields, update_fee_wei: tx.fee,
       previous_mark_time: tx.markTime, mark_time: after.status.lastMarkTime,
       mark_price: after.status.lastMarkPrice, oracle_frozen: after.status.oracleFrozen,
-      trading_active: after.status.tradingActive, repair: tx.repair,
+      trading_active: after.status.tradingActive,
       previous_lag_seconds: Number(tx.lag), lag_seconds: Number(after.lag), synchronized: recovered,
     })
     if (!recovered) logEvery(60, 'WARN', 'oracle_sync_pending', 'Accepted oracle basket still fails mark-refresh validation', {
@@ -506,7 +518,8 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       let request
       try {
         const simulation = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
-          abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+          abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee,
+          gas: MARK_REFRESH_GAS_LIMIT })
         request = simulation.request
       } catch (error) {
         const reverted = decodedContractError(error)
@@ -521,11 +534,11 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         })
         return { status: 'confidence_too_wide' }
       }
-      const hash = await walletClient.writeContract(request)
+      const hash = await walletClient.writeContract({ ...request, gas: MARK_REFRESH_GAS_LIMIT })
       nextRefreshAt = now() + pollSeconds * 1000
       failures = 0
       retryAt = 0
-      pending = { hash, fee, repair, lag: before.lag, markTime }
+      pending = { hash, fee, repair, lag: before.lag, markTime, gasLimit: MARK_REFRESH_GAS_LIMIT }
       return await reconcile()
     } catch (error) {
       if (!pending) deferRetry()

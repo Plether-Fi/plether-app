@@ -3,7 +3,9 @@ import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ContractFunctionExecutionError, ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
+import { ContractFunctionExecutionError, ContractFunctionRevertedError, createPublicClient, createWalletClient, custom, encodeErrorResult, parseAbi, parseTransaction, toHex } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import { arbitrumSepolia } from 'viem/chains'
 import { createOracleWakeupReceiver, createOracleWorker, loadOracleFeeds, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
 
 const release = JSON.parse(readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
@@ -68,7 +70,7 @@ function fixture() {
         state.acceptedTimes = state.publishes.map(BigInt)
         state.hasAccepted = true; state.acceptedPrice = state.markPrice
       }
-      return { status: state.reverted ? 'reverted' : 'success', blockNumber: 43n }
+      return { status: state.reverted ? 'reverted' : 'success', blockNumber: 43n, gasUsed: 418_000n }
     },
   }
   const options = { publicClient, walletClient: { writeContract: async () => { state.writes++; return '0x1234' } },
@@ -316,6 +318,64 @@ test('simulation failure sends nothing and a concurrent mark advancement is re-e
   f.state.publishes.fill(995)
   assert.equal((await f.iterate()).status, 'synchronized')
 })
+
+test('scheduled refresh and repair preflight and sign at the same gas limit', async () => {
+  const f = fixture()
+  const account = privateKeyToAccount(`0x${'1'.padStart(64, '0')}`)
+  const simulations = []
+  const transactions = []
+  const transport = custom({ async request({ method, params }) {
+    if (method === 'eth_call') {
+      simulations.push(params[0])
+      return '0x'
+    }
+    if (method === 'eth_fillTransaction') {
+      const request = params[0]
+      return { tx: { ...request, input: request.data, gas: toHex(466_000), nonce: toHex(transactions.length),
+        type: '0x2', chainId: toHex(arbitrumSepolia.id), maxPriorityFeePerGas: '0x1', maxFeePerGas: '0x2' } }
+    }
+    if (method === 'eth_sendRawTransaction') {
+      transactions.push(parseTransaction(params[0]))
+      return `0x${'1'.repeat(64)}`
+    }
+    throw new Error(`Unexpected mock RPC ${method}`)
+  } }, { retryCount: 0 })
+  const clientOptions = { chain: arbitrumSepolia, transport }
+  f.publicClient.simulateContract = createPublicClient(clientOptions).simulateContract
+  const iterate = createOracleWorker({ ...f.options, account, walletClient: createWalletClient(clientOptions) })
+
+  assert.equal((await iterate()).status, 'synchronized')
+  f.state.now += 30_000
+  f.state.publishes.fill(995)
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(simulations.length, 2)
+  assert.equal(transactions.length, 2)
+  for (const [index, tx] of transactions.entries()) {
+    const simulation = simulations[index]
+    assert.equal(BigInt(simulation.gas), 1_200_000n)
+    assert.equal(tx.gas, 1_200_000n)
+    assert.equal(tx.to.toLowerCase(), simulation.to.toLowerCase())
+    assert.equal(tx.data, simulation.data)
+    assert.equal(tx.value, BigInt(simulation.value))
+  }
+  assert.deepEqual(f.state.logs.filter(args => args[1] === 'oracle_update_mined').map(args => args[3].repair), [true, false])
+})
+
+test('simulation that exhausts the gas limit sends nothing and honors backoff', async () => {
+  const f = fixture()
+  let simulations = 0
+  f.publicClient.simulateContract = async ({ gas }) => {
+    assert.equal(gas, 1_200_000n)
+    simulations++
+    throw new Error('out of gas')
+  }
+  await assert.rejects(f.iterate(), /out of gas/)
+  f.state.now += 4999
+  assert.equal((await f.iterate()).status, 'backoff')
+  assert.equal(simulations, 1)
+  assert.equal(f.state.writes, 0)
+})
+
 const confidenceErrorAbi = parseAbi(['error PletherOracle__BasketConfidenceTooWide(uint8 mode, uint256 basketConfidence, uint256 basketPrice, uint256 maxConfidenceBps)'])
 function confidenceRevert(abi = confidenceErrorAbi) {
   return new ContractFunctionExecutionError(new ContractFunctionRevertedError({
@@ -386,12 +446,30 @@ test('concurrent ticks cannot overlap a pending submission', async () => {
 test('reverted receipt is reported and may be retried on a later health check', async () => {
   const f = fixture(); f.state.reverted = true
   await assert.rejects(f.iterate(), /tx failed/)
+  const reverted = f.state.logs.find(args => args[2] === 'oracle_update_reverted')[4]
+  assert.equal(reverted.gas_limit, 1_200_000n)
+  assert.equal(reverted.gas_used, 418_000n)
   assert.equal(f.state.stored, 980n)
   f.state.reverted = false
   f.state.now += 5000
   assert.equal((await f.iterate()).status, 'synchronized')
   assert.equal(f.state.writes, 2)
 })
+
+test('mined gas telemetry reflects the replacement transaction', async () => {
+  const f = fixture()
+  const wait = f.publicClient.waitForTransactionReceipt
+  f.publicClient.waitForTransactionReceipt = async ({ onReplaced }) => {
+    onReplaced({ transaction: { hash: '0x4567', gas: 1_400_000n } })
+    return wait()
+  }
+  assert.equal((await f.iterate()).hash, '0x4567')
+  const mined = f.state.logs.find(args => args[1] === 'oracle_update_mined')[3]
+  assert.equal(mined.transaction_hash, '0x4567')
+  assert.equal(mined.gas_limit, 1_400_000n)
+  assert.equal(mined.gas_used, 418_000n)
+})
+
 test('post-receipt reads can report continuing lag instead of claiming recovery', async () => {
   const f = fixture()
   f.publicClient.waitForTransactionReceipt = async () => ({ status: 'success', blockNumber: 43n })
@@ -682,6 +760,31 @@ test('a same-payload one-second header race catches up before fee lookup and rep
   assert.deepEqual(pauses, [1000])
   assert.equal(f.state.freshFetches, 0)
   assert.equal(f.state.accepted, 1001n)
+  assert.equal(f.state.writes, 1)
+})
+
+test('a near-ahead repair reobserves the head using the default pause', async t => {
+  const f = fixture()
+  f.state.now = 1_001_000
+  f.state.publishes.fill(1001)
+  let timestamp = 1000n
+  let headReads = 0
+  f.publicClient.getBlock = async () => {
+    headReads++
+    return { number: timestamp, hash: `0x${timestamp}`, timestamp }
+  }
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const iterate = createOracleWorker({ ...f.options, pause: undefined })
+  const iteration = iterate()
+  await new Promise(resolve => setImmediate(resolve))
+
+  t.mock.timers.tick(999)
+  assert.equal(headReads, 2)
+  assert.equal(f.state.writes, 0)
+  timestamp = 1001n
+  f.state.timestamp = timestamp
+  t.mock.timers.tick(1)
+  assert.equal((await iteration).status, 'synchronized')
   assert.equal(f.state.writes, 1)
 })
 
