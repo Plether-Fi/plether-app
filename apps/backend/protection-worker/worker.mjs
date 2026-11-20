@@ -1,6 +1,35 @@
-import { encodeFunctionData, keccak256, isAddressEqual } from 'viem'
+import { BaseError, ContractFunctionRevertedError, encodeFunctionData, keccak256, isAddressEqual } from 'viem'
 import abi from './abi.mjs'
 import { admittedPayload, json, protectionSnapshot, retryDecision, triggerLeg } from './policy.mjs'
+
+const MARK_REFRESH = 1
+const RECOVERABLE_BASKET_ERRORS = new Set([
+  'PletherOracle__NoAcceptedBasket',
+  'PletherOracle__PriceOutOfOrder',
+  'PletherOracle__EqualTimeMarkMismatch',
+  'PletherOracle__StalePrice',
+  'PletherOracle__PublishTimeDivergence',
+  'PletherOracle__BasketConfidenceTooWide',
+  'PletherOracle__InvalidPrice',
+  'PletherOracle__InvalidInverseConfidence',
+  'PletherOracle__ZeroBasketPrice',
+])
+
+function oracleErrorName(error) {
+  const revert = error instanceof BaseError && error.walk(cause => cause instanceof ContractFunctionRevertedError)
+  return revert instanceof ContractFunctionRevertedError ? revert.data?.errorName : undefined
+}
+
+function validRefreshSnapshot(snapshot, block, expectedFee) {
+  return snapshot?.markPrice > 0n && snapshot.publishTime > 0n && snapshot.publishTime <= block.timestamp &&
+    snapshot.oracleFrozen === false && snapshot.updateFee === expectedFee
+}
+
+function oldestAcceptedPublishTime(times, newest) {
+  if (!Array.isArray(times) || !times.includes(newest) ||
+      times.some(time => typeof time !== 'bigint' || time <= 0n || time > newest)) return undefined
+  return times.reduce((oldest, time) => time < oldest ? time : oldest, newest)
+}
 
 export class ProtectionWorker {
   constructor({ db, publicClient, walletClient, account, release, executionEnabled = false, log, batchBlocks = 2000n, confirmations = 12n, candidateBatch = 50, maxPayloadAge = 15, keeperBatchSize = 5, keeperPollSeconds = 5 }) {
@@ -151,25 +180,64 @@ export class ProtectionWorker {
     [this.chainId, this.book, protection.protectionId.toString(), block.number.toString(), block.hash, json(observation)])
   }
 
+  async triggerPrice(block) {
+    const unavailable = (reason, oracleError) => {
+      this.log('warn', 'protection_oracle_unavailable', { reason, oracleError, blockNumber: block.number.toString() })
+    }
+    let recoveryError
+    let acceptedSnapshot
+    try {
+      // The mark-refresh view validates the same accepted basket as a Book trigger with empty update data.
+      acceptedSnapshot = await this.read(this.oracle, 'PletherOracle', 'getLatestPrice', [MARK_REFRESH], block.number)
+    } catch (error) {
+      recoveryError = oracleErrorName(error)
+      if (!RECOVERABLE_BASKET_ERRORS.has(recoveryError)) return unavailable('accepted-basket-check-failed', recoveryError)
+    }
+
+    if (!recoveryError) {
+      if (!validRefreshSnapshot(acceptedSnapshot, block, 0n)) return unavailable('invalid-accepted-basket-snapshot')
+      let times
+      try {
+        times = await this.read(this.oracle, 'PletherOracle', 'getAcceptedFeedPublishTimes', [], block.number)
+      } catch (error) {
+        return unavailable('accepted-feed-times-check-failed', oracleErrorName(error))
+      }
+      const oldest = oldestAcceptedPublishTime(times, acceptedSnapshot.publishTime)
+      if (oldest === undefined) return unavailable('invalid-accepted-feed-times')
+      // The local trigger limit applies to every feed even if Core accepts an older basket for mark refresh.
+      const acceptedThrough = oldest + BigInt(this.maxPayloadAge)
+      if (block.timestamp <= acceptedThrough) {
+        return { snapshot: acceptedSnapshot, updateData: [], fee: 0n, acceptedThrough }
+      }
+    }
+
+    const payload = (await this.db.query("SELECT source,min_publish_time,max_publish_time,update_data FROM perps_pyth_update_payloads WHERE source='backend_hermes_latest_v2' ORDER BY max_publish_time DESC LIMIT 1")).rows[0]
+    if (!admittedPayload(payload, Number(block.timestamp), this.maxPayloadAge)) {
+      return unavailable('no-admitted-fresh-payload', recoveryError)
+    }
+    const updateData = payload.update_data
+    try {
+      const fee = await this.read(this.oracle, 'PletherOracle', 'getUpdateFee', [updateData], block.number)
+      // Simulate the Router's nested call. The eventual Book transaction is simulated again with the signer.
+      const { result: snapshot } = await this.publicClient.simulateContract({
+        account: this.router, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice',
+        args: [this.account.address, updateData, MARK_REFRESH], value: fee, blockNumber: block.number,
+      })
+      if (!validRefreshSnapshot(snapshot, block, fee)) return unavailable('invalid-signed-basket-snapshot')
+      return { snapshot, updateData, fee }
+    } catch (error) {
+      return unavailable('signed-basket-check-failed', oracleErrorName(error))
+    }
+  }
+
   async evaluate() {
     if (await this.reconcileTransaction()) return
     const block = await this.publicClient.getBlock({ blockTag: 'latest' })
     const candidates = (await this.db.query("SELECT protection_id FROM (SELECT DISTINCT ON (protection_id) protection_id,snapshot FROM perps_protection_events WHERE chain_id=$1 AND book=$2 ORDER BY protection_id,block_number DESC,log_index DESC) latest WHERE (snapshot->>'status')::int IN (2,8) ORDER BY (protection_id>$3) DESC,protection_id LIMIT $4", [this.chainId, this.book, this.candidateCursor.toString(), this.candidateBatch])).rows
     if (!candidates.length) return
-    const payload = (await this.db.query("SELECT source,min_publish_time,max_publish_time,update_data FROM perps_pyth_update_payloads WHERE source='backend_hermes_latest_v2' ORDER BY max_publish_time DESC LIMIT 1")).rows[0]
-    const freshPayload = admittedPayload(payload, Number(block.timestamp), this.maxPayloadAge)
     const frozen = await this.read(this.oracle, 'PletherOracle', 'isOracleFrozen', [], block.number)
-    let snapshot
-    let fee = 0n
-    if (freshPayload) {
-      fee = await this.read(this.oracle, 'PletherOracle', 'getUpdateFee', [payload.update_data], block.number)
-      try {
-        // Current Oracle updates are Router-only. Model the Router's nested call
-        // for this read-only price check; Book submissions still use our signer.
-        snapshot = (await this.publicClient.simulateContract({ account: this.router, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice', args: [this.account.address, payload.update_data, 1], value: fee, blockNumber: block.number })).result
-      } catch { this.log('warn', 'protection_oracle_unavailable', {}) }
-    }
-    if (!freshPayload && !frozen) this.log('warn', 'protection_oracle_unavailable', { reason: 'no-admitted-fresh-payload' })
+    const oraclePrice = frozen ? undefined : await this.triggerPrice(block)
+    const snapshot = oraclePrice?.snapshot
     for (const candidate of candidates) {
       const id = BigInt(candidate.protection_id)
       this.candidateCursor = id
@@ -178,9 +246,15 @@ export class ProtectionWorker {
         protection = await this.read(this.book, 'PositionProtectionBook', 'getPositionProtection', [id], block.number)
         if (![2, 8].includes(protection.status)) { await this.observe(block, protection, 'inactive'); continue }
         if (!this.executionEnabled) { await this.observe(block, protection, 'execution-disabled'); continue }
-        if (!frozen && snapshot && triggerLeg(protection, snapshot.markPrice, snapshot.publishTime, block.number)) {
+        if (snapshot && triggerLeg(protection, snapshot.markPrice, snapshot.publishTime, block.number)) {
           await this.observe(block, protection, 'trigger-ready')
-          if (await this.submit('trigger', id, this.book, 'PositionProtectionBook', 'triggerPositionProtection', [id, payload.update_data], fee)) return
+          if (oraclePrice.acceptedThrough !== undefined) {
+            const latest = await this.publicClient.getBlock({ blockTag: 'latest' })
+            if (latest.timestamp > oraclePrice.acceptedThrough) {
+              throw new Error('Accepted protection basket aged before trigger simulation')
+            }
+          }
+          if (await this.submit('trigger', id, this.book, 'PositionProtectionBook', 'triggerPositionProtection', [id, oraclePrice.updateData], oraclePrice.fee)) return
         } else if (protection.status === 8) {
           const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'terminalOutcome', [protection.linkedOrderId], block.number)
           if (outcome.reason !== 2 || outcome.status !== 3) {
