@@ -40,6 +40,7 @@ library
         Plether.AA.OracleReadiness
         Plether.Keeper.Broadcast
         Plether.Keeper.Funding
+        Plether.Keeper.OracleWakeup
         Plether.Keeper.Submission
         Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
@@ -188,6 +189,7 @@ library
         base64-bytestring >= 1.2,
         crypton >= 0.34,
         memory >= 0.18,
+        network >= 3.1,
         network-uri >= 2.6,
         scientific >= 0.3,
         mtl >= 2.3,
@@ -431,6 +433,7 @@ test-suite plether-api-test
         Plether.Keeper.FundingSpec
         Plether.Keeper.SubmissionSpec
         Plether.Keeper.WakeupSpec
+        Plether.Keeper.OracleWakeupSpec
         Plether.Keeper.CommitmentHintsSpec
         Plether.Database.ExecutionProgressSpec
         Plether.AA.OrderDiagnosticsSpec
