@@ -69,6 +69,15 @@ run "disabled_by_default" {
     condition     = length(aws_instance.rpc_node) == 0 && length(aws_lb.rpc) == 0 && length(aws_ecs_service.rpc_gateway) == 0 && output.sepolia_rpc_pilot == null
     error_message = "Existing deployments must not provision RPC infrastructure by default."
   }
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.rpc_request_rate_warning.threshold == 225000 &&
+      aws_cloudwatch_metric_alarm.rpc_request_rate_warning.evaluation_periods == 2 &&
+      aws_cloudwatch_metric_alarm.rpc_request_rate_critical.threshold == 275000 &&
+      aws_cloudwatch_metric_alarm.rpc_failure_rate.threshold == 1
+    )
+    error_message = "Sepolia volume thresholds must reflect its measured baseline and retain the failure-rate alarm."
+  }
 }
 
 run "isolated_sepolia_pilot" {
@@ -124,4 +133,19 @@ run "reject_mainnet_pilot" {
     pyth_api_key_ssm_parameter_name = "/plether/mainnet/pyth-api-key"
   }
   expect_failures = [terraform_data.rpc_guard]
+}
+
+run "retain_mainnet_rpc_volume_thresholds" {
+  command = plan
+  variables {
+    environment                     = "mainnet"
+    pyth_api_key_ssm_parameter_name = "/plether/mainnet/pyth-api-key"
+  }
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.rpc_request_rate_warning.threshold == 15000 &&
+      aws_cloudwatch_metric_alarm.rpc_request_rate_critical.threshold == 25000
+    )
+    error_message = "Sepolia calibration must leave the mainnet volume thresholds intact."
+  }
 }

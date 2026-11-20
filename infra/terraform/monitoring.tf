@@ -125,16 +125,22 @@ resource "aws_cloudwatch_log_metric_filter" "rpc_request_attribution" {
   }
 }
 
+locals {
+  # Sepolia's Nov 6–20 hourly application traffic peaked at 187k after the RPC rollout.
+  rpc_request_rate_warning_threshold  = var.environment == "sepolia" ? 225000 : 15000
+  rpc_request_rate_critical_threshold = var.environment == "sepolia" ? 275000 : 25000
+}
+
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
   alarm_name          = "plether-${local.deployment_name}-rpc-request-rate-warning"
-  alarm_description   = "Ethereum RPC traffic exceeded the steady-state 15k request/hour warning threshold for two hours."
+  alarm_description   = "Ethereum RPC traffic exceeded the steady-state ${local.rpc_request_rate_warning_threshold / 1000}k request/hour warning threshold for two hours."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].name
   namespace           = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].namespace
   period              = 3600
   statistic           = "Sum"
-  threshold           = 15000
+  threshold           = local.rpc_request_rate_warning_threshold
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
   ok_actions          = []
@@ -142,14 +148,14 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
 
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
   alarm_name          = "plether-${local.deployment_name}-rpc-request-rate-critical"
-  alarm_description   = "Ethereum RPC traffic exceeded 25k requests in one hour."
+  alarm_description   = "Ethereum RPC traffic exceeded ${local.rpc_request_rate_critical_threshold / 1000}k requests in one hour."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].name
   namespace           = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].namespace
   period              = 3600
   statistic           = "Sum"
-  threshold           = 25000
+  threshold           = local.rpc_request_rate_critical_threshold
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
   ok_actions          = local.operations_alarm_recovery_actions
@@ -1096,13 +1102,17 @@ locals {
   ]) : toset([])
 
   aa_native_api_fault_patterns = local.self_hosted_aa_resource_count == 1 ? {
-    issuance_unavailable   = "{ $.container_name = \"plether-api\" && $.level = \"WARN\" && $.event = \"aa_native_issuance_unavailable\" }"
-    reconciler_stale       = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_reconciler_stale\" }"
-    signer_failure         = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_signer_failure\" }"
-    bundler_hash_mismatch  = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_bundler_hash_mismatch\" }"
-    sponsorship_db_failure = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_sponsorship_database_failure\" }"
-    security_attestation   = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_security_attestation_failure\" }"
+    issuance_unavailable             = "{ $.container_name = \"plether-api\" && $.level = \"WARN\" && $.event = \"aa_native_issuance_unavailable\" }"
+    reconciler_stale                 = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_reconciler_stale\" }"
+    signer_failure                   = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_signer_failure\" }"
+    bundler_hash_mismatch            = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_bundler_hash_mismatch\" }"
+    sponsorship_db_failure           = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_sponsorship_database_failure\" }"
+    security_attestation             = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_security_attestation_failure\" && (($.reason_code != \"PRIMARY_HEADER_READ_FAILED\" && $.reason_code != \"SECONDARY_HEADER_READ_FAILED\") || $.reason_code NOT EXISTS || $.reason_code IS NULL) }"
+    security_attestation_header_read = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_security_attestation_failure\" && ($.reason_code = \"PRIMARY_HEADER_READ_FAILED\" || $.reason_code = \"SECONDARY_HEADER_READ_FAILED\") }"
   } : {}
+
+  aa_native_api_dependency_fault_keys        = toset(["reconciler_stale", "security_attestation_header_read"])
+  aa_native_api_dependency_fault_metric_name = "AaNativeApiDependencyFault-${local.deployment_name}"
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_native_api_fault" {
@@ -1113,9 +1123,10 @@ resource "aws_cloudwatch_log_metric_filter" "aa_native_api_fault" {
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaNativeApiFault-${local.deployment_name}"
-    namespace = "Plether/Operations"
-    value     = "1"
+    name          = contains(local.aa_native_api_dependency_fault_keys, each.key) ? local.aa_native_api_dependency_fault_metric_name : "AaNativeApiFault-${local.deployment_name}"
+    namespace     = "Plether/Operations"
+    value         = "1"
+    default_value = contains(local.aa_native_api_dependency_fault_keys, each.key) ? 0 : null
   }
 }
 
@@ -1125,12 +1136,32 @@ resource "aws_cloudwatch_metric_alarm" "aa_native_api_fault" {
   depends_on = [aws_cloudwatch_log_metric_filter.aa_native_api_fault]
 
   alarm_name          = "plether-${local.deployment_name}-aa-native-api-fault"
-  alarm_description   = "Native AA issuance, signer, bundler hash, reconciliation freshness, or durable sponsorship state failed closed."
+  alarm_description   = "Native AA startup issuance, signer, bundler hash, durable sponsorship state, or security attestation failed closed."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "AaNativeApiFault-${local.deployment_name}"
   namespace           = "Plether/Operations"
   period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_native_api_dependency_fault" {
+  count = local.self_hosted_aa_resource_count
+
+  depends_on = [aws_cloudwatch_log_metric_filter.aa_native_api_fault]
+
+  alarm_name          = "plether-${local.deployment_name}-aa-native-api-dependency-fault"
+  alarm_description   = "Native AA requests failed because of stale reconciliation or security RPC header reads in two of three five-minute periods."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = local.aa_native_api_dependency_fault_metric_name
+  namespace           = "Plether/Operations"
+  period              = 300
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
