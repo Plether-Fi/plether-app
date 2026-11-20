@@ -4,7 +4,7 @@ module Plether.LiquidationWorkerSpec (spec) where
 
 import Control.Exception (bracket)
 import Control.Monad (when)
-import Data.Aeson (Value, object, toJSON, (.=))
+import Data.Aeson (toJSON)
 import qualified Data.ByteString as BS
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
@@ -14,12 +14,8 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
-import Plether.Database.Schema
-  ( BasketSnapshotRow (..)
-  , PythUpdatePayloadRow (..)
-  , PairedPythUpdatePayloadRow (..)
-  )
-import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
+import Plether.Database.Schema (PythUpdatePayloadRow (..))
+import Plether.Ethereum.Abi (encodeAddress, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..))
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
@@ -43,11 +39,8 @@ import Plether.Insights.Competition
 import Plether.LiquidationWorker
   ( FreshLiquidationRiskInputs (..)
   , LiquidationBatchProgress (..)
-  , LiquidationBasketComponent (..)
   , LiquidationFuturePublishTime (..)
   , LiquidationRiskInputError (..)
-  , LiquidationRiskGlobals (..)
-  , PythStoredPrice (..)
   , LiquidationPayloadCircuitDecision (..)
   , LiquidationPendingSignerAction (..)
   , LiquidationSignerCircuitDecision (..)
@@ -55,11 +48,6 @@ import Plether.LiquidationWorker
   , canAffordTransaction
   , checkLiveSignerBalance
   , decodeCachedPythPayload
-  , decodeCachedLiquidationComponents
-  , decodePairedLiquidationComponents
-  , decodeLiquidationRiskGlobals
-  , decodePythStoredPriceResults
-  , freshLiquidationRiskInputsFromCache
   , isExpectedLiquidationSimulationRevert
   , isInsufficientFundsRpcError
   , isLiquidationReceiptFor
@@ -68,18 +56,15 @@ import Plether.LiquidationWorker
   , liquidationPayloadCircuitDecision
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
-  , liquidationRiskCalls
   , liquidationFuturePublishRetryDelaySeconds
   , liquidationSignerCircuitDecision
   , liquidationSnapshotCalls
   , liquidationTransactionGasLimit
   , loadFreshLiquidationExecutionPayload
-  , mergeLiquidationBasketComponents
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
   , sameNonceReplacementFees
   , selectLiquidationSimulationCandidates
-  , pythStoredPriceCalls
   , processLiquidationBatches
   , runLiquidationSweep
   , BatchOutcome (..)
@@ -92,8 +77,6 @@ import Plether.LiquidationWorker
   , transactionMaximumCost
   , validateLiquidationExecutionPayload
   , validateLiquidationBatchReceipt
-  , validateMergedLiquidationBasket
-  , validateMergedLiquidationBasketDetailed
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
@@ -142,31 +125,6 @@ spec = do
       withEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" "999" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcExecutionBatchSize workerCfg `shouldBe` 256
-
-  describe "liquidation risk Multicall" $ do
-    it "calls the current basket confidence-ratio getter" $ do
-      workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
-      let calls = liquidationRiskCalls workerCfg
-      length calls `shouldBe` 11
-      let confidenceCall = calls !! 6
-      Multicall.callTarget confidenceCall `shouldBe` lwcPletherOracle workerCfg
-      Multicall.callAllowFailure confidenceCall `shouldBe` True
-      Multicall.callCalldata confidenceCall
-        `shouldBe` encodeCall "basketMaxConfidenceRatioBps()" []
-      Multicall.callCalldata confidenceCall
-        `shouldNotBe` encodeCall "pythMaxConfidenceRatioBps()" []
-
-    it "decodes the current oracle getter result in the existing call layout" $ do
-      decodeLiquidationRiskGlobals liquidationRiskResults
-        `shouldBe` Right exactRiskGlobals
-
-    it "names the current getter when its subcall fails" $ do
-      let failedResults =
-            take 6 liquidationRiskResults
-              <> [Multicall.CallResult False BS.empty]
-              <> drop 7 liquidationRiskResults
-      decodeLiquidationRiskGlobals failedResults
-        `shouldBe` Left "basketMaxConfidenceRatioBps() subcall failed"
 
   describe "liquidation snapshot batching" $ do
     it "builds ordered, allow-failure account-lens calls" $ do
@@ -219,7 +177,7 @@ spec = do
         [("closed" :: Text, Right staleClosedSnapshot)]
         `shouldBe` []
 
-    it "uses the submitted fresh price instead of a stale stored-risk flag" $ do
+    it "uses Core’s quoted side price to update stored-risk classifications" $ do
       let freshPriceRisk =
             openHealthySnapshot
               { alsAccountEquityAssets = 2_000_000
@@ -235,6 +193,18 @@ spec = do
         , ("stored-risk", Right storedRisk)
         ]
         `shouldBe` ["fresh-price-risk"]
+
+    it "uses Core's independent short price for short positions" $ do
+      let longPosition = openHealthySnapshot
+            { alsNetEquityAssets = 1_980_000
+            , alsLiquidatable = False
+            }
+          shortPosition = longPosition {alsSide = 1}
+          prices = neutralRiskInputs {flriShortPrice = 99_000_000}
+      selectLiquidationSimulationCandidates
+        (Just prices)
+        [("long" :: Text, Right longPosition), ("short", Right shortPosition)]
+        `shouldBe` ["short"]
 
     it "includes the exact maintenance boundary but excludes a position safely above it" $ do
       let atBoundary =
@@ -274,185 +244,6 @@ spec = do
         ]
         `shouldBe` ["risky"]
 
-  describe "freshLiquidationRiskInputsFromCache" $ do
-    it "correlates the full publish-time vector and reconstructs basket price and confidence" $ do
-      freshLiquidationRiskInputsFromCache
-        payload
-        basketSnapshot
-        200_000_000
-        500
-        15_000
-        `shouldBe` Right
-          FreshLiquidationRiskInputs
-            { flriNeutralPrice = 100_000_000
-            , flriBasketConfidence = 1_000
-            , flriCapPrice = 200_000_000
-            , flriRequiredMarginBps = 500
-            , flriAdverseConfidenceMultiplierBps = 15_000
-            , flriRiskBufferBps = 5
-            }
-
-    it "rejects mismatched component counts, publish times, and reconstructed prices" $ do
-      freshLiquidationRiskInputsFromCache
-        payload {puprPublishTimes = toJSON ([101] :: [Integer]), puprMaxPublishTime = 101}
-        basketSnapshot
-        200_000_000
-        500
-        15_000
-        `shouldSatisfy` isLeft
-      freshLiquidationRiskInputsFromCache
-        payload
-        basketSnapshot {bsrComponents = toJSON mismatchedPublishTimeComponents}
-        200_000_000
-        500
-        15_000
-        `shouldSatisfy` isLeft
-      freshLiquidationRiskInputsFromCache
-        payload
-        basketSnapshot {bsrBasketPrice = 99_999_999}
-        200_000_000
-        500
-        15_000
-        `shouldSatisfy` isLeft
-
-    it "rejects a non-positive raw component price instead of understating confidence" $ do
-      freshLiquidationRiskInputsFromCache
-        payload
-        basketSnapshot {bsrComponents = toJSON nonPositiveRawPriceComponents}
-        200_000_000
-        500
-        15_000
-        `shouldSatisfy` isLeft
-
-  describe "paired liquidation cache" $ do
-    it "validates the basket embedded in the selected payload" $
-      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just basketSnapshot) of
-        Right components -> map lbcPublishTime components `shouldBe` [102, 101]
-        Left err -> expectationFailure $ "expected valid signed components: " <> show err
-
-    it "fails closed on a legacy row without invoking future-block retries" $ do
-      let result = decodePairedLiquidationComponents $ PairedPythUpdatePayloadRow payload Nothing
-      case result of
-        Left err@LiquidationRiskInputCachePairUnavailable {..} -> do
-          lrcpReason `shouldBe` "cache_pair_missing"
-          lrcpPayloadBounds `shouldBe` (101, 102)
-          lrcpComponentBounds `shouldBe` Nothing
-          liquidationFuturePublishRetryDelaySeconds 5 err `shouldBe` Nothing
-        other -> expectationFailure $ "expected a missing-pair failure: " <> show other
-
-    it "rejects corrupt paired components and reports their timestamp bounds" $ do
-      let corrupt = basketSnapshot {bsrComponents = toJSON mismatchedPublishTimeComponents}
-      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just corrupt) of
-        Left LiquidationRiskInputCachePairUnavailable {..} -> do
-          lrcpReason `shouldBe` "cache_pair_invalid"
-          lrcpPayloadBounds `shouldBe` (101, 102)
-          lrcpComponentBounds `shouldSatisfy` (/= Nothing)
-        other -> expectationFailure $ "expected a corrupt-pair failure: " <> show other
-
-    it "still rejects an inconsistent basket price or malformed component JSON" $ do
-      decodePairedLiquidationComponents
-        (PairedPythUpdatePayloadRow payload $ Just basketSnapshot {bsrBasketPrice = 1})
-        `shouldSatisfy` isLeft
-      decodePairedLiquidationComponents
-        (PairedPythUpdatePayloadRow payload $ Just basketSnapshot {bsrComponents = toJSON ("invalid" :: Text)})
-        `shouldSatisfy` isLeft
-
-  describe "Pyth stored-price merge" $ do
-    it "builds one ordered getPriceUnsafe subcall per cached component" $ do
-      case decodeCachedLiquidationComponents payload basketSnapshot of
-        Left err -> expectationFailure $ "expected valid cached components: " <> show err
-        Right components ->
-          case pythStoredPriceCalls pythContract components of
-            Left err -> expectationFailure $ "expected valid Pyth calls: " <> show err
-            Right calls -> do
-              map Multicall.callTarget calls `shouldBe` replicate 2 pythContract
-              map Multicall.callAllowFailure calls `shouldBe` [True, True]
-              map Multicall.callCalldata calls
-                `shouldBe`
-                  [ encodeCall "getPriceUnsafe(bytes32)" [feedA]
-                  , encodeCall "getPriceUnsafe(bytes32)" [feedB]
-                  ]
-
-    it "strictly decodes the four-word Pyth Price struct" $ do
-      let encoded =
-            signedWord 123_000_000
-              <> encodeUint256 456
-              <> signedWord (-8)
-              <> encodeUint256 789
-      decodePythStoredPriceResults 1 [Multicall.CallResult True encoded]
-        `shouldBe`
-          Right
-            [ PythStoredPrice
-                { pspPrice = 123_000_000
-                , pspConfidence = 456
-                , pspExponent = -8
-                , pspPublishTime = 789
-                }
-            ]
-      decodePythStoredPriceResults 1 [Multicall.CallResult True BS.empty]
-        `shouldSatisfy` isLeft
-
-    it "reproduces Pyth update semantics component by component" $ do
-      case decodeCachedLiquidationComponents payload basketSnapshot of
-        Left err -> expectationFailure $ "expected valid cached components: " <> show err
-        Right components ->
-          case
-              mergeLiquidationBasketComponents
-                components
-                [ PythStoredPrice 300_000_000 3_000 (-8) 103
-                , PythStoredPrice 90_000_000 900 (-8) 100
-                ]
-            of
-            Left err -> expectationFailure $ "expected a merged basket: " <> show err
-            Right merged -> do
-              -- Stored data wins for the first feed because it is newer; the
-              -- submitted cached update wins for the second feed.
-              map lbcPrice merged `shouldBe` [300_000_000, 100_000_000]
-              map lbcPublishTime merged `shouldBe` [103, 101]
-
-    it "matches on-chain freshness, confidence, and publish-order policy" $ do
-      case decodeCachedLiquidationComponents payload basketSnapshot of
-        Left err -> expectationFailure $ "expected valid cached components: " <> show err
-        Right components -> do
-          validateMergedLiquidationBasket exactRiskGlobals components `shouldBe` Right ()
-          validateMergedLiquidationBasket
-            exactRiskGlobals {lrgBlockTimestamp = 101}
-            components
-            `shouldSatisfy` isLeft
-          validateMergedLiquidationBasket
-            exactRiskGlobals {lrgBlockTimestamp = 113}
-            components
-            `shouldSatisfy` isLeft
-          validateMergedLiquidationBasket
-            exactRiskGlobals {lrgLastMarkTime = 102}
-            components
-            `shouldSatisfy` isLeft
-          let wideConfidence =
-                case components of
-                  first : rest -> first {lbcConfidence = 1_000_000} : rest
-                  [] -> []
-          validateMergedLiquidationBasket exactRiskGlobals wideConfidence
-            `shouldSatisfy` isLeft
-
-    it "reports the exact future skew and component for retry decisions" $ do
-      case decodeCachedLiquidationComponents payload basketSnapshot of
-        Left err -> expectationFailure $ "expected valid cached components: " <> show err
-        Right components ->
-          validateMergedLiquidationBasketDetailed
-            exactRiskGlobals {lrgBlockTimestamp = 101}
-            components
-            `shouldBe`
-              Left
-                ( LiquidationRiskInputFuturePublishTime
-                    LiquidationFuturePublishTime
-                      { lfptBlockTimestamp = 101
-                      , lfptMinimumPublishTime = 101
-                      , lfptMaximumPublishTime = 102
-                      , lfptFutureSkewSeconds = 1
-                      , lfptFeedId = feedAText
-                      }
-                )
-
   describe "future-publish exact-block retry" $ do
     it "waits for the measured skew and succeeds at a newer exact block" $ do
       attemptedBlocks <- newIORef []
@@ -467,7 +258,6 @@ spec = do
                 , lfptMinimumPublishTime = 100
                 , lfptMaximumPublishTime = 102
                 , lfptFutureSkewSeconds = 102 - blockNumber
-                , lfptFeedId = "feed-a"
                 }
           loadAtBlock blockNumber = do
             append attemptedBlocks blockNumber
@@ -511,7 +301,6 @@ spec = do
                 , lfptMinimumPublishTime = 100
                 , lfptMaximumPublishTime = 120
                 , lfptFutureSkewSeconds = 20
-                , lfptFeedId = "feed-a"
                 }
           unrelatedError = LiquidationRiskInputUnavailable "RPC unavailable"
       liquidationFuturePublishRetryDelaySeconds 5 futureError `shouldBe` Just 5
@@ -542,7 +331,6 @@ spec = do
                 , lfptMinimumPublishTime = 101
                 , lfptMaximumPublishTime = 102
                 , lfptFutureSkewSeconds = 102 - blockNumber
-                , lfptFeedId = "feed-a"
                 }
           loadRiskAtBlock blockNumber =
             pure $
@@ -1010,68 +798,6 @@ executionPayloadAt publishTime updateHex =
     , puprFetchedAt = publishTime
     }
 
-basketSnapshot :: BasketSnapshotRow
-basketSnapshot =
-  BasketSnapshotRow
-    { bsrTimestamp = 103
-    , bsrIntervalSeconds = 30
-    , bsrBasketPrice = 100_000_000
-    -- Deliberately reverse publish-time order: cache correlation must compare
-    -- the complete vector without relying on component order.
-    , bsrComponents = toJSON basketComponents
-    }
-
-basketComponents :: [Value]
-basketComponents =
-  [ basketComponent 200_000_000 200_000_000 2_000 102 5_000 200_000_000
-  , basketComponent 100_000_000 100_000_000 1_000 101 5_000 100_000_000
-  ]
-
-mismatchedPublishTimeComponents :: [Value]
-mismatchedPublishTimeComponents =
-  [ basketComponent 200_000_000 200_000_000 2_000 103 5_000 200_000_000
-  , basketComponent 100_000_000 100_000_000 1_000 101 5_000 100_000_000
-  ]
-
-nonPositiveRawPriceComponents :: [Value]
-nonPositiveRawPriceComponents =
-  [ basketComponent 200_000_000 (-200_000_000) 2_000 102 5_000 200_000_000
-  , basketComponent 100_000_000 100_000_000 1_000 101 5_000 100_000_000
-  ]
-
-basketComponent
-  :: Integer
-  -> Integer
-  -> Integer
-  -> Integer
-  -> Integer
-  -> Integer
-  -> Value
-basketComponent price rawPrice confidence publishTime weightBps basePrice =
-  object
-    [ "feedId" .= if price == 200_000_000 then feedAText else feedBText
-    , "price" .= price
-    , "rawPrice" .= rawPrice
-    , "confidence" .= confidence
-    , "exponent" .= (-8 :: Int)
-    , "publishTime" .= publishTime
-    , "inverted" .= False
-    , "weightBps" .= weightBps
-    , "basePrice" .= basePrice
-    ]
-
-feedAText :: Text
-feedAText = "0x1111111111111111111111111111111111111111111111111111111111111111"
-
-feedBText :: Text
-feedBText = "0x2222222222222222222222222222222222222222222222222222222222222222"
-
-feedA :: BS.ByteString
-feedA = BS.replicate 32 0x11
-
-feedB :: BS.ByteString
-feedB = BS.replicate 32 0x22
-
 account :: Text
 account = "0x1111111111111111111111111111111111111111"
 
@@ -1083,9 +809,6 @@ foreignAccount = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 accountLens :: Text
 accountLens = "0x9999999999999999999999999999999999999999"
-
-pythContract :: Text
-pythContract = "0x8888888888888888888888888888888888888888"
 
 cfdEngine :: Text
 cfdEngine = "0x3333333333333333333333333333333333333333"
@@ -1354,64 +1077,20 @@ openRiskySnapshot =
 neutralRiskInputs :: FreshLiquidationRiskInputs
 neutralRiskInputs =
   FreshLiquidationRiskInputs
-    { flriNeutralPrice = 100_000_000
-    , flriCapPrice = 200_000_000
+    { flriLongPrice = 100_000_000
+    , flriShortPrice = 100_000_000
     , flriRequiredMarginBps = 100
-    , flriBasketConfidence = 0
-    , flriAdverseConfidenceMultiplierBps = 0
     , flriRiskBufferBps = 0
     }
 
 adverseRiskInputs :: FreshLiquidationRiskInputs
 adverseRiskInputs =
   neutralRiskInputs
-    { flriBasketConfidence = 1_000_000
-    , flriAdverseConfidenceMultiplierBps = 10_000
+    { flriLongPrice = 101_000_000
     }
 
 invalidRiskInputs :: FreshLiquidationRiskInputs
-invalidRiskInputs = neutralRiskInputs {flriCapPrice = 0}
-
-exactRiskGlobals :: LiquidationRiskGlobals
-exactRiskGlobals =
-  LiquidationRiskGlobals
-    { lrgCapPrice = 200_000_000
-    , lrgRequiredMarginBps = 100
-    , lrgAdverseConfidenceMultiplierBps = 2_000
-    , lrgPythContract = pythContract
-    , lrgMaxStaleness = 10
-    , lrgMaxConfidenceRatioBps = 10
-    , lrgBlockTimestamp = 110
-    , lrgLastMarkTime = 100
-    }
-
-liquidationRiskResults :: [Multicall.CallResult]
-liquidationRiskResults =
-  map
-    (Multicall.CallResult True)
-    [ mconcat $
-        map
-          encodeUint256
-          [ 0
-          , 0
-          , 100
-          , 0
-          , 200
-          , 0
-          , 0
-          , 0
-          ]
-    , encodeUint256 200_000_000
-    , encodeUint256 2_000
-    , encodeAddress pythContract
-    , encodeUint256 0
-    , encodeUint256 10
-    , encodeUint256 10
-    , encodeUint256 20
-    , encodeUint256 0
-    , encodeUint256 100
-    , encodeUint256 110
-    ]
+invalidRiskInputs = neutralRiskInputs {flriLongPrice = 0}
 
 emptyAccountSnapshot :: AccountLedgerSnapshot
 emptyAccountSnapshot =

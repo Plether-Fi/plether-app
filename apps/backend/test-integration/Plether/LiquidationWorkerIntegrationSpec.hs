@@ -36,11 +36,17 @@ import Test.Hspec
 liquidationWorkerSpec :: Text -> Spec
 liquidationWorkerSpec databaseUrl = describe "liquidation worker DB/RPC orchestration" $ do
   it "refreshes after a real future-price retry and requotes each submitted batch" $
-    withFixture databaseUrl 2 True $ \conn fixture client -> do
+    withFixture databaseUrl 2 RefreshPayload $ \conn fixture client -> do
       runWorker cfg conn client
       readIORef (fSnapshots fixture) `shouldReturn` accounts 2
-      quoted <- readIORef (fQuotes fixture)
-      quoted `shouldBe` [BS.singleton 0xaa, BS.singleton 0xbb]
+      readIORef (fQuotes fixture) `shouldReturn`
+        [(quantityText 103, BS.singleton 0x01), (quantityText 112, BS.singleton 0xaa), (quantityText 124, BS.singleton 0xbb)]
+      readIORef (fOraclePreviews fixture) `shouldReturn`
+        [ (quantityText 100, [], 0)
+        , (quantityText 103, [BS.singleton 0x01], 7)
+        , (quantityText 112, [BS.singleton 0xaa], 11)
+        , (quantityText 124, [BS.singleton 0xbb], 19)
+        ]
       estimates <- readIORef (fEstimates fixture)
       map (\(_,fee,_) -> fee) estimates `shouldBe` [11,19]
       map (\(batch,_,_) -> batch) estimates `shouldBe` [[account 1],[account 2]]
@@ -50,8 +56,37 @@ liquidationWorkerSpec databaseUrl = describe "liquidation worker DB/RPC orchestr
       assertSignedIntents fixture
       remaining conn `shouldReturn` 0
 
+  it "screens and submits using canonical accepted-basket prices when a signed payload is rejected" $
+    withFixture databaseUrl 1 ReplayAcceptedBasket $ \conn fixture client -> do
+      runWorker cfg conn client
+      readIORef (fSnapshots fixture) `shouldReturn` accounts 1
+      readIORef (fOraclePreviews fixture) `shouldReturn`
+        [ (quantityText 110, [BS.singleton 0x01], 7)
+        , (quantityText 110, [], 0)
+        , (quantityText 110, [BS.singleton 0x01], 7)
+        , (quantityText 110, [], 0)
+        ]
+      readIORef (fEstimates fixture) `shouldReturn`
+        [(accounts 1, 0, Perps.executeLiquidationBatchCall (accounts 1) [])]
+      readIORef (fBatchSimulations fixture) `shouldReturn`
+        [(quantityText 110, Perps.executeLiquidationBatchCall (accounts 1) [])]
+      assertSignedIntents fixture
+      remaining conn `shouldReturn` 0
+
+  it "withholds liquidation screening when the accepted basket exceeds the local age limit" $
+    withFixture databaseUrl 1 ReplayStaleBasket $ \conn fixture client -> do
+      runWorker cfg conn client
+      readIORef (fSnapshots fixture) `shouldReturn` accounts 1
+      readIORef (fOraclePreviews fixture) `shouldReturn`
+        [(quantityText 110, [BS.singleton 0x01], 7), (quantityText 110, [], 0)]
+      readIORef (fEstimates fixture) `shouldReturn` []
+      readIORef (fBatchSimulations fixture) `shouldReturn` []
+      readIORef (fSent fixture) `shouldReturn` []
+      errors <- query_ conn "SELECT last_error FROM perps_liquidation_candidates" :: IO [Only (Maybe Text)]
+      errors `shouldBe` [Only (Just "Fresh liquidation risk inputs were unavailable")]
+
   it "retains the exact persisted transaction on confirmation failure and recovers before another nonce" $
-    withFixture databaseUrl 2 False $ \conn fixture client -> do
+    withFixture databaseUrl 2 SignedPayload $ \conn fixture client -> do
       writeIORef (fFailConfirmation fixture) True
       runWorker cfg conn client
       first <- readIORef (fSent fixture)
@@ -75,7 +110,7 @@ liquidationWorkerSpec databaseUrl = describe "liquidation worker DB/RPC orchestr
       remaining conn `shouldReturn` 0
 
   it "loads all 8000 stored accounts and submits the 250 risks across every page" $
-    withFixture databaseUrl 8000 False $ \conn fixture client -> do
+    withFixture databaseUrl 8000 SignedPayload $ \conn fixture client -> do
       runWorker (cfg {lwcExecutionBatchSize=20}) conn client
       seen <- readIORef (fSnapshots fixture)
       length seen `shouldBe` 8000
@@ -118,22 +153,27 @@ accounts :: Int -> [Text]
 accounts count = map account [1..count]
 
 -- Test-only external effects and captured requests, never a risk/selection loop.
+data FixtureScenario = SignedPayload | RefreshPayload | ReplayAcceptedBasket | ReplayStaleBasket deriving (Eq)
+
 data Fixture = Fixture
-  { fClock :: IORef Integer, fRefresh :: Bool, fCount :: Int,
-    fSnapshots :: IORef [Text], fQuotes :: IORef [BS.ByteString],
-    fEstimates :: IORef [([Text],Integer,BS.ByteString)], fSent :: IORef [BS.ByteString],
+  { fClock :: IORef Integer, fScenario :: FixtureScenario, fCount :: Int,
+    fSnapshots :: IORef [Text], fQuotes :: IORef [(Text, BS.ByteString)],
+    fOraclePreviews :: IORef [(Text, [BS.ByteString], Integer)],
+    fEstimates :: IORef [([Text],Integer,BS.ByteString)],
+    fBatchSimulations :: IORef [(Text, BS.ByteString)], fSent :: IORef [BS.ByteString],
     fReceipts :: IORef [(Text,Value)], fRiskTimes :: IORef [Integer],
     fFailConfirmation :: IORef Bool, fDb :: Connection }
 
-withFixture :: Text -> Int -> Bool -> (Connection -> Fixture -> EthClient -> IO ()) -> IO ()
-withFixture databaseUrl count refresh action = bracket open closeAll $ \(conn,rpcConn,schema) -> do
+withFixture :: Text -> Int -> FixtureScenario -> (Connection -> Fixture -> EthClient -> IO ()) -> IO ()
+withFixture databaseUrl count scenario action = bracket open closeAll $ \(conn,rpcConn,schema) -> do
   ensurePerpsLiquidationSchema conn
   ensureBasketSnapshotSchema conn
   void $ execute conn
     "INSERT INTO perps_liquidation_candidates(chain_id,cfd_engine,account,first_seen_block,last_seen_block) SELECT ?,?, '0x'||lpad(to_hex(n),40,'0'),n,n FROM generate_series(1,?) n"
     (421614::Integer,engine,count)
   seedPayload conn 102 0x01
-  fixture <- Fixture <$> newIORef (if refresh then 100 else 110) <*> pure refresh <*> pure count
+  fixture <- Fixture <$> newIORef (if scenario == RefreshPayload then 100 else 110) <*> pure scenario <*> pure count
+    <*> newIORef [] <*> newIORef []
     <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef []
     <*> newIORef [] <*> newIORef False <*> pure rpcConn
   testWithApplication (pure $ rpcApplication fixture) $ \port -> do
@@ -197,29 +237,47 @@ dispatch fixture method params = do
     ("eth_gasPrice",_) -> pure $ Right $ quantity 100
     ("eth_maxPriorityFeePerGas",_) -> pure $ Right $ quantity 10
     ("eth_getBalance",_) -> pure $ Right $ quantity (10^(30::Int))
-    ("eth_call",Object call:_) -> do
+    ("eth_call",Object call:String block:_) -> do
       let bytes = unhex $ textAt "data" call
-      if BS.take 4 bytes == BS.take 4 (encodeCall "aggregate3((address,bool,bytes)[])" [])
+      if bytes == encodeCall "getAcceptedFeedPublishTimes()" []
         then do
-          values <- traverse (subcall fixture) $ aggregateCalls bytes
-          pure $ Right $ String $ hex $ encodeResults values
-        else if BS.take 4 bytes == BS.take 4 (Perps.executeLiquidationBatchCall [] [])
-          then pure $ Right $ String $ hex $ encodeUint256 $ fromIntegral $ length $ batchAccounts bytes
-          else do
-            let updates = [BS.singleton b | b <- [0x01,0xaa,0xbb], bytes == Perps.getUpdateFeeCall [BS.singleton b]]
-            case updates of
-              [update] -> do
-                modifyIORef' (fQuotes fixture) (<> [update])
-                pure $ Right $ String $ hex $ encodeUint256 $ feeFor update
-              _ -> unexpected method params
+          textAt "to" call `shouldBe` oracle
+          block `shouldBe` quantityText 110
+          let oldest = if fScenario fixture == ReplayStaleBasket then 99 else 110
+          pure $ Right $ String $ hex $ words' [32, 2, oldest, 110]
+        else if BS.take 4 bytes == BS.take 4 (encodeCall "aggregate3((address,bool,bytes)[])" [])
+          then do
+            values <- traverse (subcall fixture) $ aggregateCalls bytes
+            pure $ Right $ String $ hex $ encodeResults values
+          else if BS.take 4 bytes == BS.take 4 (Perps.executeLiquidationBatchCall [] [])
+            then do
+              textAt "from" call `shouldBe` signer
+              textAt "to" call `shouldBe` router
+              modifyIORef' (fBatchSimulations fixture) (<> [(block, bytes)])
+              pure $ Right $ String $ hex $ encodeUint256 $ fromIntegral $ length $ batchAccounts bytes
+            else do
+              let payloads = [] : [[BS.singleton b] | b <- [0x01,0xaa,0xbb]]
+                  previewPayloads = filter ((bytes ==) . Perps.updateLiquidationBatchPriceCall signer) payloads
+              case previewPayloads of
+                [updates] -> previewOracle fixture call block updates
+                _ ->
+                  case [update | [update] <- payloads, bytes == Perps.getUpdateFeeCall [update]] of
+                    [update] -> do
+                      modifyIORef' (fQuotes fixture) (<> [(block, update)])
+                      pure $ Right $ String $ hex $ encodeUint256 $ feeFor update
+                    _ -> unexpected method params
     ("eth_estimateGas",Object call:_) -> do
       textAt "to" call `shouldBe` router
       let bytes = unhex $ textAt "data" call
           batch = batchAccounts bytes
-          update = BS.singleton $ if fRefresh fixture then (if clock <= 112 then 0xaa else 0xbb) else 0x01
-          fee = feeFor update
+          updates = case fScenario fixture of
+            ReplayAcceptedBasket -> []
+            ReplayStaleBasket -> []
+            SignedPayload -> [BS.singleton 0x01]
+            RefreshPayload -> [BS.singleton $ if clock <= 112 then 0xaa else 0xbb]
+          fee = sum $ map feeFor updates
       textAt "value" call `shouldBe` quantityText fee
-      bytes `shouldBe` Perps.executeLiquidationBatchCall batch [update]
+      bytes `shouldBe` Perps.executeLiquidationBatchCall batch updates
       modifyIORef' (fEstimates fixture) (<> [(batch,fee,bytes)])
       pure $ Right $ quantity 5000000
     ("eth_sendRawTransaction",[String raw]) -> do
@@ -239,7 +297,7 @@ dispatch fixture method params = do
       pure $ Right $ String hash
     ("eth_getTransactionReceipt",[String hash]) -> do
       receipts <- readIORef $ fReceipts fixture
-      when (fRefresh fixture && length sent == 1 && clock == 112) $ do
+      when (fScenario fixture == RefreshPayload && length sent == 1 && clock == 112) $ do
         seedPayload (fDb fixture) 124 0xbb
         writeIORef (fClock fixture) 124
       pure $ Right $ maybe Null id $ lookup hash receipts
@@ -247,22 +305,43 @@ dispatch fixture method params = do
  where
   unexpected method' params' = expectationFailure ("unexpected RPC: " <> show (method',params')) >> pure (Left "unexpected RPC")
 
+previewOracle :: Fixture -> KM.KeyMap Value -> Text -> [BS.ByteString] -> IO (Either Text Value)
+previewOracle fixture call block updates = do
+  let fee = sum $ map feeFor updates
+  textAt "to" call `shouldBe` oracle
+  textAt "from" call `shouldBe` router
+  textAt "value" call `shouldBe` quantityText fee
+  modifyIORef' (fOraclePreviews fixture) (<> [(block, updates, fee)])
+  case fScenario fixture of
+    RefreshPayload | block == quantityText 100 -> pure $ Left "accepted oracle basket unavailable"
+    scenario | scenario `elem` [ReplayAcceptedBasket, ReplayStaleBasket] ->
+      if null updates
+        then pure $ Right $ String $ hex $ words' [110000000, 90000000, 100000000, 110, 0]
+        else pure $ Left "execution reverted"
+    _ -> do
+      let publishTime = case updates of
+            [update] | update == BS.singleton 0xaa -> 112
+                     | update == BS.singleton 0xbb -> 124
+            _ -> 102
+      pure $ Right $ String $ hex $ words' [100000000, 100000000, 100000000, publishTime, fee]
+
 subcall :: Fixture -> (Text,BS.ByteString) -> IO BS.ByteString
 subcall fixture (_,bytes)
   | starts "getAccountLedgerSnapshot(address)" = do
       let who = hex $ BS.drop 12 $ BS.take 32 $ BS.drop 4 bytes
           n = decodeUint256 $ BS.drop 4 bytes
-          risky = fCount fixture <= 2 || (n::Integer) `mod` 32 == 0
+          risky = fScenario fixture `notElem` [ReplayAcceptedBasket, ReplayStaleBasket]
+            && (fCount fixture <= 2 || (n::Integer) `mod` 32 == 0)
       modifyIORef' (fSnapshots fixture) (<> [who])
-      when (fRefresh fixture) $ do
+      when (fScenario fixture == RefreshPayload) $ do
         seedPayload (fDb fixture) 112 0xaa
         writeIORef (fClock fixture) 112
-      -- Stored flags are deliberately false even for low-equity positions:
-      -- the worker must reconstruct fresh risk rather than echo this fixture.
+      -- Stored flags are deliberately false. With accepted replay, equity is
+      -- healthy at the mark and only the long-side quote makes it liquidatable.
       pure $ words' ([0,0,0,0,0,0,0,0,0,0,0,0,0,0,equity risky,0,1,0,10^(20::Int),10000000,100000000,0,equity risky,0])
   | starts "positions(address)" = pure $ BS.replicate (7*32) 0
   | starts "getPriceUnsafe(bytes32)" = pure $ words' [100000000,0,2^(256::Int)-8,102]
-  | starts "riskParams()" = pure $ words' [0,0,100,0,200,0,0,0]
+  | starts "riskParams()" = pure $ words' [0,0,100,0,200,0,0,0,5000,0]
   | starts "CAP_PRICE()" = pure $ words' [200000000]
   | starts "adverseConfidenceMultiplierBps()" = pure $ words' [0]
   | starts "pyth()" = pure $ encodeAddress oracle

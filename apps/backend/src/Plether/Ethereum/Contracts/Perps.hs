@@ -61,6 +61,7 @@ module Plether.Ethereum.Contracts.Perps
   , decodeOrderBatchResult
   , executeLiquidationCall
   , executeLiquidationBatchCall
+  , updateLiquidationBatchPriceCall
   , settleLpEpochRouterCall
   , settleLpEpochPoolCall
   , positionsCall
@@ -984,6 +985,15 @@ executeLiquidationBatchCall accounts updateData =
         , encodedAccounts
         , encodedUpdateData
         ]
+
+updateLiquidationBatchPriceCall :: Text -> [ByteString] -> ByteString
+updateLiquidationBatchPriceCall refundRecipient updateData =
+  encodeCall
+    "updateLiquidationBatchPrice(address,bytes[])"
+    [ encodeAddress refundRecipient
+    , encodeUint256 64
+    , encodeBytesArray updateData
+    ]
 
 settleLpEpochRouterCall :: [ByteString] -> ByteString
 settleLpEpochRouterCall updateData =
