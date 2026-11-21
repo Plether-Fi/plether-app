@@ -7,6 +7,8 @@ module Plether.Config
   , AaRpcMode (..)
   , aaRpcModeText
   , resolveAaSecurityRpc
+  , loadKernelSecurityRpc
+  , resolveKernelSecurityRpc
   , validateAaSafeLag
   , aaSafeLagCeiling
   , parseCanonicalAddressList
@@ -44,6 +46,7 @@ module Plether.Config
   ) where
 
 import qualified Plether.Perps.Manifest as Manifest
+import Control.Monad (unless)
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
 import Data.Char (isHexDigit)
 import Data.List (intercalate, nub, sortBy)
@@ -669,6 +672,7 @@ loadConfig = do
       nativeAaFinalRateLimitStr <- fromMaybe "6" <$> lookupEnv "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE"
       mAltoRpcUrl <- firstEnv ["AA_ALTO_RPC_URL"]
       mNativeSecurityRpcUrl <- firstEnv ["AA_RECONCILER_SECONDARY_RPC_URL"]
+      mKernelProfile <- lookupEnv "AA_KERNEL_PROFILE_JSON"
       aaRpcModeStr <- fromMaybe "dual-independent" <$> lookupEnv "AA_RPC_MODE"
       mPaymasterAddress <- firstEnv ["AA_PAYMASTER_ADDRESS"]
       mPaymasterCodeHash <- firstEnv ["AA_PAYMASTER_CODE_HASH"]
@@ -845,9 +849,8 @@ loadConfig = do
                 (Left "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED must be a boolean")
                 Right
                 (parseBoolStrict nativeGlobalRolloutEnabledStr)
-            let nativeSpecific =
+            let nativePins =
                   [ mAltoRpcUrl
-                  , mNativeSecurityRpcUrl
                   , mPaymasterAddress
                   , mPaymasterCodeHash
                   , mNativePolicyId
@@ -855,6 +858,12 @@ loadConfig = do
                   , mPaymasterKmsKeyId
                   , mPaymasterAccountCodeHash
                   ]
+                -- Kernel can use this legacy variable as its only secondary
+                -- input. Other native settings still undergo native validation.
+                nativeSecondary
+                  | isJust mKernelProfile && all (== Nothing) nativePins = Nothing
+                  | otherwise = mNativeSecurityRpcUrl
+                nativeSpecific = nativeSecondary : nativePins
             nativeConfigured <-
               validateNativeAaPresence
                 enabled
@@ -869,8 +878,8 @@ loadConfig = do
                 Right Nothing
               else case (mAaProxyOriginToken, nativeSpecific) of
                 ( Just originToken
-                  , [ Just altoRpcUrl
-                  , Just securityRpcUrl
+                  , [ Just securityRpcUrl
+                  , Just altoRpcUrl
                   , Just paymasterAddress
                   , Just paymasterCodeHash
                   , Just policyId
@@ -1508,8 +1517,37 @@ resolveAaSecurityRpc rawMode chainId rawGlobal rawOwners primaryRaw secondaryRaw
         "single-provider-sepolia must explicitly reuse PERPS_RPC_URL in the verification RPC slot"
   pure (mode, secondary)
 
+loadKernelSecurityRpc :: IO (Either Text (Text, Text))
+loadKernelSecurityRpc = resolveKernelSecurityRpc
+  <$> raw "PERPS_RPC_URL"
+  <*> raw "AA_SECURITY_RPC_URL"
+  <*> raw "AA_RECONCILER_SECONDARY_RPC_URL"
+ where
+  raw name = fmap T.pack <$> lookupEnv name
+
+-- Distinct hosts are required even if the URLs use different provider paths.
+-- An explicitly configured security URL takes precedence and must be valid.
+resolveKernelSecurityRpc :: Maybe Text -> Maybe Text -> Maybe Text -> Either Text (Text, Text)
+resolveKernelSecurityRpc primaryRaw preferredSecondary legacySecondary = do
+  primary <- endpoint "PERPS_RPC_URL" primaryRaw
+  secondary <- case preferredSecondary of
+    Nothing -> endpoint "AA_RECONCILER_SECONDARY_RPC_URL" legacySecondary
+    Just _ -> endpoint "AA_SECURITY_RPC_URL" preferredSecondary
+  unless (host primary /= host secondary) $ Left "Kernel requires RPC providers on distinct hosts"
+  pure (primary, secondary)
+ where
+  endpoint name raw = do
+    value <- maybe (Left $ name <> " is required") Right raw
+    -- Providers can route different transport paths on the same authority.
+    maybe (Left $ name <> " must be a normalized HTTPS/default-443 provider URL") Right
+      (normalizeSecurityRpcUrl id value)
+  host = T.takeWhile (/= '/') . T.drop (T.length ("https://" :: Text))
+
 normalizeExternalSecurityRpcUrl :: Text -> Maybe Text
-normalizeExternalSecurityRpcUrl raw = do
+normalizeExternalSecurityRpcUrl = normalizeSecurityRpcUrl (T.dropWhileEnd (== '/'))
+
+normalizeSecurityRpcUrl :: (Text -> Text) -> Text -> Maybe Text
+normalizeSecurityRpcUrl normalizePath raw = do
   let prefix = "https://"
       value = raw
   if raw /= T.strip raw || not (prefix `T.isPrefixOf` value)
@@ -1518,9 +1556,6 @@ normalizeExternalSecurityRpcUrl raw = do
       let remainder = T.drop (T.length prefix) value
           (authority, path) = T.breakOn "/" remainder
           host = fromMaybe authority $ T.stripSuffix ":443" authority
-          normalizedPath
-            | T.null path || path == "/" = ""
-            | otherwise = T.dropWhileEnd (== '/') path
           validHostChar char =
             (char >= 'a' && char <= 'z')
               || (char >= 'A' && char <= 'Z')
@@ -1537,7 +1572,7 @@ normalizeExternalSecurityRpcUrl raw = do
           || T.any (`elem` [' ', '\t', '\r', '\n', '\0']) value
           || (":" `T.isInfixOf` authority && not (":443" `T.isSuffixOf` authority))
         then Nothing
-        else Just $ prefix <> T.toLower host <> normalizedPath
+        else Just $ prefix <> T.toLower host <> normalizePath path
 
 reviewedNativePolicyId :: Text
 reviewedNativePolicyId =

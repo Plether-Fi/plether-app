@@ -68,7 +68,7 @@ import qualified Plether.AA.Pimlico as Legacy
 import qualified Plether.AA.Preparation as Preparation
 import qualified Plether.AA.RecoveryCapability as Recovery
 import qualified Plether.AA.Reconciler as Chain
-import Plether.Config (AaRpcMode (..), Config (..), normalizeExternalSecurityRpcUrl)
+import Plether.Config (AaRpcMode (..), Config (..), loadKernelSecurityRpc)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.AaSponsorship (consumeAaRateLimit)
 import qualified Plether.Database.KernelOperation as Db
@@ -85,7 +85,7 @@ data KernelGatewayConfig = KernelGatewayConfig
   { kgcProfile :: Kernel.KernelProfile
   , kgcAltoRpcUrl :: Text
   , kgcOriginToken :: Text
-  , kgcSecondaryRpcUrl :: Text
+  , kgcPrimaryRpcUrl :: Text
   , kgcSecondaryClient :: EthClient
   , kgcMaxSafeLagSeconds :: Integer
   , kgcEthModeEnabled :: Bool
@@ -182,16 +182,7 @@ loadKernelGatewayConfig = runExceptT $ do
       case validBundlerTransportUri bundlerUrl of
         Just uri | null (uriQuery uri) -> pure ()
         _ -> throwE "AA_KERNEL_ALTO_RPC_URL must be an HTTP(S) URL without credentials or a query"
-      primaryRaw <- requiredEnv "PERPS_RPC_URL"
-      secondaryAlias <- liftIO $ lookupEnv "AA_SECURITY_RPC_URL"
-      secondaryRaw <- case secondaryAlias of
-        Just value | not (T.null $ T.strip $ T.pack value) -> pure $ T.strip $ T.pack value
-        _ -> requiredEnv "AA_RECONCILER_SECONDARY_RPC_URL"
-      primary <- normalizeRpc "PERPS_RPC_URL" primaryRaw
-      secondary <- normalizeRpc "Kernel security RPC URL" secondaryRaw
-      let host = T.takeWhile (/= '/') . T.drop 8
-      unless (host primary /= host secondary) $
-        throwE "Kernel requires two HTTPS RPC URLs with distinct hosts"
+      (primary, secondary) <- ExceptT loadKernelSecurityRpc
       sponsorWithKey <- traverse
         (\s -> if kscEnabled s
           then (\key -> s { kscKmsKeyId = key }) <$> requiredEnv "AA_KERNEL_PAYMASTER_KMS_KEY_ID"
@@ -200,11 +191,7 @@ loadKernelGatewayConfig = runExceptT $ do
       secondaryClient <- liftIO $ withoutRpcFallback <$>
         newClientWithOptions (RpcClientOptions secondary Nothing "kernel-gateway-secondary")
       signerCache <- liftIO $ newMVar Nothing
-      pure $ Just $ KernelGatewayConfig profile bundlerUrl origin secondary secondaryClient maxLag ethEnabled protections sponsorWithKey signerCache allowedOwners
- where
-  normalizeRpc name url = maybe
-    (throwE $ name <> " must be a normalized HTTPS/default-443 provider URL") pure
-    (normalizeExternalSecurityRpcUrl url)
+      pure $ Just $ KernelGatewayConfig profile bundlerUrl origin primary secondaryClient maxLag ethEnabled protections sponsorWithKey signerCache allowedOwners
 
 -- A canary needs an explicit owner list for both gas modes. Broad admission
 -- requires a separate deliberate switch and cannot coexist with a canary list.

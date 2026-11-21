@@ -13,6 +13,8 @@ import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Plether.AA.Gateway as Native
 import Plether.AA.Kernel (KernelProfile (..), decodeKernelCalls, kernelEntryPoint, kernelFactoryArgs, kernelUserOperationHash)
+import Plether.AA.KernelDeploymentFixture
+  ( KernelDeploymentFixture (..), KernelGasFixture (..), loadKernelDeploymentFixture )
 import Plether.AA.KernelGateway
   ( PrepareIntent (..), classifyKernelEstimate, kernelCanFund, kernelCancellationCallData, kernelFundingAdvice, kernelScope, maxPrefund
   , kernelOwnerAdmitted, kernelOwnerMaySubmit, minimumKernelReplacementFee, parseKernelCancellationOriginal, parseKernelPrepareIntent
@@ -30,8 +32,12 @@ spec :: Spec
 spec = do
   describe "Kernel safe-block lag configuration" $ do
     it "accepts the isolated Sepolia service setting and rejects out-of-range values" $ do
-      map parseKernelMaxSafeLag ["60", "600", "1800"] `shouldBe` map Right [60, 600, 1800]
-      mapM_ (\raw -> parseKernelMaxSafeLag raw `shouldSatisfy` isLeft) ["59", "1801", "01800"]
+      fixture <- loadKernelDeploymentFixture
+      let lower = fixtureMinimumSafeLag fixture
+          upper = fixtureMaximumSafeLag fixture
+      map (parseKernelMaxSafeLag . show) [lower, 600, upper] `shouldBe` map Right [lower, 600, upper]
+      mapM_ (\raw -> parseKernelMaxSafeLag raw `shouldSatisfy` isLeft)
+        [show (lower - 1), show (upper + 1), '0' : show upper]
 
   describe "Kernel gateway preparation intent" $ do
     it "requires the caller to choose the payer explicitly" $ do
@@ -76,19 +82,43 @@ spec = do
       checkQuote ethQuote 360000
       checkQuote sponsoredQuote 485000
     it "admits the recorded Nitro preverification gas on Kernel while preserving the legacy ceiling" $ do
-      let quote = KM.insert "preVerificationGas" (quantity 5_861_566) ethQuote
+      gas <- fixtureGas <$> loadKernelDeploymentFixture
+      let quote = KM.insert "preVerificationGas" (quantity $ fixtureNitroPreVerificationGas gas) ethQuote
       case Paymaster.parsePackedUserOperation quote of
         Left reason -> expectationFailure $ T.unpack reason
         Right operation -> do
           validateKernelEconomicCaps operation `shouldBe` Right ()
           Native.validateHardEconomicCaps operation `shouldSatisfy` isLeft
-    it "bounds Kernel gas units and the ETH-paid cost independently" $ do
-      let estimate preVerification maxFee = Paymaster.parsePackedUserOperation $
-            KM.insert "maxFeePerGas" (quantity maxFee) $
-            KM.insert "preVerificationGas" (quantity preVerification) ethQuote
-      (estimate 12_000_000 2_000_000_000 >>= validateKernelEconomicCaps) `shouldBe` Right ()
-      (estimate 12_000_001 2_000_000_000 >>= validateKernelEconomicCaps) `shouldSatisfy` isLeft
-      (estimate 5_861_566 10_000_000_000 >>= validateKernelEconomicCaps) `shouldSatisfy` isLeft
+    it "enforces every reviewed Kernel gas and fee boundary" $ do
+      gas <- fixtureGas <$> loadKernelDeploymentFixture
+      let units =
+            [ ("callGasLimit", fixtureCallGas gas)
+            , ("verificationGasLimit", fixtureVerificationGas gas)
+            , ("preVerificationGas", fixturePreVerificationGas gas)
+            , ("paymasterVerificationGasLimit", fixturePaymasterVerificationGas gas)
+            , ("paymasterPostOpGasLimit", fixturePaymasterPostOpGas gas)
+            ]
+          caps = units <>
+            [ ("maxFeePerGas", fixtureMaxFeePerGas gas)
+            , ("maxPriorityFeePerGas", fixtureMaxPriorityFeePerGas gas)
+            ]
+          base = KM.insert "maxFeePerGas" (quantity $ fixtureMaxFeePerGas gas) sponsoredQuote
+          setCap (field, cap) = KM.insert field (quantity cap)
+          validate fields = Paymaster.parsePackedUserOperation fields >>= validateKernelEconomicCaps
+      sum (map snd units) `shouldBe` fixtureAggregateGas gas
+      validate (foldr setCap base caps) `shouldBe` Right ()
+      mapM_ (\(field, cap) -> validate (setCap (field, cap + 1) base) `shouldSatisfy` isLeft) caps
+    it "bounds ETH-paid prefund independently of the gas-unit caps" $ do
+      gas <- fixtureGas <$> loadKernelDeploymentFixture
+      let fee = fixtureMaxFeePerGas gas
+          availableGasUnits = fixtureEthMaxPrefundWei gas `div` fee
+          estimate gasUnits = Paymaster.parsePackedUserOperation $
+            KM.insert "maxFeePerGas" (quantity fee) $
+            KM.insert "callGasLimit" (quantity 1) $
+            KM.insert "verificationGasLimit" (quantity 1) $
+            KM.insert "preVerificationGas" (quantity $ gasUnits - 2) ethQuote
+      (estimate availableGasUnits >>= validateKernelEconomicCaps) `shouldBe` Right ()
+      (estimate (availableGasUnits + 1) >>= validateKernelEconomicCaps) `shouldSatisfy` isLeft
     it "classifies only the pinned ETH estimate prefund failure as insufficient gas" $ do
       let response code message = object ["error" .= object ["code" .= Number code, "message" .= String message]]
           pinned = "UserOperation reverted during simulation with reason: AA21 didn't pay prefund"

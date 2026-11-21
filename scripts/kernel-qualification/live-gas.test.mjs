@@ -8,6 +8,9 @@ import { checkEstimate, checkedEvidence, parsePreparation, verifyOne } from './l
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const { encodeAbiParameters, encodeEventTopics, getAddress, parseAbiParameters, toHex, zeroAddress } = require('viem')
 const { entryPoint09Abi, entryPoint09Address } = require('viem/account-abstraction')
+const { profile: deployment, gas } = JSON.parse(await readFile(
+  new URL('../../apps/backend/test/fixtures/kernel-deployment.json', import.meta.url), 'utf8',
+))
 const sender = getAddress('0x730115Ec79C76CafbE17E3D4a388F3e5B9bA79CE')
 const paymaster = getAddress('0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6')
 const opHash = `0x${'12'.repeat(32)}`
@@ -57,6 +60,16 @@ function preparation(mode) {
     expiresAt: Math.floor(Date.now() / 1000) + 120 }
 }
 
+function preparationAtGas(mode, limits) {
+  const raw = preparation(mode)
+  for (const [field, value] of Object.entries(limits)) raw.operation[field] = toHex(value)
+  const units = ['callGasLimit', 'verificationGasLimit', 'preVerificationGas',
+    'paymasterVerificationGasLimit', 'paymasterPostOpGasLimit']
+    .reduce((total, field) => total + BigInt(raw.operation[field] ?? 0), 0n)
+  raw.maxNetworkGasWei = toHex(units * BigInt(raw.operation.maxFeePerGas))
+  return raw
+}
+
 function evidence() {
   return {
     schema: 1, chainId: 421614, entryPoint: entryPoint09Address, mode: 'eth',
@@ -93,17 +106,44 @@ test('prepared ETH and sponsor quotes bind the exact gas cap and payer', () => {
   } }), /paymaster/)
 })
 
-test('accepts Nitro L1 gas within the reviewed maximum and rejects a sponsor post-operation stipend', () => {
-  const eth = preparation('eth')
-  const nitroL1Gas = 5_861_566n
-  eth.operation.preVerificationGas = toHex(nitroL1Gas)
-  eth.maxNetworkGasWei = toHex((100n + 200n + nitroL1Gas) * 2n)
-  assert.equal(parsePreparation(eth).operation.preVerificationGas, nitroL1Gas)
-  eth.operation.preVerificationGas = toHex(12_000_001n)
-  assert.throws(() => parsePreparation(eth), /preVerificationGas is out of range/)
-  const sponsored = preparation('sponsored')
-  sponsored.operation.paymasterPostOpGasLimit = '0x1'
-  assert.throws(() => parsePreparation(sponsored), /paymasterPostOpGasLimit is out of range/)
+test('accepts the shared deployment entry point and recorded Nitro L1 gas', () => {
+  const eth = preparationAtGas('eth', { preVerificationGas: BigInt(gas.nitroFixturePreVerificationGas) })
+  const parsed = parsePreparation({ ...eth, deployment: deployment.deployment, entryPoint: deployment.entryPoint })
+  assert.equal(parsed.deployment, deployment.deployment)
+  assert.equal(parsed.operation.preVerificationGas, BigInt(gas.nitroFixturePreVerificationGas))
+})
+
+test('enforces the shared gas and fee boundaries', () => {
+  const limits = {
+    callGasLimit: gas.callGasLimit,
+    verificationGasLimit: gas.verificationGasLimit,
+    preVerificationGas: gas.preVerificationGas,
+    paymasterVerificationGasLimit: gas.paymasterVerificationGasLimit,
+    paymasterPostOpGasLimit: gas.paymasterPostOpGasLimit,
+  }
+  const maximumGas = parsePreparation(preparationAtGas('sponsored', limits))
+  assert.equal(maximumGas.quoteMaxWei, BigInt(gas.aggregateGas) * maximumGas.operation.maxFeePerGas)
+  for (const [field, cap] of Object.entries(limits)) {
+    const excessive = preparationAtGas('sponsored', { ...limits, [field]: cap + 1 })
+    assert.throws(() => parsePreparation(excessive), { message: `${field} is out of range` })
+  }
+  for (const field of ['maxFeePerGas', 'maxPriorityFeePerGas']) {
+    const valid = preparationAtGas('eth', { maxFeePerGas: gas.maxFeePerGas, [field]: gas[field] })
+    assert.equal(parsePreparation(valid).operation[field], BigInt(gas[field]))
+    const excessive = preparationAtGas('eth', { maxFeePerGas: gas.maxFeePerGas, [field]: gas[field] + 1 })
+    assert.throws(() => parsePreparation(excessive), { message: `${field} is out of range` })
+  }
+})
+
+test('enforces the shared ETH prefund ceiling independently of gas units', () => {
+  const budget = BigInt(gas.ethMaxPrefundWei)
+  const fee = BigInt(gas.maxFeePerGas)
+  const work = budget / fee - 2n
+  const quote = preVerificationGas => preparationAtGas('eth', {
+    callGasLimit: 1n, verificationGasLimit: 1n, preVerificationGas, maxFeePerGas: fee,
+  })
+  assert.equal(parsePreparation(quote(work)).quoteMaxWei, budget)
+  assert.throws(() => parsePreparation(quote(work + 1n)), { message: 'maxNetworkGasWei is out of range' })
 })
 
 test('a live Alto estimate must fit every prepared limit', () => {

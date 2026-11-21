@@ -26,7 +26,7 @@ import Plether.Database (newDbPool, withDb)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.KernelOperation (ensureKernelOperationSchema)
 import Plether.Ethereum.Client (RpcClientOptions (..), newClient, newClientWithOptions, withoutRpcFallback)
-import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, aaRpcModeText, AaRpcMode (..), parseCanonicalAddressList, validateAaSafeLag)
+import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, loadKernelSecurityRpc, aaRpcModeText, AaRpcMode (..), parseCanonicalAddressList, validateAaSafeLag)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode, exitFailure)
@@ -109,19 +109,7 @@ runKernel profile sponsor safeLag = do
   unless (Manifest.releaseChainId == 421614) $
     fatal "aa_reconciler_configuration_invalid" "Kernel AA requires an Arbitrum Sepolia Perps release"
   databaseUrl <- requireEnv "DATABASE_URL"
-  primaryRaw <- requireRawEnv "PERPS_RPC_URL"
-  secondarySetting <- lookupEnv "AA_SECURITY_RPC_URL"
-  secondaryRaw <- case secondarySetting of
-    Just _ -> requireRawEnv "AA_SECURITY_RPC_URL"
-    Nothing -> requireRawEnv "AA_RECONCILER_SECONDARY_RPC_URL"
-  let invalid = fatal "aa_reconciler_configuration_invalid"
-  primary <- maybe (invalid "PERPS_RPC_URL must be normalized HTTPS/default-443") pure $
-    normalizeExternalSecurityRpcUrl primaryRaw
-  (_, secondary) <- either (invalid . T.pack) pure $
-    resolveAaSecurityRpc "dual-independent" 421614 "false" "" primaryRaw secondaryRaw
-  let authority = T.takeWhile (/= '/') . T.drop 8
-  unless (authority primary /= authority secondary) $
-    invalid "Kernel AA requires primary and secondary RPC providers on distinct hosts"
+  (primary, secondary) <- loadKernelSecurityRpc >>= either (fatal "aa_reconciler_configuration_invalid") pure
   primaryAuth <- fmap T.pack <$> lookupEnv "PERPS_RPC_AUTH_TOKEN"
   poll <- kernelIntSetting "AA_KERNEL_RECONCILER_POLL_SECONDS" 5 1 60
   batch <- kernelIntSetting "AA_KERNEL_RECONCILER_BATCH_BLOCKS" 250 1 2000

@@ -12,6 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.AA.Kernel
+import Plether.AA.KernelDeploymentFixture (fixtureProfile, loadKernelDeploymentFixture)
 import Plether.AA.Pimlico (OwnedTradingAccountFailure (..), SmartCall (..))
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256, keccak256, selector)
 import Plether.Ethereum.Client (RpcError)
@@ -20,6 +21,19 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "Kernel deployment profile" $ do
+    it "round-trips the exact reviewed deployment profile" $ do
+      raw <- fixtureProfile <$> loadKernelDeploymentFixture
+      case fromJSON raw :: Result KernelProfile of
+        Error failure -> expectationFailure failure
+        Success reviewed -> do
+          toJSON reviewed `shouldBe` raw
+          case raw of
+            Object fields -> mapM_ (\key ->
+              case fromJSON (Object $ KM.delete key fields) :: Result KernelProfile of
+                Error _ -> pure ()
+                Success _ -> expectationFailure "accepted a profile with a missing Staker pin")
+              ["staker", "stakerCodeHash"]
+            _ -> expectationFailure "expected an object for the deployment profile"
     it "accepts only the reviewed chain, version, and EntryPoint" $ do
       fromJSON (toJSON profile) `shouldBe` Success profile
       let wrong = toJSON $ profile {kpEntryPoint = address '1'}

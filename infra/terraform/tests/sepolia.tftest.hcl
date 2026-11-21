@@ -602,7 +602,16 @@ run "accept_sepolia_safe_lag" {
 }
 run "reject_excessive_safe_lag" {
   command = plan
-  variables { aa_reconciler_max_safe_lag_seconds = "1801" }
+  variables {
+    aa_reconciler_max_safe_lag_seconds = tostring(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.maximum + 1)
+  }
+  expect_failures = [var.aa_reconciler_max_safe_lag_seconds]
+}
+run "reject_safe_lag_below_kernel_minimum" {
+  command = plan
+  variables {
+    aa_reconciler_max_safe_lag_seconds = tostring(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.minimum - 1)
+  }
   expect_failures = [var.aa_reconciler_max_safe_lag_seconds]
 }
 run "reject_mainnet_extended_safe_lag" {

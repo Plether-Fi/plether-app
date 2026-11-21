@@ -27,6 +27,8 @@ On 2026-11-21, the private Arbitrum Sepolia Alto canary included a signed ETH-pa
 
 The normal Alto workflow accepts only EntryPoint v0.8. Use the protected isolated canary build and private launch configuration for v0.9. A core v0.9 cutover requires private VPC execution for authenticated Nitro checks, a narrowly scoped grant to read the approved canary image from ECR, and task definitions using the patched image's native launcher.
 
+The [shared deployment test fixture](../../apps/backend/test/fixtures/kernel-deployment.json) records the reviewed canary profile, gas limits, and safe-head lag bounds. Update its expectations with any reviewed policy change and run the backend, frontend, mocked Terraform, and qualification checks together. Each runtime validates its own inputs.
+
 The [isolated Pages canary procedure](../../scripts/kernel-qualification/pages-canary.md) uses `https://plether-kernel-canary.pages.dev`. Check the intended Privy app's allowed-origin policy first: test an empty development-app list as-is, or add the exact preview origin without removing existing entries if a list is already enforced. Deploy `stage_preview` with the Kernel API route closed to connect the external and Privy wallets and copy each public owner EOA address from Trading Account activity. Set the canary owner allowlist and finish contract and API attestations before `active_canary`. After opening the route, wait for a healthy API target group and verify 403 unauthenticated and 400 authenticated invalid-JSON controls; a new attachment may briefly return 503. Then dispatch `active_canary` and invite wallet approvals. Real wallet approvals and live gas evidence are still required after the active preview is live.
 
 | Field | Value |
@@ -42,6 +44,8 @@ The [isolated Pages canary procedure](../../scripts/kernel-qualification/pages-c
 | `accountVersion`, `accountIndex` | `"kernel-v4-uups"`, `0` |
 
 The API needs `DATABASE_URL`, `PERPS_RPC_URL`, `AA_SECURITY_RPC_URL` from an independent provider on a different host, `AA_KERNEL_ALTO_RPC_URL` for private Alto and the trusted Worker-to-origin `AA_PROXY_ORIGIN_TOKEN`. The reconciler needs the database and two RPC providers. Optional `PERPS_RPC_AUTH_TOKEN` authenticates the API's primary RPC. The patched Alto canary reads its own `PLETHER_ALTO_RPC_AUTH_TOKEN` secret for the private Nitro gateway and sends it only to the configured primary `ALTO_RPC_URL`. The API holds the KMS signing permission. API startup requires a deployed Arbitrum Sepolia release. The gateway checks its compiled release pins and reads the target bytecode from both providers before admitting an operation. [Terraform configuration](../../infra/terraform/README.md)
+
+Both Kernel services use `AA_RECONCILER_SECONDARY_RPC_URL` as a fallback only when `AA_SECURITY_RPC_URL` is unset. An empty or invalid value for the preferred setting fails startup. Confirm that each hostname belongs to a separately operated provider.
 
 An isolated Kernel API sharing the live Sepolia database sets `KERNEL_CANARY_API_MODE=true` and `API_BACKGROUND_WORKERS_ENABLED=false`. Startup rejects a canary with generic background workers enabled. The dedicated Kernel reconciler runs as its own service. The canary API and reconciler attach the live AA reconciler database client security group by exact ID. Preserve that group identity while the canary is running; a live core replacement could sever canary database access. Recheck the ID on every canary Terraform plan and retire the canary before replacing it.
 

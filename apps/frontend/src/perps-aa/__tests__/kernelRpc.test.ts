@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, getAddress, parseAbiParameters, toHex, zeroAddress, type Address, type Hex } from 'viem'
 import { entryPoint09Abi, entryPoint09Address } from 'viem/account-abstraction'
+import kernelDeployment from '../../../../backend/test/fixtures/kernel-deployment.json'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE } from '../../contracts/perpsAddresses'
 import { encodeKernelCalls } from '../kernelAccount'
 import { kernelSepoliaCanaryPaymaster, kernelSepoliaCanaryProfile } from '../kernelDeploymentPins'
@@ -22,7 +23,8 @@ const hash = (value: number) => toHex(value, { size: 32 })
 const entryPoint = entryPoint09Address.toLowerCase() as Address
 const sender = address(2)
 const paymaster = kernelSepoliaCanaryPaymaster
-const { accountCodeHash } = kernelSepoliaCanaryProfile
+const { profile, gas } = kernelDeployment
+const { accountCodeHash } = profile
 const preparationId = hash(5)
 const now = 1_790_000_000
 const recoveryToken = `v1.${preparationId}.${hash(6)}.${now + 604_800}.${'7'.repeat(64)}`
@@ -30,7 +32,7 @@ const callData = encodeKernelCalls([{ to: address(7), data: '0x1234' }])
 const validUntil = now + 120
 const manifestWire = {
   version: 1,
-  profile: { ...kernelSepoliaCanaryProfile, factory: getAddress(kernelSepoliaCanaryProfile.factory) },
+  profile: { ...profile, factory: getAddress(profile.factory) },
   perpsRelease: PERPS_RELEASE.release.version,
   settlementToken: PERPS_ARBITRUM_SEPOLIA.settlementToken,
   marginClearinghouse: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
@@ -51,10 +53,25 @@ const ethPreparation = {
   maxNetworkGasWei: toHex(ethCost), recoveryToken,
 }
 const sponsoredCost = ethCost + 100_000n * 100n
-const paymasterData = `0x${toHex(validUntil, { size: 6 }).slice(2)}${toHex(now - 30, { size: 6 }).slice(2)}${toHex(sponsoredCost, { size: 16 }).slice(2)}${hash(1).slice(2)}${accountCodeHash.slice(2)}${'ab'.repeat(65)}` as Hex
+const encodePaymasterData = (cost: bigint) => `0x${toHex(validUntil, { size: 6 }).slice(2)}${toHex(now - 30, { size: 6 }).slice(2)}${toHex(cost, { size: 16 }).slice(2)}${hash(1).slice(2)}${accountCodeHash.slice(2)}${'ab'.repeat(65)}` as Hex
 const sponsoredPreparation = {
   ...ethPreparation, mode: 'sponsored', expiresAt: validUntil - 30, maxNetworkGasWei: toHex(sponsoredCost),
-  operation: { ...rawOperation, paymaster, paymasterData, paymasterVerificationGasLimit: toHex(100_000), paymasterPostOpGasLimit: '0x0' },
+  operation: { ...rawOperation, paymaster, paymasterData: encodePaymasterData(sponsoredCost), paymasterVerificationGasLimit: toHex(100_000), paymasterPostOpGasLimit: '0x0' },
+}
+
+type GasField = Exclude<keyof typeof gas, 'aggregateGas' | 'ethMaxPrefundWei' | 'nitroFixturePreVerificationGas'>
+
+function parseGasQuote(overrides: Partial<Record<GasField, number>>, mode: KernelPreparationIntent['mode'] = 'eth') {
+  const preparation = mode === 'eth' ? ethPreparation : sponsoredPreparation
+  const operation: Record<string, string> = {
+    ...preparation.operation,
+    ...Object.fromEntries(Object.entries(overrides).map(([field, value]) => [field, toHex(value)])),
+  }
+  const units = BigInt(operation.callGasLimit) + BigInt(operation.verificationGasLimit) + BigInt(operation.preVerificationGas) +
+    BigInt(operation.paymasterVerificationGasLimit ?? 0) + BigInt(operation.paymasterPostOpGasLimit ?? 0)
+  const cost = units * BigInt(operation.maxFeePerGas)
+  if (mode === 'sponsored') operation.paymasterData = encodePaymasterData(cost)
+  return parseKernelPreparation({ ...preparation, operation, maxNetworkGasWei: toHex(cost) }, manifest, { ...intent, mode }, now)
 }
 
 describe('Kernel manifest and quotes', () => {
@@ -69,7 +86,8 @@ describe('Kernel manifest and quotes', () => {
   })
 
   it('accepts the pinned profile in checksum casing and rejects alternate contract identities', () => {
-    expect(manifest.profile).toEqual(kernelSepoliaCanaryProfile)
+    expect(kernelSepoliaCanaryProfile).toEqual(profile)
+    expect(manifest.profile).toEqual(profile)
     for (const field of ['factory', 'staker', 'implementation', 'validator'] as const) {
       const codeHash = `${field}CodeHash` as const
       expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, [field]: address(9) } })).toThrow('invalid response')
@@ -110,10 +128,10 @@ describe('Kernel manifest and quotes', () => {
       manifest, { ...firstIntent, factory: manifest.profile.factory }, now)).toThrow('invalid response')
   })
 
-  it('rejects a changed payer, account, calls, fee bounds, nonce key, expiry or recovery scope', () => {
+  it('rejects a changed payer, account, calls, nonce key, expiry or recovery scope', () => {
     for (const operation of [
       { ...rawOperation, paymaster: null }, { ...rawOperation, sender: address(4) }, { ...rawOperation, callData: '0x1234' },
-      { ...rawOperation, maxFeePerGas: '0x2540be401' }, { ...rawOperation, nonce: '0x10000000000000000' },
+      { ...rawOperation, nonce: '0x10000000000000000' },
       { ...rawOperation, nonce: '0x5' }, { ...rawOperation, factory: address(1) },
     ]) {
       expect(() => parseKernelPreparation({ ...ethPreparation, operation }, manifest, intent, now)).toThrow('invalid response')
@@ -128,15 +146,42 @@ describe('Kernel manifest and quotes', () => {
     expect(() => assertKernelPreparedOperation({ ...eth, operation: { ...eth.operation, nonce: 5n } })).toThrow('invalid response')
   })
 
-  it('admits Nitro-sized preverification estimates and rejects out-of-range gas or ETH prefund', () => {
-    const quote = (preVerificationGas: bigint, maxFeePerGas: bigint) => ({
-      ...ethPreparation,
-      operation: { ...rawOperation, preVerificationGas: toHex(preVerificationGas), maxFeePerGas: toHex(maxFeePerGas) },
-      maxNetworkGasWei: toHex((65_536n + 131_072n + preVerificationGas) * maxFeePerGas),
-    })
-    expect(parseKernelPreparation(quote(5_861_566n, 100n), manifest, intent, now).operation.preVerificationGas).toBe(5_861_566n)
-    expect(() => parseKernelPreparation(quote(12_000_001n, 100n), manifest, intent, now)).toThrow('invalid response')
-    expect(() => parseKernelPreparation(quote(12_000_000n, 10_000_000_000n), manifest, intent, now)).toThrow('invalid response')
+  it('admits the recorded local Nitro preverification estimate', () => {
+    const { nitroFixturePreVerificationGas } = gas
+    expect(parseGasQuote({ preVerificationGas: nitroFixturePreVerificationGas }).operation.preVerificationGas)
+      .toBe(BigInt(nitroFixturePreVerificationGas))
+  })
+
+  it.each(['callGasLimit', 'verificationGasLimit', 'preVerificationGas', 'maxFeePerGas', 'maxPriorityFeePerGas'] as const)(
+    'admits the ETH %s limit and rejects one above', field => {
+      const maximum = gas[field]
+      const fees = field === 'maxPriorityFeePerGas' ? { maxFeePerGas: gas.maxFeePerGas } : {}
+      expect(parseGasQuote({ ...fees, [field]: maximum }).operation[field]).toBe(BigInt(maximum))
+      expect(() => parseGasQuote({ ...fees, [field]: maximum + 1 })).toThrow('invalid response')
+    },
+  )
+
+  it.each(['paymasterVerificationGasLimit', 'paymasterPostOpGasLimit'] as const)(
+    'admits the sponsored %s limit and rejects one above', field => {
+      const maximum = gas[field]
+      expect(parseGasQuote({ [field]: maximum }, 'sponsored').operation[field]).toBe(BigInt(maximum))
+      expect(() => parseGasQuote({ [field]: maximum + 1 }, 'sponsored')).toThrow('invalid response')
+    },
+  )
+
+  it('admits all components of the sponsored aggregate gas limit together', () => {
+    const { callGasLimit, verificationGasLimit, preVerificationGas, paymasterVerificationGasLimit, paymasterPostOpGasLimit } = gas
+    const limits = { callGasLimit, verificationGasLimit, preVerificationGas, paymasterVerificationGasLimit, paymasterPostOpGasLimit }
+    expect(parseGasQuote(limits, 'sponsored').maxNetworkGasWei).toBe(BigInt(gas.aggregateGas) * BigInt(rawOperation.maxFeePerGas))
+  })
+
+  it('admits an ETH quote at the prefund limit and rejects the next gas unit', () => {
+    const maximum = BigInt(gas.ethMaxPrefundWei)
+    const maxFeePerGas = gas.maxFeePerGas
+    const baseGas = BigInt(rawOperation.callGasLimit) + BigInt(rawOperation.verificationGasLimit)
+    const preVerificationGas = Number(maximum / BigInt(maxFeePerGas) - baseGas)
+    expect(parseGasQuote({ preVerificationGas, maxFeePerGas }).maxNetworkGasWei).toBe(maximum)
+    expect(() => parseGasQuote({ preVerificationGas: preVerificationGas + 1, maxFeePerGas })).toThrow('invalid response')
   })
 
   it('posts the exact operation only to the same-origin route and rejects a different relay hash', async () => {
@@ -178,6 +223,16 @@ describe('Kernel manifest and quotes', () => {
         reason: 'INSUFFICIENT_GAS_ETH', funding: { balanceWei: 20n, entryPointDepositWei: 50n, maxNetworkGasWei: 100n, callValueWei: 5n, shortfallWei: 35n },
       })
       funding.shortfallWei = toHex(34n)
+      await expect(prepareKernelOperation(manifest, intent)).rejects.toMatchObject({ reason: 'INVALID_RESPONSE' })
+
+      const maximum = BigInt(gas.ethMaxPrefundWei)
+      funding.maxNetworkGasWei = toHex(maximum)
+      funding.shortfallWei = toHex(maximum - 65n)
+      await expect(prepareKernelOperation(manifest, intent)).rejects.toMatchObject({
+        reason: 'INSUFFICIENT_GAS_ETH', funding: { maxNetworkGasWei: maximum },
+      })
+      funding.maxNetworkGasWei = toHex(maximum + 1n)
+      funding.shortfallWei = toHex(maximum - 64n)
       await expect(prepareKernelOperation(manifest, intent)).rejects.toMatchObject({ reason: 'INVALID_RESPONSE' })
     } finally {
       fetcher.mockRestore()

@@ -21,6 +21,7 @@ extra-source-files: schema.sql
                     test/fixtures/token-neutral-close-rebate.json
                     test/fixtures/candle-admin-deployed-release.json
                     test/fixtures/commitment-hint-sdk-v040.json
+                    test/fixtures/kernel-deployment.json
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -430,6 +431,7 @@ test-suite plether-api-test
         Plether.AA.GatewaySpec
         Plether.AA.KernelSpec
         Plether.AA.KernelGatewaySpec
+        Plether.AA.KernelDeploymentFixture
         Plether.AA.RecoveryCapabilitySpec
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec

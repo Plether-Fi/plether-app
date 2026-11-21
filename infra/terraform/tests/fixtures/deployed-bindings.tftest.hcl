@@ -188,26 +188,9 @@ run "prepare_dormant_kernel_bindings_for_api_and_reconciler" {
     alto_entrypoint_simulation_contract_v8 = ""
     alto_entrypoint_simulation_contract_v9 = "0x0000000000000000000000000000000000000022"
     aa_kernel_canary_owners                = [format("0x%040d", 36)]
-    aa_reconciler_max_safe_lag_seconds     = "1800"
+    aa_reconciler_max_safe_lag_seconds     = tostring(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.maximum)
     aa_reconciler_batch_blocks             = "2000"
-    aa_kernel_profile_json = jsonencode({
-      deployment             = "fixture-kernel"
-      chainId                = 421614
-      entryPoint             = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
-      entryPointVersion      = "0.9"
-      entryPointCodeHash     = format("0x%064d", 1)
-      accountVersion         = "kernel-v4-uups"
-      accountIndex           = 0
-      factory                = format("0x%040d", 31)
-      factoryCodeHash        = format("0x%064d", 2)
-      staker                 = format("0x%040d", 37)
-      stakerCodeHash         = format("0x%064d", 9)
-      implementation         = format("0x%040d", 32)
-      implementationCodeHash = format("0x%064d", 3)
-      validator              = format("0x%040d", 33)
-      validatorCodeHash      = format("0x%064d", 4)
-      accountCodeHash        = format("0x%064d", 5)
-    })
+    aa_kernel_profile_json                 = jsonencode(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile)
     aa_kernel_sponsorship_json = jsonencode({
       paymaster            = format("0x%040d", 34)
       paymasterCodeHash    = format("0x%064d", 6)
@@ -242,7 +225,7 @@ run "prepare_dormant_kernel_bindings_for_api_and_reconciler" {
       && contains(local.kernel_aa_environment, { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = jsonencode(var.aa_kernel_canary_owners) })
       && contains(local.kernel_aa_environment, { name = "AA_KERNEL_PUBLIC_ADMISSION", value = "false" })
       && contains(local.kernel_aa_environment, { name = "AA_RPC_MODE", value = "dual-independent" })
-      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = "1800" })
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds })
     )
     error_message = "The Kernel API must use explicit canary admission and independent RPCs without access to the paymaster signer."
   }
@@ -251,9 +234,37 @@ run "prepare_dormant_kernel_bindings_for_api_and_reconciler" {
       !contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
       && local.kernel_aa_secrets[0].name == "AA_SECURITY_RPC_URL"
       && contains(local.kernel_aa_reconciler_environment, { name = "AA_RPC_MODE", value = "dual-independent" })
-      && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = "1800" })
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds })
       && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_RECONCILER_BATCH_BLOCKS", value = "2000" })
     )
     error_message = "The reconciler receives the current paymaster anchor and independent RPC without signing access."
   }
+}
+
+run "accept_kernel_profile_at_minimum_safe_lag" {
+  command = plan
+
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    aa_kernel_profile_json                 = jsonencode(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile)
+    aa_reconciler_max_safe_lag_seconds     = tostring(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.minimum)
+  }
+}
+
+run "reject_kernel_profile_without_attested_staker" {
+  command = plan
+
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    aa_kernel_profile_json = jsonencode({
+      for key, value in jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile : key => value
+      if !contains(["staker", "stakerCodeHash"], key)
+    })
+  }
+
+  expect_failures = [terraform_data.self_hosted_aa_guard]
 }

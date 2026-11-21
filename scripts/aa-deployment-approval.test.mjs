@@ -207,30 +207,26 @@ test('backend reconciler topology enforces the attested Kernel profile and runti
   const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
   const policy = source.split('name: Validate AA reconciler task topology')[1]?.match(/^\s+(def container\(\$name\):[\s\S]*?)^\s+\.family == \$family$/m)?.[1]
   assert.ok(policy, 'execute the actual workflow topology functions')
-  const staker = '0x' + '3'.repeat(40)
-  const factory = '0x' + '4'.repeat(40)
-  const hash = '0x' + 'a'.repeat(64)
-  const profile = {
-    deployment: 'kernel-canary', chainId: 421614, entryPoint: '0x433709009B8330FDa32311DF1C2AFA402eD8D009',
-    entryPointVersion: '0.9', entryPointCodeHash: hash, accountVersion: 'kernel-v4-uups', accountIndex: 0,
-    accountCodeHash: hash, factory, factoryCodeHash: hash, staker, stakerCodeHash: hash,
-    implementation: '0x' + '5'.repeat(40), implementationCodeHash: hash, validator: '0x' + '6'.repeat(40), validatorCodeHash: hash,
-  }
+  const {profile, safeHeadLagSeconds: {minimum, maximum}} = JSON.parse(
+    readFileSync(new URL('apps/backend/test/fixtures/kernel-deployment.json', root), 'utf8'),
+  )
+  const {maxLogRangeBlocks} = JSON.parse(readFileSync(new URL('config/rpc-log-range-policy.json', root), 'utf8'))
   for (const [batch, lag, policyMax, profileOverrides, accepted] of [
-    ['2000', '1800', 5000, {}, true],
-    ['2001', '1800', 5000, {}, false],
-    ['1800', '1800', 1000, {}, false],
-    ['2000', '1801', 5000, {}, false],
-    ['2000', '59', 5000, {}, false],
-    ['2000', '1800', 5000, {staker: undefined}, false],
-    ['2000', '1800', 5000, {staker: factory}, false],
-    ['2000', '1800', 5000, {stakerCodeHash: '0x' + '0'.repeat(64)}, false],
+    ['2000', maximum, maxLogRangeBlocks, {}, true],
+    ['2000', minimum, maxLogRangeBlocks, {}, true],
+    ['2001', maximum, maxLogRangeBlocks, {}, false],
+    ['1800', maximum, 1000, {}, false],
+    ['2000', maximum + 1, maxLogRangeBlocks, {}, false],
+    ['2000', minimum - 1, maxLogRangeBlocks, {}, false],
+    ['2000', maximum, maxLogRangeBlocks, {staker: undefined, stakerCodeHash: undefined}, false],
+    ['2000', maximum, maxLogRangeBlocks, {staker: profile.factory}, false],
+    ['2000', maximum, maxLogRangeBlocks, {stakerCodeHash: '0x' + '0'.repeat(64)}, false],
   ]) {
     const fixture = {
       environment: Object.entries({
         HOME: '/tmp', TMPDIR: '/tmp', PERPS_CHAIN_ID: '421614', AA_RPC_MODE: 'dual-independent',
         AA_KERNEL_PROFILE_JSON: JSON.stringify({...profile, ...profileOverrides}), AA_KERNEL_SPONSORSHIP_JSON: '',
-        AA_KERNEL_MAX_SAFE_LAG_SECONDS: lag, AA_KERNEL_RECONCILER_POLL_SECONDS: '10',
+        AA_KERNEL_MAX_SAFE_LAG_SECONDS: String(lag), AA_KERNEL_RECONCILER_POLL_SECONDS: '10',
         AA_KERNEL_RECONCILER_BATCH_BLOCKS: batch, AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS: '60',
       }).map(([name, value]) => ({name, value})),
       secrets: ['AA_SECURITY_RPC_URL', 'DATABASE_URL', 'PERPS_RPC_URL'].map(name => ({name})),

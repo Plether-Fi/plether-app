@@ -9,7 +9,7 @@ import qualified Data.Text as T
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Plether.AA.Gateway (nativeGatewayIssuanceError, newNativeGatewayState, initializeGatewayObservability)
-import Plether.AA.KernelGateway (loadKernelGatewayConfig)
+import Plether.AA.KernelGateway (KernelGatewayConfig (kgcPrimaryRpcUrl), loadKernelGatewayConfig)
 import Plether.AA.KernelReconciler (ensureKernelReconcilerSchema)
 import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (appWithKernelAa)
@@ -83,9 +83,10 @@ main = do
         when (isJust (cfgNativeAaConfig cfg) || isJust (cfgAaConfig cfg)) $
           ioError $ userError "Kernel AA requires a dedicated deployment without SimpleAccount AA"
       manager <- newManager tlsManagerSettings
+      let perpsRpcUrl = maybe (cfgPerpsRpcUrl cfg) kgcPrimaryRpcUrl kernelAa
       perpsClient <-
         newClientWithOptions $
-          RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "api-perps"
+          RpcClientOptions perpsRpcUrl (cfgPerpsRpcAuthToken cfg) "api-perps"
       when Manifest.releaseIsDeployed $ do
         case (cfgPerpsChainId cfg, cfgPerpsOrderLifecycleBook cfg) of
           (421614, Just _) -> do

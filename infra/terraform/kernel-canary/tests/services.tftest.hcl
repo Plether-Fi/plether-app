@@ -133,24 +133,7 @@ variables {
   live_rds_aa_ingress_rule_id     = "sgr-rds"
   kernel_canary_alto_image        = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   kernel_canary_api_image         = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  kernel_canary_profile_json = jsonencode({
-    deployment             = "synthetic-canary"
-    chainId                = 421614
-    entryPoint             = "0x433709009b8330fda32311df1c2afa402ed8d009"
-    entryPointCodeHash     = "0x1111111111111111111111111111111111111111111111111111111111111111"
-    entryPointVersion      = "0.9"
-    factory                = "0x1111111111111111111111111111111111111111"
-    factoryCodeHash        = "0x2222222222222222222222222222222222222222222222222222222222222222"
-    staker                 = "0x2222222222222222222222222222222222222222"
-    stakerCodeHash         = "0x3333333333333333333333333333333333333333333333333333333333333333"
-    implementation         = "0x3333333333333333333333333333333333333333"
-    implementationCodeHash = "0x4444444444444444444444444444444444444444444444444444444444444444"
-    validator              = "0x4444444444444444444444444444444444444444"
-    validatorCodeHash      = "0x5555555555555555555555555555555555555555555555555555555555555555"
-    accountVersion         = "kernel-v4-uups"
-    accountCodeHash        = "0x6666666666666666666666666666666666666666666666666666666666666666"
-    accountIndex           = 0
-  })
+  kernel_canary_profile_json      = jsonencode(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).profile)
   kernel_canary_sponsorship_json = jsonencode({
     paymaster            = "0x5555555555555555555555555555555555555555"
     paymasterCodeHash    = "0x7777777777777777777777777777777777777777777777777777777777777777"
@@ -291,7 +274,7 @@ run "reject_unpaired_nitro_bearer" {
 run "reject_lag_and_poll_outside_runtime_bounds" {
   command = plan
   variables {
-    kernel_canary_max_safe_lag_seconds = "1801"
+    kernel_canary_max_safe_lag_seconds = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.maximum + 1)
     kernel_canary_poll_seconds         = "61"
     kernel_canary_batch_blocks         = "02000"
   }
@@ -300,6 +283,14 @@ run "reject_lag_and_poll_outside_runtime_bounds" {
     var.kernel_canary_poll_seconds,
     var.kernel_canary_batch_blocks,
   ]
+}
+
+run "reject_safe_lag_below_kernel_minimum" {
+  command = plan
+  variables {
+    kernel_canary_max_safe_lag_seconds = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.minimum - 1)
+  }
+  expect_failures = [var.kernel_canary_max_safe_lag_seconds]
 }
 
 run "reject_alto_before_simulator_attestation" {
@@ -346,11 +337,15 @@ run "qualified_alto_stays_private" {
     error_message = "The canary image must start directly without the live Alto auth preload."
   }
   assert {
-    condition = (
-      one([for env in local.kernel_canary_alto_environment : env.value if env.name == "ALTO_MAX_GAS_PER_USER_OP"]) == "17000000"
-      && one([for env in local.kernel_canary_alto_environment : env.value if env.name == "ALTO_MAX_GAS_PER_BUNDLE"]) == "20000000"
-    )
-    error_message = "Only canary Alto's per-operation cap may rise to 17M. The 20M bundle cap remains in place."
+    condition = one([
+      for container in jsondecode(aws_ecs_task_definition.kernel_canary_alto[0].container_definitions) :
+      tomap({ for env in container.environment : env.name => env.value if contains(["ALTO_MAX_GAS_PER_USER_OP", "ALTO_MAX_GAS_PER_BUNDLE"], env.name) })
+      if container.name == "plether-alto"
+      ]) == tomap({
+      ALTO_MAX_GAS_PER_USER_OP = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).gas.aggregateGas)
+      ALTO_MAX_GAS_PER_BUNDLE  = "20000000"
+    })
+    error_message = "Canary Alto's per-operation cap must match the Kernel aggregate gas limit. The bundle cap is 20M."
   }
 }
 
@@ -434,6 +429,7 @@ run "qualified_payment_route_targets_only_kernel_api" {
     kernel_canary_eth_enabled                       = true
     kernel_canary_sponsorship_enabled               = true
     kernel_canary_reconciler_desired_count          = 1
+    kernel_canary_max_safe_lag_seconds              = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.minimum)
     kernel_canary_owners_json                       = "[\"0x3333333333333333333333333333333333333333\"]"
   }
   assert {
@@ -447,6 +443,7 @@ run "qualified_payment_route_targets_only_kernel_api" {
       && contains(aws_ecs_service.kernel_canary_reconciler[0].network_configuration[0].security_groups, "sg-0c095c11c27499ca7")
       && one([for e in local.kernel_canary_api_environment : e.value if e.name == "KERNEL_CANARY_API_MODE"]) == "true"
       && one([for e in local.kernel_canary_api_environment : e.value if e.name == "API_BACKGROUND_WORKERS_ENABLED"]) == "false"
+      && one([for e in local.kernel_canary_api_environment : e.value if e.name == "AA_KERNEL_MAX_SAFE_LAG_SECONDS"]) == var.kernel_canary_max_safe_lag_seconds
     )
     error_message = "Only the exact Kernel backend path may open after SafeMode, and both database clients must reuse the existing narrow AA group."
   }
@@ -469,13 +466,16 @@ run "reject_primary_plether_preview_origin" {
   expect_failures = [terraform_data.kernel_canary_guard]
 }
 
-run "reject_attested_profile_without_runtime_artifact" {
+run "reject_attested_profile_without_staker" {
   command = plan
   variables {
     kernel_canary_db_schema_confirmed      = true
     kernel_canary_profile_attested         = true
     kernel_canary_reconciler_desired_count = 1
-    kernel_canary_profile_json             = "{\"chainId\":421614,\"entryPoint\":\"0x433709009b8330fda32311df1c2afa402ed8d009\",\"entryPointVersion\":\"0.9\"}"
+    kernel_canary_profile_json = jsonencode({
+      for key, value in jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).profile : key => value
+      if !contains(["staker", "stakerCodeHash"], key)
+    })
   }
   expect_failures = [terraform_data.kernel_canary_guard]
 }
@@ -486,6 +486,7 @@ run "reconciler_drains_without_sponsorship_or_tunnel" {
     kernel_canary_db_schema_confirmed      = true
     kernel_canary_profile_attested         = true
     kernel_canary_reconciler_desired_count = 1
+    kernel_canary_max_safe_lag_seconds     = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.maximum)
   }
   assert {
     condition = (
@@ -506,5 +507,13 @@ run "reconciler_drains_without_sponsorship_or_tunnel" {
       ] if container.name == "plether-aa-reconciler"
     ])) == "false"
     error_message = "During drain, the reconciler must receive its valid sponsor profile with sponsorship disabled."
+  }
+  assert {
+    condition = one(flatten([
+      for container in jsondecode(aws_ecs_task_definition.kernel_canary_reconciler[0].container_definitions) : [
+        for setting in container.environment : setting.value if setting.name == "AA_KERNEL_MAX_SAFE_LAG_SECONDS"
+      ] if container.name == "plether-aa-reconciler"
+    ])) == var.kernel_canary_max_safe_lag_seconds
+    error_message = "The canary reconciler must receive the safe-head allowance from the task configuration."
   }
 }
