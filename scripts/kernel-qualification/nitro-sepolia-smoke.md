@@ -1,36 +1,26 @@
-# Public Sepolia Nitro SafeMode smoke
+# Private Sepolia managed Alto smoke
 
-Use [`nitro-sepolia-smoke.mjs`](./nitro-sepolia-smoke.mjs) only after the fresh Kernel, Staker, paymaster and simulator contracts have passed [`deploy-sepolia.mjs`](./deploy-sepolia.mjs) independent attestation and the **isolated** Alto canary is running. The default `plan` reads chain and bundler state. `send-eth` is the only command that transmits a UserOperation, and it requires an exact deployment confirmation, a matching throwaway owner signer and a new evidence file. No public send is part of preparing this harness.
+Use [`nitro-sepolia-smoke.mjs`](./nitro-sepolia-smoke.mjs) after the `kernel-sepolia-direct-v1` factory, validator, paused paymaster and simulators have passed [deployment attestation](./deploy-sepolia.md) and the isolated Alto canary is running. The default `plan` reads chain and bundler state. The separate `send-eth` stage requires authorization for the exact deployment, a matching throwaway owner signer and a new evidence file.
 
-## Access and SafeMode gate
+## Access and validation configuration
 
-The canary Alto service will be on its internal ALB, port 80, reachable only from the canary API/probe security group and the reviewed SSM-managed Nitro EC2 node security group. It has no browser route during this check. Run the script on the operator machine over controlled localhost SSM port forwards into the VPC. After Terraform outputs the exact internal ALB DNS name and the reviewed Nitro instance ID, use an SSM remote-host tunnel such as:
+Canary Alto is reachable through its internal ALB from the canary API client security group. Keep its browser route closed for this check. Use an approved short-lived in-VPC probe or an approved operator tunnel to reach that ALB. For a signed probe, sign locally and pass only the signed public UserOperation to the approved private probe. Keep the owner private key on the operator machine.
 
-```sh
-aws --profile plether ssm start-session \
-  --target "$REVIEWED_NITRO_INSTANCE_ID" \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters '{"host":["<canary-alto-internal-alb-dns>"],"portNumber":["80"],"localPortNumber":["18080"]}'
-```
-
-Replace the host placeholder with the exact Terraform output before opening the session. Point `KERNEL_SMOKE_ALTO_RPC_URL` to `http://127.0.0.1:18080`. An ECS probe may carry a **signed public** UserOperation JSON if a tunnel is unavailable, but never receive the owner private key in task overrides, secrets or logs. The owner key stays on the operator machine.
-
-Before sending, verify the running Alto ECS task definition and service use the exact reviewed patched image digest, `ALTO_SAFE_MODE=true`, `ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION=false`, EntryPoint 0.9 only, predeployed attested v0.9/Pimlico simulator addresses, and `ALTO_DEPLOY_SIMULATIONS_CONTRACT=false`. Confirm its primary Nitro gateway bearer comes from the dedicated canary SSM reference. The read-only plan checks the private Nitro RPC and an independent RPC at one common safe block and requires both to agree on the code and account state. An accepted, signed first UserOperation through this Alto task is the live Nitro SafeMode execution check. The earlier standalone Nitro `debug_traceCall` capability probe remains separate evidence; this harness does not claim to reproduce its custom tracer.
+Verify that the running task uses the exact reviewed Alto v1.2.8 digest, `ALTO_SAFE_MODE=false`, `ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION=false`, `ALTO_EXPIRATION_CHECK=true`, EntryPoint 0.9 only, and the two attested simulator addresses with `ALTO_DEPLOY_SIMULATIONS_CONTRACT=false`. Check that its primary is the managed HTTPS Sepolia RPC bound from `/plether/sepolia/perps-rpc-url`. Use the managed primary and the independently operated security RPC for a common safe block. The signed first operation qualifies normal managed Alto validation and direct factory deployment. Prior Nitro custom-tracer runs belong to the historical Staker profile.
 
 Set RPC URLs in the local environment, never in CLI arguments or an evidence file:
 
 ```sh
 export KERNEL_SMOKE_ALTO_RPC_URL="http://127.0.0.1:<alto-local-port>"
-export KERNEL_SMOKE_NITRO_RPC_URL="http://127.0.0.1:<nitro-local-port>"
+export KERNEL_SMOKE_PRIMARY_RPC_URL="<reviewed-managed-https-sepolia-rpc>"
 export KERNEL_SMOKE_SECONDARY_RPC_URL="<independent-https-sepolia-rpc>"
-# KERNEL_SMOKE_NITRO_BEARER may be set locally if the Nitro gateway tunnel requires it.
 ```
 
-The Alto and Nitro RPCs must be localhost SSM tunnels or private AWS ALBs over HTTP. For direct private ALB access, set `KERNEL_SMOKE_EXPECTED_ALTO_ALB_HOST` and `KERNEL_SMOKE_EXPECTED_NITRO_ALB_HOST` from the independently reviewed Terraform/AWS outputs; the script requires exact hostname matches. Direct Nitro also requires its bearer. The independent chain RPC must use HTTPS on a different host. RPC URLs cannot contain userinfo, a query or a fragment; the HTTPS provider's credential-bearing path remains supported. Keep the Alchemy URL and bearer out of task overrides and logs. Confirm AWS identity with `aws --profile plether sts get-caller-identity` before setting up an SSM session.
+From an approved in-VPC probe, set `KERNEL_SMOKE_ALTO_RPC_URL` to the reviewed private ALB and set `KERNEL_SMOKE_EXPECTED_ALTO_ALB_HOST` to its exact hostname. Use distinct HTTPS hosts for the managed primary and independent chain RPC. Load credential-bearing provider paths into the environment with shell tracing disabled and keep them out of task overrides and logs. Leave `KERNEL_SMOKE_NITRO_BEARER` unset when using the managed endpoint. The legacy Nitro variables support the existing tunnel transport when authorized. Confirm the AWS identity with `aws --profile plether sts get-caller-identity` before AWS work.
 
 ## Fresh ETH-paid first operation
 
-Create a new throwaway EOA in the operator's secure local wallet and retain its private key locally. It must differ from the contract deployer, sacrificial sample owner, Alto utility and KMS sponsor signer; it must have no code or delegation. Use only its public address in `--owner`. The script uses the app's Kernel index-zero adapter and first-operation Staker factory data. Its sole call is a zero-value read of `EntryPoint.balanceOf(sender)`. This deploys the throwaway Kernel account without moving tokens or changing application state.
+Create a throwaway EOA in the operator's secure local wallet and retain its key locally. It must differ from the contract deployer, sample owner, Alto utility and KMS sponsor signer, and have no code or delegation. Pass only its public address to `--owner`. The app's index-zero adapter puts the pinned KernelFactory and its direct deployment calldata in the first operation. The operation executes a zero-value `EntryPoint.balanceOf(sender)` read.
 
 Run the default plan against the independently attested public deployment manifest:
 
@@ -40,7 +30,7 @@ node scripts/kernel-qualification/nitro-sepolia-smoke.mjs plan \
   --owner "$THROWAWAY_OWNER_ADDRESS"
 ```
 
-The plan checks chain ID `421614`, common safe-block hash, pinned EntryPoint/Kernel/Staker/paymaster/simulator code, both one-day stakes, owner EOA status, the derived undeployed account, Alto's single supported EntryPoint and live gas quote. It calls `eth_estimateUserOperationGas` in Alto SafeMode. An unfunded account uses a balance-only state override for an **advisory** estimate; this changes no chain state. The output is limited to public addresses, safe-block hash, gas limits and Wei amounts. If the account is unfunded, send ETH to the reported counterfactual `sender` from a separate operator wallet, then rerun the plan until the estimate is against actual funded state and `fundingShortfallWei` is zero. The script allows at most 12 million preverification gas, covering the recorded Nitro SafeMode estimate of 5,861,566, and separately caps planned prefund at 0.05 ETH. An initial 0.2 ETH test funding amount gives headroom, with leftover ETH recoverable through the owner after the check. Check that funding did not deploy code at the address.
+The plan checks chain ID `421614`, the common safe-block hash, pinned EntryPoint, Kernel, paymaster and simulator code, the owner EOA, the derived undeployed account, Alto's supported EntryPoint and the live `eth_estimateUserOperationGas` quote. A balance-only state override yields an advisory estimate for an unfunded account. The plan prints public addresses, safe block hash, gas limits and Wei values. For the actual ETH test, fund the counterfactual sender and rerun the plan until it estimates against funded state and `fundingShortfallWei` is zero. The script caps pre-verification gas at 12 million and prefund at 0.05 ETH. Check the address still has no code after funding.
 
 For the first public send, inject the throwaway key only into the **local** process environment through the operator's approved secure wallet process. Disable shell tracing. The script checks the derived public address against `--owner` and writes a 0600 public-only intent before making `eth_sendUserOperation`:
 
@@ -67,11 +57,11 @@ node scripts/kernel-qualification/nitro-sepolia-smoke.mjs verify-eth \
   --evidence "$NEW_ETH_SMOKE_EVIDENCE"
 ```
 
-The recovery verifier decodes the included UserOperation from canonical EntryPoint calldata on both RPCs. It checks its exact no-value call, Staker deployment data, absence of paymaster fields, and reviewed gas cap. Supply `--transaction-hash` with the public bundle hash if Alto's recent-receipt lookup has aged out and the evidence file lacks the hash. Check the task definition's SafeMode flag and correlate only public operation and transaction hashes in Nitro and Alto logs.
+The recovery verifier decodes the included UserOperation from canonical EntryPoint calldata on both RPCs. It checks the exact zero-value call, direct factory deployment data, ETH payer and reviewed gas cap. Supply the public bundle hash via `--transaction-hash` if Alto's recent-receipt lookup has aged out and the evidence file lacks the hash. Correlate public operation and transaction hashes in Alto logs.
 
 ## Sponsored follow-up
 
-Do not sign a paymaster envelope directly from this script. A sponsored authorization must come through the canary API's allowlisted preparation flow, dedicated KMS signer, reservation and budget checks. After the ETH/Nitro check, start the private canary API and reconciler, attest the paused and staked paymaster, unpause only for the bounded canary cohort, and submit a real sponsored operation through the API/UI. Keep the public route closed until the required wallet checks pass. Use the resulting **public** UserOperation hash to verify the included operation:
+Obtain sponsored authorization through the canary API's allowlisted preparation flow, dedicated KMS signer, reservation and budget checks. After the managed Alto and ETH checks, attest the paused paymaster and its configured EntryPoint deposit. Unpause only during the separately approved bounded canary. Submit a real sponsored operation through the canary UI while general public admission stays closed. Use the resulting public UserOperation hash to verify the included operation:
 
 ```sh
 node scripts/kernel-qualification/nitro-sepolia-smoke.mjs verify-sponsored \
@@ -83,4 +73,4 @@ node scripts/kernel-qualification/nitro-sepolia-smoke.mjs verify-sponsored \
 
 The checker verifies the paymaster's pinned runtime hash and matches the successful event, UserOperation, signer, policy, cost cap, unpaused state, and exact EntryPoint deposit debit on both RPCs. It checks the 157-byte signed envelope, the account-code hash, the inclusion timestamp, the budget, and zero post-operation gas. Supply `--transaction-hash` with the public bundle hash if Alto no longer returns the receipt. If another paymaster operation or deposit changes that balance in the same block, reconcile the separate changes before repeating the check. The verifier prints public evidence and submits no transaction.
 
-Use [`live-gas.mjs`](./live-gas.mjs) around the later external and Privy wallet approvals to capture live Nitro L1/L2 estimates and receipt deltas for **both** payment modes. This smoke checks the infrastructure's signed first operation before the browser route opens; it does not replace those real wallet flows.
+Use [`live-gas.mjs`](./live-gas.mjs) around the later external and Privy wallet approvals to record live Arbitrum gas estimates and receipt deltas for both payment modes. Qualify both wallets before rollout.

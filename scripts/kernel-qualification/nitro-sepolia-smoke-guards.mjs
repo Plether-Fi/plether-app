@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 
 const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
 const privateAlbHost = /^internal-[a-z0-9-]+\.ap-southeast-1\.elb\.amazonaws\.com$/u
+const legacyNitroGateway = 'https://rpc-internal.sepolia.plether.com/'
 
 export function validateSmokeRpcUrls(values, expected = {}) {
-  for (const name of ['alto', 'nitro', 'secondary']) {
+  for (const name of ['alto', 'primary', 'secondary']) {
     const raw = values[name]
     assert.ok(raw, `Set KERNEL_SMOKE_${name.toUpperCase()}_RPC_URL`)
     const url = new URL(raw)
@@ -14,14 +15,26 @@ export function validateSmokeRpcUrls(values, expected = {}) {
       assert.equal(url.protocol, 'https:', 'Independent RPC must use HTTPS')
       continue
     }
+    if (name === 'primary' && url.protocol === 'https:') continue
     assert.equal(url.protocol, 'http:', `${name} RPC must use a reviewed localhost tunnel or private AWS ALB`)
     assert.equal(url.pathname, '/', `${name} RPC must use the ALB root path`)
     if (loopbackHosts.has(url.hostname)) continue
     assert.match(url.hostname, privateAlbHost, `${name} RPC must use a private AWS ALB`)
-    assert.equal(url.hostname, expected[name], `Set the exact reviewed KERNEL_SMOKE_EXPECTED_${name.toUpperCase()}_ALB_HOST`)
+    const label = name === 'primary' ? 'NITRO' : 'ALTO'
+    assert.equal(url.hostname, expected[name], `Set the exact reviewed KERNEL_SMOKE_EXPECTED_${label}_ALB_HOST`)
   }
-  assert.notEqual(new URL(values.nitro).hostname, new URL(values.secondary).hostname,
-    'Nitro and secondary attestation RPCs must have different hosts')
+  const primary = new URL(values.primary)
+  assert.notEqual(primary.hostname, new URL(values.secondary).hostname, 'Attestation RPCs must have different hosts')
+  const legacyAlb = primary.protocol === 'http:' && privateAlbHost.test(primary.hostname)
+  if (legacyAlb || primary.href === legacyNitroGateway) {
+    assert.ok(expected.bearer, 'Private Nitro requires its bearer token')
+  }
+  if (expected.bearer) {
+    const legacyTunnel = primary.protocol === 'http:' && loopbackHosts.has(primary.hostname)
+    assert.ok(legacyAlb || legacyTunnel || primary.href === legacyNitroGateway,
+      'The legacy Nitro bearer must only be sent to the private gateway or reviewed tunnel')
+    assert.match(expected.bearer, /^[!-~]{32,512}$/u, 'Invalid legacy Nitro bearer format')
+  }
   return values
 }
 
@@ -31,7 +44,7 @@ export function assertExactGasDebit(before, after, actual, label) {
 }
 
 export async function readSafeBundleReceipts(clients, hash, waitCommonSafe) {
-  const receipt = await clients.nitro.getTransactionReceipt({ hash })
+  const receipt = await clients.primary.getTransactionReceipt({ hash })
   await waitCommonSafe(clients, receipt.blockNumber)
   const independent = await clients.secondary.getTransactionReceipt({ hash })
   return [receipt, independent]
@@ -41,8 +54,8 @@ export function assertRecoveredEthSmokeOperation(operation, expected) {
   assert.equal(operation.sender.toLowerCase(), expected.sender.toLowerCase(), 'Recovered sender differs')
   assert.equal(BigInt(operation.nonce), 0n, 'Recovered smoke operation must use nonce zero')
   assert.equal(operation.callData.toLowerCase(), expected.callData.toLowerCase(), 'Recovered smoke call differs')
-  assert.equal(operation.factory?.toLowerCase(), expected.factory.toLowerCase(), 'Recovered Staker factory differs')
-  assert.equal(operation.factoryData?.toLowerCase(), expected.factoryData.toLowerCase(), 'Recovered Staker deployment data differs')
+  assert.equal(operation.factory?.toLowerCase(), expected.factory.toLowerCase(), 'Recovered KernelFactory differs')
+  assert.equal(operation.factoryData?.toLowerCase(), expected.factoryData.toLowerCase(), 'Recovered direct factory deployment data differs')
   for (const field of ['paymaster', 'paymasterData', 'paymasterVerificationGasLimit', 'paymasterPostOpGasLimit',
     'paymasterAndData', 'paymasterSignature', 'eip7702Auth']) {
     assert.equal(operation[field], undefined, `Recovered ETH operation unexpectedly has ${field}`)

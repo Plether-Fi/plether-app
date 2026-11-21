@@ -42,6 +42,8 @@ node scripts/kernel-qualification/provision-canary-credentials.mjs \
 
 The helper verifies AWS account, region, key ARN, state, curve, usage, and the exact canonical secp256k1 SPKI encoding accepted by `Plether.AA.Kms`. Its `sponsorSigner` output goes into the public `deploy-sepolia.mjs` config and must match the canary sponsorship profile. It never calls `kms:Sign`.
 
+For the direct-factory deployment, use the reviewed managed HTTPS RPC bindings. Alto reads `/plether/sepolia/perps-rpc-url`. The API and reconciler also use `/plether/sepolia/aa-reconciler-secondary-rpc-url` to check the independent chain view. Keep both credential-bearing URLs in their approved secret bindings.
+
 ## GitHub and Pages token handoff
 
 The active Pages workflow reads the GitHub Actions repository secret `KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN` and binds it to the isolated `plether-kernel-canary` project. After provisioning the SSM origin token, copy it from SSM to that GitHub secret without echoing it or placing it in a process argument:

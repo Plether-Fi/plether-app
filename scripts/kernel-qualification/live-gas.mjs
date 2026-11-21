@@ -18,6 +18,7 @@ const {
 } = require('viem/account-abstraction')
 const pins = JSON.parse(await readFile(new URL('./pins.json', import.meta.url), 'utf8'))
 const ENTRY_POINT = getAddress(pins.entryPoint.address)
+const KERNEL_FACTORY = getAddress(pins.kernel.contracts.find(contract => contract.name === 'KernelFactory').address)
 const NODE_INTERFACE = '0x00000000000000000000000000000000000000c8'
 const maxSponsoredQuoteWei = 10_000_000_000_000_000n
 const gasFieldCaps = { ...gasCap, maxFeePerGas: maxFeeCap,
@@ -64,7 +65,7 @@ function parsePreparation(source) {
   keys(raw, ['mode', 'entryPoint', 'operation', 'maxNetworkGasWei', 'expiresAt'], ['deployment'])
   if (!['eth', 'sponsored'].includes(raw.mode)) fail('Unknown gas mode')
   if (address(raw.entryPoint, 'entryPoint') !== ENTRY_POINT) fail('Wrong EntryPoint')
-  if (raw.deployment !== undefined && !/^[a-z0-9._-]{1,96}$/.test(raw.deployment)) fail('Invalid deployment')
+  if (raw.deployment !== undefined && raw.deployment !== pins.deployment) fail('Wrong Kernel deployment')
   if (!Number.isSafeInteger(raw.expiresAt) || raw.expiresAt < Date.now() / 1000 + 30) fail('Preparation expired or nearly expired')
   const sourceOp = record(raw.operation, 'operation')
   keys(sourceOp,
@@ -88,6 +89,7 @@ function parsePreparation(source) {
   if ((sourceOp.factory === undefined) !== (sourceOp.factoryData === undefined)) fail('Incomplete factory fields')
   if (sourceOp.factory !== undefined) {
     op.factory = address(sourceOp.factory, 'factory')
+    if (op.factory !== KERNEL_FACTORY) fail('First operation must use the pinned KernelFactory')
     op.factoryData = hex(sourceOp.factoryData, 'factoryData', 2_048, 1)
   }
   const paymasterFields = ['paymaster', 'paymasterData', 'paymasterVerificationGasLimit', 'paymasterPostOpGasLimit']
@@ -247,6 +249,7 @@ function checkedEvidence(source, mode) {
     'estimatedGas', 'nitroFeeControl', 'fundingControl'], ['deployment'])
   if (evidence.schema !== 1 || evidence.chainId !== pins.chainId || address(evidence.entryPoint, 'evidence EntryPoint') !== ENTRY_POINT ||
       evidence.mode !== mode) fail('Evidence is not for this canary mode or chain')
+  if (evidence.deployment !== undefined && evidence.deployment !== pins.deployment) fail('Wrong Kernel evidence deployment')
   const hash = hex(evidence.userOperationHash, 'userOperationHash', 32, 32)
   const sender = address(evidence.sender, 'sender')
   const paymaster = address(evidence.paymaster, 'paymaster')
@@ -388,7 +391,8 @@ async function main(argv) {
     'eth-transaction-hash': { type: 'string' }, 'sponsored-transaction-hash': { type: 'string' },
   }, strict: true })
   const altoRpc = rpcUrl(process.env.KERNEL_LIVE_GAS_ALTO_RPC_URL)
-  const nodeRpc = rpcUrl(process.env.KERNEL_LIVE_GAS_NITRO_RPC_URL, process.env.KERNEL_LIVE_GAS_NITRO_BEARER)
+  const nodeRpc = rpcUrl(process.env.KERNEL_LIVE_GAS_PRIMARY_RPC_URL ?? process.env.KERNEL_LIVE_GAS_NITRO_RPC_URL,
+    process.env.KERNEL_LIVE_GAS_NITRO_BEARER)
   const result = action === 'capture'
     ? await capture(altoRpc, nodeRpc, resolve(values.input), resolve(values.output))
     : await verify(altoRpc, nodeRpc, resolve(values['eth-evidence']), resolve(values['sponsored-evidence']), values)

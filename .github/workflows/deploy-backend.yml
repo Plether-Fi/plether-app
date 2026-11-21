@@ -1402,7 +1402,7 @@ jobs:
                 | keys == ([
                     "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
                     "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
-                    "staker", "stakerCodeHash", "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
+                    "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
                   ] | sort)
                 and (.deployment | type == "string" and test("^[a-z0-9._-]{1,96}$"))
                 and .chainId == 421614
@@ -1411,11 +1411,9 @@ jobs:
                 and (.entryPoint | ascii_downcase) == "0x433709009b8330fda32311df1c2afa402ed8d009"
                 and .accountVersion == "kernel-v4-uups"
                 and .accountIndex == 0
-                and all(["factory", "staker", "implementation", "validator"][]; . as $key | $profile[$key] | canonical_nonzero_address)
-                and (.staker | ascii_downcase) != (.factory | ascii_downcase)
-                and (.staker | ascii_downcase) != (.entryPoint | ascii_downcase)
+                and all(["factory", "implementation", "validator"][]; . as $key | $profile[$key] | canonical_nonzero_address)
                 and all(
-                  ["entryPointCodeHash", "accountCodeHash", "factoryCodeHash", "stakerCodeHash", "implementationCodeHash", "validatorCodeHash"][];
+                  ["entryPointCodeHash", "accountCodeHash", "factoryCodeHash", "implementationCodeHash", "validatorCodeHash"][];
                   . as $key | $profile[$key] | kernel_code_hash
                 );
               def kernel_configuration($main; $environment):

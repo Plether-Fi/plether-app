@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { assertEmbeddedPerpsOwner } from '../../apps/frontend/src/perps-aa/embeddedOwner.ts'
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock } from '../../apps/frontend/src/perps-aa/kernelAccount.ts'
+import { aggregateGasCap, boundedGasEstimate, maxFeeCap, maxPrefundCap, maxPriorityFeeCap } from './nitro-sepolia-gas.mjs'
 
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const {
@@ -41,20 +42,9 @@ const factoryAbi = parseAbi([
   'function getAddress(Install[] initialPackages,uint256 nonce) view returns (address)',
   'function deploy(Install[] initialPackages,uint256 nonce) payable returns (address)',
 ])
-const stakerAbi = parseAbi([
-  'constructor(address owner)',
-  'function deployWithFactory(address factory,bytes createData) payable returns (address)',
-  'function approveFactory(address factory,bool approval) payable',
-  'function approved(address factory) view returns (bool)',
-  'function stake(address entryPoint,uint32 unstakeDelay) payable',
-  'function owner() view returns (address)',
-])
-const stakeManagerAbi = parseAbi([
-  'function getDepositInfo(address account) view returns ((uint112 deposit,bool staked,uint112 stake,uint32 unstakeDelaySec,uint48 withdrawTime))',
-])
 const targetAbi = parseAbi(['function record()', 'function calls(address account) view returns (uint256)'])
 const gasLimit = 10_000_000n
-const maxCost = parseEther('0.05')
+const maxCost = parseEther('0.01')
 const sponsorGasLimit = 150_000n
 const policyId = keccak256(toHex('Plether Kernel qualification only'))
 const chain = {
@@ -148,8 +138,6 @@ const validatorBytecode = compileValidator()
 const kernelRelease = JSON.parse(command('git', [
   '-C', resolve(args['kernel-repo']), 'show', `${pins.kernel.commit}:${pins.kernel.release}`,
 ]))
-const stakerRelease = kernelRelease.contracts.find(contract => contract.name === 'Staker')
-assert.ok(stakerRelease?.bytecode?.startsWith('0x'), 'Pinned Kernel release must include Staker creation code')
 assert.equal(getAddress(kernelRelease.create2.factory), getAddress(pins.create2Deployer.address))
 assert.equal(kernelRelease.create2.salt, zeroHash)
 const entryPointCode = readExactRuntime('entrypoint-runtime.hex', pins.entryPoint)
@@ -158,6 +146,11 @@ const deployerCode = readExactRuntime('create2-runtime.hex', pins.create2Deploye
 const paymasterArtifact = JSON.parse(readFileSync(resolve(args['paymaster-artifact']), 'utf8'))
 const altoImage = args['alto-image'] ?? pins.alto.image
 assert.ok(Object.values(paymasterArtifact.metadata.settings.compilationTarget).includes('PletherKernelVerifyingPaymaster'))
+const paymasterConstructor = paymasterArtifact.abi.find(item => item.type === 'constructor')
+assert.deepEqual(paymasterConstructor?.inputs.map(input => input.name), [
+  'entryPoint_', 'owner_', 'initialSponsorSigner_', 'maxSponsoredCost_', 'policyId_', 'approvedAccountCodeHash_',
+  'accountFactory_', 'accountImplementation_', 'rootValidator_',
+], 'Run the direct factory qualification with the reviewed nine-argument Core paymaster artifact')
 const targetSource = fileURLToPath(new URL('./QualificationTarget.sol', import.meta.url))
 const targetArtifacts = JSON.parse(command(resolve(args.solc), ['--optimize', '--combined-json', 'bin', targetSource]))
 const targetContract = Object.entries(targetArtifacts.contracts).find(([name]) => name.endsWith(':QualificationTarget'))[1]
@@ -186,7 +179,6 @@ const accountProfile = {
   entryPointCodeHash: pins.entryPoint.codeHash, factoryCodeHash: factoryPin.codeHash,
   implementation, implementationCodeHash: implementationPin.codeHash,
   validatorCodeHash: pins.validator.codeHash, accountCodeHash: pins.kernel.proxyCodeHash,
-  staker: zeroAddress, stakerCodeHash: zeroHash,
 }
 
 async function read(address, abi, functionName, args = []) {
@@ -239,12 +231,9 @@ async function tradingAccount(owner, walletFamily) {
   const account = await createKernelTradingAccount(publicClient, accountProfile,
     { address: owner.address, signMessage: ({ message }) => wallet.signMessage({ message }) }, blockNumber)
   await checkAccount(account.address, owner, blockNumber, false)
-  const createData = encodeFunctionData({ abi: factoryAbi, functionName: 'deploy', args: [packagesFor(owner), 0n] })
-  const expectedFactoryData = encodeFunctionData({
-    abi: stakerAbi, functionName: 'deployWithFactory', args: [factory, createData],
-  })
+  const expectedFactoryData = encodeFunctionData({ abi: factoryAbi, functionName: 'deploy', args: [packagesFor(owner), 0n] })
   assert.deepEqual({ factory: account.factoryArgs.factory, data: account.factoryArgs.factoryData }, {
-    factory: accountProfile.staker, data: expectedFactoryData.toLowerCase(),
+    factory, data: expectedFactoryData.toLowerCase(),
   })
   return account
 }
@@ -319,10 +308,14 @@ async function prepareOperation({ account, nonce, callData, first, fees, sponsor
     operation.paymasterPostOpGasLimit = 0n
   }
   const estimate = await request(bundlerRpc, 'eth_estimateUserOperationGas', [formatUserOperationRequest(operation), entryPoint])
-  for (const field of ['callGasLimit', 'verificationGasLimit', 'preVerificationGas']) {
-    operation[field] = BigInt(estimate[field])
-    assert.ok(operation[field] > 0n, `Alto must return nonzero ${field}`)
-  }
+  Object.assign(operation, boundedGasEstimate(estimate))
+  const totalGas = operation.callGasLimit + operation.verificationGasLimit + operation.preVerificationGas +
+    (operation.paymasterVerificationGasLimit ?? 0n)
+  assert.ok(totalGas <= aggregateGasCap, 'Operation exceeds the reviewed aggregate gas cap')
+  assert.ok(operation.maxFeePerGas > 0n && operation.maxFeePerGas <= maxFeeCap &&
+    operation.maxPriorityFeePerGas <= maxPriorityFeeCap && operation.maxPriorityFeePerGas <= operation.maxFeePerGas,
+  'Operation exceeds the reviewed fee limits')
+  assert.ok(totalGas * operation.maxFeePerGas <= (sponsorship ? maxCost : maxPrefundCap), 'Operation exceeds the reviewed prefund')
   if (sponsorship) {
     assert.equal(BigInt(estimate.paymasterPostOpGasLimit), 0n, 'The selected paymaster has no postOp')
     assert.ok(sponsorGasLimit >= BigInt(estimate.paymasterVerificationGasLimit), 'Raise the reviewed local sponsor gas cap')
@@ -346,6 +339,19 @@ function payerBalances(sender, paymaster) {
 
 async function submitOperation({ operation, hash }) {
   assert.equal(await request(bundlerRpc, 'eth_sendUserOperation', [formatUserOperationRequest(operation), entryPoint]), hash)
+}
+
+async function checkNormalSignatureValidation(account, target) {
+  const record = encodeFunctionData({ abi: targetAbi, functionName: 'record' })
+  const { operation, hash } = await prepareOperation({
+    account, nonce: 0n, callData: singleCall(target, record), first: true, fees: await feeQuote(),
+  })
+  operation.signature = await account.getStubSignature()
+  await assert.rejects(submitOperation({ operation, hash }), /"code":-32507/u)
+  assert.equal(await request(bundlerRpc, 'eth_getUserOperationReceipt', [hash]), null)
+  assert.equal(await account.getNonce(), 0n)
+  assert.equal(await publicClient.getCode({ address: account.address }), undefined)
+  console.log('Normal validation rejected a wrong owner signature before deploying the account.')
 }
 
 async function checkInclusion({ operation, hash }, paymaster, [gasBefore, paymasterBefore], transferred = 0n) {
@@ -532,24 +538,6 @@ try {
   assert.equal(await deployCreate2(validatorBytecode, validator), pins.validator.codeHash)
   assert.equal(getAddress(await read(factory, factoryAbi, 'UUPS')), implementation)
 
-  const staker = (await deploy(stakerRelease.bytecode, stakerAbi, [utility.address])).contractAddress
-  assert.ok(staker)
-  const stakerCode = await publicClient.getCode({ address: staker })
-  assert.ok(stakerCode && stakerCode !== '0x')
-  accountProfile.staker = getAddress(staker)
-  accountProfile.stakerCodeHash = keccak256(stakerCode)
-  assert.equal(getAddress(await read(staker, stakerAbi, 'owner')), utility.address)
-  await confirmed(await utilityWallet.writeContract({
-    address: staker, abi: stakerAbi, functionName: 'approveFactory', args: [factory, true],
-  }))
-  await confirmed(await utilityWallet.writeContract({
-    address: staker, abi: stakerAbi, functionName: 'stake', args: [entryPoint, 86_400], value: parseEther('1'),
-  }))
-  assert.equal(await read(staker, stakerAbi, 'approved', [factory]), true)
-  const stakerInfo = await read(entryPoint, stakeManagerAbi, 'getDepositInfo', [staker])
-  assert.equal(stakerInfo.staked, true)
-  assert.ok(stakerInfo.stake >= parseEther('1') && stakerInfo.unstakeDelaySec >= 86_400)
-
   // Derive the proxy runtime hash from a sacrificial account with the same factory and implementation.
   const proxySample = await accountAddress(utility)
   const proxyReceipt = await confirmed(await utilityWallet.writeContract({ address: factory, abi: factoryAbi, functionName: 'deploy', args: [packagesFor(utility), 0n] }))
@@ -557,21 +545,25 @@ try {
   assert.equal(proxyHash, pins.kernel.proxyCodeHash)
   await checkAccount(proxySample, utility, proxyReceipt.blockNumber, true)
   const paymasterReceipt = await deploy(paymasterArtifact.bytecode.object, paymasterArtifact.abi, [
-    entryPoint, utility.address, sponsor.address, maxCost, policyId, proxyHash, staker, factory, implementation, validator,
+    entryPoint, utility.address, sponsor.address, maxCost, policyId, proxyHash, factory, implementation, validator,
   ])
   const paymaster = paymasterReceipt.contractAddress
   assert.ok(paymaster)
-  await confirmed(await utilityWallet.writeContract({ address: paymaster, abi: paymasterArtifact.abi, functionName: 'deposit', value: parseEther('2') }))
-  await confirmed(await utilityWallet.writeContract({
-    address: paymaster, abi: paymasterArtifact.abi, functionName: 'addStake', args: [86_400], value: parseEther('1'),
-  }))
-  const paymasterInfo = await read(entryPoint, stakeManagerAbi, 'getDepositInfo', [paymaster])
-  assert.equal(paymasterInfo.staked, true)
-  assert.ok(paymasterInfo.stake >= parseEther('1') && paymasterInfo.unstakeDelaySec >= 86_400)
+  assert.equal(await read(paymaster, paymasterArtifact.abi, 'paused'), true)
+  assert.equal(getAddress(await read(paymaster, paymasterArtifact.abi, 'accountFactory')), factory)
+  const depositValue = parseEther('0.25')
+  await confirmed(await utilityWallet.writeContract({ address: paymaster, abi: paymasterArtifact.abi, functionName: 'deposit', value: depositValue }))
+  for (const [label, address, deposit] of [['KernelFactory', factory, 0n], ['paymaster', paymaster, depositValue]]) {
+    const info = await read(entryPoint, entryPoint09Abi, 'getDepositInfo', [address])
+    assert.equal(info.staked, false, `${label} must be unstaked`)
+    assert.equal(info.stake, 0n, `${label} must have zero stake`)
+    assert.equal(info.deposit, deposit, `${label} deposit differs from the fixture`)
+  }
   await confirmed(await utilityWallet.writeContract({ address: paymaster, abi: paymasterArtifact.abi, functionName: 'unpause' }))
   const target = (await deploy(`0x${targetContract.bin}`, [])).contractAddress
   assert.ok(target)
-  console.log('Kernel runtime hashes:', JSON.stringify({ ...hashes, Staker: accountProfile.stakerCodeHash, proxy: proxyHash }))
+  console.log('Kernel runtime hashes:', JSON.stringify({ ...hashes, proxy: proxyHash }))
+  console.log('KernelFactory and paymaster are unstaked. Paymaster deposit funded separately.')
 
   const env = {
     ALTO_RPC_URL: `http://host.docker.internal:${chainPort}`,
@@ -582,6 +574,7 @@ try {
     ALTO_DEPLOY_SIMULATIONS_CONTRACT: 'true',
     ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION: 'false',
     ALTO_SAFE_MODE: args['safe-mode'] ? 'true' : 'false',
+    ALTO_MAX_GAS_PER_USER_OP: String(aggregateGasCap),
     // The loopback qualification process uses manual bundling to stage replacements.
     ALTO_ENABLE_DEBUG_ENDPOINTS: 'true',
     ALTO_BUNDLE_MODE: 'auto',
@@ -608,6 +601,7 @@ try {
   await quoteUnfundedDeployment(paidAccount, target)
   await fundAccount(paidSender, paidOwner)
   assert.equal(await paidAccount.getNonce(), 0n)
+  await checkNormalSignatureValidation(paidAccount, target)
   console.log(`External owner funded the verified counterfactual Trading Account ${paidSender} without deploying it`)
   assert.equal(await gasFunds(sponsoredSender), 0n)
   const common = { target, paymaster, proxyHash }

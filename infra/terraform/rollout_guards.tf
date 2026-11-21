@@ -468,7 +468,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
           toset(keys(local.kernel_aa_profile_object)) == toset([
             "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
             "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
-            "staker", "stakerCodeHash", "implementation", "implementationCodeHash", "validator", "validatorCodeHash",
+            "implementation", "implementationCodeHash", "validator", "validatorCodeHash",
           ])
           && startswith(jsonencode(local.kernel_aa_profile_object.deployment), "\"")
           && can(regex("^[a-z0-9._-]{1,96}$", local.kernel_aa_profile_object.deployment))
@@ -477,12 +477,11 @@ resource "terraform_data" "self_hosted_aa_guard" {
           && lower(local.kernel_aa_profile_object.entryPoint) == local.alto_entrypoint_addresses["0.9"]
           && local.kernel_aa_profile_object.accountVersion == "kernel-v4-uups"
           && local.kernel_aa_profile_object.accountIndex == 0
-          && alltrue([for field in ["factory", "staker", "implementation", "validator"] :
+          && alltrue([for field in ["factory", "implementation", "validator"] :
             can(regex("^0x[0-9A-Fa-f]{40}$", local.kernel_aa_profile_object[field]))
             && lower(local.kernel_aa_profile_object[field]) != "0x0000000000000000000000000000000000000000"
           ])
-          && !contains([lower(local.kernel_aa_profile_object.factory), lower(local.kernel_aa_profile_object.entryPoint)], lower(local.kernel_aa_profile_object.staker))
-          && alltrue([for field in ["entryPointCodeHash", "factoryCodeHash", "stakerCodeHash", "implementationCodeHash", "validatorCodeHash", "accountCodeHash"] :
+          && alltrue([for field in ["entryPointCodeHash", "factoryCodeHash", "implementationCodeHash", "validatorCodeHash", "accountCodeHash"] :
             can(regex("^0x[0-9A-Fa-f]{64}$", local.kernel_aa_profile_object[field])) && !contains([
               "0x0000000000000000000000000000000000000000000000000000000000000000",
               "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
@@ -494,7 +493,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
           false
         )
       )
-      error_message = "Kernel requires the exact public profile fields, a distinct Staker and valid contract bindings for Kernel v4 on EntryPoint v0.9 and Arbitrum Sepolia, and max safe-head lag in 60..1800 seconds."
+      error_message = "Kernel requires the exact public direct-factory profile and valid contract bindings for Kernel v4 on EntryPoint v0.9 and Arbitrum Sepolia, and max safe-head lag in 60..1800 seconds."
     }
 
     precondition {

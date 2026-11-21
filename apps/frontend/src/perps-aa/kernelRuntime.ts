@@ -6,7 +6,7 @@ import { BundlerRequestError, SponsorRequestError } from './errors'
 import type { ExecuteSponsoredPerpsActionInput, ExecuteSponsoredPerpsActionResult } from './execution'
 import { readGasPaymentPreference, type GasPaymentMode } from './gasPaymentPreference'
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock, type VerifiedKernelTradingAccount } from './kernelAccount'
-import { kernelSepoliaCanaryPaymasterCodeHash } from './kernelDeploymentPins'
+import { kernelSepoliaCanaryPaymaster } from './kernelDeploymentPins'
 import {
   getActiveKernelAttempt, getKernelAttempt, refreshKernelAttempt, saveKernelSignedAttempt, submitKernelAttempt, withKernelOperationLane,
   type KernelAttemptScope, type KernelOperationAttempt,
@@ -180,11 +180,12 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         }
         if (prepared.mode === 'sponsored') {
           const { paymaster } = current
-          if (!paymaster || !prepared.operation.paymaster || !isAddressEqual(paymaster, prepared.operation.paymaster)) {
+          if (!paymaster || !kernelSepoliaCanaryPaymaster || !prepared.operation.paymaster ||
+              !isAddressEqual(paymaster, kernelSepoliaCanaryPaymaster.address) || !isAddressEqual(paymaster, prepared.operation.paymaster)) {
             throw new Error('The sponsorship contract changed. Review a fresh quote to continue.')
           }
           const code = await publicClient.getBytecode({ address: paymaster, blockTag: 'safe' })
-          if (!code || keccak256(code) !== kernelSepoliaCanaryPaymasterCodeHash) {
+          if (!code || keccak256(code) !== kernelSepoliaCanaryPaymaster.codeHash) {
             throw new Error('The sponsorship contract does not match this Kernel deployment.')
           }
         }
@@ -273,7 +274,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     },
   }
   return {
-    chainId: scope.chainId, ownerAddress, factoryAddress: profile.staker,
+    chainId: scope.chainId, ownerAddress, factoryAddress: profile.factory,
     accountVersion: profile.accountVersion, accountIndex: '0', manifestVersion: manifest.version,
     smartAccount: { accountAddress: scope.sender, entryPoint: scope.entryPoint },
     gasPayment: { scope: preferenceScope, readiness }, kernel,

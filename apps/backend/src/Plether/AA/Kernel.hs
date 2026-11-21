@@ -4,12 +4,12 @@ module Plether.AA.Kernel
   , KernelOperationPhase (..)
   , KernelOperation (..)
   , kernelEntryPoint
-  , minimumKernelStakeWei
   , parseKernelOperation
   , parseKernelCallIntent
   , decodeKernelCalls
   , kernelFactoryArgs
   , decodeKernelFactoryOwner
+  , decodeKernelEntryPointDeposit
   , kernelUserOperationHash
   , attestKernelStackAtBlock
   , verifyKernelAccountAtBlock
@@ -49,8 +49,6 @@ data KernelProfile = KernelProfile
   , kpEntryPointCodeHash :: Text
   , kpFactory :: Text
   , kpFactoryCodeHash :: Text
-  , kpStaker :: Text
-  , kpStakerCodeHash :: Text
   , kpImplementation :: Text
   , kpImplementationCodeHash :: Text
   , kpValidator :: Text
@@ -62,15 +60,11 @@ data KernelProfile = KernelProfile
 kernelEntryPoint :: Text
 kernelEntryPoint = "0x433709009b8330fda32311df1c2afa402ed8d009"
 
--- The fresh Sepolia deployment locks this amount for each Staker and paymaster.
-minimumKernelStakeWei :: Integer
-minimumKernelStakeWei = 1_000_000_000_000_000_000
-
 instance FromJSON KernelProfile where
   parseJSON = withObject "Kernel profile" $ \fields -> do
     let names =
           [ "deployment", "chainId", "entryPoint", "entryPointCodeHash"
-          , "factory", "factoryCodeHash", "staker", "stakerCodeHash", "implementation", "implementationCodeHash"
+          , "factory", "factoryCodeHash", "implementation", "implementationCodeHash"
           , "validator", "validatorCodeHash", "accountCodeHash"
           , "entryPointVersion", "accountVersion", "accountIndex"
           ]
@@ -99,20 +93,15 @@ instance FromJSON KernelProfile where
             _ -> fail $ "Invalid Kernel code hash: " <> Key.toString label
     entryPoint <- pinnedAddress "entryPoint"
     unless (entryPoint == kernelEntryPoint) $ fail "Kernel profile has an unexpected EntryPoint address"
-    profile <- KernelProfile deployment chain entryPoint
+    KernelProfile deployment chain entryPoint
       <$> pinnedHash "entryPointCodeHash"
       <*> pinnedAddress "factory"
       <*> pinnedHash "factoryCodeHash"
-      <*> pinnedAddress "staker"
-      <*> pinnedHash "stakerCodeHash"
       <*> pinnedAddress "implementation"
       <*> pinnedHash "implementationCodeHash"
       <*> pinnedAddress "validator"
       <*> pinnedHash "validatorCodeHash"
       <*> pinnedHash "accountCodeHash"
-    when (kpStaker profile == kpFactory profile || kpStaker profile == kpEntryPoint profile) $
-      fail "Kernel Staker must be distinct from the factory and EntryPoint"
-    pure profile
     where
       deploymentCharacter c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c `elem` ("._-" :: String)
 
@@ -125,8 +114,6 @@ instance ToJSON KernelProfile where
       , "entryPointCodeHash" .= kpEntryPointCodeHash profile
       , "factory" .= kpFactory profile
       , "factoryCodeHash" .= kpFactoryCodeHash profile
-      , "staker" .= kpStaker profile
-      , "stakerCodeHash" .= kpStakerCodeHash profile
       , "implementation" .= kpImplementation profile
       , "implementationCodeHash" .= kpImplementationCodeHash profile
       , "validator" .= kpValidator profile
@@ -194,7 +181,7 @@ parseKernelCallIntent profile sender callData factory factoryData = do
   owner <- case (factory, factoryData) of
     (Nothing, Nothing) -> Right Nothing
     (Just address, Just arguments)
-      | normalizeAddress address == Just (kpStaker profile) ->
+      | normalizeAddress address == Just (kpFactory profile) ->
           Just <$> decodeKernelFactoryOwner profile arguments
     _ -> Left $ invalidParams "Kernel factory fields do not match the deployment profile"
   pure (calls, owner)
@@ -269,23 +256,9 @@ decodeKernelCalls bytes = do
 factoryType :: Text
 factoryType = "((uint256,address,bytes,bytes)[],uint256)"
 
--- The signed factory fields route through the staked Staker. Its nested call
--- deploys one index-zero Kernel with a type-1 ECDSA root owner package.
+-- Deploy one index-zero Kernel directly with a type-1 ECDSA root owner package.
 kernelFactoryArgs :: KernelProfile -> Text -> Either ProxyFailure Text
 kernelFactoryArgs profile ownerAddress = do
-  direct <- kernelDirectFactoryArgs profile ownerAddress
-  bytes <- maybe (Left $ invalidParams "Kernel factory initializer is malformed") Right $ hexBytes direct
-  let lengthBytes = BS.length bytes
-      padding = (32 - lengthBytes `mod` 32) `mod` 32
-  pure $ hexText $ encodeCall "deployWithFactory(address,bytes)"
-    [ encodeAddress (kpFactory profile)
-    , encodeUint256 64
-    , encodeUint256 $ fromIntegral lengthBytes
-    , bytes <> BS.replicate padding 0
-    ]
-
-kernelDirectFactoryArgs :: KernelProfile -> Text -> Either ProxyFailure Text
-kernelDirectFactoryArgs profile ownerAddress = do
   owner <- maybe (Left $ invalidParams "Kernel root owner is invalid") Right $ normalizeAddress ownerAddress
   _ <- maybe (Left $ invalidParams "Kernel validator is invalid") Right $ normalizeAddress (kpValidator profile)
   pure $ hexText $ encodeCall ("deploy" <> factoryType)
@@ -305,13 +278,9 @@ kernelDirectFactoryArgs profile ownerAddress = do
 decodeKernelFactoryOwner :: KernelProfile -> Text -> Either ProxyFailure Text
 decodeKernelFactoryOwner profile raw = do
   bytes <- maybe (Left malformedFactory) Right $ hexBytes raw
-  unless (BS.length bytes == 484
-      && BS.take 4 bytes == selector "deployWithFactory(address,bytes)"
-      && BS.take 32 (BS.drop 4 bytes) == encodeAddress (kpFactory profile)
-      && BS.take 32 (BS.drop 36 bytes) == encodeUint256 64
-      && BS.take 32 (BS.drop 68 bytes) == encodeUint256 356) $ Left malformedFactory
-  let direct = BS.take 356 $ BS.drop 100 bytes
-      owner = hexText $ BS.take 20 $ BS.drop 292 direct
+  unless (BS.length bytes == 356 && BS.take 4 bytes == selector ("deploy" <> factoryType)) $
+    Left malformedFactory
+  let owner = hexText $ BS.take 20 $ BS.drop 292 bytes
   approved <- kernelFactoryArgs profile owner
   unless (hexText bytes == approved) $ Left malformedFactory
   pure owner
@@ -329,17 +298,13 @@ attestKernelStack profile rpc block = runExceptT $ do
   let addresses =
         [ (kpEntryPoint profile, kpEntryPointCodeHash profile)
         , (kpFactory profile, kpFactoryCodeHash profile)
-        , (kpStaker profile, kpStakerCodeHash profile)
         , (kpImplementation profile, kpImplementationCodeHash profile)
         , (kpValidator profile, kpValidatorCodeHash profile)
         ]
-  (chain, (code, (implementation, (approval, depositInfo)))) <- liftIO $ concurrently
+  (chain, (code, implementation)) <- liftIO $ concurrently
     (rpc "eth_chainId" $ toJSON ([] :: [Value]))
     (concurrently (mapConcurrently (readCode rpc block . fst) addresses)
-      (concurrently (readWordCall rpc block (kpFactory profile) (selector "UUPS()"))
-        (concurrently
-          (readWordCall rpc block (kpStaker profile) $ encodeCall "approved(address)" [encodeAddress $ kpFactory profile])
-          (readDepositInfo rpc block (kpEntryPoint profile) (kpStaker profile)))))
+      (readWordCall rpc block (kpFactory profile) (selector "UUPS()")))
   unless (chain == Right (String $ Paymaster.canonicalQuantity $ kpChainId profile)) $
     throwE $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel RPC chain does not match the deployment profile"
   case traverse id code of
@@ -350,12 +315,6 @@ attestKernelStack profile rpc block = runExceptT $ do
   factoryImplementation <- ExceptT $ pure implementation
   unless (factoryImplementation == encodeAddress (kpImplementation profile)) $
     throwE $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel factory implementation does not match the deployment profile"
-  approved <- ExceptT $ pure approval
-  unless (approved == encodeUint256 1) $
-    throwE $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel Staker has not approved the pinned factory"
-  (staked, stake, unstakeDelay) <- ExceptT $ pure depositInfo
-  unless (staked && stake >= minimumKernelStakeWei && unstakeDelay >= 86400) $
-    throwE $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel Staker is not locked at the EntryPoint"
 
 -- Just owner is the counterfactual path and requires an undeployed account.
 -- Nothing resolves the live root owner from the deployed account. Both paths
@@ -417,7 +376,7 @@ resolveOwnedKernelAccountWithRpcAtBlock profile rpc block rawOwner
 
 deriveKernelAddress :: KernelProfile -> KernelRpc -> Integer -> Text -> ExceptT ProxyFailure IO Text
 deriveKernelAddress profile rpc block owner = do
-  factoryArguments <- ExceptT $ pure $ kernelDirectFactoryArgs profile owner
+  factoryArguments <- ExceptT $ pure $ kernelFactoryArgs profile owner
   lookupArguments <- case hexBytes factoryArguments of
     Just bytes -> pure (selector ("getAddress" <> factoryType) <> BS.drop 4 bytes)
     Nothing -> throwE $ invalidParams "Kernel factory arguments are invalid"
@@ -479,23 +438,10 @@ readWordCall rpc block address calldata = do
     Right (String raw) | Just bytes <- hexBytes raw, BS.length bytes == 32 -> Right bytes
     _ -> Left $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel contract read failed"
 
-readDepositInfo :: KernelRpc -> Integer -> Text -> Text -> IO (Either ProxyFailure (Bool, Integer, Integer))
-readDepositInfo rpc block entryPoint staker = do
-  result <- rpc "eth_call" $ toJSON
-    [object ["to" .= entryPoint, "data" .= hexText (encodeCall "getDepositInfo(address)" [encodeAddress staker])]
-    , String $ Paymaster.canonicalQuantity block]
-  pure $ case result of
-    Right (String raw) | Just bytes <- hexBytes raw, BS.length bytes == 160 ->
-      let word index = decodeUint256 $ BS.take 32 $ BS.drop (32 * index) bytes
-          staked = word 1
-          stake = word 2
-          delay = word 3
-          withdrawTime = word 4
-      in if staked `elem` [0, 1] && stake < 2 ^ (112 :: Int)
-            && delay < 2 ^ (32 :: Int) && withdrawTime < 2 ^ (48 :: Int)
-         then Right (staked == 1, stake, delay)
-         else Left $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel Staker deposit response is noncanonical"
-    _ -> Left $ unavailable "KERNEL_ATTESTATION_FAILED" "Kernel Staker deposit could not be read"
+decodeKernelEntryPointDeposit :: ByteString -> Either Text Integer
+decodeKernelEntryPointDeposit bytes
+  | BS.length bytes == 32 = Right $ decodeUint256 bytes
+  | otherwise = Left "Kernel EntryPoint deposit response is noncanonical"
 
 readCode :: KernelRpc -> Integer -> Text -> IO (Either ProxyFailure ByteString)
 readCode rpc block address = do

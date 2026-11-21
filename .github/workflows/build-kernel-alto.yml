@@ -1,4 +1,4 @@
-name: Build Kernel Alto canary image
+name: Mirror Kernel Alto canary image
 run-name: Kernel Alto image / Sepolia / ${{ inputs.candidate_sha }}
 
 on:
@@ -21,7 +21,8 @@ env:
   AWS_REGION: ap-southeast-1
   ADMIN_ENVIRONMENT: alto-admin-sepolia
   ECR_REPOSITORY: plether-kernel-alto-sepolia
-  UPSTREAM_COMMIT: e90957d8136d06087474d11cdcf4fa25bc120898
+  UPSTREAM_COMMIT: 37cade5d2804a60ab30362ea27054514e1d7a7c8
+  UPSTREAM_ALTO_IMAGE: ghcr.io/pimlicolabs/alto:v1.2.8@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa
 
 jobs:
   reviewed-candidate-preflight:
@@ -85,9 +86,9 @@ jobs:
             "$branch_policy_file" >/dev/null
 
   build:
-    name: Build, scan and pin v0.9 canary image
+    name: Mirror, scan and pin v0.9 canary image
     needs: reviewed-candidate-preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: alto-admin-sepolia
     permissions:
@@ -96,53 +97,33 @@ jobs:
       id-token: write
       pull-requests: read
     steps:
-      - name: Check out exact reviewed candidate patch
+      - name: Check out exact reviewed qualification pins
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.candidate_sha }}
           persist-credentials: false
-          sparse-checkout: scripts/alto-kernel-patch
+          sparse-checkout: scripts/kernel-qualification/pins.json
+          sparse-checkout-cone-mode: false
 
-      - name: Confirm checked-out commit
+      - name: Verify the candidate pins the upstream ARM64 image
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
           set -euo pipefail
           [ "$(git rev-parse HEAD)" = "$CANDIDATE_SHA" ]
-
-      - name: Enable ARM64 emulation
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
-        with:
-          platforms: arm64
-
-      - name: Fetch pinned Alto source
-        run: |
-          set -euo pipefail
-          git clone --quiet --depth 1 --branch v1.2.7 https://github.com/pimlicolabs/alto.git "$RUNNER_TEMP/alto-v1.2.7"
-          [ "$(git -C "$RUNNER_TEMP/alto-v1.2.7" rev-parse HEAD)" = "$UPSTREAM_COMMIT" ] || {
-            echo '::error::The upstream v1.2.7 source does not match the reviewed commit.'
+          jq -e --arg image "$UPSTREAM_ALTO_IMAGE" --arg commit "$UPSTREAM_COMMIT" \
+            '.alto.image == $image and .alto.commit == $commit' scripts/kernel-qualification/pins.json >/dev/null || {
+            echo '::error::The candidate must pin the reviewed upstream ARM64 Alto image and commit.'
             exit 1
           }
+          upstream="docker://${UPSTREAM_ALTO_IMAGE%%:*}@${UPSTREAM_ALTO_IMAGE##*@}"
+          manifest="$RUNNER_TEMP/alto-arm64-manifest.json"
+          skopeo inspect --raw "$upstream" > "$manifest"
+          [ "$(skopeo manifest-digest "$manifest")" = "${UPSTREAM_ALTO_IMAGE##*@}" ]
+          skopeo inspect --config "$upstream" | jq -e --arg commit "$UPSTREAM_COMMIT" \
+            '.os == "linux" and .architecture == "arm64" and .config.Labels["org.opencontainers.image.revision"] == $commit' >/dev/null
 
-      # Build and test before assuming the ECR role. The candidate patch and
-      # Dockerfile have no access to AWS credentials or the registry token.
-      - name: Build patched image from the reviewed source
-        run: |
-          set -euo pipefail
-          image=plether-kernel-alto-candidate:local
-          scripts/alto-kernel-patch/build.sh "$RUNNER_TEMP/alto-v1.2.7" "$image" --check
-          scripts/alto-kernel-patch/build.sh "$RUNNER_TEMP/alto-v1.2.7" "$image"
-          docker run --rm --platform linux/arm64 --network none --read-only \
-            --cap-drop ALL --security-opt no-new-privileges \
-            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/alto-kernel-patch/SafeValidatorV09.test.mjs,dst=/app/src/esm/rpc/validation/SafeValidatorV09.test.mjs,readonly" \
-            --entrypoint node "$image" --test \
-            /app/src/esm/rpc/validation/SafeValidatorV09.test.mjs
-          docker run --rm --platform linux/arm64 --network none --read-only \
-            --cap-drop ALL --security-opt no-new-privileges \
-            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/alto-kernel-patch/RpcAuth.test.mjs,dst=/app/src/esm/cli/RpcAuth.test.mjs,readonly" \
-            --entrypoint node "$image" --test /app/src/esm/cli/RpcAuth.test.mjs
-
-      - name: Recheck PR head after build
+      - name: Recheck PR head after resolving the upstream image
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -155,7 +136,7 @@ jobs:
              and .head.repo.full_name == $repo and .head.sha == $sha
              and (.head.ref | test("^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$"))' \
             "$RUNNER_TEMP/kernel-alto-pr-recheck.json" >/dev/null || {
-              echo '::error::The reviewed PR head changed during the canary build.'
+              echo '::error::The reviewed PR head changed during image resolution.'
               exit 1
             }
 
@@ -205,23 +186,22 @@ jobs:
             }
           [ "$(aws sts get-caller-identity --query Account --output text --no-cli-pager)" = '${{ vars.AWS_ACCOUNT_ID }}' ]
           [ "$AWS_REGION" = ap-southeast-1 ]
-          tag="kernel-v09-safemode-${CANDIDATE_SHA:0:12}"
+          tag="kernel-v09-managed-${CANDIDATE_SHA:0:12}"
           image="$ECR_REGISTRY/$ECR_REPOSITORY:$tag"
-          image_id=$(docker image inspect --format '{{.Id}}' plether-kernel-alto-candidate:local)
+          expected_digest=${UPSTREAM_ALTO_IMAGE##*@}
+          upstream="docker://${UPSTREAM_ALTO_IMAGE%%:*}@$expected_digest"
           if existing_digest=$(aws ecr describe-images \
               --repository-name "$ECR_REPOSITORY" \
               --image-ids imageTag="$tag" \
               --query 'imageDetails[0].imageDigest' \
               --output text --no-cli-pager 2> "$RUNNER_TEMP/alto-image-lookup.error"); then
-            [[ "$existing_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            docker pull --platform linux/arm64 "$image"
-            [ "$(docker image inspect --format '{{.Id}}' "$image")" = "$image_id" ] || {
+            [ "$existing_digest" = "$expected_digest" ] || {
               echo '::error::The immutable canary tag already has different image content.'
               exit 1
             }
           elif grep -Fq ImageNotFoundException "$RUNNER_TEMP/alto-image-lookup.error"; then
-            docker tag plether-kernel-alto-candidate:local "$image"
-            docker push "$image"
+            skopeo copy --preserve-digests --dest-authfile "${DOCKER_CONFIG:-$HOME/.docker}/config.json" \
+              "$upstream" "docker://$image"
           else
             echo '::error::Could not verify the canary image tag in ECR.'
             exit 1
@@ -231,11 +211,16 @@ jobs:
             --image-ids imageTag="$tag" \
             --query 'imageDetails[0].imageDigest' \
             --output text --no-cli-pager)
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [ "$digest" = "$expected_digest" ] || {
+            echo '::error::The ECR manifest must retain the exact upstream ARM64 digest.'
+            exit 1
+          }
           printf 'image=%s@%s\n' "$ECR_REGISTRY/$ECR_REPOSITORY" "$digest" >> "$GITHUB_ENV"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_ENV"
 
       - name: Require a complete scan without critical findings
+        env:
+          TARGET_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           scan_error="$RUNNER_TEMP/alto-image-scan.error"
@@ -255,15 +240,18 @@ jobs:
             --repository-name "$ECR_REPOSITORY" \
             --image-id imageDigest="$digest" \
             --output json --no-cli-pager > "$RUNNER_TEMP/alto-image-scan.json"
-          jq --exit-status --arg digest "$digest" --arg repository "$ECR_REPOSITORY" \
+          jq --exit-status --arg digest "$digest" --arg repository "$ECR_REPOSITORY" --arg account "$TARGET_ACCOUNT_ID" \
             '.repositoryName == $repository
+             and .registryId == $account
              and .imageId.imageDigest == $digest
              and .imageScanStatus.status == "COMPLETE"
+             and (.imageScanFindings | type) == "object"
              and (.imageScanFindings.findingSeverityCounts.CRITICAL // 0) == 0
              and (.nextToken == null or .nextToken == "")' \
             "$RUNNER_TEMP/alto-image-scan.json" >/dev/null || {
               echo '::error::The canary image scan is incomplete or has critical findings.'
               exit 1
             }
-          printf 'Built and scanned isolated Kernel v0.9 Alto image `%s` from reviewed commit `%s`.\n' "$image" '${{ inputs.candidate_sha }}' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Mirrored upstream `%s` from Alto source `%s` and scanned `%s` for candidate `%s`.\n' \
+            "$UPSTREAM_ALTO_IMAGE" "$UPSTREAM_COMMIT" "$image" '${{ inputs.candidate_sha }}' >> "$GITHUB_STEP_SUMMARY"
           printf 'This workflow does not deploy or change the existing v0.8 Alto service.\n' >> "$GITHUB_STEP_SUMMARY"

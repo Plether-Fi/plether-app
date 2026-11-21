@@ -32,10 +32,6 @@ const factoryAbi = parseAbi([
   'function getAddress(Install[] initialPackages, uint256 nonce) view returns (address)',
   'function UUPS() view returns (address)',
 ])
-const stakerAbi = parseAbi([
-  'function deployWithFactory(address factory, bytes createData) payable returns (address)',
-  'function approved(address factory) view returns (bool)',
-])
 const rootAbi = parseAbi(['function root() view returns (bytes21)'])
 const validatorAbi = parseAbi(['function ecdsaValidatorStorage(address account) view returns (address)'])
 const implementationSlot = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
@@ -53,7 +49,6 @@ export interface KernelAccountProfile {
   entryPoint: Address
   entryPointVersion: string
   factory: Address
-  staker: Address
   validator: Address
   accountVersion: string
   accountIndex: number
@@ -67,7 +62,6 @@ export interface KernelOwnerSigner {
 export interface KernelAccountPins extends KernelAccountProfile {
   entryPointCodeHash: Hex
   factoryCodeHash: Hex
-  stakerCodeHash: Hex
   implementation: Address
   implementationCodeHash: Hex
   validatorCodeHash: Hex
@@ -127,16 +121,14 @@ async function deriveKernelAccount(
   }
   const ownerAddress = getAddress(owner)
   const factory = getAddress(profile.factory)
-  const staker = getAddress(profile.staker)
   const validator = getAddress(profile.validator)
-  if ([ownerAddress, factory, staker, validator].includes(zeroAddress) || isAddressEqual(factory, staker)) {
-    throw new Error('Kernel owner, factory, Staker and validator must be valid')
+  if ([ownerAddress, factory, validator].includes(zeroAddress)) {
+    throw new Error('Kernel owner, factory and validator must be valid')
   }
   const install = [{ moduleType: 1n, module: validator, moduleData: ownerAddress, internalData: '0x' as const }]
   const args = [install, 0n] as const
-  const createData = encodeFunctionData({ abi: factoryAbi, functionName: 'deploy', args })
-  const factoryData = encodeFunctionData({ abi: stakerAbi, functionName: 'deployWithFactory', args: [factory, createData] }).toLowerCase() as Hex
-  const factoryArgs = { factory: staker, factoryData }
+  const factoryData = encodeFunctionData({ abi: factoryAbi, functionName: 'deploy', args }).toLowerCase() as Hex
+  const factoryArgs = { factory, factoryData }
   const address = await client.readContract({ abi: factoryAbi, address: factory, functionName: 'getAddress', args, blockNumber })
   if (isAddressEqual(address, zeroAddress) || isAddressEqual(address, ownerAddress)) {
     throw new Error('Kernel factory returned an invalid Trading Account address')
@@ -154,23 +146,18 @@ export async function verifyKernelTradingAccountAtBlock(
 ): Promise<VerifiedKernelTradingAccount> {
   const contracts = [
     [profile.entryPoint, profile.entryPointCodeHash], [profile.factory, profile.factoryCodeHash],
-    [profile.staker, profile.stakerCodeHash],
     [profile.implementation, profile.implementationCodeHash], [profile.validator, profile.validatorCodeHash],
   ] as const
-  const [{ address, ownerAddress }, chainId, factoryImplementation, stakerApproval, stakerDeposit, codeMatches] = await Promise.all([
+  const [{ address, ownerAddress }, chainId, factoryImplementation, codeMatches] = await Promise.all([
     deriveKernelAccount(client, profile, owner, blockNumber),
     client.getChainId(),
     client.readContract({ abi: factoryAbi, address: profile.factory, functionName: 'UUPS', blockNumber }),
-    client.readContract({ abi: stakerAbi, address: profile.staker, functionName: 'approved', args: [profile.factory], blockNumber }),
-    client.readContract({ abi: entryPoint09Abi, address: profile.entryPoint, functionName: 'getDepositInfo', args: [profile.staker], blockNumber }),
     Promise.all(contracts.map(async ([address, hash]) => {
       const code = await client.getBytecode({ address, blockNumber })
       return code !== undefined && code !== '0x' && keccak256(code).toLowerCase() === hash.toLowerCase()
     })),
   ])
   if (chainId !== profile.chainId || !isAddressEqual(factoryImplementation, profile.implementation) ||
-      !stakerApproval || !stakerDeposit.staked || stakerDeposit.stake < 1_000_000_000_000_000_000n ||
-      stakerDeposit.unstakeDelaySec < 86_400 ||
       codeMatches.includes(false) || (expectedAddress !== undefined && !isAddressEqual(address, expectedAddress))) {
     throw new Error('The Kernel account profile could not be verified onchain')
   }

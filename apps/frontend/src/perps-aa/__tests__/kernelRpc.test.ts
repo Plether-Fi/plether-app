@@ -4,7 +4,7 @@ import { entryPoint09Abi, entryPoint09Address } from 'viem/account-abstraction'
 import kernelDeployment from '../../../../backend/test/fixtures/kernel-deployment.json'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE } from '../../contracts/perpsAddresses'
 import { encodeKernelCalls } from '../kernelAccount'
-import { kernelSepoliaCanaryPaymaster, kernelSepoliaCanaryProfile } from '../kernelDeploymentPins'
+import * as kernelDeploymentPins from '../kernelDeploymentPins'
 import {
   assertKernelPreparedOperation,
   findKernelGasFundingError,
@@ -22,7 +22,8 @@ const address = (value: number) => toHex(value, { size: 20 })
 const hash = (value: number) => toHex(value, { size: 32 })
 const entryPoint = entryPoint09Address.toLowerCase() as Address
 const sender = address(2)
-const paymaster = kernelSepoliaCanaryPaymaster
+const paymaster = address(3)
+const { kernelSepoliaCanaryProfile } = kernelDeploymentPins
 const { profile, gas } = kernelDeployment
 const { accountCodeHash } = profile
 const preparationId = hash(5)
@@ -39,9 +40,10 @@ const manifestWire = {
   orderRouter: PERPS_ARBITRUM_SEPOLIA.orderRouter,
   cfdEngine: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
   positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
-  protectionCommitsEnabled: false, paymaster, readiness: { eth: true, sponsored: true },
+  protectionCommitsEnabled: false, paymaster: null, readiness: { eth: true, sponsored: false },
 }
 const manifest = parseKernelManifest(manifestWire)
+const sponsoredManifest = { ...manifest, paymaster, readiness: { ...manifest.readiness, sponsored: true } }
 const intent: KernelPreparationIntent = { preparationId, mode: 'eth', sender, callData, expectedNonce: 4n }
 const rawOperation = {
   sender, nonce: '0x4', callData, callGasLimit: '0x10000', verificationGasLimit: '0x20000',
@@ -71,36 +73,61 @@ function parseGasQuote(overrides: Partial<Record<GasField, number>>, mode: Kerne
     BigInt(operation.paymasterVerificationGasLimit ?? 0) + BigInt(operation.paymasterPostOpGasLimit ?? 0)
   const cost = units * BigInt(operation.maxFeePerGas)
   if (mode === 'sponsored') operation.paymasterData = encodePaymasterData(cost)
-  return parseKernelPreparation({ ...preparation, operation, maxNetworkGasWei: toHex(cost) }, manifest, { ...intent, mode }, now)
+  return parseKernelPreparation({ ...preparation, operation, maxNetworkGasWei: toHex(cost) },
+    mode === 'eth' ? manifest : sponsoredManifest, { ...intent, mode }, now)
 }
 
 describe('Kernel manifest and quotes', () => {
   it('keeps readiness independent and binds the compiled Perps release', () => {
-    expect(parseKernelManifest({ ...manifestWire, paymaster: null, readiness: { eth: true, sponsored: false } }).readiness)
-      .toEqual({ eth: true, sponsored: false })
+    expect(manifest.readiness).toEqual({ eth: true, sponsored: false })
     expect(() => parseKernelManifest({ ...manifestWire, orderRouter: address(9) })).toThrow('invalid response')
     expect(() => parseKernelManifest({ ...manifestWire, perpsRelease: 'other' })).toThrow('invalid response')
     expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, entryPointVersion: '0.8' } })).toThrow('invalid response')
-    expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, staker: undefined } })).toThrow('invalid response')
-    expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, staker: manifestWire.profile.factory } })).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, factory: undefined } })).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, staker: address(9) } })).toThrow('invalid response')
   })
 
   it('accepts the pinned profile in checksum casing and rejects alternate contract identities', () => {
     expect(kernelSepoliaCanaryProfile).toEqual(profile)
     expect(manifest.profile).toEqual(profile)
-    for (const field of ['factory', 'staker', 'implementation', 'validator'] as const) {
+    for (const field of ['factory', 'implementation', 'validator'] as const) {
       const codeHash = `${field}CodeHash` as const
       expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, [field]: address(9) } })).toThrow('invalid response')
       expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, [codeHash]: hash(9) } })).toThrow('invalid response')
     }
     expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, deployment: 'different-canary' } })).toThrow('invalid response')
-    expect(() => parseKernelManifest({ ...manifestWire, paymaster: address(9) })).toThrow('invalid response')
-    expect(() => parseKernelManifest({ ...manifestWire, paymaster: null })).toThrow('invalid response')
+  })
+
+  it('keeps ETH available while the gateway advertises a paused, unpinned paymaster', () => {
+    const paused = parseKernelManifest({ ...manifestWire, paymaster })
+    expect(paused).toMatchObject({ paymaster: null, readiness: { eth: true, sponsored: false } })
+    expect(parseKernelPreparation(ethPreparation, paused, intent, now).mode).toBe('eth')
+    expect(() => parseKernelPreparation(sponsoredPreparation, paused, { ...intent, mode: 'sponsored' }, now)).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, paymaster: '0x1234' })).toThrow('invalid response')
+  })
+
+  it('rejects sponsored readiness while the direct-factory paymaster remains unattested', () => {
+    expect(kernelDeploymentPins.kernelSepoliaCanaryPaymaster).toBeUndefined()
+    const readiness = { eth: true, sponsored: true }
+    expect(() => parseKernelManifest({ ...manifestWire, paymaster, readiness })).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, readiness })).toThrow('invalid response')
+  })
+
+  it('requires the exact pinned paymaster even when sponsorship is paused', () => {
+    const pin = vi.spyOn(kernelDeploymentPins, 'kernelSepoliaCanaryPaymaster', 'get')
+      .mockReturnValue({ address: paymaster, codeHash: hash(1) })
+    try {
+      const readiness = { eth: true, sponsored: true }
+      expect(parseKernelManifest({ ...manifestWire, paymaster, readiness })).toMatchObject({ paymaster, readiness })
+      expect(() => parseKernelManifest({ ...manifestWire, paymaster: address(9) })).toThrow('invalid response')
+    } finally {
+      pin.mockRestore()
+    }
   })
 
   it('verifies both payer envelopes and computes distinct version 0.9 hashes', () => {
     const eth = parseKernelPreparation(ethPreparation, manifest, intent, now)
-    const sponsored = parseKernelPreparation(sponsoredPreparation, manifest, { ...intent, mode: 'sponsored' }, now)
+    const sponsored = parseKernelPreparation(sponsoredPreparation, sponsoredManifest, { ...intent, mode: 'sponsored' }, now)
     expect(eth.operation).not.toHaveProperty('paymaster')
     expect(eth.maxNetworkGasWei).toBe(ethCost)
     expect(sponsored.operation.paymaster).toBe(paymaster)
@@ -119,13 +146,17 @@ describe('Kernel manifest and quotes', () => {
     expect(parseKernelPreparation(preparation, manifest, { ...intent, callData: withdrawal }, now).operation.callData).toBe(withdrawal)
   })
 
-  it('binds first deployment to the approved Staker', () => {
+  it('binds first deployment to the approved direct factory and reviewed calldata', () => {
     const factoryData = '0x1234' as const
-    const firstIntent = { ...intent, factory: manifest.profile.staker, factoryData }
-    const firstPreparation = { ...ethPreparation, operation: { ...rawOperation, factory: manifest.profile.staker, factoryData } }
-    expect(parseKernelPreparation(firstPreparation, manifest, firstIntent, now).operation.factory).toBe(manifest.profile.staker)
-    expect(() => parseKernelPreparation({ ...firstPreparation, operation: { ...firstPreparation.operation, factory: manifest.profile.factory } },
-      manifest, { ...firstIntent, factory: manifest.profile.factory }, now)).toThrow('invalid response')
+    const factory = manifest.profile.factory
+    const firstIntent = { ...intent, factory, factoryData }
+    const firstPreparation = { ...ethPreparation, operation: { ...rawOperation, factory, factoryData } }
+    expect(parseKernelPreparation(firstPreparation, manifest, firstIntent, now).operation.factory).toBe(factory)
+    const otherFactory = address(9)
+    expect(() => parseKernelPreparation({ ...firstPreparation, operation: { ...firstPreparation.operation, factory: otherFactory } },
+      manifest, { ...firstIntent, factory: otherFactory }, now)).toThrow('invalid response')
+    expect(() => parseKernelPreparation({ ...firstPreparation, operation: { ...firstPreparation.operation, factoryData: '0x4321' } },
+      manifest, firstIntent, now)).toThrow('invalid response')
   })
 
   it('rejects a changed payer, account, calls, nonce key, expiry or recovery scope', () => {

@@ -40,7 +40,7 @@ only the Kernel RPC path receives the new canary token.
    as the GitHub repository secret
    `KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN` without printing it. It must
    differ from the legacy `AA_PROXY_ORIGIN_TOKEN`. Open only the exact
-   canary ALB route after the signed Nitro and contract attestation
+   canary ALB route after the signed managed Alto and contract attestation
    gates pass. The new listener rule and ECS target-group attachment can
    briefly return 503 while the API target registers. Wait until the
    canary API target group reports healthy, then confirm the Kernel path
@@ -74,7 +74,8 @@ only the Kernel RPC path receives the new canary token.
    commit does not match its path filter. Do not merge the Kernel
    frontend code to `master` to create this preview.
 5. Keep the candidate code in an open same-repository `kernel-canary/*` pull request.
-   Review the exact head SHA and planned `deployment` ID for staging,
+   Review the exact head SHA and planned `deployment` ID
+   `kernel-sepolia-direct-v1` for staging,
    then the attested `AA_KERNEL_PROFILE_JSON` ID for active canary.
    The workflow verifies the PR head SHA before build and again before
    the Pages write. The reviewer for the protected environment must

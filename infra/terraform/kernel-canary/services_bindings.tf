@@ -40,16 +40,6 @@ data "aws_security_group" "live_rds" {
   id    = var.live_rds_security_group_id
 }
 
-data "aws_security_group" "live_rpc_node" {
-  count = var.provision_services && var.kernel_canary_ssm_tunnel_enabled ? 1 : 0
-  id    = var.live_rpc_node_security_group_id
-}
-
-data "aws_instance" "live_rpc_node" {
-  count       = var.provision_services && var.kernel_canary_ssm_tunnel_enabled ? 1 : 0
-  instance_id = var.live_rpc_node_instance_id
-}
-
 data "aws_vpc_security_group_rule" "live_aa_db_egress" {
   count                  = local.kernel_canary_count
   security_group_rule_id = var.live_aa_db_egress_rule_id
@@ -167,24 +157,6 @@ resource "terraform_data" "kernel_canary_live_identity_guard" {
         && var.api_hostname == "api.sepolia.plether.com"
       )
       error_message = "The canary route may attach only to the reviewed existing public Sepolia HTTPS listener and ALB security group."
-    }
-    precondition {
-      condition = (
-        data.aws_lb.kernel_canary_rpc_gateway[0].internal
-        && data.aws_lb.kernel_canary_rpc_gateway[0].load_balancer_type == "application"
-        && data.aws_lb.kernel_canary_rpc_gateway[0].vpc_id == data.aws_vpc.live[0].id
-        && one(data.aws_lb.kernel_canary_rpc_gateway[0].security_groups) == var.live_rpc_alb_security_group_id
-        && (!var.kernel_canary_ssm_tunnel_enabled || try(
-          data.aws_security_group.live_rpc_node[0].vpc_id == data.aws_vpc.live[0].id
-          && data.aws_security_group.live_rpc_node[0].id == var.live_rpc_node_security_group_id
-          && startswith(data.aws_security_group.live_rpc_node[0].name, "plether-sepolia-rpc-node-")
-          && data.aws_instance.live_rpc_node[0].subnet_id == "subnet-0633bc3db0148548f"
-          && data.aws_instance.live_rpc_node[0].instance_state == "running"
-          && toset(data.aws_instance.live_rpc_node[0].vpc_security_group_ids) == toset([var.live_rpc_node_security_group_id]),
-          false,
-        ))
-      )
-      error_message = "The canary may use only the reviewed internal Nitro gateway and Nitro SSM node security group."
     }
     precondition {
       condition = (

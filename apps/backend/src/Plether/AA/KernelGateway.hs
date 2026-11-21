@@ -26,7 +26,6 @@ module Plether.AA.KernelGateway
   , locateKernelNonceTransition
   , kernelNonceScanRange
   , kernelOperationDeadline
-  , sponsorStakeReady
   , parseOwnerAdmission
   , kernelOwnerAdmitted
   , kernelOwnerMaySubmit
@@ -429,8 +428,8 @@ requirePinnedFactory :: Kernel.KernelProfile -> KM.KeyMap Value -> Either Legacy
 requirePinnedFactory profile fields =
   when (KM.member "factory" fields) $ do
     supplied <- readText fields "factory"
-    unless (T.toLower supplied == Kernel.kpStaker profile) $
-      Left $ Legacy.policyDenied "Transaction uses an unapproved Kernel Staker"
+    unless (T.toLower supplied == Kernel.kpFactory profile) $
+      Left $ Legacy.policyDenied "Transaction uses an unapproved Kernel factory"
 
 prepare :: KernelGatewayConfig -> Config -> DbPool -> EthClient -> EthClient -> Manager -> Text -> PrepareIntent -> Gateway KernelRpcResult
 prepare gateway cfg db primary secondary manager client intent = do
@@ -438,7 +437,7 @@ prepare gateway cfg db primary secondary manager client intent = do
   callData <- maybe (throwE $ Legacy.invalidParams "Invalid Kernel callData") pure $ hexBytes $ piCallData intent
   (calls, factoryOwner) <- except $
     Kernel.parseKernelCallIntent profile (piSender intent) callData
-      (Kernel.kpStaker profile <$ piFactoryData intent) (piFactoryData intent)
+      (Kernel.kpFactory profile <$ piFactoryData intent) (piFactoryData intent)
   rateLimitAccount gateway db "account-prepare" (piSender intent) 12
   forMOptional sponsor $ \_ ->
     rateLimit gateway db "sponsored-prepare" client "sponsorship" 6
@@ -614,7 +613,7 @@ baseFields profile intent nonce maxFee priority = KM.fromList $
    ("maxFeePerGas", String $ Paymaster.canonicalQuantity maxFee),
    ("maxPriorityFeePerGas", String $ Paymaster.canonicalQuantity priority),
    ("signature", String Legacy.dummySignature)] <>
-  maybe [] (\factoryData -> [("factory", String $ Kernel.kpStaker profile), ("factoryData", String factoryData)]) (piFactoryData intent)
+  maybe [] (\factoryData -> [("factory", String $ Kernel.kpFactory profile), ("factoryData", String factoryData)]) (piFactoryData intent)
 
 gasKeys :: [Key.Key]
 gasKeys = ["callGasLimit","verificationGasLimit","preVerificationGas"]
@@ -1371,10 +1370,6 @@ attestSponsorAt profile sponsor client block = runExceptT $ do
   maxValidity <- decodeUint256 <$> readConstant "MAX_VALIDITY_WINDOW()"
   unless (maxCost >= Db.ksbMaxCostWei (kscBudget sponsor) && maxValidity >= kscValiditySeconds sponsor + 30) $
     throwE profileUnavailable
-  stakeResult <- liftIO $ ethCallAtBlock client
-    (CallParams (Kernel.kpEntryPoint profile) $
-      encodeCall "getDepositInfo(address)" [encodeAddress $ kscPaymaster sponsor]) block
-  unless (either (const False) sponsorStakeReady stakeResult) $ throwE profileUnavailable
   deposit <- ExceptT $ readAccountDeposit profile client block (kscPaymaster sponsor)
   unless (deposit >= max (kscMinDepositWei sponsor) (Db.ksbGlobalOutstandingWei $ kscBudget sponsor)) $
     throwE $ Legacy.unavailable "PAYMASTER_UNDERFUNDED" "The sponsor does not have enough ETH"
@@ -1382,7 +1377,6 @@ attestSponsorAt profile sponsor client block = runExceptT $ do
   addressPins =
     [ ("entryPoint()", Kernel.kpEntryPoint profile)
     , ("accountFactory()", Kernel.kpFactory profile)
-    , ("accountStaker()", Kernel.kpStaker profile)
     , ("accountImplementation()", Kernel.kpImplementation profile)
     , ("rootValidator()", Kernel.kpValidator profile)
     , ("sponsorSigner()", kscSignerAddress sponsor)
@@ -1390,7 +1384,6 @@ attestSponsorAt profile sponsor client block = runExceptT $ do
   hashPins =
     [ ("entryPointCodeHash()", Kernel.kpEntryPointCodeHash profile)
     , ("accountFactoryCodeHash()", Kernel.kpFactoryCodeHash profile)
-    , ("accountStakerCodeHash()", Kernel.kpStakerCodeHash profile)
     , ("accountImplementationCodeHash()", Kernel.kpImplementationCodeHash profile)
     , ("rootValidatorCodeHash()", Kernel.kpValidatorCodeHash profile)
     , ("approvedAccountCodeHash()", Kernel.kpAccountCodeHash profile)
@@ -1404,24 +1397,6 @@ attestSponsorAt profile sponsor client block = runExceptT $ do
     word <- readConstant method
     unless (BS.take 12 word == BS.replicate 12 0) $ throwE profileUnavailable
     pure $ T.toLower $ decodeAddress word
-
--- EntryPoint returns deposit, staked, stake, unstakeDelaySec and withdrawTime.
--- Validate the entire fixed-width result before admitting sponsored operations.
-sponsorStakeReady :: ByteString -> Bool
-sponsorStakeReady bytes
-  | BS.length bytes /= 160 = False
-  | otherwise =
-      let word index = decodeUint256 $ BS.take 32 $ BS.drop (32 * index) bytes
-          deposit = word 0
-          staked = word 1
-          stake = word 2
-          delay = word 3
-          withdrawTime = word 4
-      in deposit < 2 ^ (112 :: Int)
-        && staked == 1
-        && stake >= Kernel.minimumKernelStakeWei && stake < 2 ^ (112 :: Int)
-        && delay >= 86400 && delay < 2 ^ (32 :: Int)
-        && withdrawTime == 0
 
 checkFunding :: KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader -> Db.PaymentMode
   -> Text -> [Legacy.SmartCall] -> Paymaster.PackedUserOperation -> Gateway ()
@@ -1530,8 +1505,9 @@ readNonce profile client block sender = runExceptT $ do
   pure nonce
 
 readAccountDeposit :: Kernel.KernelProfile -> EthClient -> Integer -> Text -> IO (Either Legacy.ProxyFailure Integer)
-readAccountDeposit profile client block sender = fmap decodeUint256 <$>
-  readWord client block (Kernel.kpEntryPoint profile) "balanceOf(address)" [encodeAddress sender]
+readAccountDeposit profile client block sender = runExceptT $ do
+  word <- ExceptT $ readWord client block (Kernel.kpEntryPoint profile) "balanceOf(address)" [encodeAddress sender]
+  either (const $ throwE profileUnavailable) pure $ Kernel.decodeKernelEntryPointDeposit word
 
 readWord :: EthClient -> Integer -> Text -> Text -> [ByteString] -> IO (Either Legacy.ProxyFailure ByteString)
 readWord client block target function args = do

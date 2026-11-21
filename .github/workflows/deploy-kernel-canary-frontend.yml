@@ -251,6 +251,7 @@ jobs:
       - name: Verify active canary route and dedicated origin credential
         if: inputs.phase == 'active_canary'
         env:
+          DEPLOYMENT: ${{ inputs.deployment }}
           AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
           KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN: ${{ secrets.KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN }}
         run: |
@@ -278,6 +279,25 @@ jobs:
           [ "$authenticated_status" = 400 ]
           jq --exit-status '.error.data.reason == "INVALID_REQUEST"' \
             "$RUNNER_TEMP/kernel-auth.json" >/dev/null
+
+          curl --silent --show-error --fail-with-body --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 --output "$RUNNER_TEMP/kernel-manifest.json" \
+            --header 'Content-Type: application/json' --header 'CF-Connecting-IP: 192.0.2.10' \
+            --header "X-Plether-AA-Proxy-Token: $KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" \
+            --data-binary '{"jsonrpc":"2.0","id":1,"method":"plether_getKernelManifest","params":[]}' \
+            "$BACKEND_ORIGIN/api/aa/kernel/rpc"
+          jq --exit-status --arg deployment "$DEPLOYMENT" '
+            .jsonrpc == "2.0" and .id == 1 and .result.version == 1
+            and .result.readiness.eth == true and (.result.readiness.sponsored | type) == "boolean"
+            and (.result.profile | .deployment == $deployment and .chainId == 421614 and .entryPointVersion == "0.9"
+              and keys == ([
+                "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
+                "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
+                "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
+              ] | sort))' "$RUNNER_TEMP/kernel-manifest.json" >/dev/null || {
+              echo '::error::The active route must serve the requested direct-factory profile with ETH readiness.'
+              exit 1
+            }
 
       - name: Configure isolated Pages project and secrets
         working-directory: apps/frontend

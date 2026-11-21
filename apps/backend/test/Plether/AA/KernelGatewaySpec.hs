@@ -18,7 +18,7 @@ import Plether.AA.KernelDeploymentFixture
 import Plether.AA.KernelGateway
   ( PrepareIntent (..), classifyKernelEstimate, kernelCanFund, kernelCancellationCallData, kernelFundingAdvice, kernelScope, maxPrefund
   , kernelOwnerAdmitted, kernelOwnerMaySubmit, minimumKernelReplacementFee, parseKernelCancellationOriginal, parseKernelPrepareIntent
-  , kernelNonceScanRange, kernelOperationDeadline, locateKernelNonceTransition, parseKernelMaxSafeLag, parseOwnerAdmission, sponsorStakeReady
+  , kernelNonceScanRange, kernelOperationDeadline, locateKernelNonceTransition, parseKernelMaxSafeLag, parseOwnerAdmission
   , validateKernelEconomicCaps, validateKernelWithdrawalMode
   )
 import qualified Plether.AA.Paymaster as Paymaster
@@ -45,18 +45,18 @@ spec = do
       checkMode "eth" Db.PayWithEth
       mustReject (KM.delete "mode" $ request "sponsored")
       mustReject (request "auto")
-    it "accepts paired factory arguments only for the pinned Kernel Staker" $
+    it "accepts paired factory arguments only for the pinned Kernel factory" $
       case kernelFactoryArgs profile owner of
         Left failure -> expectationFailure $ show failure
         Right factoryData -> do
-          let fields = KM.insert "factory" (String $ kpStaker profile) $
+          let fields = KM.insert "factory" (String $ kpFactory profile) $
                 KM.insert "factoryData" (String factoryData) (request "eth")
           case parseKernelPrepareIntent profile fields of
             Left failure -> expectationFailure $ show failure
             Right intent -> piFactoryData intent `shouldBe` Just factoryData
           mustReject (KM.delete "factory" fields)
           mustReject (KM.delete "factoryData" fields)
-          mustReject (KM.insert "factory" (String $ kpFactory profile) fields)
+          mustReject (KM.insert "factory" (String $ address 'a') fields)
           mustReject (KM.insert "factory" (String $ address '9') fields)
     it "rejects malformed or extra request fields before preparation" $ do
       let base = request "eth"
@@ -135,22 +135,6 @@ spec = do
       kernelFundingAdvice 100 2 110 3 `shouldBe` Just (object
         ["maxNetworkGasWei" .= quantity 100, "balanceWei" .= quantity 2,
          "entryPointDepositWei" .= quantity 110, "callValueWei" .= quantity 3, "shortfallWei" .= quantity 1])
-
-  describe "Kernel sponsor stake readiness" $ do
-    it "requires a one ETH EntryPoint stake locked for at least one day" $ do
-      let stake = 10 ^ (18 :: Int)
-      sponsorStakeReady (depositInfo 1 1 stake 86400 0) `shouldBe` True
-      sponsorStakeReady (depositInfo 1 0 stake 86400 0) `shouldBe` False
-      sponsorStakeReady (depositInfo 1 1 0 86400 0) `shouldBe` False
-      sponsorStakeReady (depositInfo 1 1 (stake - 1) 86400 0) `shouldBe` False
-      sponsorStakeReady (depositInfo 1 1 stake 86399 0) `shouldBe` False
-      sponsorStakeReady (depositInfo 1 1 stake 86400 1) `shouldBe` False
-    it "fails closed on malformed or noncanonical EntryPoint responses" $ do
-      sponsorStakeReady BS.empty `shouldBe` False
-      sponsorStakeReady (depositInfo 1 2 (10 ^ (18 :: Int)) 86400 0) `shouldBe` False
-      sponsorStakeReady (depositInfo (2 ^ (112 :: Int)) 1 (10 ^ (18 :: Int)) 86400 0) `shouldBe` False
-      sponsorStakeReady (depositInfo 1 1 (2 ^ (112 :: Int)) 86400 0) `shouldBe` False
-      sponsorStakeReady (depositInfo 1 1 1 (2 ^ (32 :: Int)) 0) `shouldBe` False
 
   describe "Kernel owner withdrawal policy" $ do
     it "keeps direct native and deposit withdrawals available with ETH-paid gas" $ do
@@ -300,8 +284,8 @@ quantity :: Integer -> Value
 quantity = String . Paymaster.canonicalQuantity
 
 profile :: KernelProfile
-profile = KernelProfile "kernel-sepolia" 421614 kernelEntryPoint (hash '1')
-  (address '2') (hash '2') (address 'a') (hash 'a') (address '3') (hash '3') (address '4') (hash '4') (hash '5')
+profile = KernelProfile "kernel-sepolia-direct-v1" 421614 kernelEntryPoint (hash '1')
+  (address '2') (hash '2') (address '3') (hash '3') (address '4') (hash '4') (hash '5')
 
 owner :: Text
 owner = address '8'
@@ -312,7 +296,3 @@ hash digit = "0x" <> T.replicate 64 (T.singleton digit)
 
 hexText :: ByteString -> Text
 hexText = ("0x" <>) . TE.decodeUtf8 . Base16.encode
-
-depositInfo :: Integer -> Integer -> Integer -> Integer -> Integer -> ByteString
-depositInfo deposit staked stake delay withdrawal =
-  BS.concat $ map encodeUint256 [deposit, staked, stake, delay, withdrawal]

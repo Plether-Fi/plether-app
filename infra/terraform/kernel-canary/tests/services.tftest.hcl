@@ -6,13 +6,8 @@ mock_provider "aws" {
   mock_data "aws_subnet" { defaults = { vpc_id = "vpc-0df986b0047f901d3", state = "available", map_public_ip_on_launch = true } }
   mock_data "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:ap-southeast-1:932542905614:cluster/plether-sepolia", cluster_name = "plether-sepolia", status = "ACTIVE" } }
   mock_data "aws_lb" { defaults = { arn = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:loadbalancer/app/plether-sepolia/9544b926599859e9", internal = false, load_balancer_type = "application", vpc_id = "vpc-0df986b0047f901d3", security_groups = ["sg-08bc02814791dc349"] } }
-  override_data {
-    target = data.aws_lb.kernel_canary_rpc_gateway[0]
-    values = { arn = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:loadbalancer/app/plether-sepolia-rpc/1111111111111111", internal = true, load_balancer_type = "application", vpc_id = "vpc-0df986b0047f901d3", security_groups = ["sg-074181cf8fdb6a814"] }
-  }
   mock_data "aws_lb_listener" { defaults = { load_balancer_arn = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:loadbalancer/app/plether-sepolia/9544b926599859e9", port = 443, protocol = "HTTPS", certificate_arn = "arn:aws:acm:ap-southeast-1:932542905614:certificate/11111111-1111-1111-1111-111111111111" } }
   mock_data "aws_security_group" { defaults = { vpc_id = "vpc-0df986b0047f901d3" } }
-  mock_data "aws_instance" { defaults = { instance_state = "running", subnet_id = "subnet-0633bc3db0148548f", vpc_security_group_ids = ["sg-1234567890abcdef0"] } }
   override_data {
     target = data.aws_security_group.live_api_alb[0]
     values = { name = "plether-alb-synthetic", vpc_id = "vpc-0df986b0047f901d3" }
@@ -24,10 +19,6 @@ mock_provider "aws" {
   override_data {
     target = data.aws_security_group.live_rds[0]
     values = { name = "plether-rds-synthetic", vpc_id = "vpc-0df986b0047f901d3" }
-  }
-  override_data {
-    target = data.aws_security_group.live_rpc_node[0]
-    values = { name = "plether-sepolia-rpc-node-synthetic", id = "sg-1234567890abcdef0", vpc_id = "vpc-0df986b0047f901d3" }
   }
   mock_data "aws_vpc_security_group_rule" { defaults = { is_egress = true, ip_protocol = "tcp", from_port = 5432, to_port = 5432, security_group_id = "sg-0c095c11c27499ca7", referenced_security_group_id = "sg-085ef29e0a4896491" } }
   override_data {
@@ -44,7 +35,7 @@ mock_provider "aws" {
     values = { ids = ["sgr-db", "sgr-https"] }
   }
   mock_data "aws_ecs_task_definition" { defaults = { cpu = "1024", memory = "2048", network_mode = "awsvpc", requires_compatibilities = ["FARGATE"] } }
-  mock_data "aws_ecr_image" { defaults = { image_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+  mock_data "aws_ecr_image" { defaults = { image_digest = "sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa" } }
   override_data {
     target = data.aws_ecr_image.kernel_canary_api[0]
     values = { image_digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
@@ -89,10 +80,17 @@ mock_provider "aws" {
         {
           name       = "plether-alto"
           entryPoint = ["node", "--import", "/app/plether-rpc-auth.mjs", "/app/src/esm/cli/alto.js"]
+          command    = ["run", "--safe-mode"]
           environment = [
             { name = "ALTO_MAX_GAS_PER_USER_OP", value = "5000000" },
             { name = "ALTO_MAX_GAS_PER_BUNDLE", value = "20000000" },
+            { name = "ALTO_RPC_URL", value = "https://legacy-rpc.example.test" },
+            { name = "ALTO_SEND_TRANSACTION_RPC_URL", value = "https://legacy-relay.example.test" },
+            { name = "ALTO_SAFE_MODE", value = "true" },
+            { name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "true" },
+            { name = "ALTO_EXPIRATION_CHECK", value = "false" },
           ]
+          secrets = [{ name = "PLETHER_ALTO_RPC_AUTH_TOKEN", valueFrom = "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/rpc-gateway-token" }]
         },
       ])
     }
@@ -127,11 +125,10 @@ variables {
   provision_paymaster_key         = true
   provision_ssm_encryption_key    = true
   provision_services              = true
-  live_rpc_node_security_group_id = "sg-1234567890abcdef0"
   live_aa_db_egress_rule_id       = "sgr-db"
   live_aa_https_egress_rule_id    = "sgr-https"
   live_rds_aa_ingress_rule_id     = "sgr-rds"
-  kernel_canary_alto_image        = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  kernel_canary_alto_image        = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa"
   kernel_canary_api_image         = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-api-sepolia@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   kernel_canary_profile_json      = jsonencode(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).profile)
   kernel_canary_sponsorship_json = jsonencode({
@@ -164,11 +161,9 @@ run "services_stage_dark_in_isolated_state" {
       && aws_ecs_service.kernel_canary_api[0].desired_count == 0
       && aws_ecs_service.kernel_canary_reconciler[0].desired_count == 0
       && length(aws_lb_listener_rule.kernel_canary_api) == 0
-      && length(aws_vpc_security_group_ingress_rule.kernel_canary_rpc_gateway_from_alto) == 0
-      && length(data.aws_instance.live_rpc_node) == 0
-      && length(data.aws_security_group.live_rpc_node) == 0
+      && length(aws_iam_role_policy.kernel_canary_paymaster_sign) == 0
     )
-    error_message = "The isolated service skeleton must start no tasks and expose no public or Nitro gateway rule."
+    error_message = "The isolated service skeleton must start no tasks, sign no sponsorships and expose no public route."
   }
   assert {
     condition = alltrue([
@@ -217,10 +212,22 @@ run "reject_mutable_service_images" {
   expect_failures = [terraform_data.kernel_canary_guard]
 }
 
-run "reject_unreviewed_rpc_security_group" {
+run "reject_unreviewed_alto_digest_from_same_repository" {
   command = plan
   variables {
-    live_rpc_alb_security_group_id = "sg-11111111111111111"
+    kernel_canary_alto_image = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+  override_data {
+    target = data.aws_ecr_image.kernel_canary_alto[0]
+    values = { image_digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "reject_unreviewed_api_security_group" {
+  command = plan
+  variables {
+    live_api_alb_security_group_id = "sg-11111111111111111"
   }
   expect_failures = [terraform_data.kernel_canary_live_identity_guard]
 }
@@ -255,12 +262,12 @@ run "drop_general_rpc_bearer_when_live_binding_differs" {
   }
 }
 
-run "reject_unpaired_nitro_bearer" {
+run "reject_nitro_rpc_parameter" {
   command = plan
   variables {
-    kernel_canary_alto_rpc_url_ssm_parameter_name = "/plether/sepolia/perps-rpc-url"
+    kernel_canary_alto_rpc_url_ssm_parameter_name = "/plether/sepolia/app-rpc-url"
   }
-  expect_failures = [terraform_data.kernel_canary_guard]
+  expect_failures = [var.kernel_canary_alto_rpc_url_ssm_parameter_name]
 }
 
 run "reject_lag_and_poll_outside_runtime_bounds" {
@@ -293,19 +300,10 @@ run "reject_alto_before_simulator_attestation" {
   expect_failures = [terraform_data.kernel_canary_guard]
 }
 
-run "reject_tunnel_without_alto" {
-  command = plan
-  variables {
-    kernel_canary_ssm_tunnel_enabled = true
-  }
-  expect_failures = [terraform_data.kernel_canary_guard]
-}
-
-run "qualified_alto_stays_private" {
+run "managed_alto_stays_private_during_qualification" {
   command = plan
   variables {
     kernel_canary_alto_desired_count                = 1
-    kernel_canary_ssm_tunnel_enabled                = true
     kernel_canary_simulators_attested               = true
     kernel_canary_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
     kernel_canary_pimlico_simulation_contract       = "0x2222222222222222222222222222222222222222"
@@ -314,51 +312,54 @@ run "qualified_alto_stays_private" {
     condition = (aws_ecs_service.kernel_canary_alto[0].desired_count == 1
       && aws_ecs_service.kernel_canary_api[0].desired_count == 0
       && length(aws_lb_listener_rule.kernel_canary_api) == 0
-      && aws_vpc_security_group_ingress_rule.kernel_canary_rpc_gateway_from_alto[0].security_group_id == "sg-074181cf8fdb6a814"
-      && aws_vpc_security_group_ingress_rule.kernel_canary_rpc_gateway_from_alto[0].from_port == 443
-      && aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_ssm_node[0].referenced_security_group_id == "sg-1234567890abcdef0"
-      && length(data.aws_instance.live_rpc_node) == 1
+      && aws_lb.kernel_canary_alto[0].internal
+      && aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_api[0].referenced_security_group_id == aws_security_group.kernel_canary_api_alto_client[0].id
+      && aws_vpc_security_group_ingress_rule.kernel_canary_alto_from_alb[0].referenced_security_group_id == aws_security_group.kernel_canary_alto_alb[0].id
+      && aws_vpc_security_group_egress_rule.kernel_canary_https["alto"].from_port == 443
     )
-    error_message = "Alto may reach the reviewed private Nitro ALB and accept only the SSM-node tunnel while the public route is dark."
+    error_message = "The managed Alto must use outbound HTTPS and retain only its canary ALB ingress while the public route is dark."
   }
   assert {
     condition = one([
       for container in jsondecode(aws_ecs_task_definition.kernel_canary_alto[0].container_definitions) :
-      container.entryPoint if container.name == "plether-alto"
-    ]) == ["node", "/app/src/esm/cli/alto.js"]
+      concat(container.entryPoint, container.command) if container.name == "plether-alto"
+    ]) == ["node", "/app/src/esm/cli/alto.js", "run"]
     error_message = "The canary image must start directly without the live Alto auth preload."
   }
   assert {
     condition = one([
       for container in jsondecode(aws_ecs_task_definition.kernel_canary_alto[0].container_definitions) :
-      tomap({ for env in container.environment : env.name => env.value if contains(["ALTO_MAX_GAS_PER_USER_OP", "ALTO_MAX_GAS_PER_BUNDLE"], env.name) })
+      tomap({ for env in container.environment : env.name => env.value if contains([
+        "ALTO_MAX_GAS_PER_USER_OP", "ALTO_MAX_GAS_PER_BUNDLE", "ALTO_SAFE_MODE",
+        "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", "ALTO_DEPLOY_SIMULATIONS_CONTRACT",
+        "ALTO_EXPIRATION_CHECK",
+        "ALTO_RPC_URL", "ALTO_SEND_TRANSACTION_RPC_URL", "PLETHER_ALTO_RPC_AUTH_TOKEN",
+      ], env.name) })
       if container.name == "plether-alto"
       ]) == tomap({
-      ALTO_MAX_GAS_PER_USER_OP = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).gas.aggregateGas)
-      ALTO_MAX_GAS_PER_BUNDLE  = "20000000"
+      ALTO_MAX_GAS_PER_USER_OP                      = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).gas.aggregateGas)
+      ALTO_MAX_GAS_PER_BUNDLE                       = "20000000"
+      ALTO_SAFE_MODE                                = "false"
+      ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION = "false"
+      ALTO_DEPLOY_SIMULATIONS_CONTRACT              = "false"
+      ALTO_EXPIRATION_CHECK                         = "true"
     })
-    error_message = "Canary Alto's per-operation cap must match the Kernel aggregate gas limit. The bundle cap is 20M."
+    error_message = "Managed Alto must run normal validation with the reviewed gas caps and no inherited endpoint or simulator auto-deploy."
   }
-}
-
-run "reject_tunnel_when_nitro_node_stopped" {
-  command = plan
-  variables {
-    kernel_canary_alto_desired_count                = 1
-    kernel_canary_ssm_tunnel_enabled                = true
-    kernel_canary_simulators_attested               = true
-    kernel_canary_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
-    kernel_canary_pimlico_simulation_contract       = "0x2222222222222222222222222222222222222222"
+  assert {
+    condition = one([
+      for container in jsondecode(aws_ecs_task_definition.kernel_canary_alto[0].container_definitions) :
+      tomap({ for secret in container.secrets : secret.name => basename(secret.valueFrom) })
+      if container.name == "plether-alto"
+      ]) == tomap({
+      ALTO_RPC_URL               = "perps-rpc-url"
+      ALTO_EXECUTOR_PRIVATE_KEYS = "kernel-canary-alto-executor-private-keys"
+      ALTO_UTILITY_PRIVATE_KEY   = "kernel-canary-alto-utility-private-key"
+      }) && toset([for ref in jsondecode(aws_iam_role_policy.kernel_canary_execution_secrets["alto"].policy).Statement[0].Resource : basename(ref)]) == toset([
+      "perps-rpc-url", "kernel-canary-alto-executor-private-keys", "kernel-canary-alto-utility-private-key",
+    ])
+    error_message = "The managed Alto task and execution policy must contain the exact managed RPC and signing key references."
   }
-  override_data {
-    target = data.aws_instance.live_rpc_node[0]
-    values = {
-      instance_state         = "stopped"
-      subnet_id              = "subnet-0633bc3db0148548f"
-      vpc_security_group_ids = ["sg-1234567890abcdef0"]
-    }
-  }
-  expect_failures = [terraform_data.kernel_canary_live_identity_guard]
 }
 
 run "reject_api_before_schema_and_profile" {
@@ -383,6 +384,8 @@ run "reject_eth_with_zero_owner" {
     kernel_canary_api_desired_count                 = 1
     kernel_canary_db_schema_confirmed               = true
     kernel_canary_profile_attested                  = true
+    kernel_canary_managed_alto_qualified            = true
+    kernel_canary_managed_alto_qualified_image      = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa"
     kernel_canary_eth_enabled                       = true
     kernel_canary_owners_json                       = "[\"0x0000000000000000000000000000000000000000\"]"
   }
@@ -399,8 +402,26 @@ run "reject_sponsorship_without_exact_owner" {
     kernel_canary_api_desired_count                 = 1
     kernel_canary_db_schema_confirmed               = true
     kernel_canary_profile_attested                  = true
+    kernel_canary_managed_alto_qualified            = true
+    kernel_canary_managed_alto_qualified_image      = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa"
     kernel_canary_reconciler_desired_count          = 1
     kernel_canary_sponsorship_enabled               = true
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "reject_private_payment_without_managed_qualification" {
+  command = plan
+  variables {
+    kernel_canary_alto_desired_count                = 1
+    kernel_canary_simulators_attested               = true
+    kernel_canary_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
+    kernel_canary_pimlico_simulation_contract       = "0x2222222222222222222222222222222222222222"
+    kernel_canary_api_desired_count                 = 1
+    kernel_canary_db_schema_confirmed               = true
+    kernel_canary_profile_attested                  = true
+    kernel_canary_eth_enabled                       = true
+    kernel_canary_owners_json                       = "[\"0x3333333333333333333333333333333333333333\"]"
   }
   expect_failures = [terraform_data.kernel_canary_guard]
 }
@@ -415,7 +436,8 @@ run "qualified_payment_route_targets_only_kernel_api" {
     kernel_canary_api_desired_count                 = 1
     kernel_canary_db_schema_confirmed               = true
     kernel_canary_profile_attested                  = true
-    kernel_canary_nitro_safemode_qualified          = true
+    kernel_canary_managed_alto_qualified            = true
+    kernel_canary_managed_alto_qualified_image      = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa"
     kernel_canary_preview_origin                    = "https://kernel-preview.pages.dev"
     kernel_canary_route_enabled                     = true
     kernel_canary_eth_enabled                       = true
@@ -430,14 +452,13 @@ run "qualified_payment_route_targets_only_kernel_api" {
       && toset(flatten([for c in aws_lb_listener_rule.kernel_canary_api[0].condition : [for h in c.host_header : h.values]])) == toset(["api.sepolia.plether.com"])
       && length(aws_ecs_service.kernel_canary_api[0].load_balancer) == 1
       && length(aws_iam_role_policy.kernel_canary_paymaster_sign) == 1
-      && length(aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_ssm_node) == 0
       && contains(aws_ecs_service.kernel_canary_api[0].network_configuration[0].security_groups, "sg-0c095c11c27499ca7")
       && contains(aws_ecs_service.kernel_canary_reconciler[0].network_configuration[0].security_groups, "sg-0c095c11c27499ca7")
       && one([for e in local.kernel_canary_api_environment : e.value if e.name == "KERNEL_CANARY_API_MODE"]) == "true"
       && one([for e in local.kernel_canary_api_environment : e.value if e.name == "API_BACKGROUND_WORKERS_ENABLED"]) == "false"
       && one([for e in local.kernel_canary_api_environment : e.value if e.name == "AA_KERNEL_MAX_SAFE_LAG_SECONDS"]) == var.kernel_canary_max_safe_lag_seconds
     )
-    error_message = "Only the exact Kernel backend path may open after SafeMode, and both database clients must reuse the existing narrow AA group."
+    error_message = "Only the exact Kernel backend path may open after managed qualification, and both database clients must reuse the existing narrow AA group."
   }
 }
 
@@ -451,28 +472,81 @@ run "reject_primary_plether_preview_origin" {
     kernel_canary_api_desired_count                 = 1
     kernel_canary_db_schema_confirmed               = true
     kernel_canary_profile_attested                  = true
-    kernel_canary_nitro_safemode_qualified          = true
+    kernel_canary_managed_alto_qualified            = true
+    kernel_canary_managed_alto_qualified_image      = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa"
     kernel_canary_preview_origin                    = "https://sepolia.plether.com"
     kernel_canary_route_enabled                     = true
   }
   expect_failures = [terraform_data.kernel_canary_guard]
 }
 
-run "reject_attested_profile_without_staker" {
+run "reject_route_after_alto_image_changes" {
+  command = plan
+  variables {
+    kernel_canary_alto_desired_count                = 1
+    kernel_canary_simulators_attested               = true
+    kernel_canary_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
+    kernel_canary_pimlico_simulation_contract       = "0x2222222222222222222222222222222222222222"
+    kernel_canary_api_desired_count                 = 1
+    kernel_canary_db_schema_confirmed               = true
+    kernel_canary_profile_attested                  = true
+    kernel_canary_managed_alto_qualified            = true
+    kernel_canary_managed_alto_qualified_image      = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-kernel-alto-sepolia@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    kernel_canary_preview_origin                    = "https://kernel-preview.pages.dev"
+    kernel_canary_route_enabled                     = true
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "reject_attested_staker_profile" {
   command = plan
   variables {
     kernel_canary_db_schema_confirmed      = true
     kernel_canary_profile_attested         = true
     kernel_canary_reconciler_desired_count = 1
-    kernel_canary_profile_json = jsonencode({
-      for key, value in jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).profile : key => value
-      if !contains(["staker", "stakerCodeHash"], key)
+    kernel_canary_profile_json = jsonencode(merge(
+      jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).profile,
+      {
+        staker         = format("0x%040d", 9)
+        stakerCodeHash = format("0x%064d", 9)
+      },
+    ))
+  }
+  expect_failures = [terraform_data.kernel_canary_guard]
+}
+
+run "reject_old_paymaster_for_direct_reconciler" {
+  command = plan
+  variables {
+    kernel_canary_db_schema_confirmed      = true
+    kernel_canary_profile_attested         = true
+    kernel_canary_reconciler_desired_count = 1
+    kernel_canary_sponsorship_json = jsonencode({
+      paymaster            = "0x778b6962467632e1CC9D91c6801443d17D842fDb"
+      paymasterCodeHash    = format("0x%064d", 7)
+      policyId             = format("0x%064d", 8)
+      signerAddress        = format("0x%040d", 6)
+      deploymentBlock      = 1
+      deploymentBlockHash  = format("0x%064d", 9)
+      minDepositWei        = 1000
+      verificationGasLimit = 200000
+      validitySeconds      = 300
+      canaryOwners         = [format("0x%040d", 3)]
+      budget = {
+        maxCostWei            = 10
+        accountOutstandingWei = 100
+        clientOutstandingWei  = 100
+        globalOutstandingWei  = 1000
+        accountHourlyWei      = 100
+        globalHourlyWei       = 1000
+        globalDailyWei        = 10000
+      }
     })
   }
   expect_failures = [terraform_data.kernel_canary_guard]
 }
 
-run "reconciler_drains_without_sponsorship_or_tunnel" {
+run "reconciler_drains_without_sponsorship" {
   command = plan
   variables {
     kernel_canary_db_schema_confirmed      = true
@@ -487,10 +561,8 @@ run "reconciler_drains_without_sponsorship_or_tunnel" {
       && aws_ecs_service.kernel_canary_alto[0].desired_count == 0
       && length(aws_iam_role_policy.kernel_canary_paymaster_sign) == 0
       && length(aws_lb_listener_rule.kernel_canary_api) == 0
-      && length(data.aws_instance.live_rpc_node) == 0
-      && length(data.aws_security_group.live_rpc_node) == 0
     )
-    error_message = "The reconciler must drain in isolation after removing route access, KMS signing permission, and the Nitro tunnel."
+    error_message = "The reconciler must drain in isolation after removing route access and KMS signing permission."
   }
   assert {
     condition = one(flatten([

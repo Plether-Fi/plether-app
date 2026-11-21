@@ -6,12 +6,17 @@ import {
 
 const localUrls = {
   alto: 'http://127.0.0.1:18080/',
-  nitro: 'http://127.0.0.1:18081/',
+  primary: 'http://127.0.0.1:18081/',
   secondary: 'https://independent-rpc.example.invalid/v2/test',
 }
 
-test('smoke RPCs accept localhost tunnels and an independent HTTPS chain provider', () => {
+test('smoke RPCs accept a private Alto tunnel with managed independent chain providers', () => {
   assert.deepEqual(validateSmokeRpcUrls(localUrls), localUrls)
+  const managed = { ...localUrls, primary: 'https://sepolia-rollup.arbitrum.io/rpc' }
+  assert.deepEqual(validateSmokeRpcUrls(managed), managed)
+  assert.throws(() => validateSmokeRpcUrls(managed, { bearer: 'x'.repeat(32) }), /legacy Nitro bearer/u)
+  assert.throws(() => validateSmokeRpcUrls({ ...managed, secondary: 'https://sepolia-rollup.arbitrum.io/other' }),
+    /different hosts/u)
 })
 
 test('direct private ALBs require exact reviewed hosts', () => {
@@ -23,9 +28,9 @@ test('direct private ALBs require exact reviewed hosts', () => {
 test('smoke RPCs reject credential-bearing URLs and unreviewed public endpoints', () => {
   for (const changed of [
     { alto: 'https://bundler.example/rpc' },
-    { nitro: 'https://sepolia-rollup.arbitrum.io/rpc' },
+    { primary: 'http://sepolia-rollup.arbitrum.io/rpc' },
     { alto: 'http://user:pass@127.0.0.1:18080/' },
-    { nitro: 'http://127.0.0.1:18081/?token=secret' },
+    { primary: 'http://127.0.0.1:18081/?token=secret' },
     { secondary: 'http://independent-rpc.example.invalid/v2/key' },
   ]) assert.throws(() => validateSmokeRpcUrls({ ...localUrls, ...changed }))
 })
@@ -41,7 +46,7 @@ test('waits for the common safe block before the secondary receipt lookup', asyn
   let safe = false
   let secondaryReads = 0
   const clients = {
-    nitro: { async getTransactionReceipt(request) { assert.deepEqual(request, { hash }); return receipt } },
+    primary: { async getTransactionReceipt(request) { assert.deepEqual(request, { hash }); return receipt } },
     secondary: { async getTransactionReceipt(request) {
       assert.ok(safe, 'Secondary provider is still behind')
       assert.deepEqual(request, { hash })

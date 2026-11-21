@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Direct Kernel v0.9 Nitro/Alto smoke. No transaction is sent without --send-eth.
+// Direct Kernel v0.9 managed Arbitrum Sepolia/Alto smoke. No transaction is sent without --send-eth.
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -23,8 +23,8 @@ const { entryPoint09Abi, formatUserOperationRequest, getUserOperationHash, toPac
 const pins = JSON.parse(readFileSync(new URL('./pins.json', import.meta.url)))
 const advisoryBalance = parseEther('0.2')
 const entryPoint = getAddress(pins.entryPoint.address)
-const stakerAbi = parseAbi(['function owner() view returns (address)', 'function approved(address factory) view returns (bool)'])
-const stakeAbi = parseAbi(['function getDepositInfo(address account) view returns ((uint112 deposit,bool staked,uint112 stake,uint32 unstakeDelaySec,uint48 withdrawTime))'])
+const factoryPin = pins.kernel.contracts.find(contract => contract.name === 'KernelFactory')
+const implementationPin = pins.kernel.contracts.find(contract => contract.name === 'KernelUUPS')
 const paymasterAbi = parseAbi([
   'function paused() view returns (bool)', 'function sponsorSigner() view returns (address)',
   'function policyId() view returns (bytes32)', 'function maxSponsoredCost() view returns (uint256)',
@@ -34,7 +34,7 @@ const bigintJson = value => JSON.stringify(value, (_, item) => typeof item === '
 function usage() {
   console.log(`Usage: node scripts/kernel-qualification/nitro-sepolia-smoke.mjs [plan | send-eth | verify-eth | verify-sponsored] --manifest PATH --owner ADDRESS [--evidence PATH] [--sponsorship PATH] [--user-op-hash 0x...] [--transaction-hash 0x...] [--confirm DEPLOYMENT]
 
-Default plan is read-only and needs no private key. RPC URLs come only from KERNEL_SMOKE_ALTO_RPC_URL, KERNEL_SMOKE_NITRO_RPC_URL and KERNEL_SMOKE_SECONDARY_RPC_URL. An optional KERNEL_SMOKE_NITRO_BEARER stays in the environment.
+Default plan is read-only and needs no private key. RPC URLs come only from KERNEL_SMOKE_ALTO_RPC_URL, KERNEL_SMOKE_PRIMARY_RPC_URL and KERNEL_SMOKE_SECONDARY_RPC_URL. The legacy KERNEL_SMOKE_NITRO_RPC_URL and bearer remain available for private Nitro tunnels.
 send-eth is the only transmitting command. It requires --confirm, an unused evidence path, a funded fresh account, and KERNEL_SMOKE_OWNER_PRIVATE_KEY. verify-eth and verify-sponsored are read-only.`)
 }
 
@@ -58,25 +58,28 @@ function readManifest(path) {
   assert.equal(manifest.profile?.chainId, pins.chainId)
   assert.ok(isAddressEqual(manifest.profile.entryPoint, entryPoint), 'Wrong EntryPoint')
   assert.equal(manifest.profile.entryPointCodeHash, pins.entryPoint.codeHash)
+  for (const [field, pin] of [['factory', factoryPin], ['implementation', implementationPin], ['validator', pins.validator]]) {
+    assert.ok(isAddressEqual(manifest.profile[field], pin.address), `Wrong ${field} address`)
+    assert.equal(manifest.profile[`${field}CodeHash`], pin.codeHash, `Wrong ${field} code hash`)
+  }
   assert.equal(manifest.profile.accountCodeHash, pins.kernel.proxyCodeHash)
   assert.equal(manifest.profile.deployment, manifest.deployment)
-  assert.ok(manifest.staker && manifest.paymaster && manifest.simulations?.entryPoint09 && manifest.simulations?.pimlico)
+  assert.equal(manifest.deployment, pins.deployment, 'Use the reviewed direct-factory canary deployment')
+  assert.ok(manifest.paymaster && manifest.simulations?.entryPoint09 && manifest.simulations?.pimlico)
   return manifest
 }
 
 function urls() {
   const values = {
     alto: process.env.KERNEL_SMOKE_ALTO_RPC_URL,
-    nitro: process.env.KERNEL_SMOKE_NITRO_RPC_URL,
+    primary: process.env.KERNEL_SMOKE_PRIMARY_RPC_URL ?? process.env.KERNEL_SMOKE_NITRO_RPC_URL,
     secondary: process.env.KERNEL_SMOKE_SECONDARY_RPC_URL,
   }
   validateSmokeRpcUrls(values, {
     alto: process.env.KERNEL_SMOKE_EXPECTED_ALTO_ALB_HOST,
-    nitro: process.env.KERNEL_SMOKE_EXPECTED_NITRO_ALB_HOST,
+    primary: process.env.KERNEL_SMOKE_EXPECTED_NITRO_ALB_HOST,
+    bearer: process.env.KERNEL_SMOKE_NITRO_BEARER,
   })
-  if (new URL(values.nitro).hostname.startsWith('internal-')) {
-    assert.ok(process.env.KERNEL_SMOKE_NITRO_BEARER, 'Private Nitro ALB requires its bearer token')
-  }
   return values
 }
 
@@ -84,8 +87,8 @@ function clients(values) {
   const headers = process.env.KERNEL_SMOKE_NITRO_BEARER
     ? { authorization: `Bearer ${process.env.KERNEL_SMOKE_NITRO_BEARER}` } : undefined
   return {
-    nitro: createPublicClient({ chain: arbitrumSepolia,
-      transport: http(values.nitro, { timeout: 15_000, fetchOptions: { headers, redirect: 'error' } }) }),
+    primary: createPublicClient({ chain: arbitrumSepolia,
+      transport: http(values.primary, { timeout: 15_000, fetchOptions: { headers, redirect: 'error' } }) }),
     secondary: createPublicClient({ chain: arbitrumSepolia, transport: http(values.secondary, { timeout: 15_000 }) }),
   }
 }
@@ -110,18 +113,19 @@ async function altoRequest(url, method, params = []) {
 
 async function commonSafe(clients, minimum) {
   const [chainA, chainB, safeA, safeB] = await Promise.all([
-    clients.nitro.getChainId(), clients.secondary.getChainId(),
-    clients.nitro.getBlock({ blockTag: 'safe' }), clients.secondary.getBlock({ blockTag: 'safe' }),
+    clients.primary.getChainId(), clients.secondary.getChainId(),
+    clients.primary.getBlock({ blockTag: 'safe' }), clients.secondary.getBlock({ blockTag: 'safe' }),
   ])
   assert.equal(chainA, pins.chainId)
   assert.equal(chainB, pins.chainId)
   const number = safeA.number < safeB.number ? safeA.number : safeB.number
   assert.ok(number >= minimum, 'RPC safe blocks precede contract attestation')
   const [a, b] = await Promise.all([
-    clients.nitro.getBlock({ blockNumber: number }), clients.secondary.getBlock({ blockNumber: number }),
+    clients.primary.getBlock({ blockNumber: number }), clients.secondary.getBlock({ blockNumber: number }),
   ])
-  assert.equal(a.hash, b.hash, 'Nitro and secondary RPCs disagree at the common safe block')
-  return { number, hash: a.hash }
+  assert.equal(hash(a.hash, 'primary safe block hash'), hash(b.hash, 'secondary safe block hash'),
+    'Primary and secondary RPCs disagree at the common safe block')
+  return { number, hash: a.hash.toLowerCase() }
 }
 
 async function waitCommonSafe(clients, minimum) {
@@ -137,7 +141,7 @@ async function waitCommonSafe(clients, minimum) {
 }
 
 async function codeHashBoth(clients, address, blockNumber, expected) {
-  const [a, b] = await Promise.all([clients.nitro, clients.secondary].map(client =>
+  const [a, b] = await Promise.all([clients.primary, clients.secondary].map(client =>
     client.getCode({ address, blockNumber })))
   assert.equal(a ?? '0x', b ?? '0x', `RPCs disagree on code at ${address}`)
   assert.ok(a && a !== '0x' && keccak256(a).toLowerCase() === expected.toLowerCase(),
@@ -146,38 +150,34 @@ async function codeHashBoth(clients, address, blockNumber, expected) {
 
 async function profileCheck(clients, manifest, owner) {
   const safe = await commonSafe(clients, BigInt(manifest.attestation.blockNumber))
-  const historic = await Promise.all([clients.nitro, clients.secondary].map(client =>
+  const historic = await Promise.all([clients.primary, clients.secondary].map(client =>
     client.getBlock({ blockNumber: BigInt(manifest.attestation.blockNumber) })))
-  for (const block of historic) assert.equal(manifest.attestation.blockHash, block.hash,
+  for (const block of historic) assert.equal(manifest.attestation.blockHash.toLowerCase(), block.hash?.toLowerCase(),
     'Deployment attestation block changed')
   const profile = manifest.profile
   await Promise.all([
     codeHashBoth(clients, profile.entryPoint, safe.number, profile.entryPointCodeHash),
     codeHashBoth(clients, profile.factory, safe.number, profile.factoryCodeHash),
-    codeHashBoth(clients, profile.staker, safe.number, profile.stakerCodeHash),
     codeHashBoth(clients, profile.implementation, safe.number, profile.implementationCodeHash),
     codeHashBoth(clients, profile.validator, safe.number, profile.validatorCodeHash),
     codeHashBoth(clients, manifest.paymaster, safe.number, manifest.paymasterCodeHash),
     codeHashBoth(clients, manifest.simulations.entryPoint09.address, safe.number, manifest.simulations.entryPoint09.codeHash),
     codeHashBoth(clients, manifest.simulations.pimlico.address, safe.number, manifest.simulations.pimlico.codeHash),
   ])
-  const [stakerOwner, approved, stakerStake, paymasterStake, independentPaymasterStake, accountA, accountB] = await Promise.all([
-    clients.nitro.readContract({ address: profile.staker, abi: stakerAbi, functionName: 'owner', blockNumber: safe.number }),
-    clients.nitro.readContract({ address: profile.staker, abi: stakerAbi, functionName: 'approved', args: [profile.factory], blockNumber: safe.number }),
-    clients.nitro.readContract({ address: entryPoint, abi: stakeAbi, functionName: 'getDepositInfo', args: [profile.staker], blockNumber: safe.number }),
-    clients.nitro.readContract({ address: entryPoint, abi: stakeAbi, functionName: 'getDepositInfo', args: [manifest.paymaster], blockNumber: safe.number }),
-    clients.secondary.readContract({ address: entryPoint, abi: stakeAbi, functionName: 'getDepositInfo', args: [manifest.paymaster], blockNumber: safe.number }),
-    verifyKernelTradingAccountAtBlock(clients.nitro, profile, owner, safe.number),
+  const depositInfo = client => Promise.all([profile.factory, manifest.paymaster].map(address =>
+    client.readContract({ address: entryPoint, abi: entryPoint09Abi, functionName: 'getDepositInfo', args: [address], blockNumber: safe.number })))
+  const [primary, secondary, accountA, accountB] = await Promise.all([
+    depositInfo(clients.primary),
+    depositInfo(clients.secondary),
+    verifyKernelTradingAccountAtBlock(clients.primary, profile, owner, safe.number),
     verifyKernelTradingAccountAtBlock(clients.secondary, profile, owner, safe.number),
   ])
-  assert.ok(isAddressEqual(stakerOwner, manifest.binding.deployer) && approved, 'Staker owner or factory approval mismatch')
-  for (const [label, info] of [['Staker', stakerStake], ['paymaster', paymasterStake]]) {
-    assert.ok(info.staked && info.stake >= parseEther('1') && info.unstakeDelaySec >= 86_400,
-      `${label} must have the reviewed one-day 1 ETH stake`)
+  assert.deepEqual(primary, secondary, 'Factory or paymaster deposit info differs between RPCs')
+  for (const [label, info] of [['KernelFactory', primary[0]], ['Paymaster', primary[1]]]) {
+    assert.ok(!info.staked && info.stake === 0n, `${label} must be unstaked for the direct profile`)
   }
-  assert.deepEqual(paymasterStake, independentPaymasterStake, 'Paymaster stake differs between RPCs')
-  assert.deepEqual(accountA, accountB, 'Nitro and secondary RPCs disagree on Kernel account state')
-  return { safe, account: accountA, paymasterDeposit: paymasterStake.deposit }
+  assert.deepEqual(accountA, accountB, 'Primary and secondary RPCs disagree on Kernel account state')
+  return { safe, account: accountA, paymasterDeposit: primary[1].deposit }
 }
 
 async function accountFunds(client, sender, blockNumber) {
@@ -259,7 +259,7 @@ async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, 
     assert.equal(receipt.success, true, 'UserOperation failed')
   }
   const txHash = hash(transactionHint ?? receipt.receipt?.transactionHash, 'transaction hash')
-  const readers = [clients.nitro, clients.secondary]
+  const readers = [clients.primary, clients.secondary]
   const [tx, independentTx] = await readSafeBundleReceipts(clients, txHash, waitCommonSafe)
   const [blocks, transactions] = await Promise.all([
     Promise.all(readers.map(client => client.getBlock({ blockNumber: tx.blockNumber }))),
@@ -275,18 +275,19 @@ async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, 
     } catch { return [] }
   })
   const event = matchingEvents(tx)[0]
+  const inclusionHash = hash(tx.blockHash, 'primary bundle block hash')
   for (const [index, entry] of [tx, independentTx].entries()) {
-    assert.equal(entry.transactionHash, txHash, 'Bundle receipt hash differs')
+    assert.equal(hash(entry.transactionHash, 'bundle receipt hash'), txHash, 'Bundle receipt hash differs')
     assert.equal(entry.status, 'success', 'Bundle transaction reverted')
     assert.equal(entry.blockNumber, tx.blockNumber, 'Bundle transaction height differs between RPCs')
-    assert.equal(entry.blockHash, tx.blockHash, 'Bundle transaction block differs between RPCs')
-    assert.equal(blocks[index].hash, tx.blockHash, 'Bundle receipt block is not canonical')
+    assert.equal(hash(entry.blockHash, 'bundle block hash'), inclusionHash, 'Bundle transaction block differs between RPCs')
+    assert.equal(hash(blocks[index].hash, 'canonical block hash'), inclusionHash, 'Bundle receipt block is not canonical')
     assert.deepEqual(matchingEvents(entry), [event], 'Expected exactly one matching EntryPoint UserOperationEvent on both RPCs')
   }
   const operation = recoverOperationFromBundle({ transactions, receipt: tx, entryPoint, chainId: pins.chainId,
     operationHash, paymaster })
   assert.equal(event.nonce, operation.nonce, 'Event nonce differs from the included operation')
-  const account = await verifyKernelTradingAccountAtBlock(clients.nitro, manifest.profile, owner, tx.blockNumber)
+  const account = await verifyKernelTradingAccountAtBlock(clients.primary, manifest.profile, owner, tx.blockNumber)
   const independentAccount = await verifyKernelTradingAccountAtBlock(clients.secondary, manifest.profile, owner, tx.blockNumber)
   assert.deepEqual(account, independentAccount, 'Kernel account inclusion state differs between RPCs')
   assert.ok(account.deployed && isAddressEqual(event.sender, account.address), 'Wrong or undeployed Kernel sender')
@@ -297,7 +298,7 @@ async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, 
 }
 
 async function payerDebit(clients, payer, blockNumber, balanceField, actual, label) {
-  const debits = await Promise.all([clients.nitro, clients.secondary].map(async client => {
+  const debits = await Promise.all([clients.primary, clients.secondary].map(async client => {
     const [before, after] = await Promise.all([
       accountFunds(client, payer, blockNumber - 1n), accountFunds(client, payer, blockNumber),
     ])
@@ -308,19 +309,19 @@ async function payerDebit(clients, payer, blockNumber, balanceField, actual, lab
 }
 
 async function planOrSendEth(command, args, manifest, clients, altoUrl, owner) {
-  const { safe, account } = await profileCheck(clients, manifest, owner)
+  const { safe, account, paymasterDeposit } = await profileCheck(clients, manifest, owner)
   assert.equal(account.deployed, false, 'Smoke owner must have a fresh, undeployed Kernel account')
-  const funds = await accountFunds(clients.nitro, account.address, safe.number)
+  const funds = await accountFunds(clients.primary, account.address, safe.number)
   const signer = command === 'send-eth' ? privateKeyToAccount(process.env.KERNEL_SMOKE_OWNER_PRIVATE_KEY) : undefined
   if (signer) assert.ok(isAddressEqual(signer.address, owner), 'Owner signer does not match --owner')
-  const adapter = await makeAccount(clients.nitro, manifest.profile, owner, signer)
+  const adapter = await makeAccount(clients.primary, manifest.profile, owner, signer)
   assert.ok(isAddressEqual(adapter.address, account.address))
   const { operation, prefund, advisory } = await estimateEth(altoUrl, adapter, account.address, funds.total > 0n)
   const plan = {
     mode: 'eth', deployment: manifest.deployment, chainId: pins.chainId,
     safeBlock: String(safe.number), safeBlockHash: safe.hash, owner, sender: account.address,
     accountDeployed: false, accountBalanceWei: String(funds.balance), entryPointDepositWei: String(funds.deposit),
-    maxPrefundWei: String(prefund), advisoryEstimate: advisory,
+    maxPrefundWei: String(prefund), advisoryEstimate: advisory, paymasterDepositWei: String(paymasterDeposit),
     fundingShortfallWei: String(funds.total >= prefund ? 0n : prefund - funds.total),
     estimate: Object.fromEntries(Object.keys(gasCap).map(field => [field, String(operation[field])])),
   }
@@ -331,14 +332,14 @@ async function planOrSendEth(command, args, manifest, clients, altoUrl, owner) {
   assert.ok(!existsSync(evidencePath), 'Evidence already exists; use verify-eth, never resubmit blindly')
   assert.equal(advisory, false, 'Fund the counterfactual Kernel account and rerun before sending')
   assert.ok(funds.total >= prefund, 'Account ETH and EntryPoint deposit do not cover the prefund')
-  const nonce = await clients.nitro.readContract({ address: entryPoint, abi: entryPoint09Abi,
+  const nonce = await clients.primary.readContract({ address: entryPoint, abi: entryPoint09Abi,
     functionName: 'getNonce', args: [account.address, 0n] })
   assert.equal(nonce, 0n, 'Fresh smoke account must use nonce zero')
   assert.ok(!operation.paymaster && !operation.paymasterData, 'ETH smoke cannot use sponsorship')
   const operationHash = getUserOperationHash({ userOperation: operation, chainId: pins.chainId,
     entryPointAddress: entryPoint, entryPointVersion: '0.9' })
-  assert.ok(isAddressEqual(operation.factory, manifest.profile.staker), 'First operation must use the pinned Staker')
-  const onchainHash = await clients.nitro.readContract({ address: entryPoint, abi: entryPoint09Abi,
+  assert.ok(isAddressEqual(operation.factory, manifest.profile.factory), 'First operation must use the pinned KernelFactory')
+  const onchainHash = await clients.primary.readContract({ address: entryPoint, abi: entryPoint09Abi,
     functionName: 'getUserOpHash', args: [toPackedUserOperation(operation)] })
   assert.equal(onchainHash, operationHash, 'Viem and EntryPoint disagree on the operation hash')
   const signed = { ...operation, signature: await adapter.signUserOperation(operation) }
@@ -377,10 +378,10 @@ async function verifyEth(args, manifest, clients, altoUrl, owner) {
   assert.ok(isAddressEqual(prior.sender, event.sender), 'Evidence sender differs from included operation')
   assert.equal(event.nonce, 0n)
   assert.ok(event.actualGasCost <= BigInt(prior.maxPrefundWei))
-  const adapter = await makeAccount(clients.nitro, manifest.profile, owner, undefined, tx.blockNumber - 1n)
+  const adapter = await makeAccount(clients.primary, manifest.profile, owner, undefined, tx.blockNumber - 1n)
   assertRecoveredEthSmokeOperation(operation, {
     sender: event.sender, callData: smokeCall(event.sender),
-    factory: manifest.profile.staker, factoryData: adapter.factoryArgs.factoryData,
+    factory: manifest.profile.factory, factoryData: adapter.factoryArgs.factoryData,
     estimate: prior.estimate, maxPrefundWei: prior.maxPrefundWei,
     gasCap, maxFeeCap, maxPrefundCap,
   })
@@ -427,7 +428,7 @@ async function verifySponsored(args, manifest, clients, altoUrl, owner) {
   assert.equal(BigInt(operation.paymasterPostOpGasLimit), 0n)
   assert.ok(block.timestamp >= envelope.validAfter && block.timestamp <= envelope.validUntil,
     'Sponsored operation included outside its signed validity window')
-  const states = await Promise.all([clients.nitro, clients.secondary].map(client => Promise.all(
+  const states = await Promise.all([clients.primary, clients.secondary].map(client => Promise.all(
     ['sponsorSigner', 'policyId', 'maxSponsoredCost', 'paused'].map(functionName =>
       client.readContract({ address: manifest.paymaster, abi: paymasterAbi, functionName, blockNumber: tx.blockNumber })))))
   assert.deepEqual(states[0], states[1], 'Independent RPCs disagree on included sponsor configuration')
@@ -475,6 +476,6 @@ async function main() {
 
 try { await main() } catch (error) {
   const message = scrubRpcError(error, [process.env.KERNEL_SMOKE_OWNER_PRIVATE_KEY, process.env.KERNEL_SMOKE_NITRO_BEARER])
-  console.error(`Sepolia Nitro smoke failed: ${message}`)
+  console.error(`Arbitrum Sepolia smoke failed: ${message}`)
   process.exitCode = 1
 }

@@ -113,6 +113,15 @@ test('accepts the shared deployment entry point and recorded Nitro L1 gas', () =
   assert.equal(parsed.operation.preVerificationGas, BigInt(gas.nitroFixturePreVerificationGas))
 })
 
+test('rejects preparations for a previous release or an indirect factory', () => {
+  const eth = preparation('eth')
+  assert.throws(() => parsePreparation({ ...eth, deployment: 'kernel-sepolia-canary-20261121' }), /Wrong Kernel deployment/u)
+  assert.throws(() => parsePreparation({ ...eth, operation: { ...eth.operation, factory: sender, factoryData: '0x1234' } }),
+    /pinned KernelFactory/u)
+  const bound = { ...eth, operation: { ...eth.operation, factory: deployment.factory, factoryData: '0x1234' } }
+  assert.equal(parsePreparation(bound).operation.factory, getAddress(deployment.factory))
+})
+
 test('enforces the shared gas and fee boundaries', () => {
   const limits = {
     callGasLimit: gas.callGasLimit,

@@ -218,9 +218,10 @@ test('backend reconciler topology enforces the attested Kernel profile and runti
     ['1800', maximum, 1000, {}, false],
     ['2000', maximum + 1, maxLogRangeBlocks, {}, false],
     ['2000', minimum - 1, maxLogRangeBlocks, {}, false],
-    ['2000', maximum, maxLogRangeBlocks, {staker: undefined, stakerCodeHash: undefined}, false],
+    ['2000', maximum, maxLogRangeBlocks, {factory: undefined}, false],
     ['2000', maximum, maxLogRangeBlocks, {staker: profile.factory}, false],
-    ['2000', maximum, maxLogRangeBlocks, {stakerCodeHash: '0x' + '0'.repeat(64)}, false],
+    ['2000', maximum, maxLogRangeBlocks, {staker: profile.factory, stakerCodeHash: profile.factoryCodeHash}, false],
+    ['2000', maximum, maxLogRangeBlocks, {factoryCodeHash: '0x' + '0'.repeat(64)}, false],
   ]) {
     const fixture = {
       environment: Object.entries({
@@ -235,6 +236,58 @@ test('backend reconciler topology enforces the attested Kernel profile and runti
       policy + ' kernel_configuration(.; envmap(.))'], {input: JSON.stringify(fixture), encoding: 'utf8'})
     assert.ifError(result.error)
     assert.equal(result.status === 0, accepted, JSON.stringify([batch, lag, policyMax, profileOverrides, result.stderr]))
+  }
+})
+
+test('Kernel Alto mirrors the pinned upstream ARM64 image and scans the exact ECR digest', () => {
+  const source = readFileSync(new URL('.github/workflows/build-kernel-alto.yml', root), 'utf8')
+  const {alto} = JSON.parse(readFileSync(new URL('scripts/kernel-qualification/pins.json', root), 'utf8'))
+  assert.equal(source.match(/^  UPSTREAM_ALTO_IMAGE: (.+)$/m)?.[1], alto.image)
+  assert.equal(source.match(/^  UPSTREAM_COMMIT: (.+)$/m)?.[1], alto.commit)
+  assert.match(alto.image, /^ghcr\.io\/pimlicolabs\/alto:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/u)
+  assert.match(source, /skopeo manifest-digest/)
+  assert.match(source, /skopeo copy --preserve-digests/)
+  assert.match(source, /\[ "\$digest" = "\$expected_digest" \]/)
+  const scan = source.split('name: Require a complete scan without critical findings')[1]
+  const filter = scan?.match(/'(\.repositoryName[\s\S]*?)' \\\n\s+"\$RUNNER_TEMP\/alto-image-scan\.json"/)?.[1]
+  assert.ok(filter, 'execute the exact mirrored-image scan policy')
+  const repository = 'plether-kernel-alto-sepolia'
+  const account = '932542905614'
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const findings = {repositoryName: repository, registryId: account, imageId: {imageDigest: digest},
+    imageScanStatus: {status: 'COMPLETE'}, imageScanFindings: {findingSeverityCounts: {CRITICAL: 0}}}
+  for (const [overrides, expected] of [
+    [{}, true],
+    [{imageScanFindings: {findingSeverityCounts: {CRITICAL: 1}}}, false],
+    [{imageScanFindings: null}, false],
+    [{imageScanStatus: {status: 'IN_PROGRESS'}}, false],
+    [{imageId: {imageDigest: 'sha256:' + 'b'.repeat(64)}}, false],
+    [{registryId: '111111111111'}, false],
+  ]) {
+    const result = spawnSync('jq', ['-e', '--arg', 'digest', digest, '--arg', 'repository', repository,
+      '--arg', 'account', account, filter], {input: JSON.stringify({...findings, ...overrides}), encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected, result.stderr)
+  }
+})
+
+test('active Kernel Pages requires ETH readiness on the requested direct deployment', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-kernel-canary-frontend.yml', root), 'utf8')
+  const filter = source.match(/'(\s*\.jsonrpc == "2\.0" and \.id == 1[\s\S]*?)' "\$RUNNER_TEMP\/kernel-manifest\.json"/)?.[1]
+  assert.ok(filter, 'execute the exact active preview manifest check')
+  const {profile} = JSON.parse(readFileSync(new URL('apps/backend/test/fixtures/kernel-deployment.json', root), 'utf8'))
+  const manifest = {version: 1, profile, readiness: {eth: true, sponsored: false}}
+  for (const [result, expected] of [
+    [manifest, true],
+    [{...manifest, profile: {...profile, deployment: 'kernel-sepolia-canary-20261121'}}, false],
+    [{...manifest, profile: {...profile, staker: profile.factory, stakerCodeHash: profile.factoryCodeHash}}, false],
+    [{...manifest, readiness: {eth: false, sponsored: false}}, false],
+  ]) {
+    const outcome = spawnSync('jq', ['-e', '--arg', 'deployment', profile.deployment, filter], {
+      input: JSON.stringify({jsonrpc: '2.0', id: 1, result}), encoding: 'utf8',
+    })
+    assert.ifError(outcome.error)
+    assert.equal(outcome.status === 0, expected, outcome.stderr)
   }
 })
 

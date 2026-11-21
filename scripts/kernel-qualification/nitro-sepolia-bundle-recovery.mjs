@@ -40,9 +40,11 @@ function unpackOperation(packed) {
 
 export function recoverOperationFromBundle({ transactions, receipt, entryPoint, chainId, operationHash, paymaster }) {
   assert.equal(transactions.length, 2, 'Require two independent bundle transaction reads')
+  assert.match(receipt.transactionHash, /^0x[0-9a-f]{64}$/iu, 'Invalid bundle receipt hash')
+  assert.match(receipt.blockHash, /^0x[0-9a-f]{64}$/iu, 'Invalid bundle block hash')
   for (const transaction of transactions) {
-    assert.equal(transaction.hash, receipt.transactionHash, 'Recovered transaction hash differs from receipt')
-    assert.equal(transaction.blockHash, receipt.blockHash, 'Recovered transaction block hash differs from receipt')
+    assert.equal(transaction.hash?.toLowerCase(), receipt.transactionHash.toLowerCase(), 'Recovered transaction hash differs from receipt')
+    assert.equal(transaction.blockHash?.toLowerCase(), receipt.blockHash.toLowerCase(), 'Recovered transaction block hash differs from receipt')
     assert.equal(transaction.blockNumber, receipt.blockNumber, 'Recovered transaction block differs from receipt')
     assert.ok(transaction.to && isAddressEqual(transaction.to, entryPoint), 'Recovered bundle did not call the pinned EntryPoint')
     assert.equal(transaction.chainId, chainId, 'Recovered transaction chain differs')

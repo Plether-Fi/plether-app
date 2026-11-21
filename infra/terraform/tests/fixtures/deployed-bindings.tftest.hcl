@@ -253,17 +253,20 @@ run "accept_kernel_profile_at_minimum_safe_lag" {
   }
 }
 
-run "reject_kernel_profile_without_attested_staker" {
+run "reject_kernel_staker_profile" {
   command = plan
 
   variables {
     alto_entrypoint_version                = "0.9"
     alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
     alto_entrypoint_simulation_contract_v8 = ""
-    aa_kernel_profile_json = jsonencode({
-      for key, value in jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile : key => value
-      if !contains(["staker", "stakerCodeHash"], key)
-    })
+    aa_kernel_profile_json = jsonencode(merge(
+      jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile,
+      {
+        staker         = format("0x%040d", 9)
+        stakerCodeHash = format("0x%064d", 9)
+      },
+    ))
   }
 
   expect_failures = [terraform_data.self_hosted_aa_guard]

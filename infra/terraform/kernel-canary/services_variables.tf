@@ -22,10 +22,6 @@ variable "live_api_https_listener_arn" {
   type    = string
   default = "arn:aws:elasticloadbalancing:ap-southeast-1:932542905614:listener/app/plether-sepolia/9544b926599859e9/d4248c26d2adefb7"
 }
-variable "live_rpc_alb_security_group_id" {
-  type    = string
-  default = "sg-074181cf8fdb6a814"
-}
 variable "live_aa_db_client_security_group_id" {
   type    = string
   default = "sg-0c095c11c27499ca7"
@@ -33,14 +29,6 @@ variable "live_aa_db_client_security_group_id" {
 variable "live_rds_security_group_id" {
   type    = string
   default = "sg-085ef29e0a4896491"
-}
-variable "live_rpc_node_security_group_id" {
-  type    = string
-  default = "sg-0f00b1175fca303e4"
-}
-variable "live_rpc_node_instance_id" {
-  type    = string
-  default = "i-04a6af37b4583a4ee"
 }
 variable "live_aa_db_egress_rule_id" {
   type    = string
@@ -81,11 +69,11 @@ variable "kernel_canary_api_image" {
 }
 variable "kernel_canary_alto_rpc_url_ssm_parameter_name" {
   type    = string
-  default = "/plether/sepolia/app-rpc-url"
-}
-variable "kernel_canary_alto_rpc_token_ssm_parameter_name" {
-  type    = string
-  default = "/plether/sepolia/rpc-gateway-token"
+  default = "/plether/sepolia/perps-rpc-url"
+  validation {
+    condition     = var.kernel_canary_alto_rpc_url_ssm_parameter_name == "/plether/sepolia/perps-rpc-url"
+    error_message = "The isolated canary Alto must use the reviewed managed Arbitrum Sepolia RPC parameter."
+  }
 }
 variable "kernel_canary_alto_executor_keys_ssm_parameter_name" {
   type    = string
@@ -177,18 +165,19 @@ variable "kernel_canary_profile_attested" {
   type    = bool
   default = false
 }
-variable "kernel_canary_nitro_safemode_qualified" {
-  type    = bool
-  default = false
+variable "kernel_canary_managed_alto_qualified" {
+  type        = bool
+  default     = false
+  description = "Managed Alto completed the private Arbitrum Sepolia qualification on the exact reviewed image with normal validation enabled."
+}
+variable "kernel_canary_managed_alto_qualified_image" {
+  type        = string
+  default     = ""
+  description = "The full account-local Alto image URI with immutable digest from the approved private managed qualification."
 }
 variable "kernel_canary_route_enabled" {
   type    = bool
   default = false
-}
-variable "kernel_canary_ssm_tunnel_enabled" {
-  type        = bool
-  default     = false
-  description = "Temporarily admit the reviewed Nitro SSM node to the private canary Alto ALB for pre-route signed SafeMode smoke checks."
 }
 variable "kernel_canary_eth_enabled" {
   type    = bool

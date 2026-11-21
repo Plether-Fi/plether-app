@@ -192,13 +192,16 @@ export function parseKernelManifest(value: unknown): KernelManifest {
   const readiness = record(raw.readiness, ['eth', 'sponsored'])
   const expectedRelease = PERPS_RELEASE.release.version
   const paymaster = raw.paymaster === null ? null : address(raw.paymaster)
+  const pinnedPaymaster = kernelSepoliaCanaryPaymaster?.address.toLowerCase()
+  const paymasterMatches = paymaster !== null && paymaster === pinnedPaymaster
   if (raw.version !== 1 || !PERPS_RELEASE.isDeployed || !expectedRelease || raw.perpsRelease !== expectedRelease ||
     !tradingAddresses.every(key => address(raw[key]) === PERPS_ARBITRUM_SEPOLIA[key].toLowerCase()) ||
     !pins.every(([key, expected]) => typeof expected === 'string' && expected.startsWith('0x')
       ? bytes(profile[key], (expected.length - 2) / 2) === expected
       : profile[key] === expected) ||
     typeof raw.protectionCommitsEnabled !== 'boolean' || typeof readiness.eth !== 'boolean' || typeof readiness.sponsored !== 'boolean' ||
-    (paymaster === null ? readiness.sponsored : paymaster !== kernelSepoliaCanaryPaymaster)) return invalidResponse()
+    (readiness.sponsored && !paymasterMatches) ||
+    (pinnedPaymaster !== undefined && paymaster !== null && !paymasterMatches)) return invalidResponse()
   return {
     version: 1,
     profile: kernelSepoliaCanaryProfile,
@@ -209,7 +212,7 @@ export function parseKernelManifest(value: unknown): KernelManifest {
     cfdEngine: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
     positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
     protectionCommitsEnabled: raw.protectionCommitsEnabled,
-    paymaster,
+    paymaster: paymasterMatches ? paymaster : null,
     readiness: { eth: readiness.eth, sponsored: readiness.sponsored },
   }
 }
@@ -311,7 +314,7 @@ export function parseKernelPreparation(
   const operation = parseKernelOperation(raw.operation, intent.mode)
   if (operation.nonce !== intent.expectedNonce || operation.sender !== intent.sender.toLowerCase() || operation.callData !== intent.callData.toLowerCase() ||
     operation.factory !== intent.factory?.toLowerCase() || operation.factoryData !== intent.factoryData?.toLowerCase() ||
-    (operation.factory && operation.factory !== manifest.profile.staker)) return invalidResponse()
+    (operation.factory && operation.factory !== manifest.profile.factory)) return invalidResponse()
   const expiresAt = seconds(raw.expiresAt)
   if (!Number.isFinite(now) || expiresAt <= now || expiresAt > now + (intent.mode === 'sponsored' ? 570 : 120)) {
     return invalidResponse()

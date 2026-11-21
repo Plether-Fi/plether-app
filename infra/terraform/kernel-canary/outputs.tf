@@ -30,7 +30,7 @@ output "kernel_canary_ssm_key_alias" {
 }
 
 output "kernel_canary_alto_internal_rpc_url" {
-  description = "Private Alto JSON-RPC URL for the reviewed Nitro SSM port-forward smoke test."
+  description = "Private Alto JSON-RPC URL for the reviewed in-VPC managed-RPC qualification."
   value       = local.kernel_canary_count == 1 ? "http://${aws_lb.kernel_canary_alto[0].dns_name}" : null
 }
 
@@ -53,7 +53,6 @@ output "kernel_canary_service_names" {
 output "kernel_canary_external_ssm_parameter_names" {
   value = local.kernel_canary_count == 1 ? {
     rpc_url          = var.kernel_canary_alto_rpc_url_ssm_parameter_name
-    rpc_token        = var.kernel_canary_alto_rpc_token_ssm_parameter_name
     executor_keys    = var.kernel_canary_alto_executor_keys_ssm_parameter_name
     utility_key      = var.kernel_canary_alto_utility_key_ssm_parameter_name
     api_origin_token = var.kernel_canary_origin_token_ssm_parameter_name

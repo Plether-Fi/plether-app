@@ -235,24 +235,18 @@ attestDeposit primary secondary cfg height = do
   a <- available firstDeposit
   b <- available secondDeposit
   unless (a == b) $ throwE $ InconsistentEvidence "providers disagree on the Kernel paymaster deposit"
-  let (deposit, staked, stake, delay, withdrawal, paused) = a
-  pure $ deposit >= krcMinDepositWei cfg && staked
-    && stake >= Kernel.minimumKernelStakeWei
-    && delay >= 86400 && withdrawal == 0 && not paused
+  let (deposit, paused) = a
+  pure $ deposit >= krcMinDepositWei cfg && not paused
  where
   depositInfo client = do
     (depositResult, pausedResult) <- concurrently
-      (ethCallAtBlock client (CallParams (ksEntryPoint $ krcScope cfg) $ encodeCall "getDepositInfo(address)" [encodeAddress $ krcPaymaster cfg]) height)
+      (ethCallAtBlock client (CallParams (ksEntryPoint $ krcScope cfg) $ encodeCall "balanceOf(address)" [encodeAddress $ krcPaymaster cfg]) height)
       (ethCallAtBlock client (CallParams (krcPaymaster cfg) $ encodeCall "paused()" []) height)
     pure $ case (depositResult, pausedResult) of
-      (Right bytes, Right pausedBytes) | BS.length bytes == 160 && BS.length pausedBytes == 32 -> do
-        let word index = decodeUint256 $ BS.take 32 $ BS.drop (index * 32) bytes
-        staked <- flagAt (word 1)
+      (Right bytes, Right pausedBytes) | BS.length pausedBytes == 32 -> do
+        deposit <- Kernel.decodeKernelEntryPointDeposit bytes
         paused <- flagAt (decodeUint256 pausedBytes)
-        unless (word 0 < 2 ^ (112 :: Int) && word 2 < 2 ^ (112 :: Int)
-          && word 3 < 2 ^ (32 :: Int) && word 4 < 2 ^ (48 :: Int)) $
-          Left "Kernel paymaster deposit response is noncanonical"
-        pure (word 0, staked, word 2, word 3, word 4, paused)
+        pure (deposit, paused)
       _ -> Left "Kernel paymaster status could not be read"
   flagAt 0 = Right False
   flagAt 1 = Right True

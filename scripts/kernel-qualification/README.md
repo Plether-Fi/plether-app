@@ -1,6 +1,6 @@
 # Local Kernel v4 and Alto qualification
 
-This harness creates an isolated Prague Anvil chain with chain ID `421614` and starts the selected Alto image against it. It uses ZeroDev’s release creation code, a reproducibly compiled ZeroDev ECDSA validator and the Core Kernel paymaster. It deploys a ZeroDev Staker owned by the local utility account, approves KernelFactory, and stakes both Staker and paymaster with the local EntryPoint. All signed actions and funding are local. The captured reference bytecode comes from read-only Arbitrum Sepolia requests. [Artifact pins](./pins.json) · [Alto test config](https://github.com/pimlicolabs/alto/blob/e90957d8136d06087474d11cdcf4fa25bc120898/test/e2e/alto-config.json)
+This harness creates an isolated Prague Anvil chain with chain ID `421614` and starts Alto against it. It uses ZeroDev’s pinned release code, a reproducibly compiled ZeroDev ECDSA validator and the direct-factory Core Kernel paymaster. A first UserOperation uses the pinned KernelFactory directly through EntryPoint 0.9. The factory and paymaster have zero EntryPoint stake. Sponsorship draws from the paymaster’s EntryPoint deposit. All signed actions and funding are local. The reference bytecode comes from read-only Arbitrum Sepolia requests. [Artifact pins](./pins.json)
 
 The harness runs the app’s Kernel address verification and signing adapter through simulated external and embedded signing boundaries in both gas modes. It verifies the counterfactual address before the wallet sends ETH and confirms that the transfer changes only its balance. The first approved operation deploys that address. At the inclusion block, the browser verifier checks the deployed proxy, UUPS implementation, root validator and signer. It also exercises payer changes, same-nonce cancellations, and owner withdrawals of liquid ETH and EntryPoint deposits. The local sponsored deposit sweep uses a locally signed paymaster envelope and direct Alto RPC to exercise the contracts and bundler. Gateway sponsorship policy and real-wallet approval require separate checks.
 
@@ -10,8 +10,8 @@ At zero balance, the ETH-paid first-operation estimate returns `AA21 didn't pay 
 
 - Node 25 with the app’s frontend dependencies installed, Foundry, Solidity `0.8.30+commit.73712a01`, and Docker Desktop. The Docker container reaches the isolated host Anvil port through `host.docker.internal`. The two RPC listeners bind to loopback.
 - ZeroDev’s [Kernel v4 release commit](https://github.com/zerodevapp/kernel/tree/c960b42d2ed4adb0d5328f6e762962debdf8e57a) and a clean checkout of the [ECDSA validator commit](https://github.com/zerodevapp/kernel-7579-plugins/tree/332deed6eeef3d6279cde50aa1d51eff53728bd4). The validator checkout includes its pinned dependencies. A build hash mismatch stops execution.
-- The Core `PletherKernelVerifyingPaymaster.json` Foundry artifact from `packages/perps-aa/out/PletherKernelVerifyingPaymaster.sol/`. Build it from the Staker-aware Core implementation under test before running this harness.
-- Plether’s `ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d` image already pulled locally. For SafeMode qualification, build the patched image from [the pinned source patch](../alto-kernel-patch/README.md).
+- The direct-factory Core `PletherKernelVerifyingPaymaster.json` Foundry artifact from `packages/perps-aa/out/PletherKernelVerifyingPaymaster.sol/` in the reviewed Core checkout.
+- The exact reviewed Alto image for this run. The public Alto v1.2.8 ARM64 digest is `sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa`. This image provides an upstream baseline for local qualification. Pin and verify the deployment candidate separately. [Alto container package](https://github.com/pimlicolabs/alto/pkgs/container/alto)
 
 ## Capture the reference code
 
@@ -44,24 +44,17 @@ node scripts/kernel-qualification/run.mjs \
   --validator-repo /path/to/kernel-7579-plugins \
   --solc /path/to/solc-0.8.30 \
   --runtime-dir "$qualify_runtime_dir" \
-  --paymaster-artifact /path/to/PletherKernelVerifyingPaymaster.json
-
-# For the local SafeMode qualification, add the exact built image and flag.
-node scripts/kernel-qualification/run.mjs \
-  --kernel-repo /path/to/zerodev-kernel \
-  --validator-repo /path/to/kernel-7579-plugins \
-  --solc /path/to/solc-0.8.30 \
-  --runtime-dir "$qualify_runtime_dir" \
   --paymaster-artifact /path/to/PletherKernelVerifyingPaymaster.json \
-  --alto-image plether-alto-kernel-safemode:local \
-  --safe-mode
+  --alto-image "$REVIEWED_ALTO_IMAGE"
 ```
 
 ## Qualification boundaries
 
-The original pinned Alto image passes with normal validation and `safeMode=false`. Its `--safe-mode` path fails on the first submission with HTTP 500 because Alto decodes EntryPoint 0.9’s inner `DelegateAndRevert(bool,bytes)` frame instead of the top-level simulation result. The pinned source patch corrects that decoder. With a staked Staker and paymaster, the patched image passed all local scenarios under `--safe-mode` on 2026-11-20. The local chain uses Alto’s generic EVM estimation path. Actual Nitro SafeMode operation validation and live Arbitrum L1 data-fee estimates remain separate qualification gates. [v1.2.8 source comparison](https://github.com/pimlicolabs/alto/compare/v1.2.7...v1.2.8)
+On 2026-11-21 the pinned upstream Alto v1.2.8 ARM64 image passed 11 operations on Anvil with a direct unstaked factory and unstaked paymaster. The run verified both simulated wallet boundaries, both gas modes, payer switches, cancellations and exact payer debits. Normal validation rejected a wrong owner signature with RPC code `-32507`. Its nonce and account deployment state stayed unchanged. The local paymaster started paused and had a 0.25 ETH EntryPoint deposit.
 
-At the reference block the upstream Kernel implementation, factory and selected validator addresses had no Arbitrum Sepolia code. A fresh release must deploy and attest the exact Kernel artifacts, validator, Staker, paymaster and simulation contracts, including the Staker approval and both one-day stakes, before activating the profile. This harness uses an isolated call target, direct bundler RPC and local wallet signers behind a simulated `personal_sign` transport. Real Privy and external wallet flows, app gateway, KMS credentials and durable budget accounting require their own rollout checks.
+The direct-factory profile uses Alto’s normal simulation and signature validation with `ALTO_SAFE_MODE=false` and `ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION=false`. It relies on private Alto ingress, the Kernel gateway’s operation policy, and the dedicated sponsorship signer and budget. Trace-based ERC-7562 validation and reputation checks are outside this profile. The 2026-11-20 patched Alto tracer results are historical evidence for the earlier Staker profile. [Historical SafeMode evidence](../../docs/runbooks/evidence/kernel-nitro-safemode-2026-11-20.json)
+
+For `kernel-sepolia-direct-v1`, attest the pinned Kernel factory, implementation, validator and simulators and a fresh paused direct-factory paymaster with its configured deposit. The local chain exercises generic EVM gas estimates with an isolated call target and simulated `personal_sign` transports. Live Arbitrum gas estimates, app gateway policy, KMS signing, durable budget accounting and real transactions from external and Privy wallets each require separate canary evidence before rollout.
 
 For the public canary, see the [fresh Sepolia deployment](./deploy-sepolia.md),
 [isolated credential provisioning](./provision-canary-credentials.md),

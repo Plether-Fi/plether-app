@@ -21,28 +21,12 @@ const {
   zeroHash,
 } = require('viem')
 const { privateKeyToAccount } = require('viem/accounts')
+const { entryPoint09Abi: entryPointAbi } = require('viem/account-abstraction')
 const { arbitrumSepolia } = require('viem/chains')
 const pins = JSON.parse(readFileSync(new URL('./pins.json', import.meta.url)))
 
-// This exact bytecode is the Staker-aware Core artifact built from commit 469c40dd5757041dd57cafc35d0feb01d77a1aa2.
-// The deployed code includes constructor immutables; attest its runtime hash and every immutable on both RPCs.
-const paymasterCreationCodeHash = '0xb81b8d5409186c3a0e8faaa1de5ebb3e8d91ffc220b79f087c15f63e68743125'
-const paymasterRuntimeTemplateHash = '0x8400664934f2993e97adb86aa8ff7c465533432cb2f9b0770b01e58603b1c4a3'
-const paymasterImmutableLayoutHash = '0x382813125aaaae6c50ea0f9762497906b261252c168f53caf217d0fe5f88fed5'
-const corePaymasterCommit = '469c40dd5757041dd57cafc35d0feb01d77a1aa2'
-const corePaymasterSourceHash = '0xa94db3722ad1222d79128aa1046a786141b3698c42121ee0bb34242417a77034'
-const stakerCreationCodeHash = '0x89f185a3ea592ce85bf90f573b1864317505fa4d8d0906098645e1182f15b216'
-const stakerReleaseInitCodeHash = '0x15ffa4371818c1b8e2ce98d157e1d6c0c2e230c7d473af14ddb621cd4cb09bae'
-const stakerRuntimeCodeHash = '0xc8c723ed62cabf8190cb76172e38d6d6c2e0b2b4d031fdcb89543d9b2682ced5'
-const simulationCreationCodeHashes = {
-  entryPoint09: '0xf14a39f60bb7cad29bee4f2e4459ce0ab412e2d8f29205575881cf2cf500a937',
-  pimlico: '0xfdb3e336f78a7bcb01c7b3d1dd930f939e15ea17f00b763eda06700687c6f94d',
-}
-const entryPoint09RuntimeTemplateHash = '0xa53cc2557e16052adcde46993831707e5f24a13dade5758767ac6b9c601a89b8'
-const entryPoint09ImmutableLayoutHash = '0x934f7e7f598823c4467ac1d57ea973c4bb9ba637134318ec020d55e0b9afb577'
-const pimlicoSimulationRuntimeHash = '0xbf6f6629d08dd42ef5af9e7ba6ff5e1e7b53083f035d2f457fd8d4561182fcbd'
-const minStake = parseEther('1')
-const unstakeDelay = 86_400
+const corePaymasterSource = 'src/PletherKernelVerifyingPaymaster.sol'
+const corePaymasterRepoPath = `packages/perps-aa/${corePaymasterSource}`
 const gasReserve = parseEther('0.5')
 const sharedOrderRouterSigner = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 const factoryAbi = parseAbi([
@@ -50,17 +34,6 @@ const factoryAbi = parseAbi([
   'function UUPS() view returns (address)',
   'function getAddress(Install[] initialPackages,uint256 nonce) view returns (address)',
   'function deploy(Install[] initialPackages,uint256 nonce) payable returns (address)',
-])
-const stakerAbi = parseAbi([
-  'constructor(address owner)',
-  'function owner() view returns (address)',
-  'function approved(address factory) view returns (bool)',
-  'function approveFactory(address factory,bool approval) payable',
-  'function stake(address entryPoint,uint32 unstakeDelay) payable',
-])
-const entryPointAbi = parseAbi([
-  'function getDepositInfo(address account) view returns ((uint112 deposit,bool staked,uint112 stake,uint32 unstakeDelaySec,uint48 withdrawTime))',
-  'function senderCreator() view returns (address)',
 ])
 const validatorAbi = parseAbi(['function ecdsaValidatorStorage(address account) view returns (address)'])
 const accountAbi = parseAbi(['function root() view returns (bytes21)'])
@@ -78,7 +51,7 @@ Default: verify pinned artifacts and independent safe-block chain state, then pr
 --reconcile-inflight: record a known deployment transaction's canonical result on two RPCs; never signs or broadcasts.
 --rebroadcast-inflight: sign and send exactly the recorded transaction using the dedicated signer and the same untouched nonce.
 --reconcile-external-nonces: verify explicit, contiguous unrelated Perps order hashes on two RPCs; requires confirmation but never signs or broadcasts.
---broadcast: deploy missing contracts, approve/stake, and attest; requires explicit deployment confirmation and KERNEL_CANARY_DEPLOYER_PRIVATE_KEY.
+--broadcast: deploy missing contracts, fund the paused paymaster deposit, and attest; requires explicit deployment confirmation and KERNEL_CANARY_DEPLOYER_PRIVATE_KEY.
 The config and manifest contain public values only. See deploy-sepolia.md.`)
 }
 
@@ -102,7 +75,7 @@ function checkedHash(value, field) {
 
 function loadConfig(path) {
   const c = JSON.parse(readFileSync(resolve(path), 'utf8'))
-  assert.match(c.deployment ?? '', /^[a-z0-9][a-z0-9._-]{0,95}$/u, 'deployment must be a stable public id')
+  assert.equal(c.deployment, pins.deployment, `Use the direct-factory deployment ID ${pins.deployment}`)
   const primary = new URL(c.primaryRpc)
   const secondaryRpc = process.env.KERNEL_SECONDARY_RPC_URL || c.secondaryRpc
   assert.ok(secondaryRpc, 'Provide a second RPC through KERNEL_SECONDARY_RPC_URL or secondaryRpc')
@@ -136,7 +109,15 @@ function loadConfig(path) {
   return config
 }
 
-function loadPinnedArtifacts(c) {
+function verifyArtifactBytecode(artifact, pin, label) {
+  assert.equal(keccak256(artifact.bytecode.object), pin.creationCodeHash, `${label} creation code changed`)
+  assert.equal(keccak256(artifact.deployedBytecode.object), pin.runtimeTemplateHash, `${label} runtime template changed`)
+  assert.equal(keccak256(`0x${Buffer.from(JSON.stringify(artifact.deployedBytecode.immutableReferences ?? {})).toString('hex')}`),
+    pin.immutableLayoutHash, `${label} immutable reference layout changed`)
+  assert.deepEqual(artifact.bytecode.linkReferences, {}, `${label} has unresolved libraries`)
+}
+
+function loadPinnedArtifacts(c, { artifactOnly, transmitting }) {
   assert.equal(require('viem/package.json').version, pins.viemVersion, 'Use the locked Viem version')
   const kernelRepo = resolve(c.kernelRepo)
   const validatorRepo = resolve(c.validatorRepo)
@@ -149,11 +130,6 @@ function loadPinnedArtifacts(c) {
   assert.equal(getAddress(release.create2.factory), getAddress(pins.create2Deployer.address))
   assert.equal(release.create2.salt, zeroHash)
   const artifacts = new Map()
-  const staker = release.contracts.find(item => item.name === 'Staker')
-  assert.ok(staker?.bytecode?.startsWith('0x') && staker?.init_code?.startsWith('0x'), 'Pinned release missing Staker creation code')
-  assert.equal(keccak256(staker.bytecode), stakerCreationCodeHash, 'Generic Staker creation code changed')
-  assert.equal(keccak256(staker.init_code), stakerReleaseInitCodeHash, 'Release Staker initialization code changed')
-  artifacts.set('Staker', staker)
   for (const pin of pins.kernel.contracts) {
     const artifact = release.contracts.find(item => item.name === pin.name)
     assert.ok(artifact, `Pinned Kernel release missing ${pin.name}`)
@@ -179,36 +155,40 @@ function loadPinnedArtifacts(c) {
   assert.equal(keccak256(`0x${validator['bin-runtime']}`), pins.validator.codeHash)
   assert.equal(getContractAddress({ bytecode: validatorCode, from: pins.create2Deployer.address, salt: zeroHash, opcode: 'CREATE2' }), getAddress(pins.validator.address))
   const coreRepo = resolve(c.coreRepo)
-  assert.equal(command('git', ['-C', coreRepo, 'rev-parse', 'HEAD']).trim(), corePaymasterCommit,
-    'Core checkout must match the reviewed Staker-aware paymaster commit')
-  const coreSource = readFileSync(resolve(coreRepo, 'packages/perps-aa/src/PletherKernelVerifyingPaymaster.sol'))
-  assert.equal(keccak256(`0x${coreSource.toString('hex')}`), corePaymasterSourceHash,
-    'Core paymaster source differs from reviewed commit')
+  const core = pins.corePaymaster
+  if (!artifactOnly) {
+    assert.match(core.commit ?? '', /^[0-9a-f]{40}$/u, 'Pin the reviewed Core paymaster commit before connecting to an RPC')
+    assert.equal(command('git', ['-C', coreRepo, 'rev-parse', 'HEAD']).trim(), core.commit,
+      'Core checkout must match the pinned direct-factory paymaster commit')
+    assert.equal(command('git', ['-C', coreRepo, 'status', '--porcelain', '--untracked-files=no']).trim(), '',
+      'Pinned Core source checkout has tracked changes')
+  }
+  if (transmitting) {
+    assert.match(core.reviewedRef ?? '', /^refs\/remotes\/origin\/[A-Za-z0-9._/-]+$/u,
+      'Record the reviewed published Core ref before broadcasting')
+    command('git', ['-C', coreRepo, 'merge-base', '--is-ancestor', core.commit, core.reviewedRef])
+  }
+  const coreSource = readFileSync(resolve(coreRepo, corePaymasterRepoPath))
+  assert.equal(keccak256(`0x${coreSource.toString('hex')}`), core.sourceHash, 'Core paymaster source differs from the pin')
   const paymaster = JSON.parse(readFileSync(resolve(c.paymasterArtifact), 'utf8'))
-  assert.equal(paymaster.metadata.compiler.version, '0.8.35+commit.47b9dedd')
-  assert.equal(paymaster.metadata.settings.compilationTarget['src/PletherKernelVerifyingPaymaster.sol'], 'PletherKernelVerifyingPaymaster')
-  assert.equal(paymaster.metadata.sources['src/PletherKernelVerifyingPaymaster.sol'].keccak256, corePaymasterSourceHash,
-    'Core artifact does not correspond to the reviewed source')
-  assert.equal(keccak256(paymaster.bytecode.object), paymasterCreationCodeHash, 'Core Staker-aware paymaster artifact changed')
-  assert.equal(keccak256(paymaster.deployedBytecode.object), paymasterRuntimeTemplateHash, 'Core paymaster runtime template changed')
-  assert.equal(keccak256(`0x${Buffer.from(JSON.stringify(paymaster.deployedBytecode.immutableReferences ?? {})).toString('hex')}`),
-    paymasterImmutableLayoutHash, 'Core paymaster immutable reference layout changed')
-  assert.deepEqual(paymaster.bytecode.linkReferences, {}, 'Paymaster must have no unresolved libraries')
+  assert.equal(paymaster.metadata.compiler.version, core.compiler)
+  assert.equal(paymaster.metadata.settings.compilationTarget[corePaymasterSource], 'PletherKernelVerifyingPaymaster')
+  assert.equal(paymaster.metadata.sources[corePaymasterSource].keccak256, core.sourceHash,
+    'Core artifact does not correspond to the pinned source')
+  const constructor = paymaster.abi.find(entry => entry.type === 'constructor')
+  assert.deepEqual(constructor?.inputs.map(input => input.type),
+    ['address', 'address', 'address', 'uint256', 'bytes32', 'bytes32', 'address', 'address', 'address'],
+    'Core artifact has an unexpected direct-factory constructor')
+  verifyArtifactBytecode(paymaster, core, 'Core paymaster')
   const simulations = {}
   for (const [name, path] of [
     ['entryPoint09', c.entryPoint09SimulationArtifact], ['pimlico', c.pimlicoSimulationArtifact],
   ]) {
     const artifact = JSON.parse(readFileSync(resolve(path), 'utf8'))
-    assert.equal(artifact.metadata.compiler.version, '0.8.28+commit.7893614a', `${name} simulator compiler changed`)
-    assert.equal(keccak256(artifact.bytecode.object), simulationCreationCodeHashes[name], `${name} simulator creation code changed`)
-    assert.deepEqual(artifact.bytecode.linkReferences, {}, `${name} simulator has unresolved libraries`)
-    assert.match(artifact.deployedBytecode.object, /^0x[0-9a-fA-F]+$/u, `${name} runtime template is invalid`)
+    assert.equal(artifact.metadata.compiler.version, pins.alto.simulationCompiler, `${name} simulator compiler changed`)
+    verifyArtifactBytecode(artifact, pins.alto.simulations[name], `${name} simulator`)
     simulations[name] = artifact
   }
-  assert.equal(keccak256(simulations.pimlico.deployedBytecode.object), pimlicoSimulationRuntimeHash)
-  assert.equal(keccak256(simulations.entryPoint09.deployedBytecode.object), entryPoint09RuntimeTemplateHash)
-  assert.equal(keccak256(`0x${Buffer.from(JSON.stringify(simulations.entryPoint09.deployedBytecode.immutableReferences ?? {})).toString('hex')}`),
-    entryPoint09ImmutableLayoutHash, 'EntryPoint 0.9 simulation immutable reference layout changed')
   return { artifacts, validatorCode, paymaster, simulations }
 }
 
@@ -258,7 +238,8 @@ function deploymentBinding(c) {
     deployer: c.deployer, sampleOwner: c.sampleOwner, altoUtilityAddress: c.altoUtilityAddress,
     sponsorSigner: c.sponsorSigner, policyId: c.policyId,
     maxSponsoredCostWei: String(c.maxSponsoredCostWei), paymasterDepositWei: String(c.paymasterDepositWei),
-    corePaymasterCommit, corePaymasterSourceHash, paymasterCreationCodeHash,
+    corePaymasterCommit: pins.corePaymaster.commit, corePaymasterSourceHash: pins.corePaymaster.sourceHash,
+    paymasterCreationCodeHash: pins.corePaymaster.creationCodeHash, altoImage: pins.alto.image,
   }
 }
 
@@ -343,7 +324,7 @@ async function verifySimulation(clients, artifacts, name, address, blockNumber, 
     return undefined
   }
   const hash = keccak256(a)
-  if (name === 'pimlico') assert.equal(hash, pimlicoSimulationRuntimeHash, 'Pimlico simulation runtime hash mismatch')
+  if (name === 'pimlico') assert.equal(hash, pins.alto.simulations.pimlico.runtimeTemplateHash, 'Pimlico simulation runtime hash mismatch')
   else assert.ok(matchesRuntimeTemplate(a, artifacts.simulations[name]), 'EntryPoint 0.9 simulation runtime differs from pinned Alto artifact outside immutables')
   return hash
 }
@@ -383,14 +364,13 @@ async function requireUndeployedOwner(clients, address, blockNumber, label) {
   assert.equal(await codeHashAt(clients, address, blockNumber), undefined, `${label} must be an undeployed EOA`)
 }
 
-async function verifyStake(clients, address, blockNumber, label, minDeposit = 0n) {
+async function verifyPaymasterDeposit(clients, address, blockNumber, minDeposit) {
   const [info, secondaryInfo] = await Promise.all([clients.primary, clients.secondary].map(client => client.readContract({
     address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [address], blockNumber,
   })))
-  assert.deepEqual(info, secondaryInfo, `${label} stake differs between RPCs`)
-  assert.equal(info.staked, true, `${label} is not staked`)
-  assert.ok(info.stake >= minStake && info.unstakeDelaySec >= unstakeDelay, `${label} stake must be at least 1 ETH for one day`)
-  assert.ok(info.deposit >= minDeposit, `${label} deposit below the configured floor`)
+  assert.deepEqual(info, secondaryInfo, 'Paymaster deposit info differs between RPCs')
+  assert.ok(!info.staked && info.stake === 0n, 'Direct-factory paymaster must remain unstaked')
+  assert.ok(info.deposit >= minDeposit, 'Paymaster deposit below the configured floor')
   return info
 }
 
@@ -420,11 +400,11 @@ async function verifySample(clients, c, blockNumber, expected) {
   return account
 }
 
-function paymasterConstructorArgs(c, manifest) {
+function paymasterConstructorArgs(c) {
   const factory = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelFactory').address)
   const implementation = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelUUPS').address)
   return [pins.entryPoint.address, c.deployer, c.sponsorSigner, c.maxSponsoredCostWei, c.policyId,
-    pins.kernel.proxyCodeHash, manifest.staker, factory, implementation, pins.validator.address]
+    pins.kernel.proxyCodeHash, factory, implementation, pins.validator.address]
 }
 
 function deploymentRequest(c, manifest, artifacts, name, depositValue) {
@@ -442,24 +422,16 @@ function deploymentRequest(c, manifest, artifacts, name, depositValue) {
     }
   }
   switch (name) {
-    case 'Deploy Plether Staker':
-      return { data: encodeDeployData({ abi: stakerAbi, bytecode: artifacts.artifacts.get('Staker').bytecode, args: [c.deployer] }) }
-    case 'Approve Kernel factory':
-      return call(manifest.staker, stakerAbi, 'approveFactory', [factory, true])
-    case 'Stake Plether Staker':
-      return call(manifest.staker, stakerAbi, 'stake', [pins.entryPoint.address, unstakeDelay], minStake)
     case 'Deploy sample Kernel proxy': {
       const packages = [{ moduleType: 1n, module: getAddress(pins.validator.address), moduleData: c.sampleOwner, internalData: '0x' }]
       return call(factory, factoryAbi, 'deploy', [packages, 0n])
     }
     case 'Deploy paused Core paymaster':
       return { data: encodeDeployData({ abi: artifacts.paymaster.abi, bytecode: artifacts.paymaster.bytecode.object,
-        args: paymasterConstructorArgs(c, manifest) }) }
+        args: paymasterConstructorArgs(c) }) }
     case 'Deposit Core paymaster':
       assert.ok(depositValue > 0n && depositValue <= c.paymasterDepositWei, 'Unexpected reviewed paymaster deposit amount')
       return call(manifest.paymaster, artifacts.paymaster.abi, 'deposit', [], depositValue)
-    case 'Stake Core paymaster':
-      return call(manifest.paymaster, artifacts.paymaster.abi, 'addStake', [unstakeDelay], minStake)
     default:
       throw new Error('In-flight record names an unknown deployment action')
   }
@@ -530,7 +502,7 @@ async function recoverCreatedContract(clients, manifest, name, expectedInput) {
 
 async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
   assert.ok(!manifest.inFlight, 'Resolve the manifest transaction intent before attesting')
-  assert.ok(manifest.staker && manifest.paymaster && manifest.sampleAccount, 'Manifest is incomplete')
+  assert.ok(manifest.paymaster && manifest.sampleAccount, 'Manifest is incomplete')
   atLeast = manifest.transactions.reduce((max, tx) => {
     const block = BigInt(tx.blockNumber)
     return block > max ? block : max
@@ -549,28 +521,16 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
     requireUndeployedOwner(clients, address, safe.number, label)))
   const factory = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelFactory').address)
   const implementation = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelUUPS').address)
-  await requireHash(clients, manifest.staker, manifest.stakerCodeHash, safe.number, 'Plether-owned Staker')
-  assert.equal(manifest.stakerCodeHash, stakerRuntimeCodeHash, 'Staker runtime differs from pinned local release deployment')
-  await verifyDeploymentTransaction(clients, manifest, 'Deploy Plether Staker', manifest.staker,
-    encodeDeployData({ abi: stakerAbi, bytecode: artifacts.artifacts.get('Staker').bytecode, args: [c.deployer] }), safe.number)
-  await Promise.all([clients.primary, clients.secondary].map(async client => {
-    const [stakerOwner, approved, factoryImplementation] = await Promise.all([
-      client.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'owner', blockNumber: safe.number }),
-      client.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'approved', args: [factory], blockNumber: safe.number }),
-      client.readContract({ address: factory, abi: factoryAbi, functionName: 'UUPS', blockNumber: safe.number }),
-    ])
-    assert.ok(isAddressEqual(stakerOwner, c.deployer), 'Staker owner differs from dedicated deployer')
-    assert.equal(approved, true, 'Staker has not approved the Kernel factory')
-    assert.ok(isAddressEqual(factoryImplementation, implementation), 'Kernel factory implementation differs from pin')
-  }))
-  await verifyStake(clients, manifest.staker, safe.number, 'Staker')
+  const factoryImplementations = await Promise.all([clients.primary, clients.secondary].map(client =>
+    client.readContract({ address: factory, abi: factoryAbi, functionName: 'UUPS', blockNumber: safe.number })))
+  assert.ok(factoryImplementations.every(address => isAddressEqual(address, implementation)),
+    'Kernel factory implementation differs from pin')
   assert.ok(isAddressEqual(await verifySample(clients, c, safe.number, manifest.sampleAccount), manifest.sampleAccount))
   await requireHash(clients, manifest.paymaster, manifest.paymasterCodeHash, safe.number, 'Core paymaster')
   const paymasterRuntime = await clients.primary.getCode({ address: manifest.paymaster, blockNumber: safe.number })
   assert.ok(matchesRuntimeTemplate(paymasterRuntime, artifacts.paymaster), 'Core paymaster runtime differs from pinned artifact outside constructor immutables')
-  await verifyDeploymentTransaction(clients, manifest, 'Deploy paused Core paymaster', manifest.paymaster,
-    encodeDeployData({ abi: artifacts.paymaster.abi, bytecode: artifacts.paymaster.bytecode.object,
-      args: paymasterConstructorArgs(c, manifest) }), safe.number)
+  const paymasterDeployment = await verifyDeploymentTransaction(clients, manifest, 'Deploy paused Core paymaster', manifest.paymaster,
+    deploymentRequest(c, manifest, artifacts, 'Deploy paused Core paymaster').data, safe.number)
   const paymasterReads = {
     entryPoint: pins.entryPoint.address,
     entryPointCodeHash: pins.entryPoint.codeHash,
@@ -578,8 +538,6 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
     sponsorSigner: c.sponsorSigner,
     policyId: c.policyId,
     approvedAccountCodeHash: pins.kernel.proxyCodeHash,
-    accountStaker: manifest.staker,
-    accountStakerCodeHash: manifest.stakerCodeHash,
     accountFactory: factory,
     accountFactoryCodeHash: pins.kernel.contracts.find(x => x.name === 'KernelFactory').codeHash,
     accountImplementation: implementation,
@@ -597,8 +555,12 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
     if (typeof expected === 'string' && expected.length === 42) assert.ok(isAddressEqual(primary, expected), `Paymaster ${name} mismatch`)
     else assert.equal(typeof primary === 'string' ? primary.toLowerCase() : primary, expected, `Paymaster ${name} mismatch`)
   }
-  const paymasterStake = await verifyStake(clients, manifest.paymaster, safe.number, 'Paymaster', c.paymasterDepositWei)
+  const paymasterInfo = await verifyPaymasterDeposit(clients, manifest.paymaster, safe.number, c.paymasterDepositWei)
   assert.ok(manifest.paymasterDeploymentBlock && manifest.paymasterDeploymentBlockHash, 'Paymaster deployment receipt missing')
+  assert.equal(String(paymasterDeployment.blockNumber), manifest.paymasterDeploymentBlock, 'Paymaster receipt height differs from manifest')
+  assert.equal(checkedHash(paymasterDeployment.blockHash, 'Paymaster receipt block hash'),
+    checkedHash(manifest.paymasterDeploymentBlockHash, 'Recorded paymaster deployment block hash'),
+    'Paymaster receipt block hash differs from manifest')
   const [deploymentA, deploymentB] = await Promise.all([
     clients.primary.getBlock({ blockNumber: BigInt(manifest.paymasterDeploymentBlock) }),
     clients.secondary.getBlock({ blockNumber: BigInt(manifest.paymasterDeploymentBlock) }),
@@ -612,7 +574,6 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
     deployment: c.deployment, chainId: pins.chainId, entryPoint: getAddress(pins.entryPoint.address),
     entryPointCodeHash: pins.entryPoint.codeHash, factory,
     factoryCodeHash: pins.kernel.contracts.find(x => x.name === 'KernelFactory').codeHash,
-    staker: getAddress(manifest.staker), stakerCodeHash: manifest.stakerCodeHash,
     implementation, implementationCodeHash: pins.kernel.contracts.find(x => x.name === 'KernelUUPS').codeHash,
     validator: getAddress(pins.validator.address), validatorCodeHash: pins.validator.codeHash,
     accountCodeHash: pins.kernel.proxyCodeHash,
@@ -621,8 +582,7 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
   manifest.attestation = {
     blockNumber: String(safe.number), blockHash: safe.hash,
     providers: [c.primaryHost, c.secondaryHost],
-    stakerStakeWei: String((await verifyStake(clients, manifest.staker, safe.number, 'Staker')).stake),
-    paymasterStakeWei: String(paymasterStake.stake), paymasterDepositWei: String(paymasterStake.deposit),
+    paymasterStakeWei: String(paymasterInfo.stake), paymasterDepositWei: String(paymasterInfo.deposit),
     paymasterPaused: true,
   }
   return manifest
@@ -658,20 +618,8 @@ async function rebroadcastDeployment(clients, c, manifest, artifacts, confirmati
 async function broadcast(clients, c, manifest, artifacts, manifestPath, confirmation) {
   assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash before resuming')
   const signer = dedicatedSigner(c, confirmation)
-  const stakerInput = deploymentRequest(c, manifest, artifacts, 'Deploy Plether Staker').data
-  const recoveredStaker = await recoverCreatedContract(clients, manifest, 'Deploy Plether Staker', stakerInput)
-  if (recoveredStaker) {
-    if (manifest.staker) assert.ok(isAddressEqual(manifest.staker, recoveredStaker.address), 'Manifest Staker differs from deployment receipt')
-    manifest.staker = recoveredStaker.address
-    manifest.stakerCodeHash = stakerRuntimeCodeHash
-    const code = await clients.primary.getCode({ address: manifest.staker })
-    assert.ok(code && keccak256(code) === stakerRuntimeCodeHash, 'Recovered Staker code differs from pin')
-  } else assert.ok(!manifest.staker, 'Manifest Staker lacks a deployment receipt')
-  let recoveredPaymaster
-  if (manifest.staker) {
-    const paymasterInput = deploymentRequest(c, manifest, artifacts, 'Deploy paused Core paymaster').data
-    recoveredPaymaster = await recoverCreatedContract(clients, manifest, 'Deploy paused Core paymaster', paymasterInput)
-  }
+  const paymasterInput = deploymentRequest(c, manifest, artifacts, 'Deploy paused Core paymaster').data
+  const recoveredPaymaster = await recoverCreatedContract(clients, manifest, 'Deploy paused Core paymaster', paymasterInput)
   if (recoveredPaymaster) {
     if (manifest.paymaster) assert.ok(isAddressEqual(manifest.paymaster, recoveredPaymaster.address), 'Manifest paymaster differs from deployment receipt')
     manifest.paymaster = recoveredPaymaster.address
@@ -682,16 +630,11 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
     manifest.paymasterCodeHash = keccak256(code)
   } else assert.ok(!manifest.paymaster, 'Manifest paymaster lacks a deployment receipt')
   saveManifest(manifestPath, manifest)
-  const stakerInfoBefore = manifest.staker ? await clients.primary.readContract({
-    address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [manifest.staker],
-  }) : undefined
   const paymasterInfoBefore = manifest.paymaster ? await clients.primary.readContract({
     address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [manifest.paymaster],
   }) : undefined
-  const stakerStillNeeded = stakerInfoBefore?.staked && stakerInfoBefore.stake >= minStake && stakerInfoBefore.unstakeDelaySec >= unstakeDelay ? 0n : minStake
-  const paymasterStakeStillNeeded = paymasterInfoBefore?.staked && paymasterInfoBefore.stake >= minStake && paymasterInfoBefore.unstakeDelaySec >= unstakeDelay ? 0n : minStake
-  if (stakerInfoBefore && stakerStillNeeded > 0n) assert.equal(stakerInfoBefore.stake, 0n, 'Review partial Staker stake before resuming')
-  if (paymasterInfoBefore && paymasterStakeStillNeeded > 0n) assert.equal(paymasterInfoBefore.stake, 0n, 'Review partial paymaster stake before resuming')
+  if (paymasterInfoBefore) assert.ok(!paymasterInfoBefore.staked && paymasterInfoBefore.stake === 0n,
+    'Direct-factory paymaster must remain unstaked')
   const depositStillNeeded = paymasterInfoBefore?.deposit >= c.paymasterDepositWei ? 0n :
     c.paymasterDepositWei - (paymasterInfoBefore?.deposit ?? 0n)
   const [latestNonce, balance] = await Promise.all([
@@ -703,7 +646,7 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
     manifest.expectedNonce = String(latestNonce)
   }
   assert.equal(String(latestNonce), manifest.expectedNonce, 'Deployer nonce changed since the last confirmed script transaction; reconcile manually')
-  const needed = stakerStillNeeded + paymasterStakeStillNeeded + depositStillNeeded + gasReserve
+  const needed = depositStillNeeded + gasReserve
   assert.ok(balance >= needed, `Plether deployer needs at least ${needed} wei before broadcasting`)
   saveManifest(manifestPath, manifest)
   const wallet = deploymentWallet(c, signer)
@@ -780,27 +723,6 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   const factory = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelFactory').address)
   const implementation = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelUUPS').address)
   assert.ok(isAddressEqual(await clients.primary.readContract({ address: factory, abi: factoryAbi, functionName: 'UUPS' }), implementation))
-  if (!manifest.staker) {
-    const receipt = await confirmed('Deploy Plether Staker')
-    assert.ok(receipt.contractAddress, 'Staker deployment did not return an address')
-    manifest.staker = getAddress(receipt.contractAddress)
-    const code = await clients.primary.getCode({ address: manifest.staker })
-    assert.ok(code && code !== '0x')
-    manifest.stakerCodeHash = keccak256(code)
-    assert.equal(manifest.stakerCodeHash, stakerRuntimeCodeHash, 'Deployed Staker runtime differs from pinned release')
-    saveManifest(manifestPath, manifest)
-  }
-  assert.equal(manifest.stakerCodeHash, stakerRuntimeCodeHash, 'Manifest Staker runtime hash mismatch')
-  assert.equal(await latestCode(manifest.staker, stakerRuntimeCodeHash), true)
-  assert.ok(isAddressEqual(await clients.primary.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'owner' }), c.deployer))
-  if (!(await clients.primary.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'approved', args: [factory] }))) {
-    await confirmed('Approve Kernel factory')
-  }
-  const stakerStake = await clients.primary.readContract({ address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [manifest.staker] })
-  if (!stakerStake.staked || stakerStake.stake < minStake || stakerStake.unstakeDelaySec < unstakeDelay) {
-    assert.equal(stakerStake.stake, 0n, 'Review partial Staker stake manually before resuming')
-    await confirmed('Stake Plether Staker')
-  }
   const packages = [{ moduleType: 1n, module: getAddress(pins.validator.address), moduleData: c.sampleOwner, internalData: '0x' }]
   for (const [label, owner] of ownerAddressesToCheck(c)) {
     const code = await clients.primary.getCode({ address: owner, blockTag: 'latest' })
@@ -829,12 +751,9 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   assert.ok(manifest.paymasterCodeHash && await latestCode(manifest.paymaster, manifest.paymasterCodeHash))
   assert.equal(await clients.primary.readContract({ address: manifest.paymaster, abi: artifacts.paymaster.abi, functionName: 'paused' }), true, 'Canary paymaster must remain paused')
   const paymasterInfo = await clients.primary.readContract({ address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [manifest.paymaster] })
+  assert.ok(!paymasterInfo.staked && paymasterInfo.stake === 0n, 'Direct-factory paymaster must remain unstaked')
   if (paymasterInfo.deposit < c.paymasterDepositWei) {
     await confirmed('Deposit Core paymaster', c.paymasterDepositWei - paymasterInfo.deposit)
-  }
-  if (!paymasterInfo.staked || paymasterInfo.stake < minStake || paymasterInfo.unstakeDelaySec < unstakeDelay) {
-    assert.equal(paymasterInfo.stake, 0n, 'Review partial paymaster stake manually before resuming')
-    await confirmed('Stake Core paymaster')
   }
   return attest(clients, c, manifest, artifacts, lastBlock)
 }
@@ -855,12 +774,17 @@ async function main() {
   const c = loadConfig(args.config)
   const manifestPath = resolve(args.manifest ?? `kernel-${c.deployment}-manifest.json`)
   phase = 'pinned artifacts'
-  const artifacts = loadPinnedArtifacts(c)
+  const artifacts = loadPinnedArtifacts(c, {
+    artifactOnly: args['check-artifacts'] === true,
+    transmitting: args.broadcast === true || args['rebroadcast-inflight'] === true,
+  })
   if (args['check-artifacts']) {
-    console.log(JSON.stringify({ mode: 'read-only-artifact-check', kernelCommit: pins.kernel.commit,
-      validatorCommit: pins.validator.commit, corePaymasterCommit, corePaymasterSourceHash, stakerCreationCodeHash,
-      stakerReleaseInitCodeHash, stakerRuntimeCodeHash, paymasterCreationCodeHash,
-      simulationCreationCodeHashes,
+    console.log(JSON.stringify({ mode: 'read-only-artifact-check', deployment: c.deployment, kernelCommit: pins.kernel.commit,
+      validatorCommit: pins.validator.commit, expectedCorePaymasterCommit: pins.corePaymaster.commit,
+      corePaymasterSourceHash: pins.corePaymaster.sourceHash,
+      paymasterCreationCodeHash: pins.corePaymaster.creationCodeHash, altoImage: pins.alto.image,
+      simulationCreationCodeHashes: Object.fromEntries(Object.entries(pins.alto.simulations)
+        .map(([name, simulation]) => [name, simulation.creationCodeHash])),
       releaseContracts: [...artifacts.artifacts.keys()], validatorAddress: pins.validator.address,
     }, null, 2))
     return
@@ -929,8 +853,8 @@ async function main() {
       safeBlock: String(safe.number), safeBlockHash: safe.hash, providers: [c.primaryHost, c.secondaryHost],
       pinnedContracts: status, simulations: simulators,
       deployer: c.deployer, sampleOwner: c.sampleOwner, sponsorSigner: c.sponsorSigner,
-      deployerBalanceWei: String(primaryBalance), fundingReady: primaryBalance >= minStake * 2n + c.paymasterDepositWei + gasReserve,
-      requiredDeployerBalanceWei: String(minStake * 2n + c.paymasterDepositWei + gasReserve),
+      deployerBalanceWei: String(primaryBalance), fundingReady: primaryBalance >= c.paymasterDepositWei + gasReserve,
+      requiredDeployerBalanceWei: String(c.paymasterDepositWei + gasReserve),
       broadcastRequires: ['--broadcast', `--confirm ${c.deployment}`, 'KERNEL_CANARY_DEPLOYER_PRIVATE_KEY'],
     }, null, 2))
   }

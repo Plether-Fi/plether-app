@@ -23,7 +23,7 @@ export async function loadKernelTradingManifest(deployment: string, signal: Abor
     smartAccountMode: 'kernel',
     smartAccountVersion: 'kernel-v4-uups',
     smartAccountIndex: '0',
-    smartAccountFactory: profile.staker,
+    smartAccountFactory: profile.factory,
     settlementToken: kernel.settlementToken,
     settlementTokenSupportsEip3009: PERPS_SETTLEMENT_TOKEN.supportsReceiveWithAuthorization,
     settlementTokenEip712Name: null,

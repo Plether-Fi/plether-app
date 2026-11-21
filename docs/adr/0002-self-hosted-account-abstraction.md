@@ -109,7 +109,7 @@ deposit, and the fail-closed reconciler. Global or mainnet rollout requires a
 wallet/session proof protocol for final sponsorship requests and a new
 security review.
 
-## Alto safe-mode exception
+## Legacy Alto v0.8 safe-mode exception
 
 The pinned Alto v1.2.7 canary runs with `safeMode=false` because the selected
 Arbitrum Sepolia RPC has not yet been qualified for Alto's exact custom
@@ -124,6 +124,32 @@ native-v2 field set is exercised through a controlled client harness. Global
 Sepolia or mainnet rollout is blocked until the pinned safe-mode tracer is
 proven end to end—including a deliberately invalid operation—and the deployed
 configuration uses it.
+
+## Kernel v0.9 validation on Sepolia
+
+The Kernel v0.9 deployment uses unmodified, digest-pinned upstream Alto with
+a managed Arbitrum Sepolia HTTPS RPC. The API remains its only application
+caller. Set `ALTO_SAFE_MODE=false` and
+`ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION=false`. Alto simulates the
+account and paymaster and checks signatures, prefund and validity. The
+deployment forgoes its traced ERC-7562 opcode, storage, entity-role and
+reputation enforcement.
+
+The gateway retains reviewed account and action pins, exact signed operation
+checks, rate and gas limits, and the independent common-safe reads used for
+admission and reconciliation. Counterfactual operations use the pinned
+KernelFactory directly. The direct-factory Core paymaster requires a gas
+deposit. Neither the factory nor the paymaster requires stake for this
+validation profile.
+
+Qualify the exact image and configuration in the private canary before any
+route activation. Require a complete zero-critical ECR scan, live gas,
+invalid-signature rejection, receipts with correct payer debits, and both
+gas modes through the external and Privy wallets before wider Sepolia
+rollout. Starting the managed profile changes the paymaster address and
+reconciliation scope. Keep the prior scope available until its liabilities
+settle. Mainnet requires a separate decision and security review. See the
+[Kernel rollout procedure](../runbooks/kernel-aa.md).
 
 ## UUPS exception
 

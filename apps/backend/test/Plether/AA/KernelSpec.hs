@@ -27,31 +27,28 @@ spec = do
         Error failure -> expectationFailure failure
         Success reviewed -> do
           toJSON reviewed `shouldBe` raw
+          kpDeployment reviewed `shouldBe` "kernel-sepolia-direct-v1"
           case raw of
-            Object fields -> mapM_ (\key ->
-              case fromJSON (Object $ KM.delete key fields) :: Result KernelProfile of
-                Error _ -> pure ()
-                Success _ -> expectationFailure "accepted a profile with a missing Staker pin")
-              ["staker", "stakerCodeHash"]
+            Object fields -> do
+              KM.size fields `shouldBe` 14
+              mapM_ (\key -> assertInvalidProfile $ Object $ KM.delete key fields) (KM.keys fields)
+              let legacy = KM.insert "staker" (String $ address 'a') $
+                    KM.insert "stakerCodeHash" (String $ hash 'a') fields
+              assertInvalidProfile $ Object legacy
             _ -> expectationFailure "expected an object for the deployment profile"
     it "accepts only the reviewed chain, version, and EntryPoint" $ do
       fromJSON (toJSON profile) `shouldBe` Success profile
-      let wrong = toJSON $ profile {kpEntryPoint = address '1'}
-      case fromJSON wrong :: Result KernelProfile of
-        Error _ -> pure ()
-        Success _ -> expectationFailure "accepted an unreviewed EntryPoint"
-      case fromJSON (toJSON $ profile {kpStaker = kpFactory profile}) :: Result KernelProfile of
-        Error _ -> pure ()
-        Success _ -> expectationFailure "accepted the unstakeable Kernel factory as the Staker"
+      assertInvalidProfile $ toJSON $ profile {kpEntryPoint = address '1'}
 
   describe "Kernel factory initialization" $ do
     it "matches the v4 ABI for a single ECDSA root owner package" $ do
-      kernelFactoryArgs profile owner `shouldBe` Right (hexText stakerData)
-      decodeKernelFactoryOwner profile (hexText stakerData) `shouldBe` Right owner
+      kernelFactoryArgs profile owner `shouldBe` Right (hexText factoryData)
+      decodeKernelFactoryOwner profile (hexText factoryData) `shouldBe` Right owner
     it "rejects changes to the initialization profile" $ do
-      decodeKernelFactoryOwner profile (hexText $ replaceWord 36 1 stakerData) `shouldSatisfy` isLeft
-      decodeKernelFactoryOwner (profile {kpValidator = address '9'}) (hexText stakerData) `shouldSatisfy` isLeft
-      decodeKernelFactoryOwner profile (hexText factoryData) `shouldSatisfy` isLeft
+      decodeKernelFactoryOwner profile (hexText $ replaceWord 36 1 factoryData) `shouldSatisfy` isLeft
+      decodeKernelFactoryOwner (profile {kpValidator = address '9'}) (hexText factoryData) `shouldSatisfy` isLeft
+      decodeKernelFactoryOwner profile (hexText $ factoryData <> BS.replicate 32 0) `shouldSatisfy` isLeft
+      decodeKernelFactoryOwner profile (hexText legacyStakerData) `shouldSatisfy` isLeft
 
   describe "Kernel canonical account attestation" $ do
     it "attests factory derivation and the deployed owner at the selected block" $
@@ -68,15 +65,13 @@ spec = do
         >>= (`shouldSatisfy` isLeft)
     it "rejects a deployed account when its active root differs from the reviewed root" $
       verifyAccount (Just $ BS.replicate 32 0) Nothing >>= (`shouldSatisfy` isLeft)
-    it "rejects a Staker that has not approved the reviewed Kernel factory" $
-      verifyKernelAccountWithRpcAtBlock attestedProfile (stakerRpc False True minimumKernelStakeWei 86400) 42 (address '6') (Just owner)
+    it "rejects an unexpected Kernel factory runtime" $
+      verifyKernelAccountWithRpcAtBlock (attestedProfile {kpFactoryCodeHash = hash '9'})
+        (accountRpc Nothing) 42 (address '6') (Just owner)
         >>= (`shouldSatisfy` isLeft)
-    it "rejects a Staker without a locked EntryPoint stake" $ do
-      verifyKernelAccountWithRpcAtBlock attestedProfile (stakerRpc True False minimumKernelStakeWei 86400) 42 (address '6') (Just owner)
-        >>= (`shouldSatisfy` isLeft)
-      verifyKernelAccountWithRpcAtBlock attestedProfile (stakerRpc True True (minimumKernelStakeWei - 1) 86400) 42 (address '6') (Just owner)
-        >>= (`shouldSatisfy` isLeft)
-      verifyKernelAccountWithRpcAtBlock attestedProfile (stakerRpc True True minimumKernelStakeWei 86399) 42 (address '6') (Just owner)
+    it "rejects a factory bound to an unexpected Kernel implementation" $
+      verifyKernelAccountWithRpcAtBlock attestedProfile (accountRpcWithImplementation (address '9') Nothing "0x" owner)
+        42 (address '6') (Just owner)
         >>= (`shouldSatisfy` isLeft)
 
   describe "Kernel owned account resolution for onboarding" $ do
@@ -101,10 +96,17 @@ spec = do
       decodeKernelCalls (BS.init singleCall <> BS.singleton 1) `shouldSatisfy` isLeft
 
   describe "Kernel payment and authorization" $ do
+    it "decodes the full uint256 EntryPoint balance without a stake response" $ do
+      let largest = 2 ^ (256 :: Int) - 1
+      decodeKernelEntryPointDeposit (encodeUint256 0) `shouldBe` Right 0
+      decodeKernelEntryPointDeposit (encodeUint256 largest) `shouldBe` Right largest
+      decodeKernelEntryPointDeposit BS.empty `shouldSatisfy` isLeft
+      decodeKernelEntryPointDeposit (BS.replicate 31 0) `shouldSatisfy` isLeft
+      decodeKernelEntryPointDeposit (BS.replicate 160 0) `shouldSatisfy` isLeft
     it "matches Viem's EntryPoint 0.9 UserOperation hashes in both modes" $ do
       let parsed mode fields = parseKernelOperation profile mode KernelSubmit fields >>= kernelUserOperationHash profile . koPacked
       parsed KernelEthPaid ethPaidOperation `shouldBe` Right (fromHex "3dca3463f5d6fc8d17ce155f16e7c1b056c5697e99a7082ec0c532e4fd8cf17f")
-      parsed KernelSponsored sponsoredOperation `shouldBe` Right (fromHex "83a3c1a2367c8630dfde80f15b82be934486ff7faf3e2ad925e21a9462cde9fa")
+      parsed KernelSponsored sponsoredOperation `shouldBe` Right (fromHex "1bc663d681cf1e1c7f4553592ae689775d9a944bcae12af911d73395d9bed230")
     it "checks the signed hash against the verified owner for both wallet signature forms" $ do
       mapM_ verifyOwner [rawOwnerSignature, personalOwnerSignature]
     it "enforces the saved gas mode, root nonce lane and reviewed envelope format" $ do
@@ -117,6 +119,9 @@ spec = do
         (KM.insert "paymasterData" (String $ hexText $ BS.take 149 sponsorEnvelope <> fromHex "22e325a297439656") sponsoredOperation)
         `shouldSatisfy` isLeft
   where
+    assertInvalidProfile raw = case fromJSON raw :: Result KernelProfile of
+      Error _ -> pure ()
+      Success _ -> expectationFailure "accepted a profile outside the reviewed schema"
     verifyOwner signature =
       case parseKernelOperation profile KernelEthPaid KernelSubmit (KM.insert "signature" signature ethPaidOperation) of
         Left failure -> expectationFailure $ show failure
@@ -125,7 +130,7 @@ spec = do
           verifyKernelSignature profile (address '9') (koPacked operation) >>= (`shouldSatisfy` isLeft)
     verifyAccount root = verifyKernelAccountWithRpcAtBlock attestedProfile (accountRpc root) 42 (address '6')
 
--- ABI, hash and signature vectors generated independently with Viem 2.45.2.
+-- ABI, hash and signature vectors cross-checked independently with Viem.
 ethPaidOperation :: KM.KeyMap Value
 ethPaidOperation = KM.fromList
   [ ("sender", String $ address '6')
@@ -141,8 +146,8 @@ ethPaidOperation = KM.fromList
 
 sponsoredOperation :: KM.KeyMap Value
 sponsoredOperation = KM.union (KM.fromList
-  [ ("factory", String $ kpStaker profile)
-  , ("factoryData", String $ hexText stakerData)
+  [ ("factory", String $ kpFactory profile)
+  , ("factoryData", String $ hexText factoryData)
   , ("paymaster", String $ address '9')
   , ("paymasterVerificationGasLimit", String "0x6590")
   , ("paymasterPostOpGasLimit", String "0x0")
@@ -156,7 +161,7 @@ rawOwnerSignature, personalOwnerSignature :: Value
 rawOwnerSignature = String "0x1ab53b002cdeb5d339a76ef935ac3444b872d9b547671a1acf7db332cbec30985dec12eff10bea320e765deae7d93af2f3c73d7c786e5d17b175a680feef0f431c"
 personalOwnerSignature = String "0x8bd8016e32b821b82d63ea9fb19cae7bb5ea11f329a76d2febf6e541164187677d806a7f4af609fcabbf0d01d51936f4acba392105d8131ceed957eb2d1e160d1b"
 
-singleCall, batchCalls, factoryData, stakerData :: ByteString
+singleCall, batchCalls, factoryData, legacyStakerData :: ByteString
 singleCall = fromHex $ T.concat
   [ "e9ae5c53"
   , "0000000000000000000000000000000000000000000000000000000000000000"
@@ -199,7 +204,7 @@ factoryData = fromHex $ T.concat
   , "7e5f4552091a69125d5dfcb7b8c2659029395bdf000000000000000000000000"
   , "0000000000000000000000000000000000000000000000000000000000000000"
   ]
-stakerData = encodeCall "deployWithFactory(address,bytes)"
+legacyStakerData = encodeCall "deployWithFactory(address,bytes)"
   [ encodeAddress $ kpFactory profile
   , encodeUint256 64
   , encodeUint256 $ fromIntegral $ BS.length factoryData
@@ -207,8 +212,8 @@ stakerData = encodeCall "deployWithFactory(address,bytes)"
   ]
 
 profile :: KernelProfile
-profile = KernelProfile "perps-kernel-sepolia" 421614 kernelEntryPoint (hash '1')
-  (address '2') (hash '2') (address 'a') (hash 'a') (address '3') (hash '3') (address '4') (hash '4') (hash '5')
+profile = KernelProfile "kernel-sepolia-direct-v1" 421614 kernelEntryPoint (hash '1')
+  (address '2') (hash '2') (address '3') (hash '3') (address '4') (hash '4') (hash '5')
 
 owner :: Text
 owner = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
@@ -230,7 +235,6 @@ attestedProfile :: KernelProfile
 attestedProfile = profile
   { kpEntryPointCodeHash = hashCode 1
   , kpFactoryCodeHash = hashCode 2
-  , kpStakerCodeHash = hashCode 6
   , kpImplementationCodeHash = hashCode 3
   , kpValidatorCodeHash = hashCode 4
   , kpAccountCodeHash = hashCode 5
@@ -245,7 +249,10 @@ accountRpc :: Maybe ByteString -> Text -> Value -> IO (Either RpcError Value)
 accountRpc root = accountRpcWithOwner root "0x" owner
 
 accountRpcWithOwner :: Maybe ByteString -> Text -> Text -> Text -> Value -> IO (Either RpcError Value)
-accountRpcWithOwner root ownerCode signer method = \case
+accountRpcWithOwner = accountRpcWithImplementation (kpImplementation profile)
+
+accountRpcWithImplementation :: Text -> Maybe ByteString -> Text -> Text -> Text -> Value -> IO (Either RpcError Value)
+accountRpcWithImplementation implementation root ownerCode signer method = \case
   Array args -> (Right . String) <$> lookupResult method (foldr (:) [] args)
   _ -> expectationFailure "expected attestation RPC arguments" >> pure (Right Null)
   where
@@ -254,7 +261,6 @@ accountRpcWithOwner root ownerCode signer method = \case
     lookupResult "eth_getCode" [String target, String "0x2a"]
       | target == kpEntryPoint profile = pure "0x01"
       | target == kpFactory profile = pure "0x02"
-      | target == kpStaker profile = pure "0x06"
       | target == kpImplementation profile = pure "0x03"
       | target == kpValidator profile = pure "0x04"
       | target == address '6' = pure $ maybe "0x" (const "0x05") root
@@ -266,15 +272,9 @@ accountRpcWithOwner root ownerCode signer method = \case
       | target == address '6'
       , slot == "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50" = pure $ hash '0'
     lookupResult "eth_call" [Object call, String "0x2a"]
-      | KM.lookup "to" call == Just (String $ kpStaker profile)
-      , KM.lookup "data" call == Just (String $ hexText $ encodeCall "approved(address)" [encodeAddress $ kpFactory profile]) =
-          pure $ hexText $ encodeUint256 1
-      | KM.lookup "to" call == Just (String $ kpEntryPoint profile)
-      , KM.lookup "data" call == Just (String $ hexText $ encodeCall "getDepositInfo(address)" [encodeAddress $ kpStaker profile]) =
-          pure $ hexText $ BS.concat [encodeUint256 0, encodeUint256 1, encodeUint256 minimumKernelStakeWei, encodeUint256 86400, encodeUint256 0]
       | KM.lookup "to" call == Just (String $ kpFactory profile)
       , KM.lookup "data" call == Just (String $ hexText $ selector "UUPS()") =
-          pure $ hexText $ encodeAddress $ kpImplementation profile
+          pure $ hexText $ encodeAddress implementation
       | KM.lookup "to" call == Just (String $ kpFactory profile)
       , KM.lookup "data" call == Just (String $ hexText $ selector "getAddress((uint256,address,bytes,bytes)[],uint256)" <> BS.drop 4 factoryData) =
           pure $ hexText $ encodeAddress $ address '6'
@@ -285,19 +285,3 @@ accountRpcWithOwner root ownerCode signer method = \case
       , KM.lookup "data" call == Just (String $ hexText $ encodeCall "ecdsaValidatorStorage(address)" [encodeAddress $ address '6']) =
           pure $ hexText $ encodeAddress signer
     lookupResult unexpected _ = expectationFailure ("unexpected attestation RPC " <> T.unpack unexpected) >> pure "0x"
-
-stakerRpc :: Bool -> Bool -> Integer -> Integer -> Text -> Value -> IO (Either RpcError Value)
-stakerRpc approved staked stake delay method values@(Array args)
-  | method == "eth_call"
-  , [Object call, String "0x2a"] <- foldr (:) [] args
-  , KM.lookup "to" call == Just (String $ kpStaker profile)
-  , KM.lookup "data" call == Just (String $ hexText $ encodeCall "approved(address)" [encodeAddress $ kpFactory profile]) =
-      pure $ Right $ String $ hexText $ encodeUint256 $ if approved then 1 else 0
-  | method == "eth_call"
-  , [Object call, String "0x2a"] <- foldr (:) [] args
-  , KM.lookup "to" call == Just (String $ kpEntryPoint profile)
-  , KM.lookup "data" call == Just (String $ hexText $ encodeCall "getDepositInfo(address)" [encodeAddress $ kpStaker profile]) =
-      pure $ Right $ String $ hexText $ BS.concat
-        [encodeUint256 0, encodeUint256 $ if staked then 1 else 0, encodeUint256 stake, encodeUint256 delay, encodeUint256 0]
-  | otherwise = accountRpc Nothing method values
-stakerRpc _ _ _ _ method values = accountRpc Nothing method values

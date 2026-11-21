@@ -1,5 +1,6 @@
 {
   "chainId": 421614,
+  "deployment": "kernel-sepolia-direct-v1",
   "viemVersion": "2.57.8",
   "referenceBlock": 331101957,
   "referenceBlockHash": "0xe4cf42a69df9e9f9b4164feeeea467093b82237808a6dc6de13121ebd00300fd",
@@ -47,8 +48,30 @@
     "initCodeHash": "0x3c4585b25b24b9db6c948475691e6d1f487b5b0205024d205a9aae20eb7ff96a",
     "codeHash": "0x9ceb47b953e8d105f632c46394c66b9a4498cbea889fd45feab855feed4608fe"
   },
+  "corePaymaster": {
+    "commit": "d4c34c8fe95775a5dbdab74caa90a211bee9970d",
+    "reviewedRef": null,
+    "compiler": "0.8.35+commit.47b9dedd",
+    "sourceHash": "0x966b92d629404137d7f98d1672ac9f3148c3957499458b40ddd045917111fb8a",
+    "creationCodeHash": "0x7abd8807b1eaa62596690a88f434602b25664ee701ba16ac1cd048e6128197aa",
+    "runtimeTemplateHash": "0x2fbebdbd71549946b2e5546227275c40e81e7db58d91052421ed9adb62fa9c6b",
+    "immutableLayoutHash": "0x5dc9dc0c47dad83ebb3ae54a690bac41a289bdb9f12985f6bdbb436c186b1995"
+  },
   "alto": {
-    "commit": "e90957d8136d06087474d11cdcf4fa25bc120898",
-    "image": "ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
+    "commit": "37cade5d2804a60ab30362ea27054514e1d7a7c8",
+    "image": "ghcr.io/pimlicolabs/alto:v1.2.8@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa",
+    "simulationCompiler": "0.8.28+commit.7893614a",
+    "simulations": {
+      "entryPoint09": {
+        "creationCodeHash": "0x3822120e98fcc2d8ce3d8679d75df35f7cdfd258c804058b122586b0ae8495af",
+        "runtimeTemplateHash": "0xa4d1fdb368b81ae04e3a044503547fc20e5131ace6f9a2a891bcbf5ee3c50f68",
+        "immutableLayoutHash": "0x934f7e7f598823c4467ac1d57ea973c4bb9ba637134318ec020d55e0b9afb577"
+      },
+      "pimlico": {
+        "creationCodeHash": "0x30ce3bb225bd692e281ac353d86d259a666b3939d9e10d98014829e17e53e3ae",
+        "runtimeTemplateHash": "0x22dbcbfa136fcf31bd56a73a11492356bbfac658009dc867cfb0a61485bd7b37",
+        "immutableLayoutHash": "0xb48d38f93eaa084033fc5970bf96e559c33c4cdc07d889ab00b4d63f9590739d"
+      }
+    }
   }
 }

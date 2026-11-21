@@ -1,13 +1,12 @@
 # The Kernel v0.9 pilot is a second, normally dormant Sepolia stack. None of
 # these resources replace the EntryPoint v0.8 Alto, API, or reconciler.
 locals {
-  kernel_canary_count         = var.provision_services ? 1 : 0
-  kernel_canary_ssm_prefix    = "arn:aws:ssm:${local.region}:${data.aws_caller_identity.current.account_id}:parameter"
-  kernel_canary_rpc_arn       = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_rpc_url_ssm_parameter_name)}"
-  kernel_canary_rpc_token_arn = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_rpc_token_ssm_parameter_name)}"
-  kernel_canary_executor_arn  = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_executor_keys_ssm_parameter_name)}"
-  kernel_canary_utility_arn   = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_utility_key_ssm_parameter_name)}"
-  kernel_canary_origin_arn    = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_origin_token_ssm_parameter_name)}"
+  kernel_canary_count        = var.provision_services ? 1 : 0
+  kernel_canary_ssm_prefix   = "arn:aws:ssm:${local.region}:${data.aws_caller_identity.current.account_id}:parameter"
+  kernel_canary_alto_rpc_arn = "${local.kernel_canary_ssm_prefix}${var.kernel_canary_alto_rpc_url_ssm_parameter_name}"
+  kernel_canary_executor_arn = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_executor_keys_ssm_parameter_name)}"
+  kernel_canary_utility_arn  = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_utility_key_ssm_parameter_name)}"
+  kernel_canary_origin_arn   = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_origin_token_ssm_parameter_name)}"
 
   kernel_canary_roles = toset(["alto", "api", "reconciler"])
   kernel_canary_execution_role_names = {
@@ -18,7 +17,7 @@ locals {
   }
 
   kernel_canary_execution_secret_arns = {
-    alto       = [local.kernel_canary_rpc_arn, local.kernel_canary_rpc_token_arn, local.kernel_canary_executor_arn, local.kernel_canary_utility_arn]
+    alto       = [for secret in local.kernel_canary_alto_secrets : secret.valueFrom]
     api        = distinct([for secret in local.kernel_canary_api_secrets : secret.valueFrom])
     reconciler = distinct([for secret in local.kernel_canary_reconciler_secrets : secret.valueFrom])
   }
@@ -93,7 +92,11 @@ locals {
     for setting in local.live_alto_container.environment : setting
     if !startswith(setting.name, "PLETHER_ALTO_")
     && !startswith(setting.name, "ALTO_ENTRYPOINT")
-    && !contains(["ALTO_PIMLICO_SIMULATION_CONTRACT", "ALTO_SAFE_MODE", "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", "ALTO_DEPLOY_SIMULATIONS_CONTRACT", "ALTO_RPC_METHODS", "ALTO_MAX_GAS_PER_USER_OP"], setting.name)
+    && !contains([
+      "ALTO_RPC_URL", "ALTO_SEND_TRANSACTION_RPC_URL", "ALTO_PIMLICO_SIMULATION_CONTRACT",
+      "ALTO_SAFE_MODE", "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", "ALTO_EXPIRATION_CHECK",
+      "ALTO_DEPLOY_SIMULATIONS_CONTRACT", "ALTO_RPC_METHODS", "ALTO_MAX_GAS_PER_USER_OP",
+    ], setting.name)
   ] : []
   kernel_canary_alto_environment = concat(local.kernel_canary_alto_base_environment, [
     { name = "ALTO_ENTRYPOINTS", value = "0x433709009b8330fda32311df1c2afa402ed8d009" },
@@ -101,10 +104,23 @@ locals {
     { name = "ALTO_PIMLICO_SIMULATION_CONTRACT", value = var.kernel_canary_pimlico_simulation_contract },
     { name = "ALTO_DEPLOY_SIMULATIONS_CONTRACT", value = "false" },
     { name = "ALTO_RPC_METHODS", value = local.kernel_canary_alto_allowed_rpc_methods },
-    { name = "ALTO_SAFE_MODE", value = "true" },
+    { name = "ALTO_SAFE_MODE", value = "false" },
     { name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false" },
+    { name = "ALTO_EXPIRATION_CHECK", value = "true" },
     { name = "ALTO_MAX_GAS_PER_USER_OP", value = "17000000" },
   ])
+  kernel_canary_alto_secrets = [
+    { name = "ALTO_RPC_URL", valueFrom = local.kernel_canary_alto_rpc_arn },
+    { name = "ALTO_EXECUTOR_PRIVATE_KEYS", valueFrom = local.kernel_canary_executor_arn },
+    { name = "ALTO_UTILITY_PRIVATE_KEY", valueFrom = local.kernel_canary_utility_arn },
+  ]
+  # Upstream v1.2.8 linux/arm64 child manifest. The protected ECR mirror
+  # preserves the digest, so matching only the repository is insufficient.
+  kernel_canary_reviewed_alto_image = "${local.expected_account_id}.dkr.ecr.${local.region}.amazonaws.com/plether-kernel-alto-sepolia@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa"
+  kernel_canary_managed_alto_qualified = (
+    var.kernel_canary_managed_alto_qualified
+    && var.kernel_canary_managed_alto_qualified_image == var.kernel_canary_alto_image
+  )
 
   kernel_canary_awslogs = {
     logDriver = "awslogs"
@@ -114,11 +130,6 @@ locals {
       awslogs-stream-prefix = "ecs"
     }
   }
-}
-
-data "aws_lb" "kernel_canary_rpc_gateway" {
-  count = local.kernel_canary_count
-  name  = "plether-sepolia-rpc"
 }
 
 resource "terraform_data" "kernel_canary_guard" {
@@ -136,28 +147,16 @@ resource "terraform_data" "kernel_canary_guard" {
     }
     precondition {
       condition = (
-        can(regex("^${data.aws_caller_identity.current.account_id}\\.dkr\\.ecr\\.${local.region}\\.amazonaws\\.com/plether-kernel-alto-sepolia@sha256:[0-9a-f]{64}$", var.kernel_canary_alto_image))
+        var.kernel_canary_alto_image == local.kernel_canary_reviewed_alto_image
         && can(regex("^${data.aws_caller_identity.current.account_id}\\.dkr\\.ecr\\.${local.region}\\.amazonaws\\.com/plether-kernel-api-sepolia@sha256:[0-9a-f]{64}$", var.kernel_canary_api_image))
         && data.aws_ecr_image.kernel_canary_alto[0].image_digest == try(split("@", var.kernel_canary_alto_image)[1], "")
         && data.aws_ecr_image.kernel_canary_api[0].image_digest == try(split("@", var.kernel_canary_api_image)[1], "")
       )
-      error_message = "Canary Alto and API images must be reviewed account-local ECR sha256 digests, never tags or the live v0.8 Alto image."
-    }
-    precondition {
-      condition = (
-        var.kernel_canary_alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
-        && var.kernel_canary_alto_rpc_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
-      )
-      error_message = "Canary Alto must use the reviewed Nitro URL and bearer pair."
+      error_message = "Canary images must be account-local ECR digests for the reviewed official Alto ARM64 mirror and the candidate API."
     }
     precondition {
       condition = var.kernel_canary_alto_desired_count == 0 || (
         var.kernel_canary_simulators_attested
-        && can(regex("^sg-[0-9a-f]{8,17}$", var.live_rpc_alb_security_group_id))
-        && try(one(data.aws_lb.kernel_canary_rpc_gateway[0].security_groups), "") == var.live_rpc_alb_security_group_id
-        && try(data.aws_lb.kernel_canary_rpc_gateway[0].vpc_id, "") == data.aws_vpc.live[0].id
-        && try(data.aws_lb.kernel_canary_rpc_gateway[0].internal, false)
-        && try(data.aws_lb.kernel_canary_rpc_gateway[0].load_balancer_type, "") == "application"
         && can(regex("^0x[0-9A-Fa-f]{40}$", var.kernel_canary_entrypoint_simulation_contract_v9))
         && can(regex("^0x[0-9A-Fa-f]{40}$", var.kernel_canary_pimlico_simulation_contract))
         && lower(var.kernel_canary_entrypoint_simulation_contract_v9) != "0x0000000000000000000000000000000000000000"
@@ -180,25 +179,22 @@ resource "terraform_data" "kernel_canary_guard" {
     precondition {
       condition = !var.kernel_canary_route_enabled || (
         var.kernel_canary_api_desired_count == 1
-        && var.kernel_canary_nitro_safemode_qualified
+        && local.kernel_canary_managed_alto_qualified
         && trimspace(data.aws_lb_listener.live_api_https[0].certificate_arn) != ""
         && trimspace(var.api_hostname) != ""
         && can(regex("^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.kernel_canary_preview_origin))
         && !can(regex("(^|\\.)plether\\.com$", trimprefix(var.kernel_canary_preview_origin, "https://")))
       )
-      error_message = "The canary public path may open only for a running API and an exact HTTPS preview origin."
-    }
-    precondition {
-      condition     = !var.kernel_canary_ssm_tunnel_enabled || (var.kernel_canary_alto_desired_count == 1 && !var.kernel_canary_route_enabled)
-      error_message = "The temporary Nitro SSM tunnel may open only while canary Alto runs and the public Kernel route remains dark."
+      error_message = "The canary public path requires a running API, managed qualification of the exact Alto image and an exact HTTPS preview origin."
     }
     precondition {
       condition = !(var.kernel_canary_eth_enabled || var.kernel_canary_sponsorship_enabled) || (
         var.kernel_canary_api_desired_count == 1 && var.kernel_canary_alto_desired_count == 1
+        && local.kernel_canary_managed_alto_qualified
         && length(try(tolist(jsondecode(var.kernel_canary_owners_json)), [])) > 0
         && local.kernel_canary_owners_valid
       )
-      error_message = "Kernel payment choices require both canary API and Alto tasks running and an exact nonempty canary owner allowlist."
+      error_message = "Kernel payment choices require running canary API and Alto tasks, managed qualification of the exact Alto image and an exact nonempty canary owner allowlist."
     }
     precondition {
       condition = !var.kernel_canary_sponsorship_enabled || (
@@ -325,20 +321,6 @@ resource "aws_vpc_security_group_ingress_rule" "kernel_canary_alto_alb_from_api"
   to_port                      = 80
 }
 
-# The existing SSM-managed Nitro node has outbound access. This single inbound
-# rule permits a localhost SSM port-forward to the private canary Alto ALB for
-# signed SafeMode smoke checks before the public Kernel path is opened.
-resource "aws_vpc_security_group_ingress_rule" "kernel_canary_alto_alb_from_ssm_node" {
-  count = local.kernel_canary_count == 1 && var.kernel_canary_ssm_tunnel_enabled ? 1 : 0
-
-  security_group_id            = aws_security_group.kernel_canary_alto_alb[0].id
-  referenced_security_group_id = data.aws_security_group.live_rpc_node[0].id
-  ip_protocol                  = "tcp"
-  from_port                    = 80
-  to_port                      = 80
-  depends_on                   = [terraform_data.kernel_canary_guard]
-}
-
 resource "aws_vpc_security_group_egress_rule" "kernel_canary_alto_alb_to_task" {
   count = local.kernel_canary_count
 
@@ -367,20 +349,6 @@ resource "aws_vpc_security_group_egress_rule" "kernel_canary_https" {
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-}
-
-# The Nitro gateway ALB belongs to the separate Sepolia RPC state. This rule
-# grants the canary Alto task access to that reviewed, existing ALB only.
-resource "aws_vpc_security_group_ingress_rule" "kernel_canary_rpc_gateway_from_alto" {
-  count = local.kernel_canary_count == 1 && var.kernel_canary_alto_desired_count == 1 ? 1 : 0
-
-  security_group_id            = one(data.aws_lb.kernel_canary_rpc_gateway[0].security_groups)
-  referenced_security_group_id = aws_security_group.kernel_canary_task["alto"].id
-  ip_protocol                  = "tcp"
-  from_port                    = 443
-  to_port                      = 443
-
-  depends_on = [terraform_data.kernel_canary_guard]
 }
 
 resource "aws_vpc_security_group_ingress_rule" "kernel_canary_api_from_alb" {
@@ -503,19 +471,14 @@ resource "aws_ecs_task_definition" "kernel_canary_alto" {
 
   container_definitions = jsonencode([
     merge(local.live_alto_container, {
-      # The patched v0.9 image authenticates in its transport. The live v0.8
-      # task's preload module is absent from this image.
+      # Match the upstream start script on the read-only filesystem.
       entryPoint       = ["node", "/app/src/esm/cli/alto.js"]
+      command          = ["run"]
       image            = var.kernel_canary_alto_image
       dependsOn        = [{ containerName = "alto-tmp-init", condition = "SUCCESS" }]
       logConfiguration = local.kernel_canary_awslogs
-      secrets = [
-        { name = "ALTO_RPC_URL", valueFrom = local.kernel_canary_rpc_arn },
-        { name = "PLETHER_ALTO_RPC_AUTH_TOKEN", valueFrom = local.kernel_canary_rpc_token_arn },
-        { name = "ALTO_EXECUTOR_PRIVATE_KEYS", valueFrom = local.kernel_canary_executor_arn },
-        { name = "ALTO_UTILITY_PRIVATE_KEY", valueFrom = local.kernel_canary_utility_arn },
-      ]
-      environment = local.kernel_canary_alto_environment
+      secrets          = local.kernel_canary_alto_secrets
+      environment      = local.kernel_canary_alto_environment
     }),
     merge(local.live_alto_init_container, {
       image = var.kernel_canary_alto_image
@@ -559,11 +522,9 @@ resource "aws_ecs_service" "kernel_canary_alto" {
   depends_on = [
     aws_lb_listener.kernel_canary_alto,
     aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_api,
-    aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_ssm_node,
     aws_vpc_security_group_egress_rule.kernel_canary_alto_alb_to_task,
     aws_vpc_security_group_ingress_rule.kernel_canary_alto_from_alb,
     aws_vpc_security_group_egress_rule.kernel_canary_https,
-    aws_vpc_security_group_ingress_rule.kernel_canary_rpc_gateway_from_alto,
     terraform_data.kernel_canary_guard,
   ]
 }
