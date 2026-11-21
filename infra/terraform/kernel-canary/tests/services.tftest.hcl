@@ -55,7 +55,19 @@ mock_provider "aws" {
   }
   override_data {
     target = data.aws_ecs_task_definition.live_alto[0]
-    values = { family = "plether-sepolia-alto", revision = 12, cpu = "1024", memory = "2048", network_mode = "awsvpc", requires_compatibilities = ["FARGATE"], container_definitions = jsonencode([{ name = "alto-tmp-init" }, { name = "otel-log-router" }, { name = "plether-alto", environment = [] }]) }
+    values = {
+      family                   = "plether-sepolia-alto"
+      revision                 = 12
+      cpu                      = "1024"
+      memory                   = "2048"
+      network_mode             = "awsvpc"
+      requires_compatibilities = ["FARGATE"]
+      container_definitions = jsonencode([
+        { name = "alto-tmp-init" },
+        { name = "otel-log-router" },
+        { name = "plether-alto", entryPoint = ["node", "--import", "/app/plether-rpc-auth.mjs", "/app/src/esm/cli/alto.js"], environment = [] },
+      ])
+    }
   }
   override_data {
     target = data.aws_ecs_task_definition.live_reconciler[0]
@@ -151,6 +163,13 @@ run "qualified_alto_stays_private" {
       && aws_vpc_security_group_ingress_rule.kernel_canary_alto_alb_from_ssm_node[0].referenced_security_group_id == "sg-1234567890abcdef0"
     )
     error_message = "Alto may reach the reviewed private Nitro ALB and accept only the SSM-node tunnel while the public route is dark."
+  }
+  assert {
+    condition = one([
+      for container in jsondecode(aws_ecs_task_definition.kernel_canary_alto[0].container_definitions) :
+      container.entryPoint if container.name == "plether-alto"
+    ]) == ["node", "/app/src/esm/cli/alto.js"]
+    error_message = "The canary image must start directly without the live Alto auth preload."
   }
 }
 

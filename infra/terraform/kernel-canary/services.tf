@@ -518,6 +518,9 @@ resource "aws_ecs_task_definition" "kernel_canary_alto" {
 
   container_definitions = jsonencode([
     merge(local.live_alto_container, {
+      # The patched v0.9 image authenticates in its transport. The live v0.8
+      # task's preload module is absent from this image.
+      entryPoint       = ["node", "/app/src/esm/cli/alto.js"]
       image            = var.kernel_canary_alto_image
       dependsOn        = [{ containerName = "alto-tmp-init", condition = "SUCCESS" }]
       logConfiguration = local.kernel_canary_awslogs
