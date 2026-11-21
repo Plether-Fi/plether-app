@@ -205,7 +205,7 @@ jobs:
             }
           [ "$(aws sts get-caller-identity --query Account --output text --no-cli-pager)" = '${{ vars.AWS_ACCOUNT_ID }}' ]
           [ "$AWS_REGION" = ap-southeast-1 ]
-          tag="kernel-v09-safemode-${CANDIDATE_SHA:0:12}"
+          tag="kernel-v09-safemode-${CANDIDATE_SHA:0:12}-run${GITHUB_RUN_ID}"
           image="$ECR_REGISTRY/$ECR_REPOSITORY:$tag"
           image_id=$(docker image inspect --format '{{.Id}}' plether-kernel-alto-candidate:local)
           if existing_digest=$(aws ecr describe-images \
@@ -226,13 +226,52 @@ jobs:
             echo '::error::Could not verify the canary image tag in ECR.'
             exit 1
           fi
-          digest=$(aws ecr describe-images \
+          tag_digest=$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$tag" \
             --query 'imageDetails[0].imageDigest' \
             --output text --no-cli-pager)
+          [[ "$tag_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          aws ecr batch-get-image \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$tag" \
+            --output json --no-cli-pager > "$RUNNER_TEMP/alto-tag-manifest.json"
+          digest=$(jq --exit-status --raw-output --arg expected "$tag_digest" '
+            if ((.failures | length) != 0 or (.images | length) != 1) then
+              error("ECR did not return exactly one tagged image")
+            else .images[0] end
+            | if .imageId.imageDigest != $expected then
+                error("The immutable tag digest changed")
+              else .imageManifest | fromjson end
+            | if .schemaVersion != 2 then error("Unsupported image schema")
+              elif .mediaType == "application/vnd.oci.image.index.v1+json" then
+                [ .manifests[] | select(
+                    .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+                    .platform.os == "linux" and .platform.architecture == "arm64"
+                  ) ] as $runtime
+                | if ($runtime | length) == 1 then $runtime[0].digest
+                  else error("Expected exactly one Linux ARM64 image") end
+              elif (.mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                    .mediaType == "application/vnd.docker.distribution.manifest.v2+json") then
+                $expected
+              else error("The tag does not resolve to a scannable image") end
+          ' "$RUNNER_TEMP/alto-tag-manifest.json")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          printf 'image=%s@%s\n' "$ECR_REGISTRY/$ECR_REPOSITORY" "$digest" >> "$GITHUB_ENV"
+          manifest_media=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageDigest="$digest" \
+            --query 'imageDetails[0].imageManifestMediaType' \
+            --output text --no-cli-pager)
+          [[ "$manifest_media" == application/vnd.oci.image.manifest.v1+json ||
+             "$manifest_media" == application/vnd.docker.distribution.manifest.v2+json ]]
+          runtime_image="$ECR_REGISTRY/$ECR_REPOSITORY@$digest"
+          docker pull --platform linux/arm64 "$runtime_image"
+          [ "$(docker image inspect --format '{{.Id}}' "$runtime_image")" = "$image_id" ] || {
+            echo '::error::The scannable ARM64 manifest does not match the reviewed build.'
+            exit 1
+          }
+          printf 'image=%s\n' "$runtime_image" >> "$GITHUB_ENV"
+          printf 'tag_digest=%s\n' "$tag_digest" >> "$GITHUB_ENV"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_ENV"
 
       - name: Require a complete scan without critical findings
@@ -244,6 +283,7 @@ jobs:
               --image-id imageDigest="$digest" --no-cli-pager \
               >/dev/null 2> "$scan_error"; then
             grep -Eq 'LimitExceededException|ScanAlreadyExistsException' "$scan_error" || {
+              cat "$scan_error" >&2
               echo '::error::Could not start the canary image scan.'
               exit 1
             }
@@ -266,4 +306,5 @@ jobs:
               exit 1
             }
           printf 'Built and scanned isolated Kernel v0.9 Alto image `%s` from reviewed commit `%s`.\n' "$image" '${{ inputs.candidate_sha }}' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Immutable tag digest `%s`; scanned deployable ARM64 digest `%s`.\n' "$tag_digest" "$digest" >> "$GITHUB_STEP_SUMMARY"
           printf 'This workflow does not deploy or change the existing v0.8 Alto service.\n' >> "$GITHUB_STEP_SUMMARY"
