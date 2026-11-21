@@ -214,11 +214,6 @@ jobs:
               --query 'imageDetails[0].imageDigest' \
               --output text --no-cli-pager 2> "$RUNNER_TEMP/alto-image-lookup.error"); then
             [[ "$existing_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            docker pull --platform linux/arm64 "$image"
-            [ "$(docker image inspect --format '{{.Id}}' "$image")" = "$image_id" ] || {
-              echo '::error::The immutable canary tag already has different image content.'
-              exit 1
-            }
           elif grep -Fq ImageNotFoundException "$RUNNER_TEMP/alto-image-lookup.error"; then
             docker tag plether-kernel-alto-candidate:local "$image"
             docker push "$image"
@@ -232,6 +227,12 @@ jobs:
             --query 'imageDetails[0].imageDigest' \
             --output text --no-cli-pager)
           [[ "$tag_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          if [ -n "${existing_digest:-}" ]; then
+            [ "$tag_digest" = "$existing_digest" ] || {
+              echo '::error::The immutable canary tag changed during verification.'
+              exit 1
+            }
+          fi
           aws ecr batch-get-image \
             --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$tag" \
@@ -266,8 +267,13 @@ jobs:
              "$manifest_media" == application/vnd.docker.distribution.manifest.v2+json ]]
           runtime_image="$ECR_REGISTRY/$ECR_REPOSITORY@$digest"
           docker pull --platform linux/arm64 "$runtime_image"
-          [ "$(docker image inspect --format '{{.Id}}' "$runtime_image")" = "$image_id" ] || {
-            echo '::error::The scannable ARM64 manifest does not match the reviewed build.'
+          runtime_id=$(docker image inspect --format '{{.Id}}' "$runtime_image")
+          [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$runtime_image")" = linux/arm64 ] || {
+            echo '::error::The scannable runtime manifest is not Linux ARM64.'
+            exit 1
+          }
+          [ "$image_id" = "$tag_digest" ] || [ "$image_id" = "$runtime_id" ] || {
+            echo '::error::The tagged index or runtime manifest differs from the reviewed build.'
             exit 1
           }
           printf 'image=%s\n' "$runtime_image" >> "$GITHUB_ENV"
