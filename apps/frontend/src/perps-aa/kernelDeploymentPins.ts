@@ -20,5 +20,8 @@ export const kernelSepoliaCanaryProfile = Object.freeze({
   accountIndex: 0,
 } as const satisfies KernelDeploymentProfile)
 
-// The direct-factory deployment needs an independently attested paymaster.
-export const kernelSepoliaCanaryPaymaster: Readonly<{ address: Address; codeHash: Hex }> | undefined = undefined
+// Direct-factory paymaster confirmed by both RPCs at safe block 331475162.
+export const kernelSepoliaCanaryPaymaster: Readonly<{ address: Address; codeHash: Hex }> | undefined = Object.freeze({
+  address: '0x9ff288e30489c4e29b13d6ba960612b5d6db8d50',
+  codeHash: '0x0ff0bb843a663a4a22dbcc64b2efda8654eca777298d867a812db9073cd8c115',
+})

@@ -98,31 +98,36 @@ describe('Kernel manifest and quotes', () => {
     expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, deployment: 'different-canary' } })).toThrow('invalid response')
   })
 
-  it('keeps ETH available while the gateway advertises a paused, unpinned paymaster', () => {
-    const paused = parseKernelManifest({ ...manifestWire, paymaster })
-    expect(paused).toMatchObject({ paymaster: null, readiness: { eth: true, sponsored: false } })
-    expect(parseKernelPreparation(ethPreparation, paused, intent, now).mode).toBe('eth')
-    expect(() => parseKernelPreparation(sponsoredPreparation, paused, { ...intent, mode: 'sponsored' }, now)).toThrow('invalid response')
-    expect(() => parseKernelManifest({ ...manifestWire, paymaster: '0x1234' })).toThrow('invalid response')
-  })
-
-  it('rejects sponsored readiness while the direct-factory paymaster remains unattested', () => {
-    expect(kernelDeploymentPins.kernelSepoliaCanaryPaymaster).toBeUndefined()
-    const readiness = { eth: true, sponsored: true }
-    expect(() => parseKernelManifest({ ...manifestWire, paymaster, readiness })).toThrow('invalid response')
-    expect(() => parseKernelManifest({ ...manifestWire, readiness })).toThrow('invalid response')
-  })
-
-  it('requires the exact pinned paymaster even when sponsorship is paused', () => {
-    const pin = vi.spyOn(kernelDeploymentPins, 'kernelSepoliaCanaryPaymaster', 'get')
-      .mockReturnValue({ address: paymaster, codeHash: hash(1) })
+  it('keeps ETH available and sponsorship blocked while the gateway paymaster is unpinned', () => {
+    const pin = vi.spyOn(kernelDeploymentPins, 'kernelSepoliaCanaryPaymaster', 'get').mockReturnValue(undefined)
     try {
+      const paused = parseKernelManifest({ ...manifestWire, paymaster })
+      expect(paused).toMatchObject({ paymaster: null, readiness: { eth: true, sponsored: false } })
+      expect(parseKernelPreparation(ethPreparation, paused, intent, now).mode).toBe('eth')
+      expect(() => parseKernelPreparation(sponsoredPreparation, paused, { ...intent, mode: 'sponsored' }, now)).toThrow('invalid response')
+      expect(() => parseKernelManifest({ ...manifestWire, paymaster: '0x1234' })).toThrow('invalid response')
       const readiness = { eth: true, sponsored: true }
-      expect(parseKernelManifest({ ...manifestWire, paymaster, readiness })).toMatchObject({ paymaster, readiness })
-      expect(() => parseKernelManifest({ ...manifestWire, paymaster: address(9) })).toThrow('invalid response')
+      expect(() => parseKernelManifest({ ...manifestWire, paymaster, readiness })).toThrow('invalid response')
+      expect(() => parseKernelManifest({ ...manifestWire, readiness })).toThrow('invalid response')
     } finally {
       pin.mockRestore()
     }
+  })
+
+  it('requires the attested direct paymaster even when sponsorship is paused', () => {
+    const attestedPaymaster = '0x9ff288e30489c4e29b13d6ba960612b5d6db8d50'
+    expect(kernelDeploymentPins.kernelSepoliaCanaryPaymaster).toEqual({
+      address: attestedPaymaster,
+      codeHash: '0x0ff0bb843a663a4a22dbcc64b2efda8654eca777298d867a812db9073cd8c115',
+    })
+    const advertisedPaymaster = getAddress(attestedPaymaster)
+    const paused = parseKernelManifest({ ...manifestWire, paymaster: advertisedPaymaster })
+    expect(paused).toMatchObject({ paymaster: attestedPaymaster, readiness: { eth: true, sponsored: false } })
+    const readiness = { eth: true, sponsored: true }
+    expect(parseKernelManifest({ ...manifestWire, paymaster: advertisedPaymaster, readiness }))
+      .toMatchObject({ paymaster: attestedPaymaster, readiness })
+    expect(() => parseKernelManifest({ ...manifestWire, paymaster })).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, readiness })).toThrow('invalid response')
   })
 
   it('verifies both payer envelopes and computes distinct version 0.9 hashes', () => {
