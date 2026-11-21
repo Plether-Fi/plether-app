@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { reconcileExternalNonces, verifyRecordedExternalNonces } from './external-nonce-reconciliation.mjs'
 
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const {
@@ -63,11 +64,12 @@ const rootSlot = '0xded5d420c407eac3c615e6abe13ab4a0bd7173e5045ea543765b46f0df6e
 let phase = 'configuration'
 
 function usage() {
-  console.log(`Usage: node scripts/kernel-qualification/deploy-sepolia.mjs --config /path/to/public-config.json [--manifest /path/to/public-manifest.json] [--check-artifacts | --attest | --broadcast --confirm DEPLOYMENT]
+  console.log(`Usage: node scripts/kernel-qualification/deploy-sepolia.mjs --config /path/to/public-config.json [--manifest /path/to/public-manifest.json] [--check-artifacts | --attest | --reconcile-external-nonces --external-tx HASH ... --confirm DEPLOYMENT | --broadcast --confirm DEPLOYMENT]
 
 Default: verify pinned artifacts and independent safe-block chain state, then print a read-only plan.
 --check-artifacts: verify pinned source/build inputs without any RPC call.
 --attest: verify an existing manifest on two RPCs, with no transactions.
+--reconcile-external-nonces: verify explicit, contiguous unrelated Perps order hashes on two RPCs; requires confirmation but never signs or broadcasts.
 --broadcast: deploy missing contracts, approve/stake, and attest; requires explicit deployment confirmation and KERNEL_CANARY_DEPLOYER_PRIVATE_KEY.
 The config and manifest contain public values only. See deploy-sepolia.md.`)
 }
@@ -304,6 +306,19 @@ async function commonSafeBlock(clients, atLeast = 0n, timeoutMs = 15_000) {
   throw new Error('Timed out waiting for both RPCs to reach the required safe block')
 }
 
+async function cleanLiveDeployerNonce(clients, deployer) {
+  const [latestA, pendingA, latestB, pendingB] = await Promise.all(
+    [clients.primary, clients.secondary].flatMap(client => [
+      client.getTransactionCount({ address: deployer, blockTag: 'latest' }),
+      client.getTransactionCount({ address: deployer, blockTag: 'pending' }),
+    ]),
+  )
+  assert.equal(latestA, latestB, 'Independent RPCs disagree on the deployer latest nonce')
+  assert.equal(pendingA, pendingB, 'Independent RPCs disagree on the deployer pending nonce')
+  assert.equal(pendingA, latestA, 'Deployer has pending transactions; wait before broadcasting')
+  return latestA
+}
+
 async function codeHashAt(clients, address, blockNumber) {
   const [a, b] = await Promise.all([
     clients.primary.getCode({ address, blockNumber }), clients.secondary.getCode({ address, blockNumber }),
@@ -528,6 +543,7 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
 
 async function broadcast(clients, c, manifest, artifacts, manifestPath, confirmation) {
   assert.equal(confirmation, c.deployment, 'Pass --confirm with the exact deployment id')
+  assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash before resuming')
   const secret = process.env.KERNEL_CANARY_DEPLOYER_PRIVATE_KEY
   assert.match(secret ?? '', /^0x[0-9a-fA-F]{64}$/u, 'Inject KERNEL_CANARY_DEPLOYER_PRIVATE_KEY from the approved Plether signer process')
   const signer = privateKeyToAccount(secret)
@@ -569,13 +585,10 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   if (paymasterInfoBefore && paymasterStakeStillNeeded > 0n) assert.equal(paymasterInfoBefore.stake, 0n, 'Review partial paymaster stake before resuming')
   const depositStillNeeded = paymasterInfoBefore?.deposit >= c.paymasterDepositWei ? 0n :
     c.paymasterDepositWei - (paymasterInfoBefore?.deposit ?? 0n)
-  const [latestNonce, pendingNonce, balance] = await Promise.all([
-    clients.primary.getTransactionCount({ address: c.deployer, blockTag: 'latest' }),
-    clients.primary.getTransactionCount({ address: c.deployer, blockTag: 'pending' }),
+  const [latestNonce, balance] = await Promise.all([
+    cleanLiveDeployerNonce(clients, c.deployer),
     clients.primary.getBalance({ address: c.deployer }),
   ])
-  assert.equal(pendingNonce, latestNonce, 'Deployer has pending transactions; wait before broadcasting')
-  assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash manually before resuming')
   if (manifest.expectedNonce === undefined) {
     assert.equal(manifest.transactions.length, 0, 'Recorded transactions lack a nonce checkpoint; reconcile manually')
     manifest.expectedNonce = String(latestNonce)
@@ -591,6 +604,9 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
     return block > max ? block : max
   }, 0n)
   async function confirmed(send, name) {
+    const freshLatest = await cleanLiveDeployerNonce(clients, c.deployer)
+    assert.equal(freshLatest, nextNonce, 'Deployer nonce advanced outside the canary before the next send')
+    assert.equal(manifest.expectedNonce, String(nextNonce), 'Manifest nonce checkpoint changed before the next send')
     manifest.inFlight = { name, nonce: String(nextNonce) }
     saveManifest(manifestPath, manifest)
     const hash = await send(nextNonce)
@@ -725,17 +741,19 @@ async function main() {
   const { values: args } = parseArgs({ options: {
     config: { type: 'string' }, manifest: { type: 'string' }, attest: { type: 'boolean' },
     broadcast: { type: 'boolean' }, confirm: { type: 'string' }, help: { type: 'boolean' },
-    'check-artifacts': { type: 'boolean' },
+    'check-artifacts': { type: 'boolean' }, 'reconcile-external-nonces': { type: 'boolean' },
+    'external-tx': { type: 'string', multiple: true },
   } })
   if (args.help) return usage()
   assert.ok(args.config, 'Pass --config; see deploy-sepolia.md')
-  assert.ok(!(args.attest && args.broadcast), 'Choose either --attest or --broadcast')
+  assert.ok([args.attest, args.broadcast, args['check-artifacts'], args['reconcile-external-nonces']]
+    .filter(Boolean).length <= 1, 'Choose only one action')
+  assert.ok(!args['external-tx'] || args['reconcile-external-nonces'], '--external-tx requires --reconcile-external-nonces')
   const c = loadConfig(args.config)
   const manifestPath = resolve(args.manifest ?? `kernel-${c.deployment}-manifest.json`)
   phase = 'pinned artifacts'
   const artifacts = loadPinnedArtifacts(c)
   if (args['check-artifacts']) {
-    assert.ok(!args.broadcast && !args.attest, '--check-artifacts cannot be combined with chain actions')
     console.log(JSON.stringify({ mode: 'read-only-artifact-check', kernelCommit: pins.kernel.commit,
       validatorCommit: pins.validator.commit, corePaymasterCommit, corePaymasterSourceHash, stakerCreationCodeHash,
       stakerReleaseInitCodeHash, stakerRuntimeCodeHash, paymasterCreationCodeHash,
@@ -759,14 +777,35 @@ async function main() {
   const [primaryBalance, secondaryBalance] = await Promise.all([clients.primary, clients.secondary].map(client =>
     client.getBalance({ address: c.deployer, blockNumber: safe.number })))
   assert.equal(primaryBalance, secondaryBalance, 'Deployer balance differs between RPCs at the common safe block')
-  if (args.broadcast) {
+  if (args['reconcile-external-nonces']) {
+    phase = 'external nonce reconciliation'
+    assert.equal(args.confirm, c.deployment, 'Pass --confirm with the exact deployment id')
+    const reconciled = await reconcileExternalNonces({
+      clients, manifest, hashes: args['external-tx'],
+      awaitSafeBlock: (rpcClients, block) => commonSafeBlock(rpcClients, block, 900_000),
+    })
+    saveManifest(manifestPath, reconciled)
+    console.log(JSON.stringify({ mode: 'external-nonces-reconciled', manifest: manifestPath,
+      firstNonce: reconciled.externalNonceReconciliations.at(-1).firstNonce,
+      nextNonce: reconciled.expectedNonce,
+      observedDeployerNonce: reconciled.externalNonceReconciliations.at(-1).observedDeployerNonce,
+      observedPendingNonce: reconciled.externalNonceReconciliations.at(-1).observedPendingNonce,
+      transactionHashes: reconciled.externalNonceReconciliations.at(-1).transactionHashes,
+    }, null, 2))
+  } else if (args.broadcast) {
     phase = 'broadcast sequence'
+    assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash before resuming')
     // No wallet client or private key is read until pinned source, two RPCs and chain state pass.
+    await verifyRecordedExternalNonces({ clients, manifest,
+      awaitSafeBlock: (rpcClients, block) => commonSafeBlock(rpcClients, block, 900_000) })
     const complete = await broadcast(clients, c, manifest, artifacts, manifestPath, args.confirm)
     saveManifest(manifestPath, complete)
     console.log(JSON.stringify({ mode: 'broadcast-complete', manifest: manifestPath, profile: complete.profile, attestation: complete.attestation }, null, 2))
   } else if (args.attest) {
     phase = 'final independent attestation'
+    assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash before attesting')
+    await verifyRecordedExternalNonces({ clients, manifest,
+      awaitSafeBlock: (rpcClients, block) => commonSafeBlock(rpcClients, block, 900_000) })
     const complete = await attest(clients, c, manifest, artifacts)
     saveManifest(manifestPath, complete)
     console.log(JSON.stringify({ mode: 'attested', manifest: manifestPath, profile: complete.profile, attestation: complete.attestation }, null, 2))

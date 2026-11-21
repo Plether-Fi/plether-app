@@ -93,13 +93,27 @@ After the actual public utility/sponsor addresses, throwaway sample owner, image
   node scripts/kernel-qualification/deploy-sepolia.mjs \
     --config "$PUBLIC_CONFIG" \
     --manifest "$PUBLIC_MANIFEST" \
-    --broadcast --confirm kernel-sepolia-canary-20261120
+    --broadcast --confirm "$DEPLOYMENT_ID"
 )
 ```
 
 Do not pass the key on the command line, print it, or put it in the JSON config or manifest. The subshell discards the sourced environment when it exits. This is a future broadcast procedure; the current qualification remains read-only.
 
-The script verifies the supplied key resolves to `deployer`, verifies chain ID `421614`, canonical EntryPoint/SenderCreator/CREATE2 code, pinned source and artifacts, both independent safe-block responses, the EOA owners, live deployer funding and pending nonce **before constructing a wallet client**. It then deploys missing pinned Kernel contracts, validator, simulators, Plether-owned Staker, sample proxy, and paused Staker-aware Core paymaster. It approves the factory from the Staker, stakes the Staker and paymaster 1 ETH with a one-day unstake delay, and deposits the configured amount to the paymaster. It never calls `unpause`. A public-values-only 0600 manifest records each nonce intent before a send, then its hash and confirmed receipt. On restart, a confirmed Staker/paymaster creation is recovered from its transaction receipt. An unresolved intent or unexpected deployer nonce stops for manual chain reconciliation rather than sending a second CREATE. The funding gate charges only remaining stake/deposit obligations plus the gas reserve on a clean resume.
+The script verifies the supplied key resolves to `deployer`, verifies chain ID `421614`, canonical EntryPoint/SenderCreator/CREATE2 code, pinned source and artifacts, both independent safe-block responses, the EOA owners, live deployer funding and pending nonce **before constructing a wallet client**. It then deploys missing pinned Kernel contracts, validator, simulators, Plether-owned Staker, sample proxy, and paused Staker-aware Core paymaster. It approves the factory from the Staker, stakes the Staker and paymaster 1 ETH with a one-day unstake delay, and deposits the configured amount to the paymaster. It never calls `unpause`. A public-values-only 0600 manifest records each nonce intent before a send, then its hash and confirmed receipt. On restart, a confirmed Staker/paymaster creation is recovered from its transaction receipt. Before each send, the script checks the deployer's latest and pending nonce again. An unresolved intent or unexpected deployer nonce stops before another send. The funding gate charges only remaining stake/deposit obligations plus the gas reserve on a clean resume.
+
+### Reconcile an external deployer nonce
+
+The existing Sepolia deployer also runs Perps orders. If that process consumes a nonce while this script is running, stop the deployment and retain the manifest. For an `inFlight` intent without a transaction hash, identify the transaction that consumed that exact nonce and verify it independently. The reconciliation command only accepts successful zero-value `executeOrder(uint64,bytes[])` calls to the reviewed Sepolia OrderRouter. Pass **explicit transaction hashes in nonce order**, beginning at `expectedNonce`:
+
+```bash
+node scripts/kernel-qualification/deploy-sepolia.mjs \
+  --config "$PUBLIC_CONFIG" --manifest "$PUBLIC_MANIFEST" \
+  --reconcile-external-nonces \
+  --external-tx 0xFIRST_HASH --external-tx 0xNEXT_HASH \
+  --confirm "$DEPLOYMENT_ID"
+```
+
+This command never reads a private key or broadcasts. It requires two independent RPCs to agree on each transaction, successful receipt, sender, target, selector, value, nonce, and canonical block hash. The disputed `inFlight` nonce must also be included in both RPCs' common safe block before the command clears the intent. Later explicitly supplied order hashes can be reconciled at the confirmed tip, since the live order executor may keep moving ahead of the safe head. The command advances the checkpoint only through supplied hashes, records the public evidence, and may be repeated for a later gap. Both RPCs must agree on the latest nonce and agree on the pending nonce; pending orders may be ahead during reconciliation. Before resuming, `--broadcast` rechecks every recorded hash and requires the checkpoint to equal the current latest and pending nonce. If the order executor is still using the deployer, this may require a quiet deployment window or a dedicated deployer; no nonce is skipped automatically. Do not edit the manifest by hand or retry `--broadcast` while `inFlight` remains unresolved.
 
 Run `--attest` after both RPCs' safe heads include the deployment receipts. It checks source pins, exact code, factory implementation, Staker owner/approval/stake, the sample account's root/owner/implementation, all paymaster immutables and storage, both simulation runtimes, paused state, deposit/stake, and paymaster deployment block hash. The manifest contains an exact `profile` object for `kernel_canary_profile_json`, simulator addresses for `kernel_canary_entrypoint_simulation_contract_v9` and `kernel_canary_pimlico_simulation_contract`, and paymaster fields for the separate `kernel_canary_sponsorship_json`. Only use those values after independent attestation. Never use the live v0.8 account/paymaster bindings for the canary.
 
