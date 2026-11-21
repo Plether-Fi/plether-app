@@ -89,3 +89,35 @@ test('rejects inconsistent provider nonce state after verifying the hashes', asy
   await assert.rejects(reconcileExternalNonces({ clients, manifest: baseManifest(), hashes: [hash(10)],
     awaitSafeBlock: async () => ({ number: 110n, hash: blockHash(10) }) }), /latest nonce differs/u)
 })
+
+test('rechecks all recorded nonces in bounded parallel batches, including the tail', async () => {
+  const nonces = Array.from({ length: 11 }, (_, index) => 10 + index)
+  const { clients, transactions } = fixture({ nonces, tip: 21 })
+  const manifest = {
+    binding: { deployer },
+    externalTransactions: nonces.map(nonce => ({
+      hash: hash(nonce), nonce: String(nonce), blockNumber: String(100 + nonce),
+      blockHash: blockHash(nonce), to: externalOrderRouter, selector: externalOrderSelector,
+      valueWei: '0', classification: 'plether-sepolia-perps-executeOrder',
+      finalityAtReconciliation: 'latest',
+    })),
+  }
+  let active = 0
+  let peak = 0
+  for (const client of [clients.primary, clients.secondary]) {
+    const original = client.getTransaction.bind(client)
+    client.getTransaction = async args => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise(resolve => setTimeout(resolve, 1))
+      try { return await original(args) } finally { active -= 1 }
+    }
+  }
+  await verifyRecordedExternalNonces({ clients, manifest,
+    awaitSafeBlock: () => { throw Error('No safe-marked records') } })
+  assert.ok(peak > 2 && peak <= 8, 'At most four records may be checked concurrently on two RPCs')
+
+  transactions.get(hash(20)).to = '0x3316aaef074fe82f492a898ac91f740b8e2f0078'
+  await assert.rejects(verifyRecordedExternalNonces({ clients, manifest,
+    awaitSafeBlock: () => { throw Error('No safe-marked records') } }), /reviewed Perps OrderRouter/u)
+})

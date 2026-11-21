@@ -115,10 +115,15 @@ export async function verifyRecordedExternalNonces({ clients, manifest, awaitSaf
     return block > max ? block : max
   }, 0n)
   const safeBlock = disputed.length ? await awaitSafeBlock(clients, lastSafeBlock) : undefined
-  for (const record of records) {
-    const actual = await verifiedExternalTransaction(clients, record.hash,
-      canonicalNonce(record.nonce, 'Recorded external nonce'), manifest.binding.deployer,
-      record.finalityAtReconciliation === 'safe' ? safeBlock : undefined)
-    assert.deepEqual(actual, record, 'Recorded external transaction changed')
+  // An active order executor can advance the shared deployer nonce while this
+  // pre-broadcast check runs. Recheck every record on both providers, but bound
+  // concurrency so the public RPC is not flooded with historical lookups.
+  for (let offset = 0; offset < records.length; offset += 4) {
+    await Promise.all(records.slice(offset, offset + 4).map(async record => {
+      const actual = await verifiedExternalTransaction(clients, record.hash,
+        canonicalNonce(record.nonce, 'Recorded external nonce'), manifest.binding.deployer,
+        record.finalityAtReconciliation === 'safe' ? safeBlock : undefined)
+      assert.deepEqual(actual, record, 'Recorded external transaction changed')
+    }))
   }
 }
