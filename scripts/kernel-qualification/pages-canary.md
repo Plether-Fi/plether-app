@@ -53,9 +53,15 @@ only the Kernel RPC path receives the new canary token.
    `AA_PROXY_ORIGIN_TOKEN`, and `FAUCET_PROXY_ORIGIN_TOKEN`
    exist. Confirm `PRIVY_APP_ID` is available to the workflow for the
    intended Privy app. `PRIVY_TRADING_CLIENT_ID` is optional and is
-   passed through if configured. Add
-   `https://plether-kernel-canary.pages.dev` to that app's allowed
-   origins before connecting its embedded wallet in either phase.
+   passed through if configured. Inspect that app's current allowed
+   origins and mode before changing them. If a development app has an
+   empty list, leave it unchanged and test embedded login on the staged
+   preview first; adding the first entry could restrict existing app
+   origins. If an origin list is already enforced, add
+   `https://plether-kernel-canary.pages.dev` while preserving every
+   existing entry. A separate preview Privy app can use its own exact
+   origin and `PRIVY_APP_ID`. Do not replace the shared app's origin
+   policy solely to enable this preview.
    Confirm the required Vite RPC URL variables are available to the
    workflow, whether inherited from the organization or set on the
    repository.

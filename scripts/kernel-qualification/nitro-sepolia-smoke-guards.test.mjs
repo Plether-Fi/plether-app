@@ -5,7 +5,7 @@ import { assertExactGasDebit, assertRecoveredEthSmokeOperation, validateSmokeRpc
 const localUrls = {
   alto: 'http://127.0.0.1:18080/',
   nitro: 'http://127.0.0.1:18081/',
-  secondary: 'https://arb-sepolia.g.alchemy.com/v2/test-credential',
+  secondary: 'https://independent-rpc.example.invalid/v2/test',
 }
 
 test('smoke RPCs accept localhost tunnels and an independent HTTPS chain provider', () => {
@@ -24,7 +24,7 @@ test('smoke RPCs reject credential-bearing URLs and unreviewed public endpoints'
     { nitro: 'https://sepolia-rollup.arbitrum.io/rpc' },
     { alto: 'http://user:pass@127.0.0.1:18080/' },
     { nitro: 'http://127.0.0.1:18081/?token=secret' },
-    { secondary: 'http://arb-sepolia.g.alchemy.com/v2/key' },
+    { secondary: 'http://independent-rpc.example.invalid/v2/key' },
   ]) assert.throws(() => validateSmokeRpcUrls({ ...localUrls, ...changed }))
 })
 

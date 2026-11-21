@@ -268,11 +268,13 @@ run "preserve_singapore_identity" {
 run "accept_explicit_kernel_alto_profile" {
   command = plan
   variables {
-    alto_entrypoint_version                = "0.9"
-    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
-    alto_entrypoint_simulation_contract_v8 = ""
-    alto_entrypoint_simulation_contract_v9 = "0x1111111111111111111111111111111111111111"
-    alto_desired_count                     = 1
+    aa_rpc_mode                                        = "dual-independent"
+    aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/secondary-rpc-url"
+    alto_entrypoint_version                            = "0.9"
+    alto_entrypoint_address                            = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8             = ""
+    alto_entrypoint_simulation_contract_v9             = "0x1111111111111111111111111111111111111111"
+    alto_desired_count                                 = 1
   }
   assert {
     condition = local.alto_safe_mode && local.alto_entrypoint_simulation_environment == {
