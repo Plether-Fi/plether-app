@@ -3,7 +3,7 @@
 module Plether.AA.ReconcilerSpec (spec) where
 
 import Control.Exception (bracket)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
@@ -11,6 +11,8 @@ import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Plether.AA.Gateway (SecurityBlockHeader (..), validateSecurityHeaderTime)
+import Plether.AA.KernelReconciler (reconstructKernelReceipt)
 import Plether.AA.Reconciler
   ( BlockHeader (..)
   , AaReconcilerConfig (..)
@@ -19,13 +21,14 @@ import Plether.AA.Reconciler
   , boundariesRemainCanonical
   , targetReachesSafeBoundary
   , parseUserOperationEvent
+  , parseUserOperationEventAt
   , validateSafeHeadFreshness
   , validateTargetTimestamp
   , validateDeploymentAnchor
   , loadAaReconcilerConfig
   )
+import Plether.Database.KernelOperation (KernelInclusion (..))
 import Plether.Ethereum.Abi (encodeUint256, keccak256)
-import Plether.AA.Gateway (SecurityBlockHeader (..), validateSecurityHeaderTime)
 import Test.Hspec
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 
@@ -136,6 +139,36 @@ spec =
       validateDeploymentAnchor blockHash runtimeHash deployment mempty "wrong-runtime"
         `shouldSatisfy` isLeft
 
+    it "applies the account profile's EntryPoint and payer bindings" $ do
+      let kernelLog = setText "address" kernelEntryPoint validEvent
+      event <- expectRight $ parseUserOperationEventAt kernelEntryPoint paymaster 100 100 kernelLog
+      uoeHash event `shouldBe` operationHash
+      parseUserOperationEvent paymaster 100 100 kernelLog `shouldSatisfy` isLeft
+      parseUserOperationEventAt kernelEntryPoint otherPaymaster 100 100 kernelLog `shouldSatisfy` isLeft
+
+    it "reconstructs an included Kernel operation revert with its actual ETH cost" $ do
+      let unsponsored = kernelEvent zeroAddress False
+          receipt = kernelReceipt [executionBoundary, unsponsored]
+      (included, result) <- expectRight $
+        reconstructKernelReceipt kernelEntryPoint sender 7 zeroAddress operationHash transactionHash receipt
+      kiPaymaster included `shouldBe` Nothing
+      kiExecutionSuccess included `shouldBe` False
+      kiActualGasCost included `shouldBe` 1000
+      case result of
+        Object value -> KM.lookup "logs" value `shouldBe` Just (toJSON [unsponsored])
+        _ -> expectationFailure "expected a reconstructed receipt object"
+
+    it "binds a Kernel receipt to the signed operation and bundle execution boundary" $ do
+      let sponsored = kernelEvent paymaster True
+          prove = reconstructKernelReceipt kernelEntryPoint sender 7 paymaster operationHash transactionHash
+      case prove $ kernelReceipt [executionBoundary, sponsored] of
+        Right (included, _) -> kiPaymaster included `shouldBe` Just paymaster
+        Left reason -> expectationFailure $ T.unpack reason
+      prove (kernelReceipt [sponsored]) `shouldSatisfy` isLeft
+      prove (kernelReceipt [executionBoundary, kernelEvent zeroAddress True]) `shouldSatisfy` isLeft
+      prove (kernelReceipt [executionBoundary, setText "blockHash" otherBlockHash sponsored]) `shouldSatisfy` isLeft
+      prove (kernelReceipt [executionBoundary, sponsored, setText "logIndex" "0x3" sponsored]) `shouldSatisfy` isLeft
+
 validEvent :: Value
 validEvent =
   object
@@ -155,12 +188,33 @@ validEvent =
     ]
 
 setText :: Text -> Text -> Value -> Value
-setText key value (Object objectValue) = Object $ KM.insert (fromText key) (String value) objectValue
-setText _ _ value = value
+setText key value = setValue key (String value)
 
 setBool :: Text -> Bool -> Value -> Value
-setBool key value (Object objectValue) = Object $ KM.insert (fromText key) (Bool value) objectValue
-setBool _ _ value = value
+setBool key value = setValue key (Bool value)
+
+setValue :: Text -> Value -> Value -> Value
+setValue key value (Object objectValue) = Object $ KM.insert (fromText key) value objectValue
+setValue _ _ value = value
+
+kernelEvent :: Text -> Bool -> Value
+kernelEvent payer success =
+  setText "address" kernelEntryPoint $
+    setValue "topics" (toJSON [eventTopic, operationHash, addressTopic sender, addressTopic payer]) $
+      setText "data" (hex $ encodeUint256 7 <> encodeUint256 (if success then 1 else 0) <> encodeUint256 1000 <> encodeUint256 900) validEvent
+
+executionBoundary :: Value
+executionBoundary = setText "logIndex" "0x1" $ setText "data" "0x" $
+  setValue "topics" (toJSON [hex $ keccak256 "BeforeExecution()"]) $ setText "address" kernelEntryPoint validEvent
+
+kernelReceipt :: [Value] -> Value
+kernelReceipt logs = object
+  [ "transactionHash" .= transactionHash
+  , "blockNumber" .= ("0x64" :: Text)
+  , "blockHash" .= blockHash
+  , "status" .= ("0x1" :: Text)
+  , "logs" .= logs
+  ]
 
 fromText :: Text -> Key.Key
 fromText = Key.fromText
@@ -180,6 +234,10 @@ entryPoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
 paymaster = "0x1111111111111111111111111111111111111111"
 otherPaymaster = "0x2222222222222222222222222222222222222222"
 sender = "0x3333333333333333333333333333333333333333"
+
+kernelEntryPoint, zeroAddress :: Text
+kernelEntryPoint = "0x433709009b8330fda32311df1c2afa402ed8d009"
+zeroAddress = "0x" <> T.replicate 40 "0"
 
 operationHash, transactionHash, blockHash :: Text
 operationHash = "0x" <> T.replicate 64 "4"

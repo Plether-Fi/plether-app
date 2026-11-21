@@ -547,7 +547,7 @@ resource "aws_iam_role_policy" "api_execution_ssm" {
 }
 
 resource "aws_iam_role_policy" "api_execution_aa_reconciler_secondary_rpc_kms" {
-  count = local.native_aa_backend_configured && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? 1 : 0
+  count = (local.native_aa_backend_configured || local.kernel_aa_backend_configured) && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? 1 : 0
 
   name = "aa-reconciler-secondary-rpc-kms-decrypt"
   role = aws_iam_role.api_execution.id
@@ -601,7 +601,7 @@ resource "aws_iam_role_policy" "api_task_firelens_cloudwatch" {
 }
 
 resource "aws_iam_role_policy" "api_paymaster_kms_key_metadata" {
-  count = local.native_aa_sponsorship_enabled ? 1 : 0
+  count = local.native_aa_sponsorship_enabled || local.kernel_aa_sponsorship_enabled ? 1 : 0
 
   name = "aa-paymaster-kms-key-metadata"
   role = aws_iam_role.api_task.id
@@ -618,7 +618,7 @@ resource "aws_iam_role_policy" "api_paymaster_kms_key_metadata" {
 }
 
 resource "aws_iam_role_policy" "api_paymaster_kms_signer" {
-  count = local.native_aa_sponsorship_enabled ? 1 : 0
+  count = local.native_aa_sponsorship_enabled || local.kernel_aa_sponsorship_enabled ? 1 : 0
 
   name = "aa-paymaster-kms-signer"
   role = aws_iam_role.api_task.id

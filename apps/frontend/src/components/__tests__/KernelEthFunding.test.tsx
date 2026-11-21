@@ -1,0 +1,124 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { decodeFunctionData, parseAbi, parseEther, type Address, type Hex } from 'viem'
+import { arbitrumSepolia } from 'viem/chains'
+import { KernelEthFunding } from '../KernelEthFunding'
+import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
+import { parseKernelEthAmount } from '../../perps-aa/kernelEthFunding'
+import type { KernelPerpsAaDeploymentManifest } from '../../perps-aa/manifest'
+import type { KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
+
+const mocks = vi.hoisted(() => ({
+  verifyAccount: vi.fn(), getBalance: vi.fn(), readContract: vi.fn(), getAddresses: vi.fn(), getChainId: vi.fn(),
+  sendTransaction: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransaction: vi.fn(), getBlock: vi.fn(),
+  quoteAction: vi.fn(), execute: vi.fn(),
+}))
+
+vi.mock('wagmi', async importOriginal => ({
+  ...await importOriginal<typeof import('wagmi')>(),
+  usePublicClient: () => ({ ...mocks, chain: arbitrumSepolia }),
+  useWalletClient: () => ({ data: mocks }),
+}))
+vi.mock('../../hooks/usePerpsGasReview', () => ({ kernelQuoteIsFresh: () => true }))
+
+const owner = '0x1111111111111111111111111111111111111111' satisfies Address
+const sender = '0x2222222222222222222222222222222222222222' satisfies Address
+const entryPoint = '0x433709009b8330fda32311df1c2afa402ed8d009' satisfies Address
+const scope = { sender, ownerAddress: owner, chainId: arbitrumSepolia.id, deployment: 'kernel-test' }
+const hash = `0x${'12'.repeat(32)}` satisfies Hex
+const blockHash = `0x${'34'.repeat(32)}` satisfies Hex
+const verifiedAccount = { address: sender, ownerAddress: owner, deployed: false, blockNumber: 1n }
+const receipt = { transactionHash: hash, blockHash, blockNumber: 2n, status: 'success' }
+const transfer = { hash, blockHash, blockNumber: 2n, from: owner, to: sender, value: parseEther('0.01'), input: '0x' }
+const runtime = {
+  chainId: scope.chainId, ownerAddress: owner,
+  smartAccount: { accountAddress: sender, entryPoint },
+  gasPayment: { scope, readiness: { eth: true, sponsored: false } },
+  kernel: { scope: { ...scope, entryPoint }, verifyAccount: mocks.verifyAccount, quoteAction: mocks.quoteAction, execute: mocks.execute },
+} as unknown as KernelPerpsAaSmartAccountRuntime
+const manifest = { version: 'perps-aa-kernel-v1:kernel-test' } as KernelPerpsAaDeploymentManifest
+
+function renderPanel() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={queryClient}><KernelEthFunding runtime={runtime} manifest={manifest} /></QueryClientProvider>)
+}
+
+describe('Kernel ETH funding', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    localStorage.clear()
+    mocks.verifyAccount.mockResolvedValue(verifiedAccount)
+    mocks.getBalance.mockResolvedValue(parseEther('0.02'))
+    mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => Promise.resolve(
+      functionName === 'balanceOf' ? parseEther('0.03') : { settlementBalanceAssets: 140_000_000n },
+    ))
+    mocks.getAddresses.mockResolvedValue([owner])
+    mocks.getChainId.mockResolvedValue(arbitrumSepolia.id)
+    mocks.sendTransaction.mockResolvedValue(hash)
+    mocks.waitForTransactionReceipt.mockResolvedValue(receipt)
+    mocks.getTransaction.mockResolvedValue(transfer)
+    mocks.getBlock.mockResolvedValue({ hash: blockHash })
+    mocks.quoteAction.mockResolvedValue({ mode: 'eth', maxNetworkGasWei: parseEther('0.001') })
+    mocks.execute.mockResolvedValue({})
+  })
+
+  it('recognizes exact positive wei amounts and rejects rounding', () => {
+    expect(parseKernelEthAmount('.000000000000000001')).toBe(1n)
+    expect(parseKernelEthAmount('0.0000000000000000001')).toBeUndefined()
+    expect(parseKernelEthAmount('0')).toBeUndefined()
+  })
+
+  it('does not expose a funding address or ask the wallet to transfer when verification fails', async () => {
+    mocks.verifyAccount.mockResolvedValue({ ...verifiedAccount, ownerAddress: sender })
+    renderPanel()
+    expect(await screen.findByText('Trading Account ETH balances are temporarily unavailable.')).toBeVisible()
+    expect(screen.queryByText(sender)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add ETH' })).not.toBeInTheDocument()
+    expect(mocks.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('verifies a counterfactual recipient again, transfers ETH from the owner, and refreshes safe balances', async () => {
+    renderPanel()
+    expect(await screen.findByText(sender)).toBeVisible()
+    expect(screen.getByText('0.02 ETH')).toBeVisible()
+    expect(screen.getByText('0.03 ETH')).toBeVisible()
+    expect(screen.getByText('140 USDG')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Add ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to add' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' }))
+    expect(await screen.findByText(/ETH transfer confirmed/)).toBeVisible()
+    expect(mocks.verifyAccount).toHaveBeenCalledTimes(3)
+    expect(mocks.sendTransaction).toHaveBeenCalledWith({ account: owner, chain: arbitrumSepolia, to: sender, value: parseEther('0.01') })
+    expect(mocks.getBalance).toHaveBeenCalledTimes(2)
+  })
+
+  it('never confirms an included transaction with a mismatched payment', async () => {
+    mocks.getTransaction.mockResolvedValue({ ...transfer, to: owner })
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to add' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Check the ETH transfer in the explorer before retrying.')
+    expect(screen.queryByText(/ETH transfer confirmed/)).not.toBeInTheDocument()
+  })
+
+  it('reviews exact EntryPoint deposit recovery with ETH during a sponsorship outage', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw EntryPoint deposit' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to withdraw' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review withdrawal' }))
+    expect(await screen.findByText('Up to 0.001 ETH')).toBeVisible()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    const captured = mocks.quoteAction.mock.calls[0][0] as { account: Address; calls: { data: Hex; to: Address; value: bigint }[] }
+    expect(captured.account).toBe(sender)
+    expect(captured.calls[0]).toMatchObject({ to: entryPoint, value: 0n })
+    expect(decodeFunctionData({ abi: parseAbi(['function withdrawTo(address,uint256)']), data: captured.calls[0].data }))
+      .toEqual({ functionName: 'withdrawTo', args: [owner, parseEther('0.01')] })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to wallet' }))
+    expect(await screen.findByText('ETH withdrawal confirmed.')).toBeVisible()
+    await waitFor(() => expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({ action: captured, ownerAddress: owner })))
+    expect(mocks.sendTransaction).not.toHaveBeenCalled()
+  })
+})

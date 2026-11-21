@@ -35,7 +35,7 @@ test('public overlay stages policy without enabling sponsorship or preparation',
 })
 test('active Alto gate requires safe mode or the exact Sepolia exception', () => {
   assert.match(read('infra/terraform/alto.tf'), /name = "ALTO_SAFE_MODE", value = tostring\(local.alto_safe_mode\)/)
-  assert.match(read('infra/terraform/alto.tf'), /alto_safe_mode\s*= !\(var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614"\)/)
+  assert.match(read('infra/terraform/alto.tf'), /alto_safe_mode\s*= !\(var.alto_entrypoint_version == "0\.8" && var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614"\)/)
   assert.match(read('infra/terraform/variables.tf'), /variable "alto_sepolia_safe_mode_exception" \{[^}]*default\s*= false/s)
   assert.match(read('infra/terraform/alto.tf'), /name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false"/)
   const fixture = () => ({containerDefinitions:[{name:'plether-alto',environment:[

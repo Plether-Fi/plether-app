@@ -38,6 +38,10 @@ const SponsoredOperationRecovery = lazy(async () => {
   const module = await import('./SponsoredOperationRecovery')
   return { default: module.SponsoredOperationRecovery }
 })
+const KernelOperationRecovery = lazy(async () => {
+  const module = await import('./useKernelAttempts')
+  return { default: module.KernelOperationRecovery }
+})
 
 function configuredManifestUrl(): string | null {
   if (!PERPS_RELEASE_IS_DEPLOYED) return null
@@ -45,13 +49,20 @@ function configuredManifestUrl(): string | null {
   return resolvePerpsAaManifestUrl(value, isSepoliaDeployment())
 }
 
+function configuredKernelDeployment(): string | undefined {
+  const value: unknown = import.meta.env.VITE_PERPS_KERNEL_AA_DEPLOYMENT
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
 export function PerpsAaProvider({
   children,
   manifestUrl = configuredManifestUrl(),
+  kernelDeployment = configuredKernelDeployment(),
   runtime,
 }: {
   children: ReactNode
   manifestUrl?: string | null
+  kernelDeployment?: string
   runtime?: PerpsAaSmartAccountRuntime
 }) {
   const publicClient = usePublicClient()
@@ -73,6 +84,7 @@ export function PerpsAaProvider({
         publicClient.chain.id,
         walletClient.chain.id,
         walletClient.account.address.toLowerCase(),
+        kernelDeployment ?? 'simple',
       ].join(':')
     : 'wallet-unavailable'
 
@@ -88,7 +100,10 @@ export function PerpsAaProvider({
         throw new Error('The connected wallet client is unavailable')
       }
 
-      const key = [
+      const key = manifest.smartAccountMode === 'kernel' ? [
+        chainId, ownerAddress.toLowerCase(), publicClient.uid, walletClient.uid,
+        JSON.stringify(manifest.kernel),
+      ].join(':') : [
         chainId,
         ownerAddress.toLowerCase(),
         publicClient.uid,
@@ -110,14 +125,14 @@ export function PerpsAaProvider({
       ].join(':')
       let cacheEntry = runtimeCache.current
       if (cacheEntry?.key !== key) {
-        const promise = import('./managedPimlicoRuntime').then(
-          async ({ createManagedAaRuntime }) => withCloseAssistanceRecovery(
-            await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
-            () => useSponsoredOperationStore.getState().operations,
-            config => createManagedAaRuntime({ manifest: closeAssistanceManifest(manifest, config), ownerAddress, walletClient, publicClient }),
-            preparedManifest => createManagedAaRuntime({ manifest: preparedManifest, ownerAddress, walletClient, publicClient }),
-          )
-        )
+        const promise = manifest.smartAccountMode === 'kernel'
+          ? import('./kernelRuntime').then(({ createKernelRuntime }) => createKernelRuntime({ manifest, ownerAddress, walletClient, publicClient }))
+          : import('./managedPimlicoRuntime').then(async ({ createManagedAaRuntime }) => withCloseAssistanceRecovery(
+              await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
+              () => useSponsoredOperationStore.getState().operations,
+              config => createManagedAaRuntime({ manifest: closeAssistanceManifest(manifest, config), ownerAddress, walletClient, publicClient }),
+              preparedManifest => createManagedAaRuntime({ manifest: preparedManifest, ownerAddress, walletClient, publicClient }),
+            ))
         cacheEntry = {
           key,
           promise,
@@ -135,10 +150,9 @@ export function PerpsAaProvider({
         throw error
       }
       signal.throwIfAborted()
-      setResolvedRuntime({ connectionKey, runtime: nextRuntime })
       return nextRuntime
     },
-    [connectionKey, publicClient, runtime, walletClient]
+    [publicClient, runtime, walletClient]
   )
 
   const effectiveRuntime = runtime ??
@@ -159,6 +173,7 @@ export function PerpsAaProvider({
         signal,
       })
       if (
+        Boolean(nextRuntime.kernel) !== (manifest.smartAccountMode === 'kernel') ||
         nextRuntime.chainId !== chainId ||
         nextRuntime.chainId !== manifest.chainId ||
         manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
@@ -191,25 +206,34 @@ export function PerpsAaProvider({
           'Smart-account runtime owner, chain, or deployment metadata does not match the reviewed manifest'
         )
       }
+      setResolvedRuntime({ connectionKey, runtime: nextRuntime })
       return {
         accountAddress: nextRuntime.smartAccount.accountAddress,
         accountVersion: nextRuntime.accountVersion,
         accountIndex: nextRuntime.accountIndex,
         entryPoint: nextRuntime.smartAccount.entryPoint,
-        entryPointVersion: '0.8',
+        entryPointVersion: manifest.entryPointVersion,
         factoryAddress: nextRuntime.factoryAddress,
       }
     }
-  }, [getRuntime])
+  }, [connectionKey, getRuntime])
+
+  const loadManifest = useMemo(() => kernelDeployment === undefined
+    ? undefined
+    : async (signal: AbortSignal) => (await import('./kernelManifest')).loadKernelTradingManifest(kernelDeployment, signal), [kernelDeployment])
 
   return (
     <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
       <WagmiPerpsIdentityProvider
         manifestUrl={manifestUrl}
+        loadManifest={loadManifest}
+        kernelDeployment={kernelDeployment}
         accountAddressResolver={accountAddressResolver}
       >
         <Suspense fallback={null}>
-          {PERPS_RELEASE_IS_DEPLOYED && <SponsoredOperationRecovery />}
+          {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
+            ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} />
+            : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
         </Suspense>
         {children}
       </WagmiPerpsIdentityProvider>

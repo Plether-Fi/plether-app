@@ -265,6 +265,67 @@ run "preserve_singapore_identity" {
     error_message = "Preparation must not start services or enable issuance."
   }
 }
+run "accept_explicit_kernel_alto_profile" {
+  command = plan
+  variables {
+    aa_rpc_mode                                        = "dual-independent"
+    aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/secondary-rpc-url"
+    alto_entrypoint_version                            = "0.9"
+    alto_entrypoint_address                            = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8             = ""
+    alto_entrypoint_simulation_contract_v9             = "0x1111111111111111111111111111111111111111"
+    alto_desired_count                                 = 1
+  }
+  assert {
+    condition = local.alto_safe_mode && local.alto_entrypoint_simulation_environment == {
+      name  = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9"
+      value = "0x1111111111111111111111111111111111111111"
+    }
+    error_message = "Kernel Alto must use safe mode and the single v0.9 simulator binding."
+  }
+  assert {
+    condition     = !local.native_aa_backend_configured && !local.kernel_aa_backend_configured && !local.aa_gateway_enabled
+    error_message = "Selecting the v0.9 bundler by itself must not configure, expose, or fund execution."
+  }
+}
+run "reject_kernel_alto_with_v8_entrypoint" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_simulation_contract_v8 = ""
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_kernel_without_simulator" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_desired_count                     = 1
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_kernel_with_safe_mode_exception" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_sepolia_safe_mode_exception       = true
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_kernel_protection_without_payment_mode" {
+  command = plan
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    enable_kernel_aa_protection_commits    = true
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
 run "deployment_metadata_permissions" {
   command = plan
   assert {

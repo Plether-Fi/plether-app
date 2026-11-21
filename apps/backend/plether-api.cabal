@@ -34,6 +34,9 @@ library
         Plether.AA.Pimlico
         Plether.AA.ClientKey
         Plether.AA.Gateway
+        Plether.AA.Kernel
+        Plether.AA.KernelGateway
+        Plether.AA.KernelReconciler
         Plether.AA.RecoveryCapability
         Plether.AA.Timing
         Plether.AA.Readiness
@@ -59,6 +62,7 @@ library
         Plether.AA.Paymaster
         Plether.AA.Reconciler
         Plether.Api
+        Plether.Api.BackgroundWorkers
         Plether.Passkeys.Auth
         Plether.Passkeys.Names
         Plether.Handlers.PasskeyNames
@@ -116,6 +120,7 @@ library
         Plether.Database.AaSponsorship
         Plether.Database.AaPreparation
         Plether.Database.AaPreparationRecovery
+        Plether.Database.KernelOperation
         Plether.AA.PreparationRecovery
         Plether.Database.CandleHistory
         Plether.Database.Candles
@@ -423,6 +428,8 @@ test-suite plether-api-test
         Plether.AA.PimlicoSpec
         Plether.AA.CloseAssistanceEvidenceSpec
         Plether.AA.GatewaySpec
+        Plether.AA.KernelSpec
+        Plether.AA.KernelGatewaySpec
         Plether.AA.RecoveryCapabilitySpec
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec
@@ -442,6 +449,7 @@ test-suite plether-api-test
         Plether.AA.ReconcilerSpec
         Plether.AA.RecoveryReceiptSpec
         Plether.CacheSpec
+        Plether.Api.BackgroundWorkersSpec
         Plether.ConfigSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
@@ -600,6 +608,7 @@ test-suite plether-aa-integration-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
+    other-modules:    KernelOperationSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,

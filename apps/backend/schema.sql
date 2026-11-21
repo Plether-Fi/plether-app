@@ -3308,6 +3308,15 @@ CREATE TABLE IF NOT EXISTS testnet_margin_funding (
     -- startup and must remain usable for rollback with this additive schema.
     UNIQUE (address, token_address)
 );
+-- Kernel allocations use the deployment program and root owner as their
+-- eligibility key. Existing SimpleAccount allocations keep their original key.
+ALTER TABLE testnet_margin_funding
+    ADD COLUMN IF NOT EXISTS kernel_program TEXT
+    CHECK (kernel_program ~ '^[a-z0-9._-]{1,96}$');
+CREATE UNIQUE INDEX IF NOT EXISTS testnet_margin_funding_kernel_owner_program
+    ON testnet_margin_funding(chain_id, kernel_program, lower(owner_address))
+    WHERE kernel_program IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS testnet_margin_funding_transactions (
     id BIGSERIAL PRIMARY KEY,
     claim_id UUID NOT NULL REFERENCES testnet_margin_funding(id),

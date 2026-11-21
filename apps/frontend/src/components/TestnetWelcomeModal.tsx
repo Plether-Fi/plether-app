@@ -26,6 +26,7 @@ interface TestnetWelcomeModalViewProps {
   isSubmitting?: boolean
   fundingPhase?: TestnetFundingPhase
   isTradingAccountRecipient?: boolean
+  isKernelAccount?: boolean
   onClose: () => void
   onConnectWallet: () => void
   onWalletAddressChange: (address: string) => void
@@ -46,6 +47,7 @@ export function TestnetWelcomeModalView({
   isSubmitting = false,
   fundingPhase = 'idle',
   isTradingAccountRecipient = false,
+  isKernelAccount = false,
   onClose,
   onConnectWallet,
   onWalletAddressChange,
@@ -175,7 +177,7 @@ export function TestnetWelcomeModalView({
           >
             <p className="font-medium">
               {isDeposited
-                ? `${MOCK_TOKEN_LABEL} deposited into your Margin Account. You are ready to trade.`
+                ? `${MOCK_TOKEN_LABEL} deposited into your Margin Account.${isKernelAccount ? '' : ' You are ready to trade.'}`
                 : isDirectFunding ? 'Plether is funding your Margin Account.'
                 : isPendingClaim
                 ? 'Faucet transaction submitted. Waiting for Arbitrum Sepolia confirmation.'
@@ -199,7 +201,9 @@ export function TestnetWelcomeModalView({
             </p>
             {!isPendingClaim && isTradingAccountRecipient ? (
               <p className="text-content-secondary">
-                Plether covers gas for eligible trades. Wallet transfers need Arbitrum Sepolia ETH for gas.
+                {isKernelAccount
+                  ? 'If you pay your own gas, add Arbitrum Sepolia ETH to your Trading Account before trading.'
+                  : 'Plether covers gas for eligible trades. Wallet transfers need Arbitrum Sepolia ETH for gas.'}
               </p>
             ) : !isPendingClaim ? (
               <p className="text-content-secondary">
@@ -312,6 +316,7 @@ function LiveTestnetWelcomeModal() {
       isSubmitting={isSubmitting}
       fundingPhase={phase}
       isTradingAccountRecipient={perpsIdentity.isAaManifestConfigured}
+      isKernelAccount={perpsIdentity.manifest?.smartAccountMode === 'kernel'}
       onWalletAddressChange={(nextAddress) => {
         if (perpsIdentity.isAaManifestConfigured) return
         setWalletAddress(nextAddress)

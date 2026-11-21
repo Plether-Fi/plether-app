@@ -1,5 +1,6 @@
 import { getAddress, isAddress, type Address } from 'viem'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_SETTLEMENT_TOKEN } from '../contracts/perpsAddresses'
+import type { KernelManifest } from './kernelRpc'
 
 export const PERPS_AA_MANIFEST_V1_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
@@ -15,9 +16,11 @@ export const PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY =
 export const PERPS_AA_LEGACY_RPC_PATH = '/api/perps/v1/aa/pimlico'
 export const PERPS_AA_NATIVE_RPC_PATH = '/api/perps/v1/aa/rpc'
 
-export type PerpsSmartAccountMode = 'simple'
-export type PerpsEntryPointVersion = '0.8'
-export type PerpsSmartAccountVersion = 'permissionless-simple-v0.8'
+export const KERNEL_DEPLOYMENT_PATTERN = /^[a-z0-9._-]{1,96}$/
+export const KERNEL_MANIFEST_VERSION_PREFIX = 'perps-aa-kernel-v1:'
+export type PerpsSmartAccountMode = 'simple' | 'kernel'
+export type PerpsEntryPointVersion = '0.8' | '0.9'
+export type PerpsSmartAccountVersion = 'permissionless-simple-v0.8' | 'kernel-v4-uups'
 export type PerpsAaManifestV1Version = `perps-aa-${string}-v1`
 export type PerpsAaManifestV2Version = `perps-aa-${string}-v2`
 export type PerpsAaManifestVersion =
@@ -50,18 +53,24 @@ interface PerpsAaDeploymentManifestBase {
   sponsorshipEnabled: boolean
 }
 
+interface SimpleDeploymentManifestBase extends PerpsAaDeploymentManifestBase {
+  entryPointVersion: '0.8'
+  smartAccountMode: 'simple'
+  smartAccountVersion: 'permissionless-simple-v0.8'
+}
+
 // V1 names the legacy RPC schema, not the deployment generation. During the
 // provider migration the current bounded-v2 deployment continues to use the
 // reviewed Pimlico proxy until its manifest switches atomically to the native
 // key set.
 export interface PerpsAaDeploymentManifestV1
-  extends PerpsAaDeploymentManifestBase {
+  extends SimpleDeploymentManifestBase {
   version: PerpsAaManifestVersion
   pimlicoRpcUrl: string
 }
 
 export interface PerpsAaDeploymentManifestV2
-  extends PerpsAaDeploymentManifestBase {
+  extends SimpleDeploymentManifestBase {
   version: PerpsAaManifestV2Version
   bundlerRpcUrl: string
   paymasterRpcUrl: string
@@ -70,9 +79,19 @@ export interface PerpsAaDeploymentManifestV2
   preparationRpcVersion?: 1
 }
 
-export type PerpsAaDeploymentManifest =
+export type SimplePerpsAaDeploymentManifest =
   | PerpsAaDeploymentManifestV1
   | PerpsAaDeploymentManifestV2
+
+export interface KernelPerpsAaDeploymentManifest extends PerpsAaDeploymentManifestBase {
+  entryPointVersion: '0.9'
+  smartAccountMode: 'kernel'
+  smartAccountVersion: 'kernel-v4-uups'
+  version: `${typeof KERNEL_MANIFEST_VERSION_PREFIX}${string}`
+  kernel: KernelManifest
+}
+
+export type PerpsAaDeploymentManifest = SimplePerpsAaDeploymentManifest | KernelPerpsAaDeploymentManifest
 
 const COMMON_MANIFEST_KEYS = [
   'version',
@@ -300,14 +319,14 @@ function parseUrlTemplate(
   return stringValue
 }
 
-function parseAccountMode(value: unknown): PerpsSmartAccountMode {
+function parseAccountMode(value: unknown): 'simple' {
   if (value !== 'simple') {
     invalid('smartAccountMode', 'must be "simple"')
   }
   return 'simple'
 }
 
-function parseEntryPointVersion(value: unknown): PerpsEntryPointVersion {
+function parseEntryPointVersion(value: unknown): '0.8' {
   if (value !== '0.8') {
     invalid('entryPointVersion', 'must be "0.8"')
   }
@@ -316,7 +335,7 @@ function parseEntryPointVersion(value: unknown): PerpsEntryPointVersion {
 
 function parseSmartAccountVersion(
   value: unknown
-): PerpsSmartAccountVersion {
+): 'permissionless-simple-v0.8' {
   if (value !== 'permissionless-simple-v0.8') {
     invalid(
       'smartAccountVersion',
@@ -343,7 +362,7 @@ export function isPerpsAaManifestV2(
 }
 
 export function bundlerRpcUrlForManifest(
-  manifest: PerpsAaDeploymentManifest
+  manifest: SimplePerpsAaDeploymentManifest
 ): string {
   return isPerpsAaManifestV2(manifest)
     ? manifest.bundlerRpcUrl
@@ -351,7 +370,7 @@ export function bundlerRpcUrlForManifest(
 }
 
 export function paymasterRpcUrlForManifest(
-  manifest: PerpsAaDeploymentManifest
+  manifest: SimplePerpsAaDeploymentManifest
 ): string {
   return isPerpsAaManifestV2(manifest)
     ? manifest.paymasterRpcUrl
@@ -360,7 +379,7 @@ export function paymasterRpcUrlForManifest(
 
 export function parsePerpsAaManifest(
   value: unknown
-): PerpsAaDeploymentManifest {
+): SimplePerpsAaDeploymentManifest {
   if (!isRecord(value)) {
     throw new PerpsAaManifestValidationError([
       'manifest must be a JSON object',
@@ -431,7 +450,7 @@ export function parsePerpsAaManifest(
     }
   }
 
-  const commonManifest: PerpsAaDeploymentManifestBase = {
+  const commonManifest: SimpleDeploymentManifestBase = {
     chainId: parseChainId(value.chainId),
     entryPoint: parsePinnedAddress(
       value.entryPoint,
@@ -542,7 +561,7 @@ export async function fetchPerpsAaManifest(
     signal?: AbortSignal
     fetch?: PerpsAaManifestFetch
   } = {}
-): Promise<PerpsAaDeploymentManifest> {
+): Promise<SimplePerpsAaDeploymentManifest> {
   const fetchManifest = options.fetch ?? globalThis.fetch
   if (typeof fetchManifest !== 'function') {
     throw new PerpsAaManifestFetchError(

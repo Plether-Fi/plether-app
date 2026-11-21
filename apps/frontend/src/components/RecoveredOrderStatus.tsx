@@ -1,16 +1,25 @@
 import { usePerpsHistory } from '../hooks/usePerpsHistory'
 import type { SponsoredOperation } from '../perps-aa/operationStore'
+import type { Address, Hex } from 'viem'
 import { Button } from './ui/Button'
 
 /** Submission confirmation never stands in for trade execution. */
-export function RecoveredOrderStatus({ operation }: { operation: SponsoredOperation }) {
+export function RecoveredOrderStatus(props: { operation: SponsoredOperation } | {
+  accountAddress: Address
+  transactionHash: Hex
+  clientOrderId?: Hex | undefined
+}) {
   const history = usePerpsHistory()
+  const account = ('operation' in props ? props.operation.accountAddress : props.accountAddress).toLowerCase()
+  const clientOrderId = ('operation' in props ? props.operation.orderRequestV3?.clientOrderId : props.clientOrderId)?.toLowerCase()
+  const transactionHash = 'operation' in props
+    ? props.operation.transactionHashVerified === true ? props.operation.transactionHash?.toLowerCase() : undefined
+    : props.transactionHash.toLowerCase()
   const matches = history.orderHistory.filter(order =>
-    order.account.toLowerCase() === operation.accountAddress.toLowerCase()
-    && (operation.orderRequestV3
-      ? order.clientOrderId.toLowerCase() === operation.orderRequestV3.clientOrderId.toLowerCase()
-      : operation.transactionHashVerified === true && operation.transactionHash !== undefined
-        && order.commitTxHash?.toLowerCase() === operation.transactionHash.toLowerCase()))
+    order.account.toLowerCase() === account
+    && (clientOrderId !== undefined
+      ? order.clientOrderId.toLowerCase() === clientOrderId
+      : transactionHash !== undefined && order.commitTxHash?.toLowerCase() === transactionHash))
   const order = matches.length === 1 ? matches[0] : undefined
   return <div className="space-y-2 border border-positive/30 bg-positive/5 p-3 text-sm">
     <p className="font-semibold text-content-primary">Order submitted</p>

@@ -6,7 +6,7 @@ locals {
 resource "terraform_data" "deployment_target_guard" {
   lifecycle {
     precondition {
-      condition = !(local.native_aa_backend_configured || anytrue([
+      condition = !(local.native_aa_backend_configured || local.kernel_aa_backend_configured || anytrue([
         var.perps_settlement_token != "", var.perps_order_router != "",
         var.perps_cfd_engine != "", var.perps_margin_clearinghouse != "",
         var.perps_house_pool != "", var.perps_plether_oracle != "",

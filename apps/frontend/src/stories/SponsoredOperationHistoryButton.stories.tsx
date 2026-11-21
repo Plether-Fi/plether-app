@@ -11,7 +11,7 @@ import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { SPONSORED_OPERATION_STORAGE_NAME } from '../perps-aa/operationStore'
 import { anvil } from '../config/wagmi'
-import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime, type SimplePerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from '../perps-aa/manifest'
 import type { PreparationStatusV1 } from '../perps-aa/preparedOperation'
 import { registerOperationRecoveryCheck } from '../perps-aa/requestOperationRecovery'
@@ -476,7 +476,7 @@ const RESUMABLE_STATUS: PreparationStatusV1 = {
   userOperationHash: hash('c'), transactionHash: null,
 }
 
-function previewRuntime(status: PreparationStatusV1): PerpsAaSmartAccountRuntime {
+function previewRuntime(status: PreparationStatusV1): SimplePerpsAaSmartAccountRuntime {
   // Status is local fixture data. Signing/submission are deliberately unavailable
   // in these visual examples; never connect a Storybook fixture to a real wallet.
   const unavailable = async (): Promise<never> => {
@@ -627,7 +627,7 @@ export const SavedTransactionReadyToDiscard: Story = {
 const signedRecoveryOperations: SponsoredOperation[] = [{
   ...recoveryFixture('place-order'), status: 'receipt-timeout', userOperationHash: hash('c'),
 }]
-const signedRecoveryRuntime: PerpsAaSmartAccountRuntime = {
+const signedRecoveryRuntime: SimplePerpsAaSmartAccountRuntime = {
   ...previewRuntime(expiredSignedStatus),
   preparationRecovery: {
     // Local UI simulation only: no wallet, signing, or submission is connected.
@@ -667,7 +667,7 @@ export const SignedRecoveryCheckingOutcome: Story = {
 
 type RecoveryPreviewResult = 'uncertain' | 'expired' | 'confirmed' | 'timeout' | 'verification-expired'
 
-function recoveryResultRuntime(result: RecoveryPreviewResult): PerpsAaSmartAccountRuntime {
+function recoveryResultRuntime(result: RecoveryPreviewResult): SimplePerpsAaSmartAccountRuntime {
   let checksSinceVerification = 0
   return {
     ...signedRecoveryRuntime,
@@ -797,7 +797,7 @@ const expiredOrderOperations: SponsoredOperation[] = [{
     reduceOnly: false, fullClose: false, maxOpen: false, protectionEnabled: false,
     protection: { mode: 'price', takeProfit: '', stopLoss: '' } },
 }]
-const expiredOrderRuntime: PerpsAaSmartAccountRuntime = {
+const expiredOrderRuntime: SimplePerpsAaSmartAccountRuntime = {
   ...previewRuntime({ ...RESUMABLE_STATUS, recoverable: false, reason: 'PREPARATION_UNUSABLE' }),
   preparationRecovery: {
     verify: async () => {},

@@ -177,3 +177,77 @@ run "reject_mismatched_vault_history_deployment_block" {
   variables { vault_history_deployment_block = "124" }
   expect_failures = [terraform_data.deployment_target_guard]
 }
+
+# Kernel infrastructure uses the full module with mock AWS resources.
+run "wire_kernel_execution_to_the_private_bundler_and_reconciler" {
+  command = plan
+
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_entrypoint_simulation_contract_v9 = "0x0000000000000000000000000000000000000022"
+    alto_desired_count                     = 1
+    aa_reconciler_desired_count            = 1
+    enable_kernel_aa_eth                   = true
+    enable_kernel_aa_sponsorship           = true
+    enable_kernel_aa_protection_commits    = true
+    aa_kernel_profile_json = jsonencode({
+      deployment             = "fixture-kernel"
+      chainId                = 421614
+      entryPoint             = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      entryPointVersion      = "0.9"
+      entryPointCodeHash     = format("0x%064d", 1)
+      accountVersion         = "kernel-v4-uups"
+      accountIndex           = 0
+      factory                = format("0x%040d", 31)
+      factoryCodeHash        = format("0x%064d", 2)
+      implementation         = format("0x%040d", 32)
+      implementationCodeHash = format("0x%064d", 3)
+      validator              = format("0x%040d", 33)
+      validatorCodeHash      = format("0x%064d", 4)
+      accountCodeHash        = format("0x%064d", 5)
+    })
+    aa_kernel_sponsorship_json = jsonencode({
+      paymaster            = format("0x%040d", 34)
+      paymasterCodeHash    = format("0x%064d", 6)
+      policyId             = format("0x%064d", 7)
+      signerAddress        = format("0x%040d", 35)
+      deploymentBlock      = 123
+      deploymentBlockHash  = format("0x%064d", 8)
+      minDepositWei        = 1000
+      verificationGasLimit = 150000
+      validitySeconds      = 300
+      canaryOwners         = [format("0x%040d", 36)]
+      budget = {
+        maxCostWei            = 10
+        accountOutstandingWei = 100
+        clientOutstandingWei  = 100
+        globalOutstandingWei  = 1000
+        accountHourlyWei      = 100
+        globalHourlyWei       = 1000
+        globalDailyWei        = 10000
+      }
+    })
+  }
+
+  assert {
+    condition     = local.kernel_aa_sponsorship_enabled && local.aa_gateway_enabled && length(local.native_aa_environment) == 0
+    error_message = "The Kernel deployment must enable its own gateway and sponsorship while omitting native v0.8 configuration."
+  }
+  assert {
+    condition = contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_ALTO_RPC_URL") && (
+      contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
+      && length(aws_iam_role_policy.api_paymaster_kms_signer) == 1
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_PROTECTION_COMMITS_ENABLED", value = "true" })
+    )
+    error_message = "Kernel API routes to the private Alto service and acquires the narrow paymaster signing grant."
+  }
+  assert {
+    condition = contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_SPONSORSHIP_JSON") && (
+      !contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
+      && local.kernel_aa_secrets[0].name == "AA_SECURITY_RPC_URL"
+    )
+    error_message = "The reconciler receives the current paymaster anchor and independent RPC without signing access."
+  }
+}

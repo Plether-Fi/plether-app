@@ -630,6 +630,46 @@ variable "configure_native_aa_backend" {
   description = "Inject the complete native-AA recovery/submission configuration into the API. Keep false during Alto and paymaster bootstrap."
 }
 
+variable "aa_kernel_profile_json" {
+  type        = string
+  default     = ""
+  description = "Reviewed public Kernel execution profile for the fresh Sepolia deployment, or empty to omit the Kernel API runtime. Put credentials in the corresponding SSM/KMS resources."
+
+  validation {
+    condition     = var.aa_kernel_profile_json == "" || can(keys(jsondecode(var.aa_kernel_profile_json)))
+    error_message = "aa_kernel_profile_json must be empty or a JSON object."
+  }
+}
+
+variable "aa_kernel_sponsorship_json" {
+  type        = string
+  default     = ""
+  description = "Reviewed public Kernel paymaster deployment and budget settings, or empty to omit Kernel sponsorship. The signing key comes from AWS KMS."
+
+  validation {
+    condition     = var.aa_kernel_sponsorship_json == "" || can(keys(jsondecode(var.aa_kernel_sponsorship_json)))
+    error_message = "aa_kernel_sponsorship_json must be empty or a JSON object."
+  }
+}
+
+variable "enable_kernel_aa_eth" {
+  type        = bool
+  default     = false
+  description = "Allow account-funded Kernel UserOperations on the fresh Arbitrum Sepolia deployment."
+}
+
+variable "enable_kernel_aa_sponsorship" {
+  type        = bool
+  default     = false
+  description = "Enable new Kernel sponsorship issuance and the API task's paymaster signing permission. Reconciliation can run while this is false."
+}
+
+variable "enable_kernel_aa_protection_commits" {
+  type        = bool
+  default     = false
+  description = "Allow reviewed position protection commits through the fresh Kernel AA gateway."
+}
+
 variable "enable_aa_readiness_enforcement" {
   description = "Block new browser signing on fresh confirmed readiness blockers; observation-only by default."
   type        = bool
@@ -805,16 +845,33 @@ variable "alto_secrets_kms_key_arn" {
   }
 }
 
+variable "alto_entrypoint_version" {
+  type        = string
+  default     = "0.8"
+  description = "EntryPoint version for the private Alto service. Select 0.9 explicitly for a fresh Kernel AA deployment."
+
+  validation {
+    condition     = contains(["0.8", "0.9"], var.alto_entrypoint_version)
+    error_message = "alto_entrypoint_version must be 0.8 or 0.9."
+  }
+}
+
 variable "alto_entrypoint_address" {
   type        = string
   default     = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
-  description = "ERC-4337 EntryPoint v0.8 used by the Sepolia AA stack."
+  description = "Canonical EntryPoint address for alto_entrypoint_version. EntryPoint v0.9 is 0x433709009B8330FDa32311DF1C2AFA402eD8D009."
 }
 
 variable "alto_entrypoint_simulation_contract_v8" {
   type        = string
   default     = ""
-  description = "Pinned Alto EntryPoint v0.8 simulation contract deployed during the one-time bootstrap. Required before Alto is scaled above zero."
+  description = "Pinned Alto EntryPoint v0.8 simulation contract. Required before a v0.8 service is scaled above zero."
+}
+
+variable "alto_entrypoint_simulation_contract_v9" {
+  type        = string
+  default     = ""
+  description = "Pinned Alto EntryPoint v0.9 simulation contract. Required before a v0.9 service is scaled above zero."
 }
 
 variable "alto_pimlico_simulation_contract" {

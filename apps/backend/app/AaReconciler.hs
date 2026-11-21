@@ -9,9 +9,14 @@ import Control.Exception
   , throwIO
   , try
   )
+import Control.Monad (unless)
+import Data.Char (isAscii, isDigit)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Plether.AA.Kernel (KernelProfile (..))
+import Plether.AA.KernelGateway (KernelSponsorshipConfig (..), kernelScope, loadKernelPublicConfig)
+import Plether.AA.KernelReconciler (KernelReconcilerConfig (..), ensureKernelReconcilerSchema, runKernelReconciler)
 import Plether.AA.Reconciler
   ( AaReconcilerConfig (..)
   , loadAaReconcilerConfig
@@ -19,11 +24,13 @@ import Plether.AA.Reconciler
   )
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
+import Plether.Database.KernelOperation (ensureKernelOperationSchema)
 import Plether.Ethereum.Client (RpcClientOptions (..), newClient, newClientWithOptions, withoutRpcFallback)
 import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, aaRpcModeText, AaRpcMode (..), parseCanonicalAddressList, validateAaSafeLag)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode, exitFailure)
+import Text.Read (readMaybe)
 
 main :: IO ()
 main = runMain `catchUnexpected` handleUnexpectedFailure
@@ -31,6 +38,14 @@ main = runMain `catchUnexpected` handleUnexpectedFailure
 runMain :: IO ()
 runMain = do
   Manifest.requireDeployedRelease
+  kernel <- loadKernelPublicConfig >>= either (fatal "aa_reconciler_configuration_invalid") pure
+  case kernel of
+    Just (profile, Just sponsor, safeLag) -> runKernel profile sponsor safeLag
+    Just (_, Nothing, _) -> fatal "aa_reconciler_configuration_invalid" "Kernel reconciliation requires AA_KERNEL_SPONSORSHIP_JSON"
+    Nothing -> runSimpleAccount
+
+runSimpleAccount :: IO ()
+runSimpleAccount = do
   configResult <- loadAaReconcilerConfig
   cfg <- case configResult of
     Left err -> fatal "aa_reconciler_configuration_invalid" err
@@ -84,6 +99,56 @@ runMain = do
     , field "max_safe_lag_seconds" $ arcMaxSafeLagSeconds cfg
     ]
   runAaReconciler pool primaryClient secondaryClient cfg
+
+runKernel :: KernelProfile -> KernelSponsorshipConfig -> Integer -> IO ()
+runKernel profile sponsor safeLag = do
+  unless (Manifest.releaseChainId == 421614) $
+    fatal "aa_reconciler_configuration_invalid" "Kernel AA requires an Arbitrum Sepolia Perps release"
+  databaseUrl <- requireEnv "DATABASE_URL"
+  primaryRaw <- requireRawEnv "PERPS_RPC_URL"
+  secondarySetting <- lookupEnv "AA_SECURITY_RPC_URL"
+  secondaryRaw <- case secondarySetting of
+    Just _ -> requireRawEnv "AA_SECURITY_RPC_URL"
+    Nothing -> requireRawEnv "AA_RECONCILER_SECONDARY_RPC_URL"
+  let invalid = fatal "aa_reconciler_configuration_invalid"
+  primary <- maybe (invalid "PERPS_RPC_URL must be normalized HTTPS/default-443") pure $
+    normalizeExternalSecurityRpcUrl primaryRaw
+  (_, secondary) <- either (invalid . T.pack) pure $
+    resolveAaSecurityRpc "dual-independent" 421614 "false" "" primaryRaw secondaryRaw
+  let authority = T.takeWhile (/= '/') . T.drop 8
+  unless (authority primary /= authority secondary) $
+    invalid "Kernel AA requires primary and secondary RPC providers on distinct hosts"
+  primaryAuth <- fmap T.pack <$> lookupEnv "PERPS_RPC_AUTH_TOKEN"
+  poll <- kernelIntSetting "AA_KERNEL_RECONCILER_POLL_SECONDS" 5 1 60
+  batch <- kernelIntSetting "AA_KERNEL_RECONCILER_BATCH_BLOCKS" 250 1 2000
+  pauseAfter <- kernelIntSetting "AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS" 60 (max 5 poll) 300
+  pool <- newDbPool databaseUrl
+  withDb pool $ \conn -> do
+    ensureKernelOperationSchema conn
+    ensureKernelReconcilerSchema conn
+  primaryClient <- newClientWithOptions $ RpcClientOptions primary primaryAuth "kernel-reconciler-primary"
+  secondaryClient <- newClient secondary
+  runKernelReconciler pool primaryClient secondaryClient KernelReconcilerConfig
+    { krcScope = kernelScope profile
+    , krcEntryPointCodeHash = kpEntryPointCodeHash profile
+    , krcPaymaster = kscPaymaster sponsor
+    , krcPaymasterCodeHash = kscPaymasterCodeHash sponsor
+    , krcStartBlock = kscDeploymentBlock sponsor
+    , krcStartBlockHash = kscDeploymentBlockHash sponsor
+    , krcPollSeconds = fromInteger poll
+    , krcBatchBlocks = batch
+    , krcMinDepositWei = kscMinDepositWei sponsor
+    , krcFailurePauseSeconds = pauseAfter
+    , krcMaxSafeLagSeconds = safeLag
+    }
+
+kernelIntSetting :: String -> Integer -> Integer -> Integer -> IO Integer
+kernelIntSetting name fallback lower upper = do
+  raw <- fromMaybe (show fallback) <$> lookupEnv name
+  case readMaybe raw of
+    Just value | all (\char -> isAscii char && isDigit char) raw
+      , show value == raw, value >= lower, value <= upper -> pure value
+    _ -> fatal "aa_reconciler_configuration_invalid" $ T.pack name <> " is out of range or malformed"
 
 requireEnv :: String -> IO Text
 requireEnv name = do
