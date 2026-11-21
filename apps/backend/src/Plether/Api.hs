@@ -39,7 +39,7 @@ import Network.Wai.Middleware.Cors
 import Plether.Cache (AppCache (cachePrivyVerifier))
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness, closeAssistanceStatus)
-import Plether.AA.KernelGateway (KernelGatewayConfig, handleKernelAaRpc)
+import Plether.AA.KernelGateway (KernelGatewayConfig (kgcOriginToken), handleKernelAaRpc)
 import qualified Plether.AA.Pimlico as AaProxy
 import qualified Plether.AA.Diagnostics as AaDiagnostics
 import Plether.AA.ClientKey (pseudonymousClientKey)
@@ -224,7 +224,7 @@ appWithReleaseAndKernelAa :: Bool -> Maybe KernelGatewayConfig -> AppCache -> Et
 appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
   middleware $ perpsReleaseMiddleware deployed
   post "/api/rpc" $ handlePublicRpc (cfgPerpsChainId cfg)
-    ((naaProxyOriginToken <$> cfgNativeAaConfig cfg) <|> (aaProxyOriginToken <$> cfgAaConfig cfg))
+    ((naaProxyOriginToken <$> cfgNativeAaConfig cfg) <|> (aaProxyOriginToken <$> cfgAaConfig cfg) <|> (kgcOriginToken <$> kernelAa))
     perpsClient pimlicoProxyState
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"

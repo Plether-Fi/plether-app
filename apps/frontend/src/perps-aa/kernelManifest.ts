@@ -1,10 +1,11 @@
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE, PERPS_SETTLEMENT_TOKEN } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl, getExplorerUserOperationUrl } from '../utils/explorer'
+import { kernelSepoliaCanaryProfile } from './kernelDeploymentPins'
 import { fetchKernelManifest } from './kernelRpc'
-import { KERNEL_DEPLOYMENT_PATTERN, KERNEL_MANIFEST_VERSION_PREFIX, type KernelPerpsAaDeploymentManifest } from './manifest'
+import { KERNEL_MANIFEST_VERSION_PREFIX, type KernelPerpsAaDeploymentManifest } from './manifest'
 
 export async function loadKernelTradingManifest(deployment: string, signal: AbortSignal): Promise<KernelPerpsAaDeploymentManifest> {
-  if (!KERNEL_DEPLOYMENT_PATTERN.test(deployment) || !PERPS_RELEASE.isDeployed) {
+  if (deployment !== kernelSepoliaCanaryProfile.deployment || !PERPS_RELEASE.isDeployed) {
     throw new Error('No reviewed Kernel deployment is configured')
   }
   const kernel = await fetchKernelManifest(signal)

@@ -280,7 +280,12 @@ locals {
       { name = "AA_KERNEL_PROTECTION_COMMITS_ENABLED", value = tostring(var.enable_kernel_aa_protection_commits) },
       { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },
       { name = "AA_KERNEL_ALTO_RPC_URL", value = "http://${aws_lb.alto[0].dns_name}" },
+      { name = "AA_KERNEL_PUBLIC_ADMISSION", value = tostring(var.aa_kernel_public_admission) },
+      { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
       { name = "AWS_REGION", value = var.aws_region },
+    ] : [],
+    local.kernel_aa_backend_configured && !var.aa_kernel_public_admission ? [
+      { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = jsonencode(var.aa_kernel_canary_owners) },
     ] : [],
     local.kernel_aa_sponsorship_configured ? [
       { name = "AA_KERNEL_SPONSORSHIP_JSON", value = var.aa_kernel_sponsorship_json },

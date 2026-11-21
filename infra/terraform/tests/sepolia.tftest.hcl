@@ -274,7 +274,6 @@ run "accept_explicit_kernel_alto_profile" {
     alto_entrypoint_address                            = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
     alto_entrypoint_simulation_contract_v8             = ""
     alto_entrypoint_simulation_contract_v9             = "0x1111111111111111111111111111111111111111"
-    alto_desired_count                                 = 1
   }
   assert {
     condition = local.alto_safe_mode && local.alto_entrypoint_simulation_environment == {
@@ -287,6 +286,31 @@ run "accept_explicit_kernel_alto_profile" {
     condition     = !local.native_aa_backend_configured && !local.kernel_aa_backend_configured && !local.aa_gateway_enabled
     error_message = "Selecting the v0.9 bundler by itself must not configure, expose, or fund execution."
   }
+}
+run "reject_starting_kernel_alto_in_the_legacy_stack" {
+  command = plan
+  variables {
+    aa_rpc_mode                                        = "dual-independent"
+    aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/secondary-rpc-url"
+    alto_entrypoint_version                            = "0.9"
+    alto_entrypoint_address                            = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8             = ""
+    alto_entrypoint_simulation_contract_v9             = "0x1111111111111111111111111111111111111111"
+    alto_desired_count                                 = 1
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
+run "reject_stopped_core_kernel_reconciler_with_oversized_batch" {
+  command = plan
+  variables {
+    aa_rpc_mode                                        = "dual-independent"
+    aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/secondary-rpc-url"
+    alto_entrypoint_version                            = "0.9"
+    alto_entrypoint_address                            = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8             = ""
+    aa_reconciler_batch_blocks                         = "2001"
+  }
+  expect_failures = [terraform_data.rpc_log_range_policy_guard]
 }
 run "reject_kernel_alto_with_v8_entrypoint" {
   command = plan

@@ -2,12 +2,17 @@
 // Fresh Arbitrum Sepolia Kernel canary. The default action only reads chain state.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { reconcileExternalNonces, verifyRecordedExternalNonces } from './external-nonce-reconciliation.mjs'
+import {
+  completeMinedDeployment, deploymentFeeFields, fingerprintDeploymentRequest, readMinedDeployment,
+  rebroadcastRecordedDeployment, signDeploymentTransaction,
+} from './deployment-intent.mjs'
+import { scrubRpcError, writePublicEvidence } from './local-safety.mjs'
 
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const {
@@ -39,6 +44,7 @@ const pimlicoSimulationRuntimeHash = '0xbf6f6629d08dd42ef5af9e7ba6ff5e1e7b53083f
 const minStake = parseEther('1')
 const unstakeDelay = 86_400
 const gasReserve = parseEther('0.5')
+const sharedOrderRouterSigner = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 const factoryAbi = parseAbi([
   'struct Install { uint256 moduleType; address module; bytes moduleData; bytes internalData; }',
   'function UUPS() view returns (address)',
@@ -64,18 +70,21 @@ const rootSlot = '0xded5d420c407eac3c615e6abe13ab4a0bd7173e5045ea543765b46f0df6e
 let phase = 'configuration'
 
 function usage() {
-  console.log(`Usage: node scripts/kernel-qualification/deploy-sepolia.mjs --config /path/to/public-config.json [--manifest /path/to/public-manifest.json] [--check-artifacts | --attest | --reconcile-external-nonces --external-tx HASH ... --confirm DEPLOYMENT | --broadcast --confirm DEPLOYMENT]
+  console.log(`Usage: node scripts/kernel-qualification/deploy-sepolia.mjs --config /path/to/public-config.json [--manifest /path/to/public-manifest.json] [--check-artifacts | --attest | --reconcile-inflight --confirm DEPLOYMENT | --rebroadcast-inflight --confirm DEPLOYMENT | --reconcile-external-nonces --external-tx HASH ... --confirm DEPLOYMENT | --broadcast --confirm DEPLOYMENT]
 
 Default: verify pinned artifacts and independent safe-block chain state, then print a read-only plan.
 --check-artifacts: verify pinned source/build inputs without any RPC call.
 --attest: verify an existing manifest on two RPCs, with no transactions.
+--reconcile-inflight: record a known deployment transaction's canonical result on two RPCs; never signs or broadcasts.
+--rebroadcast-inflight: sign and send exactly the recorded transaction using the dedicated signer and the same untouched nonce.
 --reconcile-external-nonces: verify explicit, contiguous unrelated Perps order hashes on two RPCs; requires confirmation but never signs or broadcasts.
 --broadcast: deploy missing contracts, approve/stake, and attest; requires explicit deployment confirmation and KERNEL_CANARY_DEPLOYER_PRIVATE_KEY.
 The config and manifest contain public values only. See deploy-sepolia.md.`)
 }
 
 function command(file, args, options = {}) {
-  return execFileSync(file, args, { encoding: 'utf8', maxBuffer: 12 * 1024 * 1024, ...options })
+  const { PATH, TMPDIR } = process.env
+  return execFileSync(file, args, { encoding: 'utf8', maxBuffer: 12 * 1024 * 1024, ...options, env: { PATH, TMPDIR } })
 }
 
 function checkedAddress(value, field) {
@@ -120,18 +129,10 @@ function loadConfig(path) {
     primaryHost: primary.hostname,
     secondaryHost: secondary.hostname,
   }
-  for (const [name, address] of Object.entries({
-    deployer: config.deployer,
-    externalCanaryOwner: config.externalCanaryOwner,
-    privyCanaryOwner: config.privyCanaryOwner,
-    sponsorSigner: config.sponsorSigner,
-    altoUtilityAddress: config.altoUtilityAddress,
-  })) {
-    if (address) assert.ok(!isAddressEqual(config.sampleOwner, address), `Throwaway sampleOwner must differ from ${name}`)
-  }
-  if (config.externalCanaryOwner && config.privyCanaryOwner) {
-    assert.ok(!isAddressEqual(config.externalCanaryOwner, config.privyCanaryOwner), 'External and Privy canary owners must differ')
-  }
+  const signers = [config.deployer, config.sampleOwner, config.externalCanaryOwner, config.privyCanaryOwner,
+    config.sponsorSigner, config.altoUtilityAddress].filter(Boolean)
+  assert.equal(new Set(signers.map(address => address.toLowerCase())).size, signers.length,
+    'Canary signer roles must use distinct addresses')
   return config
 }
 
@@ -226,6 +227,7 @@ function simulationAddresses(c, artifacts) {
 
 function ownerAddressesToCheck(c) {
   return [
+    ['Dedicated deployer', c.deployer],
     ['Throwaway sample owner', c.sampleOwner],
     ['External canary owner', c.externalCanaryOwner],
     ['Privy canary owner', c.privyCanaryOwner],
@@ -274,8 +276,7 @@ function loadManifest(path, c) {
 
 function saveManifest(path, manifest) {
   // Public evidence only. Never write a signer key, RPC URL, auth token, or full config.
-  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writePublicEvidence(path, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
 function makeClients(c) {
@@ -306,17 +307,21 @@ async function commonSafeBlock(clients, atLeast = 0n, timeoutMs = 15_000) {
   throw new Error('Timed out waiting for both RPCs to reach the required safe block')
 }
 
-async function cleanLiveDeployerNonce(clients, deployer) {
-  const [latestA, pendingA, latestB, pendingB] = await Promise.all(
-    [clients.primary, clients.secondary].flatMap(client => [
+async function cleanLiveDeployerNonce(clients, deployer, expected) {
+  const deadline = Date.now() + (expected === undefined ? 0 : 30_000)
+  do {
+    const counts = await Promise.all([clients.primary, clients.secondary].flatMap(client => [
       client.getTransactionCount({ address: deployer, blockTag: 'latest' }),
       client.getTransactionCount({ address: deployer, blockTag: 'pending' }),
-    ]),
-  )
-  assert.equal(latestA, latestB, 'Independent RPCs disagree on the deployer latest nonce')
-  assert.equal(pendingA, pendingB, 'Independent RPCs disagree on the deployer pending nonce')
-  assert.equal(pendingA, latestA, 'Deployer has pending transactions; wait before broadcasting')
-  return latestA
+    ]))
+    const target = expected ?? counts[0]
+    if (expected !== undefined) {
+      assert.ok(counts.every(nonce => nonce <= target), 'Deployer nonce advanced outside the canary')
+    }
+    if (counts.every(nonce => nonce === target)) return target
+    if (expected !== undefined) await sleep(1_000)
+  } while (Date.now() < deadline)
+  throw new Error('Deployer nonce is pending or has not converged across both RPCs')
 }
 
 async function codeHashAt(clients, address, blockNumber) {
@@ -361,8 +366,9 @@ async function statusOfPinnedContracts(clients, blockNumber) {
   for (const [name, pin] of [
     ['EntryPoint 0.9', pins.entryPoint], ['SenderCreator', pins.senderCreator], ['CREATE2 deployer', pins.create2Deployer],
   ]) await requireHash(clients, getAddress(pin.address), pin.codeHash, blockNumber, name)
-  const creator = await clients.primary.readContract({ address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'senderCreator', blockNumber })
-  assert.ok(isAddressEqual(creator, pins.senderCreator.address), 'EntryPoint SenderCreator differs from pin')
+  const creators = await Promise.all([clients.primary, clients.secondary].map(client =>
+    client.readContract({ address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'senderCreator', blockNumber })))
+  assert.ok(creators.every(creator => isAddressEqual(creator, pins.senderCreator.address)), 'EntryPoint SenderCreator differs from pin')
   const status = {}
   for (const pin of [...pins.kernel.contracts, { name: 'ECDSAValidator', ...pins.validator }]) {
     const actual = await codeHashAt(clients, getAddress(pin.address), blockNumber)
@@ -391,21 +397,25 @@ async function verifySample(clients, c, blockNumber, expected) {
   const factory = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelFactory').address)
   const implementation = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelUUPS').address)
   const packages = [{ moduleType: 1n, module: getAddress(pins.validator.address), moduleData: c.sampleOwner, internalData: '0x' }]
-  const account = await clients.primary.readContract({ address: factory, abi: factoryAbi, functionName: 'getAddress', args: [packages, 0n], blockNumber })
+  const [account, independentAccount] = await Promise.all([clients.primary, clients.secondary].map(client =>
+    client.readContract({ address: factory, abi: factoryAbi, functionName: 'getAddress', args: [packages, 0n], blockNumber })))
+  assert.ok(isAddressEqual(account, independentAccount), 'Independent RPCs disagree on the sample address')
   if (expected) assert.ok(isAddressEqual(account, expected), 'Sample account address changed')
   await requireHash(clients, account, pins.kernel.proxyCodeHash, blockNumber, 'sample Kernel proxy')
-  const [implSlot, beacon, root, validatorOwner] = await Promise.all([
-    clients.primary.getStorageAt({ address: account, slot: implementationSlot, blockNumber }),
-    clients.primary.getStorageAt({ address: account, slot: beaconSlot, blockNumber }),
-    clients.primary.readContract({ address: account, abi: accountAbi, functionName: 'root', blockNumber }),
-    clients.primary.readContract({ address: pins.validator.address, abi: validatorAbi, functionName: 'ecdsaValidatorStorage', args: [account], blockNumber }),
-  ])
-  assert.equal(implSlot?.toLowerCase(), `0x${'0'.repeat(24)}${implementation.slice(2).toLowerCase()}`, 'Sample proxy implementation mismatch')
-  assert.equal(beacon?.toLowerCase(), zeroHash, 'Sample proxy beacon must be empty')
-  assert.equal(root.toLowerCase(), `0x01${pins.validator.address.slice(2).toLowerCase()}`, 'Sample root validator mismatch')
-  assert.ok(isAddressEqual(validatorOwner, c.sampleOwner), 'Sample validator signer mismatch')
-  const storedRoot = await clients.primary.getStorageAt({ address: account, slot: rootSlot, blockNumber })
-  assert.equal(storedRoot?.toLowerCase(), `0x${'0'.repeat(22)}01${pins.validator.address.slice(2).toLowerCase()}`, 'Sample root storage mismatch')
+  await Promise.all([clients.primary, clients.secondary].map(async client => {
+    const [implSlot, beacon, root, validatorOwner, storedRoot] = await Promise.all([
+      client.getStorageAt({ address: account, slot: implementationSlot, blockNumber }),
+      client.getStorageAt({ address: account, slot: beaconSlot, blockNumber }),
+      client.readContract({ address: account, abi: accountAbi, functionName: 'root', blockNumber }),
+      client.readContract({ address: pins.validator.address, abi: validatorAbi, functionName: 'ecdsaValidatorStorage', args: [account], blockNumber }),
+      client.getStorageAt({ address: account, slot: rootSlot, blockNumber }),
+    ])
+    assert.equal(implSlot?.toLowerCase(), `0x${'0'.repeat(24)}${implementation.slice(2).toLowerCase()}`, 'Sample proxy implementation mismatch')
+    assert.equal(beacon?.toLowerCase(), zeroHash, 'Sample proxy beacon must be empty')
+    assert.equal(root.toLowerCase(), `0x01${pins.validator.address.slice(2).toLowerCase()}`, 'Sample root validator mismatch')
+    assert.ok(isAddressEqual(validatorOwner, c.sampleOwner), 'Sample validator signer mismatch')
+    assert.equal(storedRoot?.toLowerCase(), `0x${'0'.repeat(22)}01${pins.validator.address.slice(2).toLowerCase()}`, 'Sample root storage mismatch')
+  }))
   return account
 }
 
@@ -416,13 +426,76 @@ function paymasterConstructorArgs(c, manifest) {
     pins.kernel.proxyCodeHash, manifest.staker, factory, implementation, pins.validator.address]
 }
 
+function deploymentRequest(c, manifest, artifacts, name, depositValue) {
+  const create2 = data => ({ to: getAddress(pins.create2Deployer.address), data })
+  const call = (to, abi, functionName, args = [], value = 0n) => ({
+    to: checkedAddress(to, name), data: encodeFunctionData({ abi, functionName, args }), value,
+  })
+  const factory = getAddress(pins.kernel.contracts.find(item => item.name === 'KernelFactory').address)
+  const pinnedArtifact = pins.kernel.contracts.find(item => name === `Deploy ${item.name}`)
+  if (pinnedArtifact) return create2(concatHex([zeroHash, artifacts.artifacts.get(pinnedArtifact.name).init_code]))
+  if (name === 'Deploy ECDSAValidator') return create2(concatHex([zeroHash, artifacts.validatorCode]))
+  for (const simulation of ['entryPoint09', 'pimlico']) {
+    if (name === `Deploy ${simulation} simulation`) {
+      return create2(concatHex([simulationAddresses(c, artifacts).salt, artifacts.simulations[simulation].bytecode.object]))
+    }
+  }
+  switch (name) {
+    case 'Deploy Plether Staker':
+      return { data: encodeDeployData({ abi: stakerAbi, bytecode: artifacts.artifacts.get('Staker').bytecode, args: [c.deployer] }) }
+    case 'Approve Kernel factory':
+      return call(manifest.staker, stakerAbi, 'approveFactory', [factory, true])
+    case 'Stake Plether Staker':
+      return call(manifest.staker, stakerAbi, 'stake', [pins.entryPoint.address, unstakeDelay], minStake)
+    case 'Deploy sample Kernel proxy': {
+      const packages = [{ moduleType: 1n, module: getAddress(pins.validator.address), moduleData: c.sampleOwner, internalData: '0x' }]
+      return call(factory, factoryAbi, 'deploy', [packages, 0n])
+    }
+    case 'Deploy paused Core paymaster':
+      return { data: encodeDeployData({ abi: artifacts.paymaster.abi, bytecode: artifacts.paymaster.bytecode.object,
+        args: paymasterConstructorArgs(c, manifest) }) }
+    case 'Deposit Core paymaster':
+      assert.ok(depositValue > 0n && depositValue <= c.paymasterDepositWei, 'Unexpected reviewed paymaster deposit amount')
+      return call(manifest.paymaster, artifacts.paymaster.abi, 'deposit', [], depositValue)
+    case 'Stake Core paymaster':
+      return call(manifest.paymaster, artifacts.paymaster.abi, 'addStake', [unstakeDelay], minStake)
+    default:
+      throw new Error('In-flight record names an unknown deployment action')
+  }
+}
+
+async function recoverDeployment(clients, c, manifest, artifacts) {
+  const intent = manifest.inFlight
+  assert.ok(intent?.hash, 'An intent without a recorded hash requires external nonce reconciliation or operator review')
+  const receipt = await readMinedDeployment({
+    clients, manifest, intent, awaitSafeBlock: (rpcClients, block) => commonSafeBlock(rpcClients, block, 900_000),
+    expectedRequest: async (name, blockNumber) => {
+      let depositValue
+      if (name === 'Deposit Core paymaster') {
+        if (intent.request) depositValue = BigInt(intent.request.valueWei)
+        else {
+          const [previous, independent] = await Promise.all([clients.primary, clients.secondary].map(client => client.readContract({
+            address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo',
+            args: [manifest.paymaster], blockNumber: blockNumber - 1n,
+          })))
+          assert.deepEqual(previous, independent, 'Independent RPCs disagree on the prior paymaster deposit')
+          depositValue = c.paymasterDepositWei - previous.deposit
+        }
+      }
+      return fingerprintDeploymentRequest(deploymentRequest(c, manifest, artifacts, name, depositValue))
+    },
+  })
+  return { manifest: completeMinedDeployment(manifest, receipt), status: receipt.status, hash: intent.hash }
+}
+
 async function verifyDeploymentTransaction(clients, manifest, name, address, expectedInput, safeBlock) {
   const record = manifest.transactions.findLast(item => item.name === name)
   assert.ok(record, `${name} deployment transaction is missing from manifest`)
-  const [receiptA, receiptB, tx] = await Promise.all([
+  const [receiptA, receiptB, txA, txB] = await Promise.all([
     clients.primary.getTransactionReceipt({ hash: record.hash }),
     clients.secondary.getTransactionReceipt({ hash: record.hash }),
     clients.primary.getTransaction({ hash: record.hash }),
+    clients.secondary.getTransaction({ hash: record.hash }),
   ])
   for (const receipt of [receiptA, receiptB]) {
     assert.equal(receipt.status, 'success', `${name} deployment receipt reverted`)
@@ -431,9 +504,16 @@ async function verifyDeploymentTransaction(clients, manifest, name, address, exp
     assert.ok(receipt.contractAddress && isAddressEqual(receipt.contractAddress, address), `${name} deployment address changed`)
     if (safeBlock !== undefined) assert.ok(receipt.blockNumber <= safeBlock, `${name} deployment is not safe yet`)
   }
-  assert.equal(tx.to, null, `${name} must be a direct contract creation`)
-  assert.ok(isAddressEqual(tx.from, manifest.binding.deployer), `${name} deployer differs from binding`)
-  assert.equal(tx.input.toLowerCase(), expectedInput.toLowerCase(), `${name} deployment input differs from pinned artifact and constructor`)
+  for (const tx of [txA, txB]) {
+    assert.equal(tx.hash.toLowerCase(), record.hash.toLowerCase(), `${name} deployment transaction hash differs`)
+    assert.equal(tx.blockHash, record.blockHash, `${name} deployment block hash differs`)
+    assert.equal(String(tx.blockNumber), record.blockNumber, `${name} deployment block height differs`)
+    assert.equal(tx.chainId, manifest.chainId, `${name} deployment chain differs`)
+    assert.equal(tx.value, 0n, `${name} deployment unexpectedly sends native ETH`)
+    assert.equal(tx.to, null, `${name} must be a direct contract creation`)
+    assert.ok(isAddressEqual(tx.from, manifest.binding.deployer), `${name} deployer differs from binding`)
+    assert.equal(tx.input.toLowerCase(), expectedInput.toLowerCase(), `${name} deployment input differs from pinned artifact and constructor`)
+  }
   return receiptA
 }
 
@@ -471,14 +551,16 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
   assert.equal(manifest.stakerCodeHash, stakerRuntimeCodeHash, 'Staker runtime differs from pinned local release deployment')
   await verifyDeploymentTransaction(clients, manifest, 'Deploy Plether Staker', manifest.staker,
     encodeDeployData({ abi: stakerAbi, bytecode: artifacts.artifacts.get('Staker').bytecode, args: [c.deployer] }), safe.number)
-  const [stakerOwner, approved, factoryImplementation] = await Promise.all([
-    clients.primary.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'owner', blockNumber: safe.number }),
-    clients.primary.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'approved', args: [factory], blockNumber: safe.number }),
-    clients.primary.readContract({ address: factory, abi: factoryAbi, functionName: 'UUPS', blockNumber: safe.number }),
-  ])
-  assert.ok(isAddressEqual(stakerOwner, c.deployer), 'Staker owner differs from dedicated deployer')
-  assert.equal(approved, true, 'Staker has not approved the Kernel factory')
-  assert.ok(isAddressEqual(factoryImplementation, implementation), 'Kernel factory implementation differs from pin')
+  await Promise.all([clients.primary, clients.secondary].map(async client => {
+    const [stakerOwner, approved, factoryImplementation] = await Promise.all([
+      client.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'owner', blockNumber: safe.number }),
+      client.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'approved', args: [factory], blockNumber: safe.number }),
+      client.readContract({ address: factory, abi: factoryAbi, functionName: 'UUPS', blockNumber: safe.number }),
+    ])
+    assert.ok(isAddressEqual(stakerOwner, c.deployer), 'Staker owner differs from dedicated deployer')
+    assert.equal(approved, true, 'Staker has not approved the Kernel factory')
+    assert.ok(isAddressEqual(factoryImplementation, implementation), 'Kernel factory implementation differs from pin')
+  }))
   await verifyStake(clients, manifest.staker, safe.number, 'Staker')
   assert.ok(isAddressEqual(await verifySample(clients, c, safe.number, manifest.sampleAccount), manifest.sampleAccount))
   await requireHash(clients, manifest.paymaster, manifest.paymasterCodeHash, safe.number, 'Core paymaster')
@@ -541,14 +623,37 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
   return manifest
 }
 
-async function broadcast(clients, c, manifest, artifacts, manifestPath, confirmation) {
+function dedicatedSigner(c, confirmation) {
   assert.equal(confirmation, c.deployment, 'Pass --confirm with the exact deployment id')
-  assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash before resuming')
+  assert.ok(!isAddressEqual(c.deployer, sharedOrderRouterSigner), 'Use a dedicated deployer distinct from the live OrderRouter signer')
   const secret = process.env.KERNEL_CANARY_DEPLOYER_PRIVATE_KEY
   assert.match(secret ?? '', /^0x[0-9a-fA-F]{64}$/u, 'Inject KERNEL_CANARY_DEPLOYER_PRIVATE_KEY from the approved Plether signer process')
   const signer = privateKeyToAccount(secret)
-  assert.ok(isAddressEqual(signer.address, c.deployer), 'Signer does not match the configured Plether deployer')
-  const stakerInput = encodeDeployData({ abi: stakerAbi, bytecode: artifacts.artifacts.get('Staker').bytecode, args: [c.deployer] })
+  assert.ok(isAddressEqual(signer.address, c.deployer), 'Signer does not match the dedicated deployer')
+  return signer
+}
+
+function deploymentWallet(c, signer) {
+  return createWalletClient({ account: signer, chain: arbitrumSepolia, transport: http(c.primaryRpc, { timeout: 30_000, retryCount: 0 }) })
+}
+
+async function rebroadcastDeployment(clients, c, manifest, artifacts, confirmation) {
+  const intent = manifest.inFlight
+  assert.ok(intent?.fees && intent.request, 'Legacy or missing intent can only be reconciled after mining')
+  const signer = dedicatedSigner(c, confirmation)
+  const wallet = deploymentWallet(c, signer)
+  const deposit = intent.name === 'Deposit Core paymaster' ? BigInt(intent.request.valueWei) : undefined
+  return rebroadcastRecordedDeployment({ manifest, request: deploymentRequest(c, manifest, artifacts, intent.name, deposit),
+    signTransaction: transaction => signer.signTransaction(transaction),
+    assertCleanNonce: nonce => cleanLiveDeployerNonce(clients, c.deployer, nonce),
+    sendRawTransaction: serializedTransaction => wallet.sendRawTransaction({ serializedTransaction }),
+  })
+}
+
+async function broadcast(clients, c, manifest, artifacts, manifestPath, confirmation) {
+  assert.ok(!manifest.inFlight, 'Manifest has an unresolved transaction intent; reconcile its nonce/hash before resuming')
+  const signer = dedicatedSigner(c, confirmation)
+  const stakerInput = deploymentRequest(c, manifest, artifacts, 'Deploy Plether Staker').data
   const recoveredStaker = await recoverCreatedContract(clients, manifest, 'Deploy Plether Staker', stakerInput)
   if (recoveredStaker) {
     if (manifest.staker) assert.ok(isAddressEqual(manifest.staker, recoveredStaker.address), 'Manifest Staker differs from deployment receipt')
@@ -559,8 +664,7 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   } else assert.ok(!manifest.staker, 'Manifest Staker lacks a deployment receipt')
   let recoveredPaymaster
   if (manifest.staker) {
-    const paymasterInput = encodeDeployData({ abi: artifacts.paymaster.abi, bytecode: artifacts.paymaster.bytecode.object,
-      args: paymasterConstructorArgs(c, manifest) })
+    const paymasterInput = deploymentRequest(c, manifest, artifacts, 'Deploy paused Core paymaster').data
     recoveredPaymaster = await recoverCreatedContract(clients, manifest, 'Deploy paused Core paymaster', paymasterInput)
   }
   if (recoveredPaymaster) {
@@ -586,7 +690,7 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   const depositStillNeeded = paymasterInfoBefore?.deposit >= c.paymasterDepositWei ? 0n :
     c.paymasterDepositWei - (paymasterInfoBefore?.deposit ?? 0n)
   const [latestNonce, balance] = await Promise.all([
-    cleanLiveDeployerNonce(clients, c.deployer),
+    cleanLiveDeployerNonce(clients, c.deployer, manifest.expectedNonce === undefined ? undefined : Number(manifest.expectedNonce)),
     clients.primary.getBalance({ address: c.deployer }),
   ])
   if (manifest.expectedNonce === undefined) {
@@ -597,27 +701,37 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   const needed = stakerStillNeeded + paymasterStakeStillNeeded + depositStillNeeded + gasReserve
   assert.ok(balance >= needed, `Plether deployer needs at least ${needed} wei before broadcasting`)
   saveManifest(manifestPath, manifest)
-  const wallet = createWalletClient({ account: signer, chain: arbitrumSepolia, transport: http(c.primaryRpc, { timeout: 30_000 }) })
+  const wallet = deploymentWallet(c, signer)
   let nextNonce = latestNonce
   let lastBlock = manifest.transactions.reduce((max, tx) => {
     const block = BigInt(tx.blockNumber)
     return block > max ? block : max
   }, 0n)
-  async function confirmed(send, name) {
-    const freshLatest = await cleanLiveDeployerNonce(clients, c.deployer)
-    assert.equal(freshLatest, nextNonce, 'Deployer nonce advanced outside the canary before the next send')
+  async function confirmed(name, depositValue) {
+    await cleanLiveDeployerNonce(clients, c.deployer, nextNonce)
     assert.equal(manifest.expectedNonce, String(nextNonce), 'Manifest nonce checkpoint changed before the next send')
-    manifest.inFlight = { name, nonce: String(nextNonce) }
+    const request = deploymentRequest(c, manifest, artifacts, name, depositValue)
+    const prepared = await wallet.prepareTransactionRequest({ ...request, type: 'eip1559', nonce: nextNonce })
+    const fees = deploymentFeeFields(prepared)
+    const { signed, hash } = await signDeploymentTransaction({ request, chainId: pins.chainId, nonce: nextNonce, fees,
+      signTransaction: transaction => signer.signTransaction(transaction) })
+    await cleanLiveDeployerNonce(clients, c.deployer, nextNonce)
+    manifest.inFlight = { name, nonce: String(nextNonce), hash, request: fingerprintDeploymentRequest(request), fees }
     saveManifest(manifestPath, manifest)
-    const hash = await send(nextNonce)
-    manifest.inFlight.hash = hash
-    saveManifest(manifestPath, manifest)
-    const receipt = await clients.primary.waitForTransactionReceipt({ hash, timeout: 180_000, confirmations: 1 })
-    assert.equal(receipt.status, 'success', `${name} transaction reverted`)
+    const sentHash = await wallet.sendRawTransaction({ serializedTransaction: signed })
+    assert.equal(sentHash, hash, 'Provider returned a different deployment transaction hash')
+    await Promise.all([clients.primary, clients.secondary].map(client => client.waitForTransactionReceipt({
+      hash, timeout: 180_000, confirmations: 1, checkReplacement: false,
+    })))
+    const receipt = await readMinedDeployment({ clients, manifest, intent: manifest.inFlight,
+      expectedRequest: () => fingerprintDeploymentRequest(request) })
+    // A reverted send also consumes a nonce. Finish it via safe reconciliation before retrying.
+    assert.equal(receipt.status, 'success', `${name} transaction reverted; run --reconcile-inflight`)
     lastBlock = receipt.blockNumber > lastBlock ? receipt.blockNumber : lastBlock
-    manifest.transactions.push({ name, hash, nonce: String(nextNonce), blockNumber: String(receipt.blockNumber), blockHash: receipt.blockHash })
+    const completed = completeMinedDeployment(manifest, receipt)
     nextNonce += 1
-    manifest.expectedNonce = String(nextNonce)
+    manifest.transactions = completed.transactions
+    manifest.expectedNonce = completed.expectedNonce
     delete manifest.inFlight
     saveManifest(manifestPath, manifest)
     console.log(`${name}: ${hash}`)
@@ -634,26 +748,20 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   for (const pin of pins.kernel.contracts) {
     const address = getAddress(pin.address)
     if (await latestCode(address, pin.codeHash)) continue
-    const code = artifacts.artifacts.get(pin.name).init_code
-    await confirmed(nonce => wallet.sendTransaction({ to: pins.create2Deployer.address, data: concatHex([zeroHash, code]), nonce }), `Deploy ${pin.name}`)
+    await confirmed(`Deploy ${pin.name}`)
     assert.equal(await latestCode(address, pin.codeHash), true)
   }
   if (!(await latestCode(pins.validator.address, pins.validator.codeHash))) {
-    await confirmed(nonce => wallet.sendTransaction({
-      to: pins.create2Deployer.address, data: concatHex([zeroHash, artifacts.validatorCode]), nonce,
-    }), 'Deploy ECDSAValidator')
+    await confirmed('Deploy ECDSAValidator')
     assert.equal(await latestCode(pins.validator.address, pins.validator.codeHash), true)
   }
-  const { salt: simulationSalt, addresses: simulations } = simulationAddresses(c, artifacts)
+  const { addresses: simulations } = simulationAddresses(c, artifacts)
   manifest.simulations ??= {}
   for (const name of ['entryPoint09', 'pimlico']) {
     let current = await verifySimulation({ primary: clients.primary, secondary: clients.primary }, artifacts, name,
       simulations[name], await clients.primary.getBlockNumber())
     if (!current) {
-      await confirmed(nonce => wallet.sendTransaction({
-        to: pins.create2Deployer.address,
-        data: concatHex([simulationSalt, artifacts.simulations[name].bytecode.object]), nonce,
-      }), `Deploy ${name} simulation`)
+      await confirmed(`Deploy ${name} simulation`)
       current = await verifySimulation({ primary: clients.primary, secondary: clients.primary }, artifacts, name,
         simulations[name], await clients.primary.getBlockNumber(), true)
     }
@@ -668,9 +776,7 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   const implementation = getAddress(pins.kernel.contracts.find(x => x.name === 'KernelUUPS').address)
   assert.ok(isAddressEqual(await clients.primary.readContract({ address: factory, abi: factoryAbi, functionName: 'UUPS' }), implementation))
   if (!manifest.staker) {
-    const receipt = await confirmed(nonce => wallet.deployContract({
-      abi: stakerAbi, bytecode: artifacts.artifacts.get('Staker').bytecode, args: [c.deployer], nonce,
-    }), 'Deploy Plether Staker')
+    const receipt = await confirmed('Deploy Plether Staker')
     assert.ok(receipt.contractAddress, 'Staker deployment did not return an address')
     manifest.staker = getAddress(receipt.contractAddress)
     const code = await clients.primary.getCode({ address: manifest.staker })
@@ -683,14 +789,12 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   assert.equal(await latestCode(manifest.staker, stakerRuntimeCodeHash), true)
   assert.ok(isAddressEqual(await clients.primary.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'owner' }), c.deployer))
   if (!(await clients.primary.readContract({ address: manifest.staker, abi: stakerAbi, functionName: 'approved', args: [factory] }))) {
-    await confirmed(nonce => wallet.writeContract({ address: manifest.staker, abi: stakerAbi, functionName: 'approveFactory', args: [factory, true], nonce }), 'Approve Kernel factory')
+    await confirmed('Approve Kernel factory')
   }
   const stakerStake = await clients.primary.readContract({ address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [manifest.staker] })
   if (!stakerStake.staked || stakerStake.stake < minStake || stakerStake.unstakeDelaySec < unstakeDelay) {
     assert.equal(stakerStake.stake, 0n, 'Review partial Staker stake manually before resuming')
-    await confirmed(nonce => wallet.writeContract({
-      address: manifest.staker, abi: stakerAbi, functionName: 'stake', args: [pins.entryPoint.address, unstakeDelay], value: minStake, nonce,
-    }), 'Stake Plether Staker')
+    await confirmed('Stake Plether Staker')
   }
   const packages = [{ moduleType: 1n, module: getAddress(pins.validator.address), moduleData: c.sampleOwner, internalData: '0x' }]
   for (const [label, owner] of ownerAddressesToCheck(c)) {
@@ -699,17 +803,14 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   }
   const sample = await clients.primary.readContract({ address: factory, abi: factoryAbi, functionName: 'getAddress', args: [packages, 0n] })
   if (!(await latestCode(sample, pins.kernel.proxyCodeHash))) {
-    await confirmed(nonce => wallet.writeContract({ address: factory, abi: factoryAbi, functionName: 'deploy', args: [packages, 0n], nonce }), 'Deploy sample Kernel proxy')
+    await confirmed('Deploy sample Kernel proxy')
     assert.equal(await latestCode(sample, pins.kernel.proxyCodeHash), true)
   }
   manifest.sampleAccount = getAddress(sample)
   saveManifest(manifestPath, manifest)
   await verifySample({ primary: clients.primary, secondary: clients.primary }, c, await clients.primary.getBlockNumber(), sample)
   if (!manifest.paymaster) {
-    const receipt = await confirmed(nonce => wallet.deployContract({
-      abi: artifacts.paymaster.abi, bytecode: artifacts.paymaster.bytecode.object,
-      args: paymasterConstructorArgs(c, manifest), nonce,
-    }), 'Deploy paused Core paymaster')
+    const receipt = await confirmed('Deploy paused Core paymaster')
     assert.ok(receipt.contractAddress, 'Paymaster deployment did not return an address')
     manifest.paymaster = getAddress(receipt.contractAddress)
     manifest.paymasterDeploymentBlock = String(receipt.blockNumber)
@@ -724,15 +825,11 @@ async function broadcast(clients, c, manifest, artifacts, manifestPath, confirma
   assert.equal(await clients.primary.readContract({ address: manifest.paymaster, abi: artifacts.paymaster.abi, functionName: 'paused' }), true, 'Canary paymaster must remain paused')
   const paymasterInfo = await clients.primary.readContract({ address: pins.entryPoint.address, abi: entryPointAbi, functionName: 'getDepositInfo', args: [manifest.paymaster] })
   if (paymasterInfo.deposit < c.paymasterDepositWei) {
-    await confirmed(nonce => wallet.writeContract({
-      address: manifest.paymaster, abi: artifacts.paymaster.abi, functionName: 'deposit', value: c.paymasterDepositWei - paymasterInfo.deposit, nonce,
-    }), 'Deposit Core paymaster')
+    await confirmed('Deposit Core paymaster', c.paymasterDepositWei - paymasterInfo.deposit)
   }
   if (!paymasterInfo.staked || paymasterInfo.stake < minStake || paymasterInfo.unstakeDelaySec < unstakeDelay) {
     assert.equal(paymasterInfo.stake, 0n, 'Review partial paymaster stake manually before resuming')
-    await confirmed(nonce => wallet.writeContract({
-      address: manifest.paymaster, abi: artifacts.paymaster.abi, functionName: 'addStake', args: [unstakeDelay], value: minStake, nonce,
-    }), 'Stake Core paymaster')
+    await confirmed('Stake Core paymaster')
   }
   return attest(clients, c, manifest, artifacts, lastBlock)
 }
@@ -741,12 +838,13 @@ async function main() {
   const { values: args } = parseArgs({ options: {
     config: { type: 'string' }, manifest: { type: 'string' }, attest: { type: 'boolean' },
     broadcast: { type: 'boolean' }, confirm: { type: 'string' }, help: { type: 'boolean' },
-    'check-artifacts': { type: 'boolean' }, 'reconcile-external-nonces': { type: 'boolean' },
+    'check-artifacts': { type: 'boolean' }, 'reconcile-external-nonces': { type: 'boolean' }, 'reconcile-inflight': { type: 'boolean' },
+    'rebroadcast-inflight': { type: 'boolean' },
     'external-tx': { type: 'string', multiple: true },
   } })
   if (args.help) return usage()
   assert.ok(args.config, 'Pass --config; see deploy-sepolia.md')
-  assert.ok([args.attest, args.broadcast, args['check-artifacts'], args['reconcile-external-nonces']]
+  assert.ok([args.attest, args.broadcast, args['check-artifacts'], args['reconcile-external-nonces'], args['reconcile-inflight'], args['rebroadcast-inflight']]
     .filter(Boolean).length <= 1, 'Choose only one action')
   assert.ok(!args['external-tx'] || args['reconcile-external-nonces'], '--external-tx requires --reconcile-external-nonces')
   const c = loadConfig(args.config)
@@ -777,7 +875,18 @@ async function main() {
   const [primaryBalance, secondaryBalance] = await Promise.all([clients.primary, clients.secondary].map(client =>
     client.getBalance({ address: c.deployer, blockNumber: safe.number })))
   assert.equal(primaryBalance, secondaryBalance, 'Deployer balance differs between RPCs at the common safe block')
-  if (args['reconcile-external-nonces']) {
+  if (args['reconcile-inflight']) {
+    phase = 'in-flight deployment reconciliation'
+    assert.equal(args.confirm, c.deployment, 'Pass --confirm with the exact deployment id')
+    const result = await recoverDeployment(clients, c, manifest, artifacts)
+    saveManifest(manifestPath, result.manifest)
+    console.log(JSON.stringify({ mode: 'in-flight-reconciled', manifest: manifestPath,
+      status: result.status, hash: result.hash, nextNonce: result.manifest.expectedNonce }, null, 2))
+  } else if (args['rebroadcast-inflight']) {
+    phase = 'rebroadcast of exact in-flight transaction'
+    const hash = await rebroadcastDeployment(clients, c, manifest, artifacts, args.confirm)
+    console.log(JSON.stringify({ mode: 'in-flight-rebroadcast', manifest: manifestPath, hash }, null, 2))
+  } else if (args['reconcile-external-nonces']) {
     phase = 'external nonce reconciliation'
     assert.equal(args.confirm, c.deployment, 'Pass --confirm with the exact deployment id')
     const reconciled = await reconcileExternalNonces({
@@ -825,10 +934,7 @@ async function main() {
 try {
   await main()
 } catch (error) {
-  const secret = process.env.KERNEL_CANARY_DEPLOYER_PRIVATE_KEY
-  const scrubbed = String(error?.shortMessage ?? error?.message ?? error)
-    .replaceAll(secret || '\u0000', '[REDACTED]')
-    .replace(/https:\/\/[^\s)]+/gu, '[RPC]')
+  const scrubbed = scrubRpcError(error, [process.env.KERNEL_CANARY_DEPLOYER_PRIVATE_KEY])
   console.error(`Sepolia Kernel qualification failed during ${phase}: ${scrubbed}`)
   process.exitCode = 1
 }

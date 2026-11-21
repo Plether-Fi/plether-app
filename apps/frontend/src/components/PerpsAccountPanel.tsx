@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
-import { useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
+import { KernelGasReviewCancelled, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import { usePerpsCloseMargin } from '../hooks/usePerpsCloseMargin'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
@@ -367,19 +367,7 @@ function TxLink({ hash }: { hash?: string }) {
   )
 }
 
-function PositionView({
-  position,
-  positionProtection,
-  protectionCapPrice,
-  onManageProtection,
-  equityAssets,
-  freeBuyingPowerAssets,
-  isConnected,
-  isLoading,
-  initialPositionMarginModalOpen,
-  onAccountRefresh,
-  onClosePosition,
-}: {
+interface PositionViewProps {
   position?: PerpsPosition
   positionProtection?: PositionProtection
   protectionCapPrice?: bigint
@@ -391,7 +379,26 @@ function PositionView({
   initialPositionMarginModalOpen?: boolean
   onAccountRefresh?: () => void
   onClosePosition?: () => void
-}) {
+}
+
+function PositionView({ position, isConnected, isLoading, ...props }: PositionViewProps) {
+  if (isConnected === false) return <EmptyState label="connected wallet" />
+  if (isLoading) return <LoadingState label="position data" />
+  if (!position?.exists) return <EmptyState label="current position" />
+  return <OpenPositionView {...props} position={position} />
+}
+
+function OpenPositionView({
+  position,
+  positionProtection,
+  protectionCapPrice,
+  onManageProtection,
+  equityAssets,
+  freeBuyingPowerAssets,
+  initialPositionMarginModalOpen,
+  onAccountRefresh,
+  onClosePosition,
+}: Omit<PositionViewProps, 'position' | 'isConnected' | 'isLoading'> & { position: PerpsPosition }) {
   const { addPositionMargin } = usePerpsTrading()
   const gasReview = usePerpsGasReview()
   const gasApproval = useKernelGasApproval(gasReview)
@@ -401,10 +408,6 @@ function PositionView({
   const [positionMarginAmount, setPositionMarginAmount] = useState('')
   const [positionMarginStatus, setPositionMarginStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
   const [positionMarginError, setPositionMarginError] = useState<Error>()
-
-  if (isConnected === false) return <EmptyState label="connected wallet" />
-  if (isLoading) return <LoadingState label="position data" />
-  if (!position?.exists) return <EmptyState label="current position" />
 
   const positionMarginAmountRaw = parsePerpsAssets(positionMarginAmount)
   const riskUnavailable = position.riskStatus === 'unavailable'
@@ -441,6 +444,10 @@ function PositionView({
       setPositionMarginAmount('')
       setPositionMarginStatus('idle')
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) {
+        setPositionMarginStatus('idle')
+        return
+      }
       setPositionMarginStatus('failed')
       setPositionMarginError(error instanceof Error ? error : new Error('Add position margin failed'))
     }
@@ -606,7 +613,8 @@ function PositionView({
         onClose={handleClosePositionMarginModal}
         title="Edit Position Margin"
         size="md"
-        footer={gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} /> : (
+        footer={gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel}
+          disabled={!gasApproval.canConfirm || positionMarginAmountRaw <= 0n || isPositionMarginTooHigh} /> : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               type="button"
@@ -951,24 +959,29 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
   )
 }
 
-function TraderClaimCard({
-  amount,
-  hasPosition,
-  onAccountRefresh,
-}: {
+interface TraderClaimCardProps {
   amount?: bigint
   hasPosition?: boolean
+  isConnected?: boolean
   onAccountRefresh?: () => void
-}) {
+}
+
+function TraderClaimCard({ amount, isConnected, ...props }: TraderClaimCardProps) {
+  if (isConnected === false || amount === undefined || amount <= 0n) return null
+  return <ClaimSettlementCard {...props} amount={amount} />
+}
+
+function ClaimSettlementCard({
+  amount, hasPosition, onAccountRefresh,
+}: Omit<TraderClaimCardProps, 'amount' | 'isConnected'> & { amount: bigint }) {
   const { settleTraderClaim } = usePerpsTrading()
   const gasReview = usePerpsGasReview()
   const gasApproval = useKernelGasApproval(gasReview)
   const [status, setStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
   const [error, setError] = useState<Error>()
 
-  if (amount === undefined || amount <= 0n) return null
-
   async function handleSettleClaim() {
+    if (status === 'pending' || gasReview?.available === false) return
     setStatus('pending')
     setError(undefined)
     try {
@@ -977,6 +990,10 @@ function TraderClaimCard({
       setStatus('idle')
       onAccountRefresh?.()
     } catch (cause) {
+      if (cause instanceof KernelGasReviewCancelled) {
+        setStatus('idle')
+        return
+      }
       setStatus('failed')
       setError(cause instanceof Error ? cause : new Error('Claim settlement failed'))
     }
@@ -1009,7 +1026,8 @@ function TraderClaimCard({
       {gasReview ? (
         <div className="mt-3 space-y-3">
           <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={status !== 'pending'} />
-          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} /> : null}
+          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel}
+            disabled={!gasApproval.canConfirm} /> : null}
         </div>
       ) : null}
       {error ? (
@@ -1122,6 +1140,7 @@ function AccountTabContent({
         <TraderClaimCard
           amount={traderClaimBalanceAssets}
           hasPosition={position?.exists}
+          isConnected={isConnected}
           onAccountRefresh={onAccountRefresh}
         />
         <PositionView

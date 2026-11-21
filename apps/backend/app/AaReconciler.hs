@@ -9,7 +9,7 @@ import Control.Exception
   , throwIO
   , try
   )
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Char (isAscii, isDigit)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -102,6 +102,10 @@ runSimpleAccount = do
 
 runKernel :: KernelProfile -> KernelSponsorshipConfig -> Integer -> IO ()
 runKernel profile sponsor safeLag = do
+  legacyIdentity <- traverse lookupEnv
+    ["AA_PAYMASTER_ADDRESS", "AA_PAYMASTER_CODE_HASH", "AA_RECONCILER_START_BLOCK", "AA_RECONCILER_START_BLOCK_HASH"]
+  when (any (maybe False (not . T.null . T.strip . T.pack)) legacyIdentity) $
+    fatal "aa_reconciler_configuration_invalid" "Kernel and SimpleAccount reconciler identities are mutually exclusive"
   unless (Manifest.releaseChainId == 421614) $
     fatal "aa_reconciler_configuration_invalid" "Kernel AA requires an Arbitrum Sepolia Perps release"
   databaseUrl <- requireEnv "DATABASE_URL"
@@ -123,11 +127,24 @@ runKernel profile sponsor safeLag = do
   batch <- kernelIntSetting "AA_KERNEL_RECONCILER_BATCH_BLOCKS" 250 1 2000
   pauseAfter <- kernelIntSetting "AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS" 60 (max 5 poll) 300
   pool <- newDbPool databaseUrl
-  withDb pool $ \conn -> do
+  schemaResult <- try @SomeException $ withDb pool $ \conn -> do
     ensureKernelOperationSchema conn
     ensureKernelReconcilerSchema conn
-  primaryClient <- newClientWithOptions $ RpcClientOptions primary primaryAuth "kernel-reconciler-primary"
-  secondaryClient <- newClient secondary
+  either (const $ fatal "kernel_aa_reconciler_schema_invalid" "Could not validate the Kernel sponsorship schema")
+    pure schemaResult
+  primaryClient <- withoutRpcFallback <$> newClientWithOptions (RpcClientOptions primary primaryAuth "kernel-reconciler-primary")
+  secondaryClient <- withoutRpcFallback <$> newClientWithOptions (RpcClientOptions secondary Nothing "kernel-reconciler-secondary")
+  logInfo "kernel_aa_reconciler_started" "Kernel sponsorship reconciler started"
+    [ field "chain_id" $ kpChainId profile
+    , field "rpc_mode" $ aaRpcModeText DualIndependent
+    , field "paymaster" $ kscPaymaster sponsor
+    , field "start_block" $ kscDeploymentBlock sponsor
+    , field "poll_seconds" poll
+    , field "batch_blocks" batch
+    , field "minimum_deposit_wei" $ kscMinDepositWei sponsor
+    , field "failure_pause_seconds" pauseAfter
+    , field "max_safe_lag_seconds" safeLag
+    ]
   runKernelReconciler pool primaryClient secondaryClient KernelReconcilerConfig
     { krcScope = kernelScope profile
     , krcEntryPointCodeHash = kpEntryPointCodeHash profile

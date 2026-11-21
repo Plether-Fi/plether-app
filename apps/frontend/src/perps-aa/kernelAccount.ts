@@ -8,7 +8,9 @@ import {
   padHex,
   parseAbi,
   parseAbiParameters,
+  parseSignature,
   recoverMessageAddress,
+  serializeSignature,
   toHex,
   zeroAddress,
   type Address,
@@ -44,6 +46,7 @@ const executionBatchAbi = parseAbiParameters('(address target, uint256 value, by
 const singleCallMode = toHex(0n, { size: 32 })
 const batchCallMode = toHex(1n << 248n, { size: 32 })
 const kernelStubSignature = '0xfffffffffffffffffffffffffffffff0000000000000000000000000000000007aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1c'
+const secp256k1HalfOrder = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n
 
 export interface KernelAccountProfile {
   chainId: number
@@ -100,7 +103,15 @@ export function encodeKernelCalls(calls: readonly { to: Address; value?: bigint 
     abi: executionAbi,
     functionName: 'execute',
     args: [calls.length === 1 ? singleCallMode : batchCallMode, executionData],
-  })
+  }).toLowerCase() as Hex
+}
+
+/** Match the deployed Solidity ECDSA validator's accepted signature encoding. */
+export function normalizeKernelSignature(signature: Hex): Hex {
+  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error('The Kernel wallet returned an invalid signature')
+  const parsed = parseSignature(signature)
+  if (BigInt(parsed.s) > secp256k1HalfOrder) throw new Error('The Kernel wallet returned a noncanonical signature')
+  return serializeSignature(parsed)
 }
 
 async function deriveKernelAccount(
@@ -226,7 +237,7 @@ export async function createKernelTradingAccount(
       }
       const userOperation: UserOperation<'0.9'> = { ...parameters, sender }
       const hash = getUserOperationHash({ userOperation, chainId: profile.chainId, entryPointAddress: entryPoint.address, entryPointVersion: entryPoint.version })
-      const signature = await owner.signMessage({ message: { raw: hash } })
+      const signature = normalizeKernelSignature(await owner.signMessage({ message: { raw: hash } }))
       const signer = await recoverMessageAddress({ message: { raw: hash }, signature })
       if (!isAddressEqual(signer, ownerAddress)) throw new Error('UserOperation was signed by a different Kernel owner')
       return signature

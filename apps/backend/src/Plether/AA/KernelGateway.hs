@@ -7,6 +7,7 @@ module Plether.AA.KernelGateway
   , KernelSponsorshipConfig (..)
   , loadKernelPublicConfig
   , loadKernelGatewayConfig
+  , parseKernelMaxSafeLag
   , kernelScope
   , handleKernelAaRpc
   , KernelTradingAccountProof (..)
@@ -20,6 +21,11 @@ module Plether.AA.KernelGateway
   , minimumKernelReplacementFee
   , parseKernelCancellationOriginal
   , maxPrefund
+  , validateKernelEconomicCaps
+  , validateKernelWithdrawalMode
+  , locateKernelNonceTransition
+  , kernelNonceScanRange
+  , kernelOperationDeadline
   , sponsorStakeReady
   , parseOwnerAdmission
   , kernelOwnerAdmitted
@@ -27,6 +33,7 @@ module Plether.AA.KernelGateway
   ) where
 
 import Control.Concurrent.Async (concurrently, mapConcurrently)
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (try, SomeException)
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (liftIO)
@@ -38,7 +45,6 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -62,14 +68,16 @@ import qualified Plether.AA.Pimlico as Legacy
 import qualified Plether.AA.Preparation as Preparation
 import qualified Plether.AA.RecoveryCapability as Recovery
 import qualified Plether.AA.Reconciler as Chain
-import Plether.Config (AaRpcMode (..), Config (..))
+import Plether.Config (AaRpcMode (..), Config (..), normalizeExternalSecurityRpcUrl)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.AaSponsorship (consumeAaRateLimit)
 import qualified Plether.Database.KernelOperation as Db
 import Plether.Ethereum.Abi (decodeAddress, decodeUint256, encodeAddress, encodeCall, encodeUint256, keccak256, selector)
-import Plether.Ethereum.Client (CallParams (..), EthClient, ethCallAtBlock, newClient, rpcCall)
+import Plether.Ethereum.Client
+  (CallParams (..), EthClient, RpcClientOptions (..), ethCallAtBlock, newClientWithOptions, rpcCall, withoutRpcFallback)
 import qualified Plether.Perps.Manifest as Manifest
 import System.Environment (lookupEnv)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 import Web.Scotty (ActionM, header, json, request, setHeader, status)
 
@@ -83,6 +91,7 @@ data KernelGatewayConfig = KernelGatewayConfig
   , kgcEthModeEnabled :: Bool
   , kgcProtectionCommitsEnabled :: Bool
   , kgcSponsorship :: Maybe KernelSponsorshipConfig
+  , kgcKmsSigner :: MVar (Maybe Kms.PaymasterSigner)
   , kgcAllowedOwners :: Maybe [Text]
   }
 
@@ -141,15 +150,16 @@ loadKernelPublicConfig = runExceptT $ do
       pure Nothing
     Just profileJson -> do
       profile <- ExceptT $ pure $ decodeEnvironment "AA_KERNEL_PROFILE_JSON" profileJson
-      maxLag <- maybe (pure 600) (ExceptT . pure . readSafeLag) lag
+      maxLag <- maybe (pure 600) (ExceptT . pure . parseKernelMaxSafeLag) lag
       sponsor <- traverse (ExceptT . pure . parseSponsorship sponsorEnabled) mSponsor
       when (sponsorEnabled && maybe True (null . kscCanaryOwners) sponsor) $
         throwE "Enabled Kernel sponsorship requires a nonempty canary owner allowlist"
       pure $ Just (profile, sponsor, maxLag)
- where
-  readSafeLag raw = case readMaybe raw of
-    Just value | value >= 60 && value <= 600 -> Right value
-    _ -> Left "AA_KERNEL_MAX_SAFE_LAG_SECONDS must be between 60 and 600"
+
+parseKernelMaxSafeLag :: String -> Either Text Integer
+parseKernelMaxSafeLag raw = case readMaybe raw of
+  Just value | value >= 60 && value <= 1_800 && raw == show value -> Right value
+  _ -> Left "AA_KERNEL_MAX_SAFE_LAG_SECONDS must be between 60 and 1800"
 
 loadKernelGatewayConfig :: IO (Either Text (Maybe KernelGatewayConfig))
 loadKernelGatewayConfig = runExceptT $ do
@@ -169,23 +179,32 @@ loadKernelGatewayConfig = runExceptT $ do
       unless (T.length origin == 64 && T.all lowerHex origin && T.any (/= '0') origin) $
         throwE "AA_PROXY_ORIGIN_TOKEN must be 64 nonzero lowercase hex characters"
       bundlerUrl <- requiredEnv "AA_KERNEL_ALTO_RPC_URL"
-      case validTransportUri False bundlerUrl of
+      case validBundlerTransportUri bundlerUrl of
         Just uri | null (uriQuery uri) -> pure ()
         _ -> throwE "AA_KERNEL_ALTO_RPC_URL must be an HTTP(S) URL without credentials or a query"
-      primary <- requiredEnv "PERPS_RPC_URL"
+      primaryRaw <- requiredEnv "PERPS_RPC_URL"
       secondaryAlias <- liftIO $ lookupEnv "AA_SECURITY_RPC_URL"
-      secondary <- case secondaryAlias of
+      secondaryRaw <- case secondaryAlias of
         Just value | not (T.null $ T.strip $ T.pack value) -> pure $ T.strip $ T.pack value
         _ -> requiredEnv "AA_RECONCILER_SECONDARY_RPC_URL"
-      unless (independentRpcHosts primary secondary) $
+      primary <- normalizeRpc "PERPS_RPC_URL" primaryRaw
+      secondary <- normalizeRpc "Kernel security RPC URL" secondaryRaw
+      let host = T.takeWhile (/= '/') . T.drop 8
+      unless (host primary /= host secondary) $
         throwE "Kernel requires two HTTPS RPC URLs with distinct hosts"
       sponsorWithKey <- traverse
         (\s -> if kscEnabled s
           then (\key -> s { kscKmsKeyId = key }) <$> requiredEnv "AA_KERNEL_PAYMASTER_KMS_KEY_ID"
           else pure s)
         sponsor
-      secondaryClient <- liftIO $ newClient secondary
-      pure $ Just $ KernelGatewayConfig profile bundlerUrl origin secondary secondaryClient maxLag ethEnabled protections sponsorWithKey allowedOwners
+      secondaryClient <- liftIO $ withoutRpcFallback <$>
+        newClientWithOptions (RpcClientOptions secondary Nothing "kernel-gateway-secondary")
+      signerCache <- liftIO $ newMVar Nothing
+      pure $ Just $ KernelGatewayConfig profile bundlerUrl origin secondary secondaryClient maxLag ethEnabled protections sponsorWithKey signerCache allowedOwners
+ where
+  normalizeRpc name url = maybe
+    (throwE $ name <> " must be a normalized HTTPS/default-443 provider URL") pure
+    (normalizeExternalSecurityRpcUrl url)
 
 -- A canary needs an explicit owner list for both gas modes. Broad admission
 -- requires a separate deliberate switch and cannot coexist with a canary list.
@@ -272,29 +291,21 @@ envBool name = do
     Just "true" -> Right True
     _ -> Left $ T.pack name <> " must be true or false"
 
-validTransportUri :: Bool -> Text -> Maybe URI
-validTransportUri requireHttps value = do
+validBundlerTransportUri :: Text -> Maybe URI
+validBundlerTransportUri value = do
   uri <- parseURI $ T.unpack value
   auth <- uriAuthority uri
-  if (uriScheme uri == "https:" || (not requireHttps && uriScheme uri == "http:"))
+  if uriScheme uri `elem` ["https:", "http:"]
      && null (uriUserInfo auth) && not (null $ uriRegName auth)
      && null (uriFragment uri)
     then Just uri
     else Nothing
 
-independentRpcHosts :: Text -> Text -> Bool
-independentRpcHosts primary secondary = case (host primary, host secondary) of
-  (Just first, Just second) -> first /= second
-  _ -> False
- where
-  host value = T.toLower . T.dropWhileEnd (== '.') . T.pack . uriRegName
-    <$> (validTransportUri True value >>= uriAuthority)
-
 kernelScope :: Kernel.KernelProfile -> Db.KernelScope
 kernelScope profile = Db.KernelScope (Kernel.kpDeployment profile) (Kernel.kpChainId profile) (Kernel.kpEntryPoint profile)
 
 handleKernelAaRpc :: KernelGatewayConfig -> Config -> Maybe DbPool -> EthClient -> Manager -> ActionM ()
-handleKernelAaRpc gateway cfg pool primary manager = do
+handleKernelAaRpc gateway cfg pool ordinaryPrimary manager = do
   suppliedToken <- header "X-Plether-AA-Proxy-Token"
   ip <- header "CF-Connecting-IP"
   case (pool, (TL.toStrict <$> ip) >>= Legacy.validateClientIp) of
@@ -323,7 +334,8 @@ handleKernelAaRpc gateway cfg pool primary manager = do
                     rateLimit gateway db "rpc" client "rpc" 90
                     unless (matchesPerpsRelease (kgcProfile gateway) cfg) $
                       throwE $ Legacy.unavailable "RELEASE_UNAVAILABLE" "Kernel trading is unavailable for this Perps release"
-                    dispatch gateway cfg db primary (kgcSecondaryClient gateway) manager client rpc
+                    dispatch gateway cfg db (withoutRpcFallback ordinaryPrimary)
+                      (withoutRpcFallback $ kgcSecondaryClient gateway) manager client rpc
                   case result of
                     Left failure -> Legacy.respondFailure (krId rpc) failure
                     Right (KernelFundingRequired advice) -> respondFundingAdvice (krId rpc) advice
@@ -440,7 +452,7 @@ prepare gateway cfg db primary secondary manager client intent = do
   (calls, factoryOwner) <- except $
     Kernel.parseKernelCallIntent profile (piSender intent) callData
       (Kernel.kpStaker profile <$ piFactoryData intent) (piFactoryData intent)
-  rateLimit gateway db "account-prepare" client (piSender intent) 12
+  rateLimitAccount gateway db "account-prepare" (piSender intent) 12
   forMOptional sponsor $ \_ ->
     rateLimit gateway db "sponsored-prepare" client "sponsorship" 6
   snapshot <- agreedSnapshot gateway primary secondary
@@ -448,13 +460,13 @@ prepare gateway cfg db primary secondary manager client intent = do
     verifyPerpsAccountAtBlock profile (piSender intent) factoryOwner
   unless (kernelOwnerAdmitted (kgcAllowedOwners gateway) owner) $
     throwE $ forbidden "KERNEL_CANARY_INELIGIBLE" "This Trading Account is not in the Kernel canary"
-  except $ validateKernelActions gateway cfg (piSender intent) owner calls
+  except $ validateKernelActions gateway cfg (piMode intent) (piSender intent) owner calls
   forMOptional sponsor $ \s -> do
     unless (owner `elem` kscCanaryOwners s) $
       throwE $ forbidden "SPONSORSHIP_INELIGIBLE" "This Trading Account is not eligible for sponsorship"
     verifySponsorAvailability gateway db primary secondary snapshot s
   now <- seconds
-  deadline <- except $ operationDeadline now calls
+  deadline <- except $ kernelOperationDeadline now calls
   existing <- dbAction db $ \conn ->
     Db.getKernelPreparationForClient conn scope (piId intent) client
   case existing of
@@ -507,7 +519,11 @@ prepare gateway cfg db primary secondary manager client intent = do
                   (max 0 (now - 30)) expiry (Object $ Paymaster.puoObject packed)
             result <- dbAction db $ \conn -> Db.reserveKernelSponsorship conn (kscBudget s) draft
             either (const $ throwE $ Legacy.unavailable "SPONSORSHIP_BUDGET_UNAVAILABLE" "Sponsorship capacity is unavailable") pure result
-        (operation, expiresAt) <- signSponsorship gateway db manager s now intent authorization
+        let reservedNonce = Db.ksdNonce (Db.kspDraft authorization)
+        liveNonce <- attestBoth gateway primary secondary snapshot $ \rpc block ->
+          readNonce profile rpc block (piSender intent)
+        unless (liveNonce == reservedNonce) $ throwE kernelNonceChanged
+        (operation, expiresAt) <- signSponsorship gateway cfg db manager s owner intent authorization
         persistPreparation snapshot owner now expiresAt operation
  where
   profile = kgcProfile gateway
@@ -528,6 +544,7 @@ prepare gateway cfg db primary secondary manager client intent = do
     unless (expiresAt > persistedAt) $ throwE preparationExpired
     let prepared = Db.KernelPreparation scope (piSender intent) owner (Paymaster.puoNonce operation) (piId intent)
           client (piMode intent) (Object $ Paymaster.puoObject operation) (toUtc expiresAt)
+          (Just $ Native.sbhNumber snapshot)
     stored <- dbAction db $ \conn -> Db.storeKernelPreparation conn prepared
     case stored of
       Db.PreparationConflict -> throwE preparationMismatch
@@ -585,7 +602,10 @@ quoteKernelOperationWithBalance gateway manager snapshot intent nonce (maxFee, p
         let cap = maxPrefund theQuote + kscVerificationGasLimit s * maxFee
             envelope = sponsorEnvelope profile s 0 expiry cap Paymaster.dummyPaymasterSignature
         pure $ Paymaster.applyPaymasterEnvelope theQuote envelope
-    except $ mapParseFailure $ Native.validateHardEconomicCaps actualQuote
+    except $ mapParseFailure $ validateKernelEconomicCaps actualQuote
+    forMOptional maybeSponsor $ \s ->
+      unless (maxPrefund actualQuote <= Db.ksbMaxCostWei (kscBudget s)) $
+        throwE $ Legacy.policyDenied "Estimated gas exceeds the reviewed sponsorship budget"
     pure actualQuote
  where profile = kgcProfile gateway
 
@@ -612,23 +632,32 @@ baseFields profile intent nonce maxFee priority = KM.fromList $
 gasKeys :: [Key.Key]
 gasKeys = ["callGasLimit","verificationGasLimit","preVerificationGas"]
 
-signSponsorship :: KernelGatewayConfig -> DbPool -> Manager -> KernelSponsorshipConfig -> Integer
-  -> PrepareIntent -> Db.KernelSponsorship -> Gateway (Paymaster.PackedUserOperation, Integer)
-signSponsorship gateway db manager sponsor now intent authorization = do
+signSponsorship :: KernelGatewayConfig -> Config -> DbPool -> Manager -> KernelSponsorshipConfig
+  -> Text -> PrepareIntent -> Db.KernelSponsorship -> Gateway (Paymaster.PackedUserOperation, Integer)
+signSponsorship gateway cfg db manager sponsor owner intent authorization = do
   let draft = Db.kspDraft authorization
       validAfter = Db.ksdValidAfter draft
       validUntil = Db.ksdValidUntil draft
       envelope = sponsorEnvelope profile sponsor validAfter validUntil
         (Db.ksdMaxCostWei draft) Paymaster.dummyPaymasterSignature
   unless (operationMatchesIntent intent (Db.ksdUnsignedOperation draft)) $ throwE preparationMismatch
-  unless (validUntil - now >= 30) $ throwE preparationExpired
+  now <- seconds
+  unless (validUntil - now > 30) $ throwE preparationExpired
   packed <- except $ unpackStoredOperation $ Db.ksdUnsignedOperation draft
-  except $ mapParseFailure $ Native.validateHardEconomicCaps packed
+  calls <- except $ Kernel.decodeKernelCalls $ Paymaster.puoCallData packed
+  except $ validateKernelActions gateway cfg Db.Sponsored (piSender intent) owner calls
+  except $ mapParseFailure $ validateKernelEconomicCaps packed
+  unless (maxPrefund packed == Db.ksdMaxCostWei draft &&
+          maxPrefund packed <= Db.ksbMaxCostWei (kscBudget sponsor)) $
+    throwE sponsorshipNotAuthorized
   signature <- case Db.kspSignature authorization of
-    Just stored -> maybe (throwE databaseUnavailable) pure $ fixedHex 65 stored
+    Just stored -> do
+      unless (Db.kspStatus authorization == "signed") $ throwE sponsorshipNotAuthorized
+      maybe (throwE databaseUnavailable) pure $ fixedHex 65 stored
     Nothing -> do
+      unless (Db.kspStatus authorization == "reserved") $ throwE sponsorshipNotAuthorized
       let digest = Paymaster.sponsorshipDigestFor (Kernel.kpChainId profile) (Kernel.kpEntryPoint profile) packed envelope
-      signer <- liftIO (Kms.newKmsPaymasterSigner manager (kscKmsKeyId sponsor) (kscSignerAddress sponsor))
+      signer <- liftIO cachedSigner
         >>= either (const $ throwE unavailableSigner) pure
       candidate <- liftIO (Kms.psSignDigest signer digest) >>= either (const $ throwE unavailableSigner) pure
       unless (BS.length candidate == 65) $ throwE unavailableSigner
@@ -641,17 +670,27 @@ signSponsorship gateway db manager sponsor now intent authorization = do
         -- digest. Only the durably stored signature can be returned.
         existing <- dbAction db $ \conn ->
           Db.getKernelSponsorshipForClient conn scope (kscPaymaster sponsor) (Db.ksdId draft) (Db.ksdClientKey draft)
-        case existing >>= Db.kspSignature >>= fixedHex 65 of
+        case existing >>= signedSponsorshipSignature of
           Just exactSignature -> pure exactSignature
-          Nothing -> throwE databaseUnavailable
+          Nothing -> throwE sponsorshipNotAuthorized
   let operation = Paymaster.applyPaymasterEnvelope packed envelope {Paymaster.seSignature = signature}
   nowAfterSigning <- seconds
-  unless (validUntil - nowAfterSigning >= 30) $ throwE preparationExpired
+  unless (validUntil - nowAfterSigning > 30) $ throwE preparationExpired
   pure (operation, validUntil - 30)
  where
   profile = kgcProfile gateway
   scope = kernelScope profile
   unavailableSigner = Legacy.unavailable "SPONSOR_SIGNER_UNAVAILABLE" "The sponsorship signer is unavailable"
+  signedSponsorshipSignature record
+    | Db.kspStatus record == "signed" = Db.kspSignature record >>= fixedHex 65
+    | otherwise = Nothing
+  -- Initialize only when signing is needed. The signer refreshes its ECS
+  -- credentials, and a transient initialization failure can be retried.
+  cachedSigner = modifyMVar (kgcKmsSigner gateway) $ \current -> case current of
+    Just signer -> pure (current, Right signer)
+    Nothing -> do
+      result <- Kms.newKmsPaymasterSigner manager (kscKmsKeyId sponsor) (kscSignerAddress sponsor)
+      pure (either (const Nothing) Just result, result)
 
 sponsorEnvelope :: Kernel.KernelProfile -> KernelSponsorshipConfig -> Integer -> Integer -> Integer -> ByteString -> Paymaster.SponsorshipEnvelope
 sponsorEnvelope profile sponsor validAfter validUntil cap signature =
@@ -665,6 +704,32 @@ maxPrefund :: Paymaster.PackedUserOperation -> Integer
 maxPrefund op = Paymaster.puoMaxFeePerGas op *
   (Paymaster.puoCallGasLimit op + Paymaster.puoVerificationGasLimit op + Paymaster.puoPreVerificationGas op +
    fromMaybe 0 (Paymaster.puoPaymasterVerificationGasLimit op) + fromMaybe 0 (Paymaster.puoPaymasterPostOpGasLimit op))
+
+-- Nitro charges L1 data in preVerificationGas. Keep the higher gas-unit cap
+-- Kernel-specific, while retaining a fixed ETH prefund ceiling, the configured
+-- sponsorship budget (checked by the sponsor path), and the live fee checks.
+validateKernelEconomicCaps :: Paymaster.PackedUserOperation -> Either Text ()
+validateKernelEconomicCaps operation = do
+  bounded "callGasLimit" 1 Preparation.sepoliaExecutionGasCap callGas
+  bounded "verificationGasLimit" 1 1_000_000 verificationGas
+  bounded "preVerificationGas" 1 12_000_000 preVerificationGas
+  bounded "paymasterVerificationGasLimit" 0 1_000_000 sponsorVerificationGas
+  bounded "paymasterPostOpGasLimit" 0 0 sponsorPostOpGas
+  bounded "aggregateGas" 1 17_000_000 (callGas + verificationGas + preVerificationGas +
+    sponsorVerificationGas + sponsorPostOpGas)
+  bounded "maxFeePerGas" 1 10_000_000_000 (Paymaster.puoMaxFeePerGas operation)
+  bounded "maxPriorityFeePerGas" 0 2_000_000_000 (Paymaster.puoMaxPriorityFeePerGas operation)
+  when (Paymaster.puoPaymaster operation == Nothing) $
+    bounded "ETH prefund" 1 50_000_000_000_000_000 (maxPrefund operation)
+ where
+  callGas = Paymaster.puoCallGasLimit operation
+  verificationGas = Paymaster.puoVerificationGasLimit operation
+  preVerificationGas = Paymaster.puoPreVerificationGas operation
+  sponsorVerificationGas = fromMaybe 0 (Paymaster.puoPaymasterVerificationGasLimit operation)
+  sponsorPostOpGas = fromMaybe 0 (Paymaster.puoPaymasterPostOpGasLimit operation)
+  bounded label lower upper value =
+    unless (value >= lower && value <= upper) $
+      Left $ "Kernel UserOperation " <> label <> " exceeds the reviewed gas bounds"
 
 preparationResponse :: KernelGatewayConfig -> Integer -> Db.KernelPreparation -> Paymaster.PackedUserOperation -> Value
 preparationResponse gateway now prepared operation = object $ preparationResponseFields gateway now prepared operation
@@ -702,7 +767,7 @@ submit gateway cfg db primary secondary manager client fields = do
   let operation = Kernel.koPacked parsed
       sender = Paymaster.puoSender operation
   expectedHash <- toHex <$> except (Kernel.kernelUserOperationHash profile operation)
-  rateLimit gateway db "account-submit" client sender 20
+  rateLimitAccount gateway db "account-submit" sender 20
   now <- seconds
   let replayClient = kernelRecoveryClient gateway now client ident fields
   existing <- dbAction db $ \conn -> Db.getKernelOperationForClient conn scope expectedHash replayClient
@@ -742,13 +807,16 @@ submit gateway cfg db primary secondary manager client fields = do
     snapshot <- agreedSnapshot gateway primary secondary
     owner <- attestBoth gateway primary secondary snapshot $
       verifyPerpsAccountAtBlock profile sender (Kernel.koFactoryOwner parsed)
+    unless alreadyAccepted $ do
+      nonce <- attestBoth gateway primary secondary snapshot $ \rpc block -> readNonce profile rpc block sender
+      unless (nonce == Paymaster.puoNonce operation) $ throwE kernelNonceChanged
     unless (Db.kpOwner preparation == owner) $ throwE preparationMismatch
     unless (kernelOwnerMaySubmit alreadyAccepted (kgcAllowedOwners gateway) owner) $
       throwE $ forbidden "KERNEL_CANARY_INELIGIBLE" "This Trading Account is not in the Kernel canary"
     ExceptT $ Kernel.verifyKernelSignature profile owner operation
-    except $ validateKernelActions gateway cfg sender owner calls
-    _ <- except $ operationDeadline now calls
-    except $ mapParseFailure $ Native.validateHardEconomicCaps operation
+    except $ validateKernelActions gateway cfg mode sender owner calls
+    _ <- except $ kernelOperationDeadline now calls
+    except $ mapParseFailure $ validateKernelEconomicCaps operation
     unless (Paymaster.puoMaxFeePerGas operation <= Native.nativeMaxFeeAllowance (Native.sbhBaseFeePerGas snapshot)) $
       throwE $ Legacy.policyDenied "Gas price exceeds the current reviewed allowance"
     checkFunding gateway primary secondary snapshot mode owner calls operation
@@ -761,10 +829,13 @@ submit gateway cfg db primary secondary manager client fields = do
         authorized <- dbAction db $ \conn -> Db.getKernelSponsorshipForClient conn scope (kscPaymaster sponsor) ident preparedClient
         case authorized of
           Just auth | Db.kspUserOperationHash auth == Just expectedHash
+            , Db.kspStatus auth == "signed"
             , let draft = Db.kspDraft auth
             , Db.ksdValidAfter draft < now
-            , Db.ksdValidUntil draft >= now + 30 -> pure ()
-          _ -> throwE $ forbidden "SPONSORSHIP_NOT_AUTHORIZED" "The signed UserOperation does not have a matching sponsorship"
+            , Db.ksdValidUntil draft > now + 30
+            , maxPrefund operation == Db.ksdMaxCostWei draft
+            , maxPrefund operation <= Db.ksbMaxCostWei (kscBudget sponsor) -> pure ()
+          _ -> throwE sponsorshipNotAuthorized
     revalidateSnapshot gateway primary secondary snapshot
     accepted <- dbAction db $ \conn -> Db.acceptKernelOperation conn scope ident preparedClient expectedHash (Object raw)
     case accepted of
@@ -789,7 +860,7 @@ prepareCancellation :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -
 prepareCancellation gateway db primary secondary manager client fields = do
   except $ exactVersionedFields fields cancellationKeys ["recoveryToken", "originalOperation"]
   (original, preparationId) <- cancellationAnchor gateway db client fields $
-    createCancellationAnchor gateway db primary secondary client fields
+    createCancellationAnchor gateway db primary secondary fields
   case KM.lookup "originalOperation" fields of
     Just prior | prior /= Db.koSignedOperation original -> throwE preparationMismatch
     _ -> pure ()
@@ -799,7 +870,7 @@ prepareCancellation gateway db primary secondary manager client fields = do
       nonce = Db.kpNonce prepared
       calls = [Legacy.SmartCall sender 0 BS.empty]
   unless (Db.koState original == "pending") $ throwE cancellationUnavailable
-  rateLimit gateway db "account-cancellation-prepare" client sender 6
+  rateLimitAccount gateway db "account-cancellation-prepare" sender 6
   now <- seconds
   existing <- dbAction db $ \conn -> Db.getKernelCancellation conn original preparationId
   saved <- case existing of
@@ -828,6 +899,9 @@ prepareCancellation gateway db primary secondary manager client fields = do
   operation <- except $ unpackStoredOperation $ Db.kcUnsignedOperation saved
   let quote = prepared { Db.kpId = preparationId, Db.kpUnsignedOperation = Db.kcUnsignedOperation saved,
                         Db.kpExpiresAt = Db.kcExpiresAt saved }
+  -- The quote carries its own capability to bind the published preparation.
+  -- Cancellation submission and status recover the original account lane and
+  -- therefore require the capability issued for the original preparation.
   pure $ object $ ("cancelsUserOperationHash" .= Db.koHash original) : preparationResponseFields gateway responseAt quote operation
 
 submitCancellation :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -> Manager -> Text -> KM.KeyMap Value -> Gateway Value
@@ -838,7 +912,7 @@ submitCancellation gateway db primary secondary manager client fields = do
       sender = Db.kpSender prepared
       owner = Db.kpOwner prepared
       profile = kgcProfile gateway
-  rateLimit gateway db "account-cancellation-submit" client sender 10
+  rateLimitAccount gateway db "account-cancellation-submit" sender 10
   raw <- case KM.lookup "operation" fields of
     Just (Object values) -> pure values
     _ -> throwE $ Legacy.invalidParams "A signed cancellation UserOperation is required"
@@ -865,7 +939,7 @@ submitCancellation gateway db primary secondary manager client fields = do
       factoryData <- cancellationAccount gateway primary secondary snapshot prepared
       unless ((toHex <$> Paymaster.puoFactoryData operation) == factoryData) $ throwE preparationMismatch
       ExceptT $ Kernel.verifyKernelSignature profile owner operation
-      except $ mapParseFailure $ Native.validateHardEconomicCaps operation
+      except $ mapParseFailure $ validateKernelEconomicCaps operation
       unless (Paymaster.puoMaxFeePerGas operation <= Native.nativeMaxFeeAllowance (Native.sbhBaseFeePerGas snapshot)) $
         throwE $ Legacy.policyDenied "Gas price exceeds the current reviewed allowance"
       checkFunding gateway primary secondary snapshot Db.PayWithEth owner (Kernel.koCalls parsed) operation
@@ -906,9 +980,9 @@ cancellationOnly = forbidden "CANCELLATION_PENDING" "The original UserOperation 
 -- A recovery token locates a preparation. Only the owner's exact original
 -- signed operation authorizes a new cancellation-only anchor for that quote.
 -- This path never relays the original or settles the account nonce.
-createCancellationAnchor :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -> Text -> KM.KeyMap Value
+createCancellationAnchor :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -> KM.KeyMap Value
   -> Text -> Text -> Gateway Db.KernelOperation
-createCancellationAnchor gateway db primary secondary client fields ident operationHash = do
+createCancellationAnchor gateway db primary secondary fields ident operationHash = do
   now <- seconds
   recovered <- maybe (throwE operationNotAuthorized) pure $ kernelRecoverySubject gateway now ident fields
   raw <- case KM.lookup "originalOperation" fields of
@@ -917,7 +991,7 @@ createCancellationAnchor gateway db primary secondary client fields ident operat
   prepared <- dbAction db (\conn -> Db.getKernelPreparationForClient conn scope ident recovered)
     >>= maybe (throwE operationNotAuthorized) pure
   operation <- except $ parseKernelCancellationOriginal profile prepared operationHash raw
-  rateLimit gateway db "account-cancellation-anchor" client (Db.kpSender prepared) 6
+  rateLimitAccount gateway db "account-cancellation-anchor" (Db.kpSender prepared) 6
   ExceptT $ Kernel.verifyKernelSignature profile (Db.kpOwner prepared) operation
   snapshot <- agreedSnapshot gateway primary secondary
   _ <- cancellationAccount gateway primary secondary snapshot prepared
@@ -1064,7 +1138,7 @@ acceptedOperationStatus gateway db primary secondary manager saved = do
             Nothing | Db.koState saved == "nonce_consumed" -> pure consumed
             Nothing -> do
               resolved <- liftIO $ runExceptT $
-                findCanonicalNonceEvent gateway primary secondary (Db.kpSender preparation) (Db.kpNonce preparation)
+                findCanonicalNonceEvent gateway db primary secondary preparation
               case resolved of
                 Right (Just (snapshot, observedNonce, event, paymaster)) -> do
                   let foundHash = Chain.uoeHash event
@@ -1074,7 +1148,6 @@ acceptedOperationStatus gateway db primary secondary manager saved = do
                           verify expectedPaymaster operationHash locator >>= maybe (pure pending) inclusionResult
                       | Just foundHash == cancellationHash ->
                           verify zeroAddress foundHash locator >>= maybe (pure pending) (cancellationResult foundHash)
-                      | Db.koCancellationOnly saved -> pure pending
                       | otherwise -> do
                           replacement <- verify paymaster foundHash locator
                           case replacement of
@@ -1111,7 +1184,7 @@ unacceptedOperationStatus gateway db primary secondary manager client ident oper
     Just evidence -> pure $ included evidence
     Nothing -> do
       resolved <- liftIO $ runExceptT $
-        findCanonicalNonceEvent gateway primary secondary (Db.kpSender prepared) (Db.kpNonce prepared)
+        findCanonicalNonceEvent gateway db primary secondary prepared
       outcome <- case resolved of
         Right (Just (_, _, event, paymaster)) -> do
           let foundHash = Chain.uoeHash event
@@ -1145,8 +1218,11 @@ kernelReceiptLocator :: Text -> Value
 kernelReceiptLocator txHash = object ["receipt" .= object ["transactionHash" .= txHash]]
 
 altoKernelReceiptLocator :: KernelGatewayConfig -> Manager -> Text -> Gateway Value
-altoKernelReceiptLocator gateway manager hash = liftIO
-  (runExceptT $ alto gateway manager "eth_getUserOperationReceipt" [String hash]) >>= pure . either (const Null) id
+altoKernelReceiptLocator gateway manager hash = do
+  -- Give the status request time to check canonical evidence if Alto stalls.
+  result <- liftIO $ timeout 4_000_000 $
+    runExceptT $ alto gateway manager "eth_getUserOperationReceipt" [String hash]
+  pure $ maybe Null (either (const Null) id) result
 
 canonicalKernelReceipt :: KernelGatewayConfig -> EthClient -> EthClient -> Db.KernelPreparation
   -> Text -> Text -> Value -> Gateway (Maybe (Db.KernelInclusion, Value))
@@ -1155,25 +1231,72 @@ canonicalKernelReceipt gateway primary secondary prepared paymaster hash locator
   (Reconciler.verifyKernelOperationReceipt (Db.kpScope prepared) primary secondary (kgcMaxSafeLagSeconds gateway)
     (Db.kpSender prepared) (Db.kpNonce prepared) paymaster hash locator)
 
--- Advancing the nonce could mean the original operation executed while Alto
--- was unavailable. Require the actual same-lane event to identify which hash
--- was included. Use a bounded recent search and leave older attempts pending
--- rather than treating an unavailable archive as evidence of replacement.
-findCanonicalNonceEvent :: KernelGatewayConfig -> EthClient -> EthClient -> Text -> Integer
+-- EntryPoint lane nonces are monotonic. Use the preparation's safe block as
+-- a starting point and find the first block whose lane nonce exceeds the
+-- prepared nonce. This takes logarithmically many state reads and allows a
+-- one-block log query even when the event has aged out of Alto's lookback.
+-- An advanced nonce with no matching event is not evidence of replacement.
+findCanonicalNonceEvent :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -> Db.KernelPreparation
   -> Gateway (Maybe (Native.SecurityBlockHeader, Integer, Chain.UserOperationEvent, Text))
-findCanonicalNonceEvent gateway primary secondary sender nonce = do
+findCanonicalNonceEvent gateway db primary secondary prepared = do
   snapshot <- agreedSnapshot gateway primary secondary
   observed <- attestBoth gateway primary secondary snapshot $ \client block ->
     readNonce profile client block sender
   if observed <= nonce then pure Nothing else do
-    found <- attestBoth gateway primary secondary snapshot readEvents
+    historical <- liftIO $ timeout 4_000_000 $
+      runExceptT $ attestBoth gateway primary secondary snapshot readEvents
+    found <- case historical of
+      Just (Right events) -> pure events
+      _ -> scanLogs snapshot
     pure $ (\(event, paymaster) -> (snapshot, observed, event, paymaster)) <$> found
  where
   profile = kgcProfile gateway
   entryPoint = Kernel.kpEntryPoint profile
+  sender = Db.kpSender prepared
+  nonce = Db.kpNonce prepared
   eventTopic = toHex $ keccak256 "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"
   readEvents client upper = runExceptT $ do
-    let lower = max 0 (upper - 1_999)
+    transition <- locateKernelNonceTransition
+      (\height -> ExceptT $ readNonce profile client height sender) (Db.kpSafeBlock prepared) upper nonce
+    inclusionBlock <- maybe (throwE profileUnavailable) pure transition
+    readEventRange client inclusionBlock inclusionBlock
+
+  -- Some RPCs keep logs after pruning account state. On dual state failure,
+  -- advance one bounded log batch per poll. The recorded end hash prevents a
+  -- reorg from silently skipping the already-covered part of the range.
+  scanLogs snapshot = case Db.kpSafeBlock prepared of
+    Nothing -> attestBoth gateway primary secondary snapshot $ \client upper ->
+      runExceptT $ readEventRange client (max 0 $ upper - 1_999) upper
+    Just anchor -> do
+      let upper = Native.sbhNumber snapshot
+      cursor <- dbAction db $ \conn -> Db.getKernelNonceScanCursor conn prepared
+      resumed <- case cursor of
+        Just (covered, hash) | covered >= anchor && covered <= upper -> do
+          coverage <- readCoverageHeader covered
+          pure $ if Native.sbhHash coverage == hash then Just coverage else Nothing
+        _ -> pure Nothing
+      case kernelNonceScanRange anchor (Native.sbhNumber <$> resumed) upper of
+        Nothing -> pure Nothing
+        Just (lower, end) -> do
+          endHeader <- readCoverageHeader end
+          found <- attestBoth gateway primary secondary snapshot $ \client _ ->
+            runExceptT $ readEventRange client lower end
+          forMOptional resumed requireSameHeader
+          requireSameHeader endHeader
+          revalidateSnapshot gateway primary secondary snapshot
+          when (found == Nothing) $ do
+            _ <- dbAction db $ \conn -> Db.storeKernelNonceScanCursor conn prepared cursor
+              (end, Native.sbhHash endHeader)
+            pure ()
+          pure found
+  readCoverageHeader block = do
+    coverage <- liftIO $ Native.readAgreedSecurityHeaderAt DualIndependent primary secondary block
+    either (const $ throwE profileUnavailable) pure coverage
+  requireSameHeader coverage = do
+    current <- readCoverageHeader (Native.sbhNumber coverage)
+    unless (current == coverage) $ throwE profileUnavailable
+
+  readEventRange client lower upper = do
     reply <- liftIO $ rpcCall client "eth_getLogs" $ toJSON
       [object ["address" .= entryPoint, "fromBlock" .= Paymaster.canonicalQuantity lower,
                "toBlock" .= Paymaster.canonicalQuantity upper,
@@ -1182,7 +1305,7 @@ findCanonicalNonceEvent gateway primary secondary sender nonce = do
       Right (Array values) | V.length values <= 2000 -> pure $ V.toList values
       _ -> throwE profileUnavailable
     events <- traverse (parseEvent lower upper) logs
-    case filter ((== nonce) . Chain.uoeNonce . fst) $ sortOn (Chain.uoeLogIndex . fst) events of
+    case filter ((== nonce) . Chain.uoeNonce . fst) events of
       [] -> pure Nothing
       [(event, paymaster)] -> pure $ Just (event {Chain.uoeRaw = Null}, paymaster)
       _ -> throwE profileUnavailable
@@ -1200,6 +1323,41 @@ findCanonicalNonceEvent gateway primary secondary sender nonce = do
     _ -> throwE profileUnavailable
   parseEvent _ _ _ = throwE profileUnavailable
 
+-- Accept only a cursor whose hash has been checked against both RPCs.
+kernelNonceScanRange :: Integer -> Maybe Integer -> Integer -> Maybe (Integer, Integer)
+kernelNonceScanRange anchor covered upper
+  | lower <= upper = Just (lower, min upper (lower + 1_999))
+  | otherwise = Nothing
+ where
+  lower = maybe anchor (+ 1) covered
+
+-- Given a safe upper block where the lane has advanced, locate the first
+-- block after the operation's nonce. A recorded preparation anchors the
+-- search. For older rows, grow the range backward until it brackets the
+-- transition. The caller still needs a canonical event and receipt.
+locateKernelNonceTransition :: Monad m => (Integer -> m Integer) -> Maybe Integer -> Integer -> Integer -> m (Maybe Integer)
+locateKernelNonceTransition nonceAt preparationBlock upper nonce = do
+  range <- case preparationBlock of
+    Just anchor | anchor >= 0 && anchor < upper -> do
+      anchored <- nonceAt anchor
+      if anchored <= nonce then pure $ Just (anchor, upper) else bracket anchor 1_000
+    _ -> bracket upper 1_000
+  traverse (uncurry findTransition) range
+ where
+  bracket changed distance
+    | changed == 0 = pure Nothing
+    | otherwise = do
+        let earlier = max 0 (changed - distance)
+        current <- nonceAt earlier
+        if current <= nonce then pure $ Just (earlier, changed)
+        else bracket earlier (distance * 2)
+  findTransition lower changed
+    | changed - lower == 1 = pure changed
+    | otherwise = do
+        let middle = lower + (changed - lower) `div` 2
+        current <- nonceAt middle
+        if current > nonce then findTransition lower middle else findTransition middle changed
+
 verifySponsorAvailability :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -> Native.SecurityBlockHeader -> KernelSponsorshipConfig -> Gateway ()
 verifySponsorAvailability gateway db primary secondary snapshot sponsor = do
   ready <- dbAction db $ \conn ->
@@ -1215,21 +1373,11 @@ attestSponsorAt profile sponsor client block = runExceptT $ do
     Right (String value) | Just bytes <- hexBytes value -> pure bytes
     _ -> throwE profileUnavailable
   unless (toHex (keccak256 code) == kscPaymasterCodeHash sponsor) $ throwE profileUnavailable
-  mapM_ (\(method, expected) -> readContractAddress method >>= \actual -> unless (actual == expected) $ throwE profileUnavailable)
-    [ ("entryPoint()", Kernel.kpEntryPoint profile)
-    , ("accountFactory()", Kernel.kpFactory profile)
-    , ("accountImplementation()", Kernel.kpImplementation profile)
-    , ("rootValidator()", Kernel.kpValidator profile)
-    , ("sponsorSigner()", kscSignerAddress sponsor)
-    ]
-  mapM_ (\(method, expected) -> readConstant method >>= \word -> unless (toHex word == expected) $ throwE profileUnavailable)
-    [ ("entryPointCodeHash()", Kernel.kpEntryPointCodeHash profile)
-    , ("accountFactoryCodeHash()", Kernel.kpFactoryCodeHash profile)
-    , ("accountImplementationCodeHash()", Kernel.kpImplementationCodeHash profile)
-    , ("rootValidatorCodeHash()", Kernel.kpValidatorCodeHash profile)
-    , ("approvedAccountCodeHash()", Kernel.kpAccountCodeHash profile)
-    , ("policyId()", kscPolicyId sponsor)
-    ]
+  -- Run two bounded streams per provider to reduce round-trip latency.
+  (addresses, hashes) <- liftIO $ concurrently
+    (runExceptT $ mapM_ (readExpected readContractAddress) addressPins)
+    (runExceptT $ mapM_ (readExpected (fmap toHex . readConstant)) hashPins)
+  except $ addresses >> hashes
   paused <- decodeUint256 <$> readConstant "paused()"
   unless (paused == 0) $ throwE $ Legacy.unavailable "PAYMASTER_PAUSED" "Sponsorship is paused"
   maxCost <- decodeUint256 <$> readConstant "maxSponsoredCost()"
@@ -1244,6 +1392,26 @@ attestSponsorAt profile sponsor client block = runExceptT $ do
   unless (deposit >= max (kscMinDepositWei sponsor) (Db.ksbGlobalOutstandingWei $ kscBudget sponsor)) $
     throwE $ Legacy.unavailable "PAYMASTER_UNDERFUNDED" "The sponsor does not have enough ETH"
  where
+  addressPins =
+    [ ("entryPoint()", Kernel.kpEntryPoint profile)
+    , ("accountFactory()", Kernel.kpFactory profile)
+    , ("accountStaker()", Kernel.kpStaker profile)
+    , ("accountImplementation()", Kernel.kpImplementation profile)
+    , ("rootValidator()", Kernel.kpValidator profile)
+    , ("sponsorSigner()", kscSignerAddress sponsor)
+    ]
+  hashPins =
+    [ ("entryPointCodeHash()", Kernel.kpEntryPointCodeHash profile)
+    , ("accountFactoryCodeHash()", Kernel.kpFactoryCodeHash profile)
+    , ("accountStakerCodeHash()", Kernel.kpStakerCodeHash profile)
+    , ("accountImplementationCodeHash()", Kernel.kpImplementationCodeHash profile)
+    , ("rootValidatorCodeHash()", Kernel.kpValidatorCodeHash profile)
+    , ("approvedAccountCodeHash()", Kernel.kpAccountCodeHash profile)
+    , ("policyId()", kscPolicyId sponsor)
+    ]
+  readExpected readValue (method, expected) = do
+    actual <- readValue method
+    unless (actual == expected) $ throwE profileUnavailable
   readConstant method = ExceptT $ readWord client block (kscPaymaster sponsor) method []
   readContractAddress method = do
     word <- readConstant method
@@ -1333,15 +1501,28 @@ respondFundingAdvice ident advice = do
         ]
     ]
 
-validateKernelActions :: KernelGatewayConfig -> Config -> Text -> Text -> [Legacy.SmartCall] -> Either Legacy.ProxyFailure ()
-validateKernelActions gateway cfg sender owner calls = case calls of
-  [call]
-    | Legacy.smartCallTarget call == owner
-    , Legacy.smartCallValue call > 0
-    , BS.null (Legacy.smartCallData call) -> pure ()
-    | Just amount <- readDepositWithdrawal (kgcProfile gateway) owner call
-    , amount > 0 -> pure ()
-  _ -> Legacy.validateActionSequenceWithProtection (kgcProtectionCommitsEnabled gateway) cfg sender owner calls
+validateKernelActions :: KernelGatewayConfig -> Config -> Db.PaymentMode -> Text -> Text -> [Legacy.SmartCall]
+  -> Either Legacy.ProxyFailure ()
+validateKernelActions gateway cfg mode sender owner calls = do
+  ownerWithdrawal <- validateKernelWithdrawalMode (kgcProfile gateway) mode owner calls
+  unless ownerWithdrawal $
+    Legacy.validateActionSequenceWithProtection (kgcProtectionCommitsEnabled gateway) cfg sender owner calls
+
+-- Sending native ETH can execute owner code. Safe-block EOA attestation is
+-- necessary but cannot stop a delegation made after sponsorship is signed.
+-- Only permit these owner-directed withdrawals when the account pays gas.
+validateKernelWithdrawalMode :: Kernel.KernelProfile -> Db.PaymentMode -> Text -> [Legacy.SmartCall]
+  -> Either Legacy.ProxyFailure Bool
+validateKernelWithdrawalMode profile mode owner calls = do
+  when (mode == Db.Sponsored && any ownerWithdrawal calls) $
+    Left $ Legacy.policyDenied "Native ETH withdrawals require ETH-paid gas"
+  pure $ case calls of
+    [call] -> ownerWithdrawal call
+    _ -> False
+ where
+  ownerWithdrawal call =
+    (Legacy.smartCallTarget call == owner && Legacy.smartCallValue call > 0 && BS.null (Legacy.smartCallData call))
+      || maybe False (> 0) (readDepositWithdrawal profile owner call)
 
 readDepositWithdrawal :: Kernel.KernelProfile -> Text -> Legacy.SmartCall -> Maybe Integer
 readDepositWithdrawal profile owner call
@@ -1416,10 +1597,10 @@ requireMode gateway mode = case mode of
   Db.Sponsored | Just sponsor <- kgcSponsorship gateway, kscEnabled sponsor -> pure $ Just sponsor
   _ -> throwE modeDisabled
 
-operationDeadline :: Integer -> [Legacy.SmartCall] -> Either Legacy.ProxyFailure (Maybe Integer)
-operationDeadline now calls = do
+kernelOperationDeadline :: Integer -> [Legacy.SmartCall] -> Either Legacy.ProxyFailure (Maybe Integer)
+kernelOperationDeadline now calls = do
   deadline <- Legacy.orderSubmissionDeadlineForCalls calls
-  when (maybe False (< now+30) deadline) $
+  when (maybe False (<= now+30) deadline) $
     Left $ Legacy.ProxyFailure status400 (-32001) "The order deadline is too close. Review a fresh quote." "DEADLINE_TOO_CLOSE" False
   pure deadline
 
@@ -1440,7 +1621,7 @@ agreedSnapshot gateway primary secondary = do
 -- execution. Resolve identity even when transaction admission is disabled.
 resolveOwnedKernelTradingAccount :: KernelGatewayConfig -> Config -> EthClient -> Text
   -> IO (Either Legacy.OwnedTradingAccountFailure KernelTradingAccountProof)
-resolveOwnedKernelTradingAccount gateway cfg primary owner = do
+resolveOwnedKernelTradingAccount gateway cfg ordinaryPrimary owner = do
   verified <- runExceptT $ do
     unless (matchesPerpsRelease profile cfg) $ throwE profileUnavailable
     snapshot <- agreedSnapshot gateway primary secondary
@@ -1450,7 +1631,8 @@ resolveOwnedKernelTradingAccount gateway cfg primary owner = do
   pure $ either (const $ Left Legacy.OwnedTradingAccountProofUnavailable) id verified
  where
   profile = kgcProfile gateway
-  secondary = kgcSecondaryClient gateway
+  primary = withoutRpcFallback ordinaryPrimary
+  secondary = withoutRpcFallback $ kgcSecondaryClient gateway
 
 attestBoth :: Eq a => KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader
   -> (EthClient -> Integer -> IO (Either Legacy.ProxyFailure a)) -> Gateway a
@@ -1464,9 +1646,10 @@ attestBoth gateway primary secondary snapshot readAt = do
     _ -> throwE profileUnavailable
 
 revalidateSnapshot :: KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader -> Gateway ()
-revalidateSnapshot _ primary secondary snapshot = do
-  result <- liftIO $ Native.readAgreedSecurityHeaderAt DualIndependent primary secondary (Native.sbhNumber snapshot)
-  unless (result == Right snapshot) $ throwE profileUnavailable
+revalidateSnapshot gateway primary secondary snapshot = do
+  result <- liftIO $ Native.revalidateSecuritySnapshot DualIndependent
+    (kgcMaxSafeLagSeconds gateway) primary secondary snapshot
+  unless (result == Right ()) $ throwE profileUnavailable
 
 alto :: KernelGatewayConfig -> Manager -> Text -> [Value] -> Gateway Value
 alto gateway manager method params = do
@@ -1613,6 +1796,10 @@ rateLimit gateway pool rateScope client account cap = do
   allowed <- dbAction pool $ \conn -> consumeAaRateLimit conn ("kernel-" <> rateScope) client accountKey cap
   unless allowed $ throwE Legacy.rateLimited
 
+rateLimitAccount :: KernelGatewayConfig -> DbPool -> Text -> Text -> Int -> Gateway ()
+rateLimitAccount gateway pool rateScope =
+  rateLimit gateway pool rateScope Native.nativeAccountRateClientKey
+
 dbAction :: DbPool -> (Connection -> IO a) -> Gateway a
 dbAction pool action = do
   result <- liftIO $ try $ withDb pool action
@@ -1627,6 +1814,11 @@ gasQuoteUnavailable = Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto did not ret
 modeDisabled = Legacy.unavailable "PAYMENT_MODE_UNAVAILABLE" "The selected gas payment mode is unavailable"
 preparationMismatch = Legacy.invalidParams "UserOperation does not match its reviewed preparation"
 preparationExpired = Legacy.ProxyFailure status400 (-32001) "The preparation has expired. Review a fresh quote." "PREPARATION_EXPIRED" False
+
+kernelNonceChanged, sponsorshipNotAuthorized :: Legacy.ProxyFailure
+kernelNonceChanged = forbidden "NONCE_CHANGED" "The Trading Account nonce changed. Review a fresh quote."
+sponsorshipNotAuthorized =
+  forbidden "SPONSORSHIP_NOT_AUTHORIZED" "The signed UserOperation does not have a matching live sponsorship"
 
 forbidden :: Text -> Text -> Legacy.ProxyFailure
 forbidden reason message = Legacy.ProxyFailure status403 (-32001) message reason False

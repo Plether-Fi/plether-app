@@ -30,7 +30,7 @@ import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
 import Plether.Handlers.DivisionsRegistration (ensureDivisionsSchema, loadDiscordConfig)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
-import Plether.Database.TestnetFunding (ensureMarginFundingSchema)
+import Plether.Database.TestnetFunding (ensureMarginFundingSchema, requireKernelMarginFundingSchema)
 import qualified Plether.Passkeys.Names as PasskeyNames
 import Plether.Handlers.TestnetMarginFunding (startMarginFundingProcessor)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
@@ -73,6 +73,8 @@ main = do
           genericSchemaEnabled = spGenericSchemaEnabled startupPolicy
       when (canaryApiMode && isJust (cfgRegistrationConfig cfg)) $
         ioError $ userError "Kernel canary API cannot initialize Insights registration against the shared database"
+      when (canaryApiMode && cfgTestnetMarginFundingEnabled cfg) $
+        ioError $ userError "Kernel canary API cannot enable testnet margin funding without its background processor"
       for_ kernelAa $ \_ -> do
         unless (Manifest.releaseIsDeployed && cfgPerpsChainId cfg == 421614) $
           ioError $ userError "Kernel AA requires verified Arbitrum Sepolia Perps release bindings"
@@ -130,6 +132,7 @@ main = do
               withDb pool ensureVaultActivitySchema
               withDb pool ensureAaSponsorshipSchema
             for_ kernelAa $ \_ -> withDb pool $ \conn -> do
+              when canaryApiMode $ requireKernelMarginFundingSchema conn
               ensureKernelOperationSchema conn
               ensureKernelReconcilerSchema conn
             when genericSchemaEnabled $ do

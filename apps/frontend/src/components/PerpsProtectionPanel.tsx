@@ -6,7 +6,7 @@ import { EMPTY_PROTECTION_DRAFT, type ProtectionDraft, protectionParamsFromInput
 import { useProtectionEvents, useProtectionHistory, useProtectionExecution, type ProtectionHistoryEvent, type ProtectionHistoryRecord } from '../hooks/useProtectionHistory'
 import { usePerpsTrading, type ReviewKernelGas } from '../hooks/usePerpsTrading'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
-import { useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
+import { KernelGasReviewCancelled, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import type { PerpsPosition } from '../hooks/usePerpsAccount'
 import { formatPerpsPositionSize, formatPerpsAssets, perpsSideToDirection } from '../utils/perps'
@@ -160,7 +160,11 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
       setView('overview')
       setReview(undefined)
       setSuccess(remove ? 'TP/SL removed. No position-close order was submitted.' : 'TP/SL saved.')
-    } catch (cause) { setError(cause instanceof Error ? cause : new Error('We could not update your TP/SL. Please try again.')) }
+    } catch (cause) {
+      if (!(cause instanceof KernelGasReviewCancelled)) {
+        setError(cause instanceof Error ? cause : new Error('We could not update your TP/SL. Please try again.'))
+      }
+    }
     finally { setPending(false) }
   }
 
@@ -219,7 +223,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </dl>
           <p className="text-xs leading-5 text-content-secondary">These trigger prices are fixed for confirmation. Reaching one queues a close; it does not guarantee that fill price.</p>
           <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={!pending} />
-          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmReview} /> : <div className="flex flex-wrap gap-2">
+          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmReview || !gasApproval.canConfirm} /> : <div className="flex flex-wrap gap-2">
             <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={!canConfirmReview} onClick={() => void submit()}>{gasReview ? 'Review network gas' : 'Confirm TP/SL'}</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('edit'); setError(undefined) }}>Back to edit</Button>
           </div>}
@@ -227,7 +231,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           <p className="text-sm leading-6">{protection?.status === 1 ? 'Your opening order will remain committed and can still fill without TP/SL.' : 'Your position will stay open without take-profit or stop-loss triggers.'}</p>
           <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(reserve)} />.</p>
           <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={!pending} />
-          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmRemoval} /> : <div className="flex flex-wrap gap-2">
+          {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmRemoval || !gasApproval.canConfirm} /> : <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="danger" isLoading={pending} disabled={!canConfirmRemoval} onClick={() => void submit(true)}>{gasReview ? 'Review network gas' : 'Confirm removal'}</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('overview'); setError(undefined) }}>Keep TP/SL</Button>
           </div>}

@@ -6,15 +6,18 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as Base16
 import Data.Either (isLeft)
+import Data.Functor.Identity (runIdentity)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import qualified Plether.AA.Gateway as Native
 import Plether.AA.Kernel (KernelProfile (..), decodeKernelCalls, kernelEntryPoint, kernelFactoryArgs, kernelUserOperationHash)
 import Plether.AA.KernelGateway
   ( PrepareIntent (..), classifyKernelEstimate, kernelCanFund, kernelCancellationCallData, kernelFundingAdvice, kernelScope, maxPrefund
   , kernelOwnerAdmitted, kernelOwnerMaySubmit, minimumKernelReplacementFee, parseKernelCancellationOriginal, parseKernelPrepareIntent
-  , parseOwnerAdmission, sponsorStakeReady
+  , kernelNonceScanRange, kernelOperationDeadline, locateKernelNonceTransition, parseKernelMaxSafeLag, parseOwnerAdmission, sponsorStakeReady
+  , validateKernelEconomicCaps, validateKernelWithdrawalMode
   )
 import qualified Plether.AA.Paymaster as Paymaster
 import Plether.AA.Pimlico (SmartCall (..))
@@ -25,6 +28,11 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "Kernel safe-block lag configuration" $ do
+    it "accepts the isolated Sepolia service setting and rejects out-of-range values" $ do
+      map parseKernelMaxSafeLag ["60", "600", "1800"] `shouldBe` map Right [60, 600, 1800]
+      mapM_ (\raw -> parseKernelMaxSafeLag raw `shouldSatisfy` isLeft) ["59", "1801", "01800"]
+
   describe "Kernel gateway preparation intent" $ do
     it "requires the caller to choose the payer explicitly" $ do
       checkMode "sponsored" Db.Sponsored
@@ -67,6 +75,20 @@ spec = do
     it "includes paymaster verification gas only for a prepared sponsored operation" $ do
       checkQuote ethQuote 360000
       checkQuote sponsoredQuote 485000
+    it "admits the recorded Nitro preverification gas on Kernel while preserving the legacy ceiling" $ do
+      let quote = KM.insert "preVerificationGas" (quantity 5_861_566) ethQuote
+      case Paymaster.parsePackedUserOperation quote of
+        Left reason -> expectationFailure $ T.unpack reason
+        Right operation -> do
+          validateKernelEconomicCaps operation `shouldBe` Right ()
+          Native.validateHardEconomicCaps operation `shouldSatisfy` isLeft
+    it "bounds Kernel gas units and the ETH-paid cost independently" $ do
+      let estimate preVerification maxFee = Paymaster.parsePackedUserOperation $
+            KM.insert "maxFeePerGas" (quantity maxFee) $
+            KM.insert "preVerificationGas" (quantity preVerification) ethQuote
+      (estimate 12_000_000 2_000_000_000 >>= validateKernelEconomicCaps) `shouldBe` Right ()
+      (estimate 12_000_001 2_000_000_000 >>= validateKernelEconomicCaps) `shouldSatisfy` isLeft
+      (estimate 5_861_566 10_000_000_000 >>= validateKernelEconomicCaps) `shouldSatisfy` isLeft
     it "classifies only the pinned ETH estimate prefund failure as insufficient gas" $ do
       let response code message = object ["error" .= object ["code" .= Number code, "message" .= String message]]
           pinned = "UserOperation reverted during simulation with reason: AA21 didn't pay prefund"
@@ -100,6 +122,44 @@ spec = do
       sponsorStakeReady (depositInfo 1 1 (2 ^ (112 :: Int)) 86400 0) `shouldBe` False
       sponsorStakeReady (depositInfo 1 1 1 (2 ^ (32 :: Int)) 0) `shouldBe` False
 
+  describe "Kernel owner withdrawal policy" $ do
+    it "keeps direct native and deposit withdrawals available with ETH-paid gas" $ do
+      let native = SmartCall owner 1 BS.empty
+          deposit = SmartCall (kpEntryPoint profile) 0 $
+            encodeCall "withdrawTo(address,uint256)" [encodeAddress owner, encodeUint256 1]
+      mapM_ (\call -> either (const False) id (validateKernelWithdrawalMode profile Db.PayWithEth owner [call])
+        `shouldBe` True) [native, deposit]
+      mapM_ (\call -> validateKernelWithdrawalMode profile Db.Sponsored owner [call]
+        `shouldSatisfy` isLeft) [native, deposit]
+    it "leaves ordinary sponsored operations to the protocol allowlist" $ do
+      let protocolCall = SmartCall (address '7') 0 (BS.pack [1, 2, 3, 4])
+      either (const True) id (validateKernelWithdrawalMode profile Db.Sponsored owner [protocolCall]) `shouldBe` False
+
+  describe "Kernel preparation deadline" $ do
+    it "requires time after the thirty-second submission margin" $ do
+      let order = SmartCall (address '7') 0 $ encodeCall
+            "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+            (replicate 6 (encodeUint256 0) <> [encodeUint256 130] <> replicate 12 (encodeUint256 0))
+      kernelOperationDeadline 99 [order] `shouldBe` Right (Just 130)
+      either Legacy.pfReason (const "accepted") (kernelOperationDeadline 100 [order]) `shouldBe` "DEADLINE_TOO_CLOSE"
+      kernelOperationDeadline 100 [] `shouldBe` Right Nothing
+
+  describe "Kernel nonce recovery" $ do
+    it "finds the nonce transition beyond the old rolling block window" $ do
+      let nonceAt block = pure $ if block >= 185 then 8 else 7
+      runIdentity (locateKernelNonceTransition nonceAt (Just 100) 5_000 7) `shouldBe` Just 185
+      runIdentity (locateKernelNonceTransition nonceAt Nothing 5_000 7) `shouldBe` Just 185
+    it "finds the first block even when the lane advances multiple times later" $ do
+      let nonceAt block = pure $ if block >= 1_700 then 10 else if block >= 1_400 then 8 else 7
+      runIdentity (locateKernelNonceTransition nonceAt (Just 1_500) 5_000 7) `shouldBe` Just 1_400
+    it "leaves recovery unresolved if no history precedes the advanced nonce" $
+      runIdentity (locateKernelNonceTransition (const $ pure 8) Nothing 5_000 7) `shouldBe` Nothing
+    it "scans successive bounded log batches when historic state is pruned" $ do
+      kernelNonceScanRange 100 Nothing 5_000 `shouldBe` Just (100, 2_099)
+      kernelNonceScanRange 100 (Just 2_099) 5_000 `shouldBe` Just (2_100, 4_099)
+      kernelNonceScanRange 100 (Just 4_099) 5_000 `shouldBe` Just (4_100, 5_000)
+      kernelNonceScanRange 100 (Just 5_000) 5_000 `shouldBe` Nothing
+
   describe "Kernel canary owner admission" $ do
     it "requires a nonempty explicit owner list before enabling either payment mode" $ do
       parseOwnerAdmission True False Nothing `shouldSatisfy` isLeft
@@ -130,7 +190,7 @@ spec = do
       map minimumKernelReplacementFee [0, 1, 101, 1000] `shouldBe` [1, 2, 112, 1100]
     it "binds a cancellation-only anchor to the exact stored ETH preparation and hash" $ do
       let prepared = Db.KernelPreparation (kernelScope profile) (address '6') owner 0 (hash '8') (hash '9')
-            Db.PayWithEth (Object ethQuote) (posixSecondsToUTCTime 1)
+            Db.PayWithEth (Object ethQuote) (posixSecondsToUTCTime 1) (Just 42)
           signature = hexText $ encodeUint256 1 <> encodeUint256 1 <> BS.singleton 27
           signed = KM.insert "signature" (String signature) ethQuote
       case Paymaster.parsePackedUserOperation signed of

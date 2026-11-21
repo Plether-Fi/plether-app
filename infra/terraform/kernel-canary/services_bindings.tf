@@ -41,12 +41,12 @@ data "aws_security_group" "live_rds" {
 }
 
 data "aws_security_group" "live_rpc_node" {
-  count = local.kernel_canary_count
+  count = var.provision_services && var.kernel_canary_ssm_tunnel_enabled ? 1 : 0
   id    = var.live_rpc_node_security_group_id
 }
 
 data "aws_instance" "live_rpc_node" {
-  count       = local.kernel_canary_count
+  count       = var.provision_services && var.kernel_canary_ssm_tunnel_enabled ? 1 : 0
   instance_id = var.live_rpc_node_instance_id
 }
 
@@ -113,16 +113,14 @@ locals {
   kernel_canary_database_url_arn     = "${local.kernel_canary_ssm_prefix}/plether/sepolia/database-url"
   kernel_canary_security_rpc_url_arn = "${local.kernel_canary_ssm_prefix}/plether/sepolia/aa-reconciler-secondary-rpc-url"
 
-  # Copy only named, already reviewed references from the pinned live task
-  # definition. Its secrets contain SSM ARNs, not SecureString values.
-  kernel_canary_rpc_auth_token_secret = local.kernel_canary_count == 1 ? [
-    for secret in local.live_api_container.secrets : secret if secret.name == "RPC_AUTH_TOKEN"
-  ] : []
-  kernel_canary_perps_rpc_auth_token_secret = local.kernel_canary_count == 1 ? [
-    for secret in local.live_api_container.secrets : secret if secret.name == "PERPS_RPC_AUTH_TOKEN"
-  ] : []
-  kernel_canary_pyth_api_key_secret = local.kernel_canary_count == 1 ? [
-    for secret in local.live_api_container.secrets : secret if secret.name == "PYTH_API_KEY"
+  # The external Perps URL carries its own provider credentials. The live
+  # task's Perps bearer belongs to the private Nitro gateway.
+  # Keep the general RPC bearer only with the exact reviewed general RPC pair.
+  kernel_canary_rpc_auth_token_secret = try(one([
+    for secret in local.live_api_container.secrets : secret.valueFrom if secret.name == "RPC_URL"
+    ]), null) == local.kernel_canary_rpc_url_arn ? [
+    for secret in local.live_api_container.secrets : secret
+    if secret.name == "RPC_AUTH_TOKEN" && secret.valueFrom == "${local.kernel_canary_ssm_prefix}/plether/sepolia/rpc-auth-token"
   ] : []
 
   kernel_canary_alto_allowed_rpc_methods = join(",", [
@@ -176,12 +174,15 @@ resource "terraform_data" "kernel_canary_live_identity_guard" {
         && data.aws_lb.kernel_canary_rpc_gateway[0].load_balancer_type == "application"
         && data.aws_lb.kernel_canary_rpc_gateway[0].vpc_id == data.aws_vpc.live[0].id
         && one(data.aws_lb.kernel_canary_rpc_gateway[0].security_groups) == var.live_rpc_alb_security_group_id
-        && data.aws_security_group.live_rpc_node[0].vpc_id == data.aws_vpc.live[0].id
-        && data.aws_security_group.live_rpc_node[0].id == var.live_rpc_node_security_group_id
-        && startswith(data.aws_security_group.live_rpc_node[0].name, "plether-sepolia-rpc-node-")
-        && data.aws_instance.live_rpc_node[0].subnet_id == "subnet-0633bc3db0148548f"
-        && data.aws_instance.live_rpc_node[0].instance_state == "running"
-        && toset(data.aws_instance.live_rpc_node[0].vpc_security_group_ids) == toset([var.live_rpc_node_security_group_id])
+        && (!var.kernel_canary_ssm_tunnel_enabled || try(
+          data.aws_security_group.live_rpc_node[0].vpc_id == data.aws_vpc.live[0].id
+          && data.aws_security_group.live_rpc_node[0].id == var.live_rpc_node_security_group_id
+          && startswith(data.aws_security_group.live_rpc_node[0].name, "plether-sepolia-rpc-node-")
+          && data.aws_instance.live_rpc_node[0].subnet_id == "subnet-0633bc3db0148548f"
+          && data.aws_instance.live_rpc_node[0].instance_state == "running"
+          && toset(data.aws_instance.live_rpc_node[0].vpc_security_group_ids) == toset([var.live_rpc_node_security_group_id]),
+          false,
+        ))
       )
       error_message = "The canary may use only the reviewed internal Nitro gateway and Nitro SSM node security group."
     }

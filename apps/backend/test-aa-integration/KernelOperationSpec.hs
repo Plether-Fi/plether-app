@@ -8,10 +8,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, withTransaction)
 import Numeric (showHex)
 import Plether.AA.KernelReconciler (ensureKernelReconcilerSchema)
 import Plether.Database.KernelOperation
+import Plether.Database.TestnetFunding (ensureMarginFundingSchema, requireKernelMarginFundingSchema)
 import Test.Hspec
 
 kernelOperationSpec :: ((Connection -> IO ()) -> IO ()) -> Spec
@@ -28,6 +29,9 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
         `shouldReturn` PreparationConflict
       storeKernelPreparation conn prepared `shouldReturn` PreparationStored
       storeKernelPreparation conn prepared `shouldReturn` PreparationAlreadyStored
+      storeKernelPreparation conn prepared {kpSafeBlock = Just 110} `shouldReturn` PreparationAlreadyStored
+      fmap (fmap kpSafeBlock) (getKernelPreparationForClient conn scope (kpId prepared) client)
+        `shouldReturn` Just (Just 10)
       storeKernelPreparation conn prepared {kpOwner = addressOf '8'} `shouldReturn` PreparationConflict
       acceptKernelOperation conn scope (kpId prepared) "wrong-client" digest signed
         `shouldReturn` OperationPreparationMissing
@@ -43,6 +47,42 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       fmap (fmap koState) (getKernelOperationForClient conn scope {ksEntryPoint = addressOf 'd'} digest client)
         `shouldReturn` Nothing
       kernelSponsorshipStateIsEmpty conn scope paymaster `shouldReturn` True
+
+  it "preserves unanchored preparations across a schema upgrade and retries" $
+    withKernel $ \conn -> do
+      prepared <- preparation scope PayWithEth "pre-upgrade" 0
+      let digest = hashOf 'a'
+          signed = signWith "0x1111" $ kpUnsignedOperation prepared
+      storeKernelPreparation conn prepared `shouldReturn` PreparationStored
+      acceptKernelOperation conn scope (kpId prepared) client digest signed `shouldReturn` OperationAccepted
+      void $ execute_ conn
+        "ALTER TABLE aa_kernel_preparations DROP COLUMN nonce_scan_through_hash,\
+        \ DROP COLUMN nonce_scan_through_block, DROP COLUMN prepared_safe_block"
+      ensureKernelOperationSchema conn
+      storeKernelPreparation conn prepared `shouldReturn` PreparationAlreadyStored
+      fmap (fmap (kpSafeBlock . koPreparation)) (getKernelOperationForClient conn scope digest client)
+        `shouldReturn` Just Nothing
+      storeKernelNonceScanCursor conn prepared Nothing (12, hashOf 'd') `shouldReturn` False
+
+  it "rejects stale recovery cursor updates and permits a canonical rewind" $
+    withKernel $ \conn -> do
+      prepared <- preparation scope PayWithEth "scan-progress" 0
+      let first = (20, hashOf 'd')
+          next = (30, hashOf 'e')
+          rewind = (15, hashOf 'c')
+          otherClient = prepared {kpClientKey = "different-client"}
+      storeKernelPreparation conn prepared `shouldReturn` PreparationStored
+      getKernelNonceScanCursor conn prepared `shouldReturn` Nothing
+      storeKernelNonceScanCursor conn prepared Nothing (9, hashOf 'd') `shouldReturn` False
+      storeKernelNonceScanCursor conn otherClient Nothing first `shouldReturn` False
+      storeKernelNonceScanCursor conn prepared Nothing first `shouldReturn` True
+      storeKernelNonceScanCursor conn prepared Nothing next `shouldReturn` False
+      storeKernelNonceScanCursor conn prepared (Just (20, hashOf 'c')) next `shouldReturn` False
+      getKernelNonceScanCursor conn otherClient `shouldReturn` Nothing
+      getKernelNonceScanCursor conn prepared `shouldReturn` Just first
+      storeKernelNonceScanCursor conn prepared (Just first) next `shouldReturn` True
+      storeKernelNonceScanCursor conn prepared (Just next) rewind `shouldReturn` True
+      getKernelNonceScanCursor conn prepared `shouldReturn` Just rewind
 
   it "fences accounts across modes and keeps accepted ETH operations recoverable after quote expiry" $
     withKernel $ \conn -> do
@@ -104,8 +144,6 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       acceptKernelOperation conn scope (kpId competing) client otherDigest signed `shouldReturn` OperationLaneBusy
       acceptKernelCancellationAnchor conn scope (kpId competing) client otherDigest signed
         `shouldReturn` OperationLaneBusy
-      retireKernelOperation conn scope digest (KernelNonceConsumed sender 5 6 20 (hashOf 'e'))
-        `shouldReturn` False
       let quote = cancellationQuote eth "cancel-anchor"
           signedCancellation = signWith "0x3333" $ kcUnsignedOperation quote
       storeKernelCancellation conn anchor quote `shouldReturn` PreparationStored
@@ -113,6 +151,23 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
         `shouldReturn` OperationAccepted
       finalizeKernelCancellation conn anchor cancellationHash included `shouldReturn` True
       acceptKernelOperation conn scope (kpId eth) client digest signed `shouldReturn` OperationConflict
+
+  it "releases an ETH cancellation anchor after verified same-lane nonce consumption" $
+    withKernel $ \conn -> do
+      eth <- preparation scope PayWithEth "cancellation-anchor" 5
+      successor <- preparation scope PayWithEth "new-nonce" 6
+      let digest = hashOf 'a'
+          signed = signWith "0x1111" $ kpUnsignedOperation eth
+          nextSigned = signWith "0x2222" $ kpUnsignedOperation successor
+          evidence = KernelNonceConsumed sender 5 6 20 (hashOf 'e')
+      storeKernelPreparation conn eth `shouldReturn` PreparationStored
+      storeKernelPreparation conn successor `shouldReturn` PreparationStored
+      acceptKernelCancellationAnchor conn scope (kpId eth) client digest signed `shouldReturn` OperationAccepted
+      acceptKernelOperation conn scope (kpId successor) client (hashOf 'b') nextSigned `shouldReturn` OperationLaneBusy
+      retireKernelOperation conn scope digest evidence {krObservedNonce = 1 `shiftL` 64} `shouldReturn` False
+      retireKernelOperation conn scope digest evidence `shouldReturn` True
+      status conn scope digest `shouldReturn` Just "nonce_consumed"
+      acceptKernelOperation conn scope (kpId successor) client (hashOf 'b') nextSigned `shouldReturn` OperationAccepted
 
   it "journals one exact ETH cancellation and keeps the account fenced until canonical inclusion" $
     withKernel $ \conn -> do
@@ -217,6 +272,8 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       authorize conn prepared digest now
       acceptKernelOperation conn scope (kpId prepared) client (hashOf 'b') signed `shouldReturn` OperationPreparationMismatch
       acceptKernelOperation conn scope (kpId prepared) client digest signed `shouldReturn` OperationAccepted
+      retireKernelOperation conn scope digest (KernelNonceConsumed sender 3 4 13 (hashOf 'd'))
+        `shouldReturn` False
       withTransaction conn (do
         lockKernelSponsorScope conn scope paymaster
         settleKernelSponsorship conn scope paymaster digest included {kiActualGasCost = 101} `shouldReturn` False
@@ -225,6 +282,44 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       status conn scope digest `shouldReturn` Just "included"
       fmap (fmap kspStatus) (getKernelSponsorshipForClient conn scope paymaster (kpId prepared) client)
         `shouldReturn` Just "settled"
+
+  it "preserves a signed authorization if the operation's terminal receipt conflicts" $
+    withKernel $ \conn -> do
+      now <- floor <$> getPOSIXTime
+      seedSponsor conn scope now
+      prepared <- preparation scope Sponsored "terminal-conflict" 3
+      let digest = hashOf 'a'
+          signed = signWith "0x1111" $ kpUnsignedOperation prepared
+          included = KernelInclusion sender 3 (Just paymaster) (hashOf 'c') (hashOf 'd') 13 True 40
+          sponsorshipStatus = fmap (fmap kspStatus) $ getKernelSponsorshipForClient conn scope paymaster (kpId prepared) client
+      storeKernelPreparation conn prepared `shouldReturn` PreparationStored
+      authorize conn prepared digest now
+      acceptKernelOperation conn scope (kpId prepared) client digest signed `shouldReturn` OperationAccepted
+      finalizeKernelOperation conn scope digest included `shouldReturn` True
+      withTransaction conn $ do
+        lockKernelSponsorScope conn scope paymaster
+        settleKernelSponsorship conn scope paymaster digest included {kiBlockHash = hashOf 'e'} `shouldReturn` False
+      sponsorshipStatus `shouldReturn` Just "signed"
+      withTransaction conn $ do
+        lockKernelSponsorScope conn scope paymaster
+        settleKernelSponsorship conn scope paymaster digest included `shouldReturn` True
+      sponsorshipStatus `shouldReturn` Just "settled"
+
+  it "does not create a pending lane for a sponsorship already settled by another relay" $
+    withKernel $ \conn -> do
+      now <- floor <$> getPOSIXTime
+      seedSponsor conn scope now
+      prepared <- preparation scope Sponsored "elsewhere" 3
+      let digest = hashOf 'a'
+          signed = signWith "0x1111" $ kpUnsignedOperation prepared
+          included = KernelInclusion sender 3 (Just paymaster) (hashOf 'c') (hashOf 'd') 13 True 40
+      storeKernelPreparation conn prepared `shouldReturn` PreparationStored
+      authorize conn prepared digest now
+      withTransaction conn $ do
+        lockKernelSponsorScope conn scope paymaster
+        settleKernelSponsorship conn scope paymaster digest included `shouldReturn` True
+      acceptKernelOperation conn scope (kpId prepared) client digest signed `shouldReturn` OperationPreparationMismatch
+      status conn scope digest `shouldReturn` Nothing
 
   it "expires only the selected sponsor scope after its inclusive validity bound" $
     withKernel $ \conn -> do
@@ -247,6 +342,19 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       expireAt conn (now + 61)
       status conn scope digest `shouldReturn` Just "sponsorship_expired"
       status conn other digest `shouldReturn` Just "pending"
+
+  it "requires the exact additive funding allocation schema before the canary starts" $
+    withFixture $ \conn -> do
+      requireKernelMarginFundingSchema conn `shouldThrow` anyIOException
+      void $ execute_ conn "CREATE TABLE testnet_faucet_claims (address TEXT)"
+      ensureMarginFundingSchema conn
+      requireKernelMarginFundingSchema conn
+      void $ execute_ conn "DROP INDEX testnet_margin_funding_kernel_owner_program"
+      void $ execute_ conn
+        "CREATE UNIQUE INDEX testnet_margin_funding_kernel_owner_program\
+        \ ON testnet_margin_funding(chain_id, kernel_program, lower(owner_address))\
+        \ WHERE kernel_program IS NULL"
+      requireKernelMarginFundingSchema conn `shouldThrow` anyIOException
  where
   withKernel action = withFixture $ \conn -> do
     ensureKernelOperationSchema conn
@@ -283,7 +391,7 @@ preparation profile mode identifier nonce = do
         Sponsored -> ["paymaster" .= paymaster, "paymasterData" .= ("0x1234" :: Text),
           "paymasterVerificationGasLimit" .= ("0x1" :: Text), "paymasterPostOpGasLimit" .= ("0x0" :: Text)]
       unsigned = object $ ["sender" .= sender, "nonce" .= show nonce] ++ gasFields
-  pure $ KernelPreparation profile sender (addressOf '1') nonce identifier client mode unsigned expiresAt
+  pure $ KernelPreparation profile sender (addressOf '1') nonce identifier client mode unsigned expiresAt (Just 10)
 
 signWith :: Text -> Value -> Value
 signWith signature (Object op) = Object $ KM.insert "signature" (String signature) op

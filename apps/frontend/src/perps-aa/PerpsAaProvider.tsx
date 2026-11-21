@@ -33,6 +33,7 @@ import {
   PerpsAaRuntimeProvider,
 } from './runtime'
 import type { PerpsAaSmartAccountRuntime } from './runtimeContext'
+import { usePerpsIdentity } from './usePerpsIdentity'
 
 const SponsoredOperationRecovery = lazy(async () => {
   const module = await import('./SponsoredOperationRecovery')
@@ -52,6 +53,35 @@ function configuredManifestUrl(): string | null {
 function configuredKernelDeployment(): string | undefined {
   const value: unknown = import.meta.env.VITE_PERPS_KERNEL_AA_DEPLOYMENT
   return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+function ConnectedPerpsAaRuntime({
+  runtime, kernelDeployment, children,
+}: {
+  runtime: PerpsAaSmartAccountRuntime | undefined
+  kernelDeployment: string | undefined
+  children: ReactNode
+}) {
+  const identity = usePerpsIdentity()
+  const effectiveRuntime = runtime?.kernel && (
+    identity.status !== 'ready' || identity.chainId !== runtime.chainId ||
+    identity.manifest?.smartAccountMode !== 'kernel' ||
+    identity.manifest.version !== runtime.manifestVersion ||
+    identity.manifest.kernel.profile.deployment !== runtime.kernel.scope.deployment ||
+    !identity.ownerAddress || !isAddressEqual(identity.ownerAddress, runtime.ownerAddress) ||
+    !identity.accountAddress || !isAddressEqual(identity.accountAddress, runtime.smartAccount.accountAddress)
+  ) ? undefined : runtime
+
+  return (
+    <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
+      <Suspense fallback={null}>
+        {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
+          ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} />
+          : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
+      </Suspense>
+      {children}
+    </PerpsAaRuntimeProvider>
+  )
 }
 
 export function PerpsAaProvider({
@@ -223,20 +253,15 @@ export function PerpsAaProvider({
     : async (signal: AbortSignal) => (await import('./kernelManifest')).loadKernelTradingManifest(kernelDeployment, signal), [kernelDeployment])
 
   return (
-    <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
-      <WagmiPerpsIdentityProvider
-        manifestUrl={manifestUrl}
-        loadManifest={loadManifest}
-        kernelDeployment={kernelDeployment}
-        accountAddressResolver={accountAddressResolver}
-      >
-        <Suspense fallback={null}>
-          {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
-            ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} />
-            : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
-        </Suspense>
+    <WagmiPerpsIdentityProvider
+      manifestUrl={manifestUrl}
+      loadManifest={loadManifest}
+      kernelDeployment={kernelDeployment}
+      accountAddressResolver={accountAddressResolver}
+    >
+      <ConnectedPerpsAaRuntime runtime={effectiveRuntime} kernelDeployment={kernelDeployment}>
         {children}
-      </WagmiPerpsIdentityProvider>
-    </PerpsAaRuntimeProvider>
+      </ConnectedPerpsAaRuntime>
+    </WagmiPerpsIdentityProvider>
   )
 }

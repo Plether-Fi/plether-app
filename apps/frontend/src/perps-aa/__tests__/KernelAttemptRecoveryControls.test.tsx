@@ -1,18 +1,22 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseEther, toHex, zeroAddress, type Hex } from 'viem'
 import { entryPoint09Address } from 'viem/account-abstraction'
 import { KernelAttemptRecoveryControls } from '../KernelAttemptRecoveryControls'
 import type { KernelOperationAttempt } from '../kernelOperationJournal'
 import type { KernelPreparedCancellation, KernelPreparedOperation } from '../kernelRpc'
 
-const { submit } = vi.hoisted(() => ({ submit: vi.fn() }))
+const { submit, serverNow, refreshClock } = vi.hoisted(() => ({ submit: vi.fn(), serverNow: vi.fn(), refreshClock: vi.fn() }))
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: serverNow, refreshDeadlineClock: refreshClock }))
 
 vi.mock('../kernelOperationJournal', () => ({
   isKernelAttemptPending: () => true,
-  kernelAttemptCanCancel: () => true,
-  kernelAttemptCanDiscard: () => false,
-  kernelAttemptCanRetry: () => false,
+  kernelAttemptCanCancel: (attempt: KernelOperationAttempt) => attempt.phase === 'sending',
+  kernelAttemptCanDiscard: (attempt: KernelOperationAttempt, now: number | undefined) =>
+    attempt.phase === 'signed' && now !== undefined && now >= attempt.prepared.expiresAt * 1_000,
+  kernelAttemptCanRetry: (attempt: KernelOperationAttempt, now: number | undefined) =>
+    attempt.phase === 'signed' && now !== undefined && now < attempt.prepared.expiresAt * 1_000,
   kernelCancellationCanDiscard: () => false,
   kernelCancellationCanRetry: () => false,
   signAndSubmitKernelCancellation: submit,
@@ -44,6 +48,12 @@ const attempt: KernelOperationAttempt = {
 }
 
 describe('Kernel cancellation review', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    serverNow.mockReturnValue((original.expiresAt - 10) * 1_000)
+    refreshClock.mockResolvedValue({ now: serverNow })
+  })
+
   it('displays the ETH quote before approving the wallet signature', async () => {
     const cancellation: KernelPreparedCancellation = {
       ...original,
@@ -67,5 +77,31 @@ describe('Kernel cancellation review', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve cancellation' }))
     await waitFor(() => expect(signPrepared).toHaveBeenCalledTimes(1))
     expect(submit).toHaveBeenCalledExactlyOnceWith(attempt, cancellation, signPrepared)
+  })
+
+  it('refreshes missing server time and switches from resend to discard at expiry', async () => {
+    vi.useFakeTimers()
+    try {
+      const clockReady = Promise.withResolvers<{ now: typeof serverNow }>()
+      serverNow.mockImplementation(() => { throw new Error('Server time is unavailable') })
+      refreshClock.mockReturnValueOnce(clockReady.promise)
+      render(<KernelAttemptRecoveryControls attempt={{ ...attempt, phase: 'signed' }} />)
+      expect(screen.getByRole('button', { name: 'Refresh quote status' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Resend signed operation' })).not.toBeInTheDocument()
+
+      await act(async () => {
+        serverNow.mockReturnValue((original.expiresAt - 1) * 1_000)
+        clockReady.resolve({ now: serverNow })
+      })
+      expect(screen.getByRole('button', { name: 'Resend signed operation' })).toBeInTheDocument()
+      act(() => {
+        serverNow.mockReturnValue(original.expiresAt * 1_000)
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(screen.queryByRole('button', { name: 'Resend signed operation' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Discard unsent operation' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

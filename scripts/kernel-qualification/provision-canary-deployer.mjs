@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // One-off isolated Sepolia deployer. The private key goes directly to SSM through stdin.
 import assert from 'node:assert/strict'
+import { isCliEntry } from './local-safety.mjs'
 import { createRequire } from 'node:module'
 import { parseArgs } from 'node:util'
 import { awsCliClient } from './provision-canary-credentials.mjs'
@@ -83,6 +84,6 @@ async function main() {
   console.log(JSON.stringify(await execute(options, awsCliClient(options.region)), null, 2))
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isCliEntry(import.meta.url)) {
   main().catch(error => { console.error(`Canary deployer provisioning failed: ${error.message}`); process.exitCode = 1 })
 }

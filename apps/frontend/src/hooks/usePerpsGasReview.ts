@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { readGasPaymentPreference, useGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
 import { deadlineNow } from '../perps-aa/deadlineClock'
 import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
 import { usePerpsAaRuntime } from '../perps-aa/runtimeContext'
@@ -17,6 +17,7 @@ export function usePerpsGasReview() {
   }, [payment, ownerAddress])
   return payment ? {
     preference,
+    paymentScope: payment.scope,
     openActivity,
     available: payment.readiness[preference.mode],
     kernelScope: runtime.kernel.scope,
@@ -36,7 +37,7 @@ export function kernelQuoteIsFresh(quote: KernelActionQuote): boolean {
   }
 }
 
-class KernelGasReviewCancelled extends Error {
+export class KernelGasReviewCancelled extends Error {
   constructor() {
     super('Network gas review cancelled.')
     this.name = 'KernelGasReviewCancelled'
@@ -50,11 +51,18 @@ interface PendingApproval {
   reject: (cause: Error) => void
 }
 
+function approvalMatches(gas: PerpsGasReviewView, quote: KernelActionQuote): boolean {
+  if (!gas?.available || gas.preference.mode !== quote.mode) return false
+  const current = readGasPaymentPreference(gas.paymentScope)
+  return current.mode === quote.mode && current.revision === gas.preference.revision
+}
+
 export function useKernelGasApproval(gas: PerpsGasReviewView) {
   const scope = gas && [gas.chainId, gas.deployment, gas.sender, gas.preference.revision].join(':')
   const [pending, setPending] = useState<PendingApproval>()
   const active = useRef<PendingApproval>(undefined)
   const mounted = useRef(false)
+  const current = useRef({ gas, scope })
   const cancel = useCallback(() => {
     const approval = active.current
     if (!approval) return
@@ -62,7 +70,7 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
     approval.reject(new KernelGasReviewCancelled())
     setPending(undefined)
   }, [])
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
@@ -70,26 +78,38 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
       active.current = undefined
     }
   }, [])
-  useEffect(() => {
-    if (pending && pending.scope !== scope) {
+  useLayoutEffect(() => {
+    current.current = { gas, scope }
+    const approval = active.current
+    if (approval && (approval.scope !== scope || !approvalMatches(gas, approval.quote))) {
       queueMicrotask(() => {
-        if (active.current === pending) cancel()
+        if (active.current === approval) cancel()
       })
     }
-  }, [cancel, pending, scope])
+  }, [cancel, gas, scope])
   const review = useCallback((quote: KernelActionQuote) => new Promise<void>((resolve, reject) => {
-    if (!mounted.current || scope === undefined || active.current) {
+    const { gas, scope } = current.current
+    if (!mounted.current || scope === undefined || active.current || !approvalMatches(gas, quote)) {
       reject(new KernelGasReviewCancelled())
+      return
+    }
+    if (!kernelQuoteIsFresh(quote)) {
+      reject(new Error('The network gas quote expired. Review again to continue.'))
       return
     }
     const approval = { quote, scope, resolve, reject }
     active.current = approval
     setPending(approval)
-  }), [scope])
+  }), [])
   const confirm = () => {
     const approval = active.current
     if (!approval) return
-    if (approval.scope !== scope || !kernelQuoteIsFresh(approval.quote)) {
+    const { gas, scope } = current.current
+    if (approval.scope !== scope || !approvalMatches(gas, approval.quote)) {
+      cancel()
+      return
+    }
+    if (!kernelQuoteIsFresh(approval.quote)) {
       active.current = undefined
       approval.reject(new Error('The network gas quote expired or changed. Review again to continue.'))
       setPending(undefined)
@@ -99,5 +119,7 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
     approval.resolve()
     setPending(undefined)
   }
-  return { quote: pending && pending.scope === scope ? pending.quote : undefined, review, confirm, cancel }
+  const quote = pending && pending.scope === scope ? pending.quote : undefined
+  const canConfirm = quote !== undefined && gas?.available === true && gas.preference.mode === quote.mode
+  return { quote, canConfirm, review, confirm, cancel }
 }

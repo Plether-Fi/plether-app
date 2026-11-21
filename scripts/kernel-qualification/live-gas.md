@@ -28,16 +28,14 @@ printf '' | pbcopy
 
 After both captures, run `window.__pletherKernelGasCapture.restore()` in DevTools Console. This restores the original `fetch` and erases any captured entries. Reloading the page also removes the observer; install it again before requesting another quote. The observer never stores or logs `recoveryToken`, signed owner data, or response fields outside its explicit allowlist. The sanitized operation does contain its required call data and, in sponsored mode, paymaster data; keep the temporary files private and remove them after verification.
 
-The two `capture` calls must finish before the corresponding preparation expires or the wallet sends it. Use the canary's private Alto RPC through a localhost tunnel or a VPC probe task. An HTTPS URL without query credentials is also accepted. Use an independent Nitro RPC for the node side. Each output file must be new and is created with mode `0600`.
+The two `capture` calls must finish before the corresponding preparation expires or the wallet sends it. Set `KERNEL_LIVE_GAS_ALTO_RPC_URL` to the private canary's Alto tunnel and `KERNEL_LIVE_GAS_NITRO_RPC_URL` to the Nitro RPC. For a protected Nitro gateway, supply its scoped token through `KERNEL_LIVE_GAS_NITRO_BEARER` with tracing off. The token is sent only to the private Sepolia HTTPS gateway or its root localhost tunnel. Use distinct endpoints for Alto and Nitro. Each evidence file is published atomically with mode `0600`.
 
 ```sh
 node scripts/kernel-qualification/live-gas.mjs capture \
-  --alto-rpc "$KERNEL_CANARY_ALTO_RPC" --node-rpc "$SEPOLIA_NITRO_RPC" \
   --input /private/tmp/kernel-eth-gas-input.json \
   --output /private/tmp/kernel-eth-gas-evidence.json
 
 node scripts/kernel-qualification/live-gas.mjs capture \
-  --alto-rpc "$KERNEL_CANARY_ALTO_RPC" --node-rpc "$SEPOLIA_NITRO_RPC" \
   --input /private/tmp/kernel-sponsored-gas-input.json \
   --output /private/tmp/kernel-sponsored-gas-evidence.json
 ```
@@ -46,10 +44,11 @@ After both wallets' actual UserOperations are included, verify both modes. The c
 
 ```sh
 node scripts/kernel-qualification/live-gas.mjs verify \
-  --alto-rpc "$KERNEL_CANARY_ALTO_RPC" --node-rpc "$SEPOLIA_NITRO_RPC" \
   --eth-evidence /private/tmp/kernel-eth-gas-evidence.json \
   --sponsored-evidence /private/tmp/kernel-sponsored-gas-evidence.json
 ```
+
+Verify at safe inclusion height. If the recent Alto receipt has aged out, supply the corresponding public bundle hash via `--eth-transaction-hash` or `--sponsored-transaction-hash`. The checker matches the captured operation hash and payer against the canonical EntryPoint event. Kernel's reviewed limits include 12 million pre-verification gas, 17 million aggregate gas, zero sponsored post-operation gas, a 0.05 ETH maximum prefund for ETH-paid operations, and the configured sponsorship budget up to 0.01 ETH per operation.
 
 The optional `bundleL1` field estimates the *whole* eventual `handleOps` transaction from historical pre-inclusion state. A bundler can batch several UserOperations, and an archive RPC may be unable to replay a historical bundle. Therefore this field is context, not a per-operation L1 charge. The captured `nitroFeeControl` proves the live Nitro L1 and L2 estimate path was functioning at the safe block, while the onchain event proves the actual per-operation ETH charge. Arbitrum documents that the L1 posting cost is folded into the L2 gas limit, and the value can change between quoting and inclusion. [Arbitrum gas estimation](https://docs.arbitrum.io/arbitrum-essentials/how-to-estimate-gas) · [NodeInterface reference](https://docs.arbitrum.io/arbitrum-essentials/nodeinterface/reference)
 

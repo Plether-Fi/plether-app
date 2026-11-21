@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
@@ -94,6 +93,19 @@ test('prepared ETH and sponsor quotes bind the exact gas cap and payer', () => {
   } }), /paymaster/)
 })
 
+test('accepts Nitro L1 gas within the reviewed maximum and rejects a sponsor post-operation stipend', () => {
+  const eth = preparation('eth')
+  const nitroL1Gas = 5_861_566n
+  eth.operation.preVerificationGas = toHex(nitroL1Gas)
+  eth.maxNetworkGasWei = toHex((100n + 200n + nitroL1Gas) * 2n)
+  assert.equal(parsePreparation(eth).operation.preVerificationGas, nitroL1Gas)
+  eth.operation.preVerificationGas = toHex(12_000_001n)
+  assert.throws(() => parsePreparation(eth), /preVerificationGas is out of range/)
+  const sponsored = preparation('sponsored')
+  sponsored.operation.paymasterPostOpGasLimit = '0x1'
+  assert.throws(() => parsePreparation(sponsored), /paymasterPostOpGasLimit is out of range/)
+})
+
 test('a live Alto estimate must fit every prepared limit', () => {
   const op = parsePreparation(preparation('sponsored')).operation
   assert.deepEqual(checkEstimate({ callGasLimit: '0x63', verificationGasLimit: '0xc8', preVerificationGas: '0x32',
@@ -135,7 +147,7 @@ test('sponsored evidence checks paymaster estimate and deposit', () => {
   } }, 'sponsored'), /shortfall/)
 })
 
-test('included receipt is checked against the canonical EntryPoint event and quote', async () => {
+test('included receipt is checked against the canonical EntryPoint event and quote', async t => {
   const actual = 1_400n
   const used = 700n
   const topics = encodeEventTopics({ abi: entryPoint09Abi, eventName: 'UserOperationEvent',
@@ -143,39 +155,33 @@ test('included receipt is checked against the canonical EntryPoint event and quo
   const data = encodeAbiParameters(parseAbiParameters('uint256,bool,uint256,uint256'), [0n, true, actual, used])
   const responseFor = {
     eth_getUserOperationReceipt: {
-      userOpHash: opHash, sender, paymaster: zeroAddress, actualGasCost: toHex(actual),
+      userOpHash: opHash, sender, actualGasCost: toHex(actual),
       actualGasUsed: toHex(used), success: true,
       receipt: { transactionHash: txHash, blockHash, blockNumber: '0x10' },
     },
-    eth_getUserOperationByHash: { userOperation: { sender } },
     eth_getTransactionReceipt: {
       transactionHash: txHash, blockHash, blockNumber: '0x10', status: '0x1',
       logs: [{ address: entryPoint09Address, topics, data }],
     },
-    eth_getTransactionByHash: { to: entryPoint09Address, from: sender, input: null },
-    eth_getBlockByNumber: { hash: blockHash },
+    eth_getTransactionByHash: { to: entryPoint09Address, from: sender, input: null,
+      hash: txHash, blockNumber: '0x10', blockHash },
+    eth_getBlockByNumber: { hash: blockHash, number: '0x10' },
   }
-  const server = createServer(async (request, response) => {
-    let body = ''
-    for await (const chunk of request) body += chunk
-    const { method } = JSON.parse(body)
+  t.mock.method(globalThis, 'fetch', async (_url, request) => {
+    const { method } = JSON.parse(request.body)
     const result = responseFor[method]
-    response.setHeader('content-type', 'application/json')
-    response.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result }))
+    assert.notEqual(result, undefined, `Unexpected RPC method ${method}`)
+    return Response.json({ jsonrpc: '2.0', id: 1, result })
   })
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  const url = `http://127.0.0.1:${server.address().port}`
-  try {
-    const result = await verifyOne(url, url, evidence(), 'eth')
-    assert.equal(result.actualGasCostWei, toHex(actual))
-    assert.equal(result.quoteUsedBps, 7_000)
-    responseFor.eth_getUserOperationReceipt.actualGasCost = '0x7d1'
-    await assert.rejects(verifyOne(url, url, evidence(), 'eth'), /gas charge exceeded/)
-    responseFor.eth_getUserOperationReceipt.actualGasCost = toHex(actual)
-    responseFor.eth_getTransactionReceipt.logs[0].data = encodeAbiParameters(
-      parseAbiParameters('uint256,bool,uint256,uint256'), [0n, true, actual + 1n, used])
-    await assert.rejects(verifyOne(url, url, evidence(), 'eth'), /onchain UserOperationEvent disagrees/)
-  } finally {
-    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  }
+  const url = 'https://sepolia-rpc.example.invalid/'
+  const result = await verifyOne(url, url, evidence(), 'eth')
+  assert.equal(result.actualGasCostWei, toHex(actual))
+  assert.equal(result.quoteUsedBps, 7_000)
+  assert.deepEqual(await verifyOne(url, url, evidence(), 'eth', txHash), result)
+  responseFor.eth_getUserOperationReceipt.actualGasCost = '0x7d1'
+  await assert.rejects(verifyOne(url, url, evidence(), 'eth'), /gas charge exceeded/)
+  responseFor.eth_getUserOperationReceipt.actualGasCost = toHex(actual)
+  responseFor.eth_getTransactionReceipt.logs[0].data = encodeAbiParameters(
+    parseAbiParameters('uint256,bool,uint256,uint256'), [0n, true, actual + 1n, used])
+  await assert.rejects(verifyOne(url, url, evidence(), 'eth'), /onchain UserOperationEvent disagrees/)
 })

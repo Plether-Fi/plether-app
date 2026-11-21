@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, type Address, type Hex } from 'viem'
 import { ERC20_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI } from '../../contracts/abis'
 import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
+import { KernelGasReviewCancelled } from '../usePerpsGasReview'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -25,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   quoteAction: vi.fn(),
   useKernel: false,
 }))
+
+vi.mock('../../perps-aa/deadlineClock', () => ({ deadlineNow: () => Date.now() }))
 
 vi.mock('../../perps-aa/readiness', () => ({
   refreshReadiness: vi.fn(async () => {}),
@@ -107,7 +110,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
         entryPoint: '0x3333333333333333333333333333333333333333',
       },
       ...(mocks.useKernel ? {
-        kernel: { quoteAction: mocks.quoteAction },
+        kernel: { scope: { ...kernelScope, entryPoint: manifest.entryPoint }, quoteAction: mocks.quoteAction },
         gasPayment: { scope: kernelScope, readiness: { eth: true, sponsored: false } },
       } : {}),
     }),
@@ -258,6 +261,40 @@ describe('usePerpsTrading sponsorship route', () => {
       kernelQuote: quote,
     }))
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the saved gas mode after approving a Kernel withdrawal quote', async () => {
+    mocks.useKernel = true
+    writeGasPaymentPreference(kernelScope, 'eth')
+    const quote = { mode: 'eth' as const, maxNetworkGasWei: 470_000_000n, expiresAt: Math.floor(Date.now() / 1_000) + 60 }
+    mocks.quoteAction.mockResolvedValueOnce(quote)
+    const approval = Promise.withResolvers<void>()
+    const review = vi.fn(() => approval.promise)
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    const withdrawing = result.current.withdrawMargin(10_000_000n, review)
+    const rejected = withdrawing.catch((cause: unknown) => cause)
+    await waitFor(() => { expect(review).toHaveBeenCalledExactlyOnceWith(quote) })
+    writeGasPaymentPreference(kernelScope, 'sponsored')
+    approval.resolve()
+
+    await expect(rejected).resolves.toMatchObject({ cause: { message: 'The gas setting changed. Review a fresh quote to continue.' } })
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it('returns gas review cancellation without recording a failed deposit', async () => {
+    mocks.useKernel = true
+    writeGasPaymentPreference(kernelScope, 'eth')
+    const quote = { mode: 'eth' as const, maxNetworkGasWei: 470_000_000n, expiresAt: Math.floor(Date.now() / 1_000) + 60 }
+    mocks.quoteAction.mockResolvedValueOnce(quote)
+    const cause = new KernelGasReviewCancelled()
+    const review = vi.fn().mockRejectedValue(cause)
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.depositMargin(10_000_000n, 0n, 'account', review)).rejects.toBe(cause)
+    expect(review).toHaveBeenCalledExactlyOnceWith(quote)
+    expect(mocks.trackSponsoredOperationPreflightFailure).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
   it('never exposes direct payable order finalization for a sponsored account', async () => {

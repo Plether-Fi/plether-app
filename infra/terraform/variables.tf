@@ -652,6 +652,31 @@ variable "aa_kernel_sponsorship_json" {
   }
 }
 
+variable "aa_kernel_canary_owners" {
+  type        = list(string)
+  default     = []
+  nullable    = false
+  description = "Explicit owner allowlist for both Kernel payment modes."
+
+  validation {
+    condition = length(var.aa_kernel_canary_owners) <= 100 && alltrue([
+      for owner in var.aa_kernel_canary_owners : try(
+        can(regex("^0x[0-9A-Fa-f]{40}$", owner))
+        && lower(owner) != "0x0000000000000000000000000000000000000000",
+        false
+      )
+    ]) && length(distinct([for owner in var.aa_kernel_canary_owners : try(lower(owner), "")])) == length(var.aa_kernel_canary_owners)
+    error_message = "aa_kernel_canary_owners must contain at most 100 distinct nonzero Ethereum addresses."
+  }
+}
+
+variable "aa_kernel_public_admission" {
+  type        = bool
+  default     = false
+  nullable    = false
+  description = "Explicit public Kernel admission when no owner allowlist is configured. Requires an independently qualified full Sepolia deployment."
+}
+
 variable "enable_kernel_aa_eth" {
   type        = bool
   default     = false
@@ -954,7 +979,7 @@ variable "aa_reconciler_poll_seconds" {
 variable "aa_reconciler_batch_blocks" {
   type        = string
   default     = "1000"
-  description = "Maximum inclusive EntryPoint log block count per reconciliation batch; bounded by config/rpc-log-range-policy.json."
+  description = "Maximum inclusive EntryPoint log block count per reconciliation batch. Bounded by config/rpc-log-range-policy.json and by 2000 for Kernel."
 }
 
 variable "aa_reconciler_max_safe_lag_seconds" {

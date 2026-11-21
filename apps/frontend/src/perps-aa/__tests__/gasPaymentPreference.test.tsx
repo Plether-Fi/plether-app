@@ -54,4 +54,23 @@ describe('Trading Account gas payment preference', () => {
     expect(readGasPaymentPreference(resolved).mode).toBe('eth')
     expect(readGasPaymentPreference({ ...owner, ownerAddress: '0x4444444444444444444444444444444444444444' }).mode).toBe('sponsored')
   })
+
+  it('preserves the saved sender revision when a matching choice is saved under the owner', () => {
+    const owner = { chainId: scope.chainId, deployment: scope.deployment, ownerAddress: '0x1111111111111111111111111111111111111111' } as const
+    writeGasPaymentPreference(scope, 'eth')
+    const saved = readGasPaymentPreference(scope)
+
+    expect(writeGasPaymentPreference({ ...owner, sender: scope.sender }, 'eth')).toBe(true)
+    expect(readGasPaymentPreference(owner)).toEqual(saved)
+  })
+
+  it('repairs a corrupt preference even when saving the default mode', () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const key = localStorage.key(0)
+    if (key === null) throw new Error('The gas preference was not saved.')
+    localStorage.setItem(key, '{bad JSON')
+
+    expect(writeGasPaymentPreference(scope, 'sponsored')).toBe(true)
+    expect(readGasPaymentPreference(scope)).toEqual({ mode: 'sponsored', revision: expect.stringMatching(/^[0-9a-f-]{36}$/) })
+  })
 })

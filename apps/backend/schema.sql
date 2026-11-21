@@ -3354,6 +3354,116 @@ CREATE TABLE IF NOT EXISTS testnet_margin_funding_nonce_recoveries (
     recovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Kernel operation and sponsorship state, scoped independently of legacy AA.
+CREATE TABLE IF NOT EXISTS aa_kernel_preparations (
+  deployment TEXT NOT NULL CHECK (deployment <> ''),
+  chain_id BIGINT NOT NULL CHECK (chain_id > 0),
+  entry_point TEXT NOT NULL CHECK (entry_point ~ '^0x[0-9a-f]{40}$'),
+  sender TEXT NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+  owner_address TEXT NOT NULL CHECK (owner_address ~ '^0x[0-9a-f]{40}$'),
+  nonce NUMERIC(78,0) NOT NULL CHECK (nonce >= 0),
+  preparation_id TEXT NOT NULL CHECK (preparation_id <> ''),
+  client_key TEXT NOT NULL CHECK (client_key <> ''),
+  mode TEXT NOT NULL CHECK (mode IN ('sponsored','eth')),
+  unsigned_operation JSONB NOT NULL CHECK (jsonb_typeof(unsigned_operation)='object'),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (deployment,chain_id,entry_point,preparation_id),
+  UNIQUE (deployment,chain_id,entry_point,preparation_id,sender,nonce,client_key,mode)
+);
+ALTER TABLE aa_kernel_preparations ADD COLUMN IF NOT EXISTS prepared_safe_block BIGINT
+  CHECK (prepared_safe_block >= 0);
+ALTER TABLE aa_kernel_preparations
+  ADD COLUMN IF NOT EXISTS nonce_scan_through_block BIGINT,
+  ADD COLUMN IF NOT EXISTS nonce_scan_through_hash TEXT CHECK (
+    (nonce_scan_through_block IS NULL AND nonce_scan_through_hash IS NULL) OR (
+      prepared_safe_block IS NOT NULL AND nonce_scan_through_block IS NOT NULL
+      AND nonce_scan_through_block >= prepared_safe_block AND nonce_scan_through_hash IS NOT NULL
+      AND nonce_scan_through_hash ~ '^0x[0-9a-f]{64}$'));
+
+CREATE TABLE IF NOT EXISTS aa_kernel_operations (
+  deployment TEXT NOT NULL, chain_id BIGINT NOT NULL, entry_point TEXT NOT NULL,
+  sender TEXT NOT NULL, nonce NUMERIC(78,0) NOT NULL, preparation_id TEXT NOT NULL,
+  client_key TEXT NOT NULL, mode TEXT NOT NULL,
+  user_operation_hash TEXT NOT NULL CHECK (user_operation_hash ~ '^0x[0-9a-f]{64}$'),
+  signed_operation JSONB NOT NULL CHECK (jsonb_typeof(signed_operation)='object'),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','included','nonce_consumed','sponsorship_expired')),
+  terminal_evidence JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (deployment,chain_id,entry_point,user_operation_hash),
+  UNIQUE (deployment,chain_id,entry_point,preparation_id),
+  CHECK ((status='pending')=(terminal_evidence IS NULL)),
+  FOREIGN KEY (deployment,chain_id,entry_point,preparation_id,sender,nonce,client_key,mode)
+    REFERENCES aa_kernel_preparations (deployment,chain_id,entry_point,preparation_id,sender,nonce,client_key,mode)
+);
+ALTER TABLE aa_kernel_operations ADD COLUMN IF NOT EXISTS cancellation_only BOOLEAN NOT NULL DEFAULT FALSE
+  CHECK (NOT cancellation_only OR mode='eth');
+CREATE UNIQUE INDEX IF NOT EXISTS aa_kernel_pending_account
+  ON aa_kernel_operations (deployment,chain_id,entry_point,sender) WHERE status='pending';
+
+CREATE TABLE IF NOT EXISTS aa_kernel_cancellations (
+  deployment TEXT NOT NULL, chain_id BIGINT NOT NULL, entry_point TEXT NOT NULL,
+  original_hash TEXT NOT NULL,
+  cancellation_preparation_id TEXT NOT NULL CHECK (cancellation_preparation_id <> ''),
+  unsigned_operation JSONB NOT NULL CHECK (jsonb_typeof(unsigned_operation)='object'),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  signed_operation JSONB CHECK (jsonb_typeof(signed_operation)='object'),
+  cancellation_hash TEXT CHECK (cancellation_hash ~ '^0x[0-9a-f]{64}$' AND cancellation_hash <> original_hash),
+  PRIMARY KEY (deployment,chain_id,entry_point,cancellation_preparation_id),
+  CHECK ((signed_operation IS NULL)=(cancellation_hash IS NULL)),
+  FOREIGN KEY (deployment,chain_id,entry_point,original_hash)
+    REFERENCES aa_kernel_operations (deployment,chain_id,entry_point,user_operation_hash)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS aa_kernel_accepted_cancellation
+  ON aa_kernel_cancellations (deployment,chain_id,entry_point,original_hash) WHERE cancellation_hash IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS aa_kernel_sponsorships (
+  deployment TEXT NOT NULL CHECK (deployment <> ''),
+  chain_id BIGINT NOT NULL CHECK (chain_id > 0),
+  entry_point TEXT NOT NULL CHECK (entry_point ~ '^0x[0-9a-f]{40}$'),
+  paymaster TEXT NOT NULL CHECK (paymaster ~ '^0x[0-9a-f]{40}$'),
+  authorization_id TEXT NOT NULL CHECK (authorization_id <> ''),
+  preparation_id TEXT NOT NULL CHECK (preparation_id <> ''),
+  client_key TEXT NOT NULL CHECK (client_key <> ''),
+  sender TEXT NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+  nonce NUMERIC(78,0) NOT NULL CHECK (nonce >= 0),
+  max_cost_wei NUMERIC(78,0) NOT NULL CHECK (max_cost_wei > 0),
+  valid_after BIGINT NOT NULL CHECK (valid_after >= 0),
+  valid_until BIGINT NOT NULL CHECK (valid_until > valid_after),
+  unsigned_operation JSONB NOT NULL CHECK (jsonb_typeof(unsigned_operation)='object'),
+  signature TEXT,
+  user_operation_hash TEXT CHECK (user_operation_hash ~ '^0x[0-9a-f]{64}$'),
+  status TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved','signed','settled','expired')),
+  actual_gas_cost NUMERIC(78,0),
+  terminal_evidence JSONB,
+  settled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (deployment,chain_id,entry_point,paymaster,authorization_id),
+  UNIQUE (deployment,chain_id,entry_point,paymaster,preparation_id),
+  UNIQUE (deployment,chain_id,entry_point,paymaster,user_operation_hash),
+  CHECK ((signature IS NULL)=(user_operation_hash IS NULL)),
+  CHECK (status NOT IN ('signed','settled') OR signature IS NOT NULL),
+  CHECK ((status='settled')=(terminal_evidence IS NOT NULL) AND (status='settled')=(settled_at IS NOT NULL)),
+  CHECK ((status='settled')=(actual_gas_cost IS NOT NULL)),
+  CHECK (actual_gas_cost >= 0 AND actual_gas_cost <= max_cost_wei)
+);
+CREATE INDEX IF NOT EXISTS aa_kernel_sponsorship_active ON aa_kernel_sponsorships
+  (deployment,chain_id,entry_point,paymaster,valid_until) WHERE status IN ('reserved','signed');
+CREATE INDEX IF NOT EXISTS aa_kernel_sponsorship_settled ON aa_kernel_sponsorships
+  (deployment,chain_id,entry_point,paymaster,settled_at) WHERE status='settled';
+
+CREATE TABLE IF NOT EXISTS aa_kernel_reconciler_state (
+  deployment TEXT NOT NULL, chain_id BIGINT NOT NULL, entry_point TEXT NOT NULL, paymaster TEXT NOT NULL,
+  entry_point_code_hash TEXT NOT NULL, paymaster_code_hash TEXT NOT NULL,
+  start_block BIGINT NOT NULL CHECK (start_block > 0), start_block_hash TEXT NOT NULL,
+  safe_block BIGINT, safe_block_hash TEXT, safe_timestamp BIGINT,
+  last_success_at TIMESTAMPTZ, paused_reason TEXT,
+  CHECK ((safe_block IS NULL AND safe_block_hash IS NULL AND safe_timestamp IS NULL AND last_success_at IS NULL) OR
+    (safe_block IS NOT NULL AND safe_block >= start_block - 1 AND safe_block_hash IS NOT NULL AND safe_timestamp IS NOT NULL AND safe_timestamp >= 0)),
+  PRIMARY KEY (deployment, chain_id, entry_point, paymaster)
+);
+
 -- Canonical event evidence and diluted junior-share return attribution.
 CREATE TABLE IF NOT EXISTS vault_return_reports (
   chain_id NUMERIC(78,0) NOT NULL,

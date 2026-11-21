@@ -456,25 +456,54 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
+      condition = var.alto_entrypoint_version != "0.9" || (
+        var.alto_desired_count == 0 && var.aa_reconciler_desired_count == 0
+      )
+      error_message = "Core Terraform supports only dormant v0.9 definitions. Use the isolated Kernel canary with the reviewed patched Alto image. A full deployment requires a separately qualified v0.9 image and launcher."
+    }
+
+    precondition {
       condition = var.aa_kernel_profile_json == "" || (
         local.kernel_aa_backend_configured && try(
           toset(keys(local.kernel_aa_profile_object)) == toset([
             "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
             "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
-            "implementation", "implementationCodeHash", "validator", "validatorCodeHash",
+            "staker", "stakerCodeHash", "implementation", "implementationCodeHash", "validator", "validatorCodeHash",
           ])
+          && startswith(jsonencode(local.kernel_aa_profile_object.deployment), "\"")
+          && can(regex("^[a-z0-9._-]{1,96}$", local.kernel_aa_profile_object.deployment))
           && local.kernel_aa_profile_object.chainId == 421614
           && local.kernel_aa_profile_object.entryPointVersion == "0.9"
           && lower(local.kernel_aa_profile_object.entryPoint) == local.alto_entrypoint_addresses["0.9"]
           && local.kernel_aa_profile_object.accountVersion == "kernel-v4-uups"
           && local.kernel_aa_profile_object.accountIndex == 0
+          && alltrue([for field in ["factory", "staker", "implementation", "validator"] :
+            can(regex("^0x[0-9A-Fa-f]{40}$", local.kernel_aa_profile_object[field]))
+            && lower(local.kernel_aa_profile_object[field]) != "0x0000000000000000000000000000000000000000"
+          ])
+          && !contains([lower(local.kernel_aa_profile_object.factory), lower(local.kernel_aa_profile_object.entryPoint)], lower(local.kernel_aa_profile_object.staker))
+          && alltrue([for field in ["entryPointCodeHash", "factoryCodeHash", "stakerCodeHash", "implementationCodeHash", "validatorCodeHash", "accountCodeHash"] :
+            can(regex("^0x[0-9A-Fa-f]{64}$", local.kernel_aa_profile_object[field])) && !contains([
+              "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            ], lower(local.kernel_aa_profile_object[field]))
+          ])
           && can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
           && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
-          && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 600,
+          && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 1800,
           false
         )
       )
-      error_message = "Kernel requires the exact public profile fields, a factory-created Kernel v4 account on EntryPoint v0.9 and Arbitrum Sepolia, and max safe-head lag in 60..600 seconds."
+      error_message = "Kernel requires the exact public profile fields, a distinct Staker and valid contract bindings for Kernel v4 on EntryPoint v0.9 and Arbitrum Sepolia, and max safe-head lag in 60..1800 seconds."
+    }
+
+    precondition {
+      condition = alltrue([
+        local.kernel_aa_backend_configured || (!var.aa_kernel_public_admission && length(var.aa_kernel_canary_owners) == 0),
+        !var.aa_kernel_public_admission || length(var.aa_kernel_canary_owners) == 0,
+        !(var.enable_kernel_aa_eth || var.enable_kernel_aa_sponsorship) || var.aa_kernel_public_admission || length(var.aa_kernel_canary_owners) > 0,
+      ])
+      error_message = "Kernel admission requires a Kernel execution profile. Enabled payment requires either a nonempty owner allowlist or explicit public admission, and those settings cannot be combined."
     }
 
     precondition {
@@ -634,11 +663,11 @@ resource "terraform_data" "self_hosted_aa_guard" {
           && can(regex("^0x[0-9a-f]{64}$", local.kernel_aa_sponsorship_object.deploymentBlockHash))
           && local.kernel_aa_sponsorship_object.deploymentBlockHash != "0x0000000000000000000000000000000000000000000000000000000000000000"
           && can(regex("^[1-9][0-9]*$", var.aa_reconciler_poll_seconds)) && tonumber(var.aa_reconciler_poll_seconds) <= 60
-          && can(regex("^[1-9][0-9]*$", var.aa_reconciler_batch_blocks)) && tonumber(var.aa_reconciler_batch_blocks) <= 10000,
+          && can(regex("^[1-9][0-9]*$", var.aa_reconciler_batch_blocks)) && tonumber(var.aa_reconciler_batch_blocks) <= min(2000, local.rpc_log_range_policy.maxLogRangeBlocks),
           false
         )
       )
-      error_message = "Running the Kernel reconciler requires a reviewed paymaster deployment block and hash, poll seconds in 1..60, and batch blocks in 1..10000."
+      error_message = "Running the Kernel reconciler requires a reviewed paymaster deployment block and hash, poll seconds in 1..60, and batch blocks no larger than 2000 or the shared RPC limit."
     }
 
     precondition {

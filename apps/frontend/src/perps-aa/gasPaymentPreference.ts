@@ -35,8 +35,8 @@ function readStoredPreference(key: string, previousKey?: string): string | null 
   }
 }
 
-function parsePreference(stored: string | null): GasPaymentPreference {
-  if (stored === null) return defaultPreference
+function parsePreference(stored: string | null): GasPaymentPreference | undefined {
+  if (stored === null) return undefined
   try {
     const value: unknown = JSON.parse(stored)
     if (typeof value === 'object' && value !== null &&
@@ -45,22 +45,23 @@ function parsePreference(stored: string | null): GasPaymentPreference {
       return { mode: value.mode, revision: value.revision }
     }
   } catch {
-    return defaultPreference
+    return undefined
   }
-  return defaultPreference
+  return undefined
 }
 
 export function readGasPaymentPreference(scope: GasPaymentPreferenceScope): GasPaymentPreference {
   const { key, previousKey } = storageKeys(scope)
-  return parsePreference(readStoredPreference(key, previousKey))
+  return parsePreference(readStoredPreference(key, previousKey)) ?? defaultPreference
 }
 
 export function writeGasPaymentPreference(scope: GasPaymentPreferenceScope, mode: GasPaymentMode): boolean {
-  const { key } = storageKeys(scope)
+  const { key, previousKey } = storageKeys(scope)
   const stored = readStoredPreference(key)
-  if (stored !== null && parsePreference(stored).mode === mode) return true
+  if (parsePreference(stored)?.mode === mode) return true
+  const inherited = stored === null && previousKey !== undefined ? parsePreference(readStoredPreference(previousKey)) : undefined
   try {
-    const preference: GasPaymentPreference = { mode, revision: globalThis.crypto.randomUUID() }
+    const preference: GasPaymentPreference = inherited?.mode === mode ? inherited : { mode, revision: globalThis.crypto.randomUUID() }
     window.localStorage.setItem(key, JSON.stringify(preference))
   } catch {
     return false
@@ -90,5 +91,5 @@ export function useGasPaymentPreference(scope: GasPaymentPreferenceScope | undef
   const snapshot = useSyncExternalStore(subscribe,
     useCallback(() => key === undefined ? null : readStoredPreference(key, previousKey), [key, previousKey]),
     () => null)
-  return useMemo(() => parsePreference(snapshot), [snapshot])
+  return useMemo(() => parsePreference(snapshot) ?? defaultPreference, [snapshot])
 }

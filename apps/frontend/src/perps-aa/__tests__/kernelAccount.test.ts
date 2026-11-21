@@ -3,7 +3,7 @@ import { concatHex, createPublicClient, custom, encodeAbiParameters, encodeFunct
 import { entryPoint09Abi, entryPoint09Address, getUserOperationHash, type UserOperation } from 'viem/account-abstraction'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
-import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock, type KernelAccountProfile } from '../kernelAccount'
+import { createKernelTradingAccount, encodeKernelCalls, normalizeKernelSignature, verifyKernelTradingAccountAtBlock, type KernelAccountProfile } from '../kernelAccount'
 
 const factory = getAddress('0xa299a4efee7bbfb2ea5668b30218c45fff78356c')
 const staker = getAddress('0x58e2fd56990250b0ee784d15905c9856209226ae')
@@ -21,6 +21,22 @@ const profile: KernelAccountProfile = {
 }
 
 describe('Kernel account adapter', () => {
+  it('normalizes mixed-case target and data in single and batch execution calldata', () => {
+    const checksummed = { to: factory, data: '0xAbCd' as const }
+    const lower = { to: factory.toLowerCase() as typeof factory, data: '0xabcd' as const }
+    expect(encodeKernelCalls([checksummed])).toBe(encodeKernelCalls([lower]))
+    expect(encodeKernelCalls([checksummed, checksummed])).toBe(encodeKernelCalls([lower, lower]))
+    expect(encodeKernelCalls([checksummed])).toContain(lower.to.slice(2))
+  })
+
+  it('encodes raw wallet recovery bits as Solidity v and rejects high-s signatures', () => {
+    const low = toHex(1n, { size: 32 })
+    const high = toHex(0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140n, { size: 32 })
+    expect(normalizeKernelSignature(concatHex([low, low, '0x00']))).toBe(concatHex([low, low, '0x1b']))
+    expect(normalizeKernelSignature(concatHex([low, low, '0x01']))).toBe(concatHex([low, low, '0x1c']))
+    expect(() => normalizeKernelSignature(concatHex([low, high, '0x1b']))).toThrow('noncanonical signature')
+  })
+
   it('derives the same address and root nonce in both payer modes and signs the selected operation hash', async () => {
     const owner = privateKeyToAccount(toHex(1, { size: 32 }))
     const signMessage = vi.fn(owner.signMessage)

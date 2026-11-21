@@ -99,21 +99,35 @@ variable "kernel_canary_origin_token_ssm_parameter_name" {
   type    = string
   default = "/plether/sepolia/kernel-canary-aa-origin-token"
 }
-variable "kernel_canary_rpc_alb_security_group_id" {
-  type    = string
-  default = "sg-074181cf8fdb6a814"
-}
 variable "kernel_canary_max_safe_lag_seconds" {
   type    = string
   default = "1800"
+  validation {
+    condition = (can(regex("^[1-9][0-9]*$", var.kernel_canary_max_safe_lag_seconds))
+      && try(tonumber(var.kernel_canary_max_safe_lag_seconds) >= 60 && tonumber(var.kernel_canary_max_safe_lag_seconds) <= 1800, false)
+    )
+    error_message = "The Sepolia Kernel safe-head lag budget must be a canonical integer between 60 and 1800 seconds."
+  }
 }
 variable "kernel_canary_poll_seconds" {
   type    = string
   default = "5"
+  validation {
+    condition = (can(regex("^[1-9][0-9]*$", var.kernel_canary_poll_seconds))
+      && try(tonumber(var.kernel_canary_poll_seconds) <= 60, false)
+    )
+    error_message = "The Kernel reconciler poll interval must be a canonical integer between 1 and 60 seconds."
+  }
 }
 variable "kernel_canary_batch_blocks" {
   type    = string
   default = "1000"
+  validation {
+    condition = (can(regex("^[1-9][0-9]*$", var.kernel_canary_batch_blocks))
+      && try(tonumber(var.kernel_canary_batch_blocks) <= 2000, false)
+    )
+    error_message = "The Kernel reconciler batch size must be a canonical integer between 1 and 2000 blocks."
+  }
 }
 variable "kernel_canary_entrypoint_simulation_contract_v9" {
   type    = string

@@ -43,7 +43,7 @@ import Plether.Database.KernelOperation
   , kernelSponsorshipStateIsEmpty, lockKernelSponsorScope, settleKernelSponsorship
   )
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall, keccak256)
-import Plether.Ethereum.Client (CallParams (..), EthClient, ethCallAtBlock, rpcCall)
+import Plether.Ethereum.Client (CallParams (..), EthClient, ethCallAtBlock, rpcCall, withoutRpcFallback)
 import Plether.Logging (field, logError, logInfoEvery, logWarnEvery)
 
 data KernelReconcilerConfig = KernelReconcilerConfig
@@ -93,7 +93,7 @@ validateKernelReconcilerConfig cfg = do
     && all (isNonzeroCanonicalHex 32) [krcPaymasterCodeHash cfg, krcEntryPointCodeHash cfg, krcStartBlockHash cfg]) $
     Left "Kernel reconciliation requires canonical nonzero contract and deployment pins"
   unless (inRange 1 (2 ^ (63 :: Int) - 1) (krcStartBlock cfg)
-    && inRange 1 60 (krcPollSeconds cfg) && inRange 1 10_000 (krcBatchBlocks cfg)
+    && inRange 1 60 (krcPollSeconds cfg) && inRange 1 2_000 (krcBatchBlocks cfg)
     && inRange 1 (2 ^ (256 :: Int) - 1) (krcMinDepositWei cfg)
     && inRange (max 5 $ fromIntegral $ krcPollSeconds cfg) 300 (krcFailurePauseSeconds cfg)
     && inRange 60 1_800 (krcMaxSafeLagSeconds cfg)) $
@@ -105,7 +105,7 @@ validateKernelReconcilerConfig cfg = do
 -- leadership lock avoids duplicate scans. Scoped transaction locks still fence
 -- economic mutations against concurrent issuance and process interruption.
 runKernelReconciler :: DbPool -> EthClient -> EthClient -> KernelReconcilerConfig -> IO ()
-runKernelReconciler pool primary secondary cfg = do
+runKernelReconciler pool ordinaryPrimary ordinarySecondary cfg = do
   either (fail . T.unpack) pure $ validateKernelReconcilerConfig cfg
   failedSince <- newIORef Nothing
   withDb pool $ \leader -> withDbAdvisoryLock leader leaderKey $ forever $ do
@@ -126,6 +126,8 @@ runKernelReconciler pool primary secondary cfg = do
           pauseIssuance pool cfg "dual-provider reconciliation unavailable beyond configured threshold"
     threadDelay $ krcPollSeconds cfg * 1_000_000
  where
+  primary = withoutRpcFallback ordinaryPrimary
+  secondary = withoutRpcFallback ordinarySecondary
   scope = krcScope cfg
   digest = keccak256 $ TE.encodeUtf8 $ T.intercalate ":"
     ["plether/kernel/reconciler/v1", ksDeployment scope, T.pack $ show $ ksChainId scope, ksEntryPoint scope, krcPaymaster cfg]
@@ -385,7 +387,7 @@ inclusion paymaster event = KernelInclusion
 verifyKernelOperationReceipt
   :: KernelScope -> EthClient -> EthClient -> Integer -> Text -> Integer -> Text -> Text -> Value
   -> IO (Either Text (KernelInclusion, Value))
-verifyKernelOperationReceipt scope primary secondary maxLag sender nonce paymaster operationHash altoReceipt = do
+verifyKernelOperationReceipt scope ordinaryPrimary ordinarySecondary maxLag sender nonce paymaster operationHash altoReceipt = do
   result <- runExceptT $ do
     nested <- consistent $ member "receipt" altoReceipt
     tx <- consistent $ fixedText 32 "transactionHash" nested
@@ -418,6 +420,8 @@ verifyKernelOperationReceipt scope primary secondary maxLag sender nonce paymast
     Left (TemporarilyUnavailable err) -> Left err
     Right receipt -> Right receipt
  where
+  primary = withoutRpcFallback ordinaryPrimary
+  secondary = withoutRpcFallback ordinarySecondary
   readReceipt client tx = do
     answer <- rpcCall client "eth_getTransactionReceipt" $ toJSON [String tx]
     pure $ case answer of

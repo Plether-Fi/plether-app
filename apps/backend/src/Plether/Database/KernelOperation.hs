@@ -14,6 +14,8 @@ module Plether.Database.KernelOperation
   , ensureKernelOperationSchema
   , storeKernelPreparation
   , getKernelPreparationForClient
+  , getKernelNonceScanCursor
+  , storeKernelNonceScanCursor
   , acceptKernelOperation
   , acceptKernelCancellationAnchor
   , getKernelOperationForClient
@@ -34,6 +36,7 @@ module Plether.Database.KernelOperation
   , expireKernelSponsorshipsThrough
   ) where
 
+import Control.Exception (Exception, throwIO, try)
 import Control.Monad (void)
 import Data.Aeson (Value (..), encode, object, (.=))
 import qualified Data.Aeson.KeyMap as KM
@@ -49,6 +52,7 @@ import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, que
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.ToField (Action, toField)
+import Database.PostgreSQL.Simple.Transaction (withSavepoint)
 import Database.PostgreSQL.Simple.Types (Query)
 import Numeric (showHex)
 import Text.Read (readMaybe)
@@ -87,11 +91,13 @@ data KernelPreparation = KernelPreparation
   , kpMode :: PaymentMode
   , kpUnsignedOperation :: Value
   , kpExpiresAt :: UTCTime
+  -- Older rows have no anchor. Retain the original anchor across retries.
+  , kpSafeBlock :: Maybe Integer
   } deriving stock (Eq)
 
 instance FromRow KernelPreparation where
   fromRow = KernelPreparation <$> fromRow <*> field <*> field <*> integerField
-    <*> field <*> field <*> modeField <*> field <*> field
+    <*> field <*> field <*> modeField <*> field <*> field <*> field
 
 data StorePreparationResult = PreparationStored | PreparationAlreadyStored | PreparationConflict
   deriving stock (Eq, Show)
@@ -207,6 +213,17 @@ ensureKernelOperationSchema conn = withTransaction conn $ do
     \ PRIMARY KEY (deployment,chain_id,entry_point,preparation_id),\
     \ UNIQUE (deployment,chain_id,entry_point,preparation_id,sender,nonce,client_key,mode))"
   void $ execute_ conn
+    "ALTER TABLE aa_kernel_preparations ADD COLUMN IF NOT EXISTS prepared_safe_block BIGINT\
+    \ CHECK (prepared_safe_block >= 0)"
+  void $ execute_ conn
+    "ALTER TABLE aa_kernel_preparations\
+    \ ADD COLUMN IF NOT EXISTS nonce_scan_through_block BIGINT,\
+    \ ADD COLUMN IF NOT EXISTS nonce_scan_through_hash TEXT CHECK (\
+    \   (nonce_scan_through_block IS NULL AND nonce_scan_through_hash IS NULL) OR (\
+    \   prepared_safe_block IS NOT NULL AND nonce_scan_through_block IS NOT NULL\
+    \   AND nonce_scan_through_block >= prepared_safe_block AND nonce_scan_through_hash IS NOT NULL\
+    \   AND nonce_scan_through_hash ~ '^0x[0-9a-f]{64}$'))"
+  void $ execute_ conn
     "CREATE TABLE IF NOT EXISTS aa_kernel_operations (\
     \ deployment TEXT NOT NULL, chain_id BIGINT NOT NULL, entry_point TEXT NOT NULL,\
     \ sender TEXT NOT NULL, nonce NUMERIC(78,0) NOT NULL, preparation_id TEXT NOT NULL, client_key TEXT NOT NULL,\
@@ -275,25 +292,49 @@ storeKernelPreparation conn prepared
   | otherwise = withTransaction conn $ do
       inserted <- execute conn
         "INSERT INTO aa_kernel_preparations\
-        \ (deployment,chain_id,entry_point,sender,owner_address,nonce,preparation_id,client_key,mode,unsigned_operation,expires_at)\
-        \ VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?) ON CONFLICT DO NOTHING"
+        \ (deployment,chain_id,entry_point,sender,owner_address,nonce,preparation_id,client_key,mode,unsigned_operation,expires_at,prepared_safe_block)\
+        \ VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?,?) ON CONFLICT DO NOTHING"
         (scopeParams (kpScope prepared) ++
           [ toField (kpSender prepared), toField (kpOwner prepared), toField (kpNonce prepared)
           , toField (kpId prepared), toField (kpClientKey prepared), toField (modeText $ kpMode prepared)
-          , toField (jsonText $ kpUnsignedOperation prepared), toField (kpExpiresAt prepared)
+          , toField (jsonText $ kpUnsignedOperation prepared), toField (kpExpiresAt prepared), toField (kpSafeBlock prepared)
           ])
       if inserted == 1 then pure PreparationStored else do
         prior <- getKernelPreparationForClient conn (kpScope prepared) (kpId prepared) (kpClientKey prepared)
         pure $ case prior of
-          Just stored | stored == prepared { kpExpiresAt = kpExpiresAt stored } -> PreparationAlreadyStored
+          Just stored | stored == prepared {kpExpiresAt = kpExpiresAt stored, kpSafeBlock = kpSafeBlock stored} ->
+            PreparationAlreadyStored
           _ -> PreparationConflict
 
 getKernelPreparationForClient :: Connection -> KernelScope -> Text -> Text -> IO (Maybe KernelPreparation)
 getKernelPreparationForClient conn scope preparationId client = oneRow =<< query conn
-  "SELECT deployment,chain_id,entry_point,sender,owner_address,nonce,preparation_id,client_key,mode,unsigned_operation,expires_at\
+  "SELECT deployment,chain_id,entry_point,sender,owner_address,nonce,preparation_id,client_key,mode,unsigned_operation,expires_at,prepared_safe_block\
   \ FROM aa_kernel_preparations\
   \ WHERE deployment=? AND chain_id=? AND entry_point=? AND preparation_id=? AND client_key=?"
   (scopeParams scope ++ [toField preparationId, toField client])
+
+-- This progress belongs to the original preparation. Compare-and-swap lets
+-- concurrent status requests advance it without overwriting a verified scan.
+getKernelNonceScanCursor :: Connection -> KernelPreparation -> IO (Maybe (Integer, Text))
+getKernelNonceScanCursor conn prepared = oneRow =<< query conn
+  "SELECT nonce_scan_through_block,nonce_scan_through_hash FROM aa_kernel_preparations\
+  \ WHERE deployment=? AND chain_id=? AND entry_point=? AND preparation_id=? AND client_key=?\
+  \ AND prepared_safe_block=? AND nonce_scan_through_block IS NOT NULL"
+  (scopeParams (kpScope prepared) ++
+    [toField (kpId prepared), toField (kpClientKey prepared), toField (kpSafeBlock prepared)])
+
+storeKernelNonceScanCursor
+  :: Connection -> KernelPreparation -> Maybe (Integer, Text) -> (Integer, Text) -> IO Bool
+storeKernelNonceScanCursor conn prepared expected (block, blockHash) = do
+  updated <- execute conn
+    "UPDATE aa_kernel_preparations SET nonce_scan_through_block=?,nonce_scan_through_hash=?\
+    \ WHERE deployment=? AND chain_id=? AND entry_point=? AND preparation_id=? AND client_key=?\
+    \ AND prepared_safe_block=? AND prepared_safe_block<=?\
+    \ AND nonce_scan_through_block IS NOT DISTINCT FROM ? AND nonce_scan_through_hash IS NOT DISTINCT FROM ?"
+    ([toField block, toField blockHash] ++ scopeParams (kpScope prepared) ++
+      [toField (kpId prepared), toField (kpClientKey prepared), toField (kpSafeBlock prepared), toField block,
+       toField (fst <$> expected), toField (snd <$> expected)])
+  pure $ updated == 1
 
 -- Commit acceptance before handing signed bytes to Alto. The durable lock is
 -- shared by both modes and survives processes, tabs, and relay failures.
@@ -365,7 +406,7 @@ findKernelOperation lock conn scope operationHash client = oneRow =<< query conn
 
 kernelOperationQuery :: Query
 kernelOperationQuery =
-  "SELECT p.deployment,p.chain_id,p.entry_point,p.sender,p.owner_address,p.nonce,p.preparation_id,p.client_key,p.mode,p.unsigned_operation,p.expires_at,\
+  "SELECT p.deployment,p.chain_id,p.entry_point,p.sender,p.owner_address,p.nonce,p.preparation_id,p.client_key,p.mode,p.unsigned_operation,p.expires_at,p.prepared_safe_block,\
   \ o.user_operation_hash,o.signed_operation,o.status,o.terminal_evidence,o.cancellation_only FROM aa_kernel_operations o\
   \ JOIN aa_kernel_preparations p USING (deployment,chain_id,entry_point,preparation_id)\
   \ WHERE o.deployment=? AND o.chain_id=? AND o.entry_point=? AND o.user_operation_hash=? AND o.client_key=?"
@@ -447,7 +488,7 @@ retireKernelOperation conn scope operationHash evidence
       updated <- execute conn
         "UPDATE aa_kernel_operations SET status='nonce_consumed',terminal_evidence=?::jsonb\
         \ WHERE deployment=? AND chain_id=? AND entry_point=? AND user_operation_hash=? AND sender=? AND nonce=?\
-        \ AND NOT cancellation_only\
+        \ AND mode='eth'\
         \ AND (status='pending' OR (status='nonce_consumed' AND terminal_evidence=?::jsonb))"
         ([toField payload] ++ scopeParams scope ++
           [toField operationHash, toField (krSender evidence), toField (krNonce evidence), toField payload])
@@ -686,13 +727,21 @@ storeKernelSponsorshipSignature conn scope paymaster authorizationId client sign
           [toField paymaster, toField authorizationId, toField client, toField signature, toField operationHash])
       pure $ changed == 1
 
+data KernelSettlementConflict = KernelSettlementConflict
+  deriving stock (Show)
+
+instance Exception KernelSettlementConflict
+
 -- Called inside the reconciler transaction holding lockKernelSponsorScope.
--- An operation sent via another bundler may have no local relay record.
+-- An operation sent via another bundler may have no local relay record. A
+-- conflicting local record rolls back the sponsorship update to the savepoint.
 settleKernelSponsorship :: Connection -> KernelScope -> Text -> Text -> KernelInclusion -> IO Bool
 settleKernelSponsorship conn scope paymaster operationHash inclusion
   | kiPaymaster inclusion /= Just paymaster = pure False
   | kiActualGasCost inclusion < 0 || kiBlockNumber inclusion < 0 = pure False
-  | otherwise = do
+  | otherwise = either (const False) id <$> try @KernelSettlementConflict (withSavepoint conn settle)
+  where
+    settle = do
       let evidence = jsonText $ inclusionValue inclusion
       changed <- execute conn
         "UPDATE aa_kernel_sponsorships SET status='settled',actual_gas_cost=?,terminal_evidence=?::jsonb,\
@@ -711,7 +760,7 @@ settleKernelSponsorship conn scope paymaster operationHash inclusion
             "SELECT EXISTS (SELECT 1 FROM aa_kernel_operations\
             \ WHERE deployment=? AND chain_id=? AND entry_point=? AND user_operation_hash=?)"
             (scopeParams scope ++ [toField operationHash])
-          pure $ not present
+          if present then throwIO KernelSettlementConflict else pure True
 
 -- The EntryPoint treats validUntil as inclusive, and only a complete safe
 -- scan permits releasing even unsigned reservations for this profile.
@@ -742,11 +791,11 @@ kernelBudgetTotals conn scope paymaster sender client = do
     "SELECT COALESCE(SUM(max_cost_wei) FILTER (WHERE sender=? AND status IN ('reserved','signed')),0),\
     \ COALESCE(SUM(max_cost_wei) FILTER (WHERE client_key=? AND status IN ('reserved','signed')),0),\
     \ COALESCE(SUM(max_cost_wei) FILTER (WHERE status IN ('reserved','signed')),0),\
-    \ COALESCE(SUM(actual_gas_cost) FILTER (WHERE sender=? AND settled_at>=clock_timestamp()-interval '1 hour'),0),\
-    \ COALESCE(SUM(actual_gas_cost) FILTER (WHERE settled_at>=clock_timestamp()-interval '1 hour'),0),\
-    \ COALESCE(SUM(actual_gas_cost) FILTER (WHERE settled_at>=clock_timestamp()-interval '24 hours'),0)\
+    \ COALESCE(SUM(actual_gas_cost) FILTER (WHERE sender=? AND settled_at>=statement_timestamp()-interval '1 hour'),0),\
+    \ COALESCE(SUM(actual_gas_cost) FILTER (WHERE settled_at>=statement_timestamp()-interval '1 hour'),0),\
+    \ COALESCE(SUM(actual_gas_cost) FILTER (WHERE settled_at>=statement_timestamp()-interval '24 hours'),0)\
     \ FROM aa_kernel_sponsorships WHERE deployment=? AND chain_id=? AND entry_point=? AND paymaster=?\
-    \ AND (status IN ('reserved','signed') OR settled_at>=clock_timestamp()-interval '24 hours')"
+    \ AND (status IN ('reserved','signed') OR (status='settled' AND settled_at>=statement_timestamp()-interval '24 hours'))"
     ([toField sender, toField client, toField sender] ++ scopeParams scope ++ [toField paymaster])
   pure totals
 

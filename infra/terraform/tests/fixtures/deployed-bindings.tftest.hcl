@@ -179,7 +179,7 @@ run "reject_mismatched_vault_history_deployment_block" {
 }
 
 # Kernel infrastructure uses the full module with mock AWS resources.
-run "wire_kernel_execution_to_the_private_bundler_and_reconciler" {
+run "prepare_dormant_kernel_bindings_for_api_and_reconciler" {
   command = plan
 
   variables {
@@ -187,11 +187,9 @@ run "wire_kernel_execution_to_the_private_bundler_and_reconciler" {
     alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
     alto_entrypoint_simulation_contract_v8 = ""
     alto_entrypoint_simulation_contract_v9 = "0x0000000000000000000000000000000000000022"
-    alto_desired_count                     = 1
-    aa_reconciler_desired_count            = 1
-    enable_kernel_aa_eth                   = true
-    enable_kernel_aa_sponsorship           = true
-    enable_kernel_aa_protection_commits    = true
+    aa_kernel_canary_owners                = [format("0x%040d", 36)]
+    aa_reconciler_max_safe_lag_seconds     = "1800"
+    aa_reconciler_batch_blocks             = "2000"
     aa_kernel_profile_json = jsonencode({
       deployment             = "fixture-kernel"
       chainId                = 421614
@@ -202,6 +200,8 @@ run "wire_kernel_execution_to_the_private_bundler_and_reconciler" {
       accountIndex           = 0
       factory                = format("0x%040d", 31)
       factoryCodeHash        = format("0x%064d", 2)
+      staker                 = format("0x%040d", 37)
+      stakerCodeHash         = format("0x%064d", 9)
       implementation         = format("0x%040d", 32)
       implementationCodeHash = format("0x%064d", 3)
       validator              = format("0x%040d", 33)
@@ -232,21 +232,27 @@ run "wire_kernel_execution_to_the_private_bundler_and_reconciler" {
   }
 
   assert {
-    condition     = local.kernel_aa_sponsorship_enabled && local.aa_gateway_enabled && length(local.native_aa_environment) == 0
-    error_message = "The Kernel deployment must enable its own gateway and sponsorship while omitting native v0.8 configuration."
+    condition     = local.kernel_aa_backend_configured && local.kernel_aa_sponsorship_configured && !local.kernel_aa_sponsorship_enabled && length(local.native_aa_environment) == 0
+    error_message = "The dormant Kernel gateway must accept the execution and sponsorship profiles without enabling sponsorship or native v0.8."
   }
   assert {
     condition = contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_ALTO_RPC_URL") && (
-      contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
-      && length(aws_iam_role_policy.api_paymaster_kms_signer) == 1
-      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_PROTECTION_COMMITS_ENABLED", value = "true" })
+      !contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
+      && length(aws_iam_role_policy.api_paymaster_kms_signer) == 0
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = jsonencode(var.aa_kernel_canary_owners) })
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_PUBLIC_ADMISSION", value = "false" })
+      && contains(local.kernel_aa_environment, { name = "AA_RPC_MODE", value = "dual-independent" })
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = "1800" })
     )
-    error_message = "Kernel API routes to the private Alto service and acquires the narrow paymaster signing grant."
+    error_message = "The Kernel API must use explicit canary admission and independent RPCs without access to the paymaster signer."
   }
   assert {
     condition = contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_SPONSORSHIP_JSON") && (
       !contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
       && local.kernel_aa_secrets[0].name == "AA_SECURITY_RPC_URL"
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_RPC_MODE", value = "dual-independent" })
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = "1800" })
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_RECONCILER_BATCH_BLOCKS", value = "2000" })
     )
     error_message = "The reconciler receives the current paymaster anchor and independent RPC without signing access."
   }

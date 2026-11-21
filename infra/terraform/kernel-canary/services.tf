@@ -9,24 +9,10 @@ locals {
   kernel_canary_utility_arn   = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_utility_key_ssm_parameter_name)}"
   kernel_canary_origin_arn    = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_origin_token_ssm_parameter_name)}"
 
-  kernel_canary_api_secret_arns = distinct(concat([
-    local.kernel_canary_rpc_url_arn,
-    local.kernel_canary_perps_rpc_url_arn,
-    local.kernel_canary_database_url_arn,
-    local.kernel_canary_security_rpc_url_arn,
-    local.kernel_canary_origin_arn,
-    ], [for secret in local.kernel_canary_rpc_auth_token_secret : secret.valueFrom],
-    [for secret in local.kernel_canary_perps_rpc_auth_token_secret : secret.valueFrom],
-  [for secret in local.kernel_canary_pyth_api_key_secret : secret.valueFrom]))
-
   kernel_canary_execution_secret_arns = {
-    alto = [local.kernel_canary_rpc_arn, local.kernel_canary_rpc_token_arn, local.kernel_canary_executor_arn, local.kernel_canary_utility_arn]
-    api  = local.kernel_canary_api_secret_arns
-    reconciler = distinct(concat([
-      local.kernel_canary_database_url_arn,
-      local.kernel_canary_perps_rpc_url_arn,
-      local.kernel_canary_security_rpc_url_arn,
-    ], [for secret in local.kernel_canary_perps_rpc_auth_token_secret : secret.valueFrom]))
+    alto       = [local.kernel_canary_rpc_arn, local.kernel_canary_rpc_token_arn, local.kernel_canary_executor_arn, local.kernel_canary_utility_arn]
+    api        = distinct([for secret in local.kernel_canary_api_secrets : secret.valueFrom])
+    reconciler = distinct([for secret in local.kernel_canary_reconciler_secrets : secret.valueFrom])
   }
   kernel_canary_customer_secret_arns = {
     alto       = [local.kernel_canary_executor_arn, local.kernel_canary_utility_arn]
@@ -88,13 +74,18 @@ locals {
     { name = "DATABASE_URL", valueFrom = local.kernel_canary_database_url_arn },
     { name = "AA_SECURITY_RPC_URL", valueFrom = local.kernel_canary_security_rpc_url_arn },
     { name = "AA_PROXY_ORIGIN_TOKEN", valueFrom = local.kernel_canary_origin_arn },
-  ], local.kernel_canary_rpc_auth_token_secret, local.kernel_canary_perps_rpc_auth_token_secret, local.kernel_canary_pyth_api_key_secret)
+  ], local.kernel_canary_rpc_auth_token_secret)
+  kernel_canary_reconciler_secrets = [
+    { name = "DATABASE_URL", valueFrom = local.kernel_canary_database_url_arn },
+    { name = "PERPS_RPC_URL", valueFrom = local.kernel_canary_perps_rpc_url_arn },
+    { name = "AA_SECURITY_RPC_URL", valueFrom = local.kernel_canary_security_rpc_url_arn },
+  ]
 
   kernel_canary_alto_base_environment = local.kernel_canary_count == 1 ? [
     for setting in local.live_alto_container.environment : setting
     if !startswith(setting.name, "PLETHER_ALTO_")
     && !startswith(setting.name, "ALTO_ENTRYPOINT")
-    && !contains(["ALTO_PIMLICO_SIMULATION_CONTRACT", "ALTO_SAFE_MODE", "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", "ALTO_DEPLOY_SIMULATIONS_CONTRACT", "ALTO_RPC_METHODS"], setting.name)
+    && !contains(["ALTO_PIMLICO_SIMULATION_CONTRACT", "ALTO_SAFE_MODE", "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", "ALTO_DEPLOY_SIMULATIONS_CONTRACT", "ALTO_RPC_METHODS", "ALTO_MAX_GAS_PER_USER_OP"], setting.name)
   ] : []
   kernel_canary_alto_environment = concat(local.kernel_canary_alto_base_environment, [
     { name = "ALTO_ENTRYPOINTS", value = "0x433709009b8330fda32311df1c2afa402ed8d009" },
@@ -104,6 +95,7 @@ locals {
     { name = "ALTO_RPC_METHODS", value = local.kernel_canary_alto_allowed_rpc_methods },
     { name = "ALTO_SAFE_MODE", value = "true" },
     { name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false" },
+    { name = "ALTO_MAX_GAS_PER_USER_OP", value = "17000000" },
   ])
 
   kernel_canary_awslogs = {
@@ -145,26 +137,13 @@ resource "terraform_data" "kernel_canary_guard" {
     }
     precondition {
       condition = (
-        alltrue([
-          for name in [
-            var.kernel_canary_alto_rpc_url_ssm_parameter_name,
-            var.kernel_canary_alto_rpc_token_ssm_parameter_name,
-            var.kernel_canary_alto_executor_keys_ssm_parameter_name,
-            var.kernel_canary_alto_utility_key_ssm_parameter_name,
-            var.kernel_canary_origin_token_ssm_parameter_name,
-          ] : startswith(trimspace(name), "/plether/sepolia/") && trimspace(name) == name
-          ]) && length(distinct([
-            var.kernel_canary_alto_rpc_url_ssm_parameter_name,
-            var.kernel_canary_alto_rpc_token_ssm_parameter_name,
-            var.kernel_canary_alto_executor_keys_ssm_parameter_name,
-            var.kernel_canary_alto_utility_key_ssm_parameter_name,
-            var.kernel_canary_origin_token_ssm_parameter_name,
-        ])) == 5
-        && var.kernel_canary_alto_executor_keys_ssm_parameter_name != "/plether/sepolia/alto-executor-private-keys"
-        && var.kernel_canary_alto_utility_key_ssm_parameter_name != "/plether/sepolia/alto-utility-private-key"
-        && var.kernel_canary_origin_token_ssm_parameter_name != "/plether/sepolia/aa-proxy-origin-token"
+        var.kernel_canary_alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
+        && var.kernel_canary_alto_rpc_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
+        && can(regex("^/plether/sepolia/kernel-canary-alto-executor-[a-z0-9-]+$", var.kernel_canary_alto_executor_keys_ssm_parameter_name))
+        && can(regex("^/plether/sepolia/kernel-canary-alto-utility-[a-z0-9-]+$", var.kernel_canary_alto_utility_key_ssm_parameter_name))
+        && can(regex("^/plether/sepolia/kernel-canary-aa-origin-[a-z0-9-]+$", var.kernel_canary_origin_token_ssm_parameter_name))
       )
-      error_message = "Canary URL, token, executor, utility and origin parameters must be distinct Sepolia refs protected by the dedicated symmetric key."
+      error_message = "Canary Alto must use the reviewed Nitro URL and bearer pair. Executor, utility and origin refs must use their respective dedicated canary namespaces."
     }
     precondition {
       condition = var.kernel_canary_alto_desired_count == 0 || (
@@ -174,8 +153,6 @@ resource "terraform_data" "kernel_canary_guard" {
         && try(data.aws_lb.kernel_canary_rpc_gateway[0].vpc_id, "") == data.aws_vpc.live[0].id
         && try(data.aws_lb.kernel_canary_rpc_gateway[0].internal, false)
         && try(data.aws_lb.kernel_canary_rpc_gateway[0].load_balancer_type, "") == "application"
-        && var.kernel_canary_alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
-        && var.kernel_canary_alto_rpc_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
         && can(regex("^0x[0-9A-Fa-f]{40}$", var.kernel_canary_entrypoint_simulation_contract_v9))
         && can(regex("^0x[0-9A-Fa-f]{40}$", var.kernel_canary_pimlico_simulation_contract))
         && lower(var.kernel_canary_entrypoint_simulation_contract_v9) != "0x0000000000000000000000000000000000000000"
@@ -189,10 +166,9 @@ resource "terraform_data" "kernel_canary_guard" {
         var.kernel_canary_alto_desired_count == 1
         && var.kernel_canary_db_schema_confirmed
         && var.kernel_canary_profile_attested
-        && can(jsondecode(var.kernel_canary_profile_json))
-        && try(jsondecode(var.kernel_canary_profile_json).chainId, 0) == 421614
-        && try(lower(jsondecode(var.kernel_canary_profile_json).entryPoint), "") == "0x433709009b8330fda32311df1c2afa402ed8d009"
-        && try(jsondecode(var.kernel_canary_profile_json).entryPointVersion, "") == "0.9"
+        && local.kernel_canary_profile_valid
+        && local.kernel_canary_owners_valid
+        && (var.kernel_canary_sponsorship_json == "" || local.kernel_canary_sponsor_valid)
       )
       error_message = "Starting canary API requires the canary Alto and an attested Arbitrum Sepolia Kernel v0.9 profile."
     }
@@ -202,8 +178,8 @@ resource "terraform_data" "kernel_canary_guard" {
         && var.kernel_canary_nitro_safemode_qualified
         && trimspace(data.aws_lb_listener.live_api_https[0].certificate_arn) != ""
         && trimspace(var.api_hostname) != ""
-        && can(regex("^https://[a-z0-9.-]+$", var.kernel_canary_preview_origin))
-        && var.kernel_canary_preview_origin != "https://plether.com"
+        && can(regex("^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.kernel_canary_preview_origin))
+        && !can(regex("(^|\\.)plether\\.com$", trimprefix(var.kernel_canary_preview_origin, "https://")))
       )
       error_message = "The canary public path may open only for a running API and an exact HTTPS preview origin."
     }
@@ -215,19 +191,23 @@ resource "terraform_data" "kernel_canary_guard" {
       condition = !(var.kernel_canary_eth_enabled || var.kernel_canary_sponsorship_enabled) || (
         var.kernel_canary_api_desired_count == 1 && var.kernel_canary_alto_desired_count == 1
         && length(try(tolist(jsondecode(var.kernel_canary_owners_json)), [])) > 0
-        && alltrue([for owner in try(tolist(jsondecode(var.kernel_canary_owners_json)), []) : can(regex("^0x[0-9A-Fa-f]{40}$", owner))])
+        && local.kernel_canary_owners_valid
       )
       error_message = "Kernel payment choices require both canary API and Alto tasks running and an exact nonempty canary owner allowlist."
     }
     precondition {
       condition = !var.kernel_canary_sponsorship_enabled || (
-        var.kernel_canary_reconciler_desired_count == 1 && can(jsondecode(var.kernel_canary_sponsorship_json))
+        var.kernel_canary_reconciler_desired_count == 1 && local.kernel_canary_sponsor_valid
+        && try(length(local.kernel_canary_sponsor.canaryOwners) > 0, false)
       )
       error_message = "Canary sponsorship requires its own active reconciler and reviewed paymaster profile."
     }
     precondition {
-      condition     = var.kernel_canary_reconciler_desired_count == 0 || var.kernel_canary_sponsorship_enabled
-      error_message = "The canary reconciler may run only when its sponsorship profile is enabled."
+      condition = var.kernel_canary_reconciler_desired_count == 0 || (
+        var.kernel_canary_db_schema_confirmed && var.kernel_canary_profile_attested
+        && local.kernel_canary_profile_valid && local.kernel_canary_sponsor_valid
+      )
+      error_message = "The canary reconciler requires the confirmed database schema, attested Kernel profile and valid paymaster profile. It may drain after sponsorship is disabled."
     }
   }
 }
@@ -676,15 +656,12 @@ resource "aws_ecs_task_definition" "kernel_canary_reconciler" {
       image            = var.kernel_canary_api_image
       logConfiguration = local.kernel_canary_awslogs
       dependsOn        = [{ containerName = "aa-reconciler-tmp-init", condition = "SUCCESS" }]
-      secrets = concat([
-        { name = "DATABASE_URL", valueFrom = local.kernel_canary_database_url_arn },
-        { name = "PERPS_RPC_URL", valueFrom = local.kernel_canary_perps_rpc_url_arn },
-        { name = "AA_SECURITY_RPC_URL", valueFrom = local.kernel_canary_security_rpc_url_arn },
-      ], local.kernel_canary_perps_rpc_auth_token_secret)
+      secrets          = local.kernel_canary_reconciler_secrets
       environment = [
         { name = "HOME", value = "/tmp" },
         { name = "TMPDIR", value = "/tmp" },
         { name = "PERPS_CHAIN_ID", value = "421614" },
+        { name = "AA_RPC_MODE", value = "dual-independent" },
         { name = "AA_KERNEL_PROFILE_JSON", value = var.kernel_canary_profile_json },
         { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = var.kernel_canary_owners_json },
         { name = "AA_KERNEL_PUBLIC_ADMISSION", value = "false" },

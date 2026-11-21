@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, parseAbi, parseEther, type Address, type Hex } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
@@ -13,12 +13,15 @@ const mocks = vi.hoisted(() => ({
   verifyAccount: vi.fn(), getBalance: vi.fn(), readContract: vi.fn(), getAddresses: vi.fn(), getChainId: vi.fn(),
   sendTransaction: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransaction: vi.fn(), getBlock: vi.fn(),
   quoteAction: vi.fn(), execute: vi.fn(),
+  walletChain: vi.fn(), switchChain: vi.fn(),
 }))
 
 vi.mock('wagmi', async importOriginal => ({
   ...await importOriginal<typeof import('wagmi')>(),
   usePublicClient: () => ({ ...mocks, chain: arbitrumSepolia }),
   useWalletClient: () => ({ data: mocks }),
+  useChainId: () => mocks.walletChain(),
+  useSwitchChain: () => ({ switchChainAsync: mocks.switchChain, isPending: false }),
 }))
 vi.mock('../../hooks/usePerpsGasReview', () => ({ kernelQuoteIsFresh: () => true }))
 
@@ -41,13 +44,15 @@ const manifest = { version: 'perps-aa-kernel-v1:kernel-test' } as KernelPerpsAaD
 
 function renderPanel() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={queryClient}><KernelEthFunding runtime={runtime} manifest={manifest} /></QueryClientProvider>)
+  return { ...render(<QueryClientProvider client={queryClient}><KernelEthFunding runtime={runtime} manifest={manifest} /></QueryClientProvider>), queryClient }
 }
 
 describe('Kernel ETH funding', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     localStorage.clear()
+    mocks.walletChain.mockReturnValue(arbitrumSepolia.id)
+    mocks.switchChain.mockResolvedValue(arbitrumSepolia)
     mocks.verifyAccount.mockResolvedValue(verifiedAccount)
     mocks.getBalance.mockResolvedValue(parseEther('0.02'))
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => Promise.resolve(
@@ -103,6 +108,43 @@ describe('Kernel ETH funding', () => {
     expect(screen.queryByText(/ETH transfer confirmed/)).not.toBeInTheDocument()
   })
 
+  it('keeps a declined top-up available to retry without reporting an unknown transfer', async () => {
+    mocks.sendTransaction.mockRejectedValue(new Error('Transaction execution failed', {
+      cause: Object.assign(new Error('User rejected the request'), { name: 'UserRejectedRequestError' }),
+    }))
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to add' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' }))
+    expect(await screen.findByText('You declined the ETH transfer in your wallet.')).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'ETH to add' })).toHaveValue('.01')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'View ETH transfer' })).not.toBeInTheDocument()
+    expect(mocks.waitForTransactionReceipt).not.toHaveBeenCalled()
+  })
+
+  it('offers the Arbitrum Sepolia switch before sending ETH from a different network', async () => {
+    mocks.walletChain.mockReturnValue(11155111)
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to add' }), { target: { value: '.01' } })
+    expect(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Arbitrum Sepolia' }))
+    expect(mocks.switchChain).toHaveBeenCalledWith({ chainId: arbitrumSepolia.id })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Switch to Arbitrum Sepolia' })).toBeEnabled())
+    expect(mocks.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('blocks native ETH withdrawal in sponsored mode without changing the preference', async () => {
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to withdraw' }), { target: { value: '.01' } })
+    expect(screen.getByText('Turn off Gas sponsorship in Trading Account activity to withdraw ETH.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Review withdrawal' })).toBeDisabled()
+    expect(mocks.quoteAction).not.toHaveBeenCalled()
+    expect(localStorage.length).toBe(0)
+  })
+
   it('reviews exact EntryPoint deposit recovery with ETH during a sponsorship outage', async () => {
     writeGasPaymentPreference(scope, 'eth')
     renderPanel()
@@ -120,5 +162,23 @@ describe('Kernel ETH funding', () => {
     expect(await screen.findByText('ETH withdrawal confirmed.')).toBeVisible()
     await waitFor(() => expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({ action: captured, ownerAddress: owner })))
     expect(mocks.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('preserves a reviewed ETH withdrawal when verification polling fails', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const { queryClient } = renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to withdraw' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review withdrawal' }))
+    const continueButton = await screen.findByRole('button', { name: 'Continue to wallet' })
+    expect(continueButton).toBeEnabled()
+
+    mocks.verifyAccount.mockRejectedValueOnce(new Error('RPC unavailable'))
+    await act(() => queryClient.invalidateQueries({ queryKey: ['kernel-eth-funding'] }))
+    expect(await screen.findByText(/Showing the last verified balances/)).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'ETH to withdraw' })).toHaveValue('.01')
+    expect(screen.getByText('Up to 0.001 ETH')).toBeVisible()
+    expect(continueButton).toBeDisabled()
+    expect(mocks.execute).not.toHaveBeenCalled()
   })
 })

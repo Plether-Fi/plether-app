@@ -200,7 +200,7 @@ processMarginFundingOnce pool client cfg kernel = when (configurationMatches cfg
       Just gateway | fcPhase claim == "deposit" -> do
         proof <- resolveOwnedKernelTradingAccount gateway cfg client $ fcOwner claim
         pure $ case proof of
-          Right account | ktapAddress account == fcAddress claim -> FundingDestinationVerified
+          Right account | T.toLower (ktapAddress account) == T.toLower (fcAddress claim) -> FundingDestinationVerified
           Right _ -> FundingDestinationChanged
           Left OwnerWalletIsContract -> FundingDestinationChanged
           Left OwnedTradingAccountProofUnavailable -> FundingDestinationUnavailable

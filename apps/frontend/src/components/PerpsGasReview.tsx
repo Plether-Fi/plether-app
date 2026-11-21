@@ -22,7 +22,7 @@ export function PerpsGasReview({ gas, quote, error, showSettings = true, onOpenS
           <dt>Network gas</dt>
           <dd className="text-right font-semibold text-content-primary">{mode === 'sponsored' ? 'Sponsored by Plether' : 'Pay with ETH'}</dd>
         </div>
-        {mode === 'eth' && quote ? (
+        {mode === 'eth' && quote && !funding ? (
           <div className="flex justify-between gap-3">
             <dt>Maximum network gas</dt>
             <dd className="text-right font-semibold text-content-primary">{formatEther(quote.maxNetworkGasWei)} ETH</dd>

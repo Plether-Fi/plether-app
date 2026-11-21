@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Plether.Database.TestnetFunding
-  ( FundingClaim (..), FundingTransaction (..), ensureMarginFundingSchema
+  ( FundingClaim (..), FundingTransaction (..), ensureMarginFundingSchema, requireKernelMarginFundingSchema
   , KernelFundingReservationFailure (..)
   , reserveMarginFunding, reserveKernelMarginFunding, getMarginFunding, getMarginFundingProgram, nextMarginFunding
   , nextMarginFundingForProgram
@@ -8,7 +8,7 @@ module Plether.Database.TestnetFunding
   , persistFundingTransaction, finishFundingTransaction, failMarginFunding
   ) where
 
-import Control.Monad (void, when)
+import Control.Monad (unless, void, when)
 import Data.Int (Int64)
 import Data.String (fromString)
 import Data.Text (Text)
@@ -50,6 +50,25 @@ schema = fromString $(do
 
 ensureMarginFundingSchema :: Connection -> IO ()
 ensureMarginFundingSchema conn = void $ execute_ conn schema
+
+-- The isolated API must not run writes to the shared funding schema during
+-- startup. Verify the rolled-out column and allocation constraint instead.
+requireKernelMarginFundingSchema :: Connection -> IO ()
+requireKernelMarginFundingSchema conn = do
+  [Only ready] <- query_ conn
+    "SELECT EXISTS (SELECT 1 FROM pg_attribute\
+    \ WHERE attrelid=to_regclass('testnet_margin_funding') AND attname='kernel_program'\
+    \ AND atttypid='text'::regtype AND NOT attisdropped AND NOT attnotnull)\
+    \ AND EXISTS (SELECT 1 FROM pg_index\
+    \ WHERE indrelid=to_regclass('testnet_margin_funding')\
+    \ AND indexrelid=to_regclass('testnet_margin_funding_kernel_owner_program')\
+    \ AND indisunique AND indisvalid AND indisready AND indislive AND indnatts=3 AND indnkeyatts=3\
+    \ AND pg_get_indexdef(indexrelid,1,true)='chain_id'\
+    \ AND pg_get_indexdef(indexrelid,2,true)='kernel_program'\
+    \ AND regexp_replace(pg_get_indexdef(indexrelid,3,true),'[[:space:]()]','','g')\
+    \ IN ('lowerowner_address::text','lowerowner_address')\
+    \ AND pg_get_expr(indpred,indrelid)='(kernel_program IS NOT NULL)')"
+  unless ready $ fail "Kernel funding schema is missing or incompatible. Apply the reviewed margin funding migration before starting the canary."
 
 -- Callers hold the shared faucet signer lock. The legacy allocation and new
 -- claim are committed together; an old binary sees an unknown, non-retryable

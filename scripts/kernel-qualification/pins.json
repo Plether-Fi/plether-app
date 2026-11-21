@@ -1,6 +1,6 @@
 {
   "chainId": 421614,
-  "viemVersion": "2.45.2",
+  "viemVersion": "2.57.8",
   "referenceBlock": 331101957,
   "referenceBlockHash": "0xe4cf42a69df9e9f9b4164feeeea467093b82237808a6dc6de13121ebd00300fd",
   "entryPoint": {

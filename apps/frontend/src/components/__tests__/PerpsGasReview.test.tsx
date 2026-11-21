@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import { parseEther } from 'viem'
@@ -7,7 +7,7 @@ import type { KernelActionQuote } from '../../perps-aa/kernelRuntime'
 import { KernelRpcError } from '../../perps-aa/kernelRpc'
 import { usePerpsUiStore } from '../../stores/perpsUiStore'
 import { KernelGasApprovalButtons, PerpsGasReview } from '../PerpsGasReview'
-import { useKernelGasApproval, usePerpsGasReview } from '../../hooks/usePerpsGasReview'
+import { KernelGasReviewCancelled, useKernelGasApproval, usePerpsGasReview } from '../../hooks/usePerpsGasReview'
 
 const { scope, ownerAddress, runtime } = vi.hoisted(() => {
   const scope = { chainId: 421614, deployment: 'fresh', sender: '0x1000000000000000000000000000000000000000' as const }
@@ -26,7 +26,7 @@ function Review({ quote, error, approved, cancelled }: { quote: KernelActionQuot
   return (
     <>
       <PerpsGasReview gas={gas} quote={approval.quote} error={error} />
-      {approval.quote ? <KernelGasApprovalButtons confirm={approval.confirm} cancel={approval.cancel} /> : null}
+      {approval.quote ? <KernelGasApprovalButtons confirm={approval.confirm} cancel={approval.cancel} disabled={!approval.canConfirm} /> : null}
       {!started ? <button type="button" onClick={() => {
         setStarted(true)
         void approval.review(quote).then(approved, cancelled)
@@ -41,6 +41,7 @@ afterEach(() => {
   localStorage.clear()
   usePerpsUiStore.setState({ activityRequest: null })
   runtime.gasPayment.readiness.sponsored = true
+  runtime.gasPayment.readiness.eth = true
 })
 
 describe('Kernel gas review', () => {
@@ -81,6 +82,24 @@ describe('Kernel gas review', () => {
     expect(approved).not.toHaveBeenCalled()
   })
 
+  it('shows one funding estimate when a newer funding error arrives during review', () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const quote = ethQuote()
+    const approved = vi.fn()
+    const cancelled = vi.fn()
+    const { rerender } = render(<Review quote={quote} approved={approved} cancelled={cancelled} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review network gas' }))
+    expect(screen.getByText('0.000047 ETH')).toBeVisible()
+
+    const error = new KernelRpcError('INSUFFICIENT_GAS_ETH', 'Not enough ETH', false, {
+      balanceWei: parseEther('0.000009'), entryPointDepositWei: 0n,
+      maxNetworkGasWei: parseEther('0.000050'), callValueWei: 0n, shortfallWei: parseEther('0.000041'),
+    })
+    rerender(<Review quote={quote} error={error} approved={approved} cancelled={cancelled} />)
+    expect(screen.getByText('0.00005 ETH')).toBeVisible()
+    expect(screen.queryByText('0.000047 ETH')).not.toBeInTheDocument()
+  })
+
   it('invalidates an unsigned quote when another tab changes the gas preference', async () => {
     writeGasPaymentPreference(scope, 'eth')
     const approved = vi.fn()
@@ -97,5 +116,33 @@ describe('Kernel gas review', () => {
     expect(approved).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
     expect(screen.getByText('Sponsored by Plether')).toBeVisible()
+  })
+
+  it('cancels approval when the reviewed gas mode becomes unavailable', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const approved = vi.fn()
+    const cancelled = vi.fn()
+    const quote = ethQuote()
+    const { rerender } = render(<Review quote={quote} approved={approved} cancelled={cancelled} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review network gas' }))
+    expect(screen.getByRole('button', { name: 'Continue to wallet' })).toBeEnabled()
+
+    runtime.gasPayment.readiness.eth = false
+    rerender(<Review quote={quote} approved={approved} cancelled={cancelled} />)
+    await waitFor(() => expect(cancelled).toHaveBeenCalledWith(expect.any(KernelGasReviewCancelled)))
+    expect(approved).not.toHaveBeenCalled()
+  })
+
+  it('settles the outstanding review on unmount and rejects late requests from its caller', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const { result, unmount } = renderHook(() => useKernelGasApproval(usePerpsGasReview()))
+    const { review } = result.current
+    const cancelled = vi.fn()
+    act(() => { void review(ethQuote()).catch(cancelled) })
+    expect(result.current.quote).toBeDefined()
+
+    unmount()
+    await waitFor(() => expect(cancelled).toHaveBeenCalledWith(expect.any(KernelGasReviewCancelled)))
+    await expect(review(ethQuote())).rejects.toBeInstanceOf(KernelGasReviewCancelled)
   })
 })

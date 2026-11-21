@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Generates fresh canary credentials only after the read-only preflight and an explicit apply gate.
 import assert from 'node:assert/strict'
+import { isCliEntry } from './local-safety.mjs'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -209,6 +210,6 @@ async function main() {
   console.log(JSON.stringify(result, null, 2))
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isCliEntry(import.meta.url)) {
   main().catch(error => { console.error(`Canary credential preflight failed: ${error.message}`); process.exitCode = 1 })
 }

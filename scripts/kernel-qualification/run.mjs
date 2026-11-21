@@ -456,7 +456,7 @@ async function withdrawViaAlto({ account, owner, paymaster, proxyHash, amount, f
     assert.equal(await publicClient.getBalance({ address: sender }), liquidBefore - amount)
   }
   await checkAccount(sender, owner, blockNumber, true)
-  console.log(`Withdrew ${amount} wei from ${fromDeposit ? 'EntryPoint deposit' : 'liquid account ETH'} with ${sponsored ? 'sponsored gas' : 'account ETH'}: ${prepared.hash}, ${actualGasCost} wei gas`)
+  console.log(`Withdrew ${amount} wei from ${fromDeposit ? 'EntryPoint deposit' : 'liquid account ETH'} with ${sponsored ? 'a local paymaster signature via direct Alto RPC' : 'account ETH'}: ${prepared.hash}, ${actualGasCost} wei gas`)
 }
 
 async function checkOutstanding(operation) {

@@ -203,6 +203,37 @@ describe('Kernel operation journal', () => {
     await expect(getActiveKernelAttempt(scope)).resolves.toBeUndefined()
   })
 
+  it('keeps a cancellation saved during an in-progress status check for the next canonical lookup', async () => {
+    const quote = prepared()
+    send.mockResolvedValueOnce(quote.userOperationHash)
+    await submitKernelAttempt(await save(quote))
+    const pending = (await getActiveKernelAttempt(scope))!
+    const replacement: KernelPreparedCancellation = {
+      ...prepared({ slot: 2, callData: encodeKernelCalls([{ to: scope.sender }]) }),
+      mode: 'eth', cancelsUserOperationHash: quote.userOperationHash,
+    }
+    const staleStatus = Promise.withResolvers<{ state: 'nonce_consumed'; receipt: null }>()
+    const statusRequested = Promise.withResolvers<void>()
+    status.mockImplementationOnce(() => {
+      statusRequested.resolve()
+      return staleStatus.promise
+    })
+    const firstPoll = reconcileKernelAttempt(pending)
+    await statusRequested.promise
+    expect(status).toHaveBeenLastCalledWith(expect.objectContaining({ cancellationHash: undefined }))
+
+    cancel.mockResolvedValueOnce(replacement.userOperationHash)
+    await signAndSubmitKernelCancellation(pending, replacement, sign)
+    staleStatus.resolve({ state: 'nonce_consumed', receipt: null })
+    await expect(firstPoll).resolves.toMatchObject({ phase: 'submitted', cancellation: { prepared: replacement } })
+    expect(trackPerpsKernelOutcome).not.toHaveBeenCalled()
+
+    const receipt = { success: true, actualGasCost: 30_000n } as UserOperationReceipt<'0.9'>
+    status.mockResolvedValueOnce({ state: 'cancelled', receipt })
+    await expect(reconcileKernelAttempt(pending)).resolves.toMatchObject({ phase: 'cancelled', receipt })
+    expect(status).toHaveBeenLastCalledWith(expect.objectContaining({ cancellationHash: replacement.userOperationHash }))
+  })
+
   it('discards an expired attempt only when the committed phase still proves it unsent', async () => {
     const quote = prepared()
     const unsent = await save(quote)

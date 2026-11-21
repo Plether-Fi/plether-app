@@ -44,6 +44,14 @@ spec = do
       verifyAccount (Just approvedRoot) Nothing `shouldReturn` Right owner
     it "attests the same owner's counterfactual account before the first operation" $
       verifyAccount Nothing (Just owner) `shouldReturn` Right owner
+    it "rejects a deployed account with a delegated root wallet" $
+      verifyKernelAccountWithRpcAtBlock attestedProfile
+        (accountRpcWithOwner (Just approvedRoot) ("0xef0100" <> T.drop 2 (address '9')) owner) 42 (address '6') Nothing
+        >>= (`shouldSatisfy` isLeft)
+    it "rejects a counterfactual account with code at the root wallet" $
+      verifyKernelAccountWithRpcAtBlock attestedProfile
+        (accountRpcWithOwner Nothing "0x01" owner) 42 (address '6') (Just owner)
+        >>= (`shouldSatisfy` isLeft)
     it "rejects a deployed account when its active root differs from the reviewed root" $
       verifyAccount (Just $ BS.replicate 32 0) Nothing >>= (`shouldSatisfy` isLeft)
     it "rejects a Staker that has not approved the reviewed Kernel factory" $

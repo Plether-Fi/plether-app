@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { encodeAbiParameters, encodeEventTopics, parseAbiParameters, toHex, zeroAddress, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeEventTopics, getAddress, parseAbiParameters, toHex, zeroAddress, type Address, type Hex } from 'viem'
 import { entryPoint09Abi, entryPoint09Address } from 'viem/account-abstraction'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE } from '../../contracts/perpsAddresses'
 import { encodeKernelCalls } from '../kernelAccount'
+import { kernelSepoliaCanaryPaymaster, kernelSepoliaCanaryProfile } from '../kernelDeploymentPins'
 import {
   assertKernelPreparedOperation,
   findKernelGasFundingError,
@@ -20,8 +21,8 @@ const address = (value: number) => toHex(value, { size: 20 })
 const hash = (value: number) => toHex(value, { size: 32 })
 const entryPoint = entryPoint09Address.toLowerCase() as Address
 const sender = address(2)
-const paymaster = address(3)
-const accountCodeHash = hash(4)
+const paymaster = kernelSepoliaCanaryPaymaster
+const { accountCodeHash } = kernelSepoliaCanaryProfile
 const preparationId = hash(5)
 const now = 1_790_000_000
 const recoveryToken = `v1.${preparationId}.${hash(6)}.${now + 604_800}.${'7'.repeat(64)}`
@@ -29,12 +30,7 @@ const callData = encodeKernelCalls([{ to: address(7), data: '0x1234' }])
 const validUntil = now + 120
 const manifestWire = {
   version: 1,
-  profile: {
-    deployment: 'kernel-qualification-1', chainId: 421614, entryPoint, entryPointVersion: '0.9', entryPointCodeHash: hash(1),
-    factory: address(1), factoryCodeHash: hash(2), staker: address(10), stakerCodeHash: hash(10),
-    validator: address(8), validatorCodeHash: hash(3),
-    implementation: address(9), implementationCodeHash: hash(5), accountCodeHash, accountVersion: 'kernel-v4-uups', accountIndex: 0,
-  },
+  profile: { ...kernelSepoliaCanaryProfile, factory: getAddress(kernelSepoliaCanaryProfile.factory) },
   perpsRelease: PERPS_RELEASE.release.version,
   settlementToken: PERPS_ARBITRUM_SEPOLIA.settlementToken,
   marginClearinghouse: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
@@ -44,7 +40,7 @@ const manifestWire = {
   protectionCommitsEnabled: false, paymaster, readiness: { eth: true, sponsored: true },
 }
 const manifest = parseKernelManifest(manifestWire)
-const intent: KernelPreparationIntent = { preparationId, mode: 'eth', sender, callData }
+const intent: KernelPreparationIntent = { preparationId, mode: 'eth', sender, callData, expectedNonce: 4n }
 const rawOperation = {
   sender, nonce: '0x4', callData, callGasLimit: '0x10000', verificationGasLimit: '0x20000',
   preVerificationGas: '0x1000', maxFeePerGas: '0x64', maxPriorityFeePerGas: '0x1',
@@ -63,13 +59,25 @@ const sponsoredPreparation = {
 
 describe('Kernel manifest and quotes', () => {
   it('keeps readiness independent and binds the compiled Perps release', () => {
-    expect(parseKernelManifest({ ...manifestWire, readiness: { eth: true, sponsored: false } }).readiness)
+    expect(parseKernelManifest({ ...manifestWire, paymaster: null, readiness: { eth: true, sponsored: false } }).readiness)
       .toEqual({ eth: true, sponsored: false })
     expect(() => parseKernelManifest({ ...manifestWire, orderRouter: address(9) })).toThrow('invalid response')
     expect(() => parseKernelManifest({ ...manifestWire, perpsRelease: 'other' })).toThrow('invalid response')
     expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, entryPointVersion: '0.8' } })).toThrow('invalid response')
     expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, staker: undefined } })).toThrow('invalid response')
     expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, staker: manifestWire.profile.factory } })).toThrow('invalid response')
+  })
+
+  it('accepts the pinned profile in checksum casing and rejects alternate contract identities', () => {
+    expect(manifest.profile).toEqual(kernelSepoliaCanaryProfile)
+    for (const field of ['factory', 'staker', 'implementation', 'validator'] as const) {
+      const codeHash = `${field}CodeHash` as const
+      expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, [field]: address(9) } })).toThrow('invalid response')
+      expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, [codeHash]: hash(9) } })).toThrow('invalid response')
+    }
+    expect(() => parseKernelManifest({ ...manifestWire, profile: { ...manifestWire.profile, deployment: 'different-canary' } })).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, paymaster: address(9) })).toThrow('invalid response')
+    expect(() => parseKernelManifest({ ...manifestWire, paymaster: null })).toThrow('invalid response')
   })
 
   it('verifies both payer envelopes and computes distinct version 0.9 hashes', () => {
@@ -84,6 +92,15 @@ describe('Kernel manifest and quotes', () => {
     expect(() => assertKernelPreparedOperation(sponsored)).not.toThrow()
   })
 
+  it('binds single-call ETH withdrawals with checksummed recipients to normalized gateway calldata', () => {
+    const recipient = getAddress(kernelSepoliaCanaryProfile.factory)
+    const withdrawal = encodeKernelCalls([{ to: recipient, value: 1n }])
+    const mixedCase = withdrawal.replace(recipient.slice(2).toLowerCase(), recipient.slice(2)) as Hex
+    expect(mixedCase).not.toBe(withdrawal)
+    const preparation = { ...ethPreparation, operation: { ...rawOperation, callData: mixedCase } }
+    expect(parseKernelPreparation(preparation, manifest, { ...intent, callData: withdrawal }, now).operation.callData).toBe(withdrawal)
+  })
+
   it('binds first deployment to the approved Staker', () => {
     const factoryData = '0x1234' as const
     const firstIntent = { ...intent, factory: manifest.profile.staker, factoryData }
@@ -96,7 +113,8 @@ describe('Kernel manifest and quotes', () => {
   it('rejects a changed payer, account, calls, fee bounds, nonce key, expiry or recovery scope', () => {
     for (const operation of [
       { ...rawOperation, paymaster: null }, { ...rawOperation, sender: address(4) }, { ...rawOperation, callData: '0x1234' },
-      { ...rawOperation, maxFeePerGas: '0x2540be401' }, { ...rawOperation, nonce: '0x10000000000000000' }, { ...rawOperation, factory: address(1) },
+      { ...rawOperation, maxFeePerGas: '0x2540be401' }, { ...rawOperation, nonce: '0x10000000000000000' },
+      { ...rawOperation, nonce: '0x5' }, { ...rawOperation, factory: address(1) },
     ]) {
       expect(() => parseKernelPreparation({ ...ethPreparation, operation }, manifest, intent, now)).toThrow('invalid response')
     }
@@ -108,6 +126,17 @@ describe('Kernel manifest and quotes', () => {
     }
     const eth = parseKernelPreparation(ethPreparation, manifest, intent, now)
     expect(() => assertKernelPreparedOperation({ ...eth, operation: { ...eth.operation, nonce: 5n } })).toThrow('invalid response')
+  })
+
+  it('admits Nitro-sized preverification estimates and rejects out-of-range gas or ETH prefund', () => {
+    const quote = (preVerificationGas: bigint, maxFeePerGas: bigint) => ({
+      ...ethPreparation,
+      operation: { ...rawOperation, preVerificationGas: toHex(preVerificationGas), maxFeePerGas: toHex(maxFeePerGas) },
+      maxNetworkGasWei: toHex((65_536n + 131_072n + preVerificationGas) * maxFeePerGas),
+    })
+    expect(parseKernelPreparation(quote(5_861_566n, 100n), manifest, intent, now).operation.preVerificationGas).toBe(5_861_566n)
+    expect(() => parseKernelPreparation(quote(12_000_001n, 100n), manifest, intent, now)).toThrow('invalid response')
+    expect(() => parseKernelPreparation(quote(12_000_000n, 10_000_000_000n), manifest, intent, now)).toThrow('invalid response')
   })
 
   it('posts the exact operation only to the same-origin route and rejects a different relay hash', async () => {
@@ -137,7 +166,8 @@ describe('Kernel manifest and quotes', () => {
       callValueWei: toHex(5n), shortfallWei: toHex(35n),
     }
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-      const payload = JSON.parse(String(init?.body)) as { id: string }
+      const payload = JSON.parse(String(init?.body)) as { id: string; params: unknown[] }
+      expect(payload.params[0]).not.toHaveProperty('expectedNonce')
       return Response.json({ jsonrpc: '2.0', id: payload.id, error: {
         code: -32001, message: 'Not enough ETH', data: { reason: 'INSUFFICIENT_GAS_ETH', retryable: false, funding },
       } }, { status: 400 })

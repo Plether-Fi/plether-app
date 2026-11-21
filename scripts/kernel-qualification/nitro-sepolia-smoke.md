@@ -67,7 +67,7 @@ node scripts/kernel-qualification/nitro-sepolia-smoke.mjs verify-eth \
   --evidence "$NEW_ETH_SMOKE_EVIDENCE"
 ```
 
-The recovery verifier also fetches the included UserOperation to check its exact no-value call, Staker deployment data, absence of paymaster fields and reviewed gas cap. The private Nitro and Alto logs should show the expected SafeMode validation and one accepted signed operation. Check the task definition's SafeMode flag and correlate only public operation/transaction hashes in logs. A zero-signature `AA24` rejection can be a separate negative control, but is not necessary for this positive smoke and should not consume the account nonce.
+The recovery verifier decodes the included UserOperation from canonical EntryPoint calldata on both RPCs. It checks its exact no-value call, Staker deployment data, absence of paymaster fields, and reviewed gas cap. Supply `--transaction-hash` with the public bundle hash if Alto's recent-receipt lookup has aged out and the evidence file lacks the hash. Check the task definition's SafeMode flag and correlate only public operation and transaction hashes in Nitro and Alto logs.
 
 ## Sponsored follow-up
 
@@ -81,6 +81,6 @@ node scripts/kernel-qualification/nitro-sepolia-smoke.mjs verify-sponsored \
   --user-op-hash "$SPONSORED_USER_OPERATION_HASH"
 ```
 
-The checker requires the manifest's paymaster as the event payer, successful inclusion, event nonce matching the included UserOperation, a 157-byte signed envelope with the reviewed policy and account-code hash, a signed maximum no greater than the canary budget, an actual gas cost within that bound, a validity window containing the inclusion block, zero paymaster post-op gas, a matching onchain KMS signer/policy/cost cap and an unpaused paymaster at inclusion. It requires the paymaster's EntryPoint deposit to decrease by exactly the event gas cost across the inclusion block. If another paymaster operation or deposit changes that balance in the same block, this intentionally fails and needs separate block-level reconciliation. It prints only public address, hash, block and Wei evidence. It does not issue a sponsorship, spend budget or submit a transaction.
+The checker verifies the paymaster's pinned runtime hash and matches the successful event, UserOperation, signer, policy, cost cap, unpaused state, and exact EntryPoint deposit debit on both RPCs. It checks the 157-byte signed envelope, the account-code hash, the inclusion timestamp, the budget, and zero post-operation gas. Supply `--transaction-hash` with the public bundle hash if Alto no longer returns the receipt. If another paymaster operation or deposit changes that balance in the same block, reconcile the separate changes before repeating the check. The verifier prints public evidence and submits no transaction.
 
 Use [`live-gas.mjs`](./live-gas.mjs) around the later external and Privy wallet approvals to capture live Nitro L1/L2 estimates and receipt deltas for **both** payment modes. This smoke checks the infrastructure's signed first operation before the browser route opens; it does not replace those real wallet flows.

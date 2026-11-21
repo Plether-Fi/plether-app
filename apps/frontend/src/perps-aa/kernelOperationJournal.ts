@@ -8,7 +8,8 @@ import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 import { clearDepositAuthorization } from './authorizationStore'
 import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
-import { encodeKernelCalls } from './kernelAccount'
+import { encodeKernelCalls, normalizeKernelSignature } from './kernelAccount'
+import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
 import {
   assertKernelPreparedOperation,
   getKernelOperationStatus,
@@ -183,7 +184,7 @@ async function assertSignedForScope(input: SignedKernelAttemptInput): Promise<vo
   if (scope.chainId !== arbitrumSepolia.id || !isAddressEqual(prepared.entryPoint, scope.entryPoint) ||
       !isAddressEqual(prepared.operation.sender, scope.sender) ||
       prepared.operation.nonce >> 64n !== 0n ||
-      !/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+      normalizeKernelSignature(signature) !== signature.toLowerCase()) {
     throw new Error('The signed operation does not match this Trading Account')
   }
   const signer = await recoverMessageAddress({ message: { raw: prepared.userOperationHash }, signature })
@@ -276,7 +277,7 @@ export function kernelAttemptCanRetry(attempt: KernelOperationAttempt, now = kno
   const orderDeadline = attempt.orderRequestV3?.submitBy
   return now !== undefined && isKernelAttemptPending(attempt) && attempt.cancellation === undefined &&
     now < attempt.prepared.expiresAt * 1_000 &&
-    (orderDeadline === undefined || BigInt(Math.floor(now / 1_000)) + 30n <= BigInt(orderDeadline))
+    hasKernelOrderSubmissionTime(orderDeadline, now)
 }
 
 /** Manual recovery preserves the originally signed fields and payer. */
@@ -418,18 +419,21 @@ export async function retryKernelCancellation(attempt: KernelOperationAttempt): 
 
 /** An ambiguous transport response, timeout, or elapsed quote leaves the lane held. */
 export async function reconcileKernelAttempt(attempt: KernelOperationAttempt): Promise<KernelOperationAttempt> {
-  if (!isKernelAttemptPending(attempt) || attempt.phase === 'signed') return attempt
-  assertKernelPreparedOperation(attempt.prepared)
-  if (!isAddressEqual(attempt.expectedPaymaster, attempt.prepared.operation.paymaster ?? zeroAddress)) {
+  const current = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash)
+  if (!current) throw new Error('The pending Trading Account operation is unavailable')
+  if (!isKernelAttemptPending(current) || current.phase === 'signed') return current
+  assertKernelPreparedOperation(current.prepared)
+  if (!isAddressEqual(current.expectedPaymaster, current.prepared.operation.paymaster ?? zeroAddress)) {
     throw new Error('The saved gas payer no longer matches the Trading Account operation')
   }
-  const status = await getKernelOperationStatus(reconcileLocator(attempt))
-  if (status.state === 'pending') return attempt
-  if (status.state === 'sponsorship_expired' && attempt.prepared.mode !== 'sponsored') {
+  const locator = reconcileLocator(current)
+  const status = await getKernelOperationStatus(locator)
+  if (status.state === 'pending') return (await getKernelAttempt(current.scope, current.prepared.userOperationHash)) ?? current
+  if (status.state === 'sponsorship_expired' && current.prepared.mode !== 'sponsored') {
     throw new Error('The Trading Account gateway returned an incompatible expiry')
   }
-  const { attempt: resolved, changed } = await editAttempt(attempt, existing => {
-    if (!isKernelAttemptPending(existing)) return existing
+  const { attempt: resolved, changed } = await editAttempt(current, existing => {
+    if (!isKernelAttemptPending(existing) || reconcileLocator(existing).cancellationHash !== locator.cancellationHash) return existing
     return { ...existing, phase: status.state, ...(status.receipt ? { receipt: status.receipt } : {}), updatedAt: Date.now() }
   })
   if (!changed) return resolved

@@ -1,20 +1,22 @@
 import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
-import { bytesToHex, isAddressEqual, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
+import { bytesToHex, isAddressEqual, keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
 import { trackPerpsKernelOutcome } from '../analytics/perps'
 import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
 import { BundlerRequestError, SponsorRequestError } from './errors'
 import type { ExecuteSponsoredPerpsActionInput, ExecuteSponsoredPerpsActionResult } from './execution'
 import { readGasPaymentPreference, type GasPaymentMode } from './gasPaymentPreference'
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock, type VerifiedKernelTradingAccount } from './kernelAccount'
+import { kernelSepoliaCanaryPaymasterCodeHash } from './kernelDeploymentPins'
 import {
   getActiveKernelAttempt, getKernelAttempt, refreshKernelAttempt, saveKernelSignedAttempt, submitKernelAttempt, withKernelOperationLane,
   type KernelAttemptScope, type KernelOperationAttempt,
 } from './kernelOperationJournal'
-import { assertKernelPreparedOperation, KernelRpcError, prepareKernelCancellation, prepareKernelOperation, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
+import { assertKernelPreparedOperation, fetchKernelManifest, KernelRpcError, prepareKernelCancellation, prepareKernelOperation, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
 import type { KernelPerpsAaDeploymentManifest } from './manifest'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from './readiness'
 import { readReviewedActionState } from './reviewedActionState'
 import type { KernelPerpsAaSmartAccountRuntime } from './runtimeContext'
+import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
 
 export interface KernelActionQuote {
   readonly mode: GasPaymentMode
@@ -103,10 +105,14 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       throw new Error('Reconnect the Trading Account owner on Arbitrum Sepolia before approving')
     }
   }
-  const sign = async (prepared: KernelPreparedOperation) => {
+  const requireNonce = async (expectedNonce: bigint) => {
+    if (await account.getNonce() !== expectedNonce) throw new Error('The Trading Account nonce changed. Review a fresh quote to continue.')
+  }
+  const sign = async (prepared: KernelPreparedOperation, beforePrompt?: () => void) => {
     assertKernelPreparedOperation(prepared)
-    await assertConnectedOwner()
+    await Promise.all([assertConnectedOwner(), requireNonce(prepared.operation.nonce)])
     requireFresh(prepared)
+    beforePrompt?.()
     return account.signUserOperation(prepared.operation)
   }
 
@@ -125,12 +131,12 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       }
       if (await getActiveKernelAttempt(scope)) throw new Error('Resolve the pending operation in Trading Account activity before getting a new gas quote')
       const callData = encodeKernelCalls(action.calls)
-      const factory = await factoryAtSafe()
+      const [factory, expectedNonce] = await Promise.all([factoryAtSafe(), account.getNonce()])
       const reviewedState = await readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId })
       signal?.throwIfAborted()
       let prepared: KernelPreparedOperation
       try {
-        prepared = await prepareKernelOperation(manifest.kernel, { mode, sender: scope.sender, callData, preparationId: newPreparationId(), ...factory }, signal)
+        prepared = await prepareKernelOperation(manifest.kernel, { mode, sender: scope.sender, callData, preparationId: newPreparationId(), expectedNonce, ...factory }, signal)
       } catch (error) {
         if (!signal?.aborted) trackPerpsKernelOutcome({ mode, outcome: 'quote_failed', error })
         throw error
@@ -148,7 +154,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       if (!isAddressEqual(input.ownerAddress, ownerAddress) || !isAddressEqual(action.account, scope.sender) ||
           review?.accountKey !== accountKey || review.action !== action.kind ||
           review.clientOrderId !== input.orderRequestV3?.clientOrderId ||
-          review.prepared.operation.callData !== encodeKernelCalls(action.calls)) {
+          review.prepared.operation.callData.toLowerCase() !== encodeKernelCalls(action.calls)) {
         throw new Error('Review the gas fee for this Trading Account action before approving')
       }
       const { prepared } = review
@@ -162,6 +168,27 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         const current = await readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId: review.clientOrderId })
         if (current !== review.reviewedState) throw new Error('The reviewed position or protection changed. Review a new transaction.')
       }
+      const requireOrderSubmissionTime = (now: number) => {
+        if (!hasKernelOrderSubmissionTime(input.orderRequestV3?.submitBy, now)) {
+          throw new Error('The order deadline is too close. Review a fresh order before approving.')
+        }
+      }
+      const requireModeReady = async () => {
+        const current = await fetchKernelManifest()
+        if (current.profile.deployment !== scope.deployment || !current.readiness[prepared.mode]) {
+          throw new KernelRpcError('PAYMENT_MODE_UNAVAILABLE', 'The reviewed gas payment mode is unavailable. Review the gas fee again.', true)
+        }
+        if (prepared.mode === 'sponsored') {
+          const { paymaster } = current
+          if (!paymaster || !prepared.operation.paymaster || !isAddressEqual(paymaster, prepared.operation.paymaster)) {
+            throw new Error('The sponsorship contract changed. Review a fresh quote to continue.')
+          }
+          const code = await publicClient.getBytecode({ address: paymaster, blockTag: 'safe' })
+          if (!code || keccak256(code) !== kernelSepoliaCanaryPaymasterCodeHash) {
+            throw new Error('The sponsorship contract does not match this Kernel deployment.')
+          }
+        }
+      }
       const attempt = await withKernelOperationLane(scope, async () => {
         await refreshReadiness()
         const readinessAction = input.orderRequestV3 ? (input.orderRequestV3.isClose ? 'close' : 'open') : input.protectionIntent ? 'protection' : 'deposit'
@@ -169,12 +196,17 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
         await requireReviewedState()
         requirePreference()
-        requireFresh(prepared)
-        onStatus?.('awaiting-signature')
-        const signature = await sign(prepared)
-        await requireReviewedState()
+        await requireModeReady()
+        const signature = await sign(prepared, () => {
+          requirePreference()
+          requireOrderSubmissionTime(deadlineNow())
+          onStatus?.('awaiting-signature')
+        })
+        await Promise.all([requireReviewedState(), requireNonce(prepared.operation.nonce)])
+        const now = (await refreshDeadlineClock()).now()
         requirePreference()
-        requireFresh(prepared, (await refreshDeadlineClock()).now())
+        requireFresh(prepared, now)
+        requireOrderSubmissionTime(now)
         onStatus?.('journaling')
         const stored = await saveKernelSignedAttempt({ scope, ownerAddress, action: action.kind, prepared, signature,
           orderRequestV3: input.orderRequestV3, protectionIntent: input.protectionIntent,
@@ -223,6 +255,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     },
     quoteCancellation: async (original, originalSignature) => {
       if (!isAddressEqual(original.operation.sender, scope.sender)) throw new Error('The pending operation belongs to a different Trading Account')
+      await requireNonce(original.operation.nonce)
       const factory = await factoryAtSafe()
       const response = await prepareKernelCancellation(manifest.kernel, original, { preparationId: newPreparationId(), originalSignature, ...factory })
       const quote = Object.freeze({ ...response, operation: Object.freeze(response.operation) })
@@ -234,7 +267,9 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       if (review?.accountKey !== accountKey || review.hash !== prepared.userOperationHash) {
         throw new Error('Review the cancellation fee before approving')
       }
-      return sign(prepared)
+      const signature = await sign(prepared)
+      await requireNonce(prepared.operation.nonce)
+      return signature
     },
   }
   return {

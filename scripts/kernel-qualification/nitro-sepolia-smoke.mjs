@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Direct Kernel v0.9 Nitro/Alto smoke. No transaction is sent without --send-eth.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock } from '../../apps/frontend/src/perps-aa/kernelAccount.ts'
-import { boundedGasEstimate, gasCap } from './nitro-sepolia-gas.mjs'
+import { boundedGasEstimate, gasCap, maxFeeCap, maxPrefundCap } from './nitro-sepolia-gas.mjs'
 import { assertExactGasDebit, assertRecoveredEthSmokeOperation, validateSmokeRpcUrls } from './nitro-sepolia-smoke-guards.mjs'
+import { recoverOperationFromBundle } from './nitro-sepolia-bundle-recovery.mjs'
+import { scrubRpcError, writePublicEvidence } from './local-safety.mjs'
 
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const {
@@ -17,10 +19,8 @@ const {
 } = require('viem')
 const { privateKeyToAccount } = require('viem/accounts')
 const { arbitrumSepolia } = require('viem/chains')
-const { entryPoint09Abi, formatUserOperation, formatUserOperationRequest, getUserOperationHash, toPackedUserOperation } = require('viem/account-abstraction')
+const { entryPoint09Abi, formatUserOperationRequest, getUserOperationHash, toPackedUserOperation } = require('viem/account-abstraction')
 const pins = JSON.parse(readFileSync(new URL('./pins.json', import.meta.url)))
-const maxFeeCap = 10_000_000_000n
-const maxPrefundCap = parseEther('0.05')
 const advisoryBalance = parseEther('0.2')
 const entryPoint = getAddress(pins.entryPoint.address)
 const stakerAbi = parseAbi(['function owner() view returns (address)', 'function approved(address factory) view returns (bool)'])
@@ -32,7 +32,7 @@ const paymasterAbi = parseAbi([
 const bigintJson = value => JSON.stringify(value, (_, item) => typeof item === 'bigint' ? item.toString() : item, 2)
 
 function usage() {
-  console.log(`Usage: node scripts/kernel-qualification/nitro-sepolia-smoke.mjs [plan | send-eth | verify-eth | verify-sponsored] --manifest PATH --owner ADDRESS [--evidence PATH] [--sponsorship PATH] [--user-op-hash 0x... ] [--confirm DEPLOYMENT]
+  console.log(`Usage: node scripts/kernel-qualification/nitro-sepolia-smoke.mjs [plan | send-eth | verify-eth | verify-sponsored] --manifest PATH --owner ADDRESS [--evidence PATH] [--sponsorship PATH] [--user-op-hash 0x...] [--transaction-hash 0x...] [--confirm DEPLOYMENT]
 
 Default plan is read-only and needs no private key. RPC URLs come only from KERNEL_SMOKE_ALTO_RPC_URL, KERNEL_SMOKE_NITRO_RPC_URL and KERNEL_SMOKE_SECONDARY_RPC_URL. An optional KERNEL_SMOKE_NITRO_BEARER stays in the environment.
 send-eth is the only transmitting command. It requires --confirm, an unused evidence path, a funded fresh account, and KERNEL_SMOKE_OWNER_PRIVATE_KEY. verify-eth and verify-sponsored are read-only.`)
@@ -85,7 +85,7 @@ function clients(values) {
     ? { authorization: `Bearer ${process.env.KERNEL_SMOKE_NITRO_BEARER}` } : undefined
   return {
     nitro: createPublicClient({ chain: arbitrumSepolia,
-      transport: http(values.nitro, { timeout: 15_000, fetchOptions: headers ? { headers } : undefined }) }),
+      transport: http(values.nitro, { timeout: 15_000, fetchOptions: { headers, redirect: 'error' } }) }),
     secondary: createPublicClient({ chain: arbitrumSepolia, transport: http(values.secondary, { timeout: 15_000 }) }),
   }
 }
@@ -239,8 +239,7 @@ async function estimateEth(altoUrl, account, sender, funded) {
 }
 
 function saveEvidence(path, evidence, exclusive = false) {
-  writeFileSync(path, `${bigintJson(evidence)}\n`, { mode: 0o600, flag: exclusive ? 'wx' : 'w' })
-  chmodSync(path, 0o600)
+  writePublicEvidence(path, `${bigintJson(evidence)}\n`, exclusive)
 }
 
 async function operationReceipt(altoUrl, operationHash) {
@@ -250,20 +249,25 @@ async function operationReceipt(altoUrl, operationHash) {
     if (receipt) return receipt
     await sleep(2_000)
   }
-  throw new Error(`No inclusion receipt yet for ${operationHash}; use verify-eth after it lands`)
+  throw new Error(`No recent Alto inclusion receipt for ${operationHash}; pass the public bundle transaction hash to verify the safe chain`)
 }
 
-async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, paymaster) {
-  const receipt = await operationReceipt(altoUrl, operationHash)
-  assert.equal(receipt.userOpHash?.toLowerCase(), operationHash.toLowerCase())
-  assert.equal(receipt.success, true, 'UserOperation failed')
-  const txHash = hash(receipt.receipt?.transactionHash, 'transaction hash')
-  const tx = await clients.nitro.getTransactionReceipt({ hash: txHash })
-  assert.equal(tx.status, 'success', 'Bundle transaction reverted')
+async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, paymaster, transactionHint) {
+  const receipt = transactionHint ? undefined : await operationReceipt(altoUrl, operationHash)
+  if (receipt) {
+    assert.equal(receipt.userOpHash?.toLowerCase(), operationHash)
+    assert.equal(receipt.success, true, 'UserOperation failed')
+  }
+  const txHash = hash(transactionHint ?? receipt.receipt?.transactionHash, 'transaction hash')
+  const readers = [clients.nitro, clients.secondary]
+  const [tx, independentTx] = await Promise.all(readers.map(client => client.getTransactionReceipt({ hash: txHash })))
   await waitCommonSafe(clients, tx.blockNumber)
-  const independentTx = await clients.secondary.getTransactionReceipt({ hash: txHash })
-  assert.equal(independentTx.blockHash, tx.blockHash, 'Bundle transaction block differs between RPCs')
-  const events = tx.logs.flatMap(log => {
+  const [blocks, transactions] = await Promise.all([
+    Promise.all(readers.map(client => client.getBlock({ blockNumber: tx.blockNumber }))),
+    Promise.all(readers.map(client => client.getTransaction({ hash: txHash }))),
+  ])
+  assert.equal(blocks[0].timestamp, blocks[1].timestamp, 'Bundle block timestamp differs between RPCs')
+  const matchingEvents = entry => entry.logs.flatMap(log => {
     if (!isAddressEqual(log.address, entryPoint)) return []
     try {
       const decoded = decodeEventLog({ abi: entryPoint09Abi, topics: log.topics, data: log.data })
@@ -271,16 +275,37 @@ async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, 
         ? [decoded.args] : []
     } catch { return [] }
   })
-  assert.equal(events.length, 1, 'Expected exactly one matching EntryPoint UserOperationEvent')
-  const [event] = events
+  const event = matchingEvents(tx)[0]
+  for (const [index, entry] of [tx, independentTx].entries()) {
+    assert.equal(entry.transactionHash, txHash, 'Bundle receipt hash differs')
+    assert.equal(entry.status, 'success', 'Bundle transaction reverted')
+    assert.equal(entry.blockNumber, tx.blockNumber, 'Bundle transaction height differs between RPCs')
+    assert.equal(entry.blockHash, tx.blockHash, 'Bundle transaction block differs between RPCs')
+    assert.equal(blocks[index].hash, tx.blockHash, 'Bundle receipt block is not canonical')
+    assert.deepEqual(matchingEvents(entry), [event], 'Expected exactly one matching EntryPoint UserOperationEvent on both RPCs')
+  }
+  const operation = recoverOperationFromBundle({ transactions, receipt: tx, entryPoint, chainId: pins.chainId,
+    operationHash, paymaster })
+  assert.equal(event.nonce, operation.nonce, 'Event nonce differs from the included operation')
   const account = await verifyKernelTradingAccountAtBlock(clients.nitro, manifest.profile, owner, tx.blockNumber)
   const independentAccount = await verifyKernelTradingAccountAtBlock(clients.secondary, manifest.profile, owner, tx.blockNumber)
   assert.deepEqual(account, independentAccount, 'Kernel account inclusion state differs between RPCs')
   assert.ok(account.deployed && isAddressEqual(event.sender, account.address), 'Wrong or undeployed Kernel sender')
   assert.ok(isAddressEqual(event.paymaster, paymaster ?? zeroAddress), 'Wrong UserOperation gas payer')
-  assert.ok(event.success && event.actualGasCost > 0n && event.actualGasCost === BigInt(receipt.actualGasCost),
-    'Event and Alto receipt gas disagree')
-  return { account, event, tx, txHash }
+  assert.ok(event.success && event.actualGasCost > 0n, 'EntryPoint reports a failed or uncharged operation')
+  if (receipt) assert.equal(event.actualGasCost, BigInt(receipt.actualGasCost), 'Event and Alto receipt gas disagree')
+  return { account, event, operation, tx, txHash, block: blocks[0] }
+}
+
+async function payerDebit(clients, payer, blockNumber, balanceField, actual, label) {
+  const debits = await Promise.all([clients.nitro, clients.secondary].map(async client => {
+    const [before, after] = await Promise.all([
+      accountFunds(client, payer, blockNumber - 1n), accountFunds(client, payer, blockNumber),
+    ])
+    assertExactGasDebit(before[balanceField], after[balanceField], actual, label)
+    return before[balanceField] - after[balanceField]
+  }))
+  return debits[0]
 }
 
 async function planOrSendEth(command, args, manifest, clients, altoUrl, owner) {
@@ -330,12 +355,10 @@ async function planOrSendEth(command, args, manifest, clients, altoUrl, owner) {
   const { account: deployed, event, tx, txHash } = await verifyIncluded(clients, altoUrl, manifest, owner, operationHash)
   assert.equal(event.nonce, 0n)
   assert.ok(event.actualGasCost <= prefund, 'Actual gas exceeded reviewed prefund')
-  const before = await accountFunds(clients.nitro, account.address, tx.blockNumber - 1n)
-  const after = await accountFunds(clients.nitro, account.address, tx.blockNumber)
-  assertExactGasDebit(before.total, after.total, event.actualGasCost, 'ETH smoke')
+  const debit = await payerDebit(clients, account.address, tx.blockNumber, 'total', event.actualGasCost, 'ETH smoke')
   const result = { ...intent, status: 'included', transactionHash: txHash,
     inclusionBlock: String(tx.blockNumber), inclusionBlockHash: tx.blockHash,
-    actualGasCostWei: String(event.actualGasCost), payerDebitWei: String(before.total - after.total),
+    actualGasCostWei: String(event.actualGasCost), payerDebitWei: String(debit),
     accountDeployed: deployed.deployed }
   saveEvidence(evidencePath, result)
   console.log(bigintJson(result))
@@ -350,15 +373,11 @@ async function verifyEth(args, manifest, clients, altoUrl, owner) {
   assert.ok(['send-intent', 'submitted', 'included'].includes(prior.status), 'Invalid ETH smoke evidence status')
   assert.ok(isAddressEqual(prior.owner, owner))
   const operationHash = hash(prior.userOperationHash, 'evidence UserOperation hash')
-  const { event, tx, txHash } = await verifyIncluded(clients, altoUrl, manifest, owner, operationHash)
+  const transactionHint = args['transaction-hash'] ?? prior.transactionHash
+  const { event, operation, tx, txHash } = await verifyIncluded(clients, altoUrl, manifest, owner, operationHash, undefined, transactionHint)
   assert.ok(isAddressEqual(prior.sender, event.sender), 'Evidence sender differs from included operation')
   assert.equal(event.nonce, 0n)
   assert.ok(event.actualGasCost <= BigInt(prior.maxPrefundWei))
-  const included = await altoRequest(altoUrl, 'eth_getUserOperationByHash', [operationHash])
-  assert.ok(isAddressEqual(included?.entryPoint, entryPoint), 'Recovered operation uses another EntryPoint')
-  assert.equal(included?.transactionHash?.toLowerCase(), txHash.toLowerCase(), 'Recovered bundle transaction differs')
-  const operation = included?.userOperation && formatUserOperation(included.userOperation)
-  assert.ok(operation, 'Alto did not return the included ETH operation')
   const adapter = await makeAccount(clients.nitro, manifest.profile, owner, undefined, tx.blockNumber - 1n)
   assertRecoveredEthSmokeOperation(operation, {
     sender: event.sender, callData: smokeCall(event.sender),
@@ -369,12 +388,10 @@ async function verifyEth(args, manifest, clients, altoUrl, owner) {
   assert.equal(getUserOperationHash({ userOperation: operation, chainId: pins.chainId,
     entryPointAddress: entryPoint, entryPointVersion: '0.9' }).toLowerCase(), operationHash,
   'Recovered ETH operation hash differs from intent')
-  const before = await accountFunds(clients.nitro, event.sender, tx.blockNumber - 1n)
-  const after = await accountFunds(clients.nitro, event.sender, tx.blockNumber)
-  assertExactGasDebit(before.total, after.total, event.actualGasCost, 'ETH smoke')
+  const debit = await payerDebit(clients, event.sender, tx.blockNumber, 'total', event.actualGasCost, 'ETH smoke')
   const result = { ...prior, status: 'included', transactionHash: txHash,
     inclusionBlock: String(tx.blockNumber), inclusionBlockHash: tx.blockHash,
-    actualGasCostWei: String(event.actualGasCost), payerDebitWei: String(before.total - after.total), accountDeployed: true }
+    actualGasCostWei: String(event.actualGasCost), payerDebitWei: String(debit), accountDeployed: true }
   saveEvidence(path, result)
   console.log(bigintJson(result))
 }
@@ -396,16 +413,10 @@ async function verifySponsored(args, manifest, clients, altoUrl, owner) {
   assert.equal(sponsorship.paymasterCodeHash, manifest.paymasterCodeHash)
   assert.ok(sponsorship.canaryOwners.some(candidate => isAddressEqual(candidate, owner)), 'Owner is outside sponsored canary')
   const operationHash = hash(args['user-op-hash'], 'sponsored UserOperation hash')
-  const { account, event, tx, txHash } = await verifyIncluded(clients, altoUrl, manifest, owner, operationHash, manifest.paymaster)
-  const included = await altoRequest(altoUrl, 'eth_getUserOperationByHash', [operationHash])
-  assert.ok(isAddressEqual(included?.entryPoint, entryPoint), 'Alto reported the wrong EntryPoint')
-  assert.equal(included?.transactionHash?.toLowerCase(), txHash.toLowerCase(), 'Alto reported the wrong bundle transaction')
-  const operation = included?.userOperation && formatUserOperation(included.userOperation)
-  assert.ok(operation && isAddressEqual(operation.sender, account.address), 'Alto did not return matching sponsored operation')
-  assert.equal(getUserOperationHash({ userOperation: operation, chainId: pins.chainId,
-    entryPointAddress: entryPoint, entryPointVersion: '0.9' }).toLowerCase(), operationHash,
-  'Alto operation data does not match the included onchain hash')
-  assert.equal(event.nonce, BigInt(operation.nonce), 'Sponsored event nonce differs from the included operation')
+  const { account, event, operation, tx, txHash, block } = await verifyIncluded(clients, altoUrl, manifest,
+    owner, operationHash, manifest.paymaster, args['transaction-hash'])
+  await codeHashBoth(clients, manifest.paymaster, tx.blockNumber, manifest.paymasterCodeHash)
+  assert.ok(isAddressEqual(operation.sender, account.address), 'Included sponsored operation sender differs')
   assert.ok(isAddressEqual(operation.paymaster, manifest.paymaster), 'Operation paymaster mismatch')
   const envelope = parseSponsorEnvelope(operation.paymasterData)
   assert.equal(envelope.policyId, sponsorship.policyId.toLowerCase())
@@ -415,39 +426,36 @@ async function verifySponsored(args, manifest, clients, altoUrl, owner) {
   assert.ok(event.actualGasCost <= envelope.maxCost, 'Sponsored gas exceeds signed max cost')
   assert.ok(BigInt(operation.paymasterVerificationGasLimit) <= BigInt(sponsorship.verificationGasLimit))
   assert.equal(BigInt(operation.paymasterPostOpGasLimit), 0n)
-  const block = await clients.nitro.getBlock({ blockNumber: tx.blockNumber })
   assert.ok(block.timestamp >= envelope.validAfter && block.timestamp <= envelope.validUntil,
     'Sponsored operation included outside its signed validity window')
-  const [onchainSigner, onchainPolicy, onchainCap, paused] = await Promise.all([
-    clients.nitro.readContract({ address: manifest.paymaster, abi: paymasterAbi, functionName: 'sponsorSigner', blockNumber: tx.blockNumber }),
-    clients.nitro.readContract({ address: manifest.paymaster, abi: paymasterAbi, functionName: 'policyId', blockNumber: tx.blockNumber }),
-    clients.nitro.readContract({ address: manifest.paymaster, abi: paymasterAbi, functionName: 'maxSponsoredCost', blockNumber: tx.blockNumber }),
-    clients.nitro.readContract({ address: manifest.paymaster, abi: paymasterAbi, functionName: 'paused', blockNumber: tx.blockNumber }),
-  ])
+  const states = await Promise.all([clients.nitro, clients.secondary].map(client => Promise.all(
+    ['sponsorSigner', 'policyId', 'maxSponsoredCost', 'paused'].map(functionName =>
+      client.readContract({ address: manifest.paymaster, abi: paymasterAbi, functionName, blockNumber: tx.blockNumber })))))
+  assert.deepEqual(states[0], states[1], 'Independent RPCs disagree on included sponsor configuration')
+  const [onchainSigner, onchainPolicy, onchainCap, paused] = states[0]
   assert.equal(paused, false, 'Paymaster was paused at sponsored inclusion')
   assert.ok(isAddressEqual(onchainSigner, sponsorship.signerAddress))
   assert.equal(onchainPolicy.toLowerCase(), sponsorship.policyId.toLowerCase())
   assert.ok(event.actualGasCost <= onchainCap)
-  const before = await accountFunds(clients.nitro, manifest.paymaster, tx.blockNumber - 1n)
-  const after = await accountFunds(clients.nitro, manifest.paymaster, tx.blockNumber)
-  assertExactGasDebit(before.deposit, after.deposit, event.actualGasCost, 'Sponsored paymaster deposit')
+  const debit = await payerDebit(clients, manifest.paymaster, tx.blockNumber, 'deposit', event.actualGasCost, 'Sponsored paymaster deposit')
   console.log(bigintJson({ mode: 'sponsored-verification', deployment: manifest.deployment,
     owner, sender: account.address, paymaster: manifest.paymaster,
     userOperationHash: operationHash, transactionHash: txHash, inclusionBlock: String(tx.blockNumber),
     inclusionBlockHash: tx.blockHash, actualGasCostWei: String(event.actualGasCost),
-    signedMaxCostWei: String(envelope.maxCost), payerDebitWei: String(before.deposit - after.deposit),
+    signedMaxCostWei: String(envelope.maxCost), payerDebitWei: String(debit),
     policyId: envelope.policyId }))
 }
 
 async function main() {
   const { values: args, positionals } = parseArgs({ allowPositionals: true, options: {
     manifest: { type: 'string' }, owner: { type: 'string' }, evidence: { type: 'string' },
-    sponsorship: { type: 'string' }, 'user-op-hash': { type: 'string' },
+    sponsorship: { type: 'string' }, 'user-op-hash': { type: 'string' }, 'transaction-hash': { type: 'string' },
     confirm: { type: 'string' }, help: { type: 'boolean' },
   } })
   if (args.help) return usage()
   const command = positionals[0] ?? 'plan'
   assert.ok(['plan', 'send-eth', 'verify-eth', 'verify-sponsored'].includes(command), 'Unknown command')
+  assert.ok(!args['transaction-hash'] || command.startsWith('verify-'), '--transaction-hash is only for verification')
   assert.ok(args.manifest, 'Pass --manifest with the independently attested deployment')
   const manifest = readManifest(args.manifest)
   const owner = address(args.owner, 'throwaway owner')
@@ -467,11 +475,7 @@ async function main() {
 }
 
 try { await main() } catch (error) {
-  let message = String(error?.shortMessage ?? error?.message ?? error)
-  for (const secret of [process.env.KERNEL_SMOKE_OWNER_PRIVATE_KEY, process.env.KERNEL_SMOKE_NITRO_BEARER]) {
-    if (secret) message = message.replaceAll(secret, '[REDACTED]')
-  }
-  message = message.replace(/https?:\/\/[^\s)]+/gu, '[RPC]')
+  const message = scrubRpcError(error, [process.env.KERNEL_SMOKE_OWNER_PRIVATE_KEY, process.env.KERNEL_SMOKE_NITRO_BEARER])
   console.error(`Sepolia Nitro smoke failed: ${message}`)
   process.exitCode = 1
 }

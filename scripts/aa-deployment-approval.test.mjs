@@ -64,25 +64,30 @@ test('Alto checks out the exact reviewed policy before invoking repository files
   assert.match(step, /sparse-checkout: \.github\/scripts/)
 })
 
-test('Alto selects a single reviewed EntryPoint and its corresponding simulator and smoke route', () => {
+test('legacy Alto refuses v0.9 deploy, bootstrap and rollback before credentials', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
   const selection = source.match(/^\s+case "\$ALTO_ENTRYPOINT_VERSION" in\n[\s\S]*?^\s+esac$/m)?.[0]
+  const refusal = source.match(/^([ \t]+)if \[ "\$ALTO_ENTRYPOINT_VERSION" != "0.8" \]; then\n[\s\S]*?^\1fi$/m)?.[0]
   assert.ok(selection, 'execute the actual workflow profile selection')
+  assert.ok(refusal, 'execute the actual early workflow refusal')
+  assert.ok(source.indexOf(refusal) < source.indexOf('gh api'))
+  assert.ok(source.indexOf(refusal) < source.indexOf('- name: Configure AWS credentials'))
+  assert.doesNotMatch(source.split('      action:')[0], /^\s+- '0.9'$/m)
   const entrypointV8 = '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
-  const entrypointV9 = '0x433709009B8330FDa32311DF1C2AFA402eD8D009'
-  const v9RuntimeHash = '0x' + 'ab'.repeat(32)
+  const legacySelection = [entrypointV8, 'ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8', '/api/aa/rpc']
   const cases = [
-    ['0.8', '', [entrypointV8, 'ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8', '/api/aa/rpc']],
-    ['0.9', v9RuntimeHash, [entrypointV9, 'ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9', '/api/aa/kernel/rpc']],
-    ['0.9', '', null],
-    ['0.9', '0x' + '0'.repeat(64), null],
-    ['0.9', '0x1234', null],
-    ['0.7', v9RuntimeHash, null],
+    ['0.8', 'deploy', legacySelection],
+    ['0.8', 'rollback', legacySelection],
+    ['0.9', 'deploy', null],
+    ['0.9', 'bootstrap-simulations', null],
+    ['0.9', 'rollback', null],
+    ['0.7', 'deploy', null],
   ]
-  for (const [version, hash, expected] of cases) {
-    const result = spawnSync('bash', ['-euc', `${selection}\nprintf '%s\\n' "$expected_entrypoint" "$simulation_name" "$smoke_path"`], {
+  for (const [version, action, expected] of cases) {
+    const script = [refusal, selection, 'printf "%s\\n" "$expected_entrypoint" "$simulation_name" "$smoke_path"'].join('\n')
+    const result = spawnSync('bash', ['-euc', script], {
       encoding: 'utf8',
-      env: {...process.env, ALTO_ENTRYPOINT_VERSION: version, ALTO_V09_ENTRYPOINT_RUNTIME_HASH: hash, ALTO_ENTRYPOINT_V8: entrypointV8, ALTO_ENTRYPOINT_V9: entrypointV9},
+      env: {...process.env, ALTO_ENTRYPOINT_VERSION: version, ALTO_ACTION: action, ALTO_ENTRYPOINT_V8: entrypointV8},
     })
     assert.ifError(result.error)
     assert.equal(result.status === 0, expected !== null, result.stderr + result.stdout)
@@ -115,61 +120,30 @@ test('Alto smoke rejects ambiguous supported EntryPoint responses', () => {
   }
 })
 
-test('new EntryPoint 0.9 Alto deployments require the actual custom JavaScript tracer response', () => {
+test('legacy Alto refuses the authenticated profile before loading any secrets', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
-  const traceProbe = source.match(/^([ \t]+)assert_v09_trace_capability\(\) \{\n[\s\S]*?^\1\}$/m)?.[0]
-  const traceGate = source.match(/^([ \t]+)if \[ "\$ALTO_ENTRYPOINT_VERSION" = "0.9" \] && \[ "\$ALTO_ACTION" != "rollback" \]; then\n\1  assert_v09_trace_capability\n\1fi$/m)?.[0]
-  assert.ok(traceProbe && traceGate, 'execute the actual workflow probe and gate')
-  const entrypoint = '0x433709009B8330FDa32311DF1C2AFA402eD8D009'
-  const word = '0'.repeat(64)
-  const valid = { jsonrpc: '2.0', id: 1, result: { probe: 'plether-v09', sawReturn: true, output: `0x${word}` } }
-  const cases = [
-    { label: 'valid 0.9 deploy tracer', reply: valid, requiresTrace: true, accepted: true },
-    { label: 'valid 0.9 bootstrap tracer', action: 'bootstrap-simulations', reply: valid, requiresTrace: true, accepted: true },
-    { label: 'legacy 0.8 unaffected', version: '0.8', requiresTrace: false, accepted: true },
-    { label: 'rollback unaffected', action: 'rollback', requiresTrace: false, accepted: true },
-    { label: 'debug disabled', reply: { error: { code: -32601 } }, requiresTrace: true, accepted: false },
-    { label: 'native tracer only', reply: { result: { type: 'CALL', output: `0x${word}` } }, requiresTrace: true, accepted: false },
-    { label: 'wrong request id', reply: { ...valid, id: 2 }, requiresTrace: true, accepted: false },
-    { label: 'missing return step', reply: { ...valid, result: { ...valid.result, sawReturn: false } }, requiresTrace: true, accepted: false },
-    { label: 'unexpected contract output', reply: { ...valid, result: { ...valid.result, output: '0x01' } }, requiresTrace: true, accepted: false },
-    { label: 'overlong valid prefix', raw: JSON.stringify(valid) + ' '.repeat(4096), requiresTrace: true, accepted: false },
-    { label: 'RPC transport error', reply: valid, transportError: true, requiresTrace: true, accepted: false },
-  ]
-  for (const { label, version = '0.9', action = 'deploy', reply, raw, transportError, requiresTrace, accepted } of cases) {
-    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `
-      rpc_url='https://tracer.example.invalid'
-      entrypoint="$TEST_ENTRYPOINT"
-      exec 3>&1
-      rpc_call() {
-        [ "$1" = "$rpc_url" ] && [ "$2" = 'debug_traceCall' ] || return 1
-        # Log only the first line, with the JSON formatted on a single line by jq.
-        printf '%s\n' "$3" >&3
-        printf '%s' "$TEST_REPLY"
-        [ "$TEST_RPC_OK" = 'yes' ]
-      }
-      ${traceProbe}
-      ${traceGate}
-    `], {encoding: 'utf8', env: {
-      ...process.env, ALTO_ENTRYPOINT_VERSION: version, ALTO_ACTION: action, TEST_ENTRYPOINT: entrypoint,
-      TEST_REPLY: raw ?? JSON.stringify(reply ?? null), TEST_RPC_OK: transportError ? 'no' : 'yes',
-    }})
-    assert.ifError(result.error)
-    assert.equal(result.status === 0, accepted, `${label}: ${result.stdout} ${result.stderr}`)
-    const [params, ...messages] = result.stdout.trim().split('\n')
-    if (requiresTrace) {
-      const [transaction, block, options] = JSON.parse(params)
-      assert.deepEqual(transaction, {to: entrypoint, data: `0x35567e1a${word}${word}`})
-      assert.equal(block, 'latest')
-      assert.equal(options.timeout, '5s')
-      assert.match(options.tracer, /step: function\(log\)/)
-      assert.deepEqual(messages, accepted ? [] : [
-        '::error title=Alto RPC capability preflight failed::EntryPoint 0.9 requires ALTO_RPC_URL to execute a custom JavaScript debug_traceCall tracer.',
-      ])
-    } else {
-      assert.equal(result.stdout, '', label)
+  const preflight = source.split('      - name: Validate infrastructure and Alto runtime configuration')[1]
+  const refusal = preflight.match(/^([ \t]+)if jq -e --arg alto "\$ALTO_CONTAINER" '\n\s+any\(\.containerDefinitions[\s\S]*?^\1fi$/m)?.[0]
+  assert.ok(refusal, 'execute the actual authenticated task refusal')
+  assert.ok(preflight.indexOf(refusal) < preflight.indexOf('aws ssm get-parameter'))
+  const directory = mkdtempSync(join(tmpdir(), 'plether-alto-auth-preflight-'))
+  try {
+    for (const useAuth of [false, true]) {
+      const secrets = [{name: 'ALTO_RPC_URL', valueFrom: 'synthetic-primary'}]
+      if (useAuth) secrets.push({name: 'PLETHER_ALTO_RPC_AUTH_TOKEN', valueFrom: 'synthetic-token-reference'})
+      const task = {containerDefinitions: [{name: 'plether-alto', secrets}]}
+      const script = ['task_definition_file="$RUNNER_TEMP/task.json"', 'cat > "$task_definition_file"', refusal].join('\n')
+      const result = spawnSync('bash', ['-euc', script], {
+        input: JSON.stringify(task),
+        encoding: 'utf8',
+        env: {...process.env, RUNNER_TEMP: directory, ALTO_CONTAINER: 'plether-alto'},
+      })
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, !useAuth, result.stdout + result.stderr)
+      assert.doesNotMatch(result.stdout + result.stderr, /synthetic-token-reference/)
     }
-    assert.equal(result.stderr, '', label)
+  } finally {
+    rmSync(directory, {recursive: true, force: true})
   }
 })
 
@@ -189,34 +163,106 @@ test('backend public AA gate loads policy without cleaning generated task files'
   assert.match(deploy.slice(gate), /jq -e -f deployment-policy\/\.github\/scripts\/validate-aa-public-alto\.jq public-alto-task.json/)
 })
 
-test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
+test('backend consumer preflight requires the independent RPC reference for Kernel API tasks', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
+  const inspect = source.match(/^([ \t]+)inspect_consumer\(\) \{\n[\s\S]*?^\1\}$/m)?.[0]
+  assert.ok(inspect, 'execute the actual workflow consumer inspection')
+  const directory = mkdtempSync(join(tmpdir(), 'plether-kernel-rpc-consumer-'))
+  try {
+    const script = [
+      'aws() { [ "$1 $2" = "ecs describe-task-definition" ] && printf "%s\\n" "$TASK_FIXTURE"; }',
+      'parameter_refs=(); execution_roles=(); rpc_modes=()',
+      inspect,
+      'inspect_consumer plether-sepolia plether-api false',
+    ].join('\n')
+    for (const [profileSource, verification, accepted] of [
+      [null, null, true],
+      ['environment', 'AA_SECURITY_RPC_URL', true],
+      ['environment', null, false],
+      ['environment', 'AA_RECONCILER_SECONDARY_RPC_URL', false],
+      ['secrets', 'AA_RECONCILER_SECONDARY_RPC_URL', false],
+    ]) {
+      const container = {
+        name: 'plether-api',
+        environment: [{name: 'PERPS_CHAIN_ID', value: '421614'}, {name: 'AA_RPC_MODE', value: 'dual-independent'}],
+        secrets: [{name: 'PERPS_RPC_URL', valueFrom: 'synthetic-primary'}],
+      }
+      if (profileSource) container[profileSource].push({name: 'AA_KERNEL_PROFILE_JSON', value: '{}', valueFrom: 'synthetic-profile'})
+      if (verification) container.secrets.push({name: verification, valueFrom: 'synthetic-independent'})
+      const fixture = {family: 'plether-sepolia', status: 'ACTIVE', executionRoleArn: 'synthetic-role', containerDefinitions: [container]}
+      const result = spawnSync('bash', ['-euc', script], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {...process.env, RUNNER_TEMP: directory, TASK_FIXTURE: JSON.stringify(fixture)},
+      })
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, accepted, JSON.stringify([profileSource, verification, result.stdout, result.stderr]))
+    }
+  } finally {
+    rmSync(directory, {recursive: true, force: true})
+  }
+})
+
+test('backend reconciler topology enforces the attested Kernel profile and runtime limits', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
+  const policy = source.split('name: Validate AA reconciler task topology')[1]?.match(/^\s+(def container\(\$name\):[\s\S]*?)^\s+\.family == \$family$/m)?.[1]
+  assert.ok(policy, 'execute the actual workflow topology functions')
+  const staker = '0x' + '3'.repeat(40)
+  const factory = '0x' + '4'.repeat(40)
+  const hash = '0x' + 'a'.repeat(64)
+  const profile = {
+    deployment: 'kernel-canary', chainId: 421614, entryPoint: '0x433709009B8330FDa32311DF1C2AFA402eD8D009',
+    entryPointVersion: '0.9', entryPointCodeHash: hash, accountVersion: 'kernel-v4-uups', accountIndex: 0,
+    accountCodeHash: hash, factory, factoryCodeHash: hash, staker, stakerCodeHash: hash,
+    implementation: '0x' + '5'.repeat(40), implementationCodeHash: hash, validator: '0x' + '6'.repeat(40), validatorCodeHash: hash,
+  }
+  for (const [batch, lag, policyMax, profileOverrides, accepted] of [
+    ['2000', '1800', 5000, {}, true],
+    ['2001', '1800', 5000, {}, false],
+    ['1800', '1800', 1000, {}, false],
+    ['2000', '1801', 5000, {}, false],
+    ['2000', '59', 5000, {}, false],
+    ['2000', '1800', 5000, {staker: undefined}, false],
+    ['2000', '1800', 5000, {staker: factory}, false],
+    ['2000', '1800', 5000, {stakerCodeHash: '0x' + '0'.repeat(64)}, false],
+  ]) {
+    const fixture = {
+      environment: Object.entries({
+        HOME: '/tmp', TMPDIR: '/tmp', PERPS_CHAIN_ID: '421614', AA_RPC_MODE: 'dual-independent',
+        AA_KERNEL_PROFILE_JSON: JSON.stringify({...profile, ...profileOverrides}), AA_KERNEL_SPONSORSHIP_JSON: '',
+        AA_KERNEL_MAX_SAFE_LAG_SECONDS: lag, AA_KERNEL_RECONCILER_POLL_SECONDS: '10',
+        AA_KERNEL_RECONCILER_BATCH_BLOCKS: batch, AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS: '60',
+      }).map(([name, value]) => ({name, value})),
+      secrets: ['AA_SECURITY_RPC_URL', 'DATABASE_URL', 'PERPS_RPC_URL'].map(name => ({name})),
+    }
+    const result = spawnSync('jq', ['-e', '--arg', 'desired_count', '0', '--argjson', 'max_log_range', String(policyMax),
+      policy + ' kernel_configuration(.; envmap(.))'], {input: JSON.stringify(fixture), encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, accepted, JSON.stringify([batch, lag, policyMax, profileOverrides, result.stderr]))
+  }
+})
+
+test('Alto image scans fail closed on critical findings and incomplete or mismatched evidence', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
-  const section = source.split('scan_policy=$(jq -ce')[1]
+  const section = source.split('scan_findings=$(aws ecr describe-image-scan-findings')[1]
   const filter = section?.match(/'([\s\S]*?)' <<< "\$scan_findings"/)?.[1]
   assert.ok(filter, 'execute the actual workflow scan policy')
-  assert.match(section, /::warning title=Approved Sepolia image exception/)
-  assert.match(section, /GITHUB_STEP_SUMMARY/)
   assert.match(source, /aws ecr wait image-scan-complete/)
   const args = {
-    environment: 'sepolia', region: 'ap-southeast-1', account: '932542905614', repository: 'plether-alto-sepolia',
+    account: '932542905614', repository: 'plether-alto-sepolia',
     digest: 'sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a',
-    upstream: 'sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d', now: 1791357469,
   }
-  const fixture = () => ({registryId: args.account, repositoryName: args.repository,
+  const fixture = () => ({
+    registryId: args.account, repositoryName: args.repository,
     imageId: {imageDigest: args.digest}, imageScanStatus: {status: 'COMPLETE'},
-    imageScanFindings: {findingSeverityCounts: {CRITICAL: 1}, findings: [{name: 'CVE-2024-5535', severity: 'CRITICAL',
-      attributes: [{key: 'package_name', value: 'openssl'}, {key: 'package_version', value: '3.1.4-r5'}]}]},
+    imageScanFindings: {findingSeverityCounts: {}, findings: []},
   })
+  const criticalFinding = {name: 'CVE-2024-5535', severity: 'CRITICAL',
+    attributes: [{key: 'package_name', value: 'openssl'}, {key: 'package_version', value: '3.1.4-r5'}]}
   const cases = [
-    ['approved exact finding', () => {}, true, 1],
-    ['clean completed scan', v => {v.imageScanFindings = {findingSeverityCounts: {}, findings: []}}, true, 0],
-    ['other critical', v => {v.imageScanFindings.findings[0].name = 'CVE-OTHER'}, false],
-    ['another critical alongside accepted one', v => {v.imageScanFindings.findings.push({name: 'CVE-OTHER', severity: 'CRITICAL'}); v.imageScanFindings.findingSeverityCounts.CRITICAL = 2}, false],
-    ['duplicate accepted finding', v => {v.imageScanFindings.findings.push(structuredClone(v.imageScanFindings.findings[0])); v.imageScanFindings.findingSeverityCounts.CRITICAL = 2}, false],
-    ['different package', v => {v.imageScanFindings.findings[0].attributes[0].value = 'libssl'}, false],
-    ['different package version', v => {v.imageScanFindings.findings[0].attributes[1].value = '3.1.5-r0'}, false],
-    ['missing package evidence', v => {delete v.imageScanFindings.findings[0].attributes}, false],
-    ['duplicate package evidence', v => {v.imageScanFindings.findings[0].attributes.push({key: 'package_name', value: 'openssl'})}, false],
+    ['clean completed scan', () => {}, true],
+    ['noncritical finding', v => {v.imageScanFindings.findings.push({name: 'CVE-LOW', severity: 'LOW'})}, true],
+    ['former exception is rejected', v => {v.imageScanFindings = {findingSeverityCounts: {CRITICAL: 1}, findings: [criticalFinding]}}, false],
     ['missing scan', v => {delete v.imageScanFindings}, false],
     ['missing status', v => {delete v.imageScanStatus}, false],
     ['in-progress scan', v => {v.imageScanStatus.status = 'IN_PROGRESS'}, false],
@@ -224,30 +270,22 @@ test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
     ['pagination incomplete', v => {v.nextToken = 'more'}, false],
     ['missing details', v => {delete v.imageScanFindings.findings}, false],
     ['missing counts', v => {delete v.imageScanFindings.findingSeverityCounts}, false],
-    ['missing critical count but critical detail', v => {v.imageScanFindings.findingSeverityCounts = {}}, false],
-    ['summary conceals critical', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = 0}, false],
-    ['details omit critical', v => {v.imageScanFindings.findings = []}, false],
+    ['summary omits critical', v => {v.imageScanFindings.findings.push(criticalFinding)}, false],
+    ['details omit critical', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = 1}, false],
     ['malformed critical count', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = '1'}, false],
     ['null critical count', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = null}, false],
-    ['unknown severity', v => {v.imageScanFindings.findings[0].severity = 'critical'}, false],
+    ['unknown severity', v => {v.imageScanFindings.findings.push({name: 'CVE-BAD', severity: 'critical'})}, false],
     ['wrong scan image', v => {v.imageId.imageDigest = 'sha256:' + 'a'.repeat(64)}, false],
     ['wrong scan account', v => {v.registryId = '111111111111'}, false],
     ['wrong scan repository', v => {v.repositoryName = 'other'}, false],
-    ...Object.entries({environment: 'mainnet', region: 'us-east-1', account: '111111111111', repository: 'other', digest: 'sha256:' + 'b'.repeat(64), upstream: 'sha256:' + 'c'.repeat(64), now: 1791936000}).map(([key, value]) => [
-      `exception rejects ${key}`, (v, a) => {a[key] = value; if(key === 'account') v.registryId = value; if(key === 'repository') v.repositoryName = value; if(key === 'digest') v.imageId.imageDigest = value}, false,
-    ]),
-    ['last second before expiry', (_, a) => {a.now = 1791935999}, true, 1],
-    ['before approval date', (_, a) => {a.now = 1791331199}, false],
-    ['expired original exception', (_, a) => {a.now = 1789776000}, false],
-    ['first second of renewed approval', (_, a) => {a.now = 1791331200}, true, 1],
-    ['missing clock value', (_, a) => {a.now = null}, false],
   ]
-  for (const [label, mutate, passed, accepted] of cases) {
-    const value = fixture(), current = {...args}; mutate(value, current)
-    const result = spawnSync('jq', ['-ce', ...Object.entries(current).flatMap(([key, value]) => key === 'now' ? ['--argjson', key, JSON.stringify(value)] : ['--arg', key, value]), filter], {input: JSON.stringify(value), encoding: 'utf8'})
+  for (const [label, mutate, passed] of cases) {
+    const value = fixture()
+    mutate(value)
+    const result = spawnSync('jq', ['-e', ...Object.entries(args).flatMap(([key, value]) => ['--arg', key, value]), filter],
+      {input: JSON.stringify(value), encoding: 'utf8'})
     assert.ifError(result.error)
-    assert.equal(result.status === 0, passed, `${label}: ${result.stderr}`)
-    if (passed) assert.equal(JSON.parse(result.stdout).acceptedCriticalCount, accepted, label)
+    assert.equal(result.status === 0, passed, label + ': ' + result.stderr)
   }
 })
 

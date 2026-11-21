@@ -32,7 +32,7 @@ import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
-import { kernelQuoteIsFresh, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
+import { KernelGasReviewCancelled, kernelQuoteIsFresh, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV3'
@@ -3265,9 +3265,12 @@ export function PerpsTradeTicket({
   const fundingShortfallMessage = reviewFundingShortfallAssets === undefined
     ? undefined
     : `Deposit ${formatPerpsAssets(reviewFundingShortfallAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more or reduce the order before committing.`
-  const gasQuoteExpired = preparedOrder?.kernelQuote !== undefined && !kernelQuoteIsFresh(preparedOrder.kernelQuote)
-  const reviewFooterError = sponsorshipPauseMessage ?? (gasQuoteExpired
-    ? 'The network gas quote expired. Retry review before confirming.' : executionProtectionsError)
+  const preparedGasQuote = preparation.ready && !preparationError ? preparedOrder?.kernelQuote : undefined
+  const reviewedGasQuote = preparedGasQuote?.mode === gasReview?.preference.mode ? preparedGasQuote : undefined
+  const gasQuoteExpired = reviewedGasQuote !== undefined && !kernelQuoteIsFresh(reviewedGasQuote)
+  const canConfirmGasReview = !gasReview || (gasReview.available && reviewedGasQuote !== undefined && !gasQuoteExpired)
+  const reviewFooterError = executionProtectionsError ?? sponsorshipPauseMessage ?? (gasQuoteExpired
+    ? 'The network gas quote expired. Retry review before confirming.' : undefined)
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
     ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
   const accountBlockReason = pendingOperationGuidance
@@ -3878,7 +3881,7 @@ export function PerpsTradeTicket({
   }, [clearMarginActionRequest, marginActionRequest, openMarginAction])
 
   async function handleMarginActionSubmit() {
-    if (!marginAction) return
+    if (!marginAction || isMarginActionPending || kernelOperationPending) return
     if (sponsorshipPauseMessage) return
     if (enableLiveTrading && !isConnected) {
       connect()
@@ -3930,6 +3933,10 @@ export function PerpsTradeTicket({
       trackPerpsMarginLifecycle(`${marginAction}_succeeded`, commonAnalyticsProperties)
       void onAccountRefresh?.()
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) {
+        setMarginActionStatus('idle')
+        return
+      }
       setMarginActionStatus('failed')
       const errorMessage = error instanceof Error
         ? error.message
@@ -3956,7 +3963,7 @@ export function PerpsTradeTicket({
   async function handleConfirmCommit() {
     if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
       document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase() ||
-      (gasReview && (!preparedOrder.kernelQuote || gasQuoteExpired)))) {
+      !canConfirmGasReview || (reviewedGasQuote && !kernelQuoteIsFresh(reviewedGasQuote)))) {
       setFlowError('Wait for a fresh order review before confirming.')
       return
     }
@@ -4902,9 +4909,9 @@ export function PerpsTradeTicket({
               changes={reviewChanges}
               direction={direction}
               canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready) &&
-                (!gasReview || (preparedOrder?.kernelQuote !== undefined && !gasQuoteExpired))}
+                canConfirmGasReview}
               gasReview={gasReview ? (
-                <PerpsGasReview gas={gasReview} quote={preparedOrder?.kernelQuote} error={preparationError} onOpenSettings={() => {
+                <PerpsGasReview gas={gasReview} quote={reviewedGasQuote} error={preparationError} onOpenSettings={() => {
                   closeReviewModal()
                   gasReview.openActivity()
                 }} />
@@ -5737,7 +5744,7 @@ export function PerpsTradeTicket({
         analyticsProperties={commonAnalyticsProperties}
         footer={
           <div className="space-y-3">
-            {marginGasApproval.quote ? <KernelGasApprovalButtons confirm={marginGasApproval.confirm} cancel={marginGasApproval.cancel} disabled={isMarginActionInvalid || Boolean(sponsorshipPauseMessage)} /> : (
+            {marginGasApproval.quote ? <KernelGasApprovalButtons confirm={marginGasApproval.confirm} cancel={marginGasApproval.cancel} disabled={isMarginActionInvalid || kernelOperationPending || !marginGasApproval.canConfirm} /> : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
                 type="button"
@@ -5798,6 +5805,11 @@ export function PerpsTradeTicket({
           {sponsorshipPauseMessage && (
             <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
               {sponsorshipPauseMessage}
+            </p>
+          )}
+          {kernelOperationPending && (
+            <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+              A Trading Account action is pending. Check Trading Account activity before submitting another action.
             </p>
           )}
           <p className="text-sm leading-6 text-content-secondary">

@@ -377,6 +377,9 @@ verifyKernelAccountWithRpcAtBlock profile rpc block rawSender factoryOwner = run
       unless (BS.null bytecode) $ throwE $ policyDenied "Kernel factory data may be used only for an undeployed account"
       maybe (throwE $ invalidParams "Kernel root owner is invalid") pure $ normalizeAddress rawOwner
     Nothing -> verifyLiveKernel profile rpc block sender bytecode
+  ownerCode <- ExceptT $ readCode rpc block owner
+  unless (BS.null ownerCode) $
+    throwE $ policyDenied "The Kernel root owner must be a wallet without deployed code"
   derived <- deriveKernelAddress profile rpc block owner
   unless (derived == sender) $
     throwE $ policyDenied "The Kernel factory does not derive this sender for the verified owner"

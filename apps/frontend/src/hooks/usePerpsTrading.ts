@@ -5,7 +5,7 @@ import { SponsorRequestError } from '../perps-aa/errors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
-import { useCallback } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { PerpsKeeperExecutionProgress } from './usePerpsHistory'
 import { KeeperExecutionReorgedError } from '../utils/keeperExecutionCanonicality'
 import { useQueryClient } from '@tanstack/react-query'
@@ -80,7 +80,7 @@ import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../
 import { readGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
 import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
 import type { PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
-import { kernelQuoteIsFresh } from './usePerpsGasReview'
+import { KernelGasReviewCancelled, kernelQuoteIsFresh } from './usePerpsGasReview'
 
 interface PrepareOrderInput {
   direction: PerpsDirection
@@ -121,14 +121,6 @@ interface ExecuteOrderResult {
 }
 
 export type ReviewKernelGas = (quote: KernelActionQuote) => Promise<void>
-
-async function approveKernelAction(runtime: PerpsAaSmartAccountRuntime, action: PerpsActionPlan, reviewGas?: ReviewKernelGas) {
-  if (!runtime.kernel) return undefined
-  if (!reviewGas) throw new Error('Review the network gas before approving this Trading Account action.')
-  const quote = await runtime.kernel.quoteAction(action)
-  await reviewGas(quote)
-  return quote
-}
 
 const PERPS_CONTRACT_ADDRESSES = new Set(
   Object.values(PERPS_ARBITRUM_SEPOLIA)
@@ -524,6 +516,44 @@ export function usePerpsTrading() {
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync } = useWriteContract()
   const queryClient = useQueryClient()
+  const liveAccount = useRef({ runtime: aaRuntime, identity })
+  useLayoutEffect(() => {
+    liveAccount.current = { runtime: aaRuntime, identity }
+  }, [aaRuntime, identity])
+
+  const requireCurrentKernelQuote = useCallback((runtime: PerpsAaSmartAccountRuntime, quote?: KernelActionQuote) => {
+    if (!runtime.kernel) return
+    const { runtime: current, identity: liveIdentity } = liveAccount.current
+    const expected = runtime.kernel.scope
+    if (!current?.kernel || liveIdentity.status !== 'ready' ||
+        !liveIdentity.accountAddress || !isAddressEqual(liveIdentity.accountAddress, expected.sender) ||
+        !liveIdentity.ownerAddress || !isAddressEqual(liveIdentity.ownerAddress, runtime.ownerAddress) ||
+        current.kernel.scope.chainId !== expected.chainId ||
+        current.kernel.scope.deployment !== expected.deployment ||
+        !isAddressEqual(current.kernel.scope.sender, expected.sender) ||
+        !isAddressEqual(current.kernel.scope.entryPoint, expected.entryPoint) ||
+        !isAddressEqual(current.ownerAddress, runtime.ownerAddress)) {
+      throw new Error('The Trading Account changed. Review a fresh network gas quote.')
+    }
+    if (!quote || !kernelQuoteIsFresh(quote)) {
+      throw new Error('Review a current network gas quote before approving this Trading Account action.')
+    }
+    const { mode } = readGasPaymentPreference(current.gasPayment.scope)
+    if (quote.mode !== mode) throw new Error('The gas setting changed. Review a fresh quote to continue.')
+    if (!current.gasPayment.readiness[quote.mode]) {
+      throw new Error(mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.')
+    }
+  }, [])
+
+  const approveKernelAction = useCallback(async (runtime: PerpsAaSmartAccountRuntime, action: PerpsActionPlan, reviewGas?: ReviewKernelGas) => {
+    if (!runtime.kernel) return undefined
+    if (!reviewGas) throw new Error('Review the network gas before approving this Trading Account action.')
+    const quote = await runtime.kernel.quoteAction(action)
+    requireCurrentKernelQuote(runtime, quote)
+    await reviewGas(quote)
+    requireCurrentKernelQuote(runtime, quote)
+    return quote
+  }, [requireCurrentKernelQuote])
 
   const invalidatePerpsReads = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -761,6 +791,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) throw error
       if (!executionStarted) {
         trackSponsoredOperationPreflightFailure({
           action: 'deposit',
@@ -777,6 +808,7 @@ export function usePerpsTrading() {
   }, [
     aaRuntime,
     address,
+    approveKernelAction,
     identity.manifest,
     invalidatePerpsReads,
     requireTradingExecution,
@@ -811,11 +843,12 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'withdraw' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'withdraw'), { surface: 'perps', action: 'withdraw' })
     }
-  }, [address, invalidatePerpsReads, requireTradingExecution])
+  }, [address, approveKernelAction, invalidatePerpsReads, requireTradingExecution])
 
   const addPositionMargin = useCallback(async (amount: bigint, reviewGas?: ReviewKernelGas) => {
     try {
@@ -843,11 +876,12 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'addPositionMargin' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'addPositionMargin'), { surface: 'perps', action: 'addPositionMargin' })
     }
-  }, [address, invalidatePerpsReads, requireTradingExecution])
+  }, [address, approveKernelAction, invalidatePerpsReads, requireTradingExecution])
 
   const prepareOrder = useCallback(async ({
     direction,
@@ -1076,9 +1110,8 @@ export function usePerpsTrading() {
       })
 
       const assisted = preparedOrder.sponsoredClose
-      if (sponsored.runtime.kernel && (assisted || !preparedOrder.kernelQuote || !kernelQuoteIsFresh(preparedOrder.kernelQuote))) {
-        throw new Error('Review a current network gas quote before committing this order.')
-      }
+      if (sponsored.runtime.kernel && assisted) throw new Error('Review a current network gas quote before committing this order.')
+      requireCurrentKernelQuote(sponsored.runtime, preparedOrder.kernelQuote)
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
         : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
         : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
@@ -1112,6 +1145,7 @@ export function usePerpsTrading() {
         clientOrderId: request.clientOrderId,
         positionProtectionBook: protection?.book,
       }
+      requireCurrentKernelQuote(executionRuntime, preparedOrder.kernelQuote)
       const result = await executeSponsoredPerpsAction({
         manifest: executionManifest,
         ownerAddress: sponsored.ownerAddress,
@@ -1178,7 +1212,7 @@ export function usePerpsTrading() {
 
       throw reportedTransactionError(error, message, { surface: 'perps', action: 'commit' })
     }
-  }, [address, invalidatePerpsReads, publicClient, requireTradingExecution, walletClient])
+  }, [address, invalidatePerpsReads, publicClient, requireCurrentKernelQuote, requireTradingExecution, walletClient])
 
   const executeOrder = useCallback(async (orderId: bigint): Promise<ExecuteOrderResult> => {
     void orderId
@@ -1352,11 +1386,12 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'settleClaim' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'settleClaim'), { surface: 'perps', action: 'settleClaim' })
     }
-  }, [address, invalidatePerpsReads, requireTradingExecution])
+  }, [address, approveKernelAction, invalidatePerpsReads, requireTradingExecution])
 
   const abandonDepositAuthorization = useCallback(() => {
     if (
@@ -1424,10 +1459,11 @@ export function usePerpsTrading() {
       if (events.length !== 1) throw new Error('The operation was included but its protection event could not be reconciled. Refresh protections before another submission.')
       return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) throw error
       const sponsorError = findSponsorRequestError(error)
       throw reportedTransactionError(error, sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { surface: 'perps', action: 'protection' })
     }
-  }, [invalidatePerpsReads, publicClient, requireTradingExecution])
+  }, [approveKernelAction, invalidatePerpsReads, publicClient, requireTradingExecution])
 
   return {
     managePositionProtection,

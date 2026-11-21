@@ -11,13 +11,12 @@ on:
         options:
           - sepolia
       entrypoint_version:
-        description: Reviewed single EntryPoint profile from the Terraform task definition
+        description: Reviewed legacy EntryPoint profile from the Terraform task definition
         required: true
         default: '0.8'
         type: choice
         options:
           - '0.8'
-          - '0.9'
       action:
         description: Deploy Alto, bootstrap its simulation contracts while dark, or roll back to a reviewed revision
         required: true
@@ -73,7 +72,6 @@ env:
   ALTO_UPSTREAM_DIGEST: sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d
   ALTO_MIRROR_TAG: v1.2.7-arm64-28cee87ea6b5
   ALTO_ENTRYPOINT_V8: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
-  ALTO_ENTRYPOINT_V9: '0x433709009B8330FDa32311DF1C2AFA402eD8D009'
   ALTO_DETERMINISTIC_DEPLOYER: '0x4e59b44847b379578588920cA78FbF26c0B4956C'
   ALTO_RPC_METHODS: eth_supportedEntryPoints,eth_estimateUserOperationGas,eth_sendUserOperation,eth_getUserOperationByHash,eth_getUserOperationReceipt,pimlico_getUserOperationGasPrice,pimlico_getUserOperationStatus
   ALTO_HEALTH_COMMAND: >-
@@ -96,6 +94,11 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+
+          if [ "$ALTO_ENTRYPOINT_VERSION" != "0.8" ]; then
+            echo "::error title=Unsupported EntryPoint profile::This workflow only administers legacy EntryPoint v0.8. Use the isolated Kernel canary with its reviewed patched Alto image for v0.9."
+            exit 1
+          fi
 
           if [ "$GITHUB_REF" != "refs/heads/master" ]; then
             echo "::error title=Unsupported workflow ref::Alto administration must be dispatched from master."
@@ -147,16 +150,12 @@ jobs:
             --arg recover_unavailable "$RECOVER_UNAVAILABLE" \
             --arg api_hostname "$API_HOSTNAME" \
             --arg environment "$ENVIRONMENT" \
-            --arg entrypoint_version "$ALTO_ENTRYPOINT_VERSION" \
             --arg rollback_task_definition "$ROLLBACK_TASK_DEFINITION" \
             --arg utility_gas_cushion_wei "$UTILITY_GAS_CUSHION_WEI" \
             '{schema:2, action:$action, recoverUnavailable:$recover_unavailable, apiHostname:$api_hostname,
               environment:$environment,
               rollbackTaskDefinition:$rollback_task_definition,
-              utilityGasCushionWei:$utility_gas_cushion_wei}
-              | if $entrypoint_version == "0.8" then .
-                elif $entrypoint_version == "0.9" then . + {schema:3, entryPointVersion:$entrypoint_version}
-                else error("Unsupported Alto EntryPoint version") end' \
+              utilityGasCushionWei:$utility_gas_cushion_wei}' \
             | sha256sum | cut -d' ' -f1)
           [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
           echo "Dispatch input fingerprint: sha256:$fingerprint"
@@ -174,10 +173,8 @@ jobs:
       id-token: write
     env:
       EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-      ALTO_V09_ENTRYPOINT_RUNTIME_HASH: ${{ vars.ALTO_V09_ENTRYPOINT_RUNTIME_HASH }}
     outputs:
       entrypoint_simulation_contract_v8: ${{ steps.bootstrap_simulations.outputs.entrypoint_simulation_contract_v8 }}
-      entrypoint_simulation_contract_v9: ${{ steps.bootstrap_simulations.outputs.entrypoint_simulation_contract_v9 }}
       pimlico_simulation_contract: ${{ steps.bootstrap_simulations.outputs.pimlico_simulation_contract }}
 
     steps:
@@ -257,16 +254,6 @@ jobs:
               expected_entrypoint=$ALTO_ENTRYPOINT_V8
               simulation_name=ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8
               smoke_path=/api/aa/rpc
-              ;;
-            0.9)
-              expected_entrypoint=$ALTO_ENTRYPOINT_V9
-              simulation_name=ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9
-              smoke_path=/api/aa/kernel/rpc
-              if [[ ! "$ALTO_V09_ENTRYPOINT_RUNTIME_HASH" =~ ^0x[0-9a-f]{64}$ ]] \
-                  || [[ "$ALTO_V09_ENTRYPOINT_RUNTIME_HASH" =~ ^0x0+$ ]]; then
-                echo "::error::The protected environment must pin the reviewed Arbitrum Sepolia EntryPoint v0.9 runtime hash."
-                exit 1
-              fi
               ;;
             *)
               echo "::error::Unsupported Alto EntryPoint version."
@@ -411,6 +398,14 @@ jobs:
             --output json \
             --no-cli-pager > "$task_definition_file"
 
+          if jq -e --arg alto "$ALTO_CONTAINER" '
+              any(.containerDefinitions[] | select(.name == $alto);
+                  any((.secrets // [])[]; .name == "PLETHER_ALTO_RPC_AUTH_TOKEN"))
+              ' "$task_definition_file" >/dev/null; then
+            echo "::error title=Authenticated Alto profile requires separate procedure::Use the reviewed RPC gateway cutover for authenticated v0.8, or the isolated Kernel canary for v0.9."
+            exit 1
+          fi
+
           if ! jq -e \
               --arg account "$actual_account_id" \
               --arg region "$AWS_REGION" \
@@ -419,7 +414,6 @@ jobs:
               --arg tmp_init "$ALTO_TMP_INIT_CONTAINER" \
               --arg router "$LOG_ROUTER_CONTAINER" \
               --arg entrypoint "${expected_entrypoint,,}" \
-              --arg entrypoint_version "$ALTO_ENTRYPOINT_VERSION" \
               --arg simulation_name "$simulation_name" \
               --arg deterministic_deployer "${ALTO_DETERMINISTIC_DEPLOYER,,}" \
               --arg execution_role "arn:aws:iam::$actual_account_id:role/plether-sepolia-alto-execution" \
@@ -590,7 +584,6 @@ jobs:
                 and $environment.ALTO_DEFAULT_API_VERSION == "v1"
                 and $environment.ALTO_RPC_METHODS == $rpc_methods
                 and ($environment.ALTO_SAFE_MODE == "true" or $environment.ALTO_SAFE_MODE == "false")
-                and ($entrypoint_version == "0.8" or $environment.ALTO_SAFE_MODE == "true")
                 and $environment.ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT == "0"
                 and $environment.ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER == "0"
                 and $environment.ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION == "false"
@@ -799,36 +792,6 @@ jobs:
             fi
           }
 
-          assert_v09_trace_capability() {
-            local zero_word
-            local params
-            local response
-            zero_word=$(printf '0%.0s' {1..64})
-
-            # Execute the provider's custom JavaScript tracer on the EntryPoint's
-            # read-only getNonce(address(0), 0) call. This checks RPC capability;
-            # it does not qualify Alto validation of a Kernel UserOperation.
-            local tracer='{
-              sawReturn: false,
-              step: function(log) { if (log.op.toString() === "RETURN") this.sawReturn = true; },
-              fault: function() {},
-              result: function(ctx) {
-                return { probe: "plether-v09", sawReturn: this.sawReturn, output: toHex(ctx.output) };
-              }
-            }'
-            params=$(jq -nc --arg entrypoint "$entrypoint" --arg tracer "$tracer" \
-              --arg calldata "0x35567e1a${zero_word}${zero_word}" \
-              '[{to: $entrypoint, data: $calldata}, "latest", {tracer: $tracer, timeout: "5s"}]')
-            if ! response=$(rpc_call "$rpc_url" debug_traceCall "$params" 2>/dev/null | head -c 4096) \
-                || [ "${#response}" -ge 4096 ] \
-                || ! jq -se --arg output "0x${zero_word}" \
-                  '. == [{jsonrpc: "2.0", id: 1, result: {probe: "plether-v09", sawReturn: true, output: $output}}]' \
-                  <<< "$response" >/dev/null 2>&1; then
-              echo "::error title=Alto RPC capability preflight failed::EntryPoint 0.9 requires ALTO_RPC_URL to execute a custom JavaScript debug_traceCall tracer."
-              exit 1
-            fi
-          }
-
           assert_gas_price_rpc_capabilities() {
             local latest_block
             local fee_history
@@ -941,9 +904,6 @@ jobs:
           assert_rpc_override_capabilities
           assert_gas_price_rpc_capabilities
           assert_deployed_code "EntryPoint v${ALTO_ENTRYPOINT_VERSION}" "$rpc_url" "$entrypoint"
-          if [ "$ALTO_ENTRYPOINT_VERSION" = "0.9" ] && [ "$ALTO_ACTION" != "rollback" ]; then
-            assert_v09_trace_capability
-          fi
           assert_deployed_code 'universal deterministic deployer' "$rpc_url" "$ALTO_DETERMINISTIC_DEPLOYER"
 
           if [ "$ALTO_ACTION" != "bootstrap-simulations" ]; then
@@ -1180,19 +1140,12 @@ jobs:
             --image-id imageDigest="$mirrored_digest" \
             --output json \
             --no-cli-pager)
-          scan_policy=$(jq -ce \
-            --arg environment "$TARGET_ENV" \
-            --arg region "$AWS_REGION" \
+          jq -e \
             --arg account "$EXPECTED_AWS_ACCOUNT_ID" \
             --arg repository "$ECR_REPOSITORY" \
             --arg digest "$mirrored_digest" \
-            --arg upstream "$ALTO_UPSTREAM_DIGEST" \
-            --argjson now "$(date -u +%s)" \
             '
             def uint: type == "number" and . >= 0 and floor == .;
-            def package_attribute($key; $value):
-              [.attributes[]? | select(.key == $key)]
-              | length == 1 and .[0].value == $value;
             if .registryId != $account or .repositoryName != $repository
               or .imageId.imageDigest != $digest
               or .imageScanStatus.status != "COMPLETE"
@@ -1210,25 +1163,9 @@ jobs:
             | [$scan.findings[] | select(.severity == "CRITICAL")] as $critical
             | if ($critical | length) == $critical_count then .
               else error("Alto critical finding count does not match detailed evidence") end
-            # Owner-approved temporary exception: this is risk acceptance, not
-            # a finding suppression or a claim that the runtime is unaffected.
-            | ($environment == "sepolia" and $region == "ap-southeast-1"
-                and $account == "932542905614" and $repository == "plether-alto-sepolia"
-                and $upstream == "sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
-                and $digest == "sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a"
-                and ($now | uint) and $now >= 1791331200 and $now < 1791936000) as $exception_scope
-            | [$critical[] | select($exception_scope
-                and .name == "CVE-2024-5535"
-                and package_attribute("package_name"; "openssl")
-                and package_attribute("package_version"; "3.1.4-r5"))] as $accepted
-            | if ($critical | length) != ($accepted | length) or ($accepted | length) > 1
-              then error("Alto image has an unaccepted critical finding")
-              else {criticalCount: $critical_count, acceptedCriticalCount: ($accepted | length)} end
-            ' <<< "$scan_findings")
-          if [ "$(jq -r '.acceptedCriticalCount' <<< "$scan_policy")" -eq 1 ]; then
-            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-10-14 00:00 UTC. The finding remains visible; other critical findings still block deployment."
-            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-10-14 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+            | if $critical_count == 0 then true
+              else error("Alto image has a critical finding") end
+            ' <<< "$scan_findings" >/dev/null
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
           echo "digest=$mirrored_digest" >> "$GITHUB_OUTPUT"
@@ -1263,7 +1200,6 @@ jobs:
         if: inputs.action == 'deploy' || inputs.action == 'bootstrap-simulations'
         env:
           ALTO_IMAGE: ${{ steps.alto_image.outputs.image }}
-          ALTO_ENTRYPOINT: ${{ steps.preflight.outputs.entrypoint }}
           EXECUTOR_KEYS_PARAMETER_REF: ${{ steps.preflight.outputs.executor_keys_parameter_ref }}
           RPC_PARAMETER_REF: ${{ steps.preflight.outputs.rpc_parameter_ref }}
           TASK_DEFINITION_FILE: ${{ steps.preflight.outputs.task_definition_file }}
@@ -1315,9 +1251,6 @@ jobs:
               --workdir /app/src \
               --cap-drop ALL \
               --security-opt no-new-privileges \
-              --env ALTO_ENTRYPOINT_VERSION \
-              --env ALTO_ENTRYPOINT \
-              --env ALTO_V09_ENTRYPOINT_RUNTIME_HASH \
               --entrypoint node \
               "$ALTO_IMAGE" \
               --input-type=module \
@@ -1331,13 +1264,7 @@ jobs:
                   throw new Error("invalid RPC input");
                 }
 
-                const contracts = process.env.ALTO_ENTRYPOINT_VERSION === "0.9" ? [
-                  {
-                    label: "EntryPoint v0.9",
-                    address: process.env.ALTO_ENTRYPOINT,
-                    expectedHash: process.env.ALTO_V09_ENTRYPOINT_RUNTIME_HASH,
-                  },
-                ] : [
+                const contracts = [
                   {
                     label: "EntryPoint",
                     address: "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
@@ -1390,17 +1317,12 @@ jobs:
                 process.stdout.write(JSON.stringify({ verifiedRuntimeCodeHashes: contracts.length }));
               '
           )
-          if [ "$ALTO_ENTRYPOINT_VERSION" = "0.9" ]; then
-            expected_hash_count=1
-          else
-            expected_hash_count=3
-          fi
-          if ! jq -e --argjson expected "$expected_hash_count" '.verifiedRuntimeCodeHashes == $expected' \
+          if ! jq -e '.verifiedRuntimeCodeHashes == 3' \
               <<< "$runtime_code_hashes" >/dev/null; then
             echo "::error::The pinned Alto image did not verify all approved runtime bytecode hashes."
             exit 1
           fi
-          echo "Runtime bytecode hash gate passed for the selected EntryPoint profile ($expected_hash_count pinned contracts)."
+          echo "Runtime bytecode hash gate passed for the legacy EntryPoint profile (3 pinned contracts)."
 
           IFS=',' read -r -a executor_key_values <<< "$executor_keys"
           if [ "${#executor_key_values[@]}" -ne 4 ]; then

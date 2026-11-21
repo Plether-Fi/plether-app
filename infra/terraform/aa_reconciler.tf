@@ -5,6 +5,7 @@ locals {
     { name = "HOME", value = "/tmp" },
     { name = "TMPDIR", value = "/tmp" },
     { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+    { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
     { name = "AA_KERNEL_PROFILE_JSON", value = var.aa_kernel_profile_json },
     { name = "AA_KERNEL_SPONSORSHIP_JSON", value = var.aa_kernel_sponsorship_json },
     { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },

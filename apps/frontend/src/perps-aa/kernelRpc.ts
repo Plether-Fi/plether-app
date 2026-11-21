@@ -22,15 +22,17 @@ import {
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE } from '../contracts/perpsAddresses'
 import { observeDeadlineResponse } from './deadlineClock'
 import { encodeKernelCalls, type KernelAccountPins } from './kernelAccount'
+import { kernelSepoliaCanaryPaymaster, kernelSepoliaCanaryProfile } from './kernelDeploymentPins'
 
 export const PERPS_KERNEL_RPC_PATH = '/api/perps/v1/aa/kernel/rpc'
 const chainId = 421614
 const entryPoint = entryPoint09Address.toLowerCase() as Address
-const emptyCodeHash = keccak256('0x')
-const zeroHash = toHex(0n, { size: 32 })
 const operationTopic = keccak256(toBytes('UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)'))
 const executionTopic = keccak256(toBytes('BeforeExecution()'))
 const recoveryTokenPattern = /^v1\.(0x[0-9a-f]{64})\.0x[0-9a-f]{64}\.\d{1,12}\.[0-9a-f]{64}$/
+const maxKernelPreVerificationGas = 12_000_000n
+const maxKernelAggregateGas = 17_000_000n
+const maxKernelEthPrefundWei = 50_000_000_000_000_000n
 
 export type KernelGasMode = 'sponsored' | 'eth'
 
@@ -59,6 +61,8 @@ export interface KernelPreparationIntent {
   preparationId: Hex
   sender: Address
   callData: Hex
+  /** Read directly from EntryPoint in the connected browser. Never sent to the gateway. */
+  expectedNonce: bigint
   factory?: Address | undefined
   factoryData?: Hex | undefined
 }
@@ -151,12 +155,6 @@ function address(value: unknown, allowZero = false): Address {
   return parsed
 }
 
-function codeHash(value: unknown): Hex {
-  const parsed = bytes(value, 32)
-  if (parsed === zeroHash || parsed === emptyCodeHash) return invalidResponse()
-  return parsed
-}
-
 function quantity(value: unknown, min = 0n, max = (1n << 256n) - 1n): bigint {
   if (typeof value !== 'string' || value.length > 66 || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/.test(value)) return invalidResponse()
   const parsed = BigInt(value)
@@ -168,7 +166,7 @@ function parseFundingAdvice(value: unknown): KernelGasFundingAdvice {
   const raw = record(value, ['balanceWei', 'entryPointDepositWei', 'maxNetworkGasWei', 'callValueWei', 'shortfallWei'])
   const balanceWei = quantity(raw.balanceWei)
   const entryPointDepositWei = quantity(raw.entryPointDepositWei)
-  const maxNetworkGasWei = quantity(raw.maxNetworkGasWei, 1n, 50_000_000_000_000_000n)
+  const maxNetworkGasWei = quantity(raw.maxNetworkGasWei, 1n, maxKernelEthPrefundWei)
   const callValueWei = quantity(raw.callValueWei)
   const shortfallWei = quantity(raw.shortfallWei, 1n)
   const liquidGas = maxNetworkGasWei > entryPointDepositWei ? maxNetworkGasWei - entryPointDepositWei : 0n
@@ -189,30 +187,21 @@ function recoveryToken(value: unknown, preparationId: Hex): string {
 export function parseKernelManifest(value: unknown): KernelManifest {
   const raw = record(value, ['version', 'profile', 'perpsRelease', ...tradingAddresses,
     'protectionCommitsEnabled', 'paymaster', 'readiness'])
-  const profile = record(raw.profile, ['deployment', 'chainId', 'entryPoint', 'entryPointVersion', 'entryPointCodeHash',
-    'factory', 'factoryCodeHash', 'staker', 'stakerCodeHash', 'implementation', 'implementationCodeHash', 'validator', 'validatorCodeHash',
-    'accountVersion', 'accountIndex', 'accountCodeHash'])
+  const pins = Object.entries(kernelSepoliaCanaryProfile)
+  const profile = record(raw.profile, pins.map(([key]) => key))
   const readiness = record(raw.readiness, ['eth', 'sponsored'])
   const expectedRelease = PERPS_RELEASE.release.version
+  const paymaster = raw.paymaster === null ? null : address(raw.paymaster)
   if (raw.version !== 1 || !PERPS_RELEASE.isDeployed || !expectedRelease || raw.perpsRelease !== expectedRelease ||
     !tradingAddresses.every(key => address(raw[key]) === PERPS_ARBITRUM_SEPOLIA[key].toLowerCase()) ||
-    typeof profile.deployment !== 'string' || !/^[a-z0-9._-]{1,96}$/.test(profile.deployment) ||
-    profile.chainId !== chainId || address(profile.entryPoint) !== entryPoint || profile.entryPointVersion !== '0.9' ||
-    address(profile.staker) === address(profile.factory) ||
-    profile.accountVersion !== 'kernel-v4-uups' || profile.accountIndex !== 0 ||
+    !pins.every(([key, expected]) => typeof expected === 'string' && expected.startsWith('0x')
+      ? bytes(profile[key], (expected.length - 2) / 2) === expected
+      : profile[key] === expected) ||
     typeof raw.protectionCommitsEnabled !== 'boolean' || typeof readiness.eth !== 'boolean' || typeof readiness.sponsored !== 'boolean' ||
-    (raw.paymaster === null && readiness.sponsored)) return invalidResponse()
+    (paymaster === null ? readiness.sponsored : paymaster !== kernelSepoliaCanaryPaymaster)) return invalidResponse()
   return {
     version: 1,
-    profile: {
-      deployment: profile.deployment, chainId, entryPoint, entryPointVersion: '0.9',
-      entryPointCodeHash: codeHash(profile.entryPointCodeHash),
-      factory: address(profile.factory), factoryCodeHash: codeHash(profile.factoryCodeHash),
-      staker: address(profile.staker), stakerCodeHash: codeHash(profile.stakerCodeHash),
-      implementation: address(profile.implementation), implementationCodeHash: codeHash(profile.implementationCodeHash),
-      validator: address(profile.validator), validatorCodeHash: codeHash(profile.validatorCodeHash),
-      accountVersion: 'kernel-v4-uups', accountIndex: 0, accountCodeHash: codeHash(profile.accountCodeHash),
-    },
+    profile: kernelSepoliaCanaryProfile,
     perpsRelease: expectedRelease,
     settlementToken: PERPS_ARBITRUM_SEPOLIA.settlementToken,
     marginClearinghouse: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
@@ -220,7 +209,7 @@ export function parseKernelManifest(value: unknown): KernelManifest {
     cfdEngine: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
     positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
     protectionCommitsEnabled: raw.protectionCommitsEnabled,
-    paymaster: raw.paymaster === null ? null : address(raw.paymaster),
+    paymaster,
     readiness: { eth: readiness.eth, sponsored: readiness.sponsored },
   }
 }
@@ -240,17 +229,20 @@ function parseKernelOperation(value: unknown, mode: KernelGasMode): UserOperatio
     callData: bytes(raw.callData, 1, 16_384),
     callGasLimit: quantity(raw.callGasLimit, 1n, 3_000_000n),
     verificationGasLimit: quantity(raw.verificationGasLimit, 1n, 1_000_000n),
-    preVerificationGas: quantity(raw.preVerificationGas, 1n, 1_000_000n),
+    preVerificationGas: quantity(raw.preVerificationGas, 1n, maxKernelPreVerificationGas),
     maxFeePerGas: quantity(raw.maxFeePerGas, 1n, 10_000_000_000n),
     maxPriorityFeePerGas: quantity(raw.maxPriorityFeePerGas, 0n, 2_000_000_000n),
     signature: '0x' as const,
     ...(factory && factoryData ? { factory, factoryData } : {}),
   }
   const baseGas = base.callGasLimit + base.verificationGasLimit + base.preVerificationGas
-  if (base.maxPriorityFeePerGas > base.maxFeePerGas || baseGas + 100_000n > 5_000_000n && mode === 'eth') {
+  if (base.maxPriorityFeePerGas > base.maxFeePerGas || baseGas > maxKernelAggregateGas) {
     return invalidResponse()
   }
-  if (mode === 'eth') return base
+  if (mode === 'eth') {
+    if (baseGas * base.maxFeePerGas > maxKernelEthPrefundWei) return invalidResponse()
+    return base
+  }
   const paymasterData = bytes(raw.paymasterData, 157)
   const paymasterVerificationGasLimit = quantity(raw.paymasterVerificationGasLimit, 1n, 1_000_000n)
   const paymasterPostOpGasLimit = quantity(raw.paymasterPostOpGasLimit, 0n, 0n)
@@ -258,7 +250,7 @@ function parseKernelOperation(value: unknown, mode: KernelGasMode): UserOperatio
   const validUntil = BigInt(slice(paymasterData, 0, 6))
   const validAfter = BigInt(slice(paymasterData, 6, 12))
   const ceiling = BigInt(slice(paymasterData, 12, 28))
-  if (paymasterData.endsWith('22e325a297439656') || gas > 5_000_000n || validUntil <= validAfter ||
+  if (paymasterData.endsWith('22e325a297439656') || gas > maxKernelAggregateGas || validUntil <= validAfter ||
     validUntil - validAfter > 600n || ceiling < gas * base.maxFeePerGas || ceiling > 10_000_000_000_000_000n) {
     return invalidResponse()
   }
@@ -317,7 +309,7 @@ export function parseKernelPreparation(
     return invalidResponse()
   }
   const operation = parseKernelOperation(raw.operation, intent.mode)
-  if (operation.sender !== intent.sender.toLowerCase() || operation.callData !== intent.callData.toLowerCase() ||
+  if (operation.nonce !== intent.expectedNonce || operation.sender !== intent.sender.toLowerCase() || operation.callData !== intent.callData.toLowerCase() ||
     operation.factory !== intent.factory?.toLowerCase() || operation.factoryData !== intent.factoryData?.toLowerCase() ||
     (operation.factory && operation.factory !== manifest.profile.staker)) return invalidResponse()
   const expiresAt = seconds(raw.expiresAt)
@@ -467,7 +459,9 @@ export async function fetchKernelManifest(signal?: AbortSignal): Promise<KernelM
 export async function prepareKernelOperation(
   manifest: KernelManifest, intent: KernelPreparationIntent, signal?: AbortSignal,
 ): Promise<KernelPreparedOperation> {
-  const { result, now } = await rpc('plether_prepareUserOperation', [{ version: 1, ...intent }], signal)
+  const { expectedNonce, ...request } = intent
+  if (typeof expectedNonce !== 'bigint' || expectedNonce < 0n || expectedNonce >> 64n !== 0n) return invalidResponse()
+  const { result, now } = await rpc('plether_prepareUserOperation', [{ version: 1, ...request }], signal)
   return parseKernelPreparation(result, manifest, intent, now)
 }
 
@@ -513,7 +507,7 @@ export async function prepareKernelCancellation(
     version: 1, ...locator, preparationId: intent.preparationId, recoveryToken: original.recoveryToken, originalOperation,
   }], signal)
   return {
-    ...parseKernelPreparation(result, manifest, { ...intent, mode: 'eth', sender, callData }, now, {
+    ...parseKernelPreparation(result, manifest, { ...intent, mode: 'eth', sender, callData, expectedNonce: original.operation.nonce }, now, {
       original, hash: locator.originalUserOperationHash,
     }),
     mode: 'eth',
@@ -528,7 +522,9 @@ export async function sendKernelCancellation(
   assertKernelPreparedOperation(prepared)
   if (prepared.cancelsUserOperationHash !== locator.originalUserOperationHash ||
     prepared.operation.nonce !== original.operation.nonce || prepared.operation.sender !== original.operation.sender ||
-    prepared.operation.callData !== encodeKernelCalls([{ to: original.operation.sender }])) return invalidResponse()
+    prepared.operation.callData.toLowerCase() !== encodeKernelCalls([{ to: original.operation.sender }])) return invalidResponse()
+  // The replacement preparation has its own token. Authorization to replace
+  // an operation after an IP change remains scoped to the original operation.
   const { result } = await rpc('plether_sendUserOperationCancellation', [{
     version: 1, ...locator, preparationId: prepared.preparationId, recoveryToken: original.recoveryToken,
     operation: formatUserOperationRequest({ ...prepared.operation, signature: bytes(signature, 65) }),
