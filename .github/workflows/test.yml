@@ -119,6 +119,10 @@ jobs:
         working-directory: .
         run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs scripts/install-foundry-ci.test.mjs
 
+      - name: Verify guarded Sepolia bridge invariants
+        working-directory: .
+        run: node --test scripts/kernel-qualification/bridge-sepolia.test.mjs
+
       - name: Install pinned local EVM for AA execution regressions
         id: foundry
         continue-on-error: true
