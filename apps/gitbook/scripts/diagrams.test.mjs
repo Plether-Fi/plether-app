@@ -9,7 +9,7 @@ const content = id => JSON.stringify(get(id).blocks)
 
 test('every generated asset has exactly one synchronized article reference', () => {
   const assetRoot = new URL('../.gitbook/assets/diagrams/', import.meta.url)
-  assert.equal(readdirSync(assetRoot).filter(name => name.endsWith('.svg')).length, 30)
+  assert.equal(readdirSync(assetRoot).filter(name => name.endsWith('.svg')).length, 33)
   for (const d of diagrams) {
     const article = readFileSync(new URL(`../${d.source}`, import.meta.url), 'utf8')
     assert.equal(article.split(`/${d.id}.svg)`).length - 1, 1)
@@ -18,9 +18,9 @@ test('every generated asset has exactly one synchronized article reference', () 
   }
 })
 
-test('all 30 diagrams have unique IDs, source articles and review evidence', () => {
-  assert.equal(diagrams.length, 30)
-  assert.equal(new Set(diagrams.map(d => d.id)).size, 30)
+test('all 33 diagrams have unique IDs, source articles and review evidence', () => {
+  assert.equal(diagrams.length, 33)
+  assert.equal(new Set(diagrams.map(d => d.id)).size, 33)
   for (const d of diagrams) {
     assert.match(d.source, /\.md$/)
     assert.ok(d.description.length > 40)
@@ -50,14 +50,16 @@ test('rendering is deterministic, portable and accessible', () => {
     assert.doesNotMatch(svg, /foreignObject|<script|<image|undefined|NaN/)
   }
 })
-test('all diagram colors come from the media kit, its cream surface or frontend positive green', () => {
+test('all diagram colors come from the media kit or frontend dark-UI tokens', () => {
   const landing = readFileSync(new URL('../../landing/src/App.tsx', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('../../landing/src/styles.css', import.meta.url), 'utf8').toUpperCase()
   const swatches = landing.match(/const MEDIA_COLORS = \[([\s\S]*?)\] as const/)[1]
   const frontend = readFileSync(new URL('../../frontend/src/index.css', import.meta.url), 'utf8')
   assert.equal(brandPalette.green, frontend.match(/--color-positive:\s*(#[\da-fA-F]{6})/)[1].toUpperCase())
+  assert.equal(brandPalette.panel, frontend.match(/--color-surface-panel:\s*(#[\da-fA-F]{6})/)[1].toUpperCase())
+  assert.equal(brandPalette.mutedInk, frontend.match(/--color-content-secondary:\s*(#[\da-fA-F]{6})/)[1].toUpperCase())
   for (const [name, color] of Object.entries(brandPalette)) {
-    if (name === 'green') continue
+    if (name === 'green' || name === 'panel' || name === 'mutedInk') continue
     assert.ok(name === 'cream' ? styles.includes(color) : swatches.includes(color), color)
   }
   const allowed = new Set(Object.values(brandPalette))
@@ -70,12 +72,13 @@ test('all diagram colors come from the media kit, its cream surface or frontend 
   }
   assert.deepEqual(used, allowed)
 })
-test('positive green remains an accent, with high-contrast plum text', () => {
+test('dark-plum cards use positive green accents and keep low-contrast orange out of text labels', () => {
   const success = renderDiagram(get('delayed-order-execution-pipeline'))
   assert.ok(success.includes(`fill="${brandPalette.green}"`))
+  assert.ok(success.includes(`fill="${brandPalette.plum}"`))
   for (const d of diagrams) {
     const labels = renderDiagram(d).match(/<text\b[^>]*>/g)
-    assert.ok(labels.every(label => !label.includes(brandPalette.green)), d.id)
+    assert.ok(labels.every(label => !label.includes(brandPalette.orange)), d.id)
   }
 })
 test('calendar uses New York DST-aware boundaries and labels its non-scaled sequence', () => {

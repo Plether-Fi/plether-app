@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1015" viewBox="0 0 640 1015" role="img" aria-labelledby="dollar-index-bounded-payoff-title dollar-index-bounded-payoff-desc" focusable="false">
+<title id="dollar-index-bounded-payoff-title">Inverse basket, bounded 0.00 to 2.00</title>
+<desc id="dollar-index-bounded-payoff-desc">The raw foreign-currency basket moves opposite to USD strength. The interface displays 2.00 minus the raw basket so LONG USD rises with the dollar and payouts stay bounded. Finite bounds let Plether verify worst-case pool backing before admitting new risk. Bounds are not liquidation protection.</desc>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="1015" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · THE DOLLAR INDEX</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Inverse basket, bounded 0.00 to</text>
+<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">2.00</text>
+<path d="M32 180 L608 180" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 180 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<rect x="32" y="206" width="576" height="266" rx="12" fill="#3B212D" stroke="#9A8890" stroke-width="1.5"/>
+<text x="56" y="242" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="528">Displayed plDXY = 2.00 − B</text>
+<text x="60" y="278" font-size="22" font-weight="700" fill="#F7D977" data-max-width="200">SHORT USD</text>
+<path d="M302 269 H200 m6 -6 -6 6 6 6" stroke="#F7D977" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<path d="M338 269 H440 m-6 -6 6 6 -6 6" stroke="#00FF99" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="580" y="278" font-size="22" font-weight="700" fill="#00FF99" data-max-width="200" text-anchor="end">LONG USD</text>
+<rect x="56" y="298" width="262" height="16" rx="8" fill="#F7D977" stroke="none"/>
+<rect x="322" y="298" width="262" height="16" rx="8" fill="#00FF99" stroke="none"/>
+<circle cx="320" cy="306" r="9" fill="#250917" stroke="#FFF5F9" stroke-width="3"/>
+<text x="56" y="346" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="90">0.00</text>
+<text x="320" y="346" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="150" text-anchor="middle">1.00 (Ref)</text>
+<text x="584" y="346" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="140" text-anchor="end">2.00 (Cap)</text>
+<path d="M56 364 L584 364" stroke="#9A8890" stroke-width="1" stroke-dasharray="4 4" fill="none"/>
+<text x="56" y="398" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="528">Raw FX Basket (B)</text>
+<text x="56" y="434" font-size="22" font-weight="700" fill="#D8CBD0" data-max-width="90">2.00</text>
+<text x="320" y="434" font-size="22" font-weight="700" fill="#D8CBD0" data-max-width="90" text-anchor="middle">1.00</text>
+<text x="584" y="434" font-size="22" font-weight="700" fill="#D8CBD0" data-max-width="90" text-anchor="end">0.00</text>
+<rect x="32" y="494" width="278" height="349" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="44" y="497" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="48" y="536" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">LONG USD</text>
+<path d="M48 553 L294 553" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="579" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Profits as USD rises</text>
+<text x="48" y="615" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Raw basket falls</text>
+<text x="48" y="645" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">toward 0.00; plDXY</text>
+<text x="48" y="675" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">rises toward 2.00.</text>
+<path d="M171 691 V711 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="48" y="747" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Max gross profit</text>
+<text x="48" y="783" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Entry raw basket ×</text>
+<text x="48" y="813" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">quantity.</text>
+<rect x="330" y="494" width="278" height="349" rx="12" fill="#3B212D" stroke="#F7D977" stroke-width="1.5"/>
+<rect x="342" y="497" width="254" height="5" rx="3" fill="#F7D977" stroke="none"/>
+<text x="346" y="536" font-size="24" font-weight="700" fill="#F7D977" data-max-width="246">SHORT USD</text>
+<path d="M346 553 L592 553" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="579" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Profits as USD falls</text>
+<text x="346" y="615" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Raw basket rises</text>
+<text x="346" y="645" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">toward 2.00; plDXY</text>
+<text x="346" y="675" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">falls toward 0.00.</text>
+<path d="M469 691 V711 m-6 -6 6 6 6 -6" stroke="#F7D977" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="346" y="747" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Max gross profit</text>
+<text x="346" y="783" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">(2.00 − entry raw</text>
+<text x="346" y="813" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">basket) × quantity.</text>
+<rect x="32" y="865" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="875" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="899" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Finite bounds let Plether verify worst-case</text>
+<text x="56" y="929" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">pool backing before admitting new risk. Bounds</text>
+<text x="56" y="959" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">are not liquidation protection.</text>
+</svg>

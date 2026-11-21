@@ -1,158 +1,99 @@
 # Take profit and stop loss
 
-Take profit (TP) and stop loss (SL) set price conditions for automatically closing your plDXY Perp position. You can set either trigger or both. Each applies to the **full position**, not a partial reduction.
+Take profit (TP) and stop loss (SL) set onchain price triggers to automatically queue a **full-position close** for your plDXY Perp position. You can set either trigger or both (first accepted trigger queues the exit and cancels the other). Partial TP/SL exits are not supported.
 
-When an eligible oracle price reaches a trigger, a keeper submits a transaction that queues a full-position close. The close then waits for execution. If both triggers are set, the first one accepted onchain determines the exit and the other is cancelled.
-
-{% hint style="warning" %}
-A trigger price is not a guaranteed fill price or maximum loss. Your position remains exposed to price changes, carry and liquidation until the close executes. A chart crossing alone does not confirm that a trigger or close has been processed.
-{% endhint %}
-
-Screenshots below use the current application components in Storybook with illustrative values. They are not live trades or execution guarantees.
+> **Warning: Trigger prices are not guaranteed fills**
+>
+> * Reaching a trigger price submits a **delayed full-position close order** into the FIFO queue; your position stays exposed to price moves, carry and liquidation until that close executes.
+> * **Uncapped close slippage in the web interface:** The current web interface sets all four onchain `CloseFinancialLimits` on triggered TP/SL closes to unlimited (`uint256.max`), prioritizing exit completion over a price cap—so a triggered close executes like a market close once queued.
+> * **Paused during weekend/holiday freezes:** New TP/SL triggers cannot fire while `oracleFrozen` is active.
 
 ### Choose your trigger prices
 
-Use the dollar-oriented plDXY Perp price displayed in the application. The application converts it into the raw basket price used by the contracts; you do not need to invert it yourself.
+Enter triggers using the displayed dollar-oriented **plDXY Perp price** (the app handles conversion to the raw basket automatically):
 
 | Position | Take profit | Stop loss |
 | --- | --- | --- |
-| Long plDXY Perp | Above the current displayed price | Below the current displayed price |
-| Short plDXY Perp | Below the current displayed price | Above the current displayed price |
+| **Long plDXY Perp** | Above current price | Below current price |
+| **Short plDXY Perp** | Below current price | Above current price |
 
-Each trigger has two editable fields:
+Each trigger offers two synchronized inputs:
 
-* **Price**, in USDG: the absolute trigger price.
-* **Gain** or **Loss**, in percent: gross price PnL from entry as a percentage of position margin. The calculation uses entry price, position quantity and margin, so it accounts for leverage. A negative Loss % locks in a gain; a negative Gain % targets a loss.
+* **Price (`USDG`)** — absolute trigger price (up to 8 decimals).
+* **Gain / Loss (`%`)** — gross price PnL from entry as a percentage of **position margin** (accounts for leverage, excludes fees, carry and VPI; up to 4 decimals). A negative Loss % locks in a gain; a negative Gain % targets a loss.
 
-Editing either field recalculates the other when position data and a valid current price are available. You can enter one trigger as a price and the other as a percentage. Prices support up to eight decimal places; percentages support up to four. Calculated percentages are truncated to four decimals. If position data is unavailable, including while an attached opening order is waiting to fill, use absolute trigger prices.
-
-For example, a position with entry at 1.00 USDG, quantity of 1,000 and margin of 100 USDG has a 50% gain target of 50 USDG and a 20% loss target of 20 USDG. For a long, those give TP at 1.05 and SL at 0.98. For a short, TP is 0.95 and SL is 1.02. These are illustrative inputs, not recommended settings.
-
-**Gain/Loss is gross return on position margin, not net PnL.** It excludes fees, carry and VPI. New orders use the preview's estimated entry, quantity and margin. Read [How PnL is calculated](../how-plether-works/how-pnl-is-calculated.md).
-
-The editor shows the estimated liquidation price when available and rejects stop losses at or beyond it. A 90% loss target can still be beyond liquidation because maintenance margin and account collateral affect the liquidation boundary. Choose a stop before that boundary; a trigger still does not guarantee execution before liquidation.
-
-An existing position's percentage target is anchored to its entry and margin. A new order's preview can change before review. Review fixes the absolute trigger prices for confirmation; changes to position entry or margin require another review, and the stop is checked again against the latest available liquidation price. Saved triggers do not trail the market or reset to a new return percentage. Their displayed return and distance from the current price can change while their absolute prices stay fixed.
+Stop losses at or beyond the estimated **liquidation price** are rejected. Saved triggers store fixed absolute prices—they do not trail the market or automatically shift if you add margin later.
 
 ### Attach TP/SL to a new position
 
 ![Trade ticket with Take profit / stop loss checked and both trigger inputs expanded](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--add-take-profit-stop-loss.png)
 
-1. Configure a new opening order in the trade ticket.
-2. Select **Take profit / stop loss** and enter one or both triggers.
-3. Review the opening order, trigger prices and additional execution reserve.
-4. Authorize the sponsored operation in your wallet and wait for onchain confirmation.
-5. Check the **TP/SL** tab below the chart. Attached triggers show **Waiting for position** until the opening order fills, then **Active** when armed.
+1. Configure a new opening order in the trade ticket (available only when flat and `Reduce only` is unchecked).
+2. Check **Take profit / stop loss** and enter one or both trigger levels.
+3. Review the opening order, trigger prices, and the additional **trigger reserve** (`0.20 USDG` in Core v2.0.0).
+4. Authorize the sponsored operation. Attached triggers show **Waiting for position** in the **TP/SL** tab until the opening order fills, then switch to **Active**.
 
-Opening-order confirmation is not an opening fill. Attached triggers cannot protect a position before it exists. If the opening order does not execute successfully, inspect its outcome and protection record rather than assuming the triggers became active.
+If the opening order fails or expires, inspect both **Order History** and the **TP/SL** tab—no triggers activate without a filled position.
 
-The trade-ticket checkbox attaches triggers to a **new position**, not to an increase or reduction. For an existing position or protection, it is greyed out; its information tooltip directs you to the TP/SL tab. Selecting **Reduce only** hides the checkbox. Feature availability also depends on the deployment and service configuration.
+### Add, edit or remove TP/SL on an existing position
 
-### Add TP/SL to an existing position
-
-1. Open the **TP/SL** tab below the chart.
-2. Select **Add TP/SL**. The position must exist and its pending orders must have finished.
-3. Enter one or both triggers, then select **Review TP/SL**.
-4. Check the prices, **100% of the position**, execution reserve and activation timing.
-5. Select **Confirm TP/SL**, authorize the wallet request, and wait for **TP/SL saved** and **Active**.
-
-Only one active protection record can control the account at a time. If protection already exists, use **Edit TP/SL** instead of creating a second pair.
+1. Open the **TP/SL** tab below the chart (your position must exist with **zero pending orders**).
+2. Select **Add TP/SL**, enter one or both triggers, click **Review TP/SL**, verify **100% of the position** and the trigger reserve, and confirm in your wallet.
 
 ![Active TP/SL with saved trigger prices and the worker monitoring notice](../.gitbook/assets/screenshots/storybook-perps-position-protection--armed.png)
 
-### Execution reserve and sponsorship
+While status is **Waiting for position** or **Active**:
 
-Creating TP/SL reserves USDG from free funds for the trigger reward. The resulting close order has zero keeper execution reward. Attaching TP/SL to an opening order requires the trigger reserve as well as the opening order's normal margin and execution reward.
+* **Edit TP/SL** replaces trigger prices while keeping the existing protection record and reserve (old triggers stay active until the edit confirms onchain).
+* **Remove TP/SL** cancels protection and refunds any unpaid trigger reserve. It does **not** close your position or cancel a pending opening order.
+* **Discretionary orders are blocked while TP/SL is active.** To manually increase, reduce, or close your position, remove untriggered TP/SL first and wait for confirmation. You can still use **Add Margin** from the Position tab at any time.
 
-Use the trigger amount shown in the review: it comes from the deployment's configuration. For example, a 0.2 USDG trigger reward requires an additional 0.2 USDG reserve; no second reward is reserved for close execution.
+Once status reaches **Close queued** or **Close delayed**, TP/SL can no longer be edited or removed.
 
-Gas sponsorship does not pay this USDG reserve or remove normal trading costs. When available, it pays network gas for an eligible create, edit or remove operation that you authorize. Triggering, retrying and executing a close are separate keeper transactions.
+### Trigger reserve and sponsorship
 
-**Execution details** shows the remaining reserve, protection reference and latest close-order reference. Removing untriggered protection releases its unpaid reserve. See [Gas-sponsored trading](gas-sponsored-trading-and-your-plether-trading-account.md) and [Trading costs](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
+Creating TP/SL reserves **`0.20 USDG`** (Core v2.0.0 `positionProtectionTriggerBountyAssets`) from **Available to Trade** (free USDG—adding position margin does not fund this reserve). That reserve pays the protection keeper that submits the trigger transaction. The resulting close order itself has **`0 USDG`** keeper execution reward.
 
-### Edit or remove TP/SL
-
-You can edit or remove protection while it is **Waiting for position** or **Active**.
-
-* **Edit TP/SL** opens the editor. Existing triggers remain in place until the replacement prices confirm onchain.
-* **Remove TP/SL** asks for a separate confirmation. It does **not** close the position. If attached to a pending opening order, that order remains committed and can still fill without TP/SL.
-
-If the account, position or protection changes during review, go back and review it again. A trigger may also be processed before an edit or removal confirms; opening the editor does not pause monitoring.
-
-While protection controls the position, discretionary order submission is blocked. To increase, reduce or manually close the position, remove its untriggered TP/SL first and wait for confirmation. You can still add margin from the Position tab.
-
-Once protection is **Close queued** or **Close delayed**, it cannot be edited or removed. Removal is not a way to cancel an already-triggered exit.
+Creating, editing, and removing TP/SL are **gas-sponsored** operations (and removing/cancelling TP/SL remains sponsored even if new protection sponsorship is paused).
 
 ### Understand every protection state
 
-These states are separate from the wallet's sponsored-operation status and the linked order's execution status.
-
 | Interface status | Contract status | Meaning |
 | --- | --- | --- |
-| Not set | None | No active TP/SL record is selected. Older records may still appear in activity. |
-| Waiting for position | PendingOpen | Triggers are attached to an opening order but are not active yet. |
-| Active | Armed | An eligible trigger can queue a full close. The close has not necessarily started. |
-| Close queued | Triggered | A trigger was accepted and a close order was queued. Execution has not necessarily completed. |
-| Close delayed | Latched | A close attempt failed, but the original triggered exit remains binding. Protection is unresolved. |
-| Closed | Executed | TP/SL successfully closed the protected position. Neither trigger remains active. |
-| Not completed | Failed | Protection ended without a successful TP/SL close. Check the position and order outcome; do not assume the position is closed. |
-| Removed | Cancelled | TP/SL was removed. This did not close a position or cancel its opening order. |
-| Liquidated | Liquidated | The protected position was liquidated. Its triggers are no longer active. |
+| **Not set** | `None` | No active TP/SL record on the account |
+| **Waiting for position** | `PendingOpen` | Attached to a pending opening order; not active until the open fills |
+| **Active** | `Armed` | Triggers are live; eligible oracle crossing queues a full close |
+| **Close queued** | `Triggered` | Trigger accepted onchain and full close order queued in FIFO |
+| **Close delayed** | `Latched` | Linked close attempt failed, but the triggered exit stays **permanently binding** |
+| **Closed** | `Executed` | TP/SL close executed and closed the position |
+| **Not completed** | `Failed` | Protection ended without a TP/SL close; check position & Order History |
+| **Removed** | `Cancelled` | Protection removed by the trader (position untouched) |
+| **Liquidated** | `Liquidated` | Position liquidated before TP/SL completed |
 
 ![Close queued after a trigger, with the linked order awaiting execution](../.gitbook/assets/screenshots/storybook-perps-position-protection--close-queued.png)
 
-#### Close delayed: what “latched” means
+#### What "Close delayed" (`Latched`) means
 
-A failed close attempt does not reset a triggered protection to ordinary price watching. The original exit stays binding **even if the price moves back across the trigger**. A retry does not need another crossing.
+If a triggered close order fails (for example, expires during queue congestion), the protection enters **Close delayed** (`Latched`). **The exit remains permanently binding even if the price reverses back across your trigger.** You cannot edit or remove a latched protection, though you can still add margin.
 
 ![Close delayed with a binding trigger and a queue-related retry delay](../.gitbook/assets/screenshots/storybook-perps-position-protection--latched.png)
 
-The current protection worker automatically considers retries for expired close attempts. It checks pending account orders, oracle availability and whether the queue can plausibly process a retry within its expiry window. Queue cleanup may be necessary first. These checks reduce unnecessary retries; they do not guarantee execution.
+* **Expired close retries:** The protection worker automatically retries expired latched closes once account pending orders clear, oracle data is usable (including bounded frozen pricing if the market froze after latching), and FIFO queue capacity fits within the 60-second execution window.
+* **Non-expiry failures:** Failures other than expiry display **`Operator review required`** and are **not** auto-retried; contact support with your protection reference, close order ID, and transaction hash.
 
-Failures outside the supported expiry case show **Operator review required** instead of being retried automatically. This is an operational alert, not permission to bypass contract rules or a statement that the position has closed. Contact support with the protection reference, linked close-order reference and transaction hash. Never share your seed phrase or private key.
+### Automatic execution status & operational realities
 
-While the close is unresolved, keep checking account health. You can add margin, but cannot edit or remove latched TP/SL. The interface leaves retries and finalization to keepers; it does not offer a wallet-operated retry button.
+The **Automatic execution status** panel displays the protection worker's latest advisory check (refreshed every 5 seconds; not an execution guarantee). Key operational behaviors to plan around:
 
-### Automatic execution status
+* **Trigger rules:** Requires a fresh oracle observation with `publishTime > armedAt` and `blockNumber > armedBlock` (same-block triggers are rejected). Transient price wicks that revert before inclusion do not trigger.
+* **Worker timing:** The reference protection worker indexes new records **12 blocks behind head**, polls every **5 seconds**, processes up to 50 candidates per pass, submits **1 transaction at a time**, and does not automatically fee-bump a dropped transaction.
+* **Market freezes:** New armed triggers pause during `oracleFrozen` (the market can gap across your trigger or into liquidation when FX reopens). Already-latched expired closes can still retry under frozen-close rules (`0.50%` frozen-close spread).
+* **Liquidation precedence:** TP/SL never suspends liquidation (including the 3.00% FAD margin jump before Friday close) and does not guarantee immediate cash settlement if pool liquidity triggers a [trader claim](check-and-settle-a-trader-claim.md).
 
-The **Automatic execution status** notice is the worker's latest observation. It is advisory, not proof of an onchain transaction or an execution guarantee. Check its timestamp alongside protection and linked-order states.
+### Inspecting TP/SL activity
 
-| Notice | Meaning |
-| --- | --- |
-| Watching your trigger prices | The last check did not find an eligible trigger. |
-| Preparing the close / Preparing a retry | An eligible action was identified; a new close is not confirmed yet. |
-| Waiting for live prices / Waiting for a usable oracle price | Oracle conditions prevent progress. New triggers are paused while the oracle is frozen. |
-| Waiting for your pending orders | Another account order must finish before a retry. |
-| Waiting for the execution queue / Clearing an expired queue entry | Queue conditions or cleanup are delaying a retry. |
-| Operator review required | The failure is outside the worker's automatic retry policy. |
-| Automatic execution is paused | The worker is in monitoring-only mode. Onchain TP/SL has not been removed. |
-| Execution check did not complete | The worker could not finish checking or preparing a transaction. A retry is not confirmed. |
-| Waiting for updated contract state | The worker observed a different state; the current onchain state takes precedence. |
-
-If the observation is unavailable or stale, there is no reliable fresh check to rely on. Refresh and inspect contract/order status rather than assuming a close was submitted.
-
-Closing the browser does not remove onchain triggers or require your wallet to remain connected for a keeper to act. However, keepers, RPC access and valid oracle updates remain dependencies for timely execution.
-
-### Oracle, queue and liquidation limitations
-
-Trigger evaluation requires an eligible oracle observation after protection was armed. A chart tick, an old price or an unavailable oracle update is not proof that the contracts accepted a trigger.
-
-New triggers are paused during `oracleFrozen`. An already-triggered close has a separate lifecycle: an eligible latched retry can still be queued under the applicable rules, and execution remains subject to the market's close policy. An oracle freeze does not cancel an already-triggered exit.
-
-Once queued, the close follows the order router's execution process. Trigger and execution prices can differ; TP/SL is not a resting limit order and does not promise a fill at the trigger. See [How orders execute](../how-plether-works/how-orders-execute.md) and [Market states and oracle closures](../how-plether-works/market-states-and-oracle-closures.md).
-
-TP/SL does not suspend liquidation, stop carry while a position remains open or guarantee immediate settlement of a profitable close. A successful close can still produce a [trader claim](check-and-settle-a-trader-claim.md).
-
-### Check activity and troubleshoot
-
-**TP/SL activity** lists protection records. Expand one to inspect trigger prices, opening/close references and events such as **TP/SL added**, **Triggers became active**, **Trigger prices updated**, **Exit price reached**, **Close order queued**, **Close did not complete**, **TP/SL removed** and **Protection finished**. Transaction links open the corresponding onchain actions.
+Expand any record under **TP/SL activity** to inspect trigger prices, opening/close order references, and chronological onchain events (such as **TP/SL added**, **Triggers became active**, **Stop loss reached** / **Take profit reached**, **Close order queued**, **Close did not complete**, and **TP/SL closed**) with explorer links.
 
 ![Completed TP/SL record with expanded activity and transaction links](../.gitbook/assets/screenshots/storybook-perps-position-protection--closed.png)
 
-In this completed example, the current panel shows **Not set** because no protection remains active. The expanded **Closed** record below preserves the earlier trigger, failed attempt, retry and final close.
-
-Use **Order History** for the linked order outcome. A failed close attempt is not the same as terminally failed protection: **Close delayed** means the triggered exit remains unresolved.
-
-If activity is unavailable, use **Try again**. Indexing can lag behind confirmation; an activity error alone does not remove protection or prove that a transaction failed. Check the current TP/SL state and transaction before submitting another operation.
-
-If creation or editing is rejected because sponsorship or new protection is disabled, a wallet signature has not necessarily created onchain protection. Check for a confirmed transaction and the current record. Service availability and stored contract state are separate. See [Trader troubleshooting](trader-troubleshooting.md).
+Closing the browser does not remove onchain TP/SL. If **TP/SL activity** shows a history loading error, select **Try again**—an indexer error never removes onchain protection.
