@@ -1,0 +1,359 @@
+name: Deploy isolated Kernel canary frontend
+run-name: Kernel canary Pages / ${{ inputs.candidate_sha }}
+
+# This workflow must be installed on master before dispatch. It checks out an
+# exact non-master PR commit and deploys only plether-kernel-canary Pages.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_branch:
+        description: Open kernel-canary/* PR branch targeting master
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact reviewed 40-character PR head commit
+        required: true
+        type: string
+      deployment:
+        description: Planned deployment id for staging, exact attested AA_KERNEL_PROFILE_JSON id for active canary
+        required: true
+        type: string
+      phase:
+        description: Stage wallet connection before opening the Kernel API, or verify the active canary route
+        required: true
+        default: stage_preview
+        type: choice
+        options:
+          - stage_preview
+          - active_canary
+
+concurrency:
+  group: plether-kernel-canary-pages
+  cancel-in-progress: false
+
+env:
+  PROJECT: plether-kernel-canary
+  PRODUCTION_BRANCH: kernel-canary
+  BACKEND_ORIGIN: https://api.sepolia.plether.com
+  PREVIEW_ORIGIN: https://plether-kernel-canary.pages.dev
+  WRANGLER_VERSION: 4.103.0
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      deployments: read
+    steps:
+      - name: Require exact same-repository PR commit and protected AA environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_BRANCH: ${{ inputs.candidate_branch }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DEPLOYMENT: ${{ inputs.deployment }}
+          PHASE: ${{ inputs.phase }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/master ]]
+          [[ "$CANDIDATE_BRANCH" =~ ^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOYMENT" =~ ^[a-z0-9][a-z0-9._-]{0,95}$ ]]
+          [[ "$PHASE" == stage_preview || "$PHASE" == active_canary ]]
+          branch_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH" --jq .object.sha)
+          [ "$branch_head" = "$CANDIDATE_SHA" ]
+          gh pr list --repo "$GITHUB_REPOSITORY" --head "$CANDIDATE_BRANCH" \
+            --base master --state open \
+            --json headRefOid,headRepository,headRepositoryOwner > "$RUNNER_TEMP/kernel-canary-prs.json"
+          jq --exit-status --arg sha "$CANDIDATE_SHA" \
+            --arg owner "$GITHUB_REPOSITORY_OWNER" \
+            --arg repo "plether-app" \
+            'any(.[]; .headRefOid == $sha and
+              .headRepositoryOwner.login == $owner and .headRepository.name == $repo)' \
+            "$RUNNER_TEMP/kernel-canary-prs.json" >/dev/null
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/aa-admin-sepolia" \
+            > "$RUNNER_TEMP/kernel-canary-environment.json"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/aa-admin-sepolia/deployment-branch-policies?per_page=100" \
+            > "$RUNNER_TEMP/kernel-canary-branches.json"
+          jq --exit-status '
+            .name == "aa-admin-sepolia" and .can_admins_bypass == false and
+            .deployment_branch_policy.custom_branch_policies == true and
+            ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1 and
+            ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false) and
+            ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+          ' "$RUNNER_TEMP/kernel-canary-environment.json" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$RUNNER_TEMP/kernel-canary-branches.json" >/dev/null
+
+  build:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: aa-admin-sepolia
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out the exact reviewed canary commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          persist-credentials: false
+
+      - name: Check immutable source
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 25.2.1
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+
+      - name: Install pinned npm and frontend dependencies
+        working-directory: apps/frontend
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.6.2
+          npm ci
+
+      - name: Check out pinned TradingView assets
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: tradingview/charting_library
+          ref: f2a61ba473ec254b69f9c1377c67e4b81eff853b
+          token: ${{ secrets.TRADINGVIEW_GITHUB_TOKEN }}
+          persist-credentials: false
+          path: .private/tradingview-charting-library
+
+      - name: Install pinned TradingView runtime
+        working-directory: apps/frontend
+        run: npm run tradingview:install -- "$GITHUB_WORKSPACE/.private/tradingview-charting-library"
+
+      - name: Build exact Sepolia Kernel and Privy candidate
+        working-directory: apps/frontend
+        env:
+          VITE_DEFAULT_CHAIN_ID: '421614'
+          VITE_PERPS_AA_MANIFEST_URL: /perps-aa-manifest.json
+          VITE_PERPS_KERNEL_AA_DEPLOYMENT: ${{ inputs.deployment }}
+          VITE_DEPLOYMENT_ENV: sepolia
+          VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
+          VITE_PRIVY_CLIENT_ID: ${{ vars.PRIVY_TRADING_CLIENT_ID }}
+          VITE_PERPS_POSITION_PROTECTION_ENABLED: ${{ vars.VITE_PERPS_POSITION_PROTECTION_ENABLED_SEPOLIA || 'false' }}
+          VITE_MAINNET_RPC_URL: ${{ vars.VITE_MAINNET_RPC_URL }}
+          VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
+          VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
+          VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          [[ "$VITE_PRIVY_APP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]
+          if [ -n "$VITE_PRIVY_CLIENT_ID" ]; then
+            [[ "$VITE_PRIVY_CLIENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]
+          fi
+          npm run build
+          test -s dist/perps-aa-manifest.json
+          node ../../scripts/validate-perps-deployment.mjs aa \
+            ../../config/perps/arbitrum-sepolia-v2.0.0.json \
+            dist/perps-aa-manifest.json public/perps-aa-manifest.json
+          node scripts/remove-source-maps.mjs dist
+          test ! -e dist/charting_library/sameorigin.html
+          test ! -e dist/charting_library/charting_library.d.ts
+          test -s dist/charting_library/charting_library.standalone.js
+
+      - name: Record exact source SHA in build payload
+        working-directory: apps/frontend
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DEPLOYMENT: ${{ inputs.deployment }}
+        run: |
+          set -euo pipefail
+          printf '{"candidateSha":"%s","deployment":"%s"}\n' \
+            "$CANDIDATE_SHA" "$DEPLOYMENT" > dist/kernel-canary-build.json
+
+      - name: Upload isolated canary payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kernel-canary-${{ inputs.candidate_sha }}
+          path: apps/frontend/dist
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: aa-admin-sepolia
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Download reviewed canary payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: kernel-canary-${{ inputs.candidate_sha }}
+          path: apps/frontend/dist
+
+      - name: Recheck exact same-repository PR head before Pages write
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_BRANCH: ${{ inputs.candidate_branch }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_BRANCH" =~ ^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          branch_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH" --jq .object.sha)
+          [ "$branch_head" = "$CANDIDATE_SHA" ]
+          gh pr list --repo "$GITHUB_REPOSITORY" --head "$CANDIDATE_BRANCH" \
+            --base master --state open \
+            --json headRefOid,headRepository,headRepositoryOwner > "$RUNNER_TEMP/kernel-canary-prs.json"
+          jq --exit-status --arg sha "$CANDIDATE_SHA" \
+            --arg owner "$GITHUB_REPOSITORY_OWNER" --arg repo "plether-app" \
+            'any(.[]; .headRefOid == $sha and
+              .headRepositoryOwner.login == $owner and .headRepository.name == $repo)' \
+            "$RUNNER_TEMP/kernel-canary-prs.json" >/dev/null
+
+      - name: Verify exact candidate payload
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DEPLOYMENT: ${{ inputs.deployment }}
+        run: |
+          set -euo pipefail
+          jq --exit-status --arg sha "$CANDIDATE_SHA" --arg deployment "$DEPLOYMENT" \
+            '.candidateSha == $sha and .deployment == $deployment' \
+            apps/frontend/dist/kernel-canary-build.json >/dev/null
+          test -s apps/frontend/dist/_worker.js
+
+      - name: Require closed Kernel route while staging wallet connections
+        if: inputs.phase == 'stage_preview'
+        run: |
+          set -euo pipefail
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 --output "$RUNNER_TEMP/kernel-stage-route.json" \
+            --write-out '%{http_code}' --header 'Content-Type: application/json' \
+            --data-binary '{' "$BACKEND_ORIGIN/api/aa/kernel/rpc")
+          [ "$status" = 404 ] || {
+            echo '::error::Staging requires the canary Kernel API route to remain closed.'
+            exit 1
+          }
+
+      - name: Verify active canary route and dedicated origin credential
+        if: inputs.phase == 'active_canary'
+        env:
+          AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
+          KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN: ${{ secrets.KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in AA_PROXY_ORIGIN_TOKEN KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN; do
+            token=${!name}
+            [[ "$token" =~ ^[0-9a-f]{64}$ ]]
+            echo "::add-mask::$token"
+          done
+          [ "$AA_PROXY_ORIGIN_TOKEN" != "$KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" ]
+          unauthenticated_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 --output "$RUNNER_TEMP/kernel-unauth.json" \
+            --write-out '%{http_code}' --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 192.0.2.10' \
+            --data-binary '{' "$BACKEND_ORIGIN/api/aa/kernel/rpc")
+          [ "$unauthenticated_status" = 403 ]
+          jq --exit-status '.error.data.reason == "PROXY_AUTH_FAILED"' \
+            "$RUNNER_TEMP/kernel-unauth.json" >/dev/null
+          authenticated_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 --output "$RUNNER_TEMP/kernel-auth.json" \
+            --write-out '%{http_code}' --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 192.0.2.10' \
+            --header "X-Plether-AA-Proxy-Token: $KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" \
+            --data-binary '{' "$BACKEND_ORIGIN/api/aa/kernel/rpc")
+          [ "$authenticated_status" = 400 ]
+          jq --exit-status '.error.data.reason == "INVALID_REQUEST"' \
+            "$RUNNER_TEMP/kernel-auth.json" >/dev/null
+
+      - name: Configure isolated Pages project and secrets
+        working-directory: apps/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
+          FAUCET_PROXY_ORIGIN_TOKEN: ${{ secrets.FAUCET_PROXY_ORIGIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          [[ "$AA_PROXY_ORIGIN_TOKEN" =~ ^[0-9a-f]{64}$ ]]
+          test -n "$FAUCET_PROXY_ORIGIN_TOKEN"
+          echo "::add-mask::$AA_PROXY_ORIGIN_TOKEN"
+          echo "::add-mask::$FAUCET_PROXY_ORIGIN_TOKEN"
+          cat > wrangler.toml <<EOF
+          name = "plether-kernel-canary"
+          pages_build_output_dir = "dist"
+          compatibility_date = "2026-06-22"
+
+          [vars]
+          SEPOLIA_BACKEND_URL = "https://api.sepolia.plether.com"
+          MAINNET_BACKEND_URL = "https://api.sepolia.plether.com"
+          EOF
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --output "$RUNNER_TEMP/kernel-pages-project.json" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT")
+          if [ "$status" = 404 ]; then
+            npx --yes wrangler@4.103.0 pages project create "$PROJECT" \
+              --production-branch="$PRODUCTION_BRANCH" \
+              --compatibility-date=2026-06-22
+            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+              > "$RUNNER_TEMP/kernel-pages-project.json"
+          else
+            [ "$status" = 200 ]
+          fi
+          jq --exit-status --arg project "$PROJECT" --arg branch "$PRODUCTION_BRANCH" \
+            '.success == true and .result.name == $project and .result.production_branch == $branch' \
+            "$RUNNER_TEMP/kernel-pages-project.json" >/dev/null
+          printf '%s\n' "$AA_PROXY_ORIGIN_TOKEN" |
+            npx --yes wrangler@4.103.0 pages secret put AA_PROXY_ORIGIN_TOKEN --project-name="$PROJECT"
+          printf '%s\n' "$FAUCET_PROXY_ORIGIN_TOKEN" |
+            npx --yes wrangler@4.103.0 pages secret put FAUCET_PROXY_ORIGIN_TOKEN --project-name="$PROJECT"
+
+      - name: Bind dedicated Kernel credential only for active canary
+        if: inputs.phase == 'active_canary'
+        working-directory: apps/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN: ${{ secrets.KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" |
+            npx --yes wrangler@4.103.0 pages secret put KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN --project-name="$PROJECT"
+
+      - name: Deploy only the isolated canary Pages project
+        working-directory: apps/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PHASE: ${{ inputs.phase }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.103.0 pages deploy dist \
+            --project-name="$PROJECT" --branch="$PRODUCTION_BRANCH" \
+            --commit-hash="$CANDIDATE_SHA"
+          curl --fail --silent --show-error --retry 4 --retry-delay 5 \
+            --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
+            "$PREVIEW_ORIGIN/" > "$RUNNER_TEMP/kernel-canary-index.html"
+          test -s "$RUNNER_TEMP/kernel-canary-index.html"
+          printf 'Deployed reviewed SHA %s to %s in %s phase from a separate Pages project.\n' \
+            "$CANDIDATE_SHA" "$PREVIEW_ORIGIN" "$PHASE" >> "$GITHUB_STEP_SUMMARY"
