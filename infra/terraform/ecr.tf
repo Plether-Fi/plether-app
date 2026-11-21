@@ -52,27 +52,3 @@ resource "aws_ecr_repository" "alto" {
     encryption_type = "AES256"
   }
 }
-
-# Canary digests have separate immutable repositories without count-based
-# expiration. Repeated live API or Alto builds cannot remove a pinned canary.
-resource "aws_ecr_repository" "kernel_canary_api" {
-  count = local.kernel_canary_repository_count
-
-  name                 = "plether-kernel-api-sepolia"
-  image_tag_mutability = "IMMUTABLE"
-  force_delete         = false
-  image_scanning_configuration { scan_on_push = true }
-  encryption_configuration { encryption_type = "AES256" }
-  depends_on = [terraform_data.kernel_canary_repository_guard]
-}
-
-resource "aws_ecr_repository" "kernel_canary_alto" {
-  count = local.kernel_canary_repository_count
-
-  name                 = "plether-kernel-alto-sepolia"
-  image_tag_mutability = "IMMUTABLE"
-  force_delete         = false
-  image_scanning_configuration { scan_on_push = true }
-  encryption_configuration { encryption_type = "AES256" }
-  depends_on = [terraform_data.kernel_canary_repository_guard]
-}

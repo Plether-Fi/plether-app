@@ -41,9 +41,13 @@ only the Kernel RPC path receives the new canary token.
    `KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN` without printing it. It must
    differ from the legacy `AA_PROXY_ORIGIN_TOKEN`. Open only the exact
    canary ALB route after the signed Nitro and contract attestation
-   gates pass. The active workflow proves the credential reaches the
-   canary API by comparing a 403 unauthenticated control with a 400
-   authenticated invalid-JSON control.
+   gates pass. The new listener rule and ECS target-group attachment can
+   briefly return 503 while the API target registers. Wait until the
+   canary API target group reports healthy, then confirm the Kernel path
+   returns 403 without the origin token and 400 for authenticated invalid
+   JSON before dispatching `active_canary` or inviting wallet approvals.
+   The active workflow repeats those 403/400 controls before binding the
+   Pages Kernel secret.
 3. Confirm repository secrets `CLOUDFLARE_API_TOKEN`,
    `CLOUDFLARE_ACCOUNT_ID`, `TRADINGVIEW_GITHUB_TOKEN`,
    `AA_PROXY_ORIGIN_TOKEN`, and `FAUCET_PROXY_ORIGIN_TOKEN`

@@ -105,34 +105,6 @@ enable_kernel_aa_eth                         = false
 enable_kernel_aa_sponsorship                 = false
 enable_kernel_aa_protection_commits          = false
 
-# Fresh Kernel canary: reviewed image digests and all attestations are required
-# before scaling. These defaults create no resources and cannot open a route.
-provision_kernel_canary_repositories    = false
-provision_kernel_canary                 = false
-kernel_canary_alto_image                = ""
-kernel_canary_api_image                 = ""
-kernel_canary_alto_rpc_url_ssm_parameter_name = "/plether/sepolia/app-rpc-url"
-kernel_canary_alto_rpc_token_ssm_parameter_name = "/plether/sepolia/rpc-gateway-token"
-kernel_canary_alto_executor_keys_ssm_parameter_name = "/plether/sepolia/kernel-canary-alto-executor-private-keys"
-kernel_canary_alto_utility_key_ssm_parameter_name = "/plether/sepolia/kernel-canary-alto-utility-private-key"
-kernel_canary_origin_token_ssm_parameter_name = "/plether/sepolia/kernel-canary-aa-origin-token"
-kernel_canary_alto_secrets_kms_key_arn = ""
-kernel_canary_entrypoint_simulation_contract_v9 = ""
-kernel_canary_pimlico_simulation_contract = ""
-kernel_canary_profile_json              = ""
-kernel_canary_sponsorship_json          = ""
-kernel_canary_owners_json               = "[]"
-kernel_canary_alto_desired_count        = 0
-kernel_canary_api_desired_count         = 0
-kernel_canary_reconciler_desired_count  = 0
-kernel_canary_route_enabled            = false
-kernel_canary_eth_enabled              = false
-kernel_canary_sponsorship_enabled      = false
-kernel_canary_preview_origin           = ""
-kernel_canary_simulators_attested      = false
-kernel_canary_db_schema_confirmed      = false
-kernel_canary_profile_attested         = false
-kernel_canary_nitro_safemode_qualified = false
 alto_min_executor_balance_wei               = "5000000000000000"
 alto_max_gas_per_user_operation             = "5000000"
 alto_max_gas_per_bundle                     = "20000000"

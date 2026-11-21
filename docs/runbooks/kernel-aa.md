@@ -8,6 +8,8 @@ Run the pinned [local qualification harness](../../scripts/kernel-qualification/
 
 Provision the private Alto v0.9 profile and select the same simulator in its deployment smoke checks. Keep safe mode enabled. Use separate executor and utility keys from the SimpleAccount deployment. Set the following public pins in `AA_KERNEL_PROFILE_JSON` on the API and reconciler.
 
+Build the canary Alto and API images with the protected [Alto](../../.github/workflows/build-kernel-alto.yml) and [API](../../.github/workflows/build-kernel-api.yml) workflows from the exact reviewed PR head. Set `KERNEL_CANARY_BUILD_ROLE_ARN` in their protected environments to `arn:aws:iam::932542905614:role/plether-sepolia-kernel-canary-image-build`; both workflows verify that dedicated ECR-only role before assuming it.
+
 Keep both admission flags off until the patched Alto image, simulator and a debug-enabled Nitro RPC pass funded deployment and execution in both modes. Unmodified Alto v1.2.7 cannot decode EntryPoint 0.9’s `DelegateAndRevert` result in SafeMode. [The pinned source patch](../../scripts/alto-kernel-patch/README.md), a staked ZeroDev Staker and a staked Plether paymaster passed the full local SafeMode suite on Anvil on 2026-11-20. That suite does not exercise Arbitrum's L1 data fee or real wallets. [Qualification results](../../scripts/kernel-qualification/README.md)
 
 ### Point 5 evidence, 2026-11-20
@@ -20,6 +22,8 @@ Keep both admission flags off until the patched Alto image, simulator and a debu
 | Public Sepolia bindings | At safe block `331161366`, hash `0x510a02af0fc993a57b1432dd518d6f13f148e737821881e1ab0e403278999496`, three independent RPCs agreed on the pinned EntryPoint, SenderCreator and CREATE2 runtime. Pinned KernelFactory, KernelUUPS, KernelImmutableECDSA and ECDSA validator addresses had no code. |
 | Live gas | `eth_estimateGas` and `NodeInterface.gasEstimateComponents` agreed for three read-only EntryPoint calldata controls. Actual Kernel `eth_estimateUserOperationGas`, sponsored quotes, L1 data cost and receipt deltas remain to be measured on the fresh canary. [Arbitrum gas guide](https://docs.arbitrum.io/arbitrum-essentials/how-to-estimate-gas) |
 | Wallets and admission | Local `personal_sign` simulations passed. The actual external and Privy wallet flows require a current-master preview, fresh deployed account addresses and approved wallet prompts. Both production admission flags remain off. |
+
+The [isolated Pages canary procedure](../../scripts/kernel-qualification/pages-canary.md) uses `https://plether-kernel-canary.pages.dev`. Add that exact origin to the intended Privy app's allowed origins. Deploy `stage_preview` with the Kernel API route closed to connect the external and Privy wallets and copy each public owner EOA address from Trading Account activity. Set the canary owner allowlist and finish contract and API attestations before `active_canary`. After opening the route, wait for a healthy API target group and verify 403 unauthenticated and 400 authenticated invalid-JSON controls; a new attachment may briefly return 503. Then dispatch `active_canary` and invite wallet approvals. Real wallet approvals and live gas evidence are still required after the active preview is live.
 
 | Field | Value |
 | --- | --- |
@@ -35,7 +39,7 @@ Keep both admission flags off until the patched Alto image, simulator and a debu
 
 The API needs `DATABASE_URL`, `PERPS_RPC_URL`, `AA_SECURITY_RPC_URL` from an independent provider on a different host, `AA_KERNEL_ALTO_RPC_URL` for private Alto and the trusted Worker-to-origin `AA_PROXY_ORIGIN_TOKEN`. The reconciler needs the database and two RPC providers. Optional `PERPS_RPC_AUTH_TOKEN` authenticates the API's primary RPC. The patched Alto canary reads its own `PLETHER_ALTO_RPC_AUTH_TOKEN` secret for the private Nitro gateway and sends it only to the configured primary `ALTO_RPC_URL`. The API holds the KMS signing permission. API startup requires a deployed Arbitrum Sepolia release. The gateway checks its compiled release pins and reads the target bytecode from both providers before admitting an operation. [Terraform configuration](../../infra/terraform/README.md)
 
-An isolated Kernel API sharing the live Sepolia database sets `KERNEL_CANARY_API_MODE=true` and `API_BACKGROUND_WORKERS_ENABLED=false`. Startup rejects a canary with generic background workers enabled. The dedicated Kernel reconciler runs as its own service.
+An isolated Kernel API sharing the live Sepolia database sets `KERNEL_CANARY_API_MODE=true` and `API_BACKGROUND_WORKERS_ENABLED=false`. Startup rejects a canary with generic background workers enabled. The dedicated Kernel reconciler runs as its own service. The canary API and reconciler attach the live AA reconciler database client security group by exact ID. Preserve that group identity while the canary is running; a live core replacement could sever canary database access. Recheck the ID on every canary Terraform plan and retire the canary before replacing it.
 
 ## Sponsorship configuration
 

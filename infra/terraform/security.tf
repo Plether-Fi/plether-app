@@ -59,18 +59,6 @@ resource "aws_security_group" "rds" {
   }
 
   dynamic "ingress" {
-    for_each = local.kernel_canary_count == 1 ? ["api", "reconciler"] : []
-
-    content {
-      description     = "PostgreSQL from isolated Kernel canary ${ingress.value}"
-      from_port       = 5432
-      to_port         = 5432
-      protocol        = "tcp"
-      security_groups = [aws_security_group.kernel_canary_task[ingress.value].id]
-    }
-  }
-
-  dynamic "ingress" {
     for_each = local.self_hosted_aa_resource_count == 1 ? [1] : []
 
     content {

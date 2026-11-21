@@ -137,10 +137,25 @@ jobs:
               exit 1
           }
 
+      - name: Require the isolated canary image role
+        env:
+          CANARY_ROLE_ARN: ${{ vars.KERNEL_CANARY_BUILD_ROLE_ARN }}
+          TARGET_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [ "$TARGET_ACCOUNT_ID" = 932542905614 ] || {
+            echo '::error::The protected environment targets the wrong AWS account.'
+            exit 1
+          }
+          [ "$CANARY_ROLE_ARN" = "arn:aws:iam::$TARGET_ACCOUNT_ID:role/plether-sepolia-kernel-canary-image-build" ] || {
+            echo '::error::Set KERNEL_CANARY_BUILD_ROLE_ARN in the protected environment to the dedicated canary ECR role.'
+            exit 1
+          }
+
       - name: Configure AWS credentials for ECR only
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.KERNEL_CANARY_BUILD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: plether-kernel-api-${{ github.run_id }}

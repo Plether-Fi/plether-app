@@ -77,14 +77,14 @@ The no-broadcast plan reports the common safe block, exact code status, derived 
 
 With the default 2 ETH paymaster deposit, the script requires at least **4.5 ETH** in the deployer EOA immediately before any transaction: 1 ETH Staker stake, 1 ETH paymaster stake, 2 ETH deposit, and a 0.5 ETH gas reserve for all contract and simulator deployments. It also requires no pending deployer transaction. The observed 6.73 ETH balance passed this minimum on 2026-11-20, but recheck at broadcast time. This is *only* contract deployment funding. Fund the new canary Alto executor and utility EOAs separately for bundling, and fund each ETH-paid wallet's counterfactual Kernel account before its own first paid UserOperation. The sponsored account can remain unfunded. Keep the paymaster deposit above the separate `minDepositWei` budget floor after sponsorship gas starts; the initial deposit is not a perpetual floor.
 
-After the actual public utility/sponsor addresses, throwaway sample owner, image and deployment window are established, run the default read-only plan again. Confirm the deployer balance still covers the remaining stakes, deposit and 0.5 ETH gas reserve; confirm its pending and latest nonces match. The script repeats both checks immediately before its first send. Core's `packages/perps/DEPLOYMENT.md` uses `TEST_PRIVATE_KEY` from a local ignored environment file. Set `PLETHER_CORE_ROOT` to the same checkout as the config's `coreRepo`. For this canary, source that checkout's existing `.env` in a subshell, map the key to the deploy script's input, and let the script verify its public address matches `deployer` before broadcasting:
+After the actual public utility/sponsor addresses, throwaway sample owner, image and deployment window are established, run the default read-only plan again. Confirm the deployer balance still covers the remaining stakes, deposit and 0.5 ETH gas reserve; confirm its pending and latest nonces match. The script repeats both checks immediately before its first send. Core's `packages/perps/DEPLOYMENT.md` uses `TEST_PRIVATE_KEY` from a local ignored environment file. Set `PLETHER_CORE_SIGNER_ROOT` to the existing checkout that holds that `.env`; the config's `coreRepo` may instead point to the reviewed paymaster-commit checkout and artifact. Source only the existing signer's `.env` in a subshell, map the key to the deploy script's input, and let the script verify its public address matches `deployer` before broadcasting:
 
 ```sh
 (
   set +x
   set -e
   set -a
-  source "$PLETHER_CORE_ROOT/.env"
+  source "$PLETHER_CORE_SIGNER_ROOT/.env"
   set +a
   test -n "${TEST_PRIVATE_KEY:-}"
   KERNEL_CANARY_DEPLOYER_PRIVATE_KEY="$TEST_PRIVATE_KEY"

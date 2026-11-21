@@ -58,86 +58,10 @@ terraform show sepolia.tfplan
 
 ## Fresh Kernel AA deployment
 
-First set `provision_kernel_canary_repositories=true` while
-`provision_kernel_canary=false`, review the plan, and apply only the two
-immutable ECR repositories and their exact GitHub deploy-role image grants.
-These repositories have no count-based expiration policy, so later live builds
-cannot delete canary digests. Build and record their image digests, then set
-`provision_kernel_canary=true` for the second, isolated Sepolia stack. Keep
-the existing `alto_entrypoint_version="0.8"`, live ECS task definitions, and
-live Pages project intact. The canary creates its own Alto, API, reconciler,
-IAM roles, internal Alto ALB, API target group, and paymaster KMS signer. Every
-canary desired count, payment flag and public route defaults to zero or false.
-Provisioning the skeleton with the three desired counts at zero and
-`kernel_canary_route_enabled=false` does not start tasks or change public
-routing. Review the saved Terraform plan and verify that no live resource is
-replaced before applying it.
-
-Build the patched Alto image using
-[`build-kernel-alto.yml`](../../.github/workflows/build-kernel-alto.yml) and the
-Kernel API image using
-[`build-kernel-api.yml`](../../.github/workflows/build-kernel-api.yml). Both
-must be reviewed ARM64 images in account `932542905614`, stored in separate
-`plether-kernel-alto-sepolia` and `plether-kernel-api-sepolia` repositories,
-and recorded by immutable ECR `@sha256:` digest in `kernel_canary_alto_image` and
-`kernel_canary_api_image`. Neither workflow deploys ECS or updates `latest`.
-The API build workflow can build a reviewed same-repository PR head through a
-protected master-dispatched workflow, so the candidate does not need to be
-merged into the live frontend release first. The Alto image workflow follows
-the same reviewed candidate SHA and protected environment sequence.
-The protected environment reviewer must inspect the exact PR head SHA and
-image Dockerfile before approving the build; the workflow rechecks that SHA
-before obtaining AWS credentials.
-
-Create separate SecureStrings for the canary Alto executor and utility keys
-under the `kernel-canary-alto-*` SSM names and a dedicated
-`/plether/sepolia/kernel-canary-aa-origin-token` (64 lowercase hex characters).
-The patched Alto reads `/plether/sepolia/app-rpc-url` and the existing private
-gateway bearer token, injecting the token only into its primary RPC transport.
-Do not use the live Alto executor or utility keys. The Terraform output
-`kernel_canary_paymaster_kms_key_arn` identifies the separate signer; derive its
-public Ethereum address before deploying the new paymaster.
-
-Deploy and independently attest the fresh Kernel factory, validator, Staker,
-both v0.9 simulation contracts and paymaster before starting tasks. The
-Staker and paymaster each require at least 1 ETH stake with the required delay;
-the paymaster also requires its own deposit. Keep Alto simulator auto-deploy off
-and set its two reviewed simulation addresses explicitly. Apply the additive
-Kernel database tables and funding index before API startup, reviewing the
-non-concurrent index lock impact in a quiet window. Set
-`kernel_canary_simulators_attested`, `kernel_canary_db_schema_confirmed` and
-`kernel_canary_profile_attested` only after their respective checks. The canary
-API sets `KERNEL_CANARY_API_MODE=true` and
-`API_BACKGROUND_WORKERS_ENABLED=false` so it cannot run a second live indexer
-or other background writer against the shared Sepolia database.
-An existing Plether testnet deployer may fund these fresh contracts only after
-its public address, balance, signer custody and reviewed broadcast path are
-verified; no deployer private key belongs in Terraform inputs or logs.
-
-Start Alto with `kernel_canary_alto_desired_count=1`, keeping the route dark.
-Verify its actual outbound bearer-authenticated v0.9 SafeMode trace through the
-private gateway; a direct gateway fetch alone is insufficient. The gateway's
-default trace timeout is 8 seconds and response cap is 8 MiB, so record measured
-trace duration and size. Start the API with
-`kernel_canary_api_desired_count=1` only after the profile and database gates.
-Before the public route is enabled, probe the API's private ECS task address
-from a bounded in-VPC task or ECS Exec; no ALB target is attached yet.
-
-Set `kernel_canary_nitro_safemode_qualified=true`, an exact HTTPS
-`kernel_canary_preview_origin`, and `kernel_canary_route_enabled=true` only
-after the signed Nitro/Alto gate. The HTTPS listener rule matches only backend
-`/api/aa/kernel/rpc` (priority 180); the dedicated Pages preview Worker maps
-browser `/api/perps/v1/aa/kernel/rpc` to it and supplies the distinct canary
-origin token. Both ETH-paid and sponsored modes are limited to
-`kernel_canary_owners_json`; `AA_KERNEL_PUBLIC_ADMISSION` remains false.
-Live gas and external plus Privy wallet flows are then checked on the fresh
-preview before any broader rollout. To test sponsorship, configure the fresh
-paymaster profile and start the canary reconciler before enabling its flag.
-
-For rollback, first close canary admission and the route. Keep the canary
-reconciler running until accepted operations and sponsorship reservations have
-settled or expired, then scale all canary tasks to zero. Keep the additive
-database schema and KMS key so pending evidence and old binaries remain safe.
+The isolated Sepolia Kernel canary uses its own Terraform state and variables.
+See [kernel-canary/README.md](kernel-canary/README.md) for the gated image,
+signing key, ECS, and route sequence. This live core state continues to own the
+EntryPoint v0.8 services.
 
 ## Retained runtime images
 

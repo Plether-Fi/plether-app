@@ -10,9 +10,6 @@ locals {
     local.self_hosted_aa_resource_count == 1 ? [
       "repo:Plether-Fi/plether-app:environment:aa-admin-sepolia",
       "repo:Plether-Fi/plether-app:environment:alto-admin-sepolia",
-    ] : [],
-    local.kernel_canary_repository_count == 1 ? [
-      "repo:Plether-Fi/plether-app:environment:backend-admin-sepolia",
     ] : []
   )
 
@@ -23,10 +20,6 @@ locals {
     ],
     local.self_hosted_aa_resource_count == 1 ? [
       "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/plether-alto-${local.deployment_name}",
-    ] : [],
-    local.kernel_canary_repository_count == 1 ? [
-      aws_ecr_repository.kernel_canary_api[0].arn,
-      aws_ecr_repository.kernel_canary_alto[0].arn,
     ] : []
   )
 
@@ -431,21 +424,6 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
         }
       },
     ]
-  })
-}
-
-resource "aws_iam_role_policy" "github_deploy_kernel_canary_ecr_scan" {
-  count = local.kernel_canary_repository_count
-
-  name = "plether-sepolia-kernel-canary-image-scan"
-  role = aws_iam_role.github_deploy.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["ecr:DescribeImageScanFindings", "ecr:StartImageScan"]
-      Resource = [aws_ecr_repository.kernel_canary_api[0].arn, aws_ecr_repository.kernel_canary_alto[0].arn]
-    }]
   })
 }
 
