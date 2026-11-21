@@ -4,6 +4,17 @@ import { createRequire } from 'node:module'
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const { isAddressEqual, keccak256 } = require('viem')
 
+function normalizedHash(hash, message) {
+  assert.match(hash ?? '', /^0x[0-9a-f]{64}$/iu, message)
+  return hash.toLowerCase()
+}
+
+function normalizedReceiptAddress(address) {
+  if (address == null) return null
+  assert.match(address, /^0x[0-9a-f]{40}$/iu, 'Invalid deployment receipt contractAddress')
+  return address.toLowerCase()
+}
+
 export function fingerprintDeploymentRequest({ to, data, value = 0n }) {
   return { to: to?.toLowerCase() ?? null, inputHash: keccak256(data), valueWei: String(value) }
 }
@@ -43,27 +54,33 @@ export async function rebroadcastRecordedDeployment({ manifest, request, signTra
 }
 
 export async function readMinedDeployment({ clients, manifest, intent, awaitSafeBlock, expectedRequest }) {
-  const { hash, name, nonce } = intent
-  assert.match(hash ?? '', /^0x[0-9a-f]{64}$/iu, 'Recover only a recorded deployment transaction hash')
+  const { name, nonce } = intent
+  const hash = normalizedHash(intent.hash, 'Recover only a recorded deployment transaction hash')
   assert.equal(nonce, manifest.expectedNonce, 'In-flight nonce differs from the manifest checkpoint')
   assert.match(nonce ?? '', /^(?:0|[1-9][0-9]*)$/u)
   const observations = await Promise.all([clients.primary, clients.secondary].map(async client => {
     const [receipt, transaction] = await Promise.all([
       client.getTransactionReceipt({ hash }), client.getTransaction({ hash }),
     ])
-    assert.equal(receipt.transactionHash.toLowerCase(), hash.toLowerCase(), 'Receipt hash differs from intent')
-    assert.equal(transaction.hash.toLowerCase(), hash.toLowerCase(), 'Transaction hash differs from intent')
+    assert.equal(normalizedHash(receipt.transactionHash, 'Invalid deployment receipt hash'), hash, 'Receipt hash differs from intent')
+    assert.equal(normalizedHash(transaction.hash, 'Invalid deployment transaction hash'), hash, 'Transaction hash differs from intent')
     assert.ok(isAddressEqual(transaction.from, manifest.binding.deployer), 'In-flight transaction sender differs')
     assert.equal(transaction.chainId, manifest.chainId, 'In-flight transaction chain differs')
     assert.equal(String(transaction.nonce), nonce, 'In-flight transaction nonce differs')
-    assert.equal(transaction.blockHash, receipt.blockHash, 'Transaction and receipt block hashes differ')
+    const blockHash = normalizedHash(receipt.blockHash, 'Invalid deployment receipt block hash')
+    assert.equal(normalizedHash(transaction.blockHash, 'Invalid deployment transaction block hash'), blockHash,
+      'Transaction and receipt block hashes differ')
     assert.equal(transaction.blockNumber, receipt.blockNumber, 'Transaction and receipt heights differ')
     assert.ok(receipt.status === 'success' || receipt.status === 'reverted', 'Unknown deployment receipt status')
-    return { receipt, request: fingerprintDeploymentRequest({ to: transaction.to, data: transaction.input, value: transaction.value }) }
+    return { receipt, blockHash, contractAddress: normalizedReceiptAddress(receipt.contractAddress),
+      request: fingerprintDeploymentRequest({ to: transaction.to, data: transaction.input, value: transaction.value }) }
   }))
   const [first, second] = observations
   assert.deepEqual(first.request, second.request, 'Independent RPCs disagree on deployment transaction data')
-  for (const field of ['blockHash', 'blockNumber', 'status', 'contractAddress']) {
+  for (const field of ['blockHash', 'contractAddress']) {
+    assert.equal(first[field], second[field], `Independent RPCs disagree on deployment receipt ${field}`)
+  }
+  for (const field of ['blockNumber', 'status']) {
     assert.equal(first.receipt[field], second.receipt[field], `Independent RPCs disagree on deployment receipt ${field}`)
   }
   const expected = await expectedRequest(name, first.receipt.blockNumber)
@@ -75,7 +92,9 @@ export async function readMinedDeployment({ clients, manifest, intent, awaitSafe
   }
   const canonical = await Promise.all([clients.primary, clients.secondary].map(client =>
     client.getBlock({ blockNumber: first.receipt.blockNumber })))
-  for (const block of canonical) assert.equal(block.hash, first.receipt.blockHash, 'Deployment receipt is not canonical')
+  for (const block of canonical) {
+    assert.equal(normalizedHash(block.hash, 'Invalid canonical block hash'), first.blockHash, 'Deployment receipt is not canonical')
+  }
   return first.receipt
 }
 

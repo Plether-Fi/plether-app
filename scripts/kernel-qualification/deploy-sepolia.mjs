@@ -299,8 +299,9 @@ async function commonSafeBlock(clients, atLeast = 0n, timeoutMs = 15_000) {
       const [a, b] = await Promise.all([
         clients.primary.getBlock({ blockNumber: number }), clients.secondary.getBlock({ blockNumber: number }),
       ])
-      assert.equal(a.hash, b.hash, 'Independent RPCs disagree on the safe block hash')
-      return { number, hash: a.hash }
+      const hash = checkedHash(a.hash, 'Primary safe block hash')
+      assert.equal(hash, checkedHash(b.hash, 'Secondary safe block hash'), 'Independent RPCs disagree on the safe block hash')
+      return { number, hash }
     }
     await sleep(3_000)
   }
@@ -498,15 +499,16 @@ async function verifyDeploymentTransaction(clients, manifest, name, address, exp
     clients.secondary.getTransaction({ hash: record.hash }),
   ])
   for (const receipt of [receiptA, receiptB]) {
+    assert.equal(receipt.transactionHash?.toLowerCase(), record.hash.toLowerCase(), `${name} deployment receipt hash differs`)
     assert.equal(receipt.status, 'success', `${name} deployment receipt reverted`)
-    assert.equal(receipt.blockHash, record.blockHash, `${name} deployment block changed`)
+    assert.equal(receipt.blockHash?.toLowerCase(), record.blockHash.toLowerCase(), `${name} deployment block changed`)
     assert.equal(String(receipt.blockNumber), record.blockNumber, `${name} deployment height changed`)
     assert.ok(receipt.contractAddress && isAddressEqual(receipt.contractAddress, address), `${name} deployment address changed`)
     if (safeBlock !== undefined) assert.ok(receipt.blockNumber <= safeBlock, `${name} deployment is not safe yet`)
   }
   for (const tx of [txA, txB]) {
     assert.equal(tx.hash.toLowerCase(), record.hash.toLowerCase(), `${name} deployment transaction hash differs`)
-    assert.equal(tx.blockHash, record.blockHash, `${name} deployment block hash differs`)
+    assert.equal(tx.blockHash?.toLowerCase(), record.blockHash.toLowerCase(), `${name} deployment block hash differs`)
     assert.equal(String(tx.blockNumber), record.blockNumber, `${name} deployment block height differs`)
     assert.equal(tx.chainId, manifest.chainId, `${name} deployment chain differs`)
     assert.equal(tx.value, 0n, `${name} deployment unexpectedly sends native ETH`)
@@ -601,8 +603,11 @@ async function attest(clients, c, manifest, artifacts, atLeast = 0n) {
     clients.primary.getBlock({ blockNumber: BigInt(manifest.paymasterDeploymentBlock) }),
     clients.secondary.getBlock({ blockNumber: BigInt(manifest.paymasterDeploymentBlock) }),
   ])
-  assert.equal(deploymentA.hash, deploymentB.hash, 'Paymaster deployment block differs between RPCs')
-  assert.equal(deploymentA.hash, manifest.paymasterDeploymentBlockHash, 'Paymaster deployment block hash changed')
+  const deploymentHash = checkedHash(deploymentA.hash, 'Primary paymaster deployment block hash')
+  assert.equal(deploymentHash, checkedHash(deploymentB.hash, 'Secondary paymaster deployment block hash'),
+    'Paymaster deployment block differs between RPCs')
+  assert.equal(deploymentHash, checkedHash(manifest.paymasterDeploymentBlockHash, 'Recorded paymaster deployment block hash'),
+    'Paymaster deployment block hash changed')
   manifest.profile = {
     deployment: c.deployment, chainId: pins.chainId, entryPoint: getAddress(pins.entryPoint.address),
     entryPointCodeHash: pins.entryPoint.codeHash, factory,

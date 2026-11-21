@@ -90,14 +90,26 @@ variable "kernel_canary_alto_rpc_token_ssm_parameter_name" {
 variable "kernel_canary_alto_executor_keys_ssm_parameter_name" {
   type    = string
   default = "/plether/sepolia/kernel-canary-alto-executor-private-keys"
+  validation {
+    condition     = can(regex("^/plether/sepolia/kernel-canary-alto-executor-[a-z0-9-]+$", var.kernel_canary_alto_executor_keys_ssm_parameter_name))
+    error_message = "The executor parameter must use the dedicated Sepolia canary executor namespace."
+  }
 }
 variable "kernel_canary_alto_utility_key_ssm_parameter_name" {
   type    = string
   default = "/plether/sepolia/kernel-canary-alto-utility-private-key"
+  validation {
+    condition     = can(regex("^/plether/sepolia/kernel-canary-alto-utility-[a-z0-9-]+$", var.kernel_canary_alto_utility_key_ssm_parameter_name))
+    error_message = "The utility parameter must use the dedicated Sepolia canary utility namespace."
+  }
 }
 variable "kernel_canary_origin_token_ssm_parameter_name" {
   type    = string
   default = "/plether/sepolia/kernel-canary-aa-origin-token"
+  validation {
+    condition     = can(regex("^/plether/sepolia/kernel-canary-aa-origin-[a-z0-9-]+$", var.kernel_canary_origin_token_ssm_parameter_name))
+    error_message = "The origin parameter must use the dedicated Sepolia canary origin namespace."
+  }
 }
 variable "kernel_canary_max_safe_lag_seconds" {
   type    = string

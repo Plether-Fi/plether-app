@@ -5744,7 +5744,13 @@ export function PerpsTradeTicket({
         analyticsProperties={commonAnalyticsProperties}
         footer={
           <div className="space-y-3">
-            {marginGasApproval.quote ? <KernelGasApprovalButtons confirm={marginGasApproval.confirm} cancel={marginGasApproval.cancel} disabled={isMarginActionInvalid || kernelOperationPending || !marginGasApproval.canConfirm} /> : (
+            {marginGasApproval.quote ? (
+              <KernelGasApprovalButtons
+                confirm={marginGasApproval.confirm}
+                cancel={marginGasApproval.cancel}
+                disabled={isMarginActionInvalid || kernelOperationPending || Boolean(sponsorshipPauseMessage) || !marginGasApproval.canConfirm}
+              />
+            ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
                 type="button"

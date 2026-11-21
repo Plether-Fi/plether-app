@@ -5,26 +5,28 @@ import {
   rebroadcastRecordedDeployment, signDeploymentTransaction,
 } from './deployment-intent.mjs'
 
-const hash = `0x${'11'.repeat(32)}`
-const blockHash = `0x${'22'.repeat(32)}`
+const hash = `0x${'1a'.repeat(32)}`
+const blockHash = `0x${'2b'.repeat(32)}`
 const deployer = '0x1111111111111111111111111111111111111111'
 const contract = '0x2222222222222222222222222222222222222222'
 const action = { to: contract, data: '0x12345678', value: 10n }
 
-function fixture({ status = 'success', safe = 100n, secondValue = 10n, secondHash = blockHash, recorded = true } = {}) {
+function fixture({ status = 'success', safe = 100n, secondValue = 10n, secondHash = blockHash, recorded = true,
+  firstReceipt = {}, secondReceipt = {}, secondTx = {}, intentHash = hash } = {}) {
   const manifest = { expectedNonce: '8', chainId: 421614, binding: { deployer }, transactions: [],
-    inFlight: { name: 'Deposit paymaster', hash, nonce: '8',
+    inFlight: { name: 'Deposit paymaster', hash: intentHash, nonce: '8',
       ...(recorded ? { request: fingerprintDeploymentRequest(action) } : {}) } }
-  function client(value, canonicalHash) {
+  function client(value, canonicalHash, receiptFields, txFields = {}) {
     return {
-      async getTransactionReceipt() { return { transactionHash: hash, blockHash, blockNumber: 100n, status } },
+      async getTransactionReceipt() { return { transactionHash: hash, blockHash, blockNumber: 100n, status,
+        contractAddress: null, ...receiptFields } },
       async getTransaction() { return { hash, from: deployer, to: contract, input: action.data, value,
-        chainId: manifest.chainId, nonce: 8, blockHash, blockNumber: 100n } },
+        chainId: manifest.chainId, nonce: 8, blockHash, blockNumber: 100n, ...txFields } },
       async getBlock() { return { hash: canonicalHash } },
     }
   }
   return { manifest, intent: manifest.inFlight,
-    clients: { primary: client(10n, blockHash), secondary: client(secondValue, secondHash) },
+    clients: { primary: client(10n, blockHash, firstReceipt), secondary: client(secondValue, secondHash, secondReceipt, secondTx) },
     awaitSafeBlock: async () => ({ number: safe }),
     expectedRequest: async () => fingerprintDeploymentRequest(action) }
 }
@@ -37,6 +39,26 @@ test('reconciles both durable and legacy known hashes without resending', async 
     assert.equal(updated.expectedNonce, '9')
     assert.equal(updated.transactions[0].hash, hash)
   }
+})
+
+test('deployment recovery handles mixed-case RPC hashes and addresses while preserving hash and null checks', async () => {
+  const capitalized = value => '0x' + value.slice(2).toUpperCase()
+  const deployedContract = `0x${'3a'.repeat(20)}`
+  const plan = fixture({
+    intentHash: capitalized(hash), secondHash: capitalized(blockHash),
+    firstReceipt: { contractAddress: deployedContract },
+    secondReceipt: { transactionHash: capitalized(hash), blockHash: capitalized(blockHash),
+      contractAddress: capitalized(deployedContract) },
+    secondTx: { hash: capitalized(hash) },
+  })
+  assert.equal((await readMinedDeployment(plan)).contractAddress, deployedContract)
+  assert.equal((await readMinedDeployment(fixture())).contractAddress, null)
+  await assert.rejects(readMinedDeployment(fixture({ secondReceipt: { contractAddress: deployedContract } })),
+    /disagree on deployment receipt contractAddress/u)
+  await assert.rejects(readMinedDeployment(fixture({ secondReceipt: { transactionHash: blockHash } })),
+    /Receipt hash differs from intent/u)
+  await assert.rejects(readMinedDeployment(fixture({ secondTx: { blockHash: hash } })),
+    /Transaction and receipt block hashes differ/u)
 })
 
 test('a canonical reverted transaction advances the nonce without completing the action', async () => {

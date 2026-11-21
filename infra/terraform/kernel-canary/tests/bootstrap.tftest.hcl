@@ -43,14 +43,81 @@ run "ssm_key_is_symmetric_and_independent" {
   assert {
     condition = (length(aws_ecr_repository.api) == 0
       && length(aws_iam_role.image_build) == 0
+      && length(aws_iam_role.kernel_canary_execution) == 0
+      && length(aws_iam_role.kernel_canary_task) == 0
       && length(aws_kms_key.paymaster) == 0
       && aws_kms_key.kernel_canary_ssm[0].key_usage == "ENCRYPT_DECRYPT"
       && aws_kms_key.kernel_canary_ssm[0].customer_master_key_spec == "SYMMETRIC_DEFAULT"
       && aws_kms_key.kernel_canary_ssm[0].enable_key_rotation
+      && !aws_kms_key.kernel_canary_ssm[0].bypass_policy_lockout_safety_check
       && aws_kms_alias.kernel_canary_ssm[0].name == "alias/plether-sepolia-kernel-canary-ssm"
     )
     error_message = "SSM encryption must use a separate rotating symmetric key without creating the paymaster signer or image resources."
   }
+  assert {
+    condition = (length(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement) == 4
+      && alltrue([
+        for statement in jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement :
+        statement.Principal.AWS == "arn:aws:iam::932542905614:root"
+        && statement.Effect == "Allow"
+        && alltrue([for action in statement.Action : length(regexall("\\*", action)) == 0])
+      ])
+      && toset(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[0].Action) == toset([
+        "kms:CancelKeyDeletion", "kms:CreateAlias", "kms:DeleteAlias", "kms:DescribeKey",
+        "kms:DisableKey", "kms:DisableKeyRotation", "kms:EnableKey", "kms:EnableKeyRotation",
+        "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListGrants", "kms:ListResourceTags",
+        "kms:PutKeyPolicy", "kms:RevokeGrant", "kms:TagResource", "kms:UntagResource",
+        "kms:UpdateAlias", "kms:UpdateKeyDescription",
+      ])
+    )
+    error_message = "The account IAM delegation must preserve key management and recovery with an explicit non-cryptographic action list."
+  }
+  assert {
+    condition = (
+      toset(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[1].Action) == toset(["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"])
+      && toset(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[1].Condition.ArnNotEquals["aws:PrincipalArn"]) == toset([
+        for name in ["alto-execution", "api-execution", "reconciler-execution", "alto-task", "api-task", "reconciler-task", "canary-image-build"] :
+        "arn:aws:iam::932542905614:role/plether-sepolia-kernel-${name}"
+      ])
+      && toset(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[1].Condition.StringEquals["kms:EncryptionContext:PARAMETER_ARN"]) == toset([
+        for name in ["alto-executor-private-keys", "alto-utility-private-key", "aa-origin-token", "deployer-private-key"] :
+        "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/kernel-canary-${name}"
+      ])
+      && alltrue([
+        for statement in slice(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement, 1, 4) :
+        statement.Condition.StringEquals["kms:ViaService"] == "ssm.ap-southeast-1.amazonaws.com"
+      ])
+    )
+    error_message = "IAM-authorized operators retain provisioning and recovery for the four exact SecureStrings only through regional SSM. Canary service and build roles cannot use this delegation."
+  }
+  assert {
+    condition = alltrue([
+      for i, role in ["alto", "api"] : (
+        jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[i + 2].Action == ["kms:Decrypt"]
+        && jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[i + 2].Condition.ArnEquals["aws:PrincipalArn"] == "arn:aws:iam::932542905614:role/plether-sepolia-kernel-${role}-execution"
+        && toset(jsondecode(aws_kms_key.kernel_canary_ssm[0].policy).Statement[i + 2].Condition.StringEquals["kms:EncryptionContext:PARAMETER_ARN"]) == toset([
+          for name in(role == "alto" ? toset(["alto-executor-private-keys", "alto-utility-private-key"]) : toset(["aa-origin-token"])) :
+          "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/kernel-canary-${name}"
+        ])
+      )
+    ])
+    error_message = "Each workload grant is read-only and limited to the exact future execution role and its own SecureStrings."
+  }
+}
+
+run "reject_noncanary_ssm_key_context_at_bootstrap" {
+  command = plan
+  variables {
+    provision_ssm_encryption_key                        = true
+    kernel_canary_alto_executor_keys_ssm_parameter_name = "/plether/sepolia/alto-executor-private-keys"
+    kernel_canary_alto_utility_key_ssm_parameter_name   = "/plether/sepolia/kernel-canary-deployer-private-key"
+    kernel_canary_origin_token_ssm_parameter_name       = "/plether/sepolia/aa-proxy-origin-token"
+  }
+  expect_failures = [
+    var.kernel_canary_alto_executor_keys_ssm_parameter_name,
+    var.kernel_canary_alto_utility_key_ssm_parameter_name,
+    var.kernel_canary_origin_token_ssm_parameter_name,
+  ]
 }
 
 run "build_role_only_pushes_to_immutable_canary_repositories" {

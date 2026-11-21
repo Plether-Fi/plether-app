@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { entryPoint09Address } from 'viem/account-abstraction'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
 import { useSponsoredOperationStore, type SponsoredOperationStatus } from '../../perps-aa'
@@ -10,6 +11,9 @@ import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 import type { ReadinessSnapshot } from '../../perps-aa/readiness'
+import { observeDeadlineResponse } from '../../perps-aa/deadlineClock'
+import type { KernelActionQuote } from '../../perps-aa/kernelRuntime'
+import { PerpsAaRuntimeContext, type KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
 
 const readinessFixture = vi.hoisted(() => ({ snapshot: undefined as ReadinessSnapshot | undefined }))
 vi.mock('../../perps-aa/readiness', async importOriginal => ({
@@ -432,6 +436,59 @@ describe('perps ticket oracle regime matrix', () => {
     view.rerender(<PerpsTradeTicket enableLiveTrading />)
     expect(screen.queryByText(/Gas sponsorship is temporarily paused/)).not.toBeInTheDocument()
     expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+  })
+
+  it('blocks the Margin Modal wallet button if trading pauses during a Kernel gas review', async () => {
+    identityFixture.isAaManifestConfigured = true
+    const ownerAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    const scope: KernelPerpsAaSmartAccountRuntime['kernel']['scope'] = {
+      deployment: 'kernel-test', chainId: 421614, entryPoint: entryPoint09Address, sender: ownerAddress,
+    }
+    const runtime: KernelPerpsAaSmartAccountRuntime = {
+      chainId: scope.chainId, ownerAddress, factoryAddress: ownerAddress, accountVersion: 'kernel-v4-uups', accountIndex: '0',
+      smartAccount: { accountAddress: scope.sender, entryPoint: scope.entryPoint },
+      gasPayment: { scope: { ...scope, ownerAddress }, readiness: { sponsored: true, eth: true } },
+      kernel: { scope, verifyAccount: vi.fn(), quoteAction: vi.fn(), execute: vi.fn(), quoteCancellation: vi.fn(), signPrepared: vi.fn() },
+    }
+    const now = Date.now()
+    observeDeadlineResponse(new Response(null, { headers: { Date: new Date(now).toUTCString() } }), performance.now())
+    const quote: KernelActionQuote = { mode: 'sponsored', maxNetworkGasWei: 15n, expiresAt: Math.floor(now / 1_000) + 60 }
+    const continueToWallet = vi.fn()
+    perpsTradingMocks.depositMargin.mockImplementationOnce(async (
+      _amount, _allowance, _source, approve: (quote: KernelActionQuote) => Promise<void>,
+    ) => {
+      await approve(quote)
+      continueToWallet()
+    })
+    const ticket = () => (
+      <PerpsAaRuntimeContext value={runtime}>
+        <PerpsTradeTicket enableLiveTrading walletAssetsRaw={1_000_000n} />
+      </PerpsAaRuntimeContext>
+    )
+    const view = render(ticket())
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Review network gas' }))
+    const walletButton = await dialog.findByRole('button', { name: 'Continue to wallet' })
+    expect(walletButton).toBeEnabled()
+
+    const checks = [{ component: 'bundler', status: 'blocked' as const, reason: 'BUNDLER_UNAVAILABLE' }]
+    readinessFixture.snapshot = {
+      version: 1, enforcementEnabled: true, observedAt: now, expiresAt: now + 15_000,
+      actions: { open: checks, close: checks, deposit: checks, protection: checks },
+    }
+    view.rerender(ticket())
+    expect(dialog.getByText('Transaction submission could not be verified.')).toBeVisible()
+    expect(walletButton).toBeDisabled()
+    fireEvent.click(walletButton)
+    expect(continueToWallet).not.toHaveBeenCalled()
+
+    readinessFixture.snapshot = undefined
+    view.rerender(ticket())
+    expect(walletButton).toBeEnabled()
+    await act(async () => { fireEvent.click(walletButton) })
+    expect(continueToWallet).toHaveBeenCalledOnce()
   })
 
   function seedActiveOperation(status: SponsoredOperationStatus) {

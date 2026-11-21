@@ -255,14 +255,6 @@ run "drop_general_rpc_bearer_when_live_binding_differs" {
   }
 }
 
-run "reject_live_executor_credential" {
-  command = plan
-  variables {
-    kernel_canary_alto_executor_keys_ssm_parameter_name = "/plether/sepolia/alto-executor-private-keys"
-  }
-  expect_failures = [terraform_data.kernel_canary_guard]
-}
-
 run "reject_unpaired_nitro_bearer" {
   command = plan
   variables {

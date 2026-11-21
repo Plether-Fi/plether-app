@@ -111,7 +111,7 @@ export function normalizeKernelSignature(signature: Hex): Hex {
   if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error('The Kernel wallet returned an invalid signature')
   const parsed = parseSignature(signature)
   if (BigInt(parsed.s) > secp256k1HalfOrder) throw new Error('The Kernel wallet returned a noncanonical signature')
-  return serializeSignature(parsed)
+  return serializeSignature(parsed).toLowerCase() as Hex
 }
 
 async function deriveKernelAccount(

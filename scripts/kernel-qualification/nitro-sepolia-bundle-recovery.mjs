@@ -4,6 +4,13 @@ import { createRequire } from 'node:module'
 const require = createRequire(new URL('../../apps/frontend/package.json', import.meta.url))
 const { decodeFunctionData, encodeFunctionData, getAddress, isAddressEqual, slice } = require('viem')
 const { entryPoint09Abi, getUserOperationHash, toPackedUserOperation } = require('viem/account-abstraction')
+const eip7702FactoryMarker = `0x7702${'00'.repeat(18)}`
+
+function supportedInitCode(initCode) {
+  // handleOps can contain unrelated EIP-7702 operations. Their initCode
+  // marker is not a factory and their hash depends on a delegation address.
+  return initCode === '0x' || (initCode.length >= 42 && initCode.slice(0, 42) !== eip7702FactoryMarker)
+}
 
 function unpackOperation(packed) {
   const { sender, nonce, initCode, callData, accountGasLimits, preVerificationGas, gasFees, paymasterAndData, signature } = packed
@@ -20,7 +27,7 @@ function unpackOperation(packed) {
   }
   if (initCode !== '0x') {
     operation.factory = getAddress(slice(initCode, 0, 20)).toLowerCase()
-    operation.factoryData = slice(initCode, 20)
+    operation.factoryData = initCode.length === 42 ? '0x' : slice(initCode, 20)
   }
   if (paymasterAndData !== '0x') {
     operation.paymaster = getAddress(slice(paymasterAndData, 0, 20)).toLowerCase()
@@ -28,7 +35,6 @@ function unpackOperation(packed) {
     operation.paymasterPostOpGasLimit = BigInt(slice(paymasterAndData, 36, 52))
     operation.paymasterData = slice(paymasterAndData, 52)
   }
-  assert.deepEqual(toPackedUserOperation(operation), packed, 'Recovered operation does not round-trip')
   return operation
 }
 
@@ -54,10 +60,13 @@ export function recoverOperationFromBundle({ transactions, receipt, entryPoint, 
   // EntryPoint v0.9 paymaster signature suffix.
   const payerData = paymaster && new RegExp(`^${paymaster.toLowerCase()}[0-9a-f]{378}$`, 'u')
   const matching = packedOperations
-    .filter(packed => payerData ? payerData.test(packed.paymasterAndData) : packed.paymasterAndData === '0x')
-    .map(unpackOperation)
-    .filter(operation => getUserOperationHash({ userOperation: operation, chainId, entryPointAddress: entryPoint,
+    .filter(packed => supportedInitCode(packed.initCode) &&
+      (payerData ? payerData.test(packed.paymasterAndData) : packed.paymasterAndData === '0x'))
+    .map(packed => ({ packed, operation: unpackOperation(packed) }))
+    .filter(({ operation }) => getUserOperationHash({ userOperation: operation, chainId, entryPointAddress: entryPoint,
       entryPointVersion: '0.9' }).toLowerCase() === operationHash)
   assert.equal(matching.length, 1, `Expected exactly one matching ${paymaster ? 'sponsored' : 'ETH'} operation in the canonical bundle`)
-  return matching[0]
+  const [{ packed, operation }] = matching
+  assert.deepEqual(toPackedUserOperation(operation), packed, 'Recovered operation does not round-trip')
+  return operation
 }

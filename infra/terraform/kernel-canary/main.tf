@@ -45,7 +45,8 @@ locals {
   region              = "ap-southeast-1"
   image_count         = var.provision_image_build_resources ? 1 : 0
   key_count           = var.provision_paymaster_key ? 1 : 0
-  api_task_role_arn   = "arn:aws:iam::${local.expected_account_id}:role/plether-sepolia-kernel-api-task"
+  api_task_role_arn   = "arn:aws:iam::${local.expected_account_id}:role/${local.kernel_canary_task_role_names.api}"
+  image_build_role    = "plether-sepolia-kernel-canary-image-build"
 }
 
 resource "terraform_data" "sepolia_account_guard" {
@@ -92,7 +93,7 @@ resource "aws_ecr_repository" "alto" {
 
 resource "aws_iam_role" "image_build" {
   count                = local.image_count
-  name                 = "plether-sepolia-kernel-canary-image-build"
+  name                 = local.image_build_role
   description          = "Build and inspect immutable Sepolia Kernel canary API and Alto images only."
   max_session_duration = 3600
 

@@ -716,6 +716,19 @@ spec = do
           Left failure -> expectationFailure failure
           Right cfg -> fmap (const ()) (cfgNativeAaConfig cfg) `shouldBe` Nothing
         loadKernelSecurityRpc `shouldReturn` Right (primary, legacy)
+    it "rejects a stray native secondary when the Kernel profile is empty" $
+      withEnvironmentVariables
+        [ ("RPC_URL", Just "http://127.0.0.1:1")
+        , ("PERPS_RPC_URL", Just "https://primary.example/rpc")
+        , ("LP_SETTLEMENT_MODE", Just "off")
+        , ("AA_KERNEL_PROFILE_JSON", Just "")
+        , ("AA_SECURITY_RPC_URL", Nothing)
+        , ("AA_RECONCILER_SECONDARY_RPC_URL", Just "https://legacy.example/rpc")
+        ] $ do
+          configuration <- loadConfig
+          case configuration of
+            Left failure -> T.pack failure `shouldSatisfy` T.isPrefixOf "Native AA configuration is partial"
+            Right _ -> expectationFailure "an empty Kernel profile masked partial native AA configuration"
     it "rejects aliases of the primary host even with different paths" $ do
       let alias = "https://PRIMARY.Example:443/different-tenant/"
       resolve (Just alias) (Just legacy) `shouldSatisfy` isLeft

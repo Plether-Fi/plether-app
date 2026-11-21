@@ -22,9 +22,13 @@ const sponsor = {
 }
 
 function bundle(operations, target = operation) {
+  return packedBundle(operations.map(op => toPackedUserOperation(op)), target)
+}
+
+function packedBundle(operations, target = operation) {
   const input = encodeFunctionData({
     abi: entryPoint09Abi, functionName: 'handleOps',
-    args: [operations.map(op => toPackedUserOperation(op)), sender],
+    args: [operations, sender],
   })
   const tx = { hash: receipt.transactionHash, to: entryPoint, chainId, input,
     blockHash: receipt.blockHash, blockNumber: receipt.blockNumber }
@@ -43,6 +47,25 @@ test('rejects an unmatched hash, ambiguous matching operations and a sponsored m
   assert.throws(() => recoverEthOperationFromBundle(bundle([{ ...operation, nonce: 1n }])), /exactly one matching ETH/)
   assert.throws(() => recoverEthOperationFromBundle(bundle([operation, { ...operation, signature: '0x0102' }])), /exactly one matching ETH/)
   assert.throws(() => recoverEthOperationFromBundle(bundle([sponsor], sponsor)), /exactly one matching ETH/)
+})
+
+test('ignores unrelated short and padded EIP-7702 initCode in the canonical bundle', () => {
+  const target = toPackedUserOperation(operation)
+  const unrelated = toPackedUserOperation({ ...operation, nonce: 1n })
+  const shortMarker = { ...unrelated, initCode: '0x7702' }
+  const paddedMarker = { ...unrelated, initCode: `0x7702${'00'.repeat(18)}abcd` }
+  const found = recoverEthOperationFromBundle(packedBundle([shortMarker, paddedMarker, target]))
+  assert.deepEqual(found, { ...operation, factory: factory.toLowerCase() })
+  assert.throws(() => recoverEthOperationFromBundle(packedBundle([shortMarker, paddedMarker])),
+    /exactly one matching ETH/u)
+})
+
+test('handles a co-bundled operation with a factory address and empty factory data', () => {
+  const emptyFactoryData = { ...operation, factoryData: '0x', nonce: 1n }
+  const found = recoverEthOperationFromBundle(bundle([emptyFactoryData, operation]))
+  assert.deepEqual(found, { ...operation, factory: factory.toLowerCase() })
+  const foundEmptyFactoryData = recoverEthOperationFromBundle(bundle([emptyFactoryData, operation], emptyFactoryData))
+  assert.deepEqual(foundEmptyFactoryData, { ...emptyFactoryData, factory: factory.toLowerCase() })
 })
 
 test('rejects inconsistent calldata, wrong transaction metadata, and trailing bytes', () => {

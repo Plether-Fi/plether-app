@@ -30,6 +30,13 @@ export function assertExactGasDebit(before, after, actual, label) {
   assert.equal(before - after, actual, `${label} payer debit differs from EntryPoint gas cost`)
 }
 
+export async function readSafeBundleReceipts(clients, hash, waitCommonSafe) {
+  const receipt = await clients.nitro.getTransactionReceipt({ hash })
+  await waitCommonSafe(clients, receipt.blockNumber)
+  const independent = await clients.secondary.getTransactionReceipt({ hash })
+  return [receipt, independent]
+}
+
 export function assertRecoveredEthSmokeOperation(operation, expected) {
   assert.equal(operation.sender.toLowerCase(), expected.sender.toLowerCase(), 'Recovered sender differs')
   assert.equal(BigInt(operation.nonce), 0n, 'Recovered smoke operation must use nonce zero')

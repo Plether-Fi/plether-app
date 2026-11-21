@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { assertExactGasDebit, assertRecoveredEthSmokeOperation, validateSmokeRpcUrls } from './nitro-sepolia-smoke-guards.mjs'
+import {
+  assertExactGasDebit, assertRecoveredEthSmokeOperation, readSafeBundleReceipts, validateSmokeRpcUrls,
+} from './nitro-sepolia-smoke-guards.mjs'
 
 const localUrls = {
   alto: 'http://127.0.0.1:18080/',
@@ -31,6 +33,31 @@ test('smoke RPCs reject credential-bearing URLs and unreviewed public endpoints'
 test('payer debit must exactly equal EntryPoint gas charged', () => {
   assert.doesNotThrow(() => assertExactGasDebit(100n, 77n, 23n, 'test'))
   assert.throws(() => assertExactGasDebit(100n, 76n, 23n, 'test'), /payer debit differs/u)
+})
+
+test('waits for the common safe block before the secondary receipt lookup', async () => {
+  const hash = `0x${'a1'.repeat(32)}`
+  const receipt = { blockNumber: 42n }
+  let safe = false
+  let secondaryReads = 0
+  const clients = {
+    nitro: { async getTransactionReceipt(request) { assert.deepEqual(request, { hash }); return receipt } },
+    secondary: { async getTransactionReceipt(request) {
+      assert.ok(safe, 'Secondary provider is still behind')
+      assert.deepEqual(request, { hash })
+      secondaryReads++
+      return { ...receipt }
+    } },
+  }
+  await assert.rejects(readSafeBundleReceipts(clients, hash, async () => { throw Error('Safe head lagged') }), /Safe head lagged/u)
+  assert.equal(secondaryReads, 0)
+  const receipts = await readSafeBundleReceipts(clients, hash, async (readers, block) => {
+    assert.equal(readers, clients)
+    assert.equal(block, receipt.blockNumber)
+    safe = true
+  })
+  assert.deepEqual(receipts, [receipt, receipt])
+  assert.equal(secondaryReads, 1)
 })
 
 const reviewed = {

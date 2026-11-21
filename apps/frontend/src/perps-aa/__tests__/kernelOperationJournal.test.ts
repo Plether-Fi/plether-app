@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { concatHex, toHex, zeroAddress, type Address, type Hex } from 'viem'
+import { concatHex, createPublicClient, custom, padHex, toHex, zeroAddress, type Address, type Hex } from 'viem'
 import { entryPoint09Address, type UserOperationReceipt } from 'viem/account-abstraction'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 import { trackPerpsKernelOutcome } from '../../analytics/perps'
-import { encodeKernelCalls } from '../kernelAccount'
+import { createKernelTradingAccount, encodeKernelCalls } from '../kernelAccount'
+import { kernelSepoliaCanaryProfile } from '../kernelDeploymentPins'
 import {
   discardUnsentKernelAttempt,
   getActiveKernelAttempt,
@@ -66,7 +67,7 @@ const scope: KernelAttemptScope = {
   entryPoint: entryPoint09Address.toLowerCase() as Address,
   sender: '0x00000000000000000000000000000000000000ab',
 }
-const paymaster = '0x00000000000000000000000000000000000000cd'
+const paymaster: Address = '0x00000000000000000000000000000000000000cd'
 const now = 1_800_000_000_000
 
 function prepared(input: {
@@ -122,6 +123,37 @@ describe('Kernel operation journal', () => {
     send.mockReset()
     cancel.mockReset()
     status.mockReset()
+  })
+
+  it('journals and relays canonical bytes from a wallet signature with uppercase r and s', async () => {
+    const quote = prepared()
+    const canonical = await sign(quote)
+    const walletSignature = `0x${canonical.slice(2, -2).toUpperCase()}${canonical.endsWith('1b') ? '00' : '01'}` as const
+    expect(walletSignature.slice(2, 66)).toMatch(/[A-F]/)
+    expect(walletSignature.slice(66, 130)).toMatch(/[A-F]/)
+
+    const client = createPublicClient({
+      chain: arbitrumSepolia,
+      transport: custom({
+        request: async ({ method }) => {
+          if (method === 'eth_getCode') return '0x'
+          if (method === 'eth_call') return padHex(scope.sender, { size: 32 })
+          throw new Error(`Unexpected RPC method ${method}`)
+        },
+      }),
+    })
+    const account = await createKernelTradingAccount(client, kernelSepoliaCanaryProfile, {
+      address: owner.address,
+      signMessage: async () => walletSignature,
+    })
+    const signature = await account.signUserOperation(quote.operation)
+    const saved = await saveKernelSignedAttempt({ scope, ownerAddress: owner.address, action: 'place-order', prepared: quote, signature })
+
+    expect(signature).toBe(canonical)
+    await expect(getKernelAttempt(scope, quote.userOperationHash)).resolves.toMatchObject({ phase: 'signed', signature: canonical })
+    send.mockResolvedValueOnce(quote.userOperationHash)
+    await expect(submitKernelAttempt(saved)).resolves.toBe(quote.userOperationHash)
+    expect(sendKernelOperation).toHaveBeenCalledExactlyOnceWith(quote, canonical)
   })
 
   it('persists exact signed bytes before relay and keeps both payment modes fenced on a lost response', async () => {

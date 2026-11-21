@@ -672,7 +672,7 @@ loadConfig = do
       nativeAaFinalRateLimitStr <- fromMaybe "6" <$> lookupEnv "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE"
       mAltoRpcUrl <- firstEnv ["AA_ALTO_RPC_URL"]
       mNativeSecurityRpcUrl <- firstEnv ["AA_RECONCILER_SECONDARY_RPC_URL"]
-      mKernelProfile <- lookupEnv "AA_KERNEL_PROFILE_JSON"
+      mKernelProfile <- firstEnv ["AA_KERNEL_PROFILE_JSON"]
       aaRpcModeStr <- fromMaybe "dual-independent" <$> lookupEnv "AA_RPC_MODE"
       mPaymasterAddress <- firstEnv ["AA_PAYMASTER_ADDRESS"]
       mPaymasterCodeHash <- firstEnv ["AA_PAYMASTER_CODE_HASH"]

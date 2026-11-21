@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock } from '../../apps/frontend/src/perps-aa/kernelAccount.ts'
 import { boundedGasEstimate, gasCap, maxFeeCap, maxPrefundCap } from './nitro-sepolia-gas.mjs'
-import { assertExactGasDebit, assertRecoveredEthSmokeOperation, validateSmokeRpcUrls } from './nitro-sepolia-smoke-guards.mjs'
+import { assertExactGasDebit, assertRecoveredEthSmokeOperation, readSafeBundleReceipts, validateSmokeRpcUrls } from './nitro-sepolia-smoke-guards.mjs'
 import { recoverOperationFromBundle } from './nitro-sepolia-bundle-recovery.mjs'
 import { scrubRpcError, writePublicEvidence } from './local-safety.mjs'
 
@@ -260,8 +260,7 @@ async function verifyIncluded(clients, altoUrl, manifest, owner, operationHash, 
   }
   const txHash = hash(transactionHint ?? receipt.receipt?.transactionHash, 'transaction hash')
   const readers = [clients.nitro, clients.secondary]
-  const [tx, independentTx] = await Promise.all(readers.map(client => client.getTransactionReceipt({ hash: txHash })))
-  await waitCommonSafe(clients, tx.blockNumber)
+  const [tx, independentTx] = await readSafeBundleReceipts(clients, txHash, waitCommonSafe)
   const [blocks, transactions] = await Promise.all([
     Promise.all(readers.map(client => client.getBlock({ blockNumber: tx.blockNumber }))),
     Promise.all(readers.map(client => client.getTransaction({ hash: txHash }))),

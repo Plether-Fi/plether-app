@@ -9,6 +9,14 @@ locals {
   kernel_canary_utility_arn   = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_alto_utility_key_ssm_parameter_name)}"
   kernel_canary_origin_arn    = "${local.kernel_canary_ssm_prefix}${trimspace(var.kernel_canary_origin_token_ssm_parameter_name)}"
 
+  kernel_canary_roles = toset(["alto", "api", "reconciler"])
+  kernel_canary_execution_role_names = {
+    for name in local.kernel_canary_roles : name => "plether-sepolia-kernel-${name}-execution"
+  }
+  kernel_canary_task_role_names = {
+    for name in local.kernel_canary_roles : name => "plether-sepolia-kernel-${name}-task"
+  }
+
   kernel_canary_execution_secret_arns = {
     alto       = [local.kernel_canary_rpc_arn, local.kernel_canary_rpc_token_arn, local.kernel_canary_executor_arn, local.kernel_canary_utility_arn]
     api        = distinct([for secret in local.kernel_canary_api_secrets : secret.valueFrom])
@@ -139,11 +147,8 @@ resource "terraform_data" "kernel_canary_guard" {
       condition = (
         var.kernel_canary_alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
         && var.kernel_canary_alto_rpc_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
-        && can(regex("^/plether/sepolia/kernel-canary-alto-executor-[a-z0-9-]+$", var.kernel_canary_alto_executor_keys_ssm_parameter_name))
-        && can(regex("^/plether/sepolia/kernel-canary-alto-utility-[a-z0-9-]+$", var.kernel_canary_alto_utility_key_ssm_parameter_name))
-        && can(regex("^/plether/sepolia/kernel-canary-aa-origin-[a-z0-9-]+$", var.kernel_canary_origin_token_ssm_parameter_name))
       )
-      error_message = "Canary Alto must use the reviewed Nitro URL and bearer pair. Executor, utility and origin refs must use their respective dedicated canary namespaces."
+      error_message = "Canary Alto must use the reviewed Nitro URL and bearer pair."
     }
     precondition {
       condition = var.kernel_canary_alto_desired_count == 0 || (
@@ -220,9 +225,9 @@ resource "aws_cloudwatch_log_group" "kernel_canary" {
 }
 
 resource "aws_iam_role" "kernel_canary_execution" {
-  for_each = var.provision_services ? toset(["alto", "api", "reconciler"]) : toset([])
+  for_each = var.provision_services ? local.kernel_canary_execution_role_names : {}
 
-  name = "plether-sepolia-kernel-${each.key}-execution"
+  name = each.value
   assume_role_policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
@@ -257,9 +262,9 @@ resource "aws_iam_role_policy" "kernel_canary_execution_secrets" {
 }
 
 resource "aws_iam_role" "kernel_canary_task" {
-  for_each = var.provision_services ? toset(["alto", "api", "reconciler"]) : toset([])
+  for_each = var.provision_services ? local.kernel_canary_task_role_names : {}
 
-  name = "plether-sepolia-kernel-${each.key}-task"
+  name = each.value
   assume_role_policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
