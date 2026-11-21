@@ -1,36 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="648" viewBox="0 0 640 648" role="img" aria-labelledby="confirmed-order-execution-path-title confirmed-order-execution-path-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="609" viewBox="0 0 640 609" role="img" aria-labelledby="confirmed-order-execution-path-title confirmed-order-execution-path-desc" focusable="false">
 <title id="confirmed-order-execution-path-title">Confirmed does not mean filled</title>
 <desc id="confirmed-order-execution-path-desc">A successful sponsored commitment creates a pending order. Only a successful order execution applies the requested position change. </desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="648" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / ORDER TROUBLESHOOTING</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Confirmed does not mean filled</text>
-<path d="M32 143 L608 143" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 143 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="188" r="14" fill="#FF512F"/>
-<circle cx="47" cy="188" r="5" fill="#250917"/>
-<text x="80" y="197" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Commitment confirmed</text>
-<text x="80" y="234" font-size="24" font-weight="400" fill="#250917" data-max-width="528">The sponsored operation succeeded onchain.</text>
-<path d="M47 209 V258 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="287" r="14" fill="#F7D977"/>
-<circle cx="47" cy="287" r="5" fill="#250917"/>
-<text x="80" y="296" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Order pending</text>
-<text x="80" y="333" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Wait for queue, oracle and policy eligibility.</text>
-<rect x="32" y="357" width="278" height="259" rx="12" fill="#FFF5F9" stroke="#9A8890"/>
-<rect x="44" y="361" width="254" height="6" rx="3" fill="#00FF99" stroke="none"/>
-<text x="48" y="399" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Execution</text>
-<text x="48" y="432" font-size="26" font-weight="700" fill="#250917" data-max-width="246">succeeds</text>
-<path d="M48 453 L294 453" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="48" y="483" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Position changes</text>
-<text x="48" y="522" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Verify the executed</text>
-<text x="48" y="554" font-size="24" font-weight="400" fill="#250917" data-max-width="246">order and resulting</text>
-<text x="48" y="586" font-size="24" font-weight="400" fill="#250917" data-max-width="246">position.</text>
-<rect x="330" y="357" width="278" height="259" rx="12" fill="#F7E4B2" stroke="none"/>
-<text x="346" y="399" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Execution does not</text>
-<text x="346" y="432" font-size="26" font-weight="700" fill="#250917" data-max-width="246">succeed</text>
-<path d="M346 453 L592 453" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="346" y="483" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Check the outcome</text>
-<text x="346" y="522" font-size="24" font-weight="400" fill="#250917" data-max-width="246">It may remain pending</text>
-<text x="346" y="554" font-size="24" font-weight="400" fill="#250917" data-max-width="246">or end in terminal</text>
-<text x="346" y="586" font-size="24" font-weight="400" fill="#250917" data-max-width="246">failure.</text>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="609" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · ORDER TROUBLESHOOTING</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Confirmed does not mean filled</text>
+<path d="M32 136 L608 136" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 136 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="177" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="177" r="5" fill="#FFAB96"/>
+<text x="78" y="186" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Commitment confirmed</text>
+<text x="78" y="219" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">The sponsored operation succeeded onchain.</text>
+<path d="M47 196 V243 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="266" r="13" fill="#3B212D" stroke="#F7D977" stroke-width="2.5"/>
+<circle cx="47" cy="266" r="5" fill="#F7D977"/>
+<text x="78" y="275" font-size="24" font-weight="700" fill="#F7D977" data-max-width="530">Order pending</text>
+<text x="78" y="308" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Wait for queue, oracle and policy eligibility.</text>
+<rect x="32" y="332" width="278" height="243" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="44" y="335" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="48" y="374" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">Execution succeeds</text>
+<path d="M48 391 L294 391" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="417" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Position changes</text>
+<text x="48" y="453" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Verify the executed</text>
+<text x="48" y="483" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">order and resulting</text>
+<text x="48" y="513" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">position.</text>
+<rect x="330" y="332" width="278" height="243" rx="12" fill="#3B212D" stroke="#F7D977" stroke-width="1.5"/>
+<rect x="342" y="335" width="254" height="5" rx="3" fill="#F7D977" stroke="none"/>
+<text x="346" y="374" font-size="24" font-weight="700" fill="#F7D977" data-max-width="246">Execution does not</text>
+<text x="346" y="405" font-size="24" font-weight="700" fill="#F7D977" data-max-width="246">succeed</text>
+<path d="M346 422 L592 422" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="448" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Check the outcome</text>
+<text x="346" y="484" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">It may remain pending</text>
+<text x="346" y="514" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">or end in terminal</text>
+<text x="346" y="544" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">failure.</text>
 </svg>

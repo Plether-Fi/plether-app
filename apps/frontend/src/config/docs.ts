@@ -34,8 +34,8 @@ export const DOCS_LINKS = {
     title: 'Exposure, quantity and notional are different',
   },
   positionLeverage: {
-    href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#position-leverage-and-effective-account-leverage`,
-    title: 'Position leverage and effective account leverage',
+    href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#position-leverage-and-equity-leverage`,
+    title: 'Position leverage and equity leverage',
   },
   liquidationPrice: {
     href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#liquidation-price`,

@@ -1,199 +1,81 @@
 # Deposit liquidity
 
-> **An LP deposit goes through a verified Senior or Junior Vault.**
->
-> The trader `Deposit` action funds a Trading Account's Margin Account. It does not provide pool liquidity and does not issue LP shares.
+> **Use the Vaults page for LP deposits.** The Perps-page **Deposit** button funds a trader Margin Account — it never mints Senior or Junior LP shares.
 
-Plether liquidity-provider (LP)[^lp] deposits are queued and processed hourly. Submitting a deposit moves USDG[^usdg] into the selected tranche[^tranche] vault, but it does not immediately put vault shares in your wallet.
+Plether liquidity-provider (LP)[^lp] deposits are queued for hourly epoch settlement. Submitting a deposit escrows USDG[^usdg] in the chosen Senior or Junior tranche[^tranche] vault; active 9-decimal vault shares (`psLP` or `pjLP`) are minted only when the hourly epoch settles.
 
-Use this guide after deciding which tranche fits your risk tolerance. If you have not made that choice, start with [Choose Senior or Junior](choose-senior-or-junior.md) and [LP risks and safeguards](lp-risks-and-safeguards.md).
+If you have not yet chosen a tranche, start with [Choose Senior or Junior](choose-senior-or-junior.md) and [LP risks and safeguards](lp-risks-and-safeguards.md).
 
-### Before you start
+## Before you start
 
-For the current Arbitrum Sepolia test environment, prepare:
+On Arbitrum Sepolia, prepare:
 
-* A compatible self-custody owner wallet
-* Arbitrum Sepolia selected in both the application and wallet
-* MockUSDG at the connected **owner-wallet address**
-* Arbitrum Sepolia ETH for every required transaction
-* Time to monitor the deposit until its shares are ready and moved to your wallet
+* A compatible connected **owner wallet** on Arbitrum Sepolia
+* **MockUSDG in your owner wallet** (not only in your separate Trading Account or Margin Account — check **Wallet balance** on the deposit form)
+* **Arbitrum Sepolia ETH** in your owner wallet — LP approvals, deposits, cancellations and claims are direct owner-wallet transactions and are **not** gas-sponsored
 
-LP approvals, deposits, cancellations, claims and recovery actions are ordinary owner-wallet transactions. They are not covered by the trader gas-sponsorship flow.
+## 1. Open the selected vault (not the Perps deposit)
 
-The testnet welcome flow may fund the separate **Trading Account** rather than the owner wallet. MockUSDG held by the Trading Account cannot be approved for an owner-wallet vault deposit. Check the deposit form's **Wallet balance** before continuing.
-
-### 1. Open the LP deposit—not the trader deposit
-
-Open `Vaults`, select **Explore Senior Vault** or **Explore Junior Vault**, then select the `deposit` mode. The action-panel heading should read **Deposit USDG**.
-
-The two deposit systems have different purposes:
+Open **Vaults** → **Explore Senior Vault** or **Explore Junior Vault** → **Deposit** (**Deposit USDG**).
 
 | | LP vault deposit | Trader Margin Account deposit |
 | --- | --- | --- |
-| **Where it starts** | `Vaults` → **Explore Senior Vault** or **Explore Junior Vault** → `deposit` | The Perps or welcome deposit flow |
-| **USDG source** | Connected owner wallet | Trading Account balance, with an owner-wallet shortfall transfer when needed |
-| **Destination** | Selected tranche-vault queue | Trading Account's Margin Account |
-| **What the user receives** | A queued deposit, followed by vault shares after processing | Trading collateral and fee balance |
-| **Purpose** | Underwrite pool liabilities | Fund trading collateral and fees |
-| **Gas policy** | Owner wallet pays network gas | Eligible Trading Account actions can be sponsored |
+| **Where it starts** | **Vaults** → Senior or Junior Vault → **Deposit** | Perps page **Margin Account** → **Deposit** |
+| **USDG source** | Connected owner wallet | Trading Account (plus owner shortfall transfer if needed) |
+| **Result** | Queued deposit → `psLP` or `pjLP` vault shares | Margin Account collateral |
+| **Gas policy** | Owner wallet pays Arbitrum Sepolia ETH | Eligible Trading Account actions are gas-sponsored |
 
-Depositing to the Margin Account does not later convert the balance into vault shares. Read [Your Margin Account](../trading-on-plether-perps/your-margin-account.md) if you are unsure which balance you are viewing.
+## 2. Verify network, balance and vault contract
 
-### 2. Confirm the wallet, network and balance
+Confirm your owner wallet, Arbitrum Sepolia network and **Wallet balance**. Open the vault address link in the header and confirm it matches the active deployment's official Senior or Junior Vault address (see [Deployments & live parameters](../reference/deployments-and-parameters.md)).
 
-The owner wallet and Plether Trading Account are separate onchain addresses.
+> Never send MockUSDG directly to a vault or the liquidity pool. Always use the **Deposit USDG** flow (`requestDeposit`) so the vault tracks your deposit for settlement, cancellation and share delivery.
 
-Confirm that:
+## 3. Check deposit availability and the five-minute cutoff
 
-* the connected owner wallet is the address you intend to use;
-* the application and wallet are on Arbitrum Sepolia;
-* **Wallet balance** covers the deposit amount; and
-* the owner wallet has enough ETH for an optional approval and the deposit transaction.
+Check **Deposit availability**, current limits (including **Senior deposit limits** for Senior), **Next processing time** and whether hourly processing is paused.
 
-If the owner-wallet MockUSDG balance is too low, obtain or transfer test MockUSDG to that exact address and wait for confirmation before reopening the preview.
+* **Five-minute cutoff:** The vault assigns your request based on its **onchain block-inclusion timestamp**. Inclusion strictly more than 5 minutes before the hour targets that hour's epoch; inclusion within the final 5 minutes targets the following hour.
+* **No guaranteed conversion or timing:** **Estimated shares you'll receive** is indicative only — final shares are computed at hourly settlement from the reconciled share price. Deposits pay no frozen-oracle fee, but cannot activate while the oracle is frozen, pricing is stale, Senior is impaired or a pool shortfall/pause is active.
 
-### 3. Verify the selected tranche vault
+## 4. Enter amount and review
 
-Never rely on the **Senior Vault** or **Junior Vault** label alone. The vault-page header links the abbreviated vault address to the block explorer. Open it and compare the complete address with the active deployment's official contract metadata.
-
-Verify all of the following:
-
-* **Network:** Arbitrum Sepolia for the current test deployment
-* **Token:** the official MockUSDG contract for that deployment
-* **Selected tranche:** Senior or Junior
-* **Vault address:** the official address for that exact tranche
-* **Approval spender:** the selected tranche vault
-
-The spender must not be the liquidity pool, Margin Clearinghouse, Trading Account, owner wallet or an address supplied only through an unverified message or link.
-
-Do not make a plain MockUSDG transfer to the liquidity pool or tranche vault. Use the application's deposit flow so `requestDeposit` creates the queue accounting needed for processing, cancellation and share delivery.
-
-### 4. Check deposit availability and timing
-
-Every accepted deposit is queued for an hourly processing time. There is no immediate-deposit path in the current interface.
-
-The vault overview shows:
-
-* **Deposit availability** and the current deposit limit
-* **Next processing time**
-* A countdown for the current hourly window
-* Whether hourly processing is paused
-* Whether deposits are past their expected processing time
-
-The contract uses the deposit transaction's block-inclusion timestamp. Inclusion strictly before the five-minute cutoff—more than five minutes before the hour—targets that processing time; inclusion at or after the cutoff targets the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so treat the confirmed deposit record as authoritative.
-
-An available deposit form does not guarantee processing at the displayed time. The protocol rechecks its safety conditions when the queue is processed. A safety pause, stale pricing, Senior impairment, a cap, an unresolved pool shortfall or another live gate can defer activation. **Refund available** is narrower: it means the processed batch's aggregate deposit quote rounded to zero shares and the epoch was rejected.
-
-### 5. Enter the amount and review the deposit
-
-Enter the MockUSDG amount and select **Review deposit**. Keep the amount within the displayed owner-wallet balance, current deposit limit and live minimum.
-
-The amount form shows:
-
-* **Share price**
-* **Estimated shares you'll receive**
-* **Deposit status**
-* **Expected processing**
-* **7d realized APY**, when a complete history is available
-
-The review modal shows the USDG to deposit, estimated shares, current share price, processing status and expected processing time. It also warns that the final share amount is set when the deposit is processed.
-
-The estimate is not a locked conversion rate. Tranche accounting and trader outcomes can change before processing. Deposits do not pay the frozen-oracle withdrawal surcharge; if live pricing is unavailable, deposit activation waits until the entry gates clear.
+Enter an amount within your **Wallet balance**, the vault's live minimum and current deposit capacity, then select **Review deposit**.
 
 ![Deposit preview for a queued Senior or Junior Vault deposit](../.gitbook/assets/screenshots/storybook-documentation-vaults--deposit-preview.png)
 
-### 6. Confirm the transactions
+## 5. Confirm transactions in your owner wallet
 
-Select **Confirm deposit** after reviewing the latest values.
+Select **Confirm deposit**. Up to two owner-wallet transactions are required:
 
-If the owner wallet does not already have enough allowance, the guided transaction sequence first asks you to **Approve USDG**. The decoded approval must be equivalent to:
+1. **Approve USDG** (only when current allowance is lower than your deposit amount): verifies `MockUSDG.approve(selectedTrancheVault, depositAmount)` for the **exact** deposit amount to the official selected Tranche Vault. Approval changes allowance only and moves no tokens.
+2. **Queue deposit**: moves MockUSDG into vault escrow and creates your queued deposit record.
 
-```solidity
-MockUSDG.approve(selectedTrancheVault, depositAmount)
-```
+Keep the modal open until it reports **Deposit submitted**, and note both transaction hashes.
 
-Check the approval carefully:
+## 6. Track status and complete your deposit
 
-| Approval field | Expected value |
-| --- | --- |
-| **Transaction target** | Official MockUSDG token contract |
-| **Function** | `approve(address spender, uint256 amount)` |
-| **Spender** | Official selected Senior or Junior Vault |
-| **Amount** | Exact MockUSDG deposit amount |
-| **Caller** | Connected owner wallet |
-| **Network** | Arbitrum Sepolia |
-
-The approval transaction changes allowance only. It does not move USDG or create a deposit. Reject an unlimited allowance, unfamiliar token, wrong vault or network change.
-
-After any required approval confirms, the sequence asks you to confirm **Queue deposit**. This transaction calls the selected vault's funded deposit-request method and moves the USDG into vault escrow.
-
-Keep the flow open until the application reports **Deposit submitted**. Save both transaction hashes when an approval was required.
-
-### 7. Verify the queued deposit
-
-After **Queue deposit** confirms, open **Vaults → Your position** and verify:
-
-* the correct tranche;
-* the deposit reference;
-* the deposited USDG amount;
-* **Expected processing**;
-* the estimated shares; and
-* the current status.
-
-The initial status is normally **Pending**. Before processing, **Cancel deposit** returns the escrowed USDG to the owner wallet and issues no shares. Use that action only from the matching deposit record and verify its receipt before submitting a replacement.
-
-Do not submit another deposit merely because wallet-held shares are still zero. Queued USDG is not an active wallet share balance.
-
-### 8. Complete the deposit after processing
-
-When LP settlement is enabled, a healthy keeper[^keeper] can submit eligible hourly processing through the permissionless path. The current interface does not expose a user `Finalize epoch` transaction.
-
-The deposit record can move through these states:
+Open **Vaults → Your position** to follow your deposit record. Permissionless hourly settlement is normally executed by Plether's LP settlement keeper[^keeper] (in strict order: Senior withdraw → Junior withdraw → Junior deposit → Senior deposit); there is no manual **Finalize** button in the UI.
 
 | Status | Meaning | Available action |
 | --- | --- | --- |
-| **Pending** | USDG is queued before its expected processing time | Wait or **Cancel deposit** |
-| **Waiting for processing** | The expected time has passed, but neither ready shares nor a refund exists yet | Wait and check processing or protocol status |
-| **Shares ready** | Processing created your vault-share allocation and started its withdrawal cooldown | **Move shares to wallet**, or **Queue direct withdrawal** after the cooldown when shown |
-| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and its USDG is recoverable | **Return USDG to wallet** |
+| **Pending** | Escrowed before its target hourly epoch | Wait or **Cancel deposit** (returns USDG, mints no shares) |
+| **Waiting for processing** | Target hour passed; waiting for keeper settlement or safety gate | Wait and check pool status (do not duplicate) |
+| **Shares ready** | Epoch settled; shares are active and accruing performance while the 1-hour withdrawal cooldown runs | **Move shares to wallet** (preserves activation timestamp) |
+| **Withdrawal ready** | Shares are active and the 1-hour source cooldown has elapsed | **Move shares to wallet** or **Queue direct withdrawal** |
+| **Refund available** | Batch aggregate deposit quote rounded to zero shares (epoch rejected) | **Return USDG to wallet** |
 
-When **Shares ready** appears, the shares already participate in vault performance while held by the vault. Select **Move shares to wallet** to complete delivery, or use **Queue direct withdrawal** after the displayed source-deposit cooldown when that action is available.
+Once **Shares ready** or **Withdrawal ready** appears, your shares already participate in vault gains and losses. **Move shares to wallet** delivers them to your owner wallet without restarting the 1-hour cooldown (applying the later of the deposit's activation time and any existing wallet cooldown). Once the source cooldown expires (**Withdrawal ready**), **Queue direct withdrawal** lets you exit straight from vault escrow without moving shares to your wallet first.
 
-The one-hour cooldown starts when processing activates the deposit, not when the owner later claims it. Moving shares into the owner wallet preserves the source activation timestamp and uses the later of that timestamp and any existing wallet timestamp, so claiming cannot shorten a newer wallet cooldown. During an active wallet cooldown, wallet-held shares cannot be transferred or used for a withdrawal request.
+## Common deposit surprises
 
-When **Refund available** appears, select **Return USDG to wallet** and verify that the correct amount returns before attempting another deposit.
+* **Approval confirmed, no deposit row:** Approval sets allowance only — confirm **Queue deposit** next.
+* **USDG left wallet, wallet shares still zero:** Check **Your position**; queued deposits only become wallet shares after settlement and **Move shares to wallet**.
+* **Final shares differ from preview:** Settlement uses the batch share price at execution, not the request-time estimate.
 
-### If the result is not what you expected
+For step-by-step tracking and edge cases, continue to [Manage a pending deposit](manage-a-pending-deposit.md) or [LP troubleshooting](lp-troubleshooting.md).
 
-| Symptom | Most likely explanation | What to do |
-| --- | --- | --- |
-| Approval confirmed, but the owner-wallet balance did not change | Approval creates allowance only | Return to the review flow and confirm **Queue deposit** |
-| USDG moved, but wallet-held shares are zero | The deposit is pending, waiting for processing or has shares ready in vault custody | Open **Your position** and read the matching deposit record |
-| No deposit record appears | The queue transaction failed, only approval confirmed or request discovery is refreshing | Check the transaction receipt and retry discovery before submitting again |
-| **Waiting for processing** persists | Hourly settlement is paused, delayed or blocked by the keeper path or a live safety gate | Check hourly-processing, backlog, market-price and safety status; do not look for a user finalization action |
-| Final shares differ from the preview | The preview was an estimate and processing used the then-current batch accounting and share price | Review the processed allocation rather than the request-time estimate |
-| **Refund available** appears | The processed batch's aggregate deposit quote rounded to zero shares and its epoch was rejected | Use **Return USDG to wallet** and verify the recovery transaction |
-| Shares are ready but absent from the wallet | The allocation remains claimable in vault custody | Select **Move shares to wallet**, or use **Queue direct withdrawal** after its cooldown when shown; verify the activation time |
-
-See [Manage a pending deposit](manage-a-pending-deposit.md) for the complete monitoring lifecycle and [LP troubleshooting](lp-troubleshooting.md) for broader recovery guidance.
-
-### Deposit checklist
-
-Before confirming:
-
-* Confirm the owner wallet—not only the Trading Account—holds the MockUSDG.
-* Confirm Arbitrum Sepolia and the official MockUSDG contract.
-* Confirm Senior or Junior and understand its loss position.
-* Match the complete vault address with official deployment metadata.
-* Approve only the exact amount to the selected tranche vault.
-* Check the live minimum, deposit limit and expected processing time.
-* Have the transaction included onchain before the five-minute cutoff if you need the next hourly window; verify the confirmed request target.
-* Treat estimated shares and recent APY as historical or indicative, not guaranteed.
-* Distinguish **Approve USDG** from **Queue deposit**.
-* Keep native gas for cancellation, share delivery or refund recovery.
-* Accept that share value and future withdrawal liquidity can decrease.
-
-[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-[^keeper]: An enabled service that can submit eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^keeper]: An enabled service that submits eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.

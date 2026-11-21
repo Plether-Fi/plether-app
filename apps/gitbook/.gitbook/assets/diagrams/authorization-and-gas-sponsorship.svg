@@ -1,40 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="952" viewBox="0 0 640 952" role="img" aria-labelledby="authorization-and-gas-sponsorship-title authorization-and-gas-sponsorship-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="854" viewBox="0 0 640 854" role="img" aria-labelledby="authorization-and-gas-sponsorship-title authorization-and-gas-sponsorship-desc" focusable="false">
 <title id="authorization-and-gas-sponsorship-title">Sponsorship before the signature</title>
-<desc id="authorization-and-gas-sponsorship-desc">Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result. Sponsorship covers eligible network gas. Openings can reserve an execution reward; TP/SL can reserve a separate trigger reward. Reduce and close orders reserve no execution reward.</desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="952" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / AUTHORIZATION</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Sponsorship before the</text>
-<text x="32" y="155" font-size="36" font-weight="700" fill="#250917" data-max-width="576">signature</text>
-<path d="M32 188 L608 188" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 188 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="233" r="14" fill="#9A8890"/>
-<circle cx="47" cy="233" r="5" fill="#250917"/>
-<text x="80" y="242" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Review the action</text>
-<text x="80" y="279" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Check the account, amounts and execution</text>
-<text x="80" y="311" font-size="24" font-weight="400" fill="#250917" data-max-width="528">bounds.</text>
-<path d="M47 254 V335 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="364" r="14" fill="#9A8890"/>
-<circle cx="47" cy="364" r="5" fill="#250917"/>
-<text x="80" y="373" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Prepare sponsorship</text>
-<text x="80" y="410" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Get stub data, estimate gas and attach final</text>
-<text x="80" y="442" font-size="24" font-weight="400" fill="#250917" data-max-width="528">paymaster data.</text>
-<path d="M47 385 V466 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="495" r="14" fill="#FF512F"/>
-<circle cx="47" cy="495" r="5" fill="#250917"/>
-<text x="80" y="504" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Sign in your wallet</text>
-<text x="80" y="541" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Authorize the operation including its</text>
-<text x="80" y="573" font-size="24" font-weight="400" fill="#250917" data-max-width="528">sponsorship data.</text>
-<path d="M47 516 V597 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="626" r="14" fill="#00FF99"/>
-<circle cx="47" cy="626" r="5" fill="#250917"/>
-<text x="80" y="635" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Submit and verify</text>
-<text x="80" y="672" font-size="24" font-weight="400" fill="#250917" data-max-width="528">The sponsor covers eligible network gas.</text>
-<text x="80" y="704" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Check onchain success.</text>
-<rect x="32" y="728" width="576" height="192" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="766" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Sponsorship covers eligible network gas.</text>
-<text x="50" y="798" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Openings can reserve an execution reward;</text>
-<text x="50" y="830" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">TP/SL can reserve a separate trigger</text>
-<text x="50" y="862" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">reward. Reduce and close orders reserve no</text>
-<text x="50" y="894" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">execution reward.</text>
+<desc id="authorization-and-gas-sponsorship-desc">Prepare the action, request native paymaster data and gas estimates before the owner signs. Then submit the signed operation and verify the result. First-time Trading Account deployment waits for an Arbitrum Sepolia safe block (up to 30 min). Closes have zero keeper execution reward.</desc>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="854" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · AUTHORIZATION</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Sponsorship before the</text>
+<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">signature</text>
+<path d="M32 180 L608 180" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 180 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="221" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="221" r="5" fill="#9A8890"/>
+<text x="78" y="230" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Review the action</text>
+<text x="78" y="263" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Check the account, amounts and execution</text>
+<text x="78" y="293" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">bounds.</text>
+<path d="M47 240 V317 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="340" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="340" r="5" fill="#9A8890"/>
+<text x="78" y="349" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Prepare sponsorship</text>
+<text x="78" y="382" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Request native paymaster data and gas</text>
+<text x="78" y="412" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">estimate before signing.</text>
+<path d="M47 359 V436 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="459" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="459" r="5" fill="#FFAB96"/>
+<text x="78" y="468" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Sign in your wallet</text>
+<text x="78" y="501" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Authorize the exact prepared Trading Account</text>
+<text x="78" y="531" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">operation.</text>
+<path d="M47 478 V555 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="578" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
+<circle cx="47" cy="578" r="5" fill="#00FF99"/>
+<text x="78" y="587" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">Submit and verify</text>
+<text x="78" y="620" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">The paymaster covers eligible network gas.</text>
+<text x="78" y="650" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Verify onchain receipt.</text>
+<rect x="32" y="674" width="576" height="148" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="684" width="5" height="128" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="708" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">First-time Trading Account deployment waits</text>
+<text x="56" y="738" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">for an Arbitrum Sepolia safe block (up to 30</text>
+<text x="56" y="768" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">min). Closes have zero keeper execution</text>
+<text x="56" y="798" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">reward.</text>
 </svg>

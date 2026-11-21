@@ -1,48 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1039" viewBox="0 0 640 1039" role="img" aria-labelledby="trader-claim-lifecycle-title trader-claim-lifecycle-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="969" viewBox="0 0 640 969" role="img" aria-labelledby="trader-claim-lifecycle-title trader-claim-lifecycle-desc" focusable="false">
 <title id="trader-claim-lifecycle-title">From unpaid payout to funded claim</title>
 <desc id="trader-claim-lifecycle-desc">An unfunded residual price payout becomes a claim. Claim settlement is all-or-nothing once aggregate cash coverage returns, and the credit bucket depends on whether a position remains open. Settlement is not withdrawal. Pledged credit remains backing for an open position; only eligible free funds can be withdrawn.</desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="1039" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / TRADER CLAIMS</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">From unpaid payout to funded</text>
-<text x="32" y="155" font-size="36" font-weight="700" fill="#250917" data-max-width="576">claim</text>
-<path d="M32 188 L608 188" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 188 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="233" r="14" fill="#F7D977"/>
-<circle cx="47" cy="233" r="5" fill="#250917"/>
-<text x="80" y="242" font-size="26" font-weight="700" fill="#250917" data-max-width="528">A price payout cannot be funded</text>
-<text x="80" y="279" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Record the full residual payout as a trader</text>
-<text x="80" y="311" font-size="24" font-weight="400" fill="#250917" data-max-width="528">claim.</text>
-<path d="M47 254 V335 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="364" r="14" fill="#9A8890"/>
-<circle cx="47" cy="364" r="5" fill="#250917"/>
-<text x="80" y="373" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Aggregate coverage returns</text>
-<text x="80" y="410" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Pool cash must cover all outstanding trader</text>
-<text x="80" y="442" font-size="24" font-weight="400" fill="#250917" data-max-width="528">claims.</text>
-<path d="M47 385 V466 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="495" r="14" fill="#FF512F"/>
-<circle cx="47" cy="495" r="5" fill="#250917"/>
-<text x="80" y="504" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Authorize Settle Claim</text>
-<text x="80" y="541" font-size="24" font-weight="400" fill="#250917" data-max-width="528">The owning Trading Account submits the</text>
-<text x="80" y="573" font-size="24" font-weight="400" fill="#250917" data-max-width="528">sponsored action.</text>
-<rect x="32" y="597" width="278" height="258" rx="12" fill="#FFAB96" stroke="none"/>
-<text x="48" y="639" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Position still open</text>
-<path d="M48 660 L294 660" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="48" y="690" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Credit PnL pledge</text>
-<text x="48" y="729" font-size="24" font-weight="400" fill="#250917" data-max-width="246">The funded price</text>
-<text x="48" y="761" font-size="24" font-weight="400" fill="#250917" data-max-width="246">payout backs the</text>
-<text x="48" y="793" font-size="24" font-weight="400" fill="#250917" data-max-width="246">remaining position.</text>
-<rect x="330" y="597" width="278" height="258" rx="12" fill="#FFF5F9" stroke="#9A8890"/>
-<rect x="342" y="601" width="254" height="6" rx="3" fill="#00FF99" stroke="none"/>
-<text x="346" y="639" font-size="26" font-weight="700" fill="#250917" data-max-width="246">No open position</text>
-<path d="M346 660 L592 660" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="346" y="690" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Credit settlement</text>
-<text x="346" y="729" font-size="24" font-weight="400" fill="#250917" data-max-width="246">USDG enters the</text>
-<text x="346" y="761" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Margin Account;</text>
-<text x="346" y="793" font-size="24" font-weight="400" fill="#250917" data-max-width="246">withdrawal is a</text>
-<text x="346" y="825" font-size="24" font-weight="400" fill="#250917" data-max-width="246">separate action.</text>
-<rect x="32" y="879" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="917" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Settlement is not withdrawal. Pledged credit</text>
-<text x="50" y="949" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">remains backing for an open position; only</text>
-<text x="50" y="981" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">eligible free funds can be withdrawn.</text>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="969" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · TRADER CLAIMS</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">From unpaid payout to funded</text>
+<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">claim</text>
+<path d="M32 180 L608 180" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 180 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="221" r="13" fill="#3B212D" stroke="#F7D977" stroke-width="2.5"/>
+<circle cx="47" cy="221" r="5" fill="#F7D977"/>
+<text x="78" y="230" font-size="24" font-weight="700" fill="#F7D977" data-max-width="530">A price payout cannot be funded</text>
+<text x="78" y="263" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Record the full residual payout as a trader</text>
+<text x="78" y="293" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">claim.</text>
+<path d="M47 240 V317 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="340" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="340" r="5" fill="#9A8890"/>
+<text x="78" y="349" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Aggregate coverage returns</text>
+<text x="78" y="382" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Contract verifies pool cash covers all</text>
+<text x="78" y="412" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">outstanding claims.</text>
+<path d="M47 359 V436 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="459" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="459" r="5" fill="#FFAB96"/>
+<text x="78" y="468" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Authorize Settle Claim</text>
+<text x="78" y="501" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">The owning Trading Account submits the</text>
+<text x="78" y="531" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">sponsored action.</text>
+<rect x="32" y="555" width="278" height="242" rx="12" fill="#3B212D" stroke="#FFAB96" stroke-width="1.5"/>
+<rect x="44" y="558" width="254" height="5" rx="3" fill="#FFAB96" stroke="none"/>
+<text x="48" y="597" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="246">Position still open</text>
+<path d="M48 614 L294 614" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="640" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Credit PnL pledge</text>
+<text x="48" y="676" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">The funded price</text>
+<text x="48" y="706" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">payout backs the</text>
+<text x="48" y="736" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">remaining position.</text>
+<rect x="330" y="555" width="278" height="242" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="342" y="558" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="346" y="597" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">No open position</text>
+<path d="M346 614 L592 614" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="640" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Credit settlement</text>
+<text x="346" y="676" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">USDG enters the</text>
+<text x="346" y="706" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Margin Account;</text>
+<text x="346" y="736" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">withdrawal is a</text>
+<text x="346" y="766" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">separate action.</text>
+<rect x="32" y="819" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="829" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="853" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Settlement is not withdrawal. Pledged credit</text>
+<text x="56" y="883" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">remains backing for an open position; only</text>
+<text x="56" y="913" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">eligible free funds can be withdrawn.</text>
 </svg>

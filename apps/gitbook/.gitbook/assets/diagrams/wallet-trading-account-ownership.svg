@@ -1,34 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="923" viewBox="0 0 640 923" role="img" aria-labelledby="wallet-trading-account-ownership-title wallet-trading-account-ownership-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="819" viewBox="0 0 640 819" role="img" aria-labelledby="wallet-trading-account-ownership-title wallet-trading-account-ownership-desc" focusable="false">
 <title id="wallet-trading-account-ownership-title">Your wallet controls the account</title>
 <desc id="wallet-trading-account-ownership-desc">The owner wallet signs for the distinct Trading Account. Protocol positions, orders, protection, margin and claims are keyed to that Trading Account. The owner wallet and Trading Account are different addresses. Verify the correct address before sending funds.</desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="923" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / OWNERSHIP</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Your wallet controls the</text>
-<text x="32" y="155" font-size="36" font-weight="700" fill="#250917" data-max-width="576">account</text>
-<path d="M32 188 L608 188" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 188 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="233" r="14" fill="#9A8890"/>
-<circle cx="47" cy="233" r="5" fill="#250917"/>
-<text x="80" y="242" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Owner wallet</text>
-<text x="80" y="279" font-size="24" font-weight="400" fill="#250917" data-max-width="528">You review and sign the authorized action.</text>
-<path d="M47 254 V303 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="332" r="14" fill="#FF512F"/>
-<circle cx="47" cy="332" r="5" fill="#250917"/>
-<text x="80" y="341" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Trading Account</text>
-<text x="80" y="378" font-size="24" font-weight="400" fill="#250917" data-max-width="528">A separate smart-account address you</text>
-<text x="80" y="410" font-size="24" font-weight="400" fill="#250917" data-max-width="528">control.</text>
-<text x="32" y="460" font-size="26" font-weight="700" fill="#250917" data-max-width="576">Protocol state owned by that account</text>
-<rect x="32" y="483" width="576" height="56" rx="8" fill="#FFAB96" stroke="none"/>
-<text x="52" y="517" font-size="24" font-weight="400" fill="#250917" data-max-width="536">Positions and TP/SL</text>
-<rect x="32" y="549" width="576" height="56" rx="8" fill="#FFAB96" stroke="none"/>
-<text x="52" y="583" font-size="24" font-weight="400" fill="#250917" data-max-width="536">Orders and execution bounds</text>
-<rect x="32" y="615" width="576" height="56" rx="8" fill="#FFAB96" stroke="none"/>
-<text x="52" y="649" font-size="24" font-weight="400" fill="#250917" data-max-width="536">Margin balances and reserves</text>
-<rect x="32" y="681" width="576" height="56" rx="8" fill="#FFAB96" stroke="none"/>
-<text x="52" y="715" font-size="24" font-weight="400" fill="#250917" data-max-width="536">Trader claims</text>
-<rect x="32" y="763" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="801" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">The owner wallet and Trading Account are</text>
-<text x="50" y="833" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">different addresses. Verify the correct</text>
-<text x="50" y="865" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">address before sending funds.</text>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="819" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · OWNERSHIP</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Your wallet controls the account</text>
+<path d="M32 136 L608 136" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 136 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="177" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="177" r="5" fill="#9A8890"/>
+<text x="78" y="186" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Owner wallet</text>
+<text x="78" y="219" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">You review and sign the authorized action.</text>
+<path d="M47 196 V243 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="266" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="266" r="5" fill="#FFAB96"/>
+<text x="78" y="275" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Trading Account</text>
+<text x="78" y="308" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">A separate smart-account address you</text>
+<text x="78" y="338" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">control.</text>
+<text x="32" y="386" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="576">Protocol state owned by that account</text>
+<rect x="32" y="407" width="576" height="52" rx="8" fill="#3B212D" stroke="#FFAB96" stroke-width="1"/>
+<rect x="36" y="415" width="4" height="36" rx="2" fill="#FFAB96" stroke="none"/>
+<text x="54" y="438" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Positions and TP/SL</text>
+<rect x="32" y="469" width="576" height="52" rx="8" fill="#3B212D" stroke="#FFAB96" stroke-width="1"/>
+<rect x="36" y="477" width="4" height="36" rx="2" fill="#FFAB96" stroke="none"/>
+<text x="54" y="500" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Orders and execution bounds</text>
+<rect x="32" y="531" width="576" height="52" rx="8" fill="#3B212D" stroke="#FFAB96" stroke-width="1"/>
+<rect x="36" y="539" width="4" height="36" rx="2" fill="#FFAB96" stroke="none"/>
+<text x="54" y="562" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Margin balances and reserves</text>
+<rect x="32" y="593" width="576" height="52" rx="8" fill="#3B212D" stroke="#FFAB96" stroke-width="1"/>
+<rect x="36" y="601" width="4" height="36" rx="2" fill="#FFAB96" stroke="none"/>
+<text x="54" y="624" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Trader claims</text>
+<rect x="32" y="669" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="679" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="703" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">The owner wallet and Trading Account are</text>
+<text x="56" y="733" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">different addresses. Verify the correct</text>
+<text x="56" y="763" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">address before sending funds.</text>
 </svg>
