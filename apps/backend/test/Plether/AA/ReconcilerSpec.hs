@@ -12,7 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.AA.Gateway (SecurityBlockHeader (..), validateSecurityHeaderTime)
-import Plether.AA.KernelReconciler (reconstructKernelReceipt)
+import Plether.AA.KernelReconciler (agreeKernelReceiptEvidence, reconstructKernelReceipt)
 import Plether.AA.Reconciler
   ( BlockHeader (..)
   , AaReconcilerConfig (..)
@@ -168,6 +168,15 @@ spec =
       prove (kernelReceipt [executionBoundary, kernelEvent zeroAddress True]) `shouldSatisfy` isLeft
       prove (kernelReceipt [executionBoundary, setText "blockHash" otherBlockHash sponsored]) `shouldSatisfy` isLeft
       prove (kernelReceipt [executionBoundary, sponsored, setText "logIndex" "0x3" sponsored]) `shouldSatisfy` isLeft
+
+    it "compares Kernel receipt evidence across providers while allowing unrelated vendor fields" $ do
+      let sponsored = kernelEvent paymaster True
+          receipt = kernelReceipt [executionBoundary, sponsored]
+          agree = agreeKernelReceiptEvidence kernelEntryPoint sender 7 paymaster operationHash transactionHash receipt
+      (event, _) <- expectRight $ agree (setText "vendorMetadata" "different" receipt)
+      uoeHash event `shouldBe` operationHash
+      agree (kernelReceipt [executionBoundary, kernelEvent paymaster False]) `shouldSatisfy` isLeft
+      agree (kernelReceipt [executionBoundary, setText "blockHash" otherBlockHash sponsored]) `shouldSatisfy` isLeft
 
 validEvent :: Value
 validEvent =

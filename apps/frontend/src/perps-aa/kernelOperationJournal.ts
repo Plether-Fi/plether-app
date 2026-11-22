@@ -60,12 +60,21 @@ export interface KernelOperationAttempt extends SignedKernelAttemptInput {
   phase: KernelAttemptPhase
   createdAt: number
   updatedAt: number
+  observedReceipt?: UserOperationReceipt<'0.9'>
   receipt?: UserOperationReceipt<'0.9'>
   cancellation?: {
     prepared: KernelPreparedCancellation
     signature: Hex
     phase: 'signed' | 'sending' | 'submitted'
   }
+}
+
+export type KernelObservationReorgCheck = (receipt: UserOperationReceipt<'0.9'>) => Promise<boolean>
+
+function sameObservation(left: KernelOperationAttempt['observedReceipt'], right: KernelOperationAttempt['observedReceipt']) {
+  return left?.receipt.blockHash === right?.receipt.blockHash &&
+    left?.receipt.blockNumber === right?.receipt.blockNumber &&
+    left?.receipt.transactionHash === right?.receipt.transactionHash
 }
 
 const journal = createStore('plether-perps-kernel-operations', 'attempts')
@@ -275,7 +284,7 @@ function knownServerTime(): number | undefined {
 
 export function kernelAttemptCanRetry(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
   const orderDeadline = attempt.orderRequestV3?.submitBy
-  return now !== undefined && isKernelAttemptPending(attempt) && attempt.cancellation === undefined &&
+  return now !== undefined && isKernelAttemptPending(attempt) && attempt.observedReceipt === undefined && attempt.cancellation === undefined &&
     now < attempt.prepared.expiresAt * 1_000 &&
     hasKernelOrderSubmissionTime(orderDeadline, now)
 }
@@ -311,13 +320,13 @@ export async function discardUnsentKernelAttempt(attempt: KernelOperationAttempt
 }
 
 export function kernelAttemptCanCancel(attempt: KernelOperationAttempt): boolean {
-  return attempt.prepared.mode === 'eth' && attempt.cancellation === undefined &&
+  return attempt.prepared.mode === 'eth' && attempt.observedReceipt === undefined && attempt.cancellation === undefined &&
     (attempt.phase === 'sending' || attempt.phase === 'submitted')
 }
 
 export function kernelCancellationCanRetry(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
   const cancellation = attempt.cancellation
-  return isKernelAttemptPending(attempt) && cancellation !== undefined &&
+  return isKernelAttemptPending(attempt) && attempt.observedReceipt === undefined && cancellation !== undefined &&
     (cancellation.phase !== 'signed' || now !== undefined && now < cancellation.prepared.expiresAt * 1_000)
 }
 
@@ -418,7 +427,7 @@ export async function retryKernelCancellation(attempt: KernelOperationAttempt): 
 }
 
 /** An ambiguous transport response, timeout, or elapsed quote leaves the lane held. */
-export async function reconcileKernelAttempt(attempt: KernelOperationAttempt): Promise<KernelOperationAttempt> {
+export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck): Promise<KernelOperationAttempt> {
   const current = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash)
   if (!current) throw new Error('The pending Trading Account operation is unavailable')
   if (!isKernelAttemptPending(current) || current.phase === 'signed') return current
@@ -428,13 +437,25 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt): P
   }
   const locator = reconcileLocator(current)
   const status = await getKernelOperationStatus(locator)
-  if (status.state === 'pending') return (await getKernelAttempt(current.scope, current.prepared.userOperationHash)) ?? current
+  if (status.state === 'pending' || status.state === 'observed') {
+    const next = status.state === 'observed' ? status.receipt : undefined
+    const observed = current.observedReceipt
+    const changed = next
+      ? !sameObservation(observed, next)
+      : observed !== undefined && await isObservationReorged?.(observed)
+    if (!changed) return (await getKernelAttempt(current.scope, current.prepared.userOperationHash)) ?? current
+    const { attempt: updated } = await editAttempt(current, existing => {
+      if (!isKernelAttemptPending(existing) || !sameObservation(existing.observedReceipt, observed)) return existing
+      return { ...existing, observedReceipt: next, updatedAt: Date.now() }
+    })
+    return updated
+  }
   if (status.state === 'sponsorship_expired' && current.prepared.mode !== 'sponsored') {
     throw new Error('The Trading Account gateway returned an incompatible expiry')
   }
   const { attempt: resolved, changed } = await editAttempt(current, existing => {
     if (!isKernelAttemptPending(existing) || reconcileLocator(existing).cancellationHash !== locator.cancellationHash) return existing
-    return { ...existing, phase: status.state, ...(status.receipt ? { receipt: status.receipt } : {}), updatedAt: Date.now() }
+    return { ...existing, phase: status.state, observedReceipt: undefined, ...(status.receipt ? { receipt: status.receipt } : {}), updatedAt: Date.now() }
   })
   if (!changed) return resolved
   if (resolved.phase === 'included' && resolved.receipt?.success &&
@@ -461,7 +482,7 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt): P
 }
 
 /** One tab per attempt polls at a time. Polling cannot send an operation. */
-export async function refreshKernelAttempt(attempt: KernelOperationAttempt): Promise<KernelOperationAttempt> {
+export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck): Promise<KernelOperationAttempt> {
   if (!isKernelAttemptPending(attempt) || attempt.phase === 'signed') return attempt
   const release = await acquireSponsoredOperationBrowserRecoveryLock({
     chainId: attempt.scope.chainId,
@@ -469,7 +490,7 @@ export async function refreshKernelAttempt(attempt: KernelOperationAttempt): Pro
     operationId: attempt.prepared.preparationId,
   })
   try {
-    return await reconcileKernelAttempt(attempt)
+    return await reconcileKernelAttempt(attempt, isObservationReorged)
   } finally {
     await release()
   }

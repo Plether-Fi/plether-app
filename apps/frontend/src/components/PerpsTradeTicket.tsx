@@ -34,6 +34,8 @@ import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
 import { KernelGasReviewCancelled, kernelQuoteIsFresh, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
+import { isKernelAttemptPending } from '../perps-aa/kernelOperationJournal'
+import { KernelObservedPendingError } from '../perps-aa/errors'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV3'
 import type { BasketLatest } from '../api'
@@ -1833,7 +1835,14 @@ export function PerpsTradeTicket({
   const isSponsoredAccountConfigured = identity.isAaManifestConfigured
   const gasReview = usePerpsGasReview()
   const { attempts: kernelAttempts } = useKernelAttempts(gasReview?.kernelScope)
-  const kernelOperationPending = kernelAttempts.some(({ phase }) => phase === 'signed' || phase === 'sending' || phase === 'submitted')
+  const pendingKernelOperation = kernelAttempts.find(isKernelAttemptPending)
+  const kernelOperationPending = pendingKernelOperation !== undefined
+  const kernelInclusionObserved = pendingKernelOperation?.observedReceipt
+  const kernelPendingMessage = kernelInclusionObserved
+    ? kernelInclusionObserved.success
+      ? 'The Trading Account transaction was included and is awaiting confirmation.'
+      : 'The Trading Account action reverted and is awaiting confirmation.'
+    : 'A Trading Account action is pending.'
   const marginGasApproval = useKernelGasApproval(gasReview)
   const kernelPaymentMode = gasReview?.preference.mode
   const tradingReadiness = useTradingReadiness(enableLiveTrading && isSponsoredAccountConfigured)
@@ -2028,7 +2037,7 @@ export function PerpsTradeTicket({
       : commitExecutionStatus === 'submitting'
         ? gasReview ? 'Submitting Trading Account transaction' : 'Submitting sponsored transaction'
         : commitExecutionStatus === 'confirming'
-          ? 'Waiting for on-chain confirmation'
+          ? kernelInclusionObserved ? 'Included, awaiting confirmation' : 'Waiting for on-chain confirmation'
           : commitExecutionStatus === 'confirmed'
             ? 'Transaction confirmed'
             : 'Waiting for wallet confirmation'
@@ -2039,7 +2048,8 @@ export function PerpsTradeTicket({
       : commitExecutionStatus === 'submitting'
         ? `Your wallet approved the ${commitOperationLabel}. Plether is submitting it to the network.`
         : commitExecutionStatus === 'confirming'
-          ? `Your wallet approved the ${commitOperationLabel} and it was submitted. Plether is waiting for on-chain confirmation.`
+          ? kernelInclusionObserved ? kernelPendingMessage
+            : `Your wallet approved the ${commitOperationLabel} and it was submitted. Plether is waiting for on-chain confirmation.`
           : commitExecutionStatus === 'confirmed'
             ? `The ${commitOperationLabel} is confirmed on-chain. Plether is loading the committed order.`
             : gasReview ? 'Confirm the reviewed Trading Account transaction in your owner wallet.' : isSponsoredAccountConfigured
@@ -3038,7 +3048,7 @@ export function PerpsTradeTicket({
         'Confirm the Plether Trading Account before trading.'
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
-    if (kernelOperationPending) return 'A Trading Account action is pending. Check activity before reviewing a new order.'
+    if (kernelOperationPending) return `${kernelPendingMessage} Check activity before reviewing a new order.`
     if (sponsorshipPauseMessage) return sponsorshipPauseMessage
     if (protectionInput.error) return protectionInput.error
     if (activePositionProtectionId > 0n) {
@@ -3937,6 +3947,14 @@ export function PerpsTradeTicket({
         setMarginActionStatus('idle')
         return
       }
+      if (error instanceof KernelObservedPendingError) {
+        setMarginActionStatus('idle')
+        setMarginAction(null)
+        setMarginActionAmount('')
+        setLocallyConfirmedFundingBalances(null)
+        gasReview?.openActivity()
+        return
+      }
       setMarginActionStatus('failed')
       const errorMessage = error instanceof Error
         ? error.message
@@ -4160,6 +4178,11 @@ export function PerpsTradeTicket({
         debugPerpsCommit('ticket:commit-error-after-inclusion', {
           message: error instanceof Error ? error.message : String(error),
         })
+        return
+      }
+      if (error instanceof KernelObservedPendingError) {
+        closeReviewModal()
+        gasReview?.openActivity()
         return
       }
       if (!inclusionWasReported() && findSponsorRequestError(error)?.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
@@ -4768,7 +4791,7 @@ export function PerpsTradeTicket({
           <AccountOperationNotice confirmation={savedConfirmation} operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
         ) : enableLiveTrading && kernelOperationPending && gasReview ? (
           <div className="space-y-2 border border-brand-border/25 p-3 text-sm text-content-secondary">
-            <p role="status">A Trading Account action is pending.</p>
+            <p role="status">{kernelPendingMessage}</p>
             <button type="button" className="font-semibold text-brand-peach underline underline-offset-4" onClick={gasReview.openActivity}>Check activity</button>
           </div>
         ) : displayedValidationError && displayedValidationError !== sponsorshipPauseMessage && !isZeroSize &&
@@ -5815,7 +5838,7 @@ export function PerpsTradeTicket({
           )}
           {kernelOperationPending && (
             <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-              A Trading Account action is pending. Check Trading Account activity before submitting another action.
+              {kernelPendingMessage} Check Trading Account activity before submitting another action.
             </p>
           )}
           <p className="text-sm leading-6 text-content-secondary">

@@ -6,6 +6,7 @@ import { arbitrumSepolia } from 'viem/chains'
 import { KernelEthFunding } from '../KernelEthFunding'
 import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
 import { parseKernelEthAmount } from '../../perps-aa/kernelEthFunding'
+import { KernelObservedPendingError } from '../../perps-aa/errors'
 import type { KernelPerpsAaDeploymentManifest } from '../../perps-aa/manifest'
 import type { KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
 
@@ -31,7 +32,7 @@ const entryPoint = '0x433709009b8330fda32311df1c2afa402ed8d009' satisfies Addres
 const scope = { sender, ownerAddress: owner, chainId: arbitrumSepolia.id, deployment: 'kernel-test' }
 const hash = `0x${'12'.repeat(32)}` satisfies Hex
 const blockHash = `0x${'34'.repeat(32)}` satisfies Hex
-const verifiedAccount = { address: sender, ownerAddress: owner, deployed: false, blockNumber: 1n }
+const verifiedAccount = { address: sender, ownerAddress: owner, deployed: false, blockNumber: 1n, blockHash }
 const receipt = { transactionHash: hash, blockHash, blockNumber: 2n, status: 'success' }
 const transfer = { hash, blockHash, blockNumber: 2n, from: owner, to: sender, value: parseEther('0.01'), input: '0x' }
 const runtime = {
@@ -63,7 +64,7 @@ describe('Kernel ETH funding', () => {
     mocks.sendTransaction.mockResolvedValue(hash)
     mocks.waitForTransactionReceipt.mockResolvedValue(receipt)
     mocks.getTransaction.mockResolvedValue(transfer)
-    mocks.getBlock.mockResolvedValue({ hash: blockHash })
+    mocks.getBlock.mockImplementation(async ({ blockNumber }) => ({ number: blockNumber, hash: blockHash }))
     mocks.quoteAction.mockResolvedValue({ mode: 'eth', maxNetworkGasWei: parseEther('0.001') })
     mocks.execute.mockResolvedValue({})
   })
@@ -83,7 +84,7 @@ describe('Kernel ETH funding', () => {
     expect(mocks.sendTransaction).not.toHaveBeenCalled()
   })
 
-  it('verifies a counterfactual recipient again, transfers ETH from the owner, and refreshes safe balances', async () => {
+  it('verifies a counterfactual recipient again, transfers ETH from the owner, and refreshes latest balances', async () => {
     renderPanel()
     expect(await screen.findByText(sender)).toBeVisible()
     expect(screen.getByText('0.02 ETH')).toBeVisible()
@@ -96,6 +97,15 @@ describe('Kernel ETH funding', () => {
     expect(mocks.verifyAccount).toHaveBeenCalledTimes(3)
     expect(mocks.sendTransaction).toHaveBeenCalledWith({ account: owner, chain: arbitrumSepolia, to: sender, value: parseEther('0.01') })
     expect(mocks.getBalance).toHaveBeenCalledTimes(2)
+    expect(mocks.getBalance).toHaveBeenLastCalledWith({ address: sender, blockNumber: verifiedAccount.blockNumber })
+  })
+
+  it('does not display balances when the verified account block changes', async () => {
+    mocks.getBlock.mockResolvedValueOnce({ number: verifiedAccount.blockNumber, hash })
+    renderPanel()
+    expect(await screen.findByText('Trading Account ETH balances are temporarily unavailable.')).toBeVisible()
+    expect(mocks.getBlock).toHaveBeenLastCalledWith({ blockNumber: verifiedAccount.blockNumber })
+    expect(screen.queryByRole('button', { name: 'Add ETH' })).not.toBeInTheDocument()
   })
 
   it('never confirms an included transaction with a mismatched payment', async () => {
@@ -162,6 +172,20 @@ describe('Kernel ETH funding', () => {
     expect(await screen.findByText('ETH withdrawal confirmed.')).toBeVisible()
     await waitFor(() => expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({ action: captured, ownerAddress: owner })))
     expect(mocks.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('leaves a provisionally included ETH withdrawal in Activity without reporting confirmation or failure', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    mocks.execute.mockRejectedValueOnce(new KernelObservedPendingError())
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to withdraw' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review withdrawal' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue to wallet' }))
+    expect(await screen.findByText(/included and is awaiting confirmation/)).toBeVisible()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('ETH withdrawal confirmed.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
   })
 
   it('preserves a reviewed ETH withdrawal when verification polling fails', async () => {

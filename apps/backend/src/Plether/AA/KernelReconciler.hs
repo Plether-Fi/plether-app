@@ -4,6 +4,7 @@ module Plether.AA.KernelReconciler
   , validateKernelReconcilerConfig
   , runKernelReconciler
   , verifyKernelOperationReceipt
+  , agreeKernelReceiptEvidence
   , reconstructKernelReceipt
   ) where
 
@@ -392,10 +393,8 @@ verifyKernelOperationReceipt scope ordinaryPrimary ordinarySecondary maxLag send
     (primaryReceipt, secondaryReceipt) <- liftIO $ concurrently (readReceipt primary tx) (readReceipt secondary tx)
     left <- available primaryReceipt
     right <- available secondaryReceipt
-    (event, leftLogs, rpcValue) <- consistent $ receiptEvidence (ksEntryPoint scope) sender nonce paymaster operationHash tx left
-    (rightEvent, rightLogs, _) <- consistent $ receiptEvidence (ksEntryPoint scope) sender nonce paymaster operationHash tx right
-    unless (event {uoeRaw = Null} == rightEvent {uoeRaw = Null} && leftLogs == rightLogs) $
-      throwE $ InconsistentEvidence "independent chain receipts disagree on the Kernel event or operation logs"
+    (event, rpcValue) <- consistent $ agreeKernelReceiptEvidence
+      (ksEntryPoint scope) sender nonce paymaster operationHash tx left right
     when (uoeBlockNumber event > bhNumber safe) $
       throwE $ TemporarilyUnavailable "Kernel operation is awaiting the shared safe boundary"
     provider $ verifyEventBlockHeaders primary secondary [event]
@@ -424,6 +423,15 @@ verifyKernelOperationReceipt scope ordinaryPrimary ordinarySecondary maxLag send
 
 -- Pure receipt reconstruction shared by canonical-provider validation and its
 -- tests. Posting a bundler-supplied receipt never creates inclusion evidence.
+agreeKernelReceiptEvidence
+  :: Text -> Text -> Integer -> Text -> Text -> Text -> Value -> Value -> Either Text (UserOperationEvent, Value)
+agreeKernelReceiptEvidence entryPoint sender nonce paymaster operationHash tx left right = do
+  (event, leftLogs, rpcValue) <- receiptEvidence entryPoint sender nonce paymaster operationHash tx left
+  (rightEvent, rightLogs, _) <- receiptEvidence entryPoint sender nonce paymaster operationHash tx right
+  unless (event {uoeRaw = Null} == rightEvent {uoeRaw = Null} && leftLogs == rightLogs) $
+    Left "independent chain receipts disagree on the Kernel event or operation logs"
+  pure (event, rpcValue)
+
 reconstructKernelReceipt
   :: Text -> Text -> Integer -> Text -> Text -> Text -> Value -> Either Text (KernelInclusion, Value)
 reconstructKernelReceipt entryPoint sender nonce paymaster operationHash tx receipt = do

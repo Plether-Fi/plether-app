@@ -15,6 +15,7 @@ import {
   retryKernelAttempt,
   retryKernelCancellation,
   signAndSubmitKernelCancellation,
+  type KernelObservationReorgCheck,
   type KernelOperationAttempt,
 } from './kernelOperationJournal'
 import { KernelRpcError, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
@@ -27,10 +28,11 @@ function readRecoveryTime(): number | undefined {
   }
 }
 
-export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, signPrepared }: {
+export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, signPrepared, isObservationReorged }: {
   attempt: KernelOperationAttempt
   quoteCancellation?: (original: KernelPreparedOperation, signature: Hex) => Promise<KernelPreparedCancellation>
   signPrepared?: (prepared: KernelPreparedOperation) => Promise<Hex>
+  isObservationReorged?: KernelObservationReorgCheck
 }) {
   const [quote, setQuote] = useState<KernelPreparedCancellation>()
   const [busy, setBusy] = useState(false)
@@ -102,8 +104,8 @@ export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, sign
             }}>Refresh quote status</Button>}
           {attempt.phase !== 'signed' && <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => {
             void run(async () => {
-              const result = await refreshKernelAttempt(attempt)
-              if (isKernelAttemptPending(result)) setNotice('This operation is still pending.')
+              const result = await refreshKernelAttempt(attempt, isObservationReorged)
+              if (isKernelAttemptPending(result) && !result.observedReceipt) setNotice('This operation is still pending.')
             })
           }}>Check status</Button>}
           {kernelAttemptCanRetry(attempt, now) && <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => {

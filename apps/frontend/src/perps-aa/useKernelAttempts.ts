@@ -6,12 +6,13 @@ import {
   refreshKernelAttempt,
   subscribeKernelAttemptUpdates,
   type KernelAttemptScope,
+  type KernelObservationReorgCheck,
   type KernelOperationAttempt,
 } from './kernelOperationJournal'
 
 const emptyAttempts: KernelOperationAttempt[] = []
 
-export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover = false) {
+export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover = false, isObservationReorged?: KernelObservationReorgCheck) {
   const { deployment, chainId, entryPoint, sender } = scope ?? {}
   const [snapshot, setSnapshot] = useState<{
     key: string
@@ -39,7 +40,7 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
       if (!attempt) return
       recovering = true
       try {
-        await refreshKernelAttempt(attempt)
+        await refreshKernelAttempt(attempt, isObservationReorged)
       } catch {
         // A network error or concurrent poll never changes the saved attempt.
       } finally {
@@ -82,13 +83,16 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
       document.removeEventListener('visibilitychange', update)
       window.removeEventListener('online', update)
     }
-  }, [deployment, chainId, entryPoint, sender, recover, refreshCount])
+  }, [deployment, chainId, entryPoint, sender, recover, refreshCount, isObservationReorged])
 
   const active = snapshot && scope && snapshot.key === kernelAttemptScopeKey(scope) ? snapshot : undefined
   return { attempts: active?.attempts ?? emptyAttempts, error: active?.error, refresh }
 }
 
-export function KernelOperationRecovery({ scope }: { scope: KernelAttemptScope | undefined }) {
-  useKernelAttempts(scope, true)
+export function KernelOperationRecovery({ scope, isObservationReorged }: {
+  scope: KernelAttemptScope | undefined
+  isObservationReorged?: KernelObservationReorgCheck
+}) {
+  useKernelAttempts(scope, true, isObservationReorged)
   return null
 }

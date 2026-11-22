@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { relaxedProtectionCloseLimits } from '../../contracts/positionProtection'
 import { prepared } from '../../test/fixtures/preparedOrder'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
+import { KernelObservedPendingError } from '../../perps-aa/errors'
+import * as perpsAnalytics from '../../analytics/perps'
 
 const wagmiMocks = vi.hoisted(() => ({
   useReadContracts: vi.fn(),
@@ -473,6 +475,29 @@ describe('Perps trade preview debounce', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(wagmiMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: first }))
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands a provisionally included commit off without reporting a failed or confirmed order', async () => {
+    const analytics = vi.spyOn(perpsAnalytics, 'trackPerpsOrderLifecycle')
+    const order = prepared()
+    order.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    order.request.sizeDelta = 100n * 10n ** 18n
+    wagmiMocks.prepareOrder.mockResolvedValue(order)
+    wagmiMocks.commitOrder.mockRejectedValueOnce(new KernelObservedPendingError())
+    try {
+      render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="100" initialReviewOpen oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      const confirm = screen.getByRole('button', { name: 'Confirm Commit' })
+      expect(confirm).toBeEnabled()
+      await act(async () => { fireEvent.click(confirm) })
+      expect(wagmiMocks.commitOrder).toHaveBeenCalledOnce()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(analytics).not.toHaveBeenCalledWith('commit_failed', expect.anything())
+      expect(analytics).not.toHaveBeenCalledWith('commit_succeeded', expect.anything())
+    } finally {
+      analytics.mockRestore()
+    }
   })
 
   it('closes a review after an account switch and ignores its late response', async () => {

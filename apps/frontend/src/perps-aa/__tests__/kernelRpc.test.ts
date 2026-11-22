@@ -349,17 +349,18 @@ describe('Kernel recovery evidence', () => {
     }
   }
 
-  it('uses the canonical revert event and refuses crossed identities or scoped logs', () => {
+  it.each(['included', 'observed'] as const)('uses the exact revert event and refuses crossed identities or scoped logs for %s', state => {
     const receipt = canonicalReceipt(operationHash)
-    expect(parseKernelOperationStatus({ state: 'included', receipt }, locator)).toMatchObject({
-      state: 'included', receipt: { nonce: 4n, actualGasCost: 16n, actualGasUsed: 8n, success: false },
+    expect(parseKernelOperationStatus({ state, receipt }, locator)).toMatchObject({
+      state, receipt: { nonce: 4n, actualGasCost: 16n, actualGasUsed: 8n, success: false },
     })
     for (const invalid of [
       { ...receipt, actualGasCost: '0x11' }, { ...receipt, nonce: '0x5' },
       { ...receipt, paymaster }, { ...receipt, logs: [before, ...receipt.logs] },
     ]) {
-      expect(() => parseKernelOperationStatus({ state: 'included', receipt: invalid }, locator)).toThrow('invalid response')
+      expect(() => parseKernelOperationStatus({ state, receipt: invalid }, locator)).toThrow('invalid response')
     }
+    expect(() => parseKernelOperationStatus({ state, receipt: canonicalReceipt(cancellationHash) }, locator)).toThrow('invalid response')
     expect(() => parseKernelOperationStatus({ state: 'sponsorship_expired', receipt: null }, locator)).toThrow('invalid response')
   })
 

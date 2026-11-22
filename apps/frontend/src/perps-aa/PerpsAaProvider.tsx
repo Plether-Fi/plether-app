@@ -76,7 +76,7 @@ function ConnectedPerpsAaRuntime({
     <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
       <Suspense fallback={null}>
         {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
-          ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} />
+          ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} isObservationReorged={effectiveRuntime.kernel.isObservationReorged} />
           : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
       </Suspense>
       {children}

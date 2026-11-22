@@ -25,7 +25,7 @@ Plether will self-host the Sepolia AA stack as follows:
    listener; the Plether API is its only caller.
 2. The existing Haskell API remains the only public AA gateway and becomes the
    ERC-7677 paymaster service. The existing account and action validation is
-   shared by estimation, sponsorship, and submission paths. Every
+   shared by estimation, sponsorship, and submission paths. For v0.8, each
    authorization-critical account, runtime, and fee read is evaluated at one
    explicit `safe` block agreed by two independent RPC providers; both
    providers must return the same result and the block header is re-read before
@@ -136,9 +136,15 @@ deployment forgoes its traced ERC-7562 opcode, storage, entity-role and
 reputation enforcement.
 
 The gateway retains reviewed account and action pins, exact signed operation
-checks, rate and gas limits, and the independent common-safe reads used for
-admission and reconciliation. Counterfactual operations use the pinned
-KernelFactory directly. The direct-factory Core paymaster requires a gas
+checks, and rate and gas limits. Wallet funding, account checks, preparation,
+and relay use an explicit recent block agreed by two independent RPC
+providers. The gateway rechecks the same block around those reads. Activity
+shows observed inclusion before the safe head reaches it. The ledger uses
+the agreed safe chain for settlement, expiry, and recovery. ETH-paid quotes
+retain a historical safe or finalized recovery anchor, whose age has no
+bearing on the wallet's current account or gas balance.
+Counterfactual operations use the pinned KernelFactory directly.
+The direct-factory Core paymaster requires a gas
 deposit. Neither the factory nor the paymaster requires stake for this
 validation profile.
 

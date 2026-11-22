@@ -195,9 +195,9 @@ export async function createKernelTradingAccount(
   const { factory, factoryData } = factoryArgs
   const entryPoint = { address: entryPoint09Address, abi: entryPoint09Abi, version: '0.9' as const }
 
-  const readRootNonce = async ({ key = 0n }: { key?: bigint } = {}) => {
+  const readRootNonce = async ({ key = 0n, blockNumber }: { key?: bigint; blockNumber?: bigint } = {}) => {
     if (key !== 0n) throw new Error('Only the Kernel root nonce is supported')
-    return client.readContract({ ...entryPoint, functionName: 'getNonce', args: [address, 0n] })
+    return client.readContract({ ...entryPoint, functionName: 'getNonce', args: [address, 0n], blockNumber })
   }
   const unsupportedSignature = async (): Promise<never> => {
     throw new Error('This Kernel adapter signs UserOperations only')
@@ -233,6 +233,6 @@ export async function createKernelTradingAccount(
 
   // Viem's default nonce manager generates a new key when one is omitted.
   // Plether serializes both payment modes on the same root nonce key. Keep the
-  // fixed factory args so callers can decide deployment against the safe block.
+  // fixed factory args so callers can decide deployment and nonce at one block.
   return { ...account, factoryArgs, getNonce: readRootNonce }
 }

@@ -32,13 +32,17 @@ export async function readKernelEthFunds(runtime: KernelPerpsAaSmartAccountRunti
   if (client.chain?.id !== arbitrumSepolia.id || runtime.chainId !== arbitrumSepolia.id) {
     throw new Error('Use Arbitrum Sepolia to verify Trading Account funds.')
   }
-  const { address, blockNumber } = await verifyKernelEthRecipient(runtime)
+  const { address, blockNumber, blockHash } = await verifyKernelEthRecipient(runtime)
   const [account, entrypoint, margin] = await Promise.all([
     client.getBalance({ address, blockNumber }),
     client.readContract({ address: runtime.smartAccount.entryPoint, abi: entryPointDepositAbi, functionName: 'balanceOf', args: [address], blockNumber }),
     client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.cfdEngineAccountLens, abi: PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
       functionName: 'getAccountLedgerSnapshot', args: [address], blockNumber }).catch(() => undefined),
   ])
+  const block = await client.getBlock({ blockNumber })
+  if (block.number !== blockNumber || block.hash.toLowerCase() !== blockHash.toLowerCase()) {
+    throw new Error('The Trading Account balance block changed. Refresh before continuing.')
+  }
   return { address, account, entrypoint, margin: margin?.settlementBalanceAssets }
 }
 

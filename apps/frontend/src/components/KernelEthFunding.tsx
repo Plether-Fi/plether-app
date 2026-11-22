@@ -7,6 +7,7 @@ import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { kernelQuoteIsFresh } from '../hooks/usePerpsGasReview'
 import { useSwitchToArbitrumSepolia } from '../hooks/useSwitchToArbitrumSepolia'
 import { readGasPaymentPreference, useGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
+import { KernelObservedPendingError } from '../perps-aa/errors'
 import {
   buildKernelEthWithdrawal, confirmKernelEthTopUp, parseKernelEthAmount, readKernelEthFunds,
   sendKernelEthTopUp, verifyKernelEthRecipient, type KernelEthWithdrawalSource,
@@ -72,7 +73,12 @@ export function KernelEthFunding({ runtime, manifest }: {
     try {
       await action()
     } catch (cause) {
-      setNotice({ message: cause instanceof Error ? cause.message : 'Unable to complete this action.', error: true })
+      if (cause instanceof KernelObservedPendingError) {
+        choose()
+        setNotice({ message: cause.message })
+      } else {
+        setNotice({ message: cause instanceof Error ? cause.message : 'Unable to complete this action.', error: true })
+      }
     } finally {
       setBusy(false)
       inFlight.current = false
@@ -103,7 +109,7 @@ export function KernelEthFunding({ runtime, manifest }: {
       }
       setTopUpHash(confirmed)
       await balances.refetch()
-      setNotice({ message: 'ETH transfer confirmed. Once the safe balance updates, reopen your transaction review for a fresh gas quote.' })
+      setNotice({ message: 'ETH transfer confirmed. Reopen your transaction review for a fresh gas quote.' })
     })
   }
 

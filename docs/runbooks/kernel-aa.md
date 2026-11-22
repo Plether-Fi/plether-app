@@ -56,9 +56,9 @@ The browser posts JSON-RPC to `/api/perps/v1/aa/kernel/rpc`. The Worker forwards
 | Method | Result |
 | --- | --- |
 | `plether_getKernelManifest` | Version, approved account pins, Perps release, trading addresses, paymaster and independent readiness for each payment mode |
-| `plether_prepareUserOperation` | A versioned, immutable operation including the selected payer, bounds, expiry and recovery token |
+| `plether_prepareUserOperation` | A versioned, immutable operation including the selected payer, bounds, expiry and recovery token. Funding and account state are read at a recent block agreed by both providers |
 | `plether_sendUserOperation` | The exact accepted and relayed UserOperation hash |
-| `plether_getUserOperationStatus` | Pending or terminal status and canonical inclusion evidence when available |
+| `plether_getUserOperationStatus` | Pending status, observed inclusion from both RPCs, or terminal status with safe-chain evidence |
 | `plether_prepareUserOperationCancellation` | A fee quote for an owner-approved ETH-paid replacement of a pending ETH operation on the same nonce |
 | `plether_sendUserOperationCancellation` | The exact accepted and relayed cancellation hash |
 
@@ -72,17 +72,19 @@ Build the fresh site with `VITE_PERPS_KERNEL_AA_DEPLOYMENT` set to the exact `de
 
 After connecting a wallet, users can set their preference during account setup or a gateway outage. The pinned Kernel profile derives one account per owner and deployment, so the choice carries over when the account is verified. Both submission modes still require live readiness.
 
-Use **Check status** to recover an uncertain send. An exact resend uses the saved signature and payer. An ETH-paid attempt also offers **Review cancellation**. The owner reviews the maximum ETH cost before signing a fixed, same-nonce replacement. Counterfactual cancellation includes deployment gas and may create the account. The lane stays locked until the gateway has canonical evidence. An expired attempt that the browser can prove it never relayed offers **Discard unsent operation**. An operation receipt reports the actual gas charge, including for a revert. Order activity reports keeper execution separately from operation inclusion.
+Use **Check status** to recover an uncertain send. An exact resend uses the saved signature and payer. An ETH-paid attempt also offers **Review cancellation**. The owner reviews the maximum ETH cost before signing a fixed, same-nonce replacement. Counterfactual cancellation includes deployment gas and may create the account. Activity shows the transaction as soon as both readers agree on its inclusion. The journal retains the pending attempt until safe-chain recovery finishes. An expired attempt that the browser can prove it never relayed offers **Discard unsent operation**. An operation receipt reports the actual gas charge, including for a revert. Order activity reports keeper execution separately from operation inclusion.
+
+ETH-paid preparation records a historical block agreed by both providers as a starting point for recovering aged-out receipts. This can be an older safe or finalized block. The quote uses current account state and can proceed before a recent funding transfer is safe.
 
 When the original relay failed to reach the gateway, cancellation review can reserve the same nonce using the exact signed original and its recovery token. The gateway can relay only the reviewed cancellation from that reservation. If an independent lookup lacks canonical evidence, the operation remains pending.
 
 ## Onboarding and gas funding
 
-Before showing the ETH funding address, the app derives Kernel index zero from the connected owner and checks the factory, implementation, validator and EntryPoint at a safe block. For a deployed account it also checks the proxy implementation, root validator and owner. The gateway, testnet margin funding and Insights registration use the same owner derivation. A first UserOperation uses the canonical `KernelFactory.deploy` initializer and is checked again at its canonical inclusion block. The same owner and pinned index-zero derivation retain the same funding address across the factory transport change. Reprepare any unsigned reviews under the new deployment scope.
+Before showing the ETH funding address, the app derives Kernel index zero from the connected owner and checks the factory, implementation, validator and EntryPoint at a recent block. The gateway agrees on an explicit recent height and hash with two independent RPC providers before preparing or relaying a transaction. For a deployed account it also checks the proxy implementation, root validator and owner. The gateway, testnet margin funding and Insights registration use the same owner derivation. A first UserOperation uses the canonical `KernelFactory.deploy` initializer and is checked again at its canonical inclusion block. The same owner and pinned index-zero derivation retain the same funding address across the factory transport change. Reprepare any unsigned reviews under the new deployment scope.
 
 Use a supported embedded or external EOA with empty code for the initial ECDSA profile. Contract wallets and delegated owners require different onboarding support.
 
-Trading Account activity shows the account's native ETH and any EntryPoint deposit separately from Perps margin. **Add ETH** sends a wallet-paid transfer to the verified Arbitrum Sepolia address or lets the user copy it. Once the transfer is confirmed and the funds are visible at a safe block, return to review for a fresh gas quote. An estimate made to calculate an unfunded account's shortfall is advisory. Preparation and relay use actual chain balances.
+Trading Account activity shows the account's native ETH and any EntryPoint deposit separately from Perps margin. **Add ETH** sends a wallet-paid transfer to the verified Arbitrum Sepolia address or lets the user copy it. Once the transfer is included and both providers report the funds on the same recent chain, return to review for a fresh gas quote. An estimate made to calculate an unfunded account's shortfall is advisory. Preparation and relay use actual chain balances.
 
 For ETH recovery, select the source balance and review the transfer to the verified owner and the maximum network fee. An ETH-paid withdrawal must leave enough prefund for itself. This can leave a small balance. Follow the gateway's current sponsorship policy for owner withdrawals. The local qualification used direct Alto RPC and a local paymaster signature to sweep a remaining EntryPoint deposit after sponsorship resumed. That sweep exercised the contracts and bundler.
 

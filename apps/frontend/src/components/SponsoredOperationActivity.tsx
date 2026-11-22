@@ -742,11 +742,13 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
   manifest: ReturnType<typeof usePerpsIdentity>['manifest']
   runtime?: KernelPerpsAaSmartAccountRuntime['kernel']
 }) {
-  const { prepared, receipt } = attempt
+  const { prepared, receipt, observedReceipt } = attempt
   const sponsored = prepared.mode === 'sponsored'
   const cancelled = attempt.phase === 'cancelled'
-  const transactionHash = receipt?.receipt.transactionHash
-  const status = {
+  const transactionHash = (receipt ?? observedReceipt)?.receipt.transactionHash
+  const status = observedReceipt
+    ? observedReceipt.success ? 'Included, awaiting confirmation' : 'Execution reverted, awaiting confirmation'
+    : {
     signed: 'Awaiting submission',
     sending: 'Checking submission status',
     submitted: 'Pending onchain',
@@ -785,6 +787,7 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
           attempt={attempt}
           quoteCancellation={runtime?.quoteCancellation}
           signPrepared={runtime?.signPrepared}
+          isObservationReorged={runtime?.isObservationReorged}
         />
       )}
       <details className="border-t border-brand-border/20 pt-3">

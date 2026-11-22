@@ -474,7 +474,7 @@ prepare gateway cfg db primary secondary manager client intent = do
         case result of
           Left failure | failure == insufficientGasEth -> do
             -- A balance-only simulation can produce a top-up estimate. This branch
-            -- never calls persistPreparation, even when the safe balance is large.
+            -- never calls persistPreparation.
             estimated <- liftIO $ runExceptT $ quoteKernelOperationWithBalance gateway manager snapshot
               intent nonce fees Nothing expiry (Just $ max balance 200_000_000_000_000_000)
             revalidateSnapshot gateway primary secondary snapshot
@@ -525,12 +525,22 @@ prepare gateway cfg db primary secondary manager client intent = do
     pure (nonce, fees)
 
   persistPreparation snapshot owner now expiresAt operation = do
+    anchor <- case piMode intent of
+      Db.PayWithEth -> do
+        historical <- liftIO $ Native.readAgreedRecoveryAnchor primary secondary snapshot
+        maybe (throwE profileUnavailable) (pure . Just) historical
+      Db.Sponsored -> do
+        safeAnchor <- liftIO $ timeout 600_000 $ Native.readAgreedSecurityBlock DualIndependent
+          (kgcMaxSafeLagSeconds gateway) primary secondary
+        pure $ case safeAnchor of
+          Just (Right safe) | Native.sbhNumber safe <= Native.sbhNumber snapshot -> Just (Native.sbhNumber safe)
+          _ -> Nothing
     revalidateSnapshot gateway primary secondary snapshot
     persistedAt <- seconds
     unless (expiresAt > persistedAt) $ throwE preparationExpired
     let prepared = Db.KernelPreparation scope (piSender intent) owner (Paymaster.puoNonce operation) (piId intent)
           client (piMode intent) (Object $ Paymaster.puoObject operation) (toUtc expiresAt)
-          (Just $ Native.sbhNumber snapshot)
+          anchor
     stored <- dbAction db $ \conn -> Db.storeKernelPreparation conn prepared
     case stored of
       Db.PreparationConflict -> throwE preparationMismatch
@@ -1113,39 +1123,42 @@ acceptedOperationStatus gateway db primary secondary manager saved = do
       receipt <- verify expectedPaymaster operationHash locate
       case receipt of
         Just evidence -> inclusionResult evidence
-        Nothing | Db.kpMode preparation == Db.PayWithEth -> do
-          direct <- case cancellationHash of
-            Just hash -> do
-              locator <- altoKernelReceiptLocator gateway manager hash
-              fmap ((,) hash) <$> verify zeroAddress hash locator
-            Nothing -> pure Nothing
-          case direct of
-            Just (hash, evidence) -> cancellationResult hash evidence
-            Nothing | Db.koState saved == "nonce_consumed" -> pure consumed
-            Nothing -> do
-              resolved <- liftIO $ runExceptT $
-                findCanonicalNonceEvent gateway db primary secondary preparation
-              case resolved of
-                Right (Just (snapshot, observedNonce, event, paymaster)) -> do
-                  let foundHash = Chain.uoeHash event
-                      locator = kernelReceiptLocator (Chain.uoeTransactionHash event)
-                  case () of
-                    _ | foundHash == operationHash ->
-                          verify expectedPaymaster operationHash locator >>= maybe (pure pending) inclusionResult
-                      | Just foundHash == cancellationHash ->
-                          verify zeroAddress foundHash locator >>= maybe (pure pending) (cancellationResult foundHash)
-                      | otherwise -> do
-                          replacement <- verify paymaster foundHash locator
-                          case replacement of
-                            Nothing -> pure pending
-                            Just _ -> do
-                              revalidateSnapshot gateway primary secondary snapshot
-                              retired <- dbAction db $ \conn -> Db.retireKernelOperation conn scope operationHash $
-                                Db.KernelNonceConsumed (Db.kpSender preparation) (Db.kpNonce preparation)
-                                  observedNonce (Native.sbhNumber snapshot) (Native.sbhHash snapshot)
-                              pure $ if retired then consumed else pending
-                _ -> pure pending
-        Nothing -> pure pending
+        Nothing -> do
+          statusResult <- if Db.kpMode preparation /= Db.PayWithEth then pure pending else do
+            direct <- case cancellationHash of
+              Just hash -> do
+                locator <- altoKernelReceiptLocator gateway manager hash
+                fmap ((,) hash) <$> verify zeroAddress hash locator
+              Nothing -> pure Nothing
+            case direct of
+              Just (hash, evidence) -> cancellationResult hash evidence
+              Nothing | Db.koState saved == "nonce_consumed" -> pure consumed
+              Nothing -> do
+                resolved <- liftIO $ runExceptT $
+                  findCanonicalNonceEvent gateway db primary secondary preparation
+                case resolved of
+                  Right (Just (snapshot, observedNonce, event, paymaster)) -> do
+                    let foundHash = Chain.uoeHash event
+                        locator = kernelReceiptLocator (Chain.uoeTransactionHash event)
+                    case () of
+                      _ | foundHash == operationHash ->
+                            verify expectedPaymaster operationHash locator >>= maybe (pure pending) inclusionResult
+                        | Just foundHash == cancellationHash ->
+                            verify zeroAddress foundHash locator >>= maybe (pure pending) (cancellationResult foundHash)
+                        | otherwise -> do
+                            replacement <- verify paymaster foundHash locator
+                            case replacement of
+                              Nothing -> pure pending
+                              Just _ -> do
+                                revalidateSafeSnapshot gateway primary secondary snapshot
+                                retired <- dbAction db $ \conn -> Db.retireKernelOperation conn scope operationHash $
+                                  Db.KernelNonceConsumed (Db.kpSender preparation) (Db.kpNonce preparation)
+                                    observedNonce (Native.sbhNumber snapshot) (Native.sbhHash snapshot)
+                                pure $ if retired then consumed else pending
+                  _ -> pure pending
+          if Db.koState saved == "pending"
+            then observePendingKernelReceipt gateway primary secondary preparation expectedPaymaster operationHash locate statusResult
+            else pure statusResult
  where
   profile = kgcProfile gateway
   scope = kernelScope profile
@@ -1179,7 +1192,8 @@ unacceptedOperationStatus gateway db primary secondary manager client ident oper
             then fmap included <$> verify expectedPaymaster operationHash foundLocator
             else fmap (const $ kernelStatus "nonce_consumed" Nothing) <$> verify paymaster foundHash foundLocator
         _ -> pure Nothing
-      maybe (unacceptedOperationWithoutReceipt prepared operation) pure outcome
+      statusResult <- maybe (unacceptedOperationWithoutReceipt prepared operation) pure outcome
+      observePendingKernelReceipt gateway primary secondary prepared expectedPaymaster operationHash locator statusResult
  where
   profile = kgcProfile gateway
   scope = kernelScope profile
@@ -1217,6 +1231,32 @@ canonicalKernelReceipt gateway primary secondary prepared paymaster hash locator
   (Reconciler.verifyKernelOperationReceipt (Db.kpScope prepared) primary secondary (kgcMaxSafeLagSeconds gateway)
     (Db.kpSender prepared) (Db.kpNonce prepared) paymaster hash locator)
 
+-- An agreed live inclusion is only a status observation. The safe receipt
+-- and nonce paths still own all final states, account fences, and accounting.
+observePendingKernelReceipt :: KernelGatewayConfig -> EthClient -> EthClient -> Db.KernelPreparation
+  -> Text -> Text -> Value -> Value -> Gateway Value
+observePendingKernelReceipt gateway primary secondary prepared paymaster hash locator pending
+  | locator == Null || pending /= kernelStatus "pending" Nothing = pure pending
+  | otherwise = do
+      observation <- liftIO $ runExceptT $ do
+        transactionHash <- case locator of
+          Object fields | Just (Object receipt) <- KM.lookup "receipt" fields -> except $ readHash receipt "transactionHash"
+          _ -> throwE profileUnavailable
+        snapshot <- agreedSnapshot gateway primary secondary
+        let readReceipt client = rpcCall client "eth_getTransactionReceipt" $ toJSON [String transactionHash]
+        (left, right) <- liftIO $ concurrently (readReceipt primary) (readReceipt secondary)
+        (event, receipt) <- except $ case (left, right) of
+          (Right first, Right second) -> either (const $ Left profileUnavailable) Right $
+            Reconciler.agreeKernelReceiptEvidence (Db.ksEntryPoint $ Db.kpScope prepared)
+              (Db.kpSender prepared) (Db.kpNonce prepared) paymaster hash transactionHash first second
+          _ -> Left profileUnavailable
+        unless (Chain.uoeBlockNumber event <= Native.sbhNumber snapshot) $ throwE profileUnavailable
+        block <- liftIO $ Native.readAgreedSecurityHeaderAt DualIndependent primary secondary (Chain.uoeBlockNumber event)
+        unless (fmap Native.sbhHash block == Right (Chain.uoeBlockHash event)) $ throwE profileUnavailable
+        revalidateSnapshot gateway primary secondary snapshot
+        pure $ kernelStatus "observed" (Just receipt)
+      pure $ either (const pending) id observation
+
 -- EntryPoint lane nonces are monotonic. Use the preparation's safe block as
 -- a starting point and find the first block whose lane nonce exceeds the
 -- prepared nonce. This takes logarithmically many state reads and allows a
@@ -1225,12 +1265,12 @@ canonicalKernelReceipt gateway primary secondary prepared paymaster hash locator
 findCanonicalNonceEvent :: KernelGatewayConfig -> DbPool -> EthClient -> EthClient -> Db.KernelPreparation
   -> Gateway (Maybe (Native.SecurityBlockHeader, Integer, Chain.UserOperationEvent, Text))
 findCanonicalNonceEvent gateway db primary secondary prepared = do
-  snapshot <- agreedSnapshot gateway primary secondary
-  observed <- attestBoth gateway primary secondary snapshot $ \client block ->
+  snapshot <- agreedSafeSnapshot gateway primary secondary
+  observed <- attestBothAt SafeSnapshot gateway primary secondary snapshot $ \client block ->
     readNonce profile client block sender
   if observed <= nonce then pure Nothing else do
     historical <- liftIO $ timeout 4_000_000 $
-      runExceptT $ attestBoth gateway primary secondary snapshot readEvents
+      runExceptT $ attestBothAt SafeSnapshot gateway primary secondary snapshot readEvents
     found <- case historical of
       Just (Right events) -> pure events
       _ -> scanLogs snapshot
@@ -1251,7 +1291,7 @@ findCanonicalNonceEvent gateway db primary secondary prepared = do
   -- advance one bounded log batch per poll. The recorded end hash prevents a
   -- reorg from silently skipping the already-covered part of the range.
   scanLogs snapshot = case Db.kpSafeBlock prepared of
-    Nothing -> attestBoth gateway primary secondary snapshot $ \client upper ->
+    Nothing -> attestBothAt SafeSnapshot gateway primary secondary snapshot $ \client upper ->
       runExceptT $ readEventRange client (max 0 $ upper - 1_999) upper
     Just anchor -> do
       let upper = Native.sbhNumber snapshot
@@ -1265,11 +1305,11 @@ findCanonicalNonceEvent gateway db primary secondary prepared = do
         Nothing -> pure Nothing
         Just (lower, end) -> do
           endHeader <- readCoverageHeader end
-          found <- attestBoth gateway primary secondary snapshot $ \client _ ->
+          found <- attestBothAt SafeSnapshot gateway primary secondary snapshot $ \client _ ->
             runExceptT $ readEventRange client lower end
           forMOptional resumed requireSameHeader
           requireSameHeader endHeader
-          revalidateSnapshot gateway primary secondary snapshot
+          revalidateSafeSnapshot gateway primary secondary snapshot
           when (found == Nothing) $ do
             _ <- dbAction db $ \conn -> Db.storeKernelNonceScanCursor conn prepared cursor
               (end, Native.sbhHash endHeader)
@@ -1470,7 +1510,7 @@ validateKernelActions gateway cfg mode sender owner calls = do
   unless ownerWithdrawal $
     Legacy.validateActionSequenceWithProtection (kgcProtectionCommitsEnabled gateway) cfg sender owner calls
 
--- Sending native ETH can execute owner code. Safe-block EOA attestation is
+-- Sending native ETH can execute owner code. An agreed recent EOA check is
 -- necessary but cannot stop a delegation made after sponsorship is signed.
 -- Only permit these owner-directed withdrawals when the account pays gas.
 validateKernelWithdrawalMode :: Kernel.KernelProfile -> Db.PaymentMode -> Text -> [Legacy.SmartCall]
@@ -1567,8 +1607,14 @@ kernelOperationDeadline now calls = do
     Left $ Legacy.ProxyFailure status400 (-32001) "The order deadline is too close. Review a fresh quote." "DEADLINE_TOO_CLOSE" False
   pure deadline
 
-agreedSnapshot :: KernelGatewayConfig -> EthClient -> EthClient -> Gateway Native.SecurityBlockHeader
-agreedSnapshot gateway primary secondary = do
+data SnapshotBoundary = LatestSnapshot | SafeSnapshot
+
+agreedSnapshot, agreedSafeSnapshot :: KernelGatewayConfig -> EthClient -> EthClient -> Gateway Native.SecurityBlockHeader
+agreedSnapshot = agreedSnapshotAt LatestSnapshot
+agreedSafeSnapshot = agreedSnapshotAt SafeSnapshot
+
+agreedSnapshotAt :: SnapshotBoundary -> KernelGatewayConfig -> EthClient -> EthClient -> Gateway Native.SecurityBlockHeader
+agreedSnapshotAt boundary gateway primary secondary = do
   let expected = Paymaster.canonicalQuantity (Kernel.kpChainId $ kgcProfile gateway)
       chain client = rpcCall client "eth_chainId" $ toJSON ([] :: [Value])
   (a, b) <- liftIO $ concurrently (chain primary) (chain secondary)
@@ -1576,19 +1622,20 @@ agreedSnapshot gateway primary secondary = do
     (Right (String first), Right (String second)) | normalizeString (String first) == String expected
       , normalizeString (String second) == String expected -> pure ()
     _ -> throwE profileUnavailable
-  result <- liftIO $ Native.readAgreedSecurityBlock DualIndependent
-    (kgcMaxSafeLagSeconds gateway) primary secondary
+  result <- liftIO $ case boundary of
+    LatestSnapshot -> Native.readAgreedLatestSecurityBlock primary secondary
+    SafeSnapshot -> Native.readAgreedSecurityBlock DualIndependent (kgcMaxSafeLagSeconds gateway) primary secondary
   either (const $ throwE profileUnavailable) pure result
 
--- Both onboarding consumers use the same block agreement and profile as
--- execution. Resolve identity even when transaction admission is disabled.
+-- Shared onboarding consumers can fund an account or bind an identity, so
+-- their ownership proof remains safe even when execution uses live state.
 resolveOwnedKernelTradingAccount :: KernelGatewayConfig -> Config -> EthClient -> Text
   -> IO (Either Legacy.OwnedTradingAccountFailure KernelTradingAccountProof)
 resolveOwnedKernelTradingAccount gateway cfg ordinaryPrimary owner = do
   verified <- runExceptT $ do
     unless (matchesPerpsRelease profile cfg) $ throwE profileUnavailable
-    snapshot <- agreedSnapshot gateway primary secondary
-    evidence <- attestBoth gateway primary secondary snapshot $ \client block ->
+    snapshot <- agreedSafeSnapshot gateway primary secondary
+    evidence <- attestBothAt SafeSnapshot gateway primary secondary snapshot $ \client block ->
       Right <$> Kernel.resolveOwnedKernelAccountAtBlock profile client block owner
     pure $ (\sender -> KernelTradingAccountProof sender (Native.sbhNumber snapshot) (Native.sbhHash snapshot)) <$> evidence
   pure $ either (const $ Left Legacy.OwnedTradingAccountProofUnavailable) id verified
@@ -1599,19 +1646,28 @@ resolveOwnedKernelTradingAccount gateway cfg ordinaryPrimary owner = do
 
 attestBoth :: Eq a => KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader
   -> (EthClient -> Integer -> IO (Either Legacy.ProxyFailure a)) -> Gateway a
-attestBoth gateway primary secondary snapshot readAt = do
+attestBoth = attestBothAt LatestSnapshot
+
+attestBothAt :: Eq a => SnapshotBoundary -> KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader
+  -> (EthClient -> Integer -> IO (Either Legacy.ProxyFailure a)) -> Gateway a
+attestBothAt boundary gateway primary secondary snapshot readAt = do
   let block = Native.sbhNumber snapshot
   (first, second) <- liftIO $ concurrently (readAt primary block) (readAt secondary block)
-  revalidateSnapshot gateway primary secondary snapshot
+  revalidateSnapshotAt boundary gateway primary secondary snapshot
   case (first, second) of
     (Right a, Right b) | a == b -> pure a
     (Left a, Left b) | a == b -> throwE a
     _ -> throwE profileUnavailable
 
-revalidateSnapshot :: KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader -> Gateway ()
-revalidateSnapshot gateway primary secondary snapshot = do
-  result <- liftIO $ Native.revalidateSecuritySnapshot DualIndependent
-    (kgcMaxSafeLagSeconds gateway) primary secondary snapshot
+revalidateSnapshot, revalidateSafeSnapshot :: KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader -> Gateway ()
+revalidateSnapshot = revalidateSnapshotAt LatestSnapshot
+revalidateSafeSnapshot = revalidateSnapshotAt SafeSnapshot
+
+revalidateSnapshotAt :: SnapshotBoundary -> KernelGatewayConfig -> EthClient -> EthClient -> Native.SecurityBlockHeader -> Gateway ()
+revalidateSnapshotAt boundary gateway primary secondary snapshot = do
+  result <- liftIO $ case boundary of
+    LatestSnapshot -> Native.revalidateLatestSecuritySnapshot primary secondary snapshot
+    SafeSnapshot -> Native.revalidateSecuritySnapshot DualIndependent (kgcMaxSafeLagSeconds gateway) primary secondary snapshot
   unless (result == Right ()) $ throwE profileUnavailable
 
 alto :: KernelGatewayConfig -> Manager -> Text -> [Value] -> Gateway Value

@@ -7,12 +7,13 @@ import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
 import type { PersistedPerpsOrderRequestV3 } from '../../contracts/perpsOrderV3'
 import { writeGasPaymentPreference } from '../gasPaymentPreference'
 import { createKernelRuntime } from '../kernelRuntime'
+import { KernelObservedPendingError } from '../errors'
 import type { KernelPreparedOperation } from '../kernelRpc'
 import type { KernelPerpsAaDeploymentManifest } from '../manifest'
 
-const { activeAttempt, fetchQuote, sign, save, submit, getAttempt, refresh, verifyAccountAtBlock, getNonce, fetchManifest, serverNow, getBytecode, paymaster } = vi.hoisted(() => ({
+const { activeAttempt, fetchQuote, sign, save, submit, getAttempt, refresh, verifyAccountAtBlock, getNonce, fetchManifest, serverNow, getBlock, getBytecode, paymaster } = vi.hoisted(() => ({
   activeAttempt: vi.fn(), fetchQuote: vi.fn(), sign: vi.fn(), save: vi.fn(), submit: vi.fn(), getAttempt: vi.fn(), refresh: vi.fn(),
-  verifyAccountAtBlock: vi.fn(), getNonce: vi.fn(), fetchManifest: vi.fn(), serverNow: vi.fn(), getBytecode: vi.fn(),
+  verifyAccountAtBlock: vi.fn(), getNonce: vi.fn(), fetchManifest: vi.fn(), serverNow: vi.fn(), getBlock: vi.fn(), getBytecode: vi.fn(),
   paymaster: '0x4444444444444444444444444444444444444444' as Address,
 }))
 vi.mock('../kernelDeploymentPins', async importOriginal => ({
@@ -66,7 +67,7 @@ const action: PerpsActionPlan = { kind: 'settle-claim', account: sender, calls: 
 const publicClient = {
   chain: arbitrumSepolia,
   getBlockNumber: async () => 100n,
-  getBlock: async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? 100n, hash }),
+  getBlock,
   getBytecode,
   readContract: async () => ({ orderId: 0n }),
 } as unknown as PublicClient
@@ -80,6 +81,7 @@ beforeEach(() => {
   localStorage.clear()
   vi.clearAllMocks()
   serverNow.mockReturnValue(1_000_000)
+  getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? 100n, hash, timestamp: 1_000n }))
   getNonce.mockResolvedValue(0n)
   fetchManifest.mockResolvedValue(manifest.kernel)
   getBytecode.mockResolvedValue(code)
@@ -94,6 +96,30 @@ beforeEach(() => {
 })
 
 describe('Kernel review execution', () => {
+  it('uses one recent latest block for the factory state and root nonce, and refuses a changed header', async () => {
+    const runtime = await createRuntime()
+    expect(getBlock.mock.calls.slice(0, 2)).toEqual([[{ blockTag: 'latest' }], [{ blockNumber: 100n }]])
+    getNonce.mockResolvedValue(4n)
+    getBlock.mockResolvedValueOnce({ number: 101n, hash, timestamp: 1_000n })
+    await runtime.kernel.quoteAction(action)
+    expect(verifyAccountAtBlock).toHaveBeenLastCalledWith(publicClient, profile, owner, 101n, sender)
+    expect(getNonce).toHaveBeenLastCalledWith({ blockNumber: 101n })
+    expect(getBlock).toHaveBeenLastCalledWith({ blockNumber: 101n })
+    expect(fetchQuote.mock.calls[0][1]).toMatchObject({ expectedNonce: 4n })
+    expect(fetchQuote.mock.calls[0][1]).not.toHaveProperty('factory')
+
+    getBlock.mockResolvedValueOnce({ number: 101n, hash, timestamp: 1_000n })
+      .mockResolvedValueOnce({ number: 101n, hash: codeHash, timestamp: 1_000n })
+    await expect(runtime.kernel.quoteAction(action)).rejects.toThrow('verification block changed')
+    expect(fetchQuote).toHaveBeenCalledOnce()
+  })
+
+  it('does not trust a stale latest block when initializing the Trading Account', async () => {
+    getBlock.mockResolvedValueOnce({ number: 100n, hash, timestamp: 969n })
+    await expect(createRuntime()).rejects.toThrow('latest Arbitrum Sepolia block is unavailable')
+    expect(verifyAccountAtBlock).not.toHaveBeenCalled()
+  })
+
   it('keeps the account stable and rejects a reviewed quote after switching away and back', async () => {
     const runtime = await createRuntime()
     const sponsored = await runtime.kernel.quoteAction(action)
@@ -142,6 +168,32 @@ describe('Kernel review execution', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
+  it('hands an observed operation off immediately without reporting safe inclusion or confirmation', async () => {
+    const runtime = await createRuntime()
+    writeGasPaymentPreference(runtime.gasPayment.scope, 'eth')
+    const quote = await runtime.kernel.quoteAction(action)
+    const onIncluded = vi.fn()
+    const onStatus = vi.fn()
+    sign.mockResolvedValue('0x01')
+    save.mockImplementation(async stored => stored)
+    getAttempt.mockResolvedValue({ phase: 'submitted' })
+    const observedReceipt = { success: true, receipt: { blockNumber: 104n, blockHash: hash } }
+    refresh.mockResolvedValueOnce({ phase: 'submitted', observedReceipt })
+    await expect(runtime.kernel.execute({ runtime, manifest, ownerAddress: owner, action, kernelQuote: quote, onIncluded, onStatus }))
+      .rejects.toBeInstanceOf(KernelObservedPendingError)
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(submit).toHaveBeenCalledOnce()
+    expect(verifyAccountAtBlock).toHaveBeenLastCalledWith(publicClient, profile, owner, 104n, sender)
+    expect(onIncluded).not.toHaveBeenCalled()
+    expect(onStatus).not.toHaveBeenCalledWith('confirmed')
+
+    refresh.mockResolvedValueOnce({ phase: 'submitted', observedReceipt: { ...observedReceipt,
+      receipt: { ...observedReceipt.receipt, blockHash: codeHash } } })
+    await expect(runtime.kernel.execute({ runtime, manifest, ownerAddress: owner, action, kernelQuote: quote, onIncluded, onStatus }))
+      .rejects.toMatchObject({ reason: 'ACCOUNT_NOT_TRUSTED' })
+    expect(onIncluded).not.toHaveBeenCalled()
+  })
+
   it('requires the reviewed sponsor contract bytecode before opening the wallet', async () => {
     const runtime = await createRuntime()
     const quote = await runtime.kernel.quoteAction(action)
@@ -153,7 +205,7 @@ describe('Kernel review execution', () => {
     const walletDecline = new Error('Wallet declined')
     sign.mockRejectedValueOnce(walletDecline)
     await expect(execute()).rejects.toBe(walletDecline)
-    expect(getBytecode).toHaveBeenLastCalledWith({ address: paymaster, blockTag: 'safe' })
+    expect(getBytecode).toHaveBeenLastCalledWith({ address: paymaster, blockNumber: 100n })
     expect(sign).toHaveBeenCalledOnce()
     expect(save).not.toHaveBeenCalled()
   })

@@ -1,7 +1,7 @@
 import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from '../perps-aa/readiness'
-import { SponsorRequestError } from '../perps-aa/errors'
+import { KernelObservedPendingError, SponsorRequestError } from '../perps-aa/errors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
@@ -791,7 +791,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
-      if (error instanceof KernelGasReviewCancelled) throw error
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       if (!executionStarted) {
         trackSponsoredOperationPreflightFailure({
           action: 'deposit',
@@ -843,7 +843,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
-      if (error instanceof KernelGasReviewCancelled) throw error
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'withdraw' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'withdraw'), { surface: 'perps', action: 'withdraw' })
@@ -876,7 +876,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
-      if (error instanceof KernelGasReviewCancelled) throw error
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'addPositionMargin' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'addPositionMargin'), { surface: 'perps', action: 'addPositionMargin' })
@@ -1172,6 +1172,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return committedResult
     } catch (error) {
+      if (error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) {
         throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'commit' })
@@ -1386,7 +1387,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
-      if (error instanceof KernelGasReviewCancelled) throw error
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'settleClaim' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'settleClaim'), { surface: 'perps', action: 'settleClaim' })
@@ -1459,7 +1460,7 @@ export function usePerpsTrading() {
       if (events.length !== 1) throw new Error('The operation was included but its protection event could not be reconciled. Refresh protections before another submission.')
       return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
     } catch (error) {
-      if (error instanceof KernelGasReviewCancelled) throw error
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       throw reportedTransactionError(error, sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { surface: 'perps', action: 'protection' })
     }

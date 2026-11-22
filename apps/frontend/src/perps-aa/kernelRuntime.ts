@@ -2,14 +2,14 @@ import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
 import { bytesToHex, isAddressEqual, keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
 import { trackPerpsKernelOutcome } from '../analytics/perps'
 import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
-import { BundlerRequestError, SponsorRequestError } from './errors'
+import { BundlerRequestError, KernelObservedPendingError, SponsorRequestError } from './errors'
 import type { ExecuteSponsoredPerpsActionInput, ExecuteSponsoredPerpsActionResult } from './execution'
 import { readGasPaymentPreference, type GasPaymentMode } from './gasPaymentPreference'
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock, type VerifiedKernelTradingAccount } from './kernelAccount'
 import { kernelSepoliaCanaryPaymaster } from './kernelDeploymentPins'
 import {
   getActiveKernelAttempt, getKernelAttempt, refreshKernelAttempt, saveKernelSignedAttempt, submitKernelAttempt, withKernelOperationLane,
-  type KernelAttemptScope, type KernelOperationAttempt,
+  type KernelAttemptScope, type KernelObservationReorgCheck, type KernelOperationAttempt,
 } from './kernelOperationJournal'
 import { assertKernelPreparedOperation, fetchKernelManifest, KernelRpcError, prepareKernelCancellation, prepareKernelOperation, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
 import type { KernelPerpsAaDeploymentManifest } from './manifest'
@@ -26,9 +26,10 @@ export interface KernelActionQuote {
 
 export interface KernelRuntime {
   scope: KernelAttemptScope
-  verifyAccount: () => Promise<VerifiedKernelTradingAccount>
+  verifyAccount: () => Promise<VerifiedKernelTradingAccount & { blockHash: Hex }>
   quoteAction(action: PerpsActionPlan, signal?: AbortSignal, clientOrderId?: Hex): Promise<KernelActionQuote>
   execute(input: ExecuteSponsoredPerpsActionInput): Promise<ExecuteSponsoredPerpsActionResult>
+  isObservationReorged?: KernelObservationReorgCheck
   quoteCancellation: (original: KernelPreparedOperation, originalSignature: Hex) => Promise<KernelPreparedCancellation>
   signPrepared: (prepared: KernelPreparedOperation) => Promise<Hex>
 }
@@ -42,6 +43,12 @@ interface ReviewedKernelPreparation {
   prepared: KernelPreparedOperation
 }
 
+interface KernelVerificationHeader {
+  number: bigint
+  hash: Hex
+  timestamp?: bigint
+}
+
 const reviewedPreparations = new WeakMap<KernelActionQuote, ReviewedKernelPreparation>()
 const reviewedCancellations = new WeakMap<KernelPreparedOperation, { accountKey: string; hash: Hex }>()
 const newPreparationId = () => bytesToHex(globalThis.crypto.getRandomValues(new Uint8Array(32)))
@@ -50,17 +57,17 @@ function requireFresh(prepared: KernelPreparedOperation, now = deadlineNow()) {
   if (prepared.expiresAt * 1_000 <= now) throw new Error('The gas quote expired. Review a fresh quote to continue.')
 }
 
-async function waitForCanonicalAttempt(attempt: KernelOperationAttempt) {
+async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservationReorged: KernelObservationReorgCheck) {
   const timeout = performance.now() + 75_000
   while (performance.now() < timeout) {
     let resolved: KernelOperationAttempt | undefined
     try {
       const saved = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash)
-      if (saved) resolved = await refreshKernelAttempt(saved)
+      if (saved) resolved = await refreshKernelAttempt(saved, isObservationReorged)
     } catch {
       // Loss of status connectivity leaves the signed operation unresolved.
     }
-    if (resolved && !['sending', 'submitted'].includes(resolved.phase)) return resolved
+    if (resolved && (resolved.observedReceipt || !['sending', 'submitted'].includes(resolved.phase))) return resolved
     await new Promise<void>(resolve => globalThis.setTimeout(resolve, 2_000))
   }
   throw new BundlerRequestError({
@@ -80,13 +87,34 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       !walletClient.account || !isAddressEqual(walletClient.account.address, ownerAddress)) {
     throw new Error('The connected wallet does not match this Kernel deployment')
   }
-  const verifyAt = async ({ number, hash }: { number: bigint; hash: Hex }, expectedAddress: Address) => {
-    const verified = await verifyKernelTradingAccountAtBlock(publicClient, profile, ownerAddress, number, expectedAddress)
-    const block = await publicClient.getBlock({ blockNumber: number })
-    if (block.hash !== hash) throw new Error('The Kernel account verification block changed. Check the Trading Account again.')
-    return verified
+  const requireRecentTimestamp = (timestamp: bigint) => {
+    const now = BigInt(Math.floor(deadlineNow() / 1_000))
+    if (typeof timestamp !== 'bigint' || timestamp < now - 30n || timestamp > now + 60n) {
+      throw new Error('The latest Arbitrum Sepolia block is unavailable. Check the Trading Account again.')
+    }
   }
-  const initialBlock = await publicClient.getBlock({ blockTag: 'safe' })
+  const checkBlock = async ({ number, hash, timestamp }: KernelVerificationHeader) => {
+    const block = await publicClient.getBlock({ blockNumber: number })
+    if (block.number !== number || block.hash.toLowerCase() !== hash.toLowerCase() ||
+        (timestamp !== undefined && block.timestamp !== timestamp)) {
+      throw new Error('The Kernel verification block changed. Check the Trading Account again.')
+    }
+    if (timestamp !== undefined) requireRecentTimestamp(timestamp)
+  }
+  const latestBlock = async () => {
+    const block = await publicClient.getBlock({ blockTag: 'latest' })
+    if (typeof block.number !== 'bigint' || block.number < 1n || !/^0x[0-9a-fA-F]{64}$/.test(block.hash)) {
+      throw new Error('The latest Arbitrum Sepolia block is unavailable. Check the Trading Account again.')
+    }
+    requireRecentTimestamp(block.timestamp)
+    return block
+  }
+  const verifyAt = async (block: KernelVerificationHeader, expectedAddress: Address) => {
+    const verified = await verifyKernelTradingAccountAtBlock(publicClient, profile, ownerAddress, block.number, expectedAddress)
+    await checkBlock(block)
+    return { ...verified, blockHash: block.hash }
+  }
+  const initialBlock = await latestBlock()
   const account = await createKernelTradingAccount(publicClient, profile, {
     address: ownerAddress,
     signMessage: ({ message }) => walletClient.signMessage({ account: ownerAddress, message }),
@@ -96,8 +124,16 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
   const preferenceScope = { deployment: scope.deployment, chainId: scope.chainId, ownerAddress, sender: scope.sender }
   const accountKey = JSON.stringify([profile, manifest.kernel.paymaster, ownerAddress.toLowerCase(), account.address.toLowerCase()])
 
-  const verifyAccount = async () => verifyAt(await publicClient.getBlock({ blockTag: 'safe' }), scope.sender)
-  const factoryAtSafe = async () => (await verifyAccount()).deployed ? undefined : account.factoryArgs
+  const verifyAccount = async () => verifyAt(await latestBlock(), scope.sender)
+  const readDeploymentAndNonce = async () => {
+    const block = await latestBlock()
+    const [verified, expectedNonce] = await Promise.all([
+      verifyKernelTradingAccountAtBlock(publicClient, profile, ownerAddress, block.number, scope.sender),
+      account.getNonce({ blockNumber: block.number }),
+    ])
+    await checkBlock(block)
+    return { factory: verified.deployed ? undefined : account.factoryArgs, expectedNonce }
+  }
   const assertConnectedOwner = async () => {
     const [addresses, chainId] = await Promise.all([walletClient.getAddresses(), walletClient.getChainId()])
     const selected = addresses.at(0)
@@ -106,7 +142,15 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     }
   }
   const requireNonce = async (expectedNonce: bigint) => {
-    if (await account.getNonce() !== expectedNonce) throw new Error('The Trading Account nonce changed. Review a fresh quote to continue.')
+    const block = await latestBlock()
+    const nonce = await account.getNonce({ blockNumber: block.number })
+    await checkBlock(block)
+    if (nonce !== expectedNonce) throw new Error('The Trading Account nonce changed. Review a fresh quote to continue.')
+  }
+  const isObservationReorged: KernelObservationReorgCheck = async ({ receipt }) => {
+    const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber })
+    return block.number === receipt.blockNumber && /^0x[0-9a-fA-F]{64}$/.test(block.hash) &&
+      block.hash.toLowerCase() !== receipt.blockHash.toLowerCase()
   }
   const sign = async (prepared: KernelPreparedOperation, beforePrompt?: () => void) => {
     assertKernelPreparedOperation(prepared)
@@ -119,6 +163,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
   const kernel: KernelRuntime = {
     scope,
     verifyAccount,
+    isObservationReorged,
     quoteAction: async (action, signal, clientOrderId) => {
       if (!isAddressEqual(action.account, scope.sender)) throw new Error('The action belongs to a different Trading Account')
       const { mode, revision } = readGasPaymentPreference(preferenceScope)
@@ -131,7 +176,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       }
       if (await getActiveKernelAttempt(scope)) throw new Error('Resolve the pending operation in Trading Account activity before getting a new gas quote')
       const callData = encodeKernelCalls(action.calls)
-      const [factory, expectedNonce] = await Promise.all([factoryAtSafe(), account.getNonce()])
+      const { factory, expectedNonce } = await readDeploymentAndNonce()
       const reviewedState = await readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId })
       signal?.throwIfAborted()
       let prepared: KernelPreparedOperation
@@ -184,7 +229,9 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
               !isAddressEqual(paymaster, kernelSepoliaCanaryPaymaster.address) || !isAddressEqual(paymaster, prepared.operation.paymaster)) {
             throw new Error('The sponsorship contract changed. Review a fresh quote to continue.')
           }
-          const code = await publicClient.getBytecode({ address: paymaster, blockTag: 'safe' })
+          const block = await latestBlock()
+          const code = await publicClient.getBytecode({ address: paymaster, blockNumber: block.number })
+          await checkBlock(block)
           if (!code || keccak256(code) !== kernelSepoliaCanaryPaymaster.codeHash) {
             throw new Error('The sponsorship contract does not match this Kernel deployment.')
           }
@@ -203,8 +250,9 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
           requireOrderSubmissionTime(deadlineNow())
           onStatus?.('awaiting-signature')
         })
+        const clock = await refreshDeadlineClock()
         await Promise.all([requireReviewedState(), requireNonce(prepared.operation.nonce)])
-        const now = (await refreshDeadlineClock()).now()
+        const now = clock.now()
         requirePreference()
         requireFresh(prepared, now)
         requireOrderSubmissionTime(now)
@@ -225,9 +273,11 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         return { ...stored, phase: 'submitted' as const }
       })
       onStatus?.('confirming')
-      const settled = await waitForCanonicalAttempt(attempt)
-      if (settled.phase === 'included' && settled.receipt && prepared.operation.factory !== undefined) {
-        const { blockNumber, blockHash } = settled.receipt.receipt
+      const settled = await waitForAttemptOutcome(attempt, isObservationReorged)
+      const deploymentReceipt = settled.phase === 'included' ? settled.receipt
+        : settled.observedReceipt?.success ? settled.observedReceipt : undefined
+      if (deploymentReceipt && prepared.operation.factory !== undefined) {
+        const { blockNumber, blockHash } = deploymentReceipt.receipt
         try {
           const verified = await verifyAt({ number: blockNumber, hash: blockHash }, scope.sender)
           if (!verified.deployed) throw new Error('The expected Kernel account was not deployed')
@@ -236,6 +286,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
             message: 'The operation was included. Plether could not verify the Trading Account deployment. Check Activity before another action.' })
         }
       }
+      if (settled.observedReceipt) throw new KernelObservedPendingError()
       if (settled.phase !== 'included' || !settled.receipt?.success || settled.receipt.receipt.status !== 'success') {
         throw new BundlerRequestError({
           message: settled.phase === 'included'
@@ -256,8 +307,8 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     },
     quoteCancellation: async (original, originalSignature) => {
       if (!isAddressEqual(original.operation.sender, scope.sender)) throw new Error('The pending operation belongs to a different Trading Account')
-      await requireNonce(original.operation.nonce)
-      const factory = await factoryAtSafe()
+      const { factory, expectedNonce } = await readDeploymentAndNonce()
+      if (expectedNonce !== original.operation.nonce) throw new Error('The original operation nonce has changed. Check Activity before requesting cancellation.')
       const response = await prepareKernelCancellation(manifest.kernel, original, { preparationId: newPreparationId(), originalSignature, ...factory })
       const quote = Object.freeze({ ...response, operation: Object.freeze(response.operation) })
       reviewedCancellations.set(quote, { accountKey, hash: quote.userOperationHash })

@@ -99,6 +99,7 @@ export type KernelOperationStatus =
   | { state: 'pending'; receipt: null }
   | { state: 'nonce_consumed'; receipt: null }
   | { state: 'sponsorship_expired'; receipt: null }
+  | { state: 'observed'; receipt: UserOperationReceipt<'0.9'> }
   | { state: 'included'; receipt: UserOperationReceipt<'0.9'> }
   | { state: 'cancelled'; receipt: UserOperationReceipt<'0.9'> }
 
@@ -353,7 +354,7 @@ function logLocator(value: unknown, transactionHash: Hex, blockHash: Hex, blockN
   }
 }
 
-function parseCanonicalReceipt(value: unknown, locator: KernelStatusLocator): UserOperationReceipt<'0.9'> {
+function parseKernelReceipt(value: unknown, locator: KernelStatusLocator): UserOperationReceipt<'0.9'> {
   const raw = record(value, ['userOpHash', 'sender', 'entryPoint', 'nonce', 'paymaster', 'actualGasCost',
     'actualGasUsed', 'success', 'logs', 'receipt'])
   const nested = record(raw.receipt)
@@ -409,13 +410,14 @@ export function parseKernelOperationStatus(value: unknown, locator: KernelStatus
         return invalidResponse()
       }
       return { state: raw.state, receipt: null }
+    case 'observed':
     case 'included':
-      return { state: raw.state, receipt: parseCanonicalReceipt(raw.receipt, locator) }
+      return { state: raw.state, receipt: parseKernelReceipt(raw.receipt, locator) }
     case 'cancelled': {
       if (address(locator.paymaster, true) !== zeroAddress) return invalidResponse()
       const replacement = bytes(record(raw.receipt).userOpHash, 32)
       if (replacement === locator.userOperationHash.toLowerCase()) return invalidResponse()
-      const receipt = parseCanonicalReceipt(raw.receipt, { ...locator, userOperationHash: replacement })
+      const receipt = parseKernelReceipt(raw.receipt, { ...locator, userOperationHash: replacement })
       return locator.cancellationHash?.toLowerCase() === replacement
         ? { state: 'cancelled', receipt }
         : { state: 'nonce_consumed', receipt: null }

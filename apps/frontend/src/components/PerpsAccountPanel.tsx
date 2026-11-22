@@ -3,6 +3,7 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTrade
 import { usePerpsTrading } from '../hooks'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
 import { KernelGasReviewCancelled, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
+import { KernelObservedPendingError } from '../perps-aa/errors'
 import { usePerpsCloseMargin } from '../hooks/usePerpsCloseMargin'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
@@ -446,6 +447,13 @@ function OpenPositionView({
     } catch (error) {
       if (error instanceof KernelGasReviewCancelled) {
         setPositionMarginStatus('idle')
+        return
+      }
+      if (error instanceof KernelObservedPendingError) {
+        setPositionMarginStatus('idle')
+        setIsPositionMarginModalOpen(false)
+        setPositionMarginAmount('')
+        gasReview?.openActivity()
         return
       }
       setPositionMarginStatus('failed')
@@ -992,6 +1000,11 @@ function ClaimSettlementCard({
     } catch (cause) {
       if (cause instanceof KernelGasReviewCancelled) {
         setStatus('idle')
+        return
+      }
+      if (cause instanceof KernelObservedPendingError) {
+        setStatus('idle')
+        gasReview?.openActivity()
         return
       }
       setStatus('failed')

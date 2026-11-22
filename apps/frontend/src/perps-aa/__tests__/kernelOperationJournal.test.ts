@@ -10,6 +10,7 @@ import {
   discardUnsentKernelAttempt,
   getActiveKernelAttempt,
   getKernelAttempt,
+  kernelAttemptCanCancel,
   kernelAttemptCanRetry,
   reconcileKernelAttempt,
   retryKernelAttempt,
@@ -198,6 +199,39 @@ describe('Kernel operation journal', () => {
       mode: 'sponsored', outcome: 'execution_reverted', maximum: quote.maxNetworkGasWei, actual: receipt.actualGasCost,
     })
     await expect(save(prepared({ slot: 2 }))).resolves.toMatchObject({ phase: 'signed' })
+  })
+
+  it('keeps a provisional receipt pending until a reorg is proven or the safe receipt arrives', async () => {
+    const quote = prepared()
+    send.mockResolvedValueOnce(quote.userOperationHash)
+    await submitKernelAttempt(await save(quote))
+    const pending = (await getActiveKernelAttempt(scope))!
+    const receipt = {
+      success: true, actualGasCost: 12_345n,
+      receipt: { transactionHash: toHex(10n, { size: 32 }), blockHash: toHex(11n, { size: 32 }), blockNumber: 12n },
+    } as UserOperationReceipt<'0.9'>
+    status.mockResolvedValueOnce({ state: 'observed', receipt })
+    const observed = await reconcileKernelAttempt(pending)
+    expect(observed).toMatchObject({ phase: 'submitted', observedReceipt: receipt })
+    expect(observed.receipt).toBeUndefined()
+    expect(kernelAttemptCanRetry(observed)).toBe(false)
+    expect(kernelAttemptCanCancel(observed)).toBe(false)
+    await expect(save(prepared({ slot: 2 }))).rejects.toThrow('already being submitted')
+    expect(trackPerpsKernelOutcome).not.toHaveBeenCalled()
+
+    status.mockResolvedValue({ state: 'pending', receipt: null })
+    await expect(reconcileKernelAttempt(observed, async () => false)).resolves.toMatchObject({ observedReceipt: receipt })
+    await expect(reconcileKernelAttempt(observed, async () => { throw new Error('RPC unavailable') })).rejects.toThrow('RPC unavailable')
+    await expect(getActiveKernelAttempt(scope)).resolves.toMatchObject({ observedReceipt: receipt })
+    await expect(reconcileKernelAttempt(observed, async () => true)).resolves.toMatchObject({ phase: 'submitted', observedReceipt: undefined })
+    expect(kernelAttemptCanRetry((await getActiveKernelAttempt(scope))!)).toBe(true)
+
+    status.mockResolvedValueOnce({ state: 'observed', receipt })
+    await reconcileKernelAttempt(pending)
+    status.mockResolvedValueOnce({ state: 'included', receipt })
+    await expect(reconcileKernelAttempt(pending)).resolves.toMatchObject({ phase: 'included', observedReceipt: undefined, receipt })
+    await expect(getActiveKernelAttempt(scope)).resolves.toBeUndefined()
+    expect(trackPerpsKernelOutcome).toHaveBeenCalledTimes(1)
   })
 
   it('retains the exact signed cancellation before sending and releases only after canonical status', async () => {

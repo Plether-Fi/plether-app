@@ -7,6 +7,7 @@ import { useProtectionEvents, useProtectionHistory, useProtectionExecution, type
 import { usePerpsTrading, type ReviewKernelGas } from '../hooks/usePerpsTrading'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
 import { KernelGasReviewCancelled, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
+import { KernelObservedPendingError } from '../perps-aa/errors'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import type { PerpsPosition } from '../hooks/usePerpsAccount'
 import { formatPerpsPositionSize, formatPerpsAssets, perpsSideToDirection } from '../utils/perps'
@@ -161,7 +162,12 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
       setReview(undefined)
       setSuccess(remove ? 'TP/SL removed. No position-close order was submitted.' : 'TP/SL saved.')
     } catch (cause) {
-      if (!(cause instanceof KernelGasReviewCancelled)) {
+      if (cause instanceof KernelObservedPendingError) {
+        setView('overview')
+        setReview(undefined)
+        setSuccess(undefined)
+        gasReview?.openActivity()
+      } else if (!(cause instanceof KernelGasReviewCancelled)) {
         setError(cause instanceof Error ? cause : new Error('We could not update your TP/SL. Please try again.'))
       }
     }
