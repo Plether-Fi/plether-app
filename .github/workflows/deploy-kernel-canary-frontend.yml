@@ -1,8 +1,8 @@
-name: Deploy isolated Kernel canary frontend
+name: Deploy Sepolia Kernel test frontend
 run-name: Kernel canary Pages / ${{ inputs.candidate_sha }}
 
 # This workflow must be installed on master before dispatch. It checks out an
-# exact non-master PR commit and deploys only plether-kernel-canary Pages.
+# exact non-master PR commit for an isolated preview or the Sepolia homepage.
 on:
   workflow_dispatch:
     inputs:
@@ -19,23 +19,32 @@ on:
         required: true
         type: string
       phase:
-        description: Stage wallet connection before opening the Kernel API, or verify the active canary route
+        description: Stage the preview, activate it, or enable two-wallet homepage opt-in
         required: true
         default: stage_preview
         type: choice
         options:
           - stage_preview
           - active_canary
+          - sepolia_homepage
+      external_owner:
+        description: External wallet's public owner address for the homepage test
+        required: false
+        type: string
+      privy_owner:
+        description: Privy wallet's public owner address for the homepage test
+        required: false
+        type: string
 
 concurrency:
   group: plether-kernel-canary-pages
   cancel-in-progress: false
 
 env:
-  PROJECT: plether-kernel-canary
-  PRODUCTION_BRANCH: kernel-canary
+  PROJECT: ${{ inputs.phase == 'sepolia_homepage' && 'plether-testnet' || 'plether-kernel-canary' }}
+  PRODUCTION_BRANCH: ${{ inputs.phase == 'sepolia_homepage' && 'master' || 'kernel-canary' }}
   BACKEND_ORIGIN: https://api.sepolia.plether.com
-  PREVIEW_ORIGIN: https://plether-kernel-canary.pages.dev
+  PREVIEW_ORIGIN: ${{ inputs.phase == 'sepolia_homepage' && 'https://app.sepolia.plether.com' || 'https://plether-kernel-canary.pages.dev' }}
   WRANGLER_VERSION: 4.103.0
 
 jobs:
@@ -54,13 +63,20 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DEPLOYMENT: ${{ inputs.deployment }}
           PHASE: ${{ inputs.phase }}
+          EXTERNAL_OWNER: ${{ inputs.external_owner }}
+          PRIVY_OWNER: ${{ inputs.privy_owner }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/master ]]
           [[ "$CANDIDATE_BRANCH" =~ ^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$DEPLOYMENT" =~ ^[a-z0-9][a-z0-9._-]{0,95}$ ]]
-          [[ "$PHASE" == stage_preview || "$PHASE" == active_canary ]]
+          [[ "$PHASE" == stage_preview || "$PHASE" == active_canary || "$PHASE" == sepolia_homepage ]]
+          if [ "$PHASE" = sepolia_homepage ]; then
+            [[ "$DEPLOYMENT" == kernel-sepolia-direct-v1 ]]
+            [[ "$EXTERNAL_OWNER" =~ ^0x[0-9a-fA-F]{40}$ && "$PRIVY_OWNER" =~ ^0x[0-9a-fA-F]{40}$ ]]
+            [[ "${EXTERNAL_OWNER,,}" != "${PRIVY_OWNER,,}" ]]
+          fi
           branch_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH" --jq .object.sha)
           [ "$branch_head" = "$CANDIDATE_SHA" ]
           gh pr list --repo "$GITHUB_REPOSITORY" --head "$CANDIDATE_BRANCH" \
@@ -149,6 +165,8 @@ jobs:
           VITE_DEFAULT_CHAIN_ID: '421614'
           VITE_PERPS_AA_MANIFEST_URL: /perps-aa-manifest.json
           VITE_PERPS_KERNEL_AA_DEPLOYMENT: ${{ inputs.deployment }}
+          VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN: ${{ inputs.phase == 'sepolia_homepage' && 'true' || 'false' }}
+          VITE_PERPS_KERNEL_TEST_OWNERS: ${{ inputs.external_owner }},${{ inputs.privy_owner }}
           VITE_DEPLOYMENT_ENV: sepolia
           VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
           VITE_PRIVY_CLIENT_ID: ${{ vars.PRIVY_TRADING_CLIENT_ID }}
@@ -157,6 +175,10 @@ jobs:
           VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
           VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
+          VITE_POSTHOG_KEY: ${{ inputs.phase == 'sepolia_homepage' && secrets.VITE_POSTHOG_KEY || '' }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
+          POSTHOG_SOURCEMAPS: ${{ inputs.phase == 'sepolia_homepage' && '1' || '0' }}
         run: |
           set -euo pipefail
           [[ "$VITE_PRIVY_APP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]
@@ -168,20 +190,39 @@ jobs:
           node ../../scripts/validate-perps-deployment.mjs aa \
             ../../config/perps/arbitrum-sepolia-v2.0.0.json \
             dist/perps-aa-manifest.json public/perps-aa-manifest.json
-          node scripts/remove-source-maps.mjs dist
           test ! -e dist/charting_library/sameorigin.html
           test ! -e dist/charting_library/charting_library.d.ts
           test -s dist/charting_library/charting_library.standalone.js
+
+      - name: Upload private homepage source maps
+        if: inputs.phase == 'sepolia_homepage'
+        uses: PostHog/upload-source-maps@991172e085213c222c61d2ba6a0b9e57c81e5066 # v2
+        env:
+          POSTHOG_RELEASE_MODE: symbol-set
+        with:
+          directory: apps/frontend/dist/assets
+          api-key: ${{ secrets.POSTHOG_CLI_API_KEY }}
+          project-id: '208816'
+          host: https://eu.posthog.com
+          release-name: plether-web-sepolia
+          release-version: ${{ inputs.candidate_sha }}
+          cli-version: '0.18.3'
+          delete-after-upload: 'true'
+
+      - name: Remove source maps before publication
+        working-directory: apps/frontend
+        run: node scripts/remove-source-maps.mjs dist
 
       - name: Record exact source SHA in build payload
         working-directory: apps/frontend
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DEPLOYMENT: ${{ inputs.deployment }}
+          PHASE: ${{ inputs.phase }}
         run: |
           set -euo pipefail
-          printf '{"candidateSha":"%s","deployment":"%s"}\n' \
-            "$CANDIDATE_SHA" "$DEPLOYMENT" > dist/kernel-canary-build.json
+          jq -n --arg sha "$CANDIDATE_SHA" --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" \
+            '{candidateSha:$sha, deployment:$deployment, phase:$phase}' > dist/kernel-canary-build.json
 
       - name: Upload isolated canary payload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -232,10 +273,11 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DEPLOYMENT: ${{ inputs.deployment }}
+          PHASE: ${{ inputs.phase }}
         run: |
           set -euo pipefail
-          jq --exit-status --arg sha "$CANDIDATE_SHA" --arg deployment "$DEPLOYMENT" \
-            '.candidateSha == $sha and .deployment == $deployment' \
+          jq --exit-status --arg sha "$CANDIDATE_SHA" --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" \
+            '.candidateSha == $sha and .deployment == $deployment and .phase == $phase' \
             apps/frontend/dist/kernel-canary-build.json >/dev/null
           test -s apps/frontend/dist/_worker.js
 
@@ -253,9 +295,10 @@ jobs:
           }
 
       - name: Verify active canary route and dedicated origin credential
-        if: inputs.phase == 'active_canary'
+        if: inputs.phase != 'stage_preview'
         env:
           DEPLOYMENT: ${{ inputs.deployment }}
+          PHASE: ${{ inputs.phase }}
           AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
           KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN: ${{ secrets.KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN }}
         run: |
@@ -290,9 +333,10 @@ jobs:
             --header "X-Plether-AA-Proxy-Token: $KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" \
             --data-binary '{"jsonrpc":"2.0","id":1,"method":"plether_getKernelManifest","params":[]}' \
             "$BACKEND_ORIGIN/api/aa/kernel/rpc"
-          jq --exit-status --arg deployment "$DEPLOYMENT" '
+          jq --exit-status --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" '
             .jsonrpc == "2.0" and .id == 1 and .result.version == 1
             and .result.readiness.eth == true and (.result.readiness.sponsored | type) == "boolean"
+            and ($phase != "sepolia_homepage" or .result.readiness.sponsored == false)
             and (.result.profile | .deployment == $deployment and .chainId == 421614 and .entryPointVersion == "0.9"
               and keys == ([
                 "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
@@ -304,6 +348,7 @@ jobs:
             }
 
       - name: Configure isolated Pages project and secrets
+        if: inputs.phase != 'sepolia_homepage'
         working-directory: apps/frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -351,8 +396,34 @@ jobs:
           printf '%s\n' "$FAUCET_PROXY_ORIGIN_TOKEN" |
             npx --yes wrangler@4.103.0 pages secret put FAUCET_PROXY_ORIGIN_TOKEN --project-name="$PROJECT"
 
+      - name: Verify the existing Sepolia homepage and capture its rollback target
+        if: inputs.phase == 'sepolia_homepage'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT" == plether-testnet && "$PRODUCTION_BRANCH" == master ]]
+          pages_api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT"
+          curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$pages_api" | jq -er '
+            select(.success and .result.name == "plether-testnet" and .result.production_branch == "master")
+            | .result.canonical_deployment
+            | select(.environment == "production" and .latest_stage.status == "success")
+            | .id | select(test("^[0-9a-fA-F-]{36}$"))' > "$RUNNER_TEMP/sepolia-prior-deployment-id"
+          curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$pages_api/domains/app.sepolia.plether.com" | jq -e '
+              .success and .result.name == "app.sepolia.plether.com" and .result.status == "active"' >/dev/null
+          curl --fail --silent --show-error --max-time 20 "$PREVIEW_ORIGIN/perps-aa-manifest.json" | \
+            jq -S . > "$RUNNER_TEMP/sepolia-legacy-manifest.json"
+          jq -S . apps/frontend/dist/perps-aa-manifest.json | cmp - "$RUNNER_TEMP/sepolia-legacy-manifest.json"
+          curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_supportedEntryPoints","params":[]}' \
+            "$PREVIEW_ORIGIN/api/perps/v1/aa/rpc" | jq -ce '
+              select(.id == 1 and (.result | type == "array" and length > 0)) | .result' \
+              > "$RUNNER_TEMP/sepolia-legacy-entrypoints.json"
+
       - name: Bind dedicated Kernel credential only for active canary
-        if: inputs.phase == 'active_canary'
+        if: inputs.phase != 'stage_preview'
         working-directory: apps/frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -363,7 +434,8 @@ jobs:
           printf '%s\n' "$KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" |
             npx --yes wrangler@4.103.0 pages secret put KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN --project-name="$PROJECT"
 
-      - name: Deploy only the isolated canary Pages project
+      - name: Publish to the exact Sepolia Pages project
+        id: publish
         working-directory: apps/frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -375,9 +447,70 @@ jobs:
           npx --yes wrangler@4.103.0 pages deploy dist \
             --project-name="$PROJECT" --branch="$PRODUCTION_BRANCH" \
             --commit-hash="$CANDIDATE_SHA"
+
+      - name: Verify the published Sepolia release
+        if: steps.publish.outcome == 'success'
+        id: smoke
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DEPLOYMENT: ${{ inputs.deployment }}
+          PHASE: ${{ inputs.phase }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --max-time 15 "$PREVIEW_ORIGIN/kernel-canary-build.json" | \
+              jq -e --arg sha "$CANDIDATE_SHA" --arg phase "$PHASE" --arg deployment "$DEPLOYMENT" '
+                .candidateSha == $sha and .phase == $phase and .deployment == $deployment' >/dev/null 2>&1; then
+              break
+            fi
+            [ "$attempt" != 5 ] || { echo '::error::The reviewed build is not serving from the expected hostname.'; exit 1; }
+            sleep 3
+          done
           curl --fail --silent --show-error --retry 4 --retry-delay 5 \
             --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
             "$PREVIEW_ORIGIN/" > "$RUNNER_TEMP/kernel-canary-index.html"
           test -s "$RUNNER_TEMP/kernel-canary-index.html"
-          printf 'Deployed reviewed SHA %s to %s in %s phase from a separate Pages project.\n' \
+          if [ "$PHASE" = sepolia_homepage ]; then
+            bundle=$(sed -nE 's/.*src="(\/assets\/[^" ]+\.js)".*/\1/p' apps/frontend/dist/index.html)
+            [[ "$bundle" =~ ^/assets/[a-zA-Z0-9_.-]+\.js$ ]]
+            grep -F "$bundle" "$RUNNER_TEMP/kernel-canary-index.html" >/dev/null
+            curl --fail --silent --show-error --max-time 20 --output /dev/null "$PREVIEW_ORIGIN$bundle"
+            curl --fail --silent --show-error --max-time 20 "$PREVIEW_ORIGIN/?kernel-test=1" | \
+              cmp - "$RUNNER_TEMP/kernel-canary-index.html"
+            curl --fail --silent --show-error --max-time 20 "$PREVIEW_ORIGIN/perps-aa-manifest.json" | \
+              jq -S . | cmp - "$RUNNER_TEMP/sepolia-legacy-manifest.json"
+            curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_supportedEntryPoints","params":[]}' \
+              "$PREVIEW_ORIGIN/api/perps/v1/aa/rpc" | jq -ce 'select(.id == 1)|.result' | \
+              cmp - "$RUNNER_TEMP/sepolia-legacy-entrypoints.json"
+            curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"plether_getKernelManifest","params":[]}' \
+              "$PREVIEW_ORIGIN/api/perps/v1/aa/kernel/rpc" | jq -e --arg deployment "$DEPLOYMENT" '
+                .id == 1 and .result.profile.deployment == $deployment
+                and .result.profile.chainId == 421614 and .result.readiness == {eth:true,sponsored:false}' >/dev/null
+          fi
+          printf 'Deployed reviewed SHA %s to %s in %s phase.\n' \
             "$CANDIDATE_SHA" "$PREVIEW_ORIGIN" "$PHASE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore the previous homepage if the reviewed release fails smoke checks
+        if: failure() && inputs.phase == 'sepolia_homepage' && steps.publish.outcome == 'success' && steps.smoke.outcome == 'failure'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT" == plether-testnet ]]
+          previous=$(cat "$RUNNER_TEMP/sepolia-prior-deployment-id")
+          [[ "$previous" =~ ^[a-fA-F0-9-]{36}$ ]]
+          pages_api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT"
+          curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$pages_api" | \
+            jq -e --arg sha "$CANDIDATE_SHA" --arg previous "$previous" '
+              .success and (.result.canonical_deployment | .id != $previous and .environment == "production"
+              and .deployment_trigger.metadata.commit_hash == $sha)' >/dev/null || {
+                echo '::error::Canonical deployment changed. Inspect the homepage before attempting a rollback.'
+                exit 1
+              }
+          curl --fail --silent --show-error --max-time 20 -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$pages_api/deployments/$previous/rollback" | jq -e '.success' >/dev/null
+          echo 'Restored the previous production deployment on standard Sepolia.'
