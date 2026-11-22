@@ -12,7 +12,7 @@ import type { KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeCon
 
 const mocks = vi.hoisted(() => ({
   verifyAccount: vi.fn(), getBalance: vi.fn(), readContract: vi.fn(), getAddresses: vi.fn(), getChainId: vi.fn(),
-  sendTransaction: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransaction: vi.fn(), getBlock: vi.fn(),
+  estimateFeesPerGas: vi.fn(), sendTransaction: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransaction: vi.fn(), getBlock: vi.fn(),
   quoteAction: vi.fn(), execute: vi.fn(),
   walletChain: vi.fn(), switchChain: vi.fn(),
 }))
@@ -35,6 +35,7 @@ const blockHash = `0x${'34'.repeat(32)}` satisfies Hex
 const verifiedAccount = { address: sender, ownerAddress: owner, deployed: false, blockNumber: 1n, blockHash }
 const receipt = { transactionHash: hash, blockHash, blockNumber: 2n, status: 'success' }
 const transfer = { hash, blockHash, blockNumber: 2n, from: owner, to: sender, value: parseEther('0.01'), input: '0x' }
+const networkFees = { maxFeePerGas: 24_000_000n, maxPriorityFeePerGas: 0n }
 const runtime = {
   chainId: scope.chainId, ownerAddress: owner,
   smartAccount: { accountAddress: sender, entryPoint },
@@ -61,6 +62,7 @@ describe('Kernel ETH funding', () => {
     ))
     mocks.getAddresses.mockResolvedValue([owner])
     mocks.getChainId.mockResolvedValue(arbitrumSepolia.id)
+    mocks.estimateFeesPerGas.mockResolvedValue(networkFees)
     mocks.sendTransaction.mockResolvedValue(hash)
     mocks.waitForTransactionReceipt.mockResolvedValue(receipt)
     mocks.getTransaction.mockResolvedValue(transfer)
@@ -95,7 +97,8 @@ describe('Kernel ETH funding', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' }))
     expect(await screen.findByText(/ETH transfer confirmed/)).toBeVisible()
     expect(mocks.verifyAccount).toHaveBeenCalledTimes(3)
-    expect(mocks.sendTransaction).toHaveBeenCalledWith({ account: owner, chain: arbitrumSepolia, to: sender, value: parseEther('0.01') })
+    expect(mocks.estimateFeesPerGas).toHaveBeenCalledWith({ chain: arbitrumSepolia, type: 'eip1559' })
+    expect(mocks.sendTransaction).toHaveBeenCalledWith({ account: owner, chain: arbitrumSepolia, to: sender, value: parseEther('0.01'), ...networkFees })
     expect(mocks.getBalance).toHaveBeenCalledTimes(2)
     expect(mocks.getBalance).toHaveBeenLastCalledWith({ address: sender, blockNumber: verifiedAccount.blockNumber })
   })
@@ -116,6 +119,26 @@ describe('Kernel ETH funding', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Check the ETH transfer in the explorer before retrying.')
     expect(screen.queryByText(/ETH transfer confirmed/)).not.toBeInTheDocument()
+  })
+
+  it('requests a fresh fee quote after the network rejects a stale cap, without retrying automatically', async () => {
+    mocks.sendTransaction.mockRejectedValueOnce(new Error('Transaction execution failed', {
+      cause: Object.assign(new Error('max fee per gas less than block base fee'), { name: 'FeeCapTooLowError' }),
+    }))
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to add' }), { target: { value: '.01' } })
+    const send = screen.getByRole('button', { name: 'Send ETH from Owner Wallet' })
+    fireEvent.click(send)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Arbitrum Sepolia rejected the gas fee cap.')
+    expect(mocks.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.waitForTransactionReceipt).not.toHaveBeenCalled()
+
+    const increasedFees = { ...networkFees, maxFeePerGas: 30_000_000n }
+    mocks.estimateFeesPerGas.mockResolvedValueOnce(increasedFees)
+    fireEvent.click(send)
+    expect(await screen.findByText(/ETH transfer confirmed/)).toBeVisible()
+    expect(mocks.sendTransaction).toHaveBeenLastCalledWith(expect.objectContaining(increasedFees))
   })
 
   it('keeps a declined top-up available to retry without reporting an unknown transfer', async () => {

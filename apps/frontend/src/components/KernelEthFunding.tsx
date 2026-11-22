@@ -86,16 +86,19 @@ export function KernelEthFunding({ runtime, manifest }: {
   }
 
   function requestTopUp() {
-    if (!snapshot || !walletClient || !canContinue || amount === undefined) return
+    if (!snapshot || !client || !walletClient || !canContinue || amount === undefined) return
     void run(async () => {
       let hash: Hex
       try {
-        hash = await sendKernelEthTopUp(runtime, walletClient, amount)
+        hash = await sendKernelEthTopUp(runtime, client, walletClient, amount)
       } catch (cause) {
-        if (transactionFailureCode(cause) === 'WALLET_DECLINED' || Array.from(transactionErrorRecords(cause))
-          .some(record => errorField(record, 'name') === 'UserRejectedRequestError')) {
+        const errorNames = Array.from(transactionErrorRecords(cause), record => errorField(record, 'name'))
+        if (transactionFailureCode(cause) === 'WALLET_DECLINED' || errorNames.includes('UserRejectedRequestError')) {
           setNotice({ message: 'You declined the ETH transfer in your wallet.' })
           return
+        }
+        if (errorNames.includes('FeeCapTooLowError')) {
+          throw new Error('Arbitrum Sepolia rejected the gas fee cap. Review a fresh ETH transfer.', { cause })
         }
         throw new Error('The ETH transfer could not be verified. Check your wallet before retrying.', { cause })
       }

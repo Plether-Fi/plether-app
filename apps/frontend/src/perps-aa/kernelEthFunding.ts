@@ -59,15 +59,21 @@ export function buildKernelEthWithdrawal(runtime: KernelPerpsAaSmartAccountRunti
   }
 }
 
-export async function sendKernelEthTopUp(runtime: KernelPerpsAaSmartAccountRuntime, walletClient: WalletClient, amount: bigint) {
+export async function sendKernelEthTopUp(
+  runtime: KernelPerpsAaSmartAccountRuntime, client: PublicClient, walletClient: WalletClient, amount: bigint,
+) {
   if (amount <= 0n) throw new Error('Enter an ETH amount above zero.')
   const recipient = await verifyKernelEthRecipient(runtime)
   const [addresses, chainId] = await Promise.all([walletClient.getAddresses(), walletClient.getChainId()])
   const selected = addresses.at(0)
-  if (chainId !== arbitrumSepolia.id || selected === undefined || !isAddressEqual(selected, recipient.ownerAddress)) {
+  if (client.chain?.id !== arbitrumSepolia.id || chainId !== arbitrumSepolia.id ||
+      selected === undefined || !isAddressEqual(selected, recipient.ownerAddress)) {
     throw new Error('Connect the Owner Wallet on Arbitrum Sepolia to send ETH.')
   }
-  return walletClient.sendTransaction({ account: recipient.ownerAddress, chain: arbitrumSepolia, to: recipient.address, value: amount })
+  const fees = await client.estimateFeesPerGas({ chain: client.chain, type: 'eip1559' })
+  return walletClient.sendTransaction({
+    account: recipient.ownerAddress, chain: arbitrumSepolia, to: recipient.address, value: amount, ...fees,
+  })
 }
 
 export async function confirmKernelEthTopUp(client: PublicClient, hash: Hex, sender: Address, receiver: Address, value: bigint) {
