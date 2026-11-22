@@ -9,6 +9,7 @@ import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 import { clearDepositAuthorization } from './authorizationStore'
 import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
 import { encodeKernelCalls, normalizeKernelSignature } from './kernelAccount'
+import { kernelSepoliaCanaryProfile } from './kernelDeploymentPins'
 import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
 import {
   assertKernelPreparedOperation,
@@ -104,6 +105,19 @@ export function isKernelAttemptPending(attempt: KernelOperationAttempt): boolean
   return attempt.phase === 'signed' || attempt.phase === 'sending' || attempt.phase === 'submitted'
 }
 
+interface KernelFollowUp {
+  mode: KernelPreparedOperation['mode'] | undefined
+  nonce?: bigint
+}
+
+export function kernelAttemptBlocksFollowUp(attempt: KernelOperationAttempt, next?: KernelFollowUp): boolean {
+  if (!isKernelAttemptPending(attempt)) return false
+  return !(import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
+    attempt.scope.deployment === kernelSepoliaCanaryProfile.deployment && next?.mode === 'eth' &&
+    attempt.prepared.mode === 'eth' && attempt.observedReceipt?.success &&
+    (next.nonce === undefined || next.nonce > attempt.prepared.operation.nonce))
+}
+
 export function subscribeKernelAttemptUpdates(scope: KernelAttemptScope, notify: () => void): () => void {
   const key = kernelAttemptScopeKey(scope)
   const channel = updateChannel()
@@ -136,8 +150,8 @@ export async function listKernelAttempts(scope: KernelAttemptScope): Promise<Ker
   return readAttemptList(key, await get<KernelOperationAttempt[]>(key, journal))
 }
 
-export async function getActiveKernelAttempt(scope: KernelAttemptScope): Promise<KernelOperationAttempt | undefined> {
-  return (await listKernelAttempts(scope)).find(isKernelAttemptPending)
+export async function getActiveKernelAttempt(scope: KernelAttemptScope, next?: KernelFollowUp): Promise<KernelOperationAttempt | undefined> {
+  return (await listKernelAttempts(scope)).find(attempt => kernelAttemptBlocksFollowUp(attempt, next))
 }
 
 export async function getKernelAttempt(scope: KernelAttemptScope, hash: Hex): Promise<KernelOperationAttempt | undefined> {
@@ -176,10 +190,10 @@ function acquireKernelLane(scope: KernelAttemptScope) {
 }
 
 /** The same browser and durable lane covers both gas payers. */
-export async function withKernelOperationLane<T>(scope: KernelAttemptScope, action: () => Promise<T>): Promise<T> {
+export async function withKernelOperationLane<T>(scope: KernelAttemptScope, action: () => Promise<T>, next?: KernelFollowUp): Promise<T> {
   const release = await acquireKernelLane(scope)
   try {
-    const active = await getActiveKernelAttempt(scope)
+    const active = await getActiveKernelAttempt(scope, next)
     if (active) throw new SponsoredOperationLockedError(active.prepared.preparationId)
     return await action()
   } finally {
@@ -216,12 +230,16 @@ export async function saveKernelSignedAttempt(input: SignedKernelAttemptInput): 
     updatedAt: now,
   }
   return editJournal(input.scope, attempts => {
-    const active = attempts.find(isKernelAttemptPending)
+    const active = attempts.find(existing => kernelAttemptBlocksFollowUp(existing, {
+      mode: input.prepared.mode, nonce: input.prepared.operation.nonce,
+    }))
     if (active) throw new SponsoredOperationLockedError(active.prepared.preparationId)
     if (attempts.some(existing => existing.prepared.preparationId === input.prepared.preparationId)) {
       throw new Error('This Trading Account preparation was already used')
     }
-    return { attempts: [attempt, ...attempts.slice(0, historyLimit - 1)], result: attempt }
+    const recent = attempts.slice(0, historyLimit - 1)
+    const olderPending = attempts.slice(historyLimit - 1).filter(isKernelAttemptPending)
+    return { attempts: [attempt, ...recent, ...olderPending], result: attempt }
   })
 }
 

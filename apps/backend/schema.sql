@@ -3398,8 +3398,9 @@ CREATE TABLE IF NOT EXISTS aa_kernel_operations (
 );
 ALTER TABLE aa_kernel_operations ADD COLUMN IF NOT EXISTS cancellation_only BOOLEAN NOT NULL DEFAULT FALSE
   CHECK (NOT cancellation_only OR mode='eth');
-CREATE UNIQUE INDEX IF NOT EXISTS aa_kernel_pending_account
-  ON aa_kernel_operations (deployment,chain_id,entry_point,sender) WHERE status='pending';
+CREATE UNIQUE INDEX IF NOT EXISTS aa_kernel_pending_nonce
+  ON aa_kernel_operations (deployment,chain_id,entry_point,sender,nonce) WHERE status='pending';
+DROP INDEX IF EXISTS aa_kernel_pending_account;
 
 CREATE TABLE IF NOT EXISTS aa_kernel_cancellations (
   deployment TEXT NOT NULL, chain_id BIGINT NOT NULL, entry_point TEXT NOT NULL,

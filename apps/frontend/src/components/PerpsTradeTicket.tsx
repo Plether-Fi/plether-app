@@ -34,7 +34,7 @@ import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
 import { KernelGasReviewCancelled, kernelQuoteIsFresh, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
-import { isKernelAttemptPending } from '../perps-aa/kernelOperationJournal'
+import { kernelAttemptBlocksFollowUp } from '../perps-aa/kernelOperationJournal'
 import { KernelObservedPendingError } from '../perps-aa/errors'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV3'
@@ -1835,7 +1835,7 @@ export function PerpsTradeTicket({
   const isSponsoredAccountConfigured = identity.isAaManifestConfigured
   const gasReview = usePerpsGasReview()
   const { attempts: kernelAttempts } = useKernelAttempts(gasReview?.kernelScope)
-  const pendingKernelOperation = kernelAttempts.find(isKernelAttemptPending)
+  const pendingKernelOperation = kernelAttempts.find(attempt => kernelAttemptBlocksFollowUp(attempt, { mode: gasReview?.preference.mode }))
   const kernelOperationPending = pendingKernelOperation !== undefined
   const kernelInclusionObserved = pendingKernelOperation?.observedReceipt
   const kernelPendingMessage = kernelInclusionObserved
@@ -3952,6 +3952,7 @@ export function PerpsTradeTicket({
         setMarginAction(null)
         setMarginActionAmount('')
         setLocallyConfirmedFundingBalances(null)
+        void onAccountRefresh?.()
         gasReview?.openActivity()
         return
       }

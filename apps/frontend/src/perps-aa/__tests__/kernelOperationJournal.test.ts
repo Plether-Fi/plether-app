@@ -73,15 +73,16 @@ const now = 1_800_000_000_000
 
 function prepared(input: {
   slot?: number
+  nonce?: bigint
   mode?: 'eth' | 'sponsored'
   expiresAt?: number
   callData?: Hex
 } = {}): KernelPreparedOperation {
-  const { slot = 1, mode = 'eth', expiresAt = Math.floor(now / 1_000) + 120, callData = '0x1234' } = input
+  const { slot = 1, nonce = 2n, mode = 'eth', expiresAt = Math.floor(now / 1_000) + 120, callData = '0x1234' } = input
   const preparationId = toHex(slot, { size: 32 })
   const operation = {
     sender: scope.sender,
-    nonce: 2n,
+    nonce,
     callData,
     callGasLimit: 100_000n,
     verificationGasLimit: 150_000n,
@@ -111,12 +112,13 @@ function sign(quote: KernelPreparedOperation) {
   return owner.signMessage({ message: { raw: quote.userOperationHash } })
 }
 
-async function save(quote: KernelPreparedOperation) {
-  return saveKernelSignedAttempt({ scope, ownerAddress: owner.address, action: 'place-order', prepared: quote, signature: await sign(quote) })
+async function save(quote: KernelPreparedOperation, attemptScope = scope) {
+  return saveKernelSignedAttempt({ scope: attemptScope, ownerAddress: owner.address, action: 'place-order', prepared: quote, signature: await sign(quote) })
 }
 
 describe('Kernel operation journal', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
     vi.clearAllMocks()
     vi.spyOn(Date, 'now').mockReturnValue(now)
@@ -232,6 +234,38 @@ describe('Kernel operation journal', () => {
     await expect(reconcileKernelAttempt(pending)).resolves.toMatchObject({ phase: 'included', observedReceipt: undefined, receipt })
     await expect(getActiveKernelAttempt(scope)).resolves.toBeUndefined()
     expect(trackPerpsKernelOutcome).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the ETH canary lane after observed inclusion only for a newer nonce', async () => {
+    vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'true')
+    const canary = { ...scope, deployment: kernelSepoliaCanaryProfile.deployment }
+    const quote = prepared()
+    send.mockResolvedValueOnce(quote.userOperationHash)
+    const first = await save(quote, canary)
+    await submitKernelAttempt(first)
+    const next = prepared({ slot: 2, nonce: 3n })
+    await expect(save(next, canary)).rejects.toThrow('already being submitted')
+
+    const receipt = {
+      success: true, actualGasCost: 12_345n,
+      receipt: { transactionHash: toHex(10n, { size: 32 }), blockHash: toHex(11n, { size: 32 }), blockNumber: 12n },
+    } as UserOperationReceipt<'0.9'>
+    status.mockResolvedValueOnce({ state: 'observed', receipt })
+    const observed = await reconcileKernelAttempt(first)
+    await expect(getActiveKernelAttempt(canary, { mode: 'eth', nonce: 2n })).resolves.toMatchObject({ observedReceipt: receipt })
+    await expect(getActiveKernelAttempt(canary, { mode: 'eth', nonce: 3n })).resolves.toBeUndefined()
+    await expect(getActiveKernelAttempt(canary, { mode: 'sponsored', nonce: 3n })).resolves.toMatchObject({ observedReceipt: receipt })
+    await expect(save(prepared({ slot: 3 }), canary)).rejects.toThrow('already being submitted')
+
+    status.mockResolvedValueOnce({ state: 'pending', receipt: null })
+    await reconcileKernelAttempt(observed, async () => true)
+    await expect(save(next, canary)).rejects.toThrow('already being submitted')
+    status.mockResolvedValueOnce({ state: 'observed', receipt })
+    await reconcileKernelAttempt(first)
+    await expect(withKernelOperationLane(canary, () => save(next, canary), { mode: 'eth', nonce: 3n }))
+      .resolves.toMatchObject({ phase: 'signed' })
+    expect(await getKernelAttempt(canary, quote.userOperationHash)).toMatchObject({ phase: 'submitted', observedReceipt: receipt })
+    expect(trackPerpsKernelOutcome).not.toHaveBeenCalled()
   })
 
   it('retains the exact signed cancellation before sending and releases only after canonical status', async () => {

@@ -33,11 +33,16 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
     let stopped = false
     let recovering = false
     let readSequence = 0
+    let lastPolledHash: string | undefined
 
     const check = async (attempts: KernelOperationAttempt[]) => {
       if (!recover || recovering || stopped || document.visibilityState === 'hidden') return
-      const attempt = attempts.find(isKernelAttemptPending)
+      const pending = attempts.filter(attempt => isKernelAttemptPending(attempt) && attempt.phase !== 'signed')
+      if (pending.length === 0) return
+      const previous = pending.findIndex(attempt => attempt.prepared.userOperationHash === lastPolledHash)
+      const attempt = pending[(previous + 1) % pending.length]
       if (!attempt) return
+      lastPolledHash = attempt.prepared.userOperationHash
       recovering = true
       try {
         await refreshKernelAttempt(attempt, isObservationReorged)

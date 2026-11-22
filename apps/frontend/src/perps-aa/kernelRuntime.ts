@@ -174,9 +174,11 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         trackPerpsKernelOutcome({ mode, outcome: 'quote_failed', error })
         throw error
       }
-      if (await getActiveKernelAttempt(scope)) throw new Error('Resolve the pending operation in Trading Account activity before getting a new gas quote')
       const callData = encodeKernelCalls(action.calls)
       const { factory, expectedNonce } = await readDeploymentAndNonce()
+      if (await getActiveKernelAttempt(scope, { mode, nonce: expectedNonce })) {
+        throw new Error('Resolve the pending operation in Trading Account activity before getting a new gas quote')
+      }
       const reviewedState = await readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId })
       signal?.throwIfAborted()
       let prepared: KernelPreparedOperation
@@ -271,7 +273,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
             terminalStatus: 'submission-unknown', retryable: false, cause: error })
         }
         return { ...stored, phase: 'submitted' as const }
-      })
+      }, { mode: prepared.mode, nonce: prepared.operation.nonce })
       onStatus?.('confirming')
       const settled = await waitForAttemptOutcome(attempt, isObservationReorged)
       const deploymentReceipt = settled.phase === 'included' ? settled.receipt

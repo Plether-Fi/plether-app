@@ -17,6 +17,7 @@ module Plether.Database.KernelOperation
   , getKernelNonceScanCursor
   , storeKernelNonceScanCursor
   , acceptKernelOperation
+  , acceptKernelEthOperationAtNonce
   , acceptKernelCancellationAnchor
   , getKernelOperationForClient
   , finalizeKernelOperation
@@ -240,8 +241,9 @@ ensureKernelOperationSchema conn = withTransaction conn $ do
     "ALTER TABLE aa_kernel_operations ADD COLUMN IF NOT EXISTS cancellation_only BOOLEAN NOT NULL DEFAULT FALSE\
     \ CHECK (NOT cancellation_only OR mode='eth')"
   void $ execute_ conn
-    "CREATE UNIQUE INDEX IF NOT EXISTS aa_kernel_pending_account\
-    \ ON aa_kernel_operations (deployment,chain_id,entry_point,sender) WHERE status='pending'"
+    "CREATE UNIQUE INDEX IF NOT EXISTS aa_kernel_pending_nonce\
+    \ ON aa_kernel_operations (deployment,chain_id,entry_point,sender,nonce) WHERE status='pending'"
+  void $ execute_ conn "DROP INDEX IF EXISTS aa_kernel_pending_account"
   void $ execute_ conn
     "CREATE TABLE IF NOT EXISTS aa_kernel_cancellations (\
     \ deployment TEXT NOT NULL, chain_id BIGINT NOT NULL, entry_point TEXT NOT NULL,\
@@ -339,20 +341,26 @@ storeKernelNonceScanCursor conn prepared expected (block, blockHash) = do
 -- Commit acceptance before handing signed bytes to Alto. The durable lock is
 -- shared by both modes and survives processes, tabs, and relay failures.
 acceptKernelOperation :: Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
-acceptKernelOperation = acceptKernelOperationWith False
+acceptKernelOperation = acceptKernelOperationWith False Nothing
+
+-- Only the allowlisted ETH gateway supplies a nonce attested on both recent
+-- chains. Older ETH operations stay pending for settlement on their own nonce.
+acceptKernelEthOperationAtNonce :: Connection -> KernelScope -> Integer -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
+acceptKernelEthOperationAtNonce conn scope nonce = acceptKernelOperationWith False (Just nonce) conn scope
 
 -- Recover a signed ETH operation whose original submission was ambiguous.
 -- The anchor holds the same account lane and cannot become relayable.
 acceptKernelCancellationAnchor :: Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
-acceptKernelCancellationAnchor = acceptKernelOperationWith True
+acceptKernelCancellationAnchor = acceptKernelOperationWith True Nothing
 
-acceptKernelOperationWith :: Bool -> Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
-acceptKernelOperationWith cancellationOnly conn scope preparationId client operationHash signedOperation = withTransaction conn $ do
+acceptKernelOperationWith :: Bool -> Maybe Integer -> Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
+acceptKernelOperationWith cancellationOnly currentNonce conn scope preparationId client operationHash signedOperation = withTransaction conn $ do
   preparation <- getKernelPreparationForClient conn scope preparationId client
   case preparation of
     Nothing -> pure OperationPreparationMissing
     Just prepared
       | cancellationOnly && kpMode prepared /= PayWithEth -> pure OperationPreparationMismatch
+      | maybe False (\nonce -> kpMode prepared /= PayWithEth || kpNonce prepared /= nonce) currentNonce -> pure OperationPreparationMismatch
       | not (sameUnsignedOperation prepared signedOperation) -> pure OperationPreparationMismatch
       | otherwise -> do
           lockScope conn "account" scope (kpSender prepared)
@@ -378,20 +386,21 @@ acceptKernelOperationWith cancellationOnly conn scope preparationId client opera
           valid <- hasSponsorAuthorization conn prepared operationHash now
           if valid then insertAccepted prepared else pure OperationPreparationMismatch
   insertAccepted prepared = do
-    inserted <- execute conn
-      "INSERT INTO aa_kernel_operations\
-      \ (deployment,chain_id,entry_point,sender,nonce,preparation_id,client_key,mode,user_operation_hash,signed_operation,cancellation_only)\
-      \ VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?) ON CONFLICT DO NOTHING"
-      (scopeParams scope ++
-        [ toField (kpSender prepared), toField (kpNonce prepared), toField preparationId, toField client
-        , toField (modeText $ kpMode prepared), toField operationHash, toField (jsonText signedOperation), toField cancellationOnly
-        ])
-    if inserted == 1 then pure OperationAccepted else do
-      [Only busy] <- query conn
-        "SELECT EXISTS (SELECT 1 FROM aa_kernel_operations\
-        \ WHERE deployment=? AND chain_id=? AND entry_point=? AND sender=? AND status='pending')"
-        (scopeParams scope ++ [toField (kpSender prepared)])
-      pure $ if busy then OperationLaneBusy else OperationConflict
+    [Only busy] <- query conn
+      "SELECT EXISTS (SELECT 1 FROM aa_kernel_operations\
+      \ WHERE deployment=? AND chain_id=? AND entry_point=? AND sender=? AND status='pending'\
+      \ AND (?::numeric IS NULL OR mode<>'eth' OR nonce=?))"
+      (scopeParams scope ++ [toField (kpSender prepared), toField currentNonce, toField currentNonce])
+    if busy then pure OperationLaneBusy else do
+      inserted <- execute conn
+        "INSERT INTO aa_kernel_operations\
+        \ (deployment,chain_id,entry_point,sender,nonce,preparation_id,client_key,mode,user_operation_hash,signed_operation,cancellation_only)\
+        \ VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?) ON CONFLICT DO NOTHING"
+        (scopeParams scope ++
+          [ toField (kpSender prepared), toField (kpNonce prepared), toField preparationId, toField client
+          , toField (modeText $ kpMode prepared), toField operationHash, toField (jsonText signedOperation), toField cancellationOnly
+          ])
+      pure $ if inserted == 1 then OperationAccepted else OperationConflict
 
 getKernelOperationForClient :: Connection -> KernelScope -> Text -> Text -> IO (Maybe KernelOperation)
 getKernelOperationForClient = findKernelOperation False

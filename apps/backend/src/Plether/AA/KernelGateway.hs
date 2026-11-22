@@ -803,9 +803,10 @@ submit gateway cfg db primary secondary manager client fields = do
     snapshot <- agreedSnapshot gateway primary secondary
     owner <- attestBoth gateway primary secondary snapshot $
       verifyPerpsAccountAtBlock profile sender (Kernel.koFactoryOwner parsed)
-    unless alreadyAccepted $ do
+    currentNonce <- if alreadyAccepted then pure Nothing else do
       nonce <- attestBoth gateway primary secondary snapshot $ \rpc block -> readNonce profile rpc block sender
       unless (nonce == Paymaster.puoNonce operation) $ throwE kernelNonceChanged
+      pure (Just nonce)
     unless (Db.kpOwner preparation == owner) $ throwE preparationMismatch
     unless (kernelOwnerMaySubmit alreadyAccepted (kgcAllowedOwners gateway) owner) $
       throwE $ forbidden "KERNEL_CANARY_INELIGIBLE" "This Trading Account is not in the Kernel canary"
@@ -833,7 +834,11 @@ submit gateway cfg db primary secondary manager client fields = do
             , maxPrefund operation <= Db.ksbMaxCostWei (kscBudget sponsor) -> pure ()
           _ -> throwE sponsorshipNotAuthorized
     revalidateSnapshot gateway primary secondary snapshot
-    accepted <- dbAction db $ \conn -> Db.acceptKernelOperation conn scope ident preparedClient expectedHash (Object raw)
+    let accept = case (mode, kgcAllowedOwners gateway, currentNonce) of
+          (Db.PayWithEth, Just _, Just nonce) | not (maybe False kscEnabled (kgcSponsorship gateway)) ->
+            \conn -> Db.acceptKernelEthOperationAtNonce conn scope nonce ident preparedClient expectedHash (Object raw)
+          _ -> \conn -> Db.acceptKernelOperation conn scope ident preparedClient expectedHash (Object raw)
+    accepted <- dbAction db accept
     case accepted of
       Db.OperationAlreadyFinal -> pure (String expectedHash)
       Db.OperationAccepted -> relayKernelOperation gateway manager expectedHash raw

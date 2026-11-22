@@ -110,6 +110,30 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       acceptKernelOperation conn scope (kpId eth) client ethHash ethSigned `shouldReturn` OperationAlreadyFinal
       acceptKernelOperation conn scope (kpId sponsored) client sponsorHash sponsoredSigned `shouldReturn` OperationAccepted
 
+  it "allows an attested ETH nonce while the prior ETH operation is pending settlement" $
+    withKernel $ \conn -> do
+      first <- preparation scope PayWithEth "eth-first" 0
+      next <- preparation scope PayWithEth "eth-next" 1
+      competing <- preparation scope PayWithEth "eth-competing" 1
+      sponsored <- preparation scope Sponsored "sponsored-next" 2
+      let signed = signWith "0x1111" . kpUnsignedOperation
+          acceptAt nonce prepared digest =
+            acceptKernelEthOperationAtNonce conn scope nonce (kpId prepared) client digest (signed prepared)
+      void $ execute_ conn
+        "CREATE UNIQUE INDEX aa_kernel_pending_account ON aa_kernel_operations\
+        \ (deployment,chain_id,entry_point,sender) WHERE status='pending'"
+      mapM_ (\prepared -> storeKernelPreparation conn prepared `shouldReturn` PreparationStored)
+        [first, next, competing, sponsored]
+      acceptKernelOperation conn scope (kpId first) client (hashOf 'a') (signed first) `shouldReturn` OperationAccepted
+      ensureKernelOperationSchema conn
+      acceptKernelOperation conn scope (kpId next) client (hashOf 'b') (signed next) `shouldReturn` OperationLaneBusy
+      acceptAt 0 next (hashOf 'b') `shouldReturn` OperationPreparationMismatch
+      acceptAt 1 next (hashOf 'b') `shouldReturn` OperationAccepted
+      acceptAt 1 competing (hashOf 'c') `shouldReturn` OperationLaneBusy
+      acceptAt 2 sponsored (hashOf 'd') `shouldReturn` OperationPreparationMismatch
+      status conn scope (hashOf 'a') `shouldReturn` Just "pending"
+      status conn scope (hashOf 'b') `shouldReturn` Just "pending"
+
   it "anchors an ambiguous signed ETH operation after expiry and never allows its ordinary relay" $
     withKernel $ \conn -> do
       now <- getCurrentTime
