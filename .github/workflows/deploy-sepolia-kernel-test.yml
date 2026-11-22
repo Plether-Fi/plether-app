@@ -170,25 +170,44 @@ jobs:
           curl --fail --silent --show-error --max-time 20 "$TEST_ORIGIN/" > "$RUNNER_TEMP/sepolia-root-before.html"
       - name: Deploy only the opt-in Worker route
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_KERNEL_TEST_WORKER_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo '::error::Configure CLOUDFLARE_KERNEL_TEST_WORKER_TOKEN in aa-admin-sepolia.'
+            exit 1
+          fi
           api_base=https://api.cloudflare.com/client/v4
-          zone=$(curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "$api_base/zones?name=plether.com" | jq -er '.result | select(length == 1) | .[0].id')
+          if ! zone=$(curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$api_base/zones?name=plether.com" | jq -er --arg account "$CLOUDFLARE_ACCOUNT_ID" '
+              select(.success) | .result | map(select(.name == "plether.com" and .account.id == $account))
+              | select(length == 1) | .[0].id'); then
+            echo '::error::The Worker token must have Zone Read for plether.com in the configured account.'
+            exit 1
+          fi
           curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "$api_base/zones/$zone/workers/routes" | jq -e '
             .success and all(.result[]; (.pattern | test("^(https?://)?app[.]sepolia[.]plether[.]com/kernel-test/"; "i") | not)
-              or (.pattern == "https://app.sepolia.plether.com/kernel-test/*" and .script == "plether-sepolia-kernel-test"))' >/dev/null
+              or ((.pattern | sub("^https://"; "")) == "app.sepolia.plether.com/kernel-test/*"
+                and .script == "plether-sepolia-kernel-test"))' >/dev/null
           npx --yes wrangler@4.103.0 deploy --config release/wrangler.json
       - name: Verify regular Sepolia and the new opt-in URL
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --max-time 20 "$TEST_ORIGIN/" > "$RUNNER_TEMP/sepolia-root-after.html"
           cmp "$RUNNER_TEMP/sepolia-root-before.html" "$RUNNER_TEMP/sepolia-root-after.html"
-          curl --fail --silent --show-error --retry 4 --retry-all-errors --max-time 20 "$TEST_ORIGIN/kernel-test/kernel-test-build.json" | \
-            jq -e --arg sha "$CANDIDATE_SHA" '.candidateSha == $sha and .path == "/kernel-test/"' >/dev/null
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --max-time 10 "$TEST_ORIGIN/kernel-test/kernel-test-build.json" | \
+              jq -e --arg sha "$CANDIDATE_SHA" '.candidateSha == $sha and .path == "/kernel-test/"' >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo '::error::The expected Kernel build did not propagate to the opt-in URL.'
+              exit 1
+            fi
+            sleep 3
+          done
           curl --fail --silent --show-error --max-time 20 "$TEST_ORIGIN/kernel-test/" > "$RUNNER_TEMP/sepolia-kernel-test.html"
           asset=$(sed -nE 's/.*src="(\/kernel-test\/assets\/[^" ]+\.js)".*/\1/p' "$RUNNER_TEMP/sepolia-kernel-test.html" | head -n 1)
           [[ "$asset" =~ ^/kernel-test/assets/[a-zA-Z0-9_.-]+\.js$ ]]
