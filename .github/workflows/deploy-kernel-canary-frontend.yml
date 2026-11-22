@@ -457,38 +457,84 @@ jobs:
           PHASE: ${{ inputs.phase }}
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            if curl --fail --silent --show-error --max-time 15 "$PREVIEW_ORIGIN/kernel-canary-build.json" | \
-              jq -e --arg sha "$CANDIDATE_SHA" --arg phase "$PHASE" --arg deployment "$DEPLOYMENT" '
-                .candidateSha == $sha and .phase == $phase and .deployment == $deployment' >/dev/null 2>&1; then
-              break
-            fi
-            [ "$attempt" != 5 ] || { echo '::error::The reviewed build is not serving from the expected hostname.'; exit 1; }
-            sleep 3
-          done
-          curl --fail --silent --show-error --retry 4 --retry-delay 5 \
-            --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
-            "$PREVIEW_ORIGIN/" > "$RUNNER_TEMP/kernel-canary-index.html"
-          test -s "$RUNNER_TEMP/kernel-canary-index.html"
+          attempts=5
           if [ "$PHASE" = sepolia_homepage ]; then
             bundle=$(sed -nE 's/.*src="(\/assets\/[^" ]+\.js)".*/\1/p' apps/frontend/dist/index.html)
-            [[ "$bundle" =~ ^/assets/[a-zA-Z0-9_.-]+\.js$ ]]
-            grep -F "$bundle" "$RUNNER_TEMP/kernel-canary-index.html" >/dev/null
-            curl --fail --silent --show-error --max-time 20 --output /dev/null "$PREVIEW_ORIGIN$bundle"
-            curl --fail --silent --show-error --max-time 20 "$PREVIEW_ORIGIN/?kernel-test=1" | \
-              cmp - "$RUNNER_TEMP/kernel-canary-index.html"
-            curl --fail --silent --show-error --max-time 20 "$PREVIEW_ORIGIN/perps-aa-manifest.json" | \
-              jq -S . | cmp - "$RUNNER_TEMP/sepolia-legacy-manifest.json"
-            curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' \
+            [[ "$bundle" =~ ^/assets/[a-zA-Z0-9_.-]+\.js$ ]] || {
+              echo '::error::The reviewed artifact must contain exactly one application script.'
+              exit 1
+            }
+            attempts=12
+          fi
+
+          fetch() {
+            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 5 --max-time 8 "$@"
+          }
+
+          verify_release() {
+            local content_type
+            fetch "$PREVIEW_ORIGIN/kernel-canary-build.json" | \
+              jq -e --arg sha "$CANDIDATE_SHA" --arg phase "$PHASE" --arg deployment "$DEPLOYMENT" '
+                .candidateSha == $sha and .phase == $phase and .deployment == $deployment' >/dev/null || {
+              echo 'The reviewed release marker is unavailable at the expected hostname.'
+              return 1
+            }
+            fetch "$PREVIEW_ORIGIN/" > "$RUNNER_TEMP/kernel-canary-index.html" && \
+              test -s "$RUNNER_TEMP/kernel-canary-index.html" || {
+              echo 'The homepage returned no HTML.'
+              return 1
+            }
+            if [ "$PHASE" != sepolia_homepage ]; then
+              return 0
+            fi
+            grep -F "src=\"$bundle\"" "$RUNNER_TEMP/kernel-canary-index.html" >/dev/null || {
+              echo 'The homepage does not reference the reviewed application script.'
+              return 1
+            }
+            fetch "$PREVIEW_ORIGIN/?kernel-test=1" | grep -F "src=\"$bundle\"" >/dev/null || {
+              echo 'The opt-in request does not reference the reviewed homepage script.'
+              return 1
+            }
+            content_type=$(fetch --output /dev/null --write-out '%{content_type}' "$PREVIEW_ORIGIN$bundle") && \
+              [[ "$content_type" == application/javascript* || "$content_type" == text/javascript* ]] || {
+              echo 'The reviewed application script is unavailable as JavaScript.'
+              return 1
+            }
+            fetch "$PREVIEW_ORIGIN/perps-aa-manifest.json" | \
+              jq -S . | cmp -s - "$RUNNER_TEMP/sepolia-legacy-manifest.json" || {
+              echo 'The legacy Trading Account manifest differs from the production baseline.'
+              return 1
+            }
+            fetch -H 'Content-Type: application/json' \
               --data '{"jsonrpc":"2.0","id":1,"method":"eth_supportedEntryPoints","params":[]}' \
               "$PREVIEW_ORIGIN/api/perps/v1/aa/rpc" | jq -ce 'select(.id == 1)|.result' | \
-              cmp - "$RUNNER_TEMP/sepolia-legacy-entrypoints.json"
-            curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' \
+              cmp -s - "$RUNNER_TEMP/sepolia-legacy-entrypoints.json" || {
+              echo 'The legacy Trading Account RPC does not return its production EntryPoints.'
+              return 1
+            }
+            fetch -H 'Content-Type: application/json' \
               --data '{"jsonrpc":"2.0","id":1,"method":"plether_getKernelManifest","params":[]}' \
               "$PREVIEW_ORIGIN/api/perps/v1/aa/kernel/rpc" | jq -e --arg deployment "$DEPLOYMENT" '
                 .id == 1 and .result.profile.deployment == $deployment
-                and .result.profile.chainId == 421614 and .result.readiness == {eth:true,sponsored:false}' >/dev/null
-          fi
+                and .result.profile.chainId == 421614 and .result.readiness == {eth:true,sponsored:false}' >/dev/null || {
+              echo 'The live Kernel RPC does not report the reviewed ETH-only profile.'
+              return 1
+            }
+          }
+
+          # Pages can serve the new marker before all homepage paths and bindings converge.
+          for ((attempt=1; attempt<=attempts; attempt++)); do
+            printf 'Checking the published release (attempt %d of %d).\n' "$attempt" "$attempts"
+            if verify_release; then
+              break
+            fi
+            [ "$attempt" -lt "$attempts" ] || {
+              echo '::error::The published release did not pass its live checks.'
+              exit 1
+            }
+            sleep 5
+          done
           printf 'Deployed reviewed SHA %s to %s in %s phase.\n' \
             "$CANDIDATE_SHA" "$PREVIEW_ORIGIN" "$PHASE" >> "$GITHUB_STEP_SUMMARY"
 
