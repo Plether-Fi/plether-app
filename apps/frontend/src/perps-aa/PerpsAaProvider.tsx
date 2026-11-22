@@ -24,6 +24,7 @@ import {
   type PerpsAccountAddressResolver,
 } from './PerpsIdentityProvider'
 import { resolvePerpsAaManifestUrl } from './manifestUrl'
+import { selectedKernelTestOwner } from './kernelTestOptIn'
 import {
   bundlerRpcUrlForManifest,
   isPerpsAaManifestV2 as isNativePaymasterManifest,
@@ -50,9 +51,14 @@ function configuredManifestUrl(): string | null {
   return resolvePerpsAaManifestUrl(value, isSepoliaDeployment())
 }
 
-function configuredKernelDeployment(): string | undefined {
+function configuredKernelDeployment(owner: string | undefined, entry: URL | undefined): string | undefined {
   const value: unknown = import.meta.env.VITE_PERPS_KERNEL_AA_DEPLOYMENT
-  return typeof value === 'string' && value !== '' ? value : undefined
+  if (typeof value !== 'string' || value === '') return undefined
+  if (import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
+      (!isSepoliaDeployment() || !selectedKernelTestOwner(owner, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS, entry))) {
+    return undefined
+  }
+  return value
 }
 
 function ConnectedPerpsAaRuntime({
@@ -87,7 +93,7 @@ function ConnectedPerpsAaRuntime({
 export function PerpsAaProvider({
   children,
   manifestUrl = configuredManifestUrl(),
-  kernelDeployment = configuredKernelDeployment(),
+  kernelDeployment: kernelDeploymentOverride,
   runtime,
 }: {
   children: ReactNode
@@ -99,6 +105,8 @@ export function PerpsAaProvider({
   const { data: connectedWalletClient } = useWalletClient()
   const wallet = useWalletActions()
   const walletClient = wallet.configured && !wallet.signerReady ? undefined : connectedWalletClient
+  const [entry] = useState(() => typeof window === 'undefined' ? undefined : new URL(window.location.href))
+  const kernelDeployment = kernelDeploymentOverride ?? configuredKernelDeployment(walletClient?.account.address, entry)
   const [resolvedRuntime, setResolvedRuntime] = useState<{
     connectionKey: string
     runtime: PerpsAaSmartAccountRuntime

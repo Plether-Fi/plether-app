@@ -10,7 +10,6 @@ import { useAccount, usePublicClient } from 'wagmi'
 import { useWalletActions } from '../wallet/useWalletActions'
 import { UnsupportedEmbeddedOwnerError } from './embeddedOwner'
 import { UnsupportedKernelOwnerError } from './kernelAccount'
-import { kernelTestMounted, kernelTestOwnerAllowed } from './kernelTestMount'
 import { verifyPerpsV3DeploymentBindings } from '../contracts/verifyPerpsV3Bindings'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
@@ -144,9 +143,6 @@ async function resolveConfiguredIdentity(input: {
   fetch?: PerpsAaManifestFetch
   signal: AbortSignal
 }): Promise<AsyncIdentityResolution> {
-  if (kernelTestMounted && !kernelTestOwnerAllowed(input.ownerAddress, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS)) {
-    return blockedResolution('UNSUPPORTED_OWNER_WALLET', 'Connect one of the two wallets enrolled in the Sepolia Kernel test.')
-  }
   let manifest: PerpsAaDeploymentManifest
   try {
     manifest = input.loadManifest

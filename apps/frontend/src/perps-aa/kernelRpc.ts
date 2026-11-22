@@ -24,7 +24,7 @@ import { observeDeadlineResponse } from './deadlineClock'
 import { encodeKernelCalls, type KernelAccountPins } from './kernelAccount'
 import { kernelSepoliaCanaryPaymaster, kernelSepoliaCanaryProfile } from './kernelDeploymentPins'
 
-export const PERPS_KERNEL_RPC_PATH = `${import.meta.env.BASE_URL}api/perps/v1/aa/kernel/rpc`
+export const PERPS_KERNEL_RPC_PATH = '/api/perps/v1/aa/kernel/rpc'
 const chainId = 421614
 const entryPoint = entryPoint09Address.toLowerCase() as Address
 const operationTopic = keccak256(toBytes('UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)'))
