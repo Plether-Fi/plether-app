@@ -22,7 +22,7 @@ function App() {
   const shouldDefaultToSpot = isPrimaryAppDeployment()
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Layout>
         <Suspense fallback={<div className="flex items-center justify-center min-h-[50vh]"><Spinner size="lg" /></div>}>
           <Routes>
