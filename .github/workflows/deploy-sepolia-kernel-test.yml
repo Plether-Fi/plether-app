@@ -86,6 +86,9 @@ jobs:
           set -euo pipefail
           npm install -g npm@11.6.2
           npm ci
+      - name: Install Insights story dependencies
+        working-directory: apps/insights
+        run: npm ci
       - name: Check out the pinned TradingView runtime
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
