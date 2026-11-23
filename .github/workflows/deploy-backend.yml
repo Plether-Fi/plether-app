@@ -85,11 +85,10 @@ jobs:
 
           if ! jq --exit-status \
               --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
-              --argjson prevent_self "$REQUIRE_PREVENT_SELF_REVIEW" \
               '.name == $name
                and .can_admins_bypass == false
                and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == $prevent_self)
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == ($name | endswith("-mainnet")))
                and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
                and .deployment_branch_policy.custom_branch_policies == true' \
               "$environment_file" >/dev/null \
@@ -135,11 +134,10 @@ jobs:
             > "$branch_policy_file"
           jq --exit-status \
             --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
-            --argjson prevent_self "$REQUIRE_PREVENT_SELF_REVIEW" \
             '.name == $name
              and .can_admins_bypass == false
              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == $prevent_self)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == ($name | endswith("-mainnet")))
              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
              and .deployment_branch_policy.custom_branch_policies == true' \
             "$environment_file" >/dev/null

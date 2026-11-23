@@ -57,6 +57,7 @@ variables {
   cors_origins                                         = "https://app.plether.com"
   operations_alarm_sns_topic_arn                       = "arn:aws:sns:ap-southeast-1:111122223333:plether-mainnet-operations"
   enable_incident_observer                             = true
+  incident_observer_package_path                       = "../incident-observer/handler.py"
   incident_escalation_sns_topic_arn                    = "arn:aws:sns:ap-southeast-1:111122223333:plether-mainnet-operations"
   rpc_request_rate_warning_threshold                   = 225000
   rpc_request_rate_critical_threshold                  = 275000
@@ -117,8 +118,8 @@ run "mainnet_baseline_enforces_security_observability_and_full_parity" {
 
   assert {
     condition = (
-      !contains(jsondecode(aws_iam_role_policy.ecs_execution_ssm.policy).Statement[0].Resource, "arn:aws:ssm:ap-southeast-1:111122223333:parameter/plether/mainnet/*") &&
-      !contains(jsondecode(aws_iam_role_policy.github_deploy.policy).Statement[9].Resource, "arn:aws:ssm:ap-southeast-1:111122223333:parameter/plether/mainnet/*")
+      !strcontains(aws_iam_role_policy.ecs_execution_ssm.policy, "parameter/plether/mainnet/*") &&
+      !strcontains(aws_iam_role_policy.github_deploy.policy, "parameter/plether/mainnet/*")
     )
     error_message = "Neither ECS execution nor GitHub deploy roles may hold wildcard SSM read access."
   }
