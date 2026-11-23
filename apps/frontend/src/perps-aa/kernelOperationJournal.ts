@@ -1,6 +1,6 @@
 import type { PerpsActionKind } from '@plether-fi/perps-aa-client'
 import { createStore, get, update } from 'idb-keyval'
-import { isAddressEqual, recoverMessageAddress, zeroAddress, type Address, type Hex } from 'viem'
+import { isAddressEqual, recoverMessageAddress, zeroAddress, type Address, type Hex, type TransactionReceipt } from 'viem'
 import type { UserOperationReceipt } from 'viem/account-abstraction'
 import { arbitrumSepolia } from 'viem/chains'
 import { trackPerpsKernelOutcome } from '../analytics/perps'
@@ -16,9 +16,11 @@ import {
   getKernelOperationStatus,
   sendKernelCancellation,
   sendKernelOperation,
+  type KernelActionPreparation,
   type KernelPreparedCancellation,
   type KernelPreparedOperation,
 } from './kernelRpc'
+import { assertKernelActionPreparation, type KernelWalletOutcomeReader, type KernelWalletSubmission } from './kernelWalletPayment'
 import {
   acquireSponsoredOperationBrowserLane,
   acquireSponsoredOperationBrowserRecoveryLock,
@@ -41,13 +43,16 @@ export type KernelAttemptPhase =
   | 'sponsorship_expired'
   | 'cancelled'
   | 'discarded'
+  | 'wallet_failed'
+  | 'wallet_replaced'
 
 interface SignedKernelAttemptInput {
   scope: KernelAttemptScope
   ownerAddress: Address
   action: PerpsActionKind
-  prepared: KernelPreparedOperation
+  prepared: KernelActionPreparation
   signature: Hex
+  walletSubmission?: KernelWalletSubmission
   orderRequestV3?: PersistedPerpsOrderRequestV3
   protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
@@ -63,6 +68,7 @@ export interface KernelOperationAttempt extends SignedKernelAttemptInput {
   updatedAt: number
   observedReceipt?: UserOperationReceipt<'0.9'>
   receipt?: UserOperationReceipt<'0.9'>
+  outerReceipt?: TransactionReceipt
   cancellation?: {
     prepared: KernelPreparedCancellation
     signature: Hex
@@ -81,7 +87,7 @@ function sameObservation(left: KernelOperationAttempt['observedReceipt'], right:
 const journal = createStore('plether-perps-kernel-operations', 'attempts')
 const historyLimit = 100
 const attemptPhases: readonly KernelAttemptPhase[] = [
-  'signed', 'sending', 'submitted', 'included', 'nonce_consumed', 'sponsorship_expired', 'cancelled', 'discarded',
+  'signed', 'sending', 'submitted', 'included', 'nonce_consumed', 'sponsorship_expired', 'cancelled', 'discarded', 'wallet_failed', 'wallet_replaced',
 ]
 const updates = new EventTarget()
 
@@ -154,8 +160,9 @@ export async function getActiveKernelAttempt(scope: KernelAttemptScope, next?: K
   return (await listKernelAttempts(scope)).find(attempt => kernelAttemptBlocksFollowUp(attempt, next))
 }
 
-export async function getKernelAttempt(scope: KernelAttemptScope, hash: Hex): Promise<KernelOperationAttempt | undefined> {
-  return (await listKernelAttempts(scope)).find(attempt => attempt.prepared.userOperationHash === hash)
+export async function getKernelAttempt(scope: KernelAttemptScope, hash: Hex, preparationId?: Hex): Promise<KernelOperationAttempt | undefined> {
+  return (await listKernelAttempts(scope)).find(attempt => attempt.prepared.userOperationHash === hash &&
+    (preparationId === undefined || attempt.prepared.preparationId === preparationId))
 }
 
 async function editJournal<T>(scope: KernelAttemptScope, edit: (attempts: KernelOperationAttempt[]) => {
@@ -203,7 +210,7 @@ export async function withKernelOperationLane<T>(scope: KernelAttemptScope, acti
 
 async function assertSignedForScope(input: SignedKernelAttemptInput): Promise<void> {
   const { prepared, scope, signature } = input
-  assertKernelPreparedOperation(prepared)
+  assertKernelActionPreparation(prepared)
   if (scope.chainId !== arbitrumSepolia.id || !isAddressEqual(prepared.entryPoint, scope.entryPoint) ||
       !isAddressEqual(prepared.operation.sender, scope.sender) ||
       prepared.operation.nonce >> 64n !== 0n ||
@@ -219,13 +226,16 @@ async function assertSignedForScope(input: SignedKernelAttemptInput): Promise<vo
 /** Called after wallet signing and before any network submission. */
 export async function saveKernelSignedAttempt(input: SignedKernelAttemptInput): Promise<KernelOperationAttempt> {
   await assertSignedForScope(input)
+  if ((input.prepared.transport === 'wallet') !== (input.walletSubmission !== undefined)) {
+    throw new Error('The wallet submission does not match this Trading Account preparation')
+  }
   const now = Date.now()
   const attempt: KernelOperationAttempt = {
     ...input,
     version: 1,
     nonceKey: 0n,
     expectedPaymaster: input.prepared.operation.paymaster ?? zeroAddress,
-    phase: 'signed',
+    phase: input.walletSubmission ? 'sending' : 'signed',
     createdAt: now,
     updatedAt: now,
   }
@@ -243,11 +253,21 @@ export async function saveKernelSignedAttempt(input: SignedKernelAttemptInput): 
   })
 }
 
+export async function recordKernelWalletResponse(attempt: KernelOperationAttempt, transactionHash?: Hex): Promise<void> {
+  await editAttempt(attempt, current => {
+    if (current.phase !== 'sending' || current.prepared.transport !== 'wallet' || !current.walletSubmission) return current
+    return transactionHash
+      ? { ...current, phase: 'submitted', walletSubmission: { ...current.walletSubmission, transactionHash }, updatedAt: Date.now() }
+      : { ...current, phase: 'discarded', updatedAt: Date.now() }
+  })
+}
+
 function editAttempt(attempt: KernelOperationAttempt, edit: (current: KernelOperationAttempt) => KernelOperationAttempt) {
   return editJournal(attempt.scope, attempts => {
     const current = attempts.find(item => item.prepared.preparationId === attempt.prepared.preparationId)
     if (current?.prepared.userOperationHash !== attempt.prepared.userOperationHash ||
-        current.signature !== attempt.signature || current.prepared.mode !== attempt.prepared.mode) {
+        current.signature !== attempt.signature || current.prepared.mode !== attempt.prepared.mode ||
+        current.prepared.transport !== attempt.prepared.transport) {
       throw new Error('This signed Trading Account attempt is unavailable')
     }
     const next = edit(current)
@@ -259,6 +279,7 @@ function editAttempt(attempt: KernelOperationAttempt, edit: (current: KernelOper
 }
 
 function reconcileLocator(attempt: KernelOperationAttempt) {
+  if (attempt.prepared.transport === 'wallet') throw new Error('This operation was submitted from the Owner Wallet')
   return {
     preparationId: attempt.prepared.preparationId,
     userOperationHash: attempt.prepared.userOperationHash,
@@ -276,12 +297,14 @@ function reconcileLocator(attempt: KernelOperationAttempt) {
  * A failure after `sending` is durable leaves an unresolved attempt.
  */
 export async function submitKernelAttempt(attempt: KernelOperationAttempt): Promise<Hex> {
+  if (attempt.prepared.transport === 'wallet') throw new Error('Check the pending transaction in your wallet')
   await assertSignedForScope(attempt)
   const { attempt: current } = await editAttempt(attempt, existing => {
     if (!isKernelAttemptPending(existing)) throw new Error('This Trading Account attempt is already resolved')
     if (!kernelAttemptCanRetry(existing)) throw new Error('The original gas quote expired')
     return { ...existing, phase: 'sending', updatedAt: Date.now() }
   })
+  if (current.prepared.transport === 'wallet') throw new Error('Check the pending transaction in your wallet')
   const hash = await sendKernelOperation(current.prepared, current.signature)
   if (hash.toLowerCase() !== current.prepared.userOperationHash.toLowerCase()) {
     throw new Error('The Trading Account gateway returned a different operation hash')
@@ -302,7 +325,7 @@ function knownServerTime(): number | undefined {
 
 export function kernelAttemptCanRetry(attempt: KernelOperationAttempt, now = knownServerTime()): boolean {
   const orderDeadline = attempt.orderRequestV3?.submitBy
-  return now !== undefined && isKernelAttemptPending(attempt) && attempt.observedReceipt === undefined && attempt.cancellation === undefined &&
+  return attempt.prepared.transport !== 'wallet' && now !== undefined && isKernelAttemptPending(attempt) && attempt.observedReceipt === undefined && attempt.cancellation === undefined &&
     now < attempt.prepared.expiresAt * 1_000 &&
     hasKernelOrderSubmissionTime(orderDeadline, now)
 }
@@ -338,7 +361,7 @@ export async function discardUnsentKernelAttempt(attempt: KernelOperationAttempt
 }
 
 export function kernelAttemptCanCancel(attempt: KernelOperationAttempt): boolean {
-  return attempt.prepared.mode === 'eth' && attempt.observedReceipt === undefined && attempt.cancellation === undefined &&
+  return attempt.prepared.transport !== 'wallet' && attempt.prepared.mode === 'eth' && attempt.observedReceipt === undefined && attempt.cancellation === undefined &&
     (attempt.phase === 'sending' || attempt.phase === 'submitted')
 }
 
@@ -374,7 +397,7 @@ export async function discardUnsentKernelCancellation(attempt: KernelOperationAt
 
 function assertCancellationBinding(attempt: KernelOperationAttempt, cancellation: KernelPreparedOperation & { cancelsUserOperationHash: Hex }) {
   assertKernelPreparedOperation(cancellation)
-  if (cancellation.mode !== 'eth' || cancellation.operation.paymaster !== undefined ||
+  if (attempt.prepared.transport === 'wallet' || cancellation.mode !== 'eth' || cancellation.operation.paymaster !== undefined ||
       cancellation.cancelsUserOperationHash !== attempt.prepared.userOperationHash ||
       !isAddressEqual(cancellation.entryPoint, attempt.scope.entryPoint) ||
       !isAddressEqual(cancellation.operation.sender, attempt.scope.sender) ||
@@ -398,6 +421,7 @@ async function sendSavedCancellation(attempt: KernelOperationAttempt): Promise<H
     }
     return { ...existing, cancellation: { ...cancellation, phase: 'sending' }, updatedAt: Date.now() }
   })
+  if (current.prepared.transport === 'wallet') throw new Error('Cancel the pending transaction in your wallet')
   const hash = await sendKernelCancellation(current.prepared, saved.prepared, saved.signature)
   if (hash !== saved.prepared.userOperationHash) throw new Error('The gateway returned a different cancellation hash')
   await editAttempt(current, existing => isKernelAttemptPending(existing) && existing.cancellation
@@ -445,10 +469,22 @@ export async function retryKernelCancellation(attempt: KernelOperationAttempt): 
 }
 
 /** An ambiguous transport response, timeout, or elapsed quote leaves the lane held. */
-export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck): Promise<KernelOperationAttempt> {
-  const current = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash)
+export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader): Promise<KernelOperationAttempt> {
+  const current = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash, attempt.prepared.preparationId)
   if (!current) throw new Error('The pending Trading Account operation is unavailable')
   if (!isKernelAttemptPending(current) || current.phase === 'signed') return current
+  if (current.prepared.transport === 'wallet') {
+    if (!readWalletOutcome) return current
+    const status = await readWalletOutcome(current)
+    if (status.state === 'pending') return current
+    const { attempt: resolved, changed } = await editAttempt(current, existing => isKernelAttemptPending(existing)
+      ? { ...existing, phase: status.state, updatedAt: Date.now(),
+          outerReceipt: 'outerReceipt' in status ? status.outerReceipt : undefined,
+          receipt: status.state === 'included' ? status.receipt : undefined }
+      : existing)
+    if (changed) reportKernelOutcome(resolved)
+    return resolved
+  }
   assertKernelPreparedOperation(current.prepared)
   if (!isAddressEqual(current.expectedPaymaster, current.prepared.operation.paymaster ?? zeroAddress)) {
     throw new Error('The saved gas payer no longer matches the Trading Account operation')
@@ -476,6 +512,13 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, is
     return { ...existing, phase: status.state, observedReceipt: undefined, ...(status.receipt ? { receipt: status.receipt } : {}), updatedAt: Date.now() }
   })
   if (!changed) return resolved
+  reportKernelOutcome(resolved)
+  return resolved
+}
+
+function reportKernelOutcome(resolved: KernelOperationAttempt) {
+  const { phase } = resolved
+  if (phase === 'signed' || phase === 'sending' || phase === 'submitted' || phase === 'discarded') return
   if (resolved.phase === 'included' && resolved.receipt?.success &&
       resolved.authorizationToken && resolved.authorizationNonce) {
     try {
@@ -492,15 +535,15 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, is
   }
   trackPerpsKernelOutcome({
     mode: resolved.prepared.mode,
-    outcome: status.state === 'included' && !status.receipt.success ? 'execution_reverted' : status.state,
-    maximum: status.state === 'cancelled' ? resolved.cancellation?.prepared.maxNetworkGasWei : resolved.prepared.maxNetworkGasWei,
-    actual: status.receipt?.actualGasCost,
+    outcome: phase === 'wallet_failed' || (phase === 'included' && !resolved.receipt?.success) ? 'execution_reverted'
+      : phase === 'wallet_replaced' ? 'cancelled' : phase,
+    maximum: resolved.phase === 'cancelled' ? resolved.cancellation?.prepared.maxNetworkGasWei : resolved.prepared.maxNetworkGasWei,
+    actual: resolved.outerReceipt ? resolved.outerReceipt.gasUsed * resolved.outerReceipt.effectiveGasPrice : resolved.receipt?.actualGasCost,
   })
-  return resolved
 }
 
 /** One tab per attempt polls at a time. Polling cannot send an operation. */
-export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck): Promise<KernelOperationAttempt> {
+export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader): Promise<KernelOperationAttempt> {
   if (!isKernelAttemptPending(attempt) || attempt.phase === 'signed') return attempt
   const release = await acquireSponsoredOperationBrowserRecoveryLock({
     chainId: attempt.scope.chainId,
@@ -508,7 +551,7 @@ export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isOb
     operationId: attempt.prepared.preparationId,
   })
   try {
-    return await reconcileKernelAttempt(attempt, isObservationReorged)
+    return await reconcileKernelAttempt(attempt, isObservationReorged, readWalletOutcome)
   } finally {
     await release()
   }

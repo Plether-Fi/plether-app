@@ -11,8 +11,8 @@ import { KernelObservedPendingError } from '../errors'
 import type { KernelPreparedOperation } from '../kernelRpc'
 import type { KernelPerpsAaDeploymentManifest } from '../manifest'
 
-const { activeAttempt, fetchQuote, sign, save, submit, getAttempt, refresh, verifyAccountAtBlock, getNonce, fetchManifest, serverNow, getBlock, getBytecode, paymaster } = vi.hoisted(() => ({
-  activeAttempt: vi.fn(), fetchQuote: vi.fn(), sign: vi.fn(), save: vi.fn(), submit: vi.fn(), getAttempt: vi.fn(), refresh: vi.fn(),
+const { activeAttempt, fetchQuote, sign, save, submit, recordWallet, getAttempt, refresh, verifyAccountAtBlock, getNonce, fetchManifest, serverNow, getBlock, getBytecode, paymaster } = vi.hoisted(() => ({
+  activeAttempt: vi.fn(), fetchQuote: vi.fn(), sign: vi.fn(), save: vi.fn(), submit: vi.fn(), recordWallet: vi.fn(), getAttempt: vi.fn(), refresh: vi.fn(),
   verifyAccountAtBlock: vi.fn(), getNonce: vi.fn(), fetchManifest: vi.fn(), serverNow: vi.fn(), getBlock: vi.fn(), getBytecode: vi.fn(),
   paymaster: '0x4444444444444444444444444444444444444444' as Address,
 }))
@@ -34,6 +34,7 @@ vi.mock('../kernelOperationJournal', () => ({
   withKernelOperationLane: <T,>(_scope: unknown, work: () => Promise<T>) => work(),
   saveKernelSignedAttempt: save,
   submitKernelAttempt: submit,
+  recordKernelWalletResponse: recordWallet,
   getKernelAttempt: getAttempt,
   refreshKernelAttempt: refresh,
 }))
@@ -250,5 +251,34 @@ describe('Kernel review execution', () => {
     expect(sign).toHaveBeenCalledOnce()
     expect(save).not.toHaveBeenCalled()
     expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('saves the exact fee-free operation before requesting the owner wallet transaction', async () => {
+    const estimateGas = vi.fn(async () => 1_260_000n)
+    const directClient = { ...publicClient, estimateGas, estimateFeesPerGas: async () => ({ maxFeePerGas: 1n, maxPriorityFeePerGas: 0n }),
+      getBalance: async () => 3_000_000n, readContract: async () => [10_000n], call: async () => ({}),
+      getTransactionCount: async () => 17 } as unknown as PublicClient
+    getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? 101n, hash, timestamp: 1_000n }))
+    const sendTransaction = vi.fn(async () => hash)
+    const runtime = await createKernelRuntime({ manifest, ownerAddress: owner, publicClient: directClient,
+      walletClient: { ...walletClient, sendTransaction } as WalletClient, payEthFromWallet: true })
+    writeGasPaymentPreference(runtime.gasPayment.scope, 'eth')
+    const quote = await runtime.kernel.quoteAction(action)
+    expect(quote).toMatchObject({ mode: 'eth', payer: 'wallet' })
+    expect(fetchQuote).not.toHaveBeenCalled()
+    sign.mockResolvedValue('0x01')
+    save.mockImplementation(async input => ({ ...input, phase: 'sending' }))
+    recordWallet.mockResolvedValue(undefined)
+    getAttempt.mockResolvedValue({ phase: 'submitted' })
+    refresh.mockResolvedValue({ phase: 'included', receipt: { success: true, receipt: { status: 'success', transactionHash: hash } } })
+    await expect(runtime.kernel.execute({ runtime, manifest, ownerAddress: owner, action, kernelQuote: quote }))
+      .resolves.toMatchObject({ transactionHash: hash })
+    expect(sign).toHaveBeenCalledWith(expect.objectContaining({ maxFeePerGas: 0n, maxPriorityFeePerGas: 0n }))
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ walletSubmission: { fromBlock: 101n, nonce: 17 } }))
+    expect(sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ account: owner, to: entryPoint09Address.toLowerCase(),
+      gas: 1_386_000n, maxFeePerGas: 1n, nonce: 17, value: 0n }))
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(sendTransaction.mock.invocationCallOrder[0]!)
+    expect(submit).not.toHaveBeenCalled()
+    expect(recordWallet).toHaveBeenCalledWith(expect.any(Object), hash)
   })
 })

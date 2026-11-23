@@ -68,6 +68,7 @@ export interface KernelPreparationIntent {
 }
 
 export interface KernelPreparedOperation {
+  transport?: never
   version: 1
   preparationId: Hex
   mode: KernelGasMode
@@ -78,6 +79,13 @@ export interface KernelPreparedOperation {
   maxNetworkGasWei: bigint
   recoveryToken: string
 }
+
+export interface KernelWalletPreparation extends Omit<KernelPreparedOperation, 'transport' | 'recoveryToken' | 'mode'> {
+  transport: 'wallet'
+  mode: 'eth'
+}
+
+export type KernelActionPreparation = KernelPreparedOperation | KernelWalletPreparation
 
 export interface KernelPreparedCancellation extends KernelPreparedOperation {
   mode: 'eth'

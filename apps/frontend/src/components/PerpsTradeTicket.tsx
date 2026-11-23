@@ -1845,6 +1845,7 @@ export function PerpsTradeTicket({
     : 'A Trading Account action is pending.'
   const marginGasApproval = useKernelGasApproval(gasReview)
   const kernelPaymentMode = gasReview?.preference.mode
+  const payingFromWallet = kernelPaymentMode === 'eth' && gasReview?.paysEthFromWallet
   const tradingReadiness = useTradingReadiness(enableLiveTrading && isSponsoredAccountConfigured)
   const sponsorshipBlocker = enableLiveTrading && isSponsoredAccountConfigured
     ? readinessBlocker(tradingReadiness, 'deposit', undefined, gasReview !== undefined)
@@ -2035,7 +2036,7 @@ export function PerpsTradeTicket({
     commitExecutionStatus === 'journaling'
       ? 'Saving signed transaction'
       : commitExecutionStatus === 'submitting'
-        ? gasReview ? 'Submitting Trading Account transaction' : 'Submitting sponsored transaction'
+        ? payingFromWallet ? 'Confirm gas payment in your wallet' : gasReview ? 'Submitting Trading Account transaction' : 'Submitting sponsored transaction'
         : commitExecutionStatus === 'confirming'
           ? kernelInclusionObserved ? 'Included, awaiting confirmation' : 'Waiting for on-chain confirmation'
           : commitExecutionStatus === 'confirmed'
@@ -2046,7 +2047,8 @@ export function PerpsTradeTicket({
     commitExecutionStatus === 'journaling'
       ? `Your wallet approved the ${commitOperationLabel}. Plether is saving its recovery record before submission.`
       : commitExecutionStatus === 'submitting'
-        ? `Your wallet approved the ${commitOperationLabel}. Plether is submitting it to the network.`
+        ? payingFromWallet ? 'Approve the Arbitrum Sepolia transaction in your Owner Wallet to pay for gas.'
+          : `Your wallet approved the ${commitOperationLabel}. Plether is submitting it to the network.`
         : commitExecutionStatus === 'confirming'
           ? kernelInclusionObserved ? kernelPendingMessage
             : `Your wallet approved the ${commitOperationLabel} and it was submitted. Plether is waiting for on-chain confirmation.`

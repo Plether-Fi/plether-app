@@ -9,10 +9,11 @@ import {
   type KernelObservationReorgCheck,
   type KernelOperationAttempt,
 } from './kernelOperationJournal'
+import type { KernelWalletOutcomeReader } from './kernelWalletPayment'
 
 const emptyAttempts: KernelOperationAttempt[] = []
 
-export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover = false, isObservationReorged?: KernelObservationReorgCheck) {
+export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover = false, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader) {
   const { deployment, chainId, entryPoint, sender } = scope ?? {}
   const [snapshot, setSnapshot] = useState<{
     key: string
@@ -45,7 +46,7 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
       lastPolledHash = attempt.prepared.userOperationHash
       recovering = true
       try {
-        await refreshKernelAttempt(attempt, isObservationReorged)
+        await refreshKernelAttempt(attempt, isObservationReorged, readWalletOutcome)
       } catch {
         // A network error or concurrent poll never changes the saved attempt.
       } finally {
@@ -88,16 +89,17 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
       document.removeEventListener('visibilitychange', update)
       window.removeEventListener('online', update)
     }
-  }, [deployment, chainId, entryPoint, sender, recover, refreshCount, isObservationReorged])
+  }, [deployment, chainId, entryPoint, sender, recover, refreshCount, isObservationReorged, readWalletOutcome])
 
   const active = snapshot && scope && snapshot.key === kernelAttemptScopeKey(scope) ? snapshot : undefined
   return { attempts: active?.attempts ?? emptyAttempts, error: active?.error, refresh }
 }
 
-export function KernelOperationRecovery({ scope, isObservationReorged }: {
+export function KernelOperationRecovery({ scope, isObservationReorged, readWalletOutcome }: {
   scope: KernelAttemptScope | undefined
   isObservationReorged?: KernelObservationReorgCheck
+  readWalletOutcome?: KernelWalletOutcomeReader
 }) {
-  useKernelAttempts(scope, true, isObservationReorged)
+  useKernelAttempts(scope, true, isObservationReorged, readWalletOutcome)
   return null
 }

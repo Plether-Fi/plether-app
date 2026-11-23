@@ -82,7 +82,8 @@ function ConnectedPerpsAaRuntime({
     <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
       <Suspense fallback={null}>
         {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
-          ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} isObservationReorged={effectiveRuntime.kernel.isObservationReorged} />
+          ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} isObservationReorged={effectiveRuntime.kernel.isObservationReorged}
+              readWalletOutcome={effectiveRuntime.kernel.readWalletOutcome} />
           : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
       </Suspense>
       {children}
@@ -107,6 +108,8 @@ export function PerpsAaProvider({
   const walletClient = wallet.configured && !wallet.signerReady ? undefined : connectedWalletClient
   const [entry] = useState(() => typeof window === 'undefined' ? undefined : new URL(window.location.href))
   const kernelDeployment = kernelDeploymentOverride ?? configuredKernelDeployment(walletClient?.account.address, entry)
+  const payEthFromWallet = import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
+    isSepoliaDeployment() && selectedKernelTestOwner(walletClient?.account.address, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS, entry)
   const [resolvedRuntime, setResolvedRuntime] = useState<{
     connectionKey: string
     runtime: PerpsAaSmartAccountRuntime
@@ -140,7 +143,7 @@ export function PerpsAaProvider({
 
       const key = manifest.smartAccountMode === 'kernel' ? [
         chainId, ownerAddress.toLowerCase(), publicClient.uid, walletClient.uid,
-        JSON.stringify(manifest.kernel),
+        JSON.stringify(manifest.kernel), payEthFromWallet,
       ].join(':') : [
         chainId,
         ownerAddress.toLowerCase(),
@@ -164,7 +167,7 @@ export function PerpsAaProvider({
       let cacheEntry = runtimeCache.current
       if (cacheEntry?.key !== key) {
         const promise = manifest.smartAccountMode === 'kernel'
-          ? import('./kernelRuntime').then(({ createKernelRuntime }) => createKernelRuntime({ manifest, ownerAddress, walletClient, publicClient }))
+          ? import('./kernelRuntime').then(({ createKernelRuntime }) => createKernelRuntime({ manifest, ownerAddress, walletClient, publicClient, payEthFromWallet }))
           : import('./managedPimlicoRuntime').then(async ({ createManagedAaRuntime }) => withCloseAssistanceRecovery(
               await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
               () => useSponsoredOperationStore.getState().operations,
@@ -190,7 +193,7 @@ export function PerpsAaProvider({
       signal.throwIfAborted()
       return nextRuntime
     },
-    [publicClient, runtime, walletClient]
+    [payEthFromWallet, publicClient, runtime, walletClient]
   )
 
   const effectiveRuntime = runtime ??

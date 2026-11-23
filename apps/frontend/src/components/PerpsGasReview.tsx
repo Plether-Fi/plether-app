@@ -13,14 +13,15 @@ export function PerpsGasReview({ gas, quote, error, showSettings = true, onOpenS
 }) {
   if (!gas) return null
   const mode = quote?.mode ?? gas.preference.mode
-  const fundingError = mode === 'eth' ? findKernelGasFundingError(error) : undefined
+  const payFromWallet = mode === 'eth' && (quote ? quote.payer === 'wallet' : gas.paysEthFromWallet)
+  const fundingError = mode === 'eth' && !payFromWallet ? findKernelGasFundingError(error) : undefined
   const funding = fundingError?.funding
   return (
     <div className="space-y-2 text-sm text-content-secondary">
       <dl className="space-y-1">
         <div className="flex justify-between gap-3">
           <dt>Network gas</dt>
-          <dd className="text-right font-semibold text-content-primary">{mode === 'sponsored' ? 'Sponsored by Plether' : 'Pay with ETH'}</dd>
+          <dd className="text-right font-semibold text-content-primary">{mode === 'sponsored' ? 'Sponsored by Plether' : payFromWallet ? 'Pay from wallet' : 'Pay with ETH'}</dd>
         </div>
         {mode === 'eth' && quote && !funding ? (
           <div className="flex justify-between gap-3">
@@ -47,6 +48,7 @@ export function PerpsGasReview({ gas, quote, error, showSettings = true, onOpenS
           </>
         )}
       </dl>
+      {payFromWallet && quote && <p>Sign the Trading Account action, then confirm the gas payment in your Owner Wallet.</p>}
       {funding && <p role="status">Add at least {formatEther(funding.shortfallWei)} ETH, then review a fresh gas quote.</p>}
       {!gas.available ? <p role="status">{mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.'}</p> : null}
       {showSettings ? (

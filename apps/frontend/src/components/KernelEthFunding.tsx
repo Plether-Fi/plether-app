@@ -32,6 +32,7 @@ export function KernelEthFunding({ runtime, manifest }: {
   const isCorrectChain = useChainId() === arbitrumSepolia.id
   const { switchToArbitrumSepolia, isSwitching, switchError } = useSwitchToArbitrumSepolia()
   const { mode, revision } = useGasPaymentPreference(runtime.gasPayment.scope)
+  const paysEthFromWallet = runtime.gasPayment.paysEthFromWallet === true
   const inFlight = useRef(false)
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState<FundingAction>()
@@ -86,7 +87,7 @@ export function KernelEthFunding({ runtime, manifest }: {
   }
 
   function requestTopUp() {
-    if (!snapshot || !client || !walletClient || !canContinue || amount === undefined) return
+    if (!snapshot || !walletClient || !canContinue || amount === undefined) return
     void run(async () => {
       let hash: Hex
       try {
@@ -144,7 +145,7 @@ export function KernelEthFunding({ runtime, manifest }: {
 
   return (
     <section aria-labelledby={`${id}-title`} aria-busy={busy} className="space-y-3 border border-brand-border/30 bg-app-bg/30 p-4">
-      <h3 id={`${id}-title`} className="text-sm font-semibold text-content-primary">ETH for gas</h3>
+      <h3 id={`${id}-title`} className="text-sm font-semibold text-content-primary">{paysEthFromWallet ? 'Trading Account balances' : 'ETH for gas'}</h3>
       {snapshot ? <>
         {balances.isError && <p role="status" className="text-sm text-warning">Showing the last verified balances. Wait for verification to resume before continuing.</p>}
         <dl className="space-y-1 text-sm text-content-secondary">
@@ -152,19 +153,19 @@ export function KernelEthFunding({ runtime, manifest }: {
           {snapshot.entrypoint > 0n && <div className="flex justify-between gap-3"><dt>EntryPoint ETH deposit</dt><dd>{formatEther(snapshot.entrypoint)} ETH</dd></div>}
           <div className="flex justify-between gap-3"><dt>Perps margin</dt><dd>{snapshot.margin === undefined ? 'Unavailable' : `${formatUnits(snapshot.margin, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL}`}</dd></div>
         </dl>
-        <div className="space-y-1 border-t border-brand-border/20 pt-3 text-sm text-content-secondary">
+        {!paysEthFromWallet && <div className="space-y-1 border-t border-brand-border/20 pt-3 text-sm text-content-secondary">
           <p>ETH funding address on Arbitrum Sepolia</p>
           <p className="break-all font-mono text-xs text-content-primary">{snapshot.address}</p>
-        </div>
+        </div>}
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={busy} onClick={() => { choose('topup') }}>Add ETH</Button>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => {
+          {!paysEthFromWallet && <Button size="sm" disabled={busy} onClick={() => { choose('topup') }}>Add ETH</Button>}
+          {!paysEthFromWallet && <Button size="sm" variant="secondary" disabled={busy} onClick={() => {
             void run(async () => {
               const recipient = await verifyKernelEthRecipient(runtime)
               await navigator.clipboard.writeText(recipient.address)
               setNotice({ message: 'Funding address copied.' })
             })
-          }}>Copy funding address</Button>
+          }}>Copy funding address</Button>}
           {snapshot.account > 0n && <Button size="sm" variant="secondary" disabled={busy} onClick={() => { choose('account') }}>Withdraw ETH</Button>}
           {snapshot.entrypoint > 0n && <Button size="sm" variant="secondary" disabled={busy} onClick={() => { choose('entrypoint') }}>Withdraw EntryPoint deposit</Button>}
         </div>
@@ -174,7 +175,7 @@ export function KernelEthFunding({ runtime, manifest }: {
           {form === 'topup'
             ? <p className="text-xs text-content-secondary">Your Owner Wallet pays for the transfer. The ETH goes to the Trading Account address above.</p>
             : <p className="text-xs text-content-secondary">
-                The withdrawal goes to your Owner Wallet. {mode === 'eth' && (form === 'entrypoint'
+                The withdrawal goes to your Owner Wallet. {mode === 'eth' && (paysEthFromWallet ? 'Your Owner Wallet pays for gas.' : form === 'entrypoint'
                   ? 'Leave enough in the EntryPoint deposit for the maximum gas charge.'
                   : 'Leave enough ETH for gas if the EntryPoint deposit cannot cover the maximum.')}
               </p>}

@@ -19,6 +19,7 @@ import {
   type KernelOperationAttempt,
 } from './kernelOperationJournal'
 import { KernelRpcError, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
+import type { KernelWalletOutcomeReader } from './kernelWalletPayment'
 
 function readRecoveryTime(): number | undefined {
   try {
@@ -28,11 +29,12 @@ function readRecoveryTime(): number | undefined {
   }
 }
 
-export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, signPrepared, isObservationReorged }: {
+export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, signPrepared, isObservationReorged, readWalletOutcome }: {
   attempt: KernelOperationAttempt
   quoteCancellation?: (original: KernelPreparedOperation, signature: Hex) => Promise<KernelPreparedCancellation>
   signPrepared?: (prepared: KernelPreparedOperation) => Promise<Hex>
   isObservationReorged?: KernelObservationReorgCheck
+  readWalletOutcome?: KernelWalletOutcomeReader
 }) {
   const [quote, setQuote] = useState<KernelPreparedCancellation>()
   const [busy, setBusy] = useState(false)
@@ -104,7 +106,9 @@ export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, sign
             }}>Refresh quote status</Button>}
           {attempt.phase !== 'signed' && <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => {
             void run(async () => {
-              const result = await refreshKernelAttempt(attempt, isObservationReorged)
+              const result = attempt.prepared.transport === 'wallet'
+                ? await refreshKernelAttempt(attempt, isObservationReorged, readWalletOutcome)
+                : await refreshKernelAttempt(attempt, isObservationReorged)
               if (isKernelAttemptPending(result) && !result.observedReceipt) setNotice('This operation is still pending.')
             })
           }}>Check status</Button>}
@@ -114,8 +118,9 @@ export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, sign
               setNotice('The signed operation was sent again with its original gas payer and limits.')
             })
           }}>Resend signed operation</Button>}
-          {canQuote && <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => {
+          {canQuote && attempt.prepared.transport !== 'wallet' && <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => {
             void run(async () => {
+              if (attempt.prepared.transport === 'wallet') return
               setQuote(await quoteCancellation(attempt.prepared, attempt.signature))
               setNow(readRecoveryTime())
             })
@@ -138,6 +143,7 @@ export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, sign
           )}
         </div>
       )}
+      {attempt.prepared.transport === 'wallet' && <p className="text-xs text-content-secondary">Check the transaction in your Owner Wallet for speed-up or cancellation.</p>}
       {attempt.cancellation && <p className="text-xs text-content-secondary">Waiting for the original operation or its cancellation to be confirmed onchain.</p>}
       {notice && <p role="status" className="text-xs text-content-secondary">{notice}</p>}
     </div>

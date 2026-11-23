@@ -20,6 +20,7 @@ export function usePerpsGasReview() {
     paymentScope: payment.scope,
     openActivity,
     available: payment.readiness[preference.mode],
+    paysEthFromWallet: payment.paysEthFromWallet,
     kernelScope: runtime.kernel.scope,
     chainId: payment.scope.chainId,
     deployment: payment.scope.deployment,

@@ -692,9 +692,10 @@ function OperationHistoryItem({
   )
 }
 
-function GasSponsorshipSetting({ scope, readiness }: {
+function GasSponsorshipSetting({ scope, readiness, paysEthFromWallet }: {
   scope: GasPaymentPreferenceScope
   readiness: { sponsored: boolean; eth: boolean }
+  paysEthFromWallet?: boolean
 }) {
   const { mode } = useGasPaymentPreference(scope)
   const [saveFailed, setSaveFailed] = useState(false)
@@ -706,7 +707,7 @@ function GasSponsorshipSetting({ scope, readiness }: {
       <div>
         <p id={`${id}-label`} className="text-sm font-semibold text-content-primary">Gas sponsorship</p>
         <p id={`${id}-value`} className="mt-1 text-sm text-content-secondary" aria-live="polite">
-          {sponsored ? 'Sponsored by Plether' : 'Pay with ETH'}
+          {sponsored ? 'Sponsored by Plether' : paysEthFromWallet ? 'Pay from wallet' : 'Pay with ETH'}
         </p>
         <p className="mt-1 text-xs text-content-secondary">Applies to future transactions.</p>
         {!readiness[mode] && (
@@ -745,7 +746,11 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
   const { prepared, receipt, observedReceipt } = attempt
   const sponsored = prepared.mode === 'sponsored'
   const cancelled = attempt.phase === 'cancelled'
-  const transactionHash = (receipt ?? observedReceipt)?.receipt.transactionHash
+  const walletPaid = prepared.transport === 'wallet'
+  const transactionHash = attempt.outerReceipt?.transactionHash ?? (receipt ?? observedReceipt)?.receipt.transactionHash ?? attempt.walletSubmission?.transactionHash
+  const actualGasCost = attempt.outerReceipt
+    ? attempt.outerReceipt.gasUsed * attempt.outerReceipt.effectiveGasPrice
+    : receipt?.actualGasCost
   const status = observedReceipt
     ? observedReceipt.success ? 'Included, awaiting confirmation' : 'Execution reverted, awaiting confirmation'
     : {
@@ -757,6 +762,8 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
     sponsorship_expired: 'Sponsorship expired',
     cancelled: 'Cancelled onchain',
     discarded: 'Discarded before submission',
+    wallet_failed: 'Wallet transaction failed onchain',
+    wallet_replaced: 'Replaced in Owner Wallet',
   }[attempt.phase]
   const orderCommitted = receipt?.success && !cancelled &&
     (attempt.action === 'place-order' || attempt.action === 'place-protected-order' || attempt.action === 'cancel-protection-and-close')
@@ -770,13 +777,13 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
         </time>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Badge variant={receipt?.success === false && !cancelled ? 'danger' : receipt ? 'success' : 'default'}>{status}</Badge>
-        <span className="text-xs text-content-secondary">{sponsored ? 'Sponsored by Plether' : 'Pay with ETH'}</span>
+        <Badge variant={attempt.phase === 'wallet_failed' || (receipt?.success === false && !cancelled) ? 'danger' : receipt ? 'success' : 'default'}>{status}</Badge>
+        <span className="text-xs text-content-secondary">{sponsored ? 'Sponsored by Plether' : walletPaid ? 'Pay from wallet' : 'Pay with ETH'}</span>
       </div>
-      {receipt && (
+      {actualGasCost !== undefined && (
         <dl className="flex flex-wrap items-baseline gap-x-2 text-xs text-content-secondary">
-          <dt>{cancelled ? 'Cancellation gas paid by Trading Account' : sponsored ? 'Network gas paid by Plether' : 'Network gas paid by Trading Account'}</dt>
-          <dd className="font-semibold text-content-primary">{formatEther(receipt.actualGasCost)} ETH</dd>
+          <dt>{cancelled ? 'Cancellation gas paid by Trading Account' : sponsored ? 'Network gas paid by Plether' : walletPaid ? 'Network gas paid by Owner Wallet' : 'Network gas paid by Trading Account'}</dt>
+          <dd className="font-semibold text-content-primary">{formatEther(actualGasCost)} ETH</dd>
         </dl>
       )}
       {orderCommitted && transactionHash && (
@@ -788,6 +795,7 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
           quoteCancellation={runtime?.quoteCancellation}
           signPrepared={runtime?.signPrepared}
           isObservationReorged={runtime?.isObservationReorged}
+          readWalletOutcome={runtime?.readWalletOutcome}
         />
       )}
       <details className="border-t border-brand-border/20 pt-3">
@@ -1182,7 +1190,8 @@ export function SponsoredOperationHistoryButton() {
         analyticsId="sponsored_operation_history"
       >
         <div className="space-y-5">
-          {preferenceScope && <GasSponsorshipSetting scope={preferenceScope} readiness={gasPayment?.readiness ?? { sponsored: false, eth: false }} />}
+          {preferenceScope && <GasSponsorshipSetting scope={preferenceScope} readiness={gasPayment?.readiness ?? { sponsored: false, eth: false }}
+            paysEthFromWallet={gasPayment?.paysEthFromWallet} />}
           {kernelRuntime && identity.manifest?.smartAccountMode === 'kernel' &&
             <KernelEthFunding key={identityKey} runtime={kernelRuntime} manifest={identity.manifest} />}
           {identity.manifest && isPerpsAaManifestV2(identity.manifest) && <TradingStatus />}

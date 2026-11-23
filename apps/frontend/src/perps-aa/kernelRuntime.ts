@@ -1,5 +1,6 @@
 import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
 import { bytesToHex, isAddressEqual, keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
+import { arbitrumSepolia } from 'viem/chains'
 import { trackPerpsKernelOutcome } from '../analytics/perps'
 import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
 import { BundlerRequestError, KernelObservedPendingError, SponsorRequestError } from './errors'
@@ -8,18 +9,21 @@ import { readGasPaymentPreference, type GasPaymentMode } from './gasPaymentPrefe
 import { createKernelTradingAccount, encodeKernelCalls, verifyKernelTradingAccountAtBlock, type VerifiedKernelTradingAccount } from './kernelAccount'
 import { kernelSepoliaCanaryPaymaster } from './kernelDeploymentPins'
 import {
-  getActiveKernelAttempt, getKernelAttempt, refreshKernelAttempt, saveKernelSignedAttempt, submitKernelAttempt, withKernelOperationLane,
+  getActiveKernelAttempt, getKernelAttempt, recordKernelWalletResponse, refreshKernelAttempt, saveKernelSignedAttempt, submitKernelAttempt, withKernelOperationLane,
   type KernelAttemptScope, type KernelObservationReorgCheck, type KernelOperationAttempt,
 } from './kernelOperationJournal'
-import { assertKernelPreparedOperation, fetchKernelManifest, KernelRpcError, prepareKernelCancellation, prepareKernelOperation, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
+import { fetchKernelManifest, KernelRpcError, prepareKernelCancellation, prepareKernelOperation, type KernelActionPreparation, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
+import { assertKernelActionPreparation, estimateSignedKernelWalletPayment, quoteKernelWalletPayment, readKernelWalletOutcome, type KernelWalletOutcomeReader } from './kernelWalletPayment'
 import type { KernelPerpsAaDeploymentManifest } from './manifest'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from './readiness'
 import { readReviewedActionState } from './reviewedActionState'
 import type { KernelPerpsAaSmartAccountRuntime } from './runtimeContext'
 import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
+import { isExplicitSignatureRejection } from './preparedOperation'
 
 export interface KernelActionQuote {
   readonly mode: GasPaymentMode
+  readonly payer?: 'wallet'
   readonly maxNetworkGasWei: bigint
   readonly expiresAt: number
 }
@@ -30,6 +34,7 @@ export interface KernelRuntime {
   quoteAction(action: PerpsActionPlan, signal?: AbortSignal, clientOrderId?: Hex): Promise<KernelActionQuote>
   execute(input: ExecuteSponsoredPerpsActionInput): Promise<ExecuteSponsoredPerpsActionResult>
   isObservationReorged?: KernelObservationReorgCheck
+  readWalletOutcome?: KernelWalletOutcomeReader
   quoteCancellation: (original: KernelPreparedOperation, originalSignature: Hex) => Promise<KernelPreparedCancellation>
   signPrepared: (prepared: KernelPreparedOperation) => Promise<Hex>
 }
@@ -40,7 +45,7 @@ interface ReviewedKernelPreparation {
   action: PerpsActionPlan['kind']
   clientOrderId?: Hex
   reviewedState: string
-  prepared: KernelPreparedOperation
+  prepared: KernelActionPreparation
 }
 
 interface KernelVerificationHeader {
@@ -53,17 +58,17 @@ const reviewedPreparations = new WeakMap<KernelActionQuote, ReviewedKernelPrepar
 const reviewedCancellations = new WeakMap<KernelPreparedOperation, { accountKey: string; hash: Hex }>()
 const newPreparationId = () => bytesToHex(globalThis.crypto.getRandomValues(new Uint8Array(32)))
 
-function requireFresh(prepared: KernelPreparedOperation, now = deadlineNow()) {
+function requireFresh(prepared: KernelActionPreparation, now = deadlineNow()) {
   if (prepared.expiresAt * 1_000 <= now) throw new Error('The gas quote expired. Review a fresh quote to continue.')
 }
 
-async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservationReorged: KernelObservationReorgCheck) {
+async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservationReorged: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader) {
   const timeout = performance.now() + 75_000
   while (performance.now() < timeout) {
     let resolved: KernelOperationAttempt | undefined
     try {
-      const saved = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash)
-      if (saved) resolved = await refreshKernelAttempt(saved, isObservationReorged)
+      const saved = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash, attempt.prepared.preparationId)
+      if (saved) resolved = await refreshKernelAttempt(saved, isObservationReorged, readWalletOutcome)
     } catch {
       // Loss of status connectivity leaves the signed operation unresolved.
     }
@@ -76,11 +81,12 @@ async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservat
   })
 }
 
-export async function createKernelRuntime({ manifest, ownerAddress, walletClient, publicClient }: {
+export async function createKernelRuntime({ manifest, ownerAddress, walletClient, publicClient, payEthFromWallet = false }: {
   manifest: KernelPerpsAaDeploymentManifest
   ownerAddress: Address
   walletClient: WalletClient
   publicClient: PublicClient
+  payEthFromWallet?: boolean
 }): Promise<KernelPerpsAaSmartAccountRuntime> {
   const { profile, readiness } = manifest.kernel
   if (publicClient.chain?.id !== profile.chainId || walletClient.chain?.id !== profile.chainId ||
@@ -122,7 +128,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
   await verifyAt(initialBlock, account.address)
   const scope = { deployment: profile.deployment, chainId: profile.chainId, entryPoint: profile.entryPoint, sender: account.address }
   const preferenceScope = { deployment: scope.deployment, chainId: scope.chainId, ownerAddress, sender: scope.sender }
-  const accountKey = JSON.stringify([profile, manifest.kernel.paymaster, ownerAddress.toLowerCase(), account.address.toLowerCase()])
+  const accountKey = JSON.stringify([profile, manifest.kernel.paymaster, ownerAddress.toLowerCase(), account.address.toLowerCase(), payEthFromWallet])
 
   const verifyAccount = async () => verifyAt(await latestBlock(), scope.sender)
   const readDeploymentAndNonce = async () => {
@@ -152,18 +158,20 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     return block.number === receipt.blockNumber && /^0x[0-9a-fA-F]{64}$/.test(block.hash) &&
       block.hash.toLowerCase() !== receipt.blockHash.toLowerCase()
   }
-  const sign = async (prepared: KernelPreparedOperation, beforePrompt?: () => void) => {
-    assertKernelPreparedOperation(prepared)
+  const sign = async (prepared: KernelActionPreparation, beforePrompt?: () => void) => {
+    assertKernelActionPreparation(prepared)
     await Promise.all([assertConnectedOwner(), requireNonce(prepared.operation.nonce)])
     requireFresh(prepared)
     beforePrompt?.()
     return account.signUserOperation(prepared.operation)
   }
+  const readWalletOutcome = (attempt: KernelOperationAttempt) => readKernelWalletOutcome(publicClient, attempt)
 
   const kernel: KernelRuntime = {
     scope,
     verifyAccount,
     isObservationReorged,
+    readWalletOutcome,
     quoteAction: async (action, signal, clientOrderId) => {
       if (!isAddressEqual(action.account, scope.sender)) throw new Error('The action belongs to a different Trading Account')
       const { mode, revision } = readGasPaymentPreference(preferenceScope)
@@ -181,16 +189,21 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       }
       const reviewedState = await readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId })
       signal?.throwIfAborted()
-      let prepared: KernelPreparedOperation
+      let prepared: KernelActionPreparation
       try {
-        prepared = await prepareKernelOperation(manifest.kernel, { mode, sender: scope.sender, callData, preparationId: newPreparationId(), expectedNonce, ...factory }, signal)
+        const intent = { mode, sender: scope.sender, callData, preparationId: newPreparationId(), expectedNonce, ...factory }
+        prepared = mode === 'eth' && payEthFromWallet
+          ? await quoteKernelWalletPayment(publicClient, ownerAddress, intent)
+          : await prepareKernelOperation(manifest.kernel, intent, signal)
       } catch (error) {
         if (!signal?.aborted) trackPerpsKernelOutcome({ mode, outcome: 'quote_failed', error })
         throw error
       }
+      signal?.throwIfAborted()
       const current = readGasPaymentPreference(preferenceScope)
       if (mode !== current.mode || revision !== current.revision) throw new Error('The gas setting changed. Review a fresh quote to continue.')
-      const quote = Object.freeze({ mode, maxNetworkGasWei: prepared.maxNetworkGasWei, expiresAt: prepared.expiresAt })
+      const quote = Object.freeze({ mode, ...(prepared.transport === 'wallet' ? { payer: 'wallet' as const } : {}),
+        maxNetworkGasWei: prepared.maxNetworkGasWei, expiresAt: prepared.expiresAt })
       reviewedPreparations.set(quote, { accountKey, preferenceRevision: revision, action: action.kind, clientOrderId, reviewedState, prepared })
       trackPerpsKernelOutcome({ mode, outcome: 'quote_ready' })
       return quote
@@ -258,15 +271,42 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         requirePreference()
         requireFresh(prepared, now)
         requireOrderSubmissionTime(now)
+        const walletTransaction = prepared.transport === 'wallet'
+          ? await estimateSignedKernelWalletPayment(publicClient, ownerAddress, prepared, signature)
+          : undefined
+        let walletSubmission
+        if (walletTransaction) {
+          const [block, nonce] = await Promise.all([latestBlock(), publicClient.getTransactionCount({ address: ownerAddress, blockTag: 'pending' })])
+          await Promise.all([assertConnectedOwner(), requireNonce(prepared.operation.nonce), requireReviewedState(), requireModeReady()])
+          requirePreference()
+          requireFresh(prepared)
+          requireOrderSubmissionTime(deadlineNow())
+          walletSubmission = { fromBlock: block.number, nonce }
+        }
         onStatus?.('journaling')
         const stored = await saveKernelSignedAttempt({ scope, ownerAddress, action: action.kind, prepared, signature,
+          walletSubmission,
           orderRequestV3: input.orderRequestV3, protectionIntent: input.protectionIntent,
           authorizationToken: input.authorizationTokenToClearOnConfirmation,
           authorizationNonce: input.authorizationNonceToClearOnConfirmation,
         })
         onStatus?.('submitting')
         try {
-          await submitKernelAttempt(stored)
+          if (walletTransaction && walletSubmission) {
+            let transactionHash
+            try {
+              transactionHash = await walletClient.sendTransaction({ ...walletTransaction, nonce: walletSubmission.nonce, chain: arbitrumSepolia })
+            } catch (error) {
+              if (isExplicitSignatureRejection(error)) {
+                await recordKernelWalletResponse(stored)
+                return { ...stored, phase: 'discarded' as const }
+              }
+              throw error
+            }
+            await recordKernelWalletResponse(stored, transactionHash)
+          } else {
+            await submitKernelAttempt(stored)
+          }
         } catch (error) {
           trackPerpsKernelOutcome({ mode: prepared.mode, outcome: 'submission_unknown', error })
           throw new BundlerRequestError({ message: 'Check Trading Account activity for the signed operation before trying again.',
@@ -275,7 +315,8 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         return { ...stored, phase: 'submitted' as const }
       }, { mode: prepared.mode, nonce: prepared.operation.nonce })
       onStatus?.('confirming')
-      const settled = await waitForAttemptOutcome(attempt, isObservationReorged)
+      if (attempt.phase === 'discarded') throw new Error('The wallet transaction was declined.')
+      const settled = await waitForAttemptOutcome(attempt, isObservationReorged, readWalletOutcome)
       const deploymentReceipt = settled.phase === 'included' ? settled.receipt
         : settled.observedReceipt?.success ? settled.observedReceipt : undefined
       if (deploymentReceipt && prepared.operation.factory !== undefined) {
@@ -290,11 +331,12 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       }
       if (settled.observedReceipt) throw new KernelObservedPendingError()
       if (settled.phase !== 'included' || !settled.receipt?.success || settled.receipt.receipt.status !== 'success') {
+        const reverted = settled.phase === 'included' || settled.phase === 'wallet_failed'
         throw new BundlerRequestError({
-          message: settled.phase === 'included'
+          message: reverted
             ? 'The Trading Account operation reverted onchain. See its gas charge in Activity.'
             : 'The Trading Account operation closed without executing this action. Check Activity for the outcome.',
-          terminalStatus: settled.phase === 'included' ? 'execution-reverted' : settled.phase === 'sponsorship_expired' ? 'expired' : 'replaced',
+          terminalStatus: reverted ? 'execution-reverted' : settled.phase === 'sponsorship_expired' ? 'expired' : 'replaced',
           retryable: false,
         })
       }
@@ -330,7 +372,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     chainId: scope.chainId, ownerAddress, factoryAddress: profile.factory,
     accountVersion: profile.accountVersion, accountIndex: '0', manifestVersion: manifest.version,
     smartAccount: { accountAddress: scope.sender, entryPoint: scope.entryPoint },
-    gasPayment: { scope: preferenceScope, readiness }, kernel,
+    gasPayment: { scope: preferenceScope, readiness, ...(payEthFromWallet ? { paysEthFromWallet: true } : {}) }, kernel,
     readReviewedActionState: input => readReviewedActionState(publicClient, manifest, scope.sender, input),
   }
 }

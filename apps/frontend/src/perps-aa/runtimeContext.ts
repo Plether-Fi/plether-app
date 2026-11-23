@@ -153,7 +153,7 @@ export interface KernelPerpsAaSmartAccountRuntime extends PerpsAaRuntimeIdentity
   deploymentConfirmation?: never
   smartAccount: Pick<ManagedSmartAccount, 'accountAddress' | 'entryPoint'>
   kernel: KernelRuntime
-  gasPayment: { scope: GasPaymentPreferenceScope & { sender: Address }; readiness: { sponsored: boolean; eth: boolean } }
+  gasPayment: { scope: GasPaymentPreferenceScope & { sender: Address }; readiness: { sponsored: boolean; eth: boolean }; paysEthFromWallet?: boolean }
 }
 
 export type PerpsAaSmartAccountRuntime = SimplePerpsAaSmartAccountRuntime | KernelPerpsAaSmartAccountRuntime
