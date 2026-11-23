@@ -1838,8 +1838,11 @@ export function PerpsTradeTicket({
   const pendingKernelOperation = kernelAttempts.find(attempt => kernelAttemptBlocksFollowUp(attempt, { mode: gasReview?.preference.mode }))
   const kernelOperationPending = pendingKernelOperation !== undefined
   const kernelInclusionObserved = pendingKernelOperation?.observedReceipt
+  const showKernelInclusion = import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true'
   const kernelPendingMessage = kernelInclusionObserved
-    ? kernelInclusionObserved.success
+    ? showKernelInclusion
+      ? 'The last Trading Account action was included. Settlement is still in progress.'
+      : kernelInclusionObserved.success
       ? 'The Trading Account transaction was included and is awaiting confirmation.'
       : 'The Trading Account action reverted and is awaiting confirmation.'
     : 'A Trading Account action is pending.'
@@ -2041,7 +2044,7 @@ export function PerpsTradeTicket({
       : commitExecutionStatus === 'submitting'
         ? payingFromWallet ? 'Confirm gas payment in your wallet' : gasReview ? 'Submitting Trading Account transaction' : 'Submitting sponsored transaction'
         : commitExecutionStatus === 'confirming'
-          ? kernelInclusionObserved ? 'Included, awaiting confirmation' : 'Waiting for on-chain confirmation'
+          ? kernelInclusionObserved ? showKernelInclusion ? 'Transaction included' : 'Included, awaiting confirmation' : 'Waiting for on-chain confirmation'
           : commitExecutionStatus === 'confirmed'
             ? 'Transaction confirmed'
             : 'Waiting for wallet confirmation'

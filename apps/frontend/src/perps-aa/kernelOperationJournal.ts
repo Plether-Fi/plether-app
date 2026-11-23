@@ -11,6 +11,7 @@ import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
 import { encodeKernelCalls, normalizeKernelSignature } from './kernelAccount'
 import { kernelSepoliaCanaryProfile } from './kernelDeploymentPins'
 import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
+import type { KernelBundledInclusionReader } from './kernelBundledInclusion'
 import {
   assertKernelPreparedOperation,
   getKernelOperationStatus,
@@ -469,7 +470,7 @@ export async function retryKernelCancellation(attempt: KernelOperationAttempt): 
 }
 
 /** An ambiguous transport response, timeout, or elapsed quote leaves the lane held. */
-export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader): Promise<KernelOperationAttempt> {
+export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader, readBundledInclusion?: KernelBundledInclusionReader): Promise<KernelOperationAttempt> {
   const current = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash, attempt.prepared.preparationId)
   if (!current) throw new Error('The pending Trading Account operation is unavailable')
   if (!isKernelAttemptPending(current) || current.phase === 'signed') return current
@@ -489,6 +490,17 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, is
   if (!isAddressEqual(current.expectedPaymaster, current.prepared.operation.paymaster ?? zeroAddress)) {
     throw new Error('The saved gas payer no longer matches the Trading Account operation')
   }
+  const saveObservation = async (next: KernelOperationAttempt['observedReceipt']) => {
+    const { attempt: updated } = await editAttempt(current, existing => {
+      if (!isKernelAttemptPending(existing) || !sameObservation(existing.observedReceipt, current.observedReceipt)) return existing
+      return { ...existing, observedReceipt: next, updatedAt: Date.now() }
+    })
+    return updated
+  }
+  if (!current.observedReceipt && readBundledInclusion) {
+    const inclusion = await readBundledInclusion(current).catch(() => undefined)
+    if (inclusion) return await saveObservation(inclusion)
+  }
   const locator = reconcileLocator(current)
   const status = await getKernelOperationStatus(locator)
   if (status.state === 'pending' || status.state === 'observed') {
@@ -498,11 +510,7 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, is
       ? !sameObservation(observed, next)
       : observed !== undefined && await isObservationReorged?.(observed)
     if (!changed) return (await getKernelAttempt(current.scope, current.prepared.userOperationHash)) ?? current
-    const { attempt: updated } = await editAttempt(current, existing => {
-      if (!isKernelAttemptPending(existing) || !sameObservation(existing.observedReceipt, observed)) return existing
-      return { ...existing, observedReceipt: next, updatedAt: Date.now() }
-    })
-    return updated
+    return await saveObservation(next)
   }
   if (status.state === 'sponsorship_expired' && current.prepared.mode !== 'sponsored') {
     throw new Error('The Trading Account gateway returned an incompatible expiry')
@@ -543,7 +551,7 @@ function reportKernelOutcome(resolved: KernelOperationAttempt) {
 }
 
 /** One tab per attempt polls at a time. Polling cannot send an operation. */
-export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader): Promise<KernelOperationAttempt> {
+export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader, readBundledInclusion?: KernelBundledInclusionReader): Promise<KernelOperationAttempt> {
   if (!isKernelAttemptPending(attempt) || attempt.phase === 'signed') return attempt
   const release = await acquireSponsoredOperationBrowserRecoveryLock({
     chainId: attempt.scope.chainId,
@@ -551,7 +559,7 @@ export async function refreshKernelAttempt(attempt: KernelOperationAttempt, isOb
     operationId: attempt.prepared.preparationId,
   })
   try {
-    return await reconcileKernelAttempt(attempt, isObservationReorged, readWalletOutcome)
+    return await reconcileKernelAttempt(attempt, isObservationReorged, readWalletOutcome, readBundledInclusion)
   } finally {
     await release()
   }

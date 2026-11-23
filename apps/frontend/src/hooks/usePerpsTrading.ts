@@ -1267,6 +1267,7 @@ export function usePerpsTrading() {
   ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
     const client = requireClient(publicClient)
     const sponsored = requireTradingExecution(false)
+    const confirmOnInclusion = sponsored.runtime.kernel?.readBundledInclusion !== undefined
     if (candidate) {
       if (candidate.orderId !== orderId || !isAddressEqual(candidate.account, sponsored.accountAddress)
         || !isAddressEqual(candidate.orderRouter, sponsored.manifest.orderRouter)
@@ -1284,7 +1285,7 @@ export function usePerpsTrading() {
       ])
       if (transaction.transactionHash.toLowerCase() !== candidate.transactionHash.toLowerCase()
         || transaction.status !== 'success') return undefined
-      const depth = BigInt(candidate.requiredConfirmations)
+      const depth = confirmOnInclusion ? 0n : BigInt(candidate.requiredConfirmations)
       const ready = head.number >= transaction.blockNumber + depth
       const [includedResult, terminalResult] = await Promise.allSettled([
         client.getBlock({ blockNumber: transaction.blockNumber }),
@@ -1336,13 +1337,13 @@ export function usePerpsTrading() {
         transactionBlockNumber: transaction.blockNumber, transactionBlockHash: transaction.blockHash }
     }
 
-    const safe = await client.getBlock({ blockTag: 'safe' })
+    const head = await client.getBlock({ blockTag: confirmOnInclusion ? 'latest' : 'safe' })
     const terminal = await client.readContract({
       address: sponsored.manifest.orderLifecycleBook,
       abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
       functionName: 'terminalOutcome',
       args: [orderId],
-      blockNumber: safe.number,
+      blockNumber: head.number,
     })
     if (terminal.status !== PERPS_LIFECYCLE_STATUS.EXECUTED && terminal.status !== PERPS_LIFECYCLE_STATUS.FAILED) return undefined
     // The V5 book stores the authenticated terminal summary; full economics
@@ -1353,13 +1354,19 @@ export function usePerpsTrading() {
       eventName: 'OrderFinalized',
       args: { orderId },
       // Public RPC allows 1,000 blocks inclusive; older evidence comes from indexed history.
-      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 999n
-        ? safe.number - 999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
-      toBlock: safe.number,
+      fromBlock: head.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 999n
+        ? head.number - 999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
+      toBlock: head.number,
       strict: true,
     })
     const event = events.find(log => !log.removed && log.args.receiptHash === terminal.receiptHash && log.args.account.toLowerCase() === terminal.account.toLowerCase())
     if (!event) return undefined
+    if (confirmOnInclusion) {
+      const [canonicalHead, canonicalEvent] = await Promise.all([
+        client.getBlock({ blockNumber: head.number }), client.getBlock({ blockNumber: event.blockNumber }),
+      ])
+      if (canonicalHead.hash !== head.hash || canonicalEvent.hash !== event.blockHash) return undefined
+    }
     const verified = decodeVerifiedOrderFinalized({
       chainId: BigInt(sponsored.manifest.chainId), book: sponsored.manifest.orderLifecycleBook,
       router: sponsored.manifest.orderRouter, summary: terminal,

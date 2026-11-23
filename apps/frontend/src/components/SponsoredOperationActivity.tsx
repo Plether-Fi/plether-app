@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { formatEther } from 'viem'
+import { formatEther, isAddressEqual, parseEventLogs } from 'viem'
+import { PERPS_ORDER_LIFECYCLE_BOOK_ABI } from '../contracts/abis'
 import { trackPerpsButtonClicked } from '../analytics/perps'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { PreparedOperationRecovery } from '../perps-aa/PreparedOperationRecovery'
@@ -747,11 +748,14 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
   const sponsored = prepared.mode === 'sponsored'
   const cancelled = attempt.phase === 'cancelled'
   const walletPaid = prepared.transport === 'wallet'
+  const visibleReceipt = receipt ?? (runtime?.readBundledInclusion ? observedReceipt : undefined)
   const transactionHash = attempt.outerReceipt?.transactionHash ?? (receipt ?? observedReceipt)?.receipt.transactionHash ?? attempt.walletSubmission?.transactionHash
   const actualGasCost = attempt.outerReceipt
     ? attempt.outerReceipt.gasUsed * attempt.outerReceipt.effectiveGasPrice
-    : receipt?.actualGasCost
-  const status = observedReceipt
+    : visibleReceipt?.actualGasCost
+  const status = visibleReceipt && !cancelled
+    ? visibleReceipt.success ? 'Confirmed onchain' : 'Failed onchain'
+    : observedReceipt
     ? observedReceipt.success ? 'Included, awaiting confirmation' : 'Execution reverted, awaiting confirmation'
     : {
     signed: 'Awaiting submission',
@@ -765,8 +769,14 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
     wallet_failed: 'Wallet transaction failed onchain',
     wallet_replaced: 'Replaced in Owner Wallet',
   }[attempt.phase]
-  const orderCommitted = receipt?.success && !cancelled &&
+  const orderCommitted = visibleReceipt?.success && !cancelled &&
     (attempt.action === 'place-order' || attempt.action === 'place-protected-order' || attempt.action === 'cancel-protection-and-close')
+  const book = manifest?.smartAccountMode === 'kernel' ? manifest.orderLifecycleBook : undefined
+  const clientOrderId = attempt.orderRequestV3?.clientOrderId
+  const registered = orderCommitted && book && clientOrderId && runtime?.readBundledInclusion
+    ? parseEventLogs({ abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI, eventName: 'IntentRegistered', logs: visibleReceipt.logs })
+      .filter(log => isAddressEqual(log.address, book) && isAddressEqual(log.args.account, attempt.scope.sender)
+        && log.args.clientOrderId.toLowerCase() === clientOrderId.toLowerCase()) : []
 
   return (
     <article className="space-y-3 border border-brand-border/30 bg-app-bg/30 p-4">
@@ -777,7 +787,7 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
         </time>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Badge variant={attempt.phase === 'wallet_failed' || (receipt?.success === false && !cancelled) ? 'danger' : receipt ? 'success' : 'default'}>{status}</Badge>
+        <Badge variant={attempt.phase === 'wallet_failed' || (visibleReceipt?.success === false && !cancelled) ? 'danger' : visibleReceipt ? 'success' : 'default'}>{status}</Badge>
         <span className="text-xs text-content-secondary">{sponsored ? 'Sponsored by Plether' : walletPaid ? 'Pay from wallet' : 'Pay with ETH'}</span>
       </div>
       {actualGasCost !== undefined && (
@@ -787,15 +797,17 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
         </dl>
       )}
       {orderCommitted && transactionHash && (
-        <RecoveredOrderStatus accountAddress={attempt.scope.sender} transactionHash={transactionHash} clientOrderId={attempt.orderRequestV3?.clientOrderId} />
+        <RecoveredOrderStatus accountAddress={attempt.scope.sender} transactionHash={transactionHash} clientOrderId={clientOrderId}
+          liveOrderId={registered.length === 1 ? registered[0].args.orderId : undefined} />
       )}
-      {isKernelAttemptPending(attempt) && (
+      {isKernelAttemptPending(attempt) && !visibleReceipt && (
         <KernelAttemptRecoveryControls
           attempt={attempt}
           quoteCancellation={runtime?.quoteCancellation}
           signPrepared={runtime?.signPrepared}
           isObservationReorged={runtime?.isObservationReorged}
           readWalletOutcome={runtime?.readWalletOutcome}
+          readBundledInclusion={runtime?.readBundledInclusion}
         />
       )}
       <details className="border-t border-brand-border/20 pt-3">
@@ -877,8 +889,10 @@ export function SponsoredOperationHistoryButton() {
         )
     : []
   const attentionOperations = accountOperations.filter(isAttentionOperation)
-  const kernelPending = kernelActivity.attempts.filter(isKernelAttemptPending)
-  const kernelRecent = kernelActivity.attempts.filter(attempt => !isKernelAttemptPending(attempt))
+  const awaitingKernelInclusion = (attempt: KernelOperationAttempt) => isKernelAttemptPending(attempt) &&
+    !(kernelRuntime?.kernel.readBundledInclusion && attempt.observedReceipt)
+  const kernelPending = kernelActivity.attempts.filter(awaitingKernelInclusion)
+  const kernelRecent = kernelActivity.attempts.filter(attempt => !awaitingKernelInclusion(attempt))
   const unreviewedAttentionOperations = attentionOperations.filter(
     isUnreviewedAttentionOperation
   )

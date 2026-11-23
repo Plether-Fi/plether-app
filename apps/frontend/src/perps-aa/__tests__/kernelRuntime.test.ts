@@ -1,5 +1,5 @@
 import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { keccak256, type Address, type PublicClient, type WalletClient } from 'viem'
 import { entryPoint09Address } from 'viem/account-abstraction'
 import { arbitrumSepolia } from 'viem/chains'
@@ -96,6 +96,8 @@ beforeEach(() => {
   } satisfies Omit<KernelPreparedOperation, 'operation'> & { operation: Pick<KernelPreparedOperation['operation'], 'sender' | 'callData' | 'nonce' | 'factory' | 'paymaster'> }))
 })
 
+afterEach(() => vi.unstubAllEnvs())
+
 describe('Kernel review execution', () => {
   it('uses one recent latest block for the factory state and root nonce, and refuses a changed header', async () => {
     const runtime = await createRuntime()
@@ -170,6 +172,7 @@ describe('Kernel review execution', () => {
   })
 
   it('hands an observed operation off immediately without reporting safe inclusion or confirmation', async () => {
+    vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'false')
     const runtime = await createRuntime()
     writeGasPaymentPreference(runtime.gasPayment.scope, 'eth')
     const quote = await runtime.kernel.quoteAction(action)
@@ -193,6 +196,25 @@ describe('Kernel review execution', () => {
     await expect(runtime.kernel.execute({ runtime, manifest, ownerAddress: owner, action, kernelQuote: quote, onIncluded, onStatus }))
       .rejects.toMatchObject({ reason: 'ACCOUNT_NOT_TRUSTED' })
     expect(onIncluded).not.toHaveBeenCalled()
+  })
+
+  it('confirms a sponsored Sepolia action from its live receipt while journal reconciliation continues', async () => {
+    vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'true')
+    const runtime = await createRuntime()
+    const quote = await runtime.kernel.quoteAction(action)
+    const onIncluded = vi.fn()
+    const onStatus = vi.fn()
+    sign.mockResolvedValue('0x01')
+    save.mockImplementation(async stored => stored)
+    getAttempt.mockResolvedValue({ phase: 'submitted' })
+    const observedReceipt = { success: true, receipt: { blockNumber: 104n, blockHash: hash, status: 'success', transactionHash: hash } }
+    refresh.mockResolvedValueOnce({ phase: 'submitted', observedReceipt })
+
+    await expect(runtime.kernel.execute({ runtime, manifest, ownerAddress: owner, action, kernelQuote: quote, onIncluded, onStatus }))
+      .resolves.toMatchObject({ transactionHash: hash, receipt: observedReceipt })
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(onIncluded).toHaveBeenCalledOnce()
+    expect(onStatus).toHaveBeenCalledWith('confirmed')
   })
 
   it('requires the reviewed sponsor contract bytecode before opening the wallet', async () => {

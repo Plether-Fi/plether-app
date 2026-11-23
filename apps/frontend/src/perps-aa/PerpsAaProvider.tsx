@@ -83,7 +83,7 @@ function ConnectedPerpsAaRuntime({
       <Suspense fallback={null}>
         {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
           ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} isObservationReorged={effectiveRuntime.kernel.isObservationReorged}
-              readWalletOutcome={effectiveRuntime.kernel.readWalletOutcome} />
+              readWalletOutcome={effectiveRuntime.kernel.readWalletOutcome} readBundledInclusion={effectiveRuntime.kernel.readBundledInclusion} />
           : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
       </Suspense>
       {children}

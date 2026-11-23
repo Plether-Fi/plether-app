@@ -10,10 +10,11 @@ import {
   type KernelOperationAttempt,
 } from './kernelOperationJournal'
 import type { KernelWalletOutcomeReader } from './kernelWalletPayment'
+import type { KernelBundledInclusionReader } from './kernelBundledInclusion'
 
 const emptyAttempts: KernelOperationAttempt[] = []
 
-export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover = false, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader) {
+export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover = false, isObservationReorged?: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader, readBundledInclusion?: KernelBundledInclusionReader) {
   const { deployment, chainId, entryPoint, sender } = scope ?? {}
   const [snapshot, setSnapshot] = useState<{
     key: string
@@ -42,11 +43,10 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
       if (pending.length === 0) return
       const previous = pending.findIndex(attempt => attempt.prepared.userOperationHash === lastPolledHash)
       const attempt = pending[(previous + 1) % pending.length]
-      if (!attempt) return
       lastPolledHash = attempt.prepared.userOperationHash
       recovering = true
       try {
-        await refreshKernelAttempt(attempt, isObservationReorged, readWalletOutcome)
+        await refreshKernelAttempt(attempt, isObservationReorged, readWalletOutcome, readBundledInclusion)
       } catch {
         // A network error or concurrent poll never changes the saved attempt.
       } finally {
@@ -89,17 +89,18 @@ export function useKernelAttempts(scope: KernelAttemptScope | undefined, recover
       document.removeEventListener('visibilitychange', update)
       window.removeEventListener('online', update)
     }
-  }, [deployment, chainId, entryPoint, sender, recover, refreshCount, isObservationReorged, readWalletOutcome])
+  }, [deployment, chainId, entryPoint, sender, recover, refreshCount, isObservationReorged, readWalletOutcome, readBundledInclusion])
 
   const active = snapshot && scope && snapshot.key === kernelAttemptScopeKey(scope) ? snapshot : undefined
   return { attempts: active?.attempts ?? emptyAttempts, error: active?.error, refresh }
 }
 
-export function KernelOperationRecovery({ scope, isObservationReorged, readWalletOutcome }: {
+export function KernelOperationRecovery({ scope, isObservationReorged, readWalletOutcome, readBundledInclusion }: {
   scope: KernelAttemptScope | undefined
   isObservationReorged?: KernelObservationReorgCheck
   readWalletOutcome?: KernelWalletOutcomeReader
+  readBundledInclusion?: KernelBundledInclusionReader
 }) {
-  useKernelAttempts(scope, true, isObservationReorged, readWalletOutcome)
+  useKernelAttempts(scope, true, isObservationReorged, readWalletOutcome, readBundledInclusion)
   return null
 }

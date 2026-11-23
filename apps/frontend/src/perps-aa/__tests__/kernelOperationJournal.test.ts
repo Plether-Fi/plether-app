@@ -236,6 +236,27 @@ describe('Kernel operation journal', () => {
     expect(trackPerpsKernelOutcome).toHaveBeenCalledTimes(1)
   })
 
+  it('uses a locally verified sponsored receipt before polling safe settlement', async () => {
+    const quote = prepared({ mode: 'sponsored' })
+    send.mockResolvedValueOnce(quote.userOperationHash)
+    await submitKernelAttempt(await save(quote))
+    const pending = (await getActiveKernelAttempt(scope))!
+    const receipt = {
+      success: true, actualGasCost: 12_345n,
+      receipt: { transactionHash: toHex(10n, { size: 32 }), blockHash: toHex(11n, { size: 32 }), blockNumber: 12n },
+    } as UserOperationReceipt<'0.9'>
+    const readInclusion = vi.fn().mockResolvedValue(receipt)
+
+    const observed = await reconcileKernelAttempt(pending, undefined, undefined, readInclusion)
+    expect(observed).toMatchObject({ phase: 'submitted', observedReceipt: receipt })
+    expect(status).not.toHaveBeenCalled()
+
+    status.mockResolvedValueOnce({ state: 'included', receipt })
+    await expect(reconcileKernelAttempt(observed, undefined, undefined, readInclusion))
+      .resolves.toMatchObject({ phase: 'included', receipt })
+    expect(readInclusion).toHaveBeenCalledOnce()
+  })
+
   it('opens the ETH canary lane after observed inclusion only for a newer nonce', async () => {
     vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'true')
     const canary = { ...scope, deployment: kernelSepoliaCanaryProfile.deployment }

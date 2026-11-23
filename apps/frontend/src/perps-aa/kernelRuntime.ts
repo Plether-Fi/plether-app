@@ -20,6 +20,7 @@ import { readReviewedActionState } from './reviewedActionState'
 import type { KernelPerpsAaSmartAccountRuntime } from './runtimeContext'
 import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
 import { isExplicitSignatureRejection } from './preparedOperation'
+import { readKernelBundledInclusion, type KernelBundledInclusionReader } from './kernelBundledInclusion'
 
 export interface KernelActionQuote {
   readonly mode: GasPaymentMode
@@ -35,6 +36,7 @@ export interface KernelRuntime {
   execute(input: ExecuteSponsoredPerpsActionInput): Promise<ExecuteSponsoredPerpsActionResult>
   isObservationReorged?: KernelObservationReorgCheck
   readWalletOutcome?: KernelWalletOutcomeReader
+  readBundledInclusion?: KernelBundledInclusionReader
   quoteCancellation: (original: KernelPreparedOperation, originalSignature: Hex) => Promise<KernelPreparedCancellation>
   signPrepared: (prepared: KernelPreparedOperation) => Promise<Hex>
 }
@@ -62,13 +64,14 @@ function requireFresh(prepared: KernelActionPreparation, now = deadlineNow()) {
   if (prepared.expiresAt * 1_000 <= now) throw new Error('The gas quote expired. Review a fresh quote to continue.')
 }
 
-async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservationReorged: KernelObservationReorgCheck, readWalletOutcome?: KernelWalletOutcomeReader) {
+async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservationReorged: KernelObservationReorgCheck, readWalletOutcome: KernelWalletOutcomeReader, readBundledInclusion?: KernelBundledInclusionReader) {
   const timeout = performance.now() + 75_000
   while (performance.now() < timeout) {
     let resolved: KernelOperationAttempt | undefined
     try {
       const saved = await getKernelAttempt(attempt.scope, attempt.prepared.userOperationHash, attempt.prepared.preparationId)
-      if (saved) resolved = await refreshKernelAttempt(saved, isObservationReorged, readWalletOutcome)
+      if (saved) resolved = saved.observedReceipt && readBundledInclusion && !await isObservationReorged(saved.observedReceipt)
+        ? saved : await refreshKernelAttempt(saved, isObservationReorged, readWalletOutcome, readBundledInclusion)
     } catch {
       // Loss of status connectivity leaves the signed operation unresolved.
     }
@@ -166,12 +169,15 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
     return account.signUserOperation(prepared.operation)
   }
   const readWalletOutcome = (attempt: KernelOperationAttempt) => readKernelWalletOutcome(publicClient, attempt)
+  const readBundledInclusion = import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true'
+    ? (attempt: KernelOperationAttempt) => readKernelBundledInclusion(publicClient, attempt) : undefined
 
   const kernel: KernelRuntime = {
     scope,
     verifyAccount,
     isObservationReorged,
     readWalletOutcome,
+    readBundledInclusion,
     quoteAction: async (action, signal, clientOrderId) => {
       if (!isAddressEqual(action.account, scope.sender)) throw new Error('The action belongs to a different Trading Account')
       const { mode, revision } = readGasPaymentPreference(preferenceScope)
@@ -316,7 +322,7 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
       }, { mode: prepared.mode, nonce: prepared.operation.nonce })
       onStatus?.('confirming')
       if (attempt.phase === 'discarded') throw new Error('The wallet transaction was declined.')
-      const settled = await waitForAttemptOutcome(attempt, isObservationReorged, readWalletOutcome)
+      const settled = await waitForAttemptOutcome(attempt, isObservationReorged, readWalletOutcome, readBundledInclusion)
       const deploymentReceipt = settled.phase === 'included' ? settled.receipt
         : settled.observedReceipt?.success ? settled.observedReceipt : undefined
       if (deploymentReceipt && prepared.operation.factory !== undefined) {
@@ -329,9 +335,10 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
             message: 'The operation was included. Plether could not verify the Trading Account deployment. Check Activity before another action.' })
         }
       }
-      if (settled.observedReceipt) throw new KernelObservedPendingError()
-      if (settled.phase !== 'included' || !settled.receipt?.success || settled.receipt.receipt.status !== 'success') {
-        const reverted = settled.phase === 'included' || settled.phase === 'wallet_failed'
+      if (settled.observedReceipt && !readBundledInclusion) throw new KernelObservedPendingError()
+      const receipt = settled.phase === 'included' ? settled.receipt : settled.observedReceipt
+      if (!receipt?.success || receipt.receipt.status !== 'success') {
+        const reverted = settled.phase === 'included' || settled.phase === 'wallet_failed' || settled.observedReceipt !== undefined
         throw new BundlerRequestError({
           message: reverted
             ? 'The Trading Account operation reverted onchain. See its gas charge in Activity.'
@@ -340,11 +347,11 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
           retryable: false,
         })
       }
-      const result = { userOperationHash: prepared.userOperationHash, receipt: settled.receipt, transactionHash: settled.receipt.receipt.transactionHash }
+      const result = { userOperationHash: prepared.userOperationHash, receipt, transactionHash: receipt.receipt.transactionHash }
       try {
         input.onIncluded?.(result)
       } catch {
-        // The canonical receipt is already saved even if an optional UI consumer fails.
+        // The verified receipt is already saved even if an optional UI consumer fails.
       }
       onStatus?.('confirmed')
       return result

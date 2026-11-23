@@ -20,6 +20,7 @@ import {
 } from './kernelOperationJournal'
 import { KernelRpcError, type KernelPreparedCancellation, type KernelPreparedOperation } from './kernelRpc'
 import type { KernelWalletOutcomeReader } from './kernelWalletPayment'
+import type { KernelBundledInclusionReader } from './kernelBundledInclusion'
 
 function readRecoveryTime(): number | undefined {
   try {
@@ -29,12 +30,13 @@ function readRecoveryTime(): number | undefined {
   }
 }
 
-export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, signPrepared, isObservationReorged, readWalletOutcome }: {
+export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, signPrepared, isObservationReorged, readWalletOutcome, readBundledInclusion }: {
   attempt: KernelOperationAttempt
   quoteCancellation?: (original: KernelPreparedOperation, signature: Hex) => Promise<KernelPreparedCancellation>
   signPrepared?: (prepared: KernelPreparedOperation) => Promise<Hex>
   isObservationReorged?: KernelObservationReorgCheck
   readWalletOutcome?: KernelWalletOutcomeReader
+  readBundledInclusion?: KernelBundledInclusionReader
 }) {
   const [quote, setQuote] = useState<KernelPreparedCancellation>()
   const [busy, setBusy] = useState(false)
@@ -108,7 +110,7 @@ export function KernelAttemptRecoveryControls({ attempt, quoteCancellation, sign
             void run(async () => {
               const result = attempt.prepared.transport === 'wallet'
                 ? await refreshKernelAttempt(attempt, isObservationReorged, readWalletOutcome)
-                : await refreshKernelAttempt(attempt, isObservationReorged)
+                : await refreshKernelAttempt(attempt, isObservationReorged, undefined, readBundledInclusion)
               if (isKernelAttemptPending(result) && !result.observedReceipt) setNotice('This operation is still pending.')
             })
           }}>Check status</Button>}
