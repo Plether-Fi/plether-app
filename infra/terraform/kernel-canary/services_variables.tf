@@ -75,6 +75,19 @@ variable "kernel_canary_alto_rpc_url_ssm_parameter_name" {
     error_message = "The isolated canary Alto must use the reviewed managed Arbitrum Sepolia RPC parameter."
   }
 }
+
+variable "kernel_canary_reconciler_secondary_rpc_url_ssm_parameter_name" {
+  type        = string
+  default     = "/plether/sepolia/aa-reconciler-secondary-rpc-url"
+  description = "Secondary RPC for the isolated Kernel reconciler. Use the dedicated archive RPC parameter if the shared provider prunes the paymaster deployment block."
+  validation {
+    condition = contains([
+      "/plether/sepolia/aa-reconciler-secondary-rpc-url",
+      "/plether/sepolia/kernel-canary-reconciler-archive-rpc-url",
+    ], var.kernel_canary_reconciler_secondary_rpc_url_ssm_parameter_name)
+    error_message = "The Kernel reconciler secondary RPC must use the shared Sepolia parameter or the dedicated canary archive RPC parameter."
+  }
+}
 variable "kernel_canary_alto_executor_keys_ssm_parameter_name" {
   type    = string
   default = "/plether/sepolia/kernel-canary-alto-executor-private-keys"

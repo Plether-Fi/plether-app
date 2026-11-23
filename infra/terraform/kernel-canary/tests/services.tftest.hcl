@@ -445,6 +445,8 @@ run "qualified_payment_route_targets_only_kernel_api" {
     kernel_canary_reconciler_desired_count          = 1
     kernel_canary_max_safe_lag_seconds              = tostring(jsondecode(file("../../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.minimum)
     kernel_canary_owners_json                       = "[\"0x3333333333333333333333333333333333333333\"]"
+
+    kernel_canary_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/kernel-canary-reconciler-archive-rpc-url"
   }
   assert {
     condition = (aws_lb_listener_rule.kernel_canary_api[0].priority == 180
@@ -459,6 +461,15 @@ run "qualified_payment_route_targets_only_kernel_api" {
       && one([for e in local.kernel_canary_api_environment : e.value if e.name == "AA_KERNEL_MAX_SAFE_LAG_SECONDS"]) == var.kernel_canary_max_safe_lag_seconds
     )
     error_message = "Only the exact Kernel backend path may open after managed qualification, and both database clients must reuse the existing narrow AA group."
+  }
+  assert {
+    condition = (
+      one([for s in local.kernel_canary_reconciler_secrets : s.valueFrom if s.name == "AA_SECURITY_RPC_URL"]) == "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/kernel-canary-reconciler-archive-rpc-url"
+      && one([for s in local.kernel_canary_api_secrets : s.valueFrom if s.name == "AA_SECURITY_RPC_URL"]) == "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/aa-reconciler-secondary-rpc-url"
+      && !contains(local.kernel_canary_execution_secret_arns.api, local.kernel_canary_reconciler_secondary_rpc_url_arn)
+      && contains(local.kernel_canary_execution_secret_arns.reconciler, local.kernel_canary_reconciler_secondary_rpc_url_arn)
+    )
+    error_message = "The dedicated archive parameter must be readable only by the isolated Kernel reconciler execution role."
   }
 }
 

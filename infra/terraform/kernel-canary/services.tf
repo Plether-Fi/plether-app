@@ -85,7 +85,7 @@ locals {
   kernel_canary_reconciler_secrets = [
     { name = "DATABASE_URL", valueFrom = local.kernel_canary_database_url_arn },
     { name = "PERPS_RPC_URL", valueFrom = local.kernel_canary_perps_rpc_url_arn },
-    { name = "AA_SECURITY_RPC_URL", valueFrom = local.kernel_canary_security_rpc_url_arn },
+    { name = "AA_SECURITY_RPC_URL", valueFrom = local.kernel_canary_reconciler_secondary_rpc_url_arn },
   ]
 
   kernel_canary_alto_base_environment = local.kernel_canary_count == 1 ? [

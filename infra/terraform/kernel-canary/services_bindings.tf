@@ -103,6 +103,8 @@ locals {
   kernel_canary_database_url_arn     = "${local.kernel_canary_ssm_prefix}/plether/sepolia/database-url"
   kernel_canary_security_rpc_url_arn = "${local.kernel_canary_ssm_prefix}/plether/sepolia/aa-reconciler-secondary-rpc-url"
 
+  kernel_canary_reconciler_secondary_rpc_url_arn = "${local.kernel_canary_ssm_prefix}${var.kernel_canary_reconciler_secondary_rpc_url_ssm_parameter_name}"
+
   # The external Perps URL carries its own provider credentials. The live
   # task's Perps bearer belongs to the private Nitro gateway.
   # Keep the general RPC bearer only with the exact reviewed general RPC pair.
