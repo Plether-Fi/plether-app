@@ -1569,6 +1569,17 @@ describe('perps lifecycle labels', () => {
     if (_state === 'failed') expect(screen.getByText(/Maximum size quote failed/)).toBeInTheDocument()
   })
 
+  it('keeps the zero-capacity message while refreshing the maximum', () => {
+    mockIsConnected = true
+    maxQuoteMocks.value = { ...maxQuoteMocks.value, quote: undefined, isFetching: true, isPending: true,
+      displayQuote: { maxSizeDelta: 0n, preview: { valid: true } } }
+    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="0"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} />)
+    expect(screen.getByText('Available margin cannot fund an opening order at the selected leverage.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Max' })).toBeDisabled()
+  })
+
   it('reviews and commits the refreshed lens maximum after validating its funded preview', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true

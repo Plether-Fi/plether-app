@@ -2739,10 +2739,10 @@ export function PerpsTradeTicket({
   const isMaxOpenRefreshing = !isReducingCurrentPosition && maxOpenQuote.isFetching && maxOpenDisplayQuote?.preview.valid === true
   const maxOpenQuoteMessage = maxOpenQuote.error
     ? 'Maximum size quote failed. Refresh market data or enter a quantity manually.'
-    : maxOpenQuote.quote?.maxSizeDelta === 0n
-      ? maxOpenQuote.quote.preview.valid
+    : maxOpenDisplayQuote?.maxSizeDelta === 0n
+      ? maxOpenDisplayQuote.preview.valid
         ? 'Available margin cannot fund an opening order at the selected leverage.'
-        : getPerpsOpenRevertMessage(maxOpenQuote.quote.preview.invalidReason || maxOpenQuote.quote.limitingReason)
+        : getPerpsOpenRevertMessage(maxOpenDisplayQuote.preview.invalidReason || maxOpenDisplayQuote.limitingReason)
       : undefined
   const maxOrderSizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenSizeRaw
   const maxOrderDisplaySizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenDisplaySizeRaw

@@ -27,18 +27,20 @@ export function usePerpsMaxOpenQuote({
   // Never carry it across a different account, direction, or user-selected risk settings.
   const displayKey = JSON.stringify([PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_ARBITRUM_SEPOLIA,
     account, side, protectionRewardsAssets?.toString(), selectedMaxLeverageBps])
+  const availableAssetsKey = availableAssets?.toString()
   const result = useQuery<Awaited<ReturnType<typeof quotePerpsMaxOpen>>>({
     // Time remains a readiness gate, not a new quote identity. Polling and
     // explicit trading invalidations refresh chain state without clearing a
     // result solely because the same price has a newer publication timestamp.
     queryKey: ['perps', 'max-open', PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       PERPS_ARBITRUM_SEPOLIA.cfdEngineLens, PERPS_ARBITRUM_SEPOLIA.cfdEngine, PERPS_ARBITRUM_SEPOLIA.orderRouter,
-      account, side, availableAssets?.toString(), oraclePrice?.toString(),
+      account, side, availableAssetsKey, oraclePrice?.toString(),
       protectionRewardsAssets?.toString(), selectedMaxLeverageBps],
     enabled: canRead,
-    meta: { maxOpenDisplayKey: displayKey },
+    meta: { maxOpenDisplayKey: displayKey, availableAssetsKey },
     placeholderData: (previous, previousQuery) => canRead &&
-      previousQuery?.meta?.maxOpenDisplayKey === displayKey && previousQuery.state.status === 'success'
+      previousQuery?.meta?.maxOpenDisplayKey === displayKey && previousQuery.state.status === 'success' &&
+      (previous?.quote?.maxSizeDelta !== 0n || previousQuery.meta.availableAssetsKey === availableAssetsKey)
       ? previous : undefined,
     staleTime: MAX_OPEN_STALE_TIME_MS,
     gcTime: 5 * 60_000,
