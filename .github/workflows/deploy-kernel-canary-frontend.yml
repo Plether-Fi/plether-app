@@ -336,14 +336,15 @@ jobs:
           jq --exit-status --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" '
             .jsonrpc == "2.0" and .id == 1 and .result.version == 1
             and .result.readiness.eth == true and (.result.readiness.sponsored | type) == "boolean"
-            and ($phase != "sepolia_homepage" or .result.readiness.sponsored == false)
+            and ($phase != "sepolia_homepage" or .result.readiness.sponsored == false
+              or .result.paymaster == "0x9ff288e30489c4e29b13d6ba960612b5d6db8d50")
             and (.result.profile | .deployment == $deployment and .chainId == 421614 and .entryPointVersion == "0.9"
               and keys == ([
                 "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
                 "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
                 "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
               ] | sort))' "$RUNNER_TEMP/kernel-manifest.json" >/dev/null || {
-              echo '::error::The active route must serve the requested direct-factory profile with ETH readiness.'
+              echo '::error::The active route must serve the requested direct-factory profile with ETH readiness. Homepage sponsorship requires the pinned canary paymaster.'
               exit 1
             }
 
