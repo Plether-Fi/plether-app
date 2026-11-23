@@ -17,7 +17,7 @@ import Plether.AA.KernelDeploymentFixture
   ( KernelDeploymentFixture (..), KernelGasFixture (..), loadKernelDeploymentFixture )
 import Plether.AA.KernelGateway
   ( PrepareIntent (..), classifyKernelEstimate, kernelCanFund, kernelCancellationCallData, kernelFundingAdvice, kernelScope, maxPrefund
-  , kernelOwnerAdmitted, kernelOwnerMaySubmit, minimumKernelReplacementFee, parseKernelCancellationOriginal, parseKernelPrepareIntent
+  , kernelCanaryAllowsSponsoredFollowUp, kernelOwnerAdmitted, kernelOwnerMaySubmit, minimumKernelReplacementFee, parseKernelCancellationOriginal, parseKernelPrepareIntent
   , kernelNonceScanRange, kernelOperationDeadline, locateKernelNonceTransition, parseKernelMaxSafeLag, parseOwnerAdmission
   , validateKernelEconomicCaps, validateKernelWithdrawalMode
   )
@@ -175,6 +175,15 @@ spec = do
       kernelNonceScanRange 100 (Just 5_000) 5_000 `shouldBe` Nothing
 
   describe "Kernel canary owner admission" $ do
+    it "opens sponsored follow-ups only for the matching two-wallet Arbitrum Sepolia canary" $ do
+      let owners = [owner, address '7']
+      kernelCanaryAllowsSponsoredFollowUp profile (Just owners) (reverse owners) `shouldBe` True
+      kernelCanaryAllowsSponsoredFollowUp profile Nothing owners `shouldBe` False
+      kernelCanaryAllowsSponsoredFollowUp profile (Just [owner]) [owner] `shouldBe` False
+      kernelCanaryAllowsSponsoredFollowUp profile (Just owners) [owner, address '8'] `shouldBe` False
+      kernelCanaryAllowsSponsoredFollowUp profile (Just [owner, owner]) [owner, owner] `shouldBe` False
+      kernelCanaryAllowsSponsoredFollowUp profile { kpDeployment = "another-deployment" } (Just owners) owners `shouldBe` False
+      kernelCanaryAllowsSponsoredFollowUp profile { kpChainId = 42161 } (Just owners) owners `shouldBe` False
     it "requires a nonempty explicit owner list before enabling either payment mode" $ do
       parseOwnerAdmission True False Nothing `shouldSatisfy` isLeft
       parseOwnerAdmission True False (Just "[]") `shouldSatisfy` isLeft

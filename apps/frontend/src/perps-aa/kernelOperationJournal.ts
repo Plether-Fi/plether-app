@@ -120,8 +120,9 @@ interface KernelFollowUp {
 export function kernelAttemptBlocksFollowUp(attempt: KernelOperationAttempt, next?: KernelFollowUp): boolean {
   if (!isKernelAttemptPending(attempt)) return false
   return !(import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
-    attempt.scope.deployment === kernelSepoliaCanaryProfile.deployment && next?.mode === 'eth' &&
-    attempt.prepared.mode === 'eth' && attempt.observedReceipt?.success &&
+    attempt.scope.deployment === kernelSepoliaCanaryProfile.deployment &&
+    attempt.scope.chainId === kernelSepoliaCanaryProfile.chainId && next?.mode === attempt.prepared.mode &&
+    attempt.observedReceipt?.success &&
     (next.nonce === undefined || next.nonce > attempt.prepared.operation.nonce))
 }
 

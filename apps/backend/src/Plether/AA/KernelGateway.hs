@@ -29,6 +29,7 @@ module Plether.AA.KernelGateway
   , parseOwnerAdmission
   , kernelOwnerAdmitted
   , kernelOwnerMaySubmit
+  , kernelCanaryAllowsSponsoredFollowUp
   ) where
 
 import Control.Concurrent.Async (concurrently, mapConcurrently)
@@ -217,6 +218,12 @@ kernelOwnerAdmitted (Just owners) owner = owner `elem` owners
 kernelOwnerMaySubmit :: Bool -> Maybe [Text] -> Text -> Bool
 kernelOwnerMaySubmit alreadyAccepted owners owner =
   alreadyAccepted || kernelOwnerAdmitted owners owner
+
+kernelCanaryAllowsSponsoredFollowUp :: Kernel.KernelProfile -> Maybe [Text] -> [Text] -> Bool
+kernelCanaryAllowsSponsoredFollowUp profile (Just owners@[_, _]) sponsors@[_, _] =
+  Kernel.kpChainId profile == 421614 && Kernel.kpDeployment profile == "kernel-sepolia-direct-v1" &&
+  Set.size (Set.fromList owners) == 2 && Set.fromList owners == Set.fromList sponsors
+kernelCanaryAllowsSponsoredFollowUp _ _ _ = False
 
 parseSponsorship :: Bool -> String -> Either Text KernelSponsorshipConfig
 parseSponsorship enabled raw = do
@@ -837,6 +844,9 @@ submit gateway cfg db primary secondary manager client fields = do
     let accept = case (mode, kgcAllowedOwners gateway, currentNonce) of
           (Db.PayWithEth, Just _, Just nonce) | not (maybe False kscEnabled (kgcSponsorship gateway)) ->
             \conn -> Db.acceptKernelEthOperationAtNonce conn scope nonce ident preparedClient expectedHash (Object raw)
+          (Db.Sponsored, owners, Just nonce) | Just sponsor <- kgcSponsorship gateway, kscEnabled sponsor
+            , kernelCanaryAllowsSponsoredFollowUp profile owners (kscCanaryOwners sponsor) ->
+            \conn -> Db.acceptKernelSponsoredOperationAtNonce conn scope nonce ident preparedClient expectedHash (Object raw)
           _ -> \conn -> Db.acceptKernelOperation conn scope ident preparedClient expectedHash (Object raw)
     accepted <- dbAction db accept
     case accepted of

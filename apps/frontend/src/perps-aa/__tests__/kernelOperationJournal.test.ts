@@ -289,6 +289,34 @@ describe('Kernel operation journal', () => {
     expect(trackPerpsKernelOutcome).not.toHaveBeenCalled()
   })
 
+  it('opens the sponsored canary lane after one successful inclusion with a newer nonce', async () => {
+    vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'true')
+    const canary = { ...scope, deployment: kernelSepoliaCanaryProfile.deployment }
+    const quote = prepared({ mode: 'sponsored', nonce: 2n })
+    send.mockResolvedValueOnce(quote.userOperationHash)
+    const first = await save(quote, canary)
+    await submitKernelAttempt(first)
+    const next = prepared({ mode: 'sponsored', slot: 2, nonce: 3n })
+    await expect(save(next, canary)).rejects.toThrow('already being submitted')
+
+    const receipt = {
+      success: true, actualGasCost: 12_345n,
+      receipt: { transactionHash: toHex(10n, { size: 32 }), blockHash: toHex(11n, { size: 32 }), blockNumber: 12n },
+    } as UserOperationReceipt<'0.9'>
+    const observed = await reconcileKernelAttempt(first, undefined, undefined, async () => receipt)
+    const nextLane = { mode: 'sponsored', nonce: 3n } as const
+    await expect(getActiveKernelAttempt(canary, { ...nextLane, nonce: 2n })).resolves.toMatchObject({ observedReceipt: receipt })
+    await expect(getActiveKernelAttempt(canary, { mode: 'eth', nonce: 3n })).resolves.toMatchObject({ observedReceipt: receipt })
+
+    vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'false')
+    await expect(getActiveKernelAttempt(canary, nextLane)).resolves.toMatchObject({ observedReceipt: receipt })
+    vi.stubEnv('VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN', 'true')
+    await expect(withKernelOperationLane(canary, () => save(next, canary), nextLane)).resolves.toMatchObject({ phase: 'signed' })
+    expect(await getKernelAttempt(canary, quote.userOperationHash)).toMatchObject({ phase: 'submitted', observedReceipt: receipt })
+    expect(observed.receipt).toBeUndefined()
+    expect(trackPerpsKernelOutcome).not.toHaveBeenCalled()
+  })
+
   it('retains the exact signed cancellation before sending and releases only after canonical status', async () => {
     const quote = prepared()
     send.mockResolvedValueOnce(quote.userOperationHash)

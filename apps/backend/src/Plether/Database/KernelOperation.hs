@@ -18,6 +18,7 @@ module Plether.Database.KernelOperation
   , storeKernelNonceScanCursor
   , acceptKernelOperation
   , acceptKernelEthOperationAtNonce
+  , acceptKernelSponsoredOperationAtNonce
   , acceptKernelCancellationAnchor
   , getKernelOperationForClient
   , finalizeKernelOperation
@@ -343,24 +344,27 @@ storeKernelNonceScanCursor conn prepared expected (block, blockHash) = do
 acceptKernelOperation :: Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
 acceptKernelOperation = acceptKernelOperationWith False Nothing
 
--- Only the allowlisted ETH gateway supplies a nonce attested on both recent
--- chains. Older ETH operations stay pending for settlement on their own nonce.
+-- Only the allowlisted gateway supplies a nonce attested at the live head.
+-- Older operations in the same payment mode retain their settlement state.
 acceptKernelEthOperationAtNonce :: Connection -> KernelScope -> Integer -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
-acceptKernelEthOperationAtNonce conn scope nonce = acceptKernelOperationWith False (Just nonce) conn scope
+acceptKernelEthOperationAtNonce conn scope nonce = acceptKernelOperationWith False (Just (PayWithEth, nonce)) conn scope
+
+acceptKernelSponsoredOperationAtNonce :: Connection -> KernelScope -> Integer -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
+acceptKernelSponsoredOperationAtNonce conn scope nonce = acceptKernelOperationWith False (Just (Sponsored, nonce)) conn scope
 
 -- Recover a signed ETH operation whose original submission was ambiguous.
 -- The anchor holds the same account lane and cannot become relayable.
 acceptKernelCancellationAnchor :: Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
 acceptKernelCancellationAnchor = acceptKernelOperationWith True Nothing
 
-acceptKernelOperationWith :: Bool -> Maybe Integer -> Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
-acceptKernelOperationWith cancellationOnly currentNonce conn scope preparationId client operationHash signedOperation = withTransaction conn $ do
+acceptKernelOperationWith :: Bool -> Maybe (PaymentMode, Integer) -> Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
+acceptKernelOperationWith cancellationOnly liveLane conn scope preparationId client operationHash signedOperation = withTransaction conn $ do
   preparation <- getKernelPreparationForClient conn scope preparationId client
   case preparation of
     Nothing -> pure OperationPreparationMissing
     Just prepared
       | cancellationOnly && kpMode prepared /= PayWithEth -> pure OperationPreparationMismatch
-      | maybe False (\nonce -> kpMode prepared /= PayWithEth || kpNonce prepared /= nonce) currentNonce -> pure OperationPreparationMismatch
+      | maybe False (/= (kpMode prepared, kpNonce prepared)) liveLane -> pure OperationPreparationMismatch
       | not (sameUnsignedOperation prepared signedOperation) -> pure OperationPreparationMismatch
       | otherwise -> do
           lockScope conn "account" scope (kpSender prepared)
@@ -386,11 +390,13 @@ acceptKernelOperationWith cancellationOnly currentNonce conn scope preparationId
           valid <- hasSponsorAuthorization conn prepared operationHash now
           if valid then insertAccepted prepared else pure OperationPreparationMismatch
   insertAccepted prepared = do
+    -- A same-or-higher pending nonce may still execute, including after a reorg.
     [Only busy] <- query conn
       "SELECT EXISTS (SELECT 1 FROM aa_kernel_operations\
       \ WHERE deployment=? AND chain_id=? AND entry_point=? AND sender=? AND status='pending'\
-      \ AND (?::numeric IS NULL OR mode<>'eth' OR nonce=?))"
-      (scopeParams scope ++ [toField (kpSender prepared), toField currentNonce, toField currentNonce])
+      \ AND (?::numeric IS NULL OR mode<>? OR nonce>=?))"
+      (scopeParams scope ++ [toField (kpSender prepared), toField (snd <$> liveLane),
+        toField (modeText . fst <$> liveLane), toField (snd <$> liveLane)])
     if busy then pure OperationLaneBusy else do
       inserted <- execute conn
         "INSERT INTO aa_kernel_operations\

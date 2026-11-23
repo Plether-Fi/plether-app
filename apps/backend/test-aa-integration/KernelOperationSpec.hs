@@ -134,6 +134,44 @@ kernelOperationSpec withFixture = describe "Kernel PostgreSQL operation lifecycl
       status conn scope (hashOf 'a') `shouldReturn` Just "pending"
       status conn scope (hashOf 'b') `shouldReturn` Just "pending"
 
+  it "admits a newer sponsored nonce while the previous charge remains reserved" $
+    withKernel $ \conn -> do
+      now <- floor <$> getPOSIXTime
+      seedSponsor conn scope now
+      first <- preparation scope Sponsored "sponsor-first" 0
+      next <- preparation scope Sponsored "sponsor-next" 1
+      competing <- preparation scope Sponsored "sponsor-competing" 1
+      rewound <- preparation scope Sponsored "sponsor-rewound" 0
+      let signed = signWith "0x1111" . kpUnsignedOperation
+          acceptAt nonce prepared digest =
+            acceptKernelSponsoredOperationAtNonce conn scope nonce (kpId prepared) client digest (signed prepared)
+      mapM_ (\prepared -> storeKernelPreparation conn prepared `shouldReturn` PreparationStored) [first, next, competing, rewound]
+      authorize conn first (hashOf 'a') now
+      authorize conn next (hashOf 'b') now
+      acceptKernelOperation conn scope (kpId first) client (hashOf 'a') (signed first) `shouldReturn` OperationAccepted
+      acceptKernelOperation conn scope (kpId next) client (hashOf 'b') (signed next) `shouldReturn` OperationLaneBusy
+      acceptAt 0 next (hashOf 'b') `shouldReturn` OperationPreparationMismatch
+      acceptAt 1 next (hashOf 'b') `shouldReturn` OperationAccepted
+      status conn scope (hashOf 'a') `shouldReturn` Just "pending"
+      status conn scope (hashOf 'b') `shouldReturn` Just "pending"
+      fmap (fmap kspStatus) (getKernelSponsorshipForClient conn scope paymaster (kpId first) client)
+        `shouldReturn` Just "signed"
+
+      let budget = KernelSponsorBudget 100 200 200 200 500 500 500
+          draft = KernelSponsorshipDraft scope paymaster "sponsor-budget" "sponsor-budget" client sender 2 100
+            (now - 1) (now + 60) (kpUnsignedOperation next)
+      fmap (either id (const "reserved")) (reserveKernelSponsorship conn budget draft)
+        `shouldReturn` "ACCOUNT_OUTSTANDING_BUDGET_EXCEEDED"
+
+      authorize conn competing (hashOf 'c') now
+      authorize conn rewound (hashOf 'd') now
+      acceptAt 1 competing (hashOf 'c') `shouldReturn` OperationLaneBusy
+      withTransaction conn $ do
+        lockKernelSponsorScope conn scope paymaster
+        settleKernelSponsorship conn scope paymaster (hashOf 'a')
+          (KernelInclusion sender 0 (Just paymaster) (hashOf 'e') (hashOf 'f') 20 True 40) `shouldReturn` True
+      acceptAt 0 rewound (hashOf 'd') `shouldReturn` OperationLaneBusy
+
   it "anchors an ambiguous signed ETH operation after expiry and never allows its ordinary relay" $
     withKernel $ \conn -> do
       now <- getCurrentTime
