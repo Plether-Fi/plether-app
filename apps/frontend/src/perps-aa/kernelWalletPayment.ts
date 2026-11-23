@@ -134,7 +134,7 @@ async function readReceipt(client: PublicClient, hash: Hex) {
   }
 }
 
-async function findWalletTransaction(client: PublicClient, ownerAddress: Address, submission: KernelWalletSubmission, head: bigint) {
+export async function findKernelOwnerTransaction(client: PublicClient, ownerAddress: Address, submission: KernelWalletSubmission, head: bigint) {
   const readNonce = (blockNumber: bigint) => client.getTransactionCount({ address: ownerAddress, blockNumber })
   if (await readNonce(head) <= submission.nonce) return undefined
   // Locate the first block where the nonce was used without scanning every
@@ -160,7 +160,7 @@ export async function readKernelWalletOutcome(client: PublicClient, attempt: Ker
   const head = await client.getBlock({ blockTag: 'latest' })
   if (head.number < walletSubmission.fromBlock) return { state: 'pending' }
   let receipt = walletSubmission.transactionHash === undefined ? undefined : await readReceipt(client, walletSubmission.transactionHash)
-  receipt ??= await findWalletTransaction(client, ownerAddress, walletSubmission, head.number)
+  receipt ??= await findKernelOwnerTransaction(client, ownerAddress, walletSubmission, head.number)
   if (!receipt) {
     // This also recovers a speed-up or a wallet response lost after broadcast.
     const liveNonce = await client.readContract({ address: entryPoint, abi: entryPoint09Abi, functionName: 'getNonce',

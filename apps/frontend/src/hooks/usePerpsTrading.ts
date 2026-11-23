@@ -79,8 +79,9 @@ import { persistProtectionIntent, relaxedProtectionCloseLimits, PROTECTION_RELEA
 import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV3Bindings'
 import { readGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
 import { estimateKernelOwnerTransactionFees } from '../perps-aa/kernelEthFunding'
+import { depositKernelMarginFromOwner } from '../perps-aa/kernelMarginFunding'
 import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
-import type { PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import type { KernelPerpsAaSmartAccountRuntime, PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import { KernelGasReviewCancelled, kernelQuoteIsFresh } from './usePerpsGasReview'
 
 interface PrepareOrderInput {
@@ -522,8 +523,7 @@ export function usePerpsTrading() {
     liveAccount.current = { runtime: aaRuntime, identity }
   }, [aaRuntime, identity])
 
-  const requireCurrentKernelQuote = useCallback((runtime: PerpsAaSmartAccountRuntime, quote?: KernelActionQuote) => {
-    if (!runtime.kernel) return
+  const requireCurrentKernelRuntime = useCallback((runtime: KernelPerpsAaSmartAccountRuntime) => {
     const { runtime: current, identity: liveIdentity } = liveAccount.current
     const expected = runtime.kernel.scope
     if (!current?.kernel || liveIdentity.status !== 'ready' ||
@@ -534,8 +534,14 @@ export function usePerpsTrading() {
         !isAddressEqual(current.kernel.scope.sender, expected.sender) ||
         !isAddressEqual(current.kernel.scope.entryPoint, expected.entryPoint) ||
         !isAddressEqual(current.ownerAddress, runtime.ownerAddress)) {
-      throw new Error('The Trading Account changed. Review a fresh network gas quote.')
+      throw new Error('The Trading Account changed. Review the action again.')
     }
+    return current
+  }, [])
+
+  const requireCurrentKernelQuote = useCallback((runtime: PerpsAaSmartAccountRuntime, quote?: KernelActionQuote) => {
+    if (!runtime.kernel) return
+    const current = requireCurrentKernelRuntime(runtime)
     if (!quote || !kernelQuoteIsFresh(quote)) {
       throw new Error('Review a current network gas quote before approving this Trading Account action.')
     }
@@ -544,7 +550,7 @@ export function usePerpsTrading() {
     if (!current.gasPayment.readiness[quote.mode]) {
       throw new Error(mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.')
     }
-  }, [])
+  }, [requireCurrentKernelRuntime])
 
   const approveKernelAction = useCallback(async (runtime: PerpsAaSmartAccountRuntime, action: PerpsActionPlan, reviewGas?: ReviewKernelGas) => {
     if (!runtime.kernel) return undefined
@@ -682,6 +688,34 @@ export function usePerpsTrading() {
     requireTradingExecution,
     writeContractAsync,
   ])
+
+  const depositMarginFromOwnerWallet = useCallback(async (amount: bigint, onStage?: (stage: 'approving' | 'depositing') => void) => {
+    try {
+      const { runtime } = requireTradingExecution()
+      if (!runtime.kernel || !runtime.gasPayment.paysEthFromWallet || !walletClient) {
+        throw new Error('Connect an eligible Owner Wallet to deposit margin directly.')
+      }
+      const { revision } = readGasPaymentPreference(runtime.gasPayment.scope)
+      await refreshReadiness()
+      const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, true)
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
+      return await depositKernelMarginFromOwner({
+        client: requireClient(publicClient), wallet: walletClient, runtime, amount, onStage,
+        requireCurrent: () => {
+          const current = requireCurrentKernelRuntime(runtime)
+          const preference = readGasPaymentPreference(current.gasPayment.scope)
+          if (!current.gasPayment.paysEthFromWallet || !current.gasPayment.readiness.eth ||
+              preference.mode !== 'eth' || preference.revision !== revision) {
+            throw new Error('Select Pay from wallet in Gas settings before depositing from the Owner Wallet.')
+          }
+        },
+      })
+    } catch (error) {
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'deposit'), { surface: 'perps', action: 'deposit' })
+    } finally {
+      invalidatePerpsReads()
+    }
+  }, [invalidatePerpsReads, publicClient, requireCurrentKernelRuntime, requireTradingExecution, walletClient])
 
   const depositMargin = useCallback(async (
     amount: bigint,
@@ -1473,6 +1507,7 @@ export function usePerpsTrading() {
     managePositionProtection,
     approveSettlementTokenForMargin,
     fundTradingAccount,
+    depositMarginFromOwnerWallet,
     depositMargin,
     refreshAccount: invalidatePerpsReads,
     abandonDepositAuthorization,
