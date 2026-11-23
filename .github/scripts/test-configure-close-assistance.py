@@ -22,7 +22,7 @@ class ConfigureTest(unittest.TestCase):
         workflow = (root / ".github/workflows/deploy-backend.yml").read_text()
         deploy = workflow.split("\n  deploy:\n", 1)[1]
         checkout_start = deploy.index("      - name: Check out reviewed public AA deployment policy\n")
-        configure_start = deploy.index("      - name: Configure exact Sepolia close assistance release\n")
+        configure_start = deploy.index("      - name: Configure exact close assistance release\n")
         self.assertLess(checkout_start, configure_start)
         checkout = deploy[checkout_start:configure_start]
         checkout_path = next(line.split("path:", 1)[1].strip() for line in checkout.splitlines() if line.strip().startswith("path:"))
@@ -33,7 +33,11 @@ class ConfigureTest(unittest.TestCase):
                 self.assertIn(source, checkout)
                 shutil.copytree(root / source, work / checkout_path / source)
             (work / "task-def.json").write_text(json.dumps(self.task))
-            argv = ["disabled" if arg == "$CLOSE_ASSISTANCE_MODE" else arg for arg in shlex.split(command)]
+            argv = [
+                "disabled" if arg == "$CLOSE_ASSISTANCE_MODE"
+                else arg.replace("$RELEASE_MANIFEST", "config/perps/arbitrum-sepolia-v2.0.0.json")
+                for arg in shlex.split(command)
+            ]
             subprocess.run(argv, cwd=work, check=True, capture_output=True, text=True)
             result = json.loads((work / "task-def.json").read_text())
             environment = {item["name"]: item["value"] for item in result["containerDefinitions"][0]["environment"]}
@@ -60,6 +64,16 @@ class ConfigureTest(unittest.TestCase):
         for release in [dict(schemaVersion=1, chainId=421614), dict(schemaVersion=4, network=dict(chainId=42161))]:
             with self.assertRaises(ValueError):
                 module.configure(self.task, release, "disabled")
+
+    def test_mainnet_release_matches_mainnet_task_family(self):
+        mainnet_task = copy.deepcopy(self.task)
+        mainnet_task["family"] = "plether-mainnet"
+        mainnet_release = dict(schemaVersion=4, network=dict(chainId=42161))
+        result = module.configure(mainnet_task, mainnet_release, "disabled")
+        env = {e["name"]: e["value"] for e in result["containerDefinitions"][0]["environment"]}
+        self.assertEqual(env["PERPS_CLOSE_ASSISTANCE_ENABLED"], "false")
+        with self.assertRaises(ValueError):
+            module.configure(copy.deepcopy(mainnet_task), self.release, "disabled")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1352,7 +1352,7 @@ jobs:
           node image-policy/scripts/runtime-release.mjs verify-task --task-definition task-def.json --account "$EXPECTED_ACCOUNT" --region "$AWS_REGION"
 
       - name: Check out reviewed public AA deployment policy
-        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+        if: steps.task-definition-status.outputs.exists == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -1368,6 +1368,8 @@ jobs:
       - name: Validate AA reconciler task topology
         if: matrix.task_suffix == '-aa-reconciler' && steps.task-definition-status.outputs.exists == 'true'
         env:
+          TARGET_ENV: ${{ matrix.environment }}
+          EXPECTED_CHAIN_ID: ${{ matrix.environment == 'mainnet' && '42161' || '421614' }}
           RECONCILER_DESIRED_COUNT: ${{ steps.task-definition-status.outputs.desired_count }}
           RECONCILER_CONTAINER: ${{ matrix.container_name }}
           TASK_FAMILY: plether-${{ matrix.environment }}${{ matrix.task_suffix }}
@@ -1377,6 +1379,8 @@ jobs:
           max_log_range=$(jq -er 'select(.version == 1 and (.maxLogRangeBlocks | type == "number" and floor == . and . > 0)) | .maxLogRangeBlocks' deployment-policy/config/rpc-log-range-policy.json)
 
           if ! jq -e \
+              --arg target_env "$TARGET_ENV" \
+              --arg expected_chain_id "$EXPECTED_CHAIN_ID" \
               --arg family "$TASK_FAMILY" \
               --arg reconciler "$RECONCILER_CONTAINER" \
               --arg desired_count "$RECONCILER_DESIRED_COUNT" \
@@ -1403,8 +1407,8 @@ jobs:
               and (.requiresCompatibilities | index("FARGATE") != null)
               and .runtimePlatform.cpuArchitecture == "ARM64"
               and .runtimePlatform.operatingSystemFamily == "LINUX"
-              and (.executionRoleArn | endswith(":role/plether-sepolia-aa-reconciler-execution"))
-              and (.taskRoleArn | endswith(":role/plether-sepolia-aa-reconciler-task"))
+              and (.executionRoleArn | endswith(":role/plether-\($target_env)-aa-reconciler-execution"))
+              and (.taskRoleArn | endswith(":role/plether-\($target_env)-aa-reconciler-task"))
               and (.containerDefinitions | length) == 3
               and (container($reconciler) | length) == 1
               and (container("aa-reconciler-tmp-init") | length) == 1
@@ -1452,7 +1456,7 @@ jobs:
                     envmap($main) as $environment
                     | $environment.HOME == "/tmp"
                       and $environment.TMPDIR == "/tmp"
-                      and $environment.PERPS_CHAIN_ID == "421614"
+                      and $environment.PERPS_CHAIN_ID == $expected_chain_id
                       and (
                         if $desired_count == "1" then
                           ($environment.AA_PAYMASTER_ADDRESS | canonical_nonzero_address)
@@ -1494,7 +1498,7 @@ jobs:
                   and $router.firelensConfiguration.type == "fluentbit"
               )' \
               task-def.json >/dev/null; then
-            echo "::error title=AA reconciler task-definition preflight failed::Apply the reviewed Sepolia reconciler Terraform topology before deploying its image. A stopped bootstrap definition may leave all four paymaster deployment-anchor values empty; a running definition, or a configured stopped definition, must provide the complete canonical anchor."
+            echo "::error title=AA reconciler task-definition preflight failed::Apply the reviewed $TARGET_ENV reconciler Terraform topology before deploying its image. A stopped bootstrap definition may leave all four paymaster deployment-anchor values empty; a running definition, or a configured stopped definition, must provide the complete canonical anchor."
             exit 1
           fi
 
@@ -1523,11 +1527,12 @@ jobs:
             ' task-def.json > /dev/null
 
 
-      - name: Configure exact Sepolia close assistance release
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
+      - name: Configure exact close assistance release
+        if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
         env:
           CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
-        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/config/perps/arbitrum-sepolia-v2.0.0.json "$CLOSE_ASSISTANCE_MODE"
+          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.0.0.json' }}
+        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json "deployment-policy/$RELEASE_MANIFEST" "$CLOSE_ASSISTANCE_MODE"
 
       - name: Configure liquidation worker reliability controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
@@ -1562,25 +1567,30 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
-      - name: Validate Terraform-managed Sepolia release manifest
-        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+      - name: Validate Terraform-managed release manifest
+        if: steps.task-definition-status.outputs.exists == 'true'
+        env:
+          TARGET_ENV: ${{ matrix.environment }}
+          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.0.0.json' }}
         run: |
           aws ecs describe-task-definition \
-            --task-definition plether-sepolia \
+            --task-definition "plether-$TARGET_ENV" \
             --query taskDefinition > canonical-api-task-def.json
 
           node deployment-policy/scripts/validate-perps-deployment.mjs backend \
-            deployment-policy/config/perps/arbitrum-sepolia-v2.0.0.json \
+            "deployment-policy/$RELEASE_MANIFEST" \
             task-def.json canonical-api-task-def.json
 
       - name: Require active Alto with reviewed validation policy for public native API
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
         run: |
           set -euo pipefail
           if jq -e '[.containerDefinitions[] | select(.name == "plether-api")
               | .environment[] | select(.name == "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED")
               | .value] == ["true"]' task-def.json >/dev/null; then
-            aws ecs describe-services --cluster plether-sepolia --services plether-alto > public-alto-service.json
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services plether-alto > public-alto-service.json
             jq -e '.failures == [] and (.services | length) == 1
               and .services[0].desiredCount == 1 and .services[0].runningCount == 1
               and .services[0].pendingCount == 0 and (.services[0].deployments | length) == 1' public-alto-service.json >/dev/null
@@ -1611,8 +1621,8 @@ jobs:
           ' task-def.json > task-def.funding.json
           mv task-def.funding.json task-def.json
 
-      - name: Configure Sepolia Privy app for passkey names
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+      - name: Configure Privy app for passkey names
+        if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         env:
           PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
         run: python3 deployment-policy/.github/scripts/configure-privy-app.py task-def.json "$PRIVY_APP_ID"

@@ -255,6 +255,7 @@ jobs:
         working-directory: apps/frontend
         env:
           BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          ALB_ORIGIN_SECRET: ${{ secrets.ALB_ORIGIN_SECRET }}
         run: |
           set -euo pipefail
           test -n "$BACKEND_URL"
@@ -289,7 +290,6 @@ jobs:
           command: pages project create ${{ steps.target.outputs.project }} --production-branch=master --compatibility-date=2026-06-22
 
       - name: Configure ALB origin secret on Pages
-        if: secrets.ALB_ORIGIN_SECRET != ''
         working-directory: apps/frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -298,6 +298,10 @@ jobs:
           PROJECT_NAME: ${{ steps.target.outputs.project }}
         run: |
           set -euo pipefail
+          if [ -z "$ALB_ORIGIN_SECRET" ]; then
+            echo "ALB_ORIGIN_SECRET is not configured for $PROJECT_NAME; skipping Pages origin secret sync."
+            exit 0
+          fi
           printf '%s\n' "$ALB_ORIGIN_SECRET" |
             npx --yes wrangler@4.103.0 pages secret put ALB_ORIGIN_SECRET \
               --project-name="$PROJECT_NAME"
