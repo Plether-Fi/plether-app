@@ -4,6 +4,7 @@ updates:
     directory: /apps/frontend
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
     groups:
       dev-dependencies:
         dependency-type: development
@@ -12,47 +13,122 @@ updates:
           - "viem"
           - "wagmi"
           - "@web3modal/*"
+      production-minor-patch:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: /apps/insights
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      insights-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: /apps/landing
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      landing-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: /apps/backend/protection-worker
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      protection-worker-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: /apps/backend/return-attribution
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      return-attribution-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: /apps/backend/oracle-worker
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      oracle-worker-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: /apps/backend
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      backend-docker:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: /apps/backend/otel-log-router
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      otel-log-router-docker:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: /infra/rpc/gateway
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      rpc-gateway-docker:
+        patterns:
+          - "*"
   - package-ecosystem: terraform
     directory: /infra/terraform
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      terraform-core:
+        patterns:
+          - "*"
   - package-ecosystem: terraform
     directory: /infra/terraform-rpc
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      terraform-rpc:
+        patterns:
+          - "*"
