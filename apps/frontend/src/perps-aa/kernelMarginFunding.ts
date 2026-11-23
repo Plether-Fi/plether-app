@@ -4,6 +4,7 @@ import { isAddressEqual, keccak256, parseEventLogs, zeroAddress, type PublicClie
 import { arbitrumSepolia } from 'viem/chains'
 import { ERC20_ABI } from '../contracts/abis'
 import { PERPS_RELEASE } from '../contracts/perpsAddresses'
+import { isTransactionFeeCapRejected } from '../utils/transactionFailure'
 import { estimateKernelOwnerTransactionFees } from './kernelEthFunding'
 import { kernelAttemptScopeKey, withKernelOperationLane } from './kernelOperationJournal'
 import { findKernelOwnerTransaction, type KernelWalletSubmission } from './kernelWalletPayment'
@@ -112,8 +113,9 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
     if (balance < amount) throw new Error('The Owner Wallet has insufficient USDG for this deposit.')
 
     if (await readAllowance() < amount) {
-      const fees = await estimateKernelOwnerTransactionFees(client)
       await assertOwner()
+      const fees = await estimateKernelOwnerTransactionFees(client)
+      requireCurrent()
       onStage?.('approving')
       const hash = await wallet.sendTransaction({ account: ownerAddress, chain: arbitrumSepolia, ...approval, ...fees })
       const receipt = await client.waitForTransactionReceipt({ hash, timeout: 60_000 })
@@ -123,11 +125,13 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
     }
     await client.simulateContract({ address: clearinghouse, abi: fundingAbi, functionName: 'depositFor',
       args: [scope.sender, amount], account: ownerAddress })
-    const [fees, fromBlock, nonce] = await Promise.all([
-      estimateKernelOwnerTransactionFees(client), client.getBlockNumber({ cacheTime: 0 }),
+    const [fromBlock, nonce] = await Promise.all([
+      client.getBlockNumber({ cacheTime: 0 }),
       client.getTransactionCount({ address: ownerAddress, blockTag: 'pending' }),
     ])
     await assertOwner()
+    const fees = await estimateKernelOwnerTransactionFees(client)
+    requireCurrent()
     const submission = { amount, fromBlock, nonce }
     await set(key, submission, journal)
     onStage?.('depositing')
@@ -135,7 +139,7 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
     try {
       transactionHash = await wallet.sendTransaction({ account: ownerAddress, chain: arbitrumSepolia, ...deposit, nonce, ...fees })
     } catch (error) {
-      if (isExplicitSignatureRejection(error)) {
+      if (isExplicitSignatureRejection(error) || isTransactionFeeCapRejected(error)) {
         await del(key, journal)
         throw error
       }

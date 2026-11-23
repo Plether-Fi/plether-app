@@ -16,6 +16,7 @@ export const TRANSACTION_FAILURE_MESSAGES: Record<string, string> = {
   REQUEST_TIMEOUT: 'The request timed out. Check account activity before retrying; it may still be processing.',
   RECEIPT_TIMEOUT: 'Confirmation is taking longer than expected. Check account activity before submitting another transaction.',
   REQUEST_ABORTED: 'The request was interrupted. Check account activity before trying again.',
+  FEE_CAP_TOO_LOW: 'Gas price was below the current base fee. Retry for a fresh gas quote.',
   INSUFFICIENT_FUNDS: 'There are not enough funds for this transaction. Check your token balance and the network gas balance.',
   INSUFFICIENT_GAS_ETH: 'The Trading Account needs more ETH to cover network gas. Add ETH or open Gas settings to check sponsorship.',
   INSUFFICIENT_FREE_EQUITY: 'Not enough available trading collateral. Reduce the order size or add collateral.',
@@ -89,7 +90,23 @@ export function* transactionErrorRecords(error: unknown): Generator<object> {
   yield* visit(error, 0)
 }
 
+const rejectedFeeCapMessage = /(?:max fee per gas|fee cap) less than (?:the )?block base fee/i
+
+export function isTransactionFeeCapRejected(error: unknown): boolean {
+  // Viem also maps "transaction is outdated" to FeeCapTooLowError. Require
+  // the actual base-fee rejection text to distinguish it from nonce errors.
+  if (typeof error === 'string') return rejectedFeeCapMessage.test(error)
+  for (const record of transactionErrorRecords(error)) {
+    for (const field of ['message', 'details']) {
+      const message = errorField(record, field)
+      if (typeof message === 'string' && rejectedFeeCapMessage.test(message)) return true
+    }
+  }
+  return false
+}
+
 export function transactionFailureCode(error: unknown): string {
+  if (isTransactionFeeCapRejected(error)) return 'FEE_CAP_TOO_LOW'
   let fallback = 'UNKNOWN'
   for (const record of transactionErrorRecords(error)) {
     const rawReason = errorField(record, 'diagnosticCode') ?? errorField(record, 'reason')

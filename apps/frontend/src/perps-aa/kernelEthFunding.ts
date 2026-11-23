@@ -61,7 +61,10 @@ export function buildKernelEthWithdrawal(runtime: KernelPerpsAaSmartAccountRunti
 
 export function estimateKernelOwnerTransactionFees(client: PublicClient) {
   if (client.chain?.id !== arbitrumSepolia.id) throw new Error('Use Arbitrum Sepolia to quote the owner wallet fee.')
-  return client.estimateFeesPerGas({ chain: client.chain, type: 'eip1559' })
+  // The wallet may hold this quote while the user reviews the transaction.
+  // EIP-1559 charges the inclusion fee up to the cap.
+  const chain = { ...client.chain, fees: { ...client.chain.fees, baseFeeMultiplier: 2 } }
+  return client.estimateFeesPerGas({ chain, type: 'eip1559' })
 }
 
 export async function sendKernelEthTopUp(

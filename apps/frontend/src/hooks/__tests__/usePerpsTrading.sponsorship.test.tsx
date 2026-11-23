@@ -199,7 +199,9 @@ describe('usePerpsTrading sponsorship route', () => {
 
     await expect(result.current.fundTradingAccount(1_000_000n)).resolves.toBe(TRANSACTION_HASH)
     expect(mocks.estimateFeesPerGas).toHaveBeenCalledTimes(2)
-    expect(mocks.estimateFeesPerGas).toHaveBeenLastCalledWith({ chain: arbitrumSepolia, type: 'eip1559' })
+    expect(mocks.estimateFeesPerGas).toHaveBeenLastCalledWith({
+      chain: expect.objectContaining({ id: arbitrumSepolia.id, fees: { baseFeeMultiplier: 2 } }), type: 'eip1559',
+    })
     expect(mocks.writeContractAsync).toHaveBeenLastCalledWith(expect.objectContaining({
       ...refreshedFees, account: OWNER, chainId: 421614, address: SETTLEMENT_TOKEN,
       functionName: 'transfer', args: [ACCOUNT, 1_000_000n],

@@ -690,6 +690,7 @@ export function usePerpsTrading() {
   ])
 
   const depositMarginFromOwnerWallet = useCallback(async (amount: bigint, onStage?: (stage: 'approving' | 'depositing') => void) => {
+    let stage: 'preparing' | 'approving' | 'depositing' = 'preparing'
     try {
       const { runtime } = requireTradingExecution()
       if (!runtime.kernel || !runtime.gasPayment.paysEthFromWallet || !walletClient) {
@@ -700,7 +701,8 @@ export function usePerpsTrading() {
       const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, true)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       return await depositKernelMarginFromOwner({
-        client: requireClient(publicClient), wallet: walletClient, runtime, amount, onStage,
+        client: requireClient(publicClient), wallet: walletClient, runtime, amount,
+        onStage: next => { stage = next; onStage?.(next) },
         requireCurrent: () => {
           const current = requireCurrentKernelRuntime(runtime)
           const preference = readGasPaymentPreference(current.gasPayment.scope)
@@ -711,7 +713,7 @@ export function usePerpsTrading() {
         },
       })
     } catch (error) {
-      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'deposit'), { surface: 'perps', action: 'deposit' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'deposit'), { surface: 'perps', action: 'deposit', stage })
     } finally {
       invalidatePerpsReads()
     }

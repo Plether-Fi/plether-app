@@ -106,4 +106,24 @@ describe('Owner Wallet margin deposit', () => {
     expect(f.sendTransaction).toHaveBeenCalledTimes(1)
     expect(records.size).toBe(0)
   })
+
+  it('allows a fresh deposit after the wallet RPC explicitly rejects its fee cap', async () => {
+    const f = fixture()
+    const error = new Error('Wallet submission failed', { cause: new Error('max fee per gas less than block base fee') })
+    f.sendTransaction.mockRejectedValueOnce(error)
+    await expect(f.execute()).rejects.toBe(error)
+    expect(records.size).toBe(0)
+    expect(f.waitForTransactionReceipt).not.toHaveBeenCalled()
+    await expect(f.execute()).resolves.toBe(hash)
+    expect(f.sendTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an ambiguous outdated-transaction response in recovery', async () => {
+    const f = fixture()
+    f.sendTransaction.mockRejectedValueOnce(Object.assign(new Error('transaction is outdated'), { name: 'FeeCapTooLowError' }))
+    await expect(f.execute()).rejects.toThrow('deposit could not be verified')
+    expect(records.size).toBe(1)
+    await expect(f.execute()).rejects.toThrow('deposit is still unverified')
+    expect(f.sendTransaction).toHaveBeenCalledTimes(1)
+  })
 })

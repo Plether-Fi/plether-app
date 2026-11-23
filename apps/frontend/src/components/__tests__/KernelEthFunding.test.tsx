@@ -97,7 +97,9 @@ describe('Kernel ETH funding', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send ETH from Owner Wallet' }))
     expect(await screen.findByText(/ETH transfer confirmed/)).toBeVisible()
     expect(mocks.verifyAccount).toHaveBeenCalledTimes(3)
-    expect(mocks.estimateFeesPerGas).toHaveBeenCalledWith({ chain: arbitrumSepolia, type: 'eip1559' })
+    expect(mocks.estimateFeesPerGas).toHaveBeenCalledWith({
+      chain: expect.objectContaining({ id: arbitrumSepolia.id, fees: { baseFeeMultiplier: 2 } }), type: 'eip1559',
+    })
     expect(mocks.sendTransaction).toHaveBeenCalledWith({ account: owner, chain: arbitrumSepolia, to: sender, value: parseEther('0.01'), ...networkFees })
     expect(mocks.getBalance).toHaveBeenCalledTimes(2)
     expect(mocks.getBalance).toHaveBeenLastCalledWith({ address: sender, blockNumber: verifiedAccount.blockNumber })
