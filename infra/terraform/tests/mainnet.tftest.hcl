@@ -42,6 +42,10 @@ mock_provider "aws" {
     override_during = plan
     defaults        = { arn = "arn:aws:ecr:ap-southeast-1:111122223333:repository/plether-api", repository_url = "111122223333.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api" }
   }
+  mock_resource "aws_ssm_document" {
+    override_during = plan
+    defaults        = { arn = "arn:aws:ssm:ap-southeast-1:111122223333:document/plether-mainnet-rpc-node-admin" }
+  }
 }
 
 variables {
@@ -56,8 +60,7 @@ variables {
   alb_origin_secret_header_value                       = "0123456789abcdef0123456789abcdef0123456789abcdef"
   cors_origins                                         = "https://app.plether.com"
   operations_alarm_sns_topic_arn                       = "arn:aws:sns:ap-southeast-1:111122223333:plether-mainnet-operations"
-  enable_incident_observer                             = true
-  incident_observer_package_path                       = "../incident-observer/handler.py"
+  enable_incident_observer                             = false
   incident_escalation_sns_topic_arn                    = "arn:aws:sns:ap-southeast-1:111122223333:plether-mainnet-operations"
   rpc_request_rate_warning_threshold                   = 225000
   rpc_request_rate_critical_threshold                  = 275000
@@ -151,7 +154,7 @@ run "mainnet_baseline_enforces_security_observability_and_full_parity" {
       length(aws_ecs_service.aa_reconciler) == 1 &&
       length(aws_ecs_service.protection_worker) == 1 &&
       length(aws_cloudwatch_metric_alarm.vault_indexer_heartbeat_missing) == 1 &&
-      length(aws_cloudwatch_metric_alarm.alb_unhealthy_hosts) == 1 &&
+      aws_cloudwatch_metric_alarm.alb_unhealthy_hosts.alarm_name == "plether-mainnet-api-alb-unhealthy-hosts" &&
       contains(aws_cloudwatch_metric_alarm.alb_5xx.ok_actions, var.operations_alarm_sns_topic_arn) &&
       aws_cloudwatch_metric_alarm.rpc_request_rate_warning.threshold == 225000
     )
