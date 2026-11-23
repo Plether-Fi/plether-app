@@ -156,6 +156,10 @@ test('negative-VPI open binds trace payOut calls and Transfer receipts for fail-
     const mutated = negOpen(); mutate(mutated)
     assert.throws(() => decodeActions(mutated.trace, mutated.logs, release))
   }
+  for (const missing of ['housePool', 'marginClearinghouse', 'settlementToken']) {
+    const partial = { contracts: { ...release.contracts, [missing]: undefined } }
+    assert.throws(() => decodeActions(negOpen().trace, negOpen().logs, partial), /bindings/)
+  }
 })
 
 test('batch Close payout before PositionClosed does not bleed into a subsequent Open interval', () => {

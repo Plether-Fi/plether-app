@@ -44,7 +44,7 @@ function decodeOpenPoolOutflow(openNode, sidecar, engine, housePool, marginClear
       const [recipientWord, amount] = words('0x' + child.input.slice(10), 2)
       if (recipientWord >= (1n << 160n)) throw new AttributionError('Malformed open pool payout recipient')
       const recipient = ('0x' + recipientWord.toString(16).padStart(40, '0')).toLowerCase()
-      if (marginClearinghouse && !same(recipient, marginClearinghouse)) throw new AttributionError('Unexpected open pool payout recipient')
+      if (!marginClearinghouse || !same(recipient, marginClearinghouse)) throw new AttributionError('Unexpected open pool payout recipient')
       outflow += amount
     }
     for (const nested of child.calls ?? []) walk(nested)
@@ -92,7 +92,10 @@ export function decodeActions(trace, receiptLogs, release) {
         if ((kind === 'Liquidation' && !delta.liquidatable) || (kind !== 'Liquidation' && (!delta.valid || Number(delta.revertCode) !== 0))) throw new AttributionError('Unsuccessful settlement delta')
         let openPoolOutflow = 0n
         if (kind === 'Open') {
-          if (BigInt(delta.posVpiAccruedDelta) < 0n && !Array.isArray(node.calls)) throw new AttributionError('Negative-VPI open requires settlement payout trace evidence')
+          if (BigInt(delta.posVpiAccruedDelta) < 0n) {
+            if (!housePool || !marginClearinghouse || !settlementToken) throw new AttributionError('Negative-VPI open requires pool, clearinghouse and token bindings')
+            if (!Array.isArray(node.calls)) throw new AttributionError('Negative-VPI open requires settlement payout trace evidence')
+          }
           openPoolOutflow = decodeOpenPoolOutflow(node, sidecar, engine, housePool, marginClearinghouse)
         }
         actions.push({ kind, delta, markPrice: quote.mark, frozenSpreadPaid: 0n, openPoolOutflow })
@@ -111,13 +114,14 @@ export function decodeActions(trace, receiptLogs, release) {
     if (data[0] !== BigInt(action.kind === 'Open' ? action.delta.posSide : action.delta.side) || data[1] !== size || data[2] !== BigInt(action.delta.price)) throw new AttributionError('Settlement size/price mismatch')
     action.logIndex = Number(BigInt(position.logIndex))
     const previous = index > 0 ? Number(BigInt(positions[index - 1].logIndex)) : -1
-    if (action.kind === 'Open' && settlementToken && housePool) {
+    if (action.kind === 'Open' && (BigInt(action.delta.posVpiAccruedDelta) < 0n || action.openPoolOutflow > 0n || (settlementToken && housePool))) {
+      if (!settlementToken || !housePool || !marginClearinghouse) throw new AttributionError('Open pool outflow requires pool, clearinghouse and token bindings')
       const transfers = receiptLogs.filter(log => same(log.address, settlementToken) && log.topics?.[0] === TOPICS.transfer
         && log.topics.length === 3 && Number(BigInt(log.logIndex)) > previous && Number(BigInt(log.logIndex)) < action.logIndex
         && addressTopic(log.topics[1]) === housePool.toLowerCase())
       let receiptOutflow = 0n
       for (const transfer of transfers) {
-        if (marginClearinghouse && addressTopic(transfer.topics[2]) !== marginClearinghouse.toLowerCase()) throw new AttributionError('Unexpected open pool payout recipient')
+        if (addressTopic(transfer.topics[2]) !== marginClearinghouse.toLowerCase()) throw new AttributionError('Unexpected open pool payout recipient')
         receiptOutflow += words(transfer.data, 1)[0]
       }
       if (receiptOutflow !== action.openPoolOutflow) throw new AttributionError('Open pool outflow receipt/trace mismatch')
