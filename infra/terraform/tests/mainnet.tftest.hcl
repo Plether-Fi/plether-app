@@ -46,6 +46,10 @@ mock_provider "aws" {
     override_during = plan
     defaults        = { arn = "arn:aws:ssm:ap-southeast-1:111122223333:document/plether-mainnet-rpc-node-admin" }
   }
+  mock_resource "aws_ssm_parameter" {
+    override_during = plan
+    defaults        = { arn = "arn:aws:ssm:ap-southeast-1:111122223333:parameter/plether/mainnet/mock" }
+  }
 }
 
 variables {
