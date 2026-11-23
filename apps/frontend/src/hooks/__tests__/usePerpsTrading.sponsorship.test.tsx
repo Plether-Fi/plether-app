@@ -4,6 +4,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, type Address, type Hex } from 'viem'
+import { arbitrumSepolia } from 'viem/chains'
 import { ERC20_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI } from '../../contracts/abis'
 import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
 import { KernelGasReviewCancelled } from '../usePerpsGasReview'
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   executeSponsoredPerpsAction: vi.fn(),
   trackSponsoredOperationPreflightFailure: vi.fn(),
   writeContractAsync: vi.fn(),
+  estimateFeesPerGas: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
   invalidateQueries: vi.fn(),
   readinessBlocker: vi.fn(),
@@ -39,6 +41,8 @@ vi.mock('../../perps-aa/readiness', () => ({
 vi.mock('wagmi', () => ({
   useWalletClient: () => ({ data: undefined }),
   usePublicClient: () => ({
+    chain: arbitrumSepolia,
+    estimateFeesPerGas: mocks.estimateFeesPerGas,
     waitForTransactionReceipt: mocks.waitForTransactionReceipt,
   }),
   useWriteContract: () => ({
@@ -142,6 +146,7 @@ describe('usePerpsTrading sponsorship route', () => {
       transactionHash: TRANSACTION_HASH,
     })
     mocks.writeContractAsync.mockResolvedValue(TRANSACTION_HASH)
+    mocks.estimateFeesPerGas.mockReset()
     mocks.waitForTransactionReceipt.mockResolvedValue({
       status: 'success',
       transactionHash: TRANSACTION_HASH,
@@ -174,7 +179,31 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(mocks.waitForTransactionReceipt).toHaveBeenCalledWith({
       hash: TRANSACTION_HASH,
     })
+    expect(mocks.estimateFeesPerGas).not.toHaveBeenCalled()
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it('quotes a fresh owner wallet fee for each Kernel USDG funding attempt', async () => {
+    mocks.useKernel = true
+    writeGasPaymentPreference(kernelScope, 'eth')
+    const initialFees = { maxFeePerGas: 24_048_000n, maxPriorityFeePerGas: 0n }
+    const refreshedFees = { maxFeePerGas: 24_129_600n, maxPriorityFeePerGas: 0n }
+    mocks.estimateFeesPerGas.mockResolvedValueOnce(initialFees).mockResolvedValueOnce(refreshedFees)
+    mocks.writeContractAsync.mockRejectedValueOnce(new Error('max fee per gas less than block base fee'))
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.fundTradingAccount(1_000_000n)).rejects.toThrow('Gas price was below')
+    expect(mocks.writeContractAsync).toHaveBeenCalledTimes(1)
+    expect(mocks.waitForTransactionReceipt).not.toHaveBeenCalled()
+    expect(mocks.writeContractAsync).toHaveBeenLastCalledWith(expect.objectContaining(initialFees))
+
+    await expect(result.current.fundTradingAccount(1_000_000n)).resolves.toBe(TRANSACTION_HASH)
+    expect(mocks.estimateFeesPerGas).toHaveBeenCalledTimes(2)
+    expect(mocks.estimateFeesPerGas).toHaveBeenLastCalledWith({ chain: arbitrumSepolia, type: 'eip1559' })
+    expect(mocks.writeContractAsync).toHaveBeenLastCalledWith(expect.objectContaining({
+      ...refreshedFees, account: OWNER, chainId: 421614, address: SETTLEMENT_TOKEN,
+      functionName: 'transfer', args: [ACCOUNT, 1_000_000n],
+    }))
   })
 
   it('builds an atomic Trading Account balance deposit without a direct EOA write', async () => {

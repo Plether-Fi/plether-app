@@ -59,6 +59,11 @@ export function buildKernelEthWithdrawal(runtime: KernelPerpsAaSmartAccountRunti
   }
 }
 
+export function estimateKernelOwnerTransactionFees(client: PublicClient) {
+  if (client.chain?.id !== arbitrumSepolia.id) throw new Error('Use Arbitrum Sepolia to quote the owner wallet fee.')
+  return client.estimateFeesPerGas({ chain: client.chain, type: 'eip1559' })
+}
+
 export async function sendKernelEthTopUp(
   runtime: KernelPerpsAaSmartAccountRuntime, client: PublicClient, walletClient: WalletClient, amount: bigint,
 ) {
@@ -66,11 +71,10 @@ export async function sendKernelEthTopUp(
   const recipient = await verifyKernelEthRecipient(runtime)
   const [addresses, chainId] = await Promise.all([walletClient.getAddresses(), walletClient.getChainId()])
   const selected = addresses.at(0)
-  if (client.chain?.id !== arbitrumSepolia.id || chainId !== arbitrumSepolia.id ||
-      selected === undefined || !isAddressEqual(selected, recipient.ownerAddress)) {
+  if (chainId !== arbitrumSepolia.id || selected === undefined || !isAddressEqual(selected, recipient.ownerAddress)) {
     throw new Error('Connect the Owner Wallet on Arbitrum Sepolia to send ETH.')
   }
-  const fees = await client.estimateFeesPerGas({ chain: client.chain, type: 'eip1559' })
+  const fees = await estimateKernelOwnerTransactionFees(client)
   return walletClient.sendTransaction({
     account: recipient.ownerAddress, chain: arbitrumSepolia, to: recipient.address, value: amount, ...fees,
   })

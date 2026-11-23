@@ -78,6 +78,7 @@ import { buildPlaceOrderV3Action } from '../perps-aa/orderActionV3'
 import { persistProtectionIntent, relaxedProtectionCloseLimits, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
 import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV3Bindings'
 import { readGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
+import { estimateKernelOwnerTransactionFees } from '../perps-aa/kernelEthFunding'
 import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
 import type { PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import { KernelGasReviewCancelled, kernelQuoteIsFresh } from './usePerpsGasReview'
@@ -655,6 +656,7 @@ export function usePerpsTrading() {
       const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, sponsored.runtime.kernel !== undefined)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const client = requireClient(publicClient)
+      const ownerFees = sponsored.runtime.kernel ? await estimateKernelOwnerTransactionFees(client) : undefined
       const hash = await writeContractAsync({
         account: sponsored.ownerAddress,
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -662,6 +664,7 @@ export function usePerpsTrading() {
         abi: ERC20_ABI,
         functionName: 'transfer',
         args: [sponsored.accountAddress, amount],
+        ...ownerFees,
       })
       const receipt = await client.waitForTransactionReceipt({ hash })
       if (receipt.status === 'reverted') {
