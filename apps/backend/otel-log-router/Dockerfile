@@ -1,4 +1,4 @@
-FROM docker.io/amazon/aws-for-fluent-bit:3.0.0@sha256:8d37b4b024fab89cffa497c06d23119044578127c46fae9d37ca3b640d444cdb
+FROM docker.io/amazon/aws-for-fluent-bit:3.5.9@sha256:459e631c3bb563c55ec4e36b5e0ada9757ccd1e549a51d41122f7693281b076e
 
 COPY apps/backend/otel-log-router/otel-enrichment.conf /fluent-bit/etc/otel-enrichment.conf
 COPY apps/backend/otel-log-router/plether-parsers.conf /fluent-bit/etc/plether-parsers.conf
