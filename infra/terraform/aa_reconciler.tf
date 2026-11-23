@@ -81,10 +81,10 @@ resource "aws_iam_role_policy" "aa_reconciler_execution_secrets" {
         "ssm:GetParameter"
       ]
       Resource = compact([
-        aws_ssm_parameter.database_url.arn,
+        local.database_url_parameter_arn,
         local.application_rpc_url_parameter_arn,
         local.aa_reconciler_secondary_rpc_url_parameter_arn,
-        aws_ssm_parameter.posthog_otlp_authorization_header.arn,
+        local.posthog_otlp_authorization_header_parameter_arn,
         local.perps_rpc_auth_token_parameter_arn,
       ])
     }]
@@ -213,7 +213,7 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
       secrets = concat([
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         },
         {
           name      = "PERPS_RPC_URL"

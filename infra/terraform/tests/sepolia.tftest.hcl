@@ -16,7 +16,7 @@ mock_provider "aws" {
   }
   override_resource {
     override_during = plan
-    target          = aws_ssm_parameter.posthog_otlp_authorization_header
+    target          = aws_ssm_parameter.posthog_otlp_authorization_header[0]
     values          = { arn = "arn:aws:ssm:ap-southeast-1:932542905614:parameter/plether/sepolia/posthog-otlp-authorization-header" }
   }
   override_resource {

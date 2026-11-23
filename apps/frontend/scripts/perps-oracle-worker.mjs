@@ -1,21 +1,48 @@
 import { createSocket } from 'node:dgram'
+import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { arbitrumSepolia } from 'viem/chains'
+import { arbitrum, arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
+const ARBITRUM_ONE_CHAIN_ID = 42161
 // Mined-block replays passed at this limit and reverted at the original limits.
 const MARK_REFRESH_GAS_LIMIT = 1_200_000n
 const ORACLE_WAKE_PORT = 3017
 const ORACLE_WAKE_PACKET = Buffer.from('plether-oracle-wake-v1')
 const MIN_WAKE_INTERVAL_MS = 1000
 
-const ADDRESSES = {
+const DEFAULT_SEPOLIA_ADDRESSES = {
   orderRouter: '0x918663d6da8cb33b325a04c4a5e8c51d42f3b444',
   pletherOracle: '0x4f2c62a0e03657f52c633c19c11f88d8f0897bb2',
   perpsPublicLens: '0xe1c9c8d3c068c49d933396c9591a55126f29d10e',
 }
+
+function resolveRuntimeTarget() {
+  const manifestPath = process.env.PERPS_RELEASE_MANIFEST
+  let manifest
+  if (manifestPath && fs.existsSync(manifestPath)) {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  }
+  const chainId = Number(process.env.PERPS_CHAIN_ID ?? manifest?.network?.chainId ?? ARBITRUM_SEPOLIA_CHAIN_ID)
+  if (![ARBITRUM_SEPOLIA_CHAIN_ID, ARBITRUM_ONE_CHAIN_ID].includes(chainId)) {
+    throw new Error(`Unsupported PERPS_CHAIN_ID: ${chainId}`)
+  }
+  const addresses = {
+    orderRouter: process.env.PERPS_ORDER_ROUTER || manifest?.contracts?.orderRouter?.address || (chainId === ARBITRUM_SEPOLIA_CHAIN_ID ? DEFAULT_SEPOLIA_ADDRESSES.orderRouter : ''),
+    pletherOracle: process.env.PERPS_PLETHER_ORACLE || manifest?.contracts?.pletherOracle?.address || (chainId === ARBITRUM_SEPOLIA_CHAIN_ID ? DEFAULT_SEPOLIA_ADDRESSES.pletherOracle : ''),
+    perpsPublicLens: process.env.PERPS_PUBLIC_LENS || manifest?.contracts?.perpsPublicLens?.address || (chainId === ARBITRUM_SEPOLIA_CHAIN_ID ? DEFAULT_SEPOLIA_ADDRESSES.perpsPublicLens : ''),
+  }
+  return {
+    chainId,
+    chain: chainId === ARBITRUM_ONE_CHAIN_ID ? arbitrum : arbitrumSepolia,
+    addresses,
+  }
+}
+
+const TARGET = resolveRuntimeTarget()
+const ADDRESSES = TARGET.addresses
 
 const PERPS_PUBLIC_LENS_ABI = [
   {
@@ -551,7 +578,7 @@ async function main() {
   const args = new Set(process.argv.slice(2))
   const loop = args.has('--loop')
   const dryRun = process.env.DRY_RUN === 'true' || args.has('--dry-run')
-  const rpcUrl = requiredEnv('ARBITRUM_SEPOLIA_RPC_URL', 'RPC_URL')
+  const rpcUrl = requiredEnv('PERPS_RPC_URL', 'ARBITRUM_SEPOLIA_RPC_URL', 'RPC_URL')
   const backendUrl = process.env.PERPS_ORACLE_UPDATER_BACKEND_URL ?? 'http://127.0.0.1:3001'
   const pollSeconds = positiveInteger(
     readFlag('--poll-seconds', process.env.PERPS_ORACLE_UPDATER_POLL_SECONDS ?? '30'),
@@ -572,19 +599,19 @@ async function main() {
   }
 
   const publicClient = createPublicClient({
-    chain: arbitrumSepolia,
+    chain: TARGET.chain,
     transport: rpcTransport(rpcUrl),
   })
   const chainId = await publicClient.getChainId()
-  if (chainId !== ARBITRUM_SEPOLIA_CHAIN_ID) {
-    throw new Error(`Wrong RPC chain id: expected ${ARBITRUM_SEPOLIA_CHAIN_ID}, got ${chainId}`)
+  if (chainId !== TARGET.chainId) {
+    throw new Error(`Wrong RPC chain id: expected ${TARGET.chainId}, got ${chainId}`)
   }
 
   const account = privateKey ? privateKeyToAccount(privateKey) : undefined
   const walletClient = account
     ? createWalletClient({
       account,
-      chain: arbitrumSepolia,
+      chain: TARGET.chain,
       transport: rpcTransport(rpcUrl),
     })
     : undefined

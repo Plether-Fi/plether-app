@@ -36,11 +36,31 @@ def parameter(name, region):
     return json.loads(json.loads(raw)['Parameter']['Value'])
 
 
+SUPPORTED_CHAINS = {
+    421614: ('sepolia-rollup', 11155111),
+    42161: ('arb1', 1),
+}
+
+
+def resolve_chain(config):
+    chain_id = config.get('chain_id', 421614)
+    if isinstance(chain_id, bool) or chain_id not in SUPPORTED_CHAINS:
+        raise ValueError('unsupported Arbitrum chain ID')
+    expected_name, expected_parent_id = SUPPORTED_CHAINS[chain_id]
+    chain_name = config.get('chain_name', expected_name)
+    parent_chain_id = config.get('parent_chain_id', expected_parent_id)
+    if chain_name != expected_name or parent_chain_id != expected_parent_id:
+        raise ValueError('chain_name or parent_chain_id does not match chain_id')
+    return chain_id, chain_name, parent_chain_id
+
+
 def validate_config(config, parent):
+    chain_id, chain_name, _ = resolve_chain(config)
     if not re.fullmatch(r'offchainlabs/nitro-node@sha256:[0-9a-f]{64}', config['image']):
         raise ValueError('Nitro must be pinned to an official image digest')
-    if not re.fullmatch(r'https://snapshot\.arbitrum\.foundation/sepolia-rollup/[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]+/', config['snapshot_url']):
-        raise ValueError('snapshot must be a pinned official Sepolia directory')
+    snapshot_pattern = rf'https://snapshot\.arbitrum\.foundation/{re.escape(chain_name)}/[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}-[0-9a-f]+/'
+    if not re.fullmatch(snapshot_pattern, config['snapshot_url']):
+        raise ValueError(f'snapshot must be a pinned official {chain_name} directory')
     if not re.fullmatch(r'[0-9a-f]{64}', config['snapshot_metadata_sha256']):
         raise ValueError('snapshot metadata hash is required')
     history = config['state_history_blocks']
@@ -112,10 +132,11 @@ def initialize(config):
 
 
 def nitro_config(config, parent):
+    chain_id, chain_name, parent_chain_id = resolve_chain(config)
     return {
-        'chain': {'id': 421614, 'name': 'sepolia-rollup'},
+        'chain': {'id': chain_id, 'name': chain_name},
         'parent-chain': {
-            'id': 11155111,
+            'id': parent_chain_id,
             'connection': {'url': parent['execution_url']},
             'blob-client': {
                 'beacon-url': parent['beacon_url'],
@@ -189,8 +210,9 @@ def prepare(config, parent, region):
         raw = response.read(1024 * 1024 + 1)
     if hashlib.sha256(raw).hexdigest() != config['snapshot_metadata_sha256']:
         raise ValueError('snapshot metadata checksum mismatch')
+    chain_id, chain_name, _ = resolve_chain(config)
     metadata = json.loads(raw)
-    if (metadata['state_scheme'], metadata['snapshot_kind'], metadata['chain_name']) != ('path', 'full-path', 'sepolia-rollup'):
+    if (metadata['state_scheme'], metadata['snapshot_kind'], metadata['chain_name']) != ('path', 'full-path', chain_name):
         raise ValueError('snapshot database or chain mismatch')
     size = metadata['size']['total_bytes']
     if shutil.disk_usage(DATA).free < size * 1.3 or shutil.disk_usage(STAGING).free < size * 2.1:
@@ -198,7 +220,7 @@ def prepare(config, parent, region):
     command(*docker(config, region, bootstrap=True))
     if not any(DATA.glob('**/CURRENT')):
         raise ValueError('snapshot import did not produce a Pebble database')
-    (DATA / MARKER).write_text(json.dumps({'chain_id': 421614, 'scheme': 'path', 'snapshot': config['snapshot_url']}))
+    (DATA / MARKER).write_text(json.dumps({'chain_id': chain_id, 'scheme': 'path', 'snapshot': config['snapshot_url']}))
 
 
 def main():

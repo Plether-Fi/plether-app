@@ -942,7 +942,7 @@ test('healthy dry runs retain the normal polling cadence', async () => {
 test('both deployable mark updater scripts bind the canonical protocol release', () => {
   for (const file of ['perps-oracle-worker.mjs', 'update-perps-mark-price.mjs']) {
     const source = readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8')
-    const block = source.match(/const ADDRESSES = \{([\s\S]*?)\n\}/)?.[1]
+    const block = source.match(/const (?:DEFAULT_SEPOLIA_)?ADDRESSES = \{([\s\S]*?)\n\}/)?.[1]
     assert.ok(block, file + ' address bindings are missing')
     for (const name of ['orderRouter', 'pletherOracle', 'perpsPublicLens']) {
       assert.match(block, new RegExp(name + ": '" + release.contracts[name].address + "'"))

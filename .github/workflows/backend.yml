@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: read
+
 jobs:
   faucet-recovery:
     name: Faucet and publication database tests
@@ -22,8 +25,8 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -48,7 +51,7 @@ jobs:
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Test close assistance deployment controls
         working-directory: .
@@ -86,11 +89,14 @@ jobs:
           terraform_version: 1.16.1
           terraform_wrapper: false
 
-      - name: Test mocked Sepolia deployment and signer isolation guards
+      - name: Test mocked Sepolia, mainnet, RPC and signer isolation guards
         working-directory: .
         run: |
+          terraform -chdir=infra/terraform fmt -check -recursive
+          terraform -chdir=infra/terraform-rpc fmt -check -recursive
           terraform -chdir=infra/terraform init -backend=false -input=false
-          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -filter=tests/alto_ingress.tftest.hcl -no-color
+          terraform -chdir=infra/terraform validate
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -filter=tests/mainnet.tftest.hcl -filter=tests/alto_ingress.tftest.hcl -filter=tests/rpc.tftest.hcl -no-color
 
       - name: Test retained artifacts, immutable releases and protected recovery
         working-directory: .
@@ -133,7 +139,7 @@ jobs:
       run:
         working-directory: apps/backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
@@ -210,7 +216,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
@@ -288,7 +294,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"

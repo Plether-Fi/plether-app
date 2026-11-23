@@ -421,8 +421,12 @@ export function createGateway(config, dependencies = {}) {
   return { server, probe, state }
 }
 
+const ALLOWED_CHAIN_IDS = new Set(['0x66eee', '0xa4b1'])
+
 export function configFromEnv(env) {
   if (!env.RPC_GATEWAY_TOKEN || env.RPC_GATEWAY_TOKEN.length < 32) throw new Error('RPC_GATEWAY_TOKEN must have at least 32 characters')
+  const chainId = env.RPC_CHAIN_ID === undefined || env.RPC_CHAIN_ID === '' ? '0x66eee' : env.RPC_CHAIN_ID.toLowerCase()
+  if (!ALLOWED_CHAIN_IDS.has(chainId)) throw new Error('unsupported RPC_CHAIN_ID')
   const endpoint = (value, allowHttp) => {
     const url = new URL(value)
     if ((!allowHttp && url.protocol !== 'https:') || !['http:', 'https:'].includes(url.protocol)
@@ -439,7 +443,7 @@ export function configFromEnv(env) {
     ? backup : { url: referenceUrl, token: referenceToken }
   return {
     token: env.RPC_GATEWAY_TOKEN,
-    chainId: '0x66eee', // Arbitrum Sepolia 421614; this pilot cannot select mainnet.
+    chainId,
     primary: { url: endpoint(env.RPC_PRIMARY_URL, true) },
     backup,
     reference,

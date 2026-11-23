@@ -15,3 +15,14 @@ it('requires all supplied contract pins and current token capabilities', () => {
   assert.throws(() => requireDeployedRelease({ ...deployed, schemaVersion: 3 }), /unsupported/)
   assert.throws(() => requireDeployedRelease({ ...deployed, settlementToken: { ...deployed.settlementToken, supportsBridgeFunding: true } }), /capabilities/)
 })
+it('accepts Arbitrum One mainnet releases only with non-mock USDG', () => {
+  const mainnetTemplate = JSON.parse(fs.readFileSync(new URL('../../../../config/perps/arbitrum-one-v1.template.json', import.meta.url)))
+  assert.throws(() => requireDeployedRelease(mainnetTemplate), /deployment is required/)
+  const deployedMainnet = {
+    ...mainnetTemplate,
+    release: { ...mainnetTemplate.release, phase: 'deployed', deploymentBlock: 400000000 },
+    contracts: Object.fromEntries(Object.keys(mainnetTemplate.contracts).map(name => [name, { address: `0x${'3'.repeat(40)}`, runtimeCodeHash: `0x${'4'.repeat(64)}` }])),
+  }
+  assert.doesNotThrow(() => requireDeployedRelease(deployedMainnet))
+  assert.throws(() => requireDeployedRelease({ ...deployedMainnet, settlementToken: { ...deployedMainnet.settlementToken, isMock: true } }), /mainnet USDG/)
+})

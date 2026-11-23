@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - sepolia
+          - mainnet
       action:
         description: Deploy Alto, bootstrap its simulation contracts while dark, or roll back to a reviewed revision
         required: true
@@ -25,7 +26,7 @@ on:
         default: false
         type: boolean
       rollback_task_definition:
-        description: Exact ACTIVE plether-sepolia-alto task-definition ARN or family:revision (rollback only)
+        description: Exact ACTIVE plether-<environment>-alto task-definition ARN or family:revision (rollback only)
         required: false
         default: ''
         type: string
@@ -46,16 +47,16 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
-  ADMIN_ENVIRONMENT: alto-admin-sepolia
+  ADMIN_ENVIRONMENT: alto-admin-${{ inputs.environment }}
   DOCKER_CLI_EXPERIMENTAL: enabled
   TARGET_ENV: ${{ inputs.environment }}
   ALTO_ACTION: ${{ inputs.action }}
-  ECS_CLUSTER: plether-sepolia
+  ECS_CLUSTER: plether-${{ inputs.environment }}
   ECS_SERVICE: plether-alto
-  TASK_FAMILY: plether-sepolia-alto
-  ECR_REPOSITORY: plether-alto-sepolia
-  LOG_ROUTER_REPOSITORY: plether-otel-log-router-sepolia
-  ALTO_TARGET_GROUP: plether-sepolia-alto
+  TASK_FAMILY: plether-${{ inputs.environment }}-alto
+  ECR_REPOSITORY: plether-alto-${{ inputs.environment }}
+  LOG_ROUTER_REPOSITORY: ${{ inputs.environment == 'mainnet' && 'plether-otel-log-router' || 'plether-otel-log-router-sepolia' }}
+  ALTO_TARGET_GROUP: plether-${{ inputs.environment }}-alto
   ALTO_CONTAINER: plether-alto
   ALTO_TMP_INIT_CONTAINER: alto-tmp-init
   LOG_ROUTER_CONTAINER: otel-log-router
@@ -152,7 +153,7 @@ jobs:
     needs: protected-environment-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: alto-admin-sepolia
+    environment: alto-admin-${{ inputs.environment }}
     permissions:
       actions: read
       contents: read
@@ -232,8 +233,8 @@ jobs:
           set -euo pipefail
           umask 077
 
-          if [ "$TARGET_ENV" != "sepolia" ]; then
-            echo "::error::Alto deployment is restricted to Sepolia."
+          if [ "$TARGET_ENV" != "sepolia" ] && [ "$TARGET_ENV" != "mainnet" ]; then
+            echo "::error::Alto deployment supports only sepolia and mainnet."
             exit 1
           fi
           case "$ALTO_ACTION" in
@@ -260,7 +261,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong AWS target::AWS_DEPLOY_ROLE_ARN, AWS_ACCOUNT_ID, and AWS_REGION in the protected alto-admin-sepolia environment must identify the exact approved deployment boundary."
+            echo "::error title=Wrong AWS target::AWS_DEPLOY_ROLE_ARN, AWS_ACCOUNT_ID, and AWS_REGION in the protected $ADMIN_ENVIRONMENT environment must identify the exact approved deployment boundary."
             exit 1
           fi
           aws ecr describe-repositories \
@@ -369,9 +370,9 @@ jobs:
               --arg router "$LOG_ROUTER_CONTAINER" \
               --arg entrypoint "${ALTO_ENTRYPOINT,,}" \
               --arg deterministic_deployer "${ALTO_DETERMINISTIC_DEPLOYER,,}" \
-              --arg execution_role "arn:aws:iam::$actual_account_id:role/plether-sepolia-alto-execution" \
+              --arg execution_role "arn:aws:iam::$actual_account_id:role/plether-${TARGET_ENV}-alto-execution" \
               --arg rpc_methods "$ALTO_RPC_METHODS" \
-              --arg task_role "arn:aws:iam::$actual_account_id:role/plether-sepolia-alto-task" \
+              --arg task_role "arn:aws:iam::$actual_account_id:role/plether-${TARGET_ENV}-alto-task" \
               --arg health_command "$ALTO_HEALTH_COMMAND" \
               '
               def container($name): [.containerDefinitions[] | select(.name == $name)];
@@ -685,10 +686,18 @@ jobs:
             local label=$1
             local url=$2
             local response
+            local expected_hex expected_desc
+            if [ "$TARGET_ENV" = "mainnet" ]; then
+              expected_hex="0xa4b1"
+              expected_desc="Arbitrum One chain ID 42161"
+            else
+              expected_hex="0x66eee"
+              expected_desc="Arbitrum Sepolia chain ID 421614"
+            fi
             response=$(rpc_call "$url" eth_chainId '[]')
-            if ! jq -e '.error == null and ((.result // "") | ascii_downcase) == "0x66eee"' \
+            if ! jq -e --arg expected "$expected_hex" '.error == null and ((.result // "") | ascii_downcase) == $expected' \
                 <<< "$response" >/dev/null; then
-              echo "::error title=Alto RPC preflight failed::${label} did not report Arbitrum Sepolia chain ID 421614."
+              echo "::error title=Alto RPC preflight failed::${label} did not report ${expected_desc}."
               exit 1
             fi
           }
@@ -1121,25 +1130,10 @@ jobs:
             | [$scan.findings[] | select(.severity == "CRITICAL")] as $critical
             | if ($critical | length) == $critical_count then .
               else error("Alto critical finding count does not match detailed evidence") end
-            # Owner-approved temporary exception: this is risk acceptance, not
-            # a finding suppression or a claim that the runtime is unaffected.
-            | ($environment == "sepolia" and $region == "ap-southeast-1"
-                and $account == "932542905614" and $repository == "plether-alto-sepolia"
-                and $upstream == "sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
-                and $digest == "sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a"
-                and ($now | uint) and $now >= 1791331200 and $now < 1791936000) as $exception_scope
-            | [$critical[] | select($exception_scope
-                and .name == "CVE-2024-5535"
-                and package_attribute("package_name"; "openssl")
-                and package_attribute("package_version"; "3.1.4-r5"))] as $accepted
-            | if ($critical | length) != ($accepted | length) or ($accepted | length) > 1
+            | if ($critical | length) > 0
               then error("Alto image has an unaccepted critical finding")
-              else {criticalCount: $critical_count, acceptedCriticalCount: ($accepted | length)} end
+              else {criticalCount: $critical_count, acceptedCriticalCount: 0} end
             ' <<< "$scan_findings")
-          if [ "$(jq -r '.acceptedCriticalCount' <<< "$scan_policy")" -eq 1 ]; then
-            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-10-14 00:00 UTC. The finding remains visible; other critical findings still block deployment."
-            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-10-14 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
-          fi
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
           echo "digest=$mirrored_digest" >> "$GITHUB_OUTPUT"
@@ -1561,7 +1555,7 @@ jobs:
             exit 1
           fi
           bootstrap_task_definition=$(jq -er '.taskDefinition.taskDefinitionArn' "$registration_result")
-          if [[ ! "$bootstrap_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-alto-simulation-bootstrap:[1-9][0-9]*$ ]]; then
+          if [[ ! "$bootstrap_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-${TARGET_ENV}-alto-simulation-bootstrap:[1-9][0-9]*$ ]]; then
             echo "::error title=Unsafe bootstrap definition::ECS returned a malformed simulation-bootstrap task-definition ARN."
             exit 1
           fi
@@ -1576,9 +1570,10 @@ jobs:
           if ! jq --exit-status \
               --arg arn "$bootstrap_task_definition" \
               --arg owner "$REGISTRATION_OWNER" \
+              --arg family "plether-${TARGET_ENV}-alto-simulation-bootstrap" \
               '.taskDefinition.taskDefinitionArn == $arn
                and .taskDefinition.status == "ACTIVE"
-               and .taskDefinition.family == "plether-sepolia-alto-simulation-bootstrap"
+               and .taskDefinition.family == $family
                and (.tags | sort_by(.key)) == ([
                  {key:"Capability", value:"simulation-bootstrap"},
                  {key:"WorkflowOwner", value:$owner}
@@ -1941,7 +1936,7 @@ jobs:
           fi
 
           for bootstrap_task_definition in "${definition_arns[@]}"; do
-            if [[ ! "$bootstrap_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-alto-simulation-bootstrap:[1-9][0-9]*$ ]]; then
+            if [[ ! "$bootstrap_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-${TARGET_ENV}-alto-simulation-bootstrap:[1-9][0-9]*$ ]]; then
               echo "::error title=Unsafe bootstrap deregistration target::Refusing to deregister a malformed task-definition ARN."
               cleanup_failed=true
               continue
@@ -2068,7 +2063,7 @@ jobs:
             exit 1
           fi
           new_task_definition=$(jq -er '.taskDefinition.taskDefinitionArn' "$registration_result")
-          if [[ ! "$new_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-alto:[1-9][0-9]*$ ]]; then
+          if [[ ! "$new_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/${TASK_FAMILY}:[1-9][0-9]*$ ]]; then
             echo "::error title=Unsafe Alto definition::ECS returned a malformed Alto task-definition ARN."
             exit 1
           fi
@@ -2082,9 +2077,10 @@ jobs:
           if ! jq --exit-status \
               --arg arn "$new_task_definition" \
               --arg owner "$REGISTRATION_OWNER" \
+              --arg family "$TASK_FAMILY" \
               '.taskDefinition.taskDefinitionArn == $arn
                and .taskDefinition.status == "ACTIVE"
-               and .taskDefinition.family == "plether-sepolia-alto"
+               and .taskDefinition.family == $family
                and (.tags | sort_by(.key)) == ([
                  {key:"Capability", value:"alto-deployment"},
                  {key:"WorkflowOwner", value:$owner}
@@ -2661,7 +2657,7 @@ jobs:
           selected_definition=$(jq -er '.services[0].taskDefinition' "$service_file")
 
           for definition_arn in "${definition_arns[@]}"; do
-            expected_definition_prefix="arn:aws:ecs:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:task-definition/plether-sepolia-alto:"
+            expected_definition_prefix="arn:aws:ecs:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:task-definition/${TASK_FAMILY}:"
             definition_revision=${definition_arn#"$expected_definition_prefix"}
             if [ "$definition_revision" = "$definition_arn" ] \
                 || [[ ! "$definition_revision" =~ ^[1-9][0-9]*$ ]]; then
