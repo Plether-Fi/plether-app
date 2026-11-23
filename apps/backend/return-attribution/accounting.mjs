@@ -31,8 +31,23 @@ export class EntryLedger {
       if (lots <= 0n || lots * SIZE_QUANTUM !== bigint(d.sizeDelta)) throw new AttributionError('Invalid lot quantum')
       if (bigint(d.newPosSize) % SIZE_QUANTUM !== 0n || (old && old.side !== BigInt(d.posSide)) || (old?.lots ?? 0n) + lots !== bigint(d.newPosSize) / SIZE_QUANTUM) throw new AttributionError('Entry ledger prefix missing')
       this.positions.set(account, { lots: (old?.lots ?? 0n) + lots, cost: (old?.cost ?? 0n) + lots * action.markPrice, side: BigInt(d.posSide) })
-      // A successful open has no fail-soft VPI collection path.
-      sources.netVpi = bigint(d.posVpiAccruedDelta)
+      const accruedVpi = bigint(d.posVpiAccruedDelta)
+      if (accruedVpi >= 0n) {
+        if ((action.openPoolOutflow ?? 0n) !== 0n) throw new AttributionError('Positive-VPI open cannot pay out pool assets')
+        // Positive VPI collection on open has no fail-soft path.
+        sources.netVpi = accruedVpi
+      } else {
+        if (typeof action.openPoolOutflow !== 'bigint') throw new AttributionError('Negative-VPI open missing pool outflow evidence')
+        const minOutflow = bigint(d.poolRebatePayoutAssets)
+        const maxOutflow = -accruedVpi
+        if (minOutflow > maxOutflow || action.openPoolOutflow < minOutflow || action.openPoolOutflow > maxOutflow) {
+          throw new AttributionError('Negative-VPI open pool outflow out of bounds')
+        }
+        // Negative-VPI opens pay poolRebatePayoutAssets to the trader plus a
+        // fail-soft protocol execution fee top-up bounded by free pool cash.
+        // Any uncredited treasury fee portion never leaves HousePool.
+        sources.netVpi = -action.openPoolOutflow
+      }
       return sources
     }
     const size = bigint(action.kind === 'Close' ? d.sizeDelta : d.posSize)
