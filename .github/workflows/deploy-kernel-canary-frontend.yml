@@ -242,6 +242,18 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
+    env:
+      KERNEL_ACTIVE_MANIFEST_FILTER: >-
+        .jsonrpc == "2.0" and .id == 1 and .result.version == 1
+        and (.result.readiness | keys == ["eth", "sponsored"] and .eth == true and (.sponsored | type) == "boolean")
+        and ($phase != "sepolia_homepage" or .result.readiness.sponsored == false
+          or .result.paymaster == "0x9ff288e30489c4e29b13d6ba960612b5d6db8d50")
+        and (.result.profile | .deployment == $deployment and .chainId == 421614 and .entryPointVersion == "0.9"
+          and keys == ([
+            "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
+            "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
+            "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
+          ] | sort))
     steps:
       - name: Download reviewed canary payload
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -333,17 +345,8 @@ jobs:
             --header "X-Plether-AA-Proxy-Token: $KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN" \
             --data-binary '{"jsonrpc":"2.0","id":1,"method":"plether_getKernelManifest","params":[]}' \
             "$BACKEND_ORIGIN/api/aa/kernel/rpc"
-          jq --exit-status --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" '
-            .jsonrpc == "2.0" and .id == 1 and .result.version == 1
-            and .result.readiness.eth == true and (.result.readiness.sponsored | type) == "boolean"
-            and ($phase != "sepolia_homepage" or .result.readiness.sponsored == false
-              or .result.paymaster == "0x9ff288e30489c4e29b13d6ba960612b5d6db8d50")
-            and (.result.profile | .deployment == $deployment and .chainId == 421614 and .entryPointVersion == "0.9"
-              and keys == ([
-                "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
-                "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
-                "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
-              ] | sort))' "$RUNNER_TEMP/kernel-manifest.json" >/dev/null || {
+          jq --exit-status --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" \
+            "$KERNEL_ACTIVE_MANIFEST_FILTER" "$RUNNER_TEMP/kernel-manifest.json" >/dev/null || {
               echo '::error::The active route must serve the requested direct-factory profile with ETH readiness. Homepage sponsorship requires the pinned canary paymaster.'
               exit 1
             }
@@ -514,12 +517,15 @@ jobs:
               echo 'The legacy Trading Account RPC does not return its production EntryPoints.'
               return 1
             }
-            fetch -H 'Content-Type: application/json' \
+            fetch --max-time 20 -H 'Content-Type: application/json' \
               --data '{"jsonrpc":"2.0","id":1,"method":"plether_getKernelManifest","params":[]}' \
-              "$PREVIEW_ORIGIN/api/perps/v1/aa/kernel/rpc" | jq -e --arg deployment "$DEPLOYMENT" '
-                .id == 1 and .result.profile.deployment == $deployment
-                and .result.profile.chainId == 421614 and .result.readiness == {eth:true,sponsored:false}' >/dev/null || {
-              echo 'The live Kernel RPC does not report the reviewed ETH-only profile.'
+              "$PREVIEW_ORIGIN/api/perps/v1/aa/kernel/rpc" > "$RUNNER_TEMP/kernel-live-manifest.json" || {
+              echo 'The live Kernel RPC did not return a manifest.'
+              return 1
+            }
+            jq --exit-status --arg deployment "$DEPLOYMENT" --arg phase "$PHASE" \
+              "$KERNEL_ACTIVE_MANIFEST_FILTER" "$RUNNER_TEMP/kernel-live-manifest.json" >/dev/null || {
+              echo 'The live Kernel RPC did not return the reviewed profile with ETH readiness and the pinned paymaster when sponsored.'
               return 1
             }
           }
