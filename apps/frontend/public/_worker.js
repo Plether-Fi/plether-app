@@ -27,6 +27,37 @@ const EDGE_CACHE_STORED_AT_HEADER = 'X-Plether-Edge-Cached-At';
 const EDGE_CACHE_STATUS_HEADER = 'X-Plether-Edge-Cache';
 const EDGE_ORIGIN_TIMING_METRIC = 'plether_edge_origin';
 const EDGE_CACHE_TIMING_METRIC = 'plether_edge_cache';
+const ORIGIN_READ_TIMEOUT_MS = 4_000;
+const READINESS_TIMEOUT_MS = 1_800;
+const CANDLE_PROBE_TIMEOUT_MS = 2_500;
+const PUBLIC_RPC_READ_TIMEOUT_MS = 4_000;
+const MAX_ORIGIN_READ_ATTEMPTS = 2;
+const MAX_RETRYABLE_PUBLIC_RPC_BODY_BYTES = 65_536;
+const PUBLIC_RPC_PROXY_PATH = '/api/perps/v1/rpc';
+const READINESS_PROXY_PATH = '/api/perps/v1/readiness';
+const ORDER_WAIT_PATH_PATTERN = /^\/api\/perps\/v1\/perps\/orders\/[^/]+\/wait$/;
+const RETRYABLE_EDGE_ORIGIN_STATUSES = new Set([520, 522, 524, 525]);
+const READ_ONLY_PUBLIC_RPC_METHODS = new Set([
+  'eth_chainId',
+  'net_version',
+  'web3_clientVersion',
+  'eth_syncing',
+  'eth_blockNumber',
+  'eth_getBlockByNumber',
+  'eth_getBlockByHash',
+  'eth_getTransactionByHash',
+  'eth_getTransactionReceipt',
+  'eth_getTransactionCount',
+  'eth_getBalance',
+  'eth_getCode',
+  'eth_getStorageAt',
+  'eth_call',
+  'eth_estimateGas',
+  'eth_gasPrice',
+  'eth_feeHistory',
+  'eth_maxPriorityFeePerGas',
+  'eth_getLogs',
+]);
 const CACHE_SERVED_STATUSES = new Set([
   'HIT',
   'REVALIDATED',
@@ -112,6 +143,230 @@ const PUBLIC_HISTORY_VARIANTS = new Set([
   // Component-rich snapshots are only needed for the 24-hour comparison rail.
   '24h:3600:true',
 ]);
+
+function isLongPollRequest(pathname) {
+  return ORDER_WAIT_PATH_PATTERN.test(pathname);
+}
+
+function isRetryablePublicRpcBody(bodyBytes) {
+  if (bodyBytes.byteLength === 0 || bodyBytes.byteLength > MAX_RETRYABLE_PUBLIC_RPC_BODY_BYTES) {
+    return false;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bodyBytes));
+  } catch {
+    return false;
+  }
+
+  const calls = Array.isArray(parsed) ? parsed : [parsed];
+  if (calls.length === 0 || calls.length > 20) return false;
+  return calls.every(
+    (call) =>
+      call !== null &&
+      typeof call === 'object' &&
+      !Array.isArray(call) &&
+      typeof call.method === 'string' &&
+      READ_ONLY_PUBLIC_RPC_METHODS.has(call.method),
+  );
+}
+
+function createOriginTimeoutError(timeoutMs) {
+  const error = new Error(`Origin request timed out after ${timeoutMs}ms`);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+async function readBoundedPublicRpcBody(request, maxBytes) {
+  const contentLengthHeader = request.headers.get('Content-Length');
+  if (contentLengthHeader !== null) {
+    const trimmed = contentLengthHeader.trim();
+    if (/^\d+$/.test(trimmed) && Number(trimmed) > maxBytes) {
+      return { body: request.body, retryable: false };
+    }
+  }
+
+  const reader = request.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      reader.releaseLock();
+      const buffer = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return {
+        body: buffer,
+        retryable: isRetryablePublicRpcBody(buffer),
+      };
+    }
+
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    chunks.push(chunk);
+    totalBytes += chunk.byteLength;
+    if (totalBytes > maxBytes) {
+      let bufferedIndex = 0;
+      const passthrough = new ReadableStream({
+        async pull(controller) {
+          if (bufferedIndex < chunks.length) {
+            controller.enqueue(chunks[bufferedIndex]);
+            bufferedIndex += 1;
+            return;
+          }
+          const next = await reader.read();
+          if (next.done) {
+            reader.releaseLock();
+            controller.close();
+          } else {
+            controller.enqueue(next.value);
+          }
+        },
+        cancel(reason) {
+          return reader.cancel(reason);
+        },
+      });
+      return { body: passthrough, retryable: false };
+    }
+  }
+}
+
+export async function readJsonWithTimeout(response, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || !response.body) {
+    return response.json();
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void reader.cancel(createOriginTimeoutError(timeoutMs)).catch(() => undefined);
+  }, timeoutMs);
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (timedOut) {
+        throw createOriginTimeoutError(timeoutMs);
+      }
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } finally {
+    clearTimeout(timer);
+    reader.releaseLock();
+  }
+
+  const buffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(buffer));
+}
+
+async function fetchWithBoundedTimeout(url, options, timeoutMs, callerSignal) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetch(url, options);
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort(callerSignal.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort(callerSignal.reason);
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createOriginTimeoutError(timeoutMs));
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw createOriginTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) {
+      callerSignal.removeEventListener('abort', onCallerAbort);
+    }
+  }
+}
+
+export async function fetchOriginWithResilience(
+  url,
+  options,
+  { timeoutMs, maxAttempts = 1, callerSignal } = {},
+) {
+  const attempts = Math.max(1, maxAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithBoundedTimeout(
+        url,
+        options,
+        timeoutMs,
+        callerSignal,
+      );
+      if (
+        attempt < attempts &&
+        RETRYABLE_EDGE_ORIGIN_STATUSES.has(response.status) &&
+        !callerSignal?.aborted
+      ) {
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (attempt >= attempts || callerSignal?.aborted) {
+        throw error;
+      }
+    }
+  }
+}
+
+function getOriginReadResilience(method, pathname, retryableRpcBody) {
+  if (method === 'GET' || method === 'HEAD') {
+    if (isLongPollRequest(pathname)) {
+      return { timeoutMs: undefined, maxAttempts: 1 };
+    }
+    return {
+      timeoutMs: pathname === READINESS_PROXY_PATH
+        ? READINESS_TIMEOUT_MS
+        : ORIGIN_READ_TIMEOUT_MS,
+      maxAttempts: MAX_ORIGIN_READ_ATTEMPTS,
+    };
+  }
+
+  if (method === 'POST' && pathname === PUBLIC_RPC_PROXY_PATH && retryableRpcBody) {
+    return {
+      timeoutMs: PUBLIC_RPC_READ_TIMEOUT_MS,
+      maxAttempts: MAX_ORIGIN_READ_ATTEMPTS,
+    };
+  }
+
+  return { timeoutMs: undefined, maxAttempts: 1 };
+}
 
 function withEdgeFetchTiming(response, durationMs) {
   const measuredDuration = Number.isFinite(durationMs)
@@ -411,7 +666,7 @@ async function probeCandleDatasetIdentity(variant) {
       return undefined;
     }
 
-    const payload = await response.json();
+    const payload = await readJsonWithTimeout(response, CANDLE_PROBE_TIMEOUT_MS);
     return parseCandleDatasetIdentity(payload, variant.intervalSeconds);
   } catch {
     return undefined;
@@ -597,7 +852,7 @@ async function fetchPublicResponse(
         runInBackground(
           context,
           refreshStoredPublicResponse(
-            fetchBackend,
+            () => fetchBackend({ background: true }),
             cache,
             cacheKey,
             effectivePolicy,
@@ -692,17 +947,44 @@ const requestHandler = {
         if (cachePolicy) {
           backendUrl.search = new URL(getPublicPerpsCacheKey(url)).search;
         }
+        let requestBody = request.body;
+        let retryablePublicRpc = false;
+        if (
+          request.method === 'POST' &&
+          url.pathname === PUBLIC_RPC_PROXY_PATH &&
+          request.body !== null
+        ) {
+          const bounded = await readBoundedPublicRpcBody(
+            request,
+            MAX_RETRYABLE_PUBLIC_RPC_BODY_BYTES,
+          );
+          requestBody = bounded.body;
+          retryablePublicRpc = bounded.retryable;
+        }
+
         const fetchOptions = {
           method: request.method,
           headers,
-          body: request.body,
+          body: requestBody,
           // The origin credential must never be replayed to a Location target.
           // Return a 3xx response to the browser instead of letting fetch follow
           // it with the authenticated request headers.
           redirect: 'manual',
         };
+        const originResilience = getOriginReadResilience(
+          request.method,
+          url.pathname,
+          retryablePublicRpc,
+        );
 
-        const fetchBackend = () => fetch(backendUrl, fetchOptions);
+        const fetchBackend = ({ background = false } = {}) => fetchOriginWithResilience(
+          backendUrl,
+          fetchOptions,
+          {
+            ...originResilience,
+            callerSignal: background ? undefined : request.signal,
+          },
+        );
         let candleVariant;
         if (url.pathname === CANDLES_PATH && cachePolicy !== undefined) {
           const intervalText = url.searchParams.get('interval');
@@ -719,21 +1001,36 @@ const requestHandler = {
             pricePageState: cachePolicy === CANDLE_CLOSED_PAGE_CACHE_POLICY
               ? 'closed'
               : 'active',
-            fetchIdentity: () => fetch(identityUrl, {
-              method: 'GET',
-              headers: identityHeaders,
-              redirect: 'manual',
-            }),
+            fetchIdentity: () => fetchOriginWithResilience(
+              identityUrl,
+              {
+                method: 'GET',
+                headers: identityHeaders,
+                redirect: 'manual',
+              },
+              {
+                timeoutMs: CANDLE_PROBE_TIMEOUT_MS,
+                maxAttempts: MAX_ORIGIN_READ_ATTEMPTS,
+                callerSignal: request.signal,
+              },
+            ),
             fetchUncachedPage: () => {
               const uncachedHeaders = new Headers(headers);
               uncachedHeaders.set('Cache-Control', 'no-store');
               uncachedHeaders.set('Pragma', 'no-cache');
               uncachedHeaders.delete('If-Modified-Since');
               uncachedHeaders.delete('If-None-Match');
-              return fetch(backendUrl, {
-                ...fetchOptions,
-                headers: uncachedHeaders,
-              });
+              return fetchOriginWithResilience(
+                backendUrl,
+                {
+                  ...fetchOptions,
+                  headers: uncachedHeaders,
+                },
+                {
+                  ...originResilience,
+                  callerSignal: request.signal,
+                },
+              );
             },
           };
         }
