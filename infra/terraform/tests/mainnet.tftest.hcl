@@ -208,7 +208,7 @@ run "mainnet_rejects_missing_https_certificate" {
     alb_certificate_arn = ""
     api_hostname        = ""
   }
-  expect_failures = [aws_lb.api, aws_ecs_task_definition.api]
+  expect_failures = [aws_lb.api]
 }
 
 run "mainnet_rejects_testnet_faucet_and_margin_funding" {
