@@ -3,16 +3,24 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeFunctionData } from 'viem'
 import { settlementAbi, TOPICS, decodeActions, decodeLpValuations, capitalEvent, topic } from '../evidence.mjs'
+import { EntryLedger } from '../accounting.mjs'
 const address = number => '0x' + number.toString(16).padStart(40, '0')
 const word = n => BigInt(n).toString(16).padStart(64, '0')
 const data = values => '0x' + values.map(word).join('')
 const account = address(10)
-const release = { contracts: Object.fromEntries(['cfdEngine', 'cfdEngineSettlementSidecar', 'orderRouter', 'pletherOracle', 'housePool', 'juniorVault'].map((key, i) => [key, { address: address(i + 1) }])) }
+const release = { contracts: Object.fromEntries(['cfdEngine', 'cfdEngineSettlementSidecar', 'orderRouter', 'pletherOracle', 'housePool', 'juniorVault', 'marginClearinghouse', 'settlementToken'].map((key, i) => [key, { address: address(i + 1) }])) }
 const defaults = input => input.type === 'tuple' ? Object.fromEntries(input.components.map(field => [field.name, defaults(field)])) : input.type === 'bool' ? false : input.type === 'address' ? address(0) : 0n
-function settlement(kind) {
+const payOutCall = (from, to, recipient, amount) => ({
+  type: 'CALL', from, to,
+  input: topic('payOut(address,uint256)').slice(0, 10) + word(BigInt(recipient)) + word(amount),
+})
+const transferLog = (token, from, to, amount, logIndex) => ({
+  address: token, topics: [TOPICS.transfer, data([BigInt(from)]), data([BigInt(to)])], data: data([amount]), logIndex: '0x' + logIndex.toString(16),
+})
+function settlement(kind, extraDelta = {}) {
   const entry = settlementAbi.find(item => item.name === 'execute' + kind)
   const args = entry.inputs.map(defaults)
-  Object.assign(args[0], { account, price: 101n, sizeDelta: 10n ** 20n, posSize: 10n ** 20n, valid: true, liquidatable: true })
+  Object.assign(args[0], { account, price: 101n, sizeDelta: 10n ** 20n, posSize: 10n ** 20n, valid: true, liquidatable: true, ...extraDelta })
   if (kind === 'Liquidation') args[1] = 7n
   else args[2] = 7n
   return encodeFunctionData({ abi: settlementAbi, functionName: entry.name, args })
@@ -104,4 +112,69 @@ test('LP timing evidence rejects mismatched receipts, missing NAV and nested eng
     const e = lpFixture(); mutate(e)
     assert.throws(() => decodeLpValuations(e.trace, e.logs, manifest))
   }
+})
+
+test('negative-VPI open binds trace payOut calls and Transfer receipts for fail-soft protocol fee top-up', () => {
+  const c = release.contracts
+  const negOpen = () => {
+    const e = evidence('Open', 'order')
+    e.trace.calls[1].input = settlement('Open', {
+      sizeDelta: 527n * 10n ** 20n, newPosSize: 527n * 10n ** 20n, posSide: 1,
+      posVpiAccruedDelta: -67646963n, poolRebatePayoutAssets: 47648931n, executionFeeAssets: 19998032n,
+    })
+    e.trace.calls[1].calls = [
+      payOutCall(c.cfdEngineSettlementSidecar.address, c.housePool.address, c.marginClearinghouse.address, 47648931n),
+      { ...payOutCall(c.cfdEngineSettlementSidecar.address, c.housePool.address, c.marginClearinghouse.address, 19998032n), error: 'execution reverted' },
+      payOutCall(c.cfdEngineSettlementSidecar.address, c.housePool.address, c.marginClearinghouse.address, 7300688n),
+    ]
+    e.logs = [
+      transferLog(c.settlementToken.address, c.housePool.address, c.marginClearinghouse.address, 47648931n, 1),
+      transferLog(c.settlementToken.address, c.housePool.address, c.marginClearinghouse.address, 7300688n, 2),
+      { address: c.cfdEngine.address, topics: [TOPICS.open, data([10n])], data: data([1n, 527n * 10n ** 20n, 101n, 0n]), logIndex: '0x3' },
+    ]
+    return e
+  }
+  const e = negOpen()
+  const [action] = decodeActions(e.trace, e.logs, release)
+  assert.equal(action.openPoolOutflow, 54949619n)
+  const sources = new EntryLedger().apply(action)
+  assert.equal(sources.netVpi, -54949619n)
+
+  // Verify the saved 12.697344 USDG equals the exact +0.000012355859 pp Sepolia residual at block 329855884.
+  const uncreditedFee = -action.delta.posVpiAccruedDelta - action.openPoolOutflow
+  assert.equal(uncreditedFee, 12697344n)
+  const pp = Number(uncreditedFee * 10n ** 21n * 100n * 10n ** 18n / ((101726128620434511n + 1000n) * 1010200146067645041n)) / 1e18
+  assert.ok(Math.abs(pp - 0.000012355858949366899) < 1e-15)
+
+  // Reject missing trace children, receipt/trace mismatch, and unexpected recipients.
+  for (const mutate of [
+    x => { delete x.trace.calls[1].calls },
+    x => { x.logs[1].data = data([7300689n]) },
+    x => { x.trace.calls[1].calls[0] = payOutCall(c.cfdEngineSettlementSidecar.address, c.housePool.address, address(99), 47648931n) },
+    x => { x.logs[0] = transferLog(c.settlementToken.address, c.housePool.address, address(99), 47648931n, 1) },
+  ]) {
+    const mutated = negOpen(); mutate(mutated)
+    assert.throws(() => decodeActions(mutated.trace, mutated.logs, release))
+  }
+})
+
+test('batch Close payout before PositionClosed does not bleed into a subsequent Open interval', () => {
+  const c = release.contracts
+  const e = evidence('Close', 'batch')
+  e.trace.calls.push({
+    type: 'CALL', from: c.cfdEngine.address, to: c.cfdEngineSettlementSidecar.address,
+    input: settlement('Open', { posVpiAccruedDelta: -100n, poolRebatePayoutAssets: 60n, executionFeeAssets: 40n }),
+    calls: [payOutCall(c.cfdEngineSettlementSidecar.address, c.housePool.address, c.marginClearinghouse.address, 80n)],
+  })
+  e.logs = [
+    transferLog(c.settlementToken.address, c.housePool.address, c.marginClearinghouse.address, 500n, 1),
+    { address: c.cfdEngine.address, topics: [TOPICS.close, data([10n])], data: data([0n, 10n ** 20n, 101n, 0n]), logIndex: '0x2' },
+    transferLog(c.settlementToken.address, c.housePool.address, c.marginClearinghouse.address, 80n, 3),
+    { address: c.cfdEngine.address, topics: [TOPICS.open, data([10n])], data: data([0n, 10n ** 20n, 101n, 0n]), logIndex: '0x4' },
+  ]
+  const actions = decodeActions(e.trace, e.logs, release)
+  assert.equal(actions.length, 2)
+  assert.equal(actions[0].kind, 'Close')
+  assert.equal(actions[1].kind, 'Open')
+  assert.equal(actions[1].openPoolOutflow, 80n)
 })
