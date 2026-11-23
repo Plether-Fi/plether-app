@@ -642,7 +642,7 @@ function OpenPositionView({
                 void handleAddPositionMargin()
               }}
             >
-              {gasReview ? 'Review network gas' : 'Add Margin'}
+              {gasApproval.requiresConfirmation ? 'Review network gas' : 'Add Margin'}
             </Button>
           </div>
         )}
@@ -1033,7 +1033,7 @@ function ClaimSettlementCard({
             void handleSettleClaim()
           }}
         >
-          {gasReview ? 'Review Claim Settlement' : 'Settle Claim'}
+          {gasApproval.requiresConfirmation ? 'Review Claim Settlement' : 'Settle Claim'}
         </Button> : null}
       </div>
       {gasReview ? (

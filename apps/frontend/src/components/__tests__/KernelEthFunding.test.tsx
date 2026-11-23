@@ -44,9 +44,9 @@ const runtime = {
 } as unknown as KernelPerpsAaSmartAccountRuntime
 const manifest = { version: 'perps-aa-kernel-v1:kernel-test' } as KernelPerpsAaDeploymentManifest
 
-function renderPanel() {
+function renderPanel(testRuntime = runtime) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return { ...render(<QueryClientProvider client={queryClient}><KernelEthFunding runtime={runtime} manifest={manifest} /></QueryClientProvider>), queryClient }
+  return { ...render(<QueryClientProvider client={queryClient}><KernelEthFunding runtime={testRuntime} manifest={manifest} /></QueryClientProvider>), queryClient }
 }
 
 describe('Kernel ETH funding', () => {
@@ -197,6 +197,40 @@ describe('Kernel ETH funding', () => {
     expect(await screen.findByText('ETH withdrawal confirmed.')).toBeVisible()
     await waitFor(() => expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({ action: captured, ownerAddress: owner })))
     expect(mocks.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('goes directly to the wallet for ETH recovery paid by the owner wallet', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const quote = { mode: 'eth', payer: 'wallet', maxNetworkGasWei: parseEther('0.001') }
+    mocks.quoteAction.mockResolvedValueOnce(quote)
+    renderPanel({ ...runtime, gasPayment: { ...runtime.gasPayment, paysEthFromWallet: true } })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to withdraw' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw to Owner Wallet' }))
+
+    await waitFor(() => expect(mocks.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      ownerAddress: owner, kernelQuote: quote,
+      action: expect.objectContaining({ account: sender, calls: [expect.objectContaining({ to: owner, value: parseEther('0.01') })] }),
+    })))
+    expect(screen.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
+    expect(await screen.findByText('ETH withdrawal confirmed.')).toBeVisible()
+  })
+
+  it('does not open the wallet if ETH recovery closes while the quote is loading', async () => {
+    writeGasPaymentPreference(scope, 'eth')
+    const pendingQuote = Promise.withResolvers<{ mode: 'eth'; payer: 'wallet'; maxNetworkGasWei: bigint }>()
+    mocks.quoteAction.mockReturnValueOnce(pendingQuote.promise)
+    const { unmount } = renderPanel({ ...runtime, gasPayment: { ...runtime.gasPayment, paysEthFromWallet: true } })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw ETH' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'ETH to withdraw' }), { target: { value: '.01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw to Owner Wallet' }))
+    unmount()
+    await act(async () => pendingQuote.resolve({ mode: 'eth', payer: 'wallet', maxNetworkGasWei: 1n }))
+
+    expect(mocks.quoteAction).toHaveBeenCalledOnce()
+    expect(mocks.execute).not.toHaveBeenCalled()
   })
 
   it('leaves a provisionally included ETH withdrawal in Activity without reporting confirmation or failure', async () => {

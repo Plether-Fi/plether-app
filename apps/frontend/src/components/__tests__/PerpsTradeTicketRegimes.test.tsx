@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { entryPoint09Address } from 'viem/account-abstraction'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
@@ -12,6 +12,7 @@ import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 import type { ReadinessSnapshot } from '../../perps-aa/readiness'
 import { observeDeadlineResponse } from '../../perps-aa/deadlineClock'
+import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
 import type { KernelActionQuote } from '../../perps-aa/kernelRuntime'
 import { PerpsAaRuntimeContext, type KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
 
@@ -438,18 +439,22 @@ describe('perps ticket oracle regime matrix', () => {
     expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
   })
 
-  it('blocks the Margin Modal wallet button if trading pauses during a Kernel gas review', async () => {
-    identityFixture.isAaManifestConfigured = true
+  function kernelRuntime(paysEthFromWallet = false): KernelPerpsAaSmartAccountRuntime {
     const ownerAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     const scope: KernelPerpsAaSmartAccountRuntime['kernel']['scope'] = {
       deployment: 'kernel-test', chainId: 421614, entryPoint: entryPoint09Address, sender: ownerAddress,
     }
-    const runtime: KernelPerpsAaSmartAccountRuntime = {
+    return {
       chainId: scope.chainId, ownerAddress, factoryAddress: ownerAddress, accountVersion: 'kernel-v4-uups', accountIndex: '0',
       smartAccount: { accountAddress: scope.sender, entryPoint: scope.entryPoint },
-      gasPayment: { scope: { ...scope, ownerAddress }, readiness: { sponsored: true, eth: true } },
+      gasPayment: { scope: { ...scope, ownerAddress }, paysEthFromWallet, readiness: { sponsored: true, eth: true } },
       kernel: { scope, verifyAccount: vi.fn(), quoteAction: vi.fn(), execute: vi.fn(), quoteCancellation: vi.fn(), signPrepared: vi.fn() },
     }
+  }
+
+  it('blocks the Margin Modal wallet button if trading pauses during a Kernel gas review', async () => {
+    identityFixture.isAaManifestConfigured = true
+    const runtime = kernelRuntime()
     const now = Date.now()
     observeDeadlineResponse(new Response(null, { headers: { Date: new Date(now).toUTCString() } }), performance.now())
     const quote: KernelActionQuote = { mode: 'sponsored', maxNetworkGasWei: 15n, expiresAt: Math.floor(now / 1_000) + 60 }
@@ -489,6 +494,31 @@ describe('perps ticket oracle regime matrix', () => {
     expect(walletButton).toBeEnabled()
     await act(async () => { fireEvent.click(walletButton) })
     expect(continueToWallet).toHaveBeenCalledOnce()
+  })
+
+  it('goes directly to wallet approval from Withdraw Margin in Pay from wallet mode', async () => {
+    identityFixture.isAaManifestConfigured = true
+    const runtime = kernelRuntime(true)
+    writeGasPaymentPreference(runtime.gasPayment.scope, 'eth')
+    const now = Date.now()
+    observeDeadlineResponse(new Response(null, { headers: { Date: new Date(now).toUTCString() } }), performance.now())
+    const quote: KernelActionQuote = { mode: 'eth', payer: 'wallet', maxNetworkGasWei: 15n, expiresAt: Math.floor(now / 1_000) + 60 }
+    const continueToWallet = vi.fn()
+    perpsTradingMocks.withdrawMargin.mockImplementationOnce(async (amount, approve: (quote: KernelActionQuote) => Promise<void>) => {
+      await approve(quote)
+      continueToWallet(amount)
+    })
+    render(<PerpsAaRuntimeContext value={runtime}>
+      <PerpsTradeTicket enableLiveTrading withdrawableAssetsRaw={2_000_000n} />
+    </PerpsAaRuntimeContext>)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Withdraw' }))
+
+    await waitFor(() => expect(continueToWallet).toHaveBeenCalledExactlyOnceWith(1_000_000n))
+    expect(dialog.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
+    act(() => { writeGasPaymentPreference(runtime.gasPayment.scope, 'sponsored') })
   })
 
   function seedActiveOperation(status: SponsoredOperationStatus) {

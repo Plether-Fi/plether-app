@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useId, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { formatEther, formatUnits, type Hex } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import { useChainId, usePublicClient, useWalletClient } from 'wagmi'
@@ -34,6 +34,7 @@ export function KernelEthFunding({ runtime, manifest }: {
   const { mode, revision } = useGasPaymentPreference(runtime.gasPayment.scope)
   const paysEthFromWallet = runtime.gasPayment.paysEthFromWallet === true
   const inFlight = useRef(false)
+  const withdrawalRequest = useRef<AbortController>(undefined)
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState<FundingAction>()
   const [amountText, setAmountText] = useState('')
@@ -49,10 +50,14 @@ export function KernelEthFunding({ runtime, manifest }: {
   })
   const snapshot = balances.data
   const amount = parseKernelEthAmount(amountText)
-  const quote = mode === 'eth' && reviewedWithdrawal?.revision === revision ? reviewedWithdrawal.quote : undefined
+  const quote = !paysEthFromWallet && mode === 'eth' && reviewedWithdrawal?.revision === revision ? reviewedWithdrawal.quote : undefined
   const withdrawal = form !== undefined && form !== 'topup'
   const readyForWithdrawal = mode === 'eth' && runtime.gasPayment.readiness.eth
   const canContinue = isCorrectChain && !balances.isError
+
+  useLayoutEffect(() => () => {
+    withdrawalRequest.current?.abort()
+  }, [canContinue, paysEthFromWallet, readyForWithdrawal, revision, runtime.ownerAddress, scope.deployment, scope.sender])
 
   function isCurrentEthPreference() {
     const current = readGasPaymentPreference(runtime.gasPayment.scope)
@@ -117,26 +122,36 @@ export function KernelEthFunding({ runtime, manifest }: {
     })
   }
 
-  function reviewWithdrawal() {
+  function requestWithdrawal() {
     if (!snapshot || !withdrawal || !canContinue || !readyForWithdrawal || !isCurrentEthPreference() ||
       amount === undefined || amount > snapshot[form]) return
     void run(async () => {
       const action = buildKernelEthWithdrawal(runtime, form, amount)
-      const reviewed = await runtime.kernel.quoteAction(action)
-      if (isCurrentEthPreference() && reviewed.mode === 'eth') setReviewedWithdrawal({ quote: reviewed, revision })
-    })
-  }
-
-  function confirmWithdrawal() {
-    if (!snapshot || !withdrawal || !canContinue || !readyForWithdrawal || !isCurrentEthPreference() ||
-      amount === undefined || amount > snapshot[form] || quote?.mode !== 'eth') return
-    void run(async () => {
-      if (!kernelQuoteIsFresh(quote)) {
-        setReviewedWithdrawal(undefined)
-        throw new Error('The gas quote expired. Review the withdrawal again.')
+      const request = new AbortController()
+      withdrawalRequest.current = request
+      let reviewed: KernelActionQuote
+      try {
+        reviewed = quote ?? await runtime.kernel.quoteAction(action, request.signal)
+      } catch (cause) {
+        if (request.signal.aborted) return
+        throw cause
+      } finally {
+        withdrawalRequest.current = undefined
       }
-      await runtime.kernel.execute({ manifest, runtime, action: buildKernelEthWithdrawal(runtime, form, amount),
-        ownerAddress: runtime.ownerAddress, kernelQuote: quote })
+      if (request.signal.aborted) return
+      if (!isCurrentEthPreference() || reviewed.mode !== 'eth' || paysEthFromWallet !== (reviewed.payer === 'wallet')) {
+        setReviewedWithdrawal(undefined)
+        throw new Error('The gas setting changed. Try the withdrawal again.')
+      }
+      if (!kernelQuoteIsFresh(reviewed)) {
+        setReviewedWithdrawal(undefined)
+        throw new Error('The gas quote expired. Try the withdrawal again.')
+      }
+      if (!paysEthFromWallet && !quote) {
+        setReviewedWithdrawal({ quote: reviewed, revision })
+        return
+      }
+      await runtime.kernel.execute({ manifest, runtime, action, ownerAddress: runtime.ownerAddress, kernelQuote: reviewed })
       choose()
       await balances.refetch()
       setNotice({ message: 'ETH withdrawal confirmed.' })
@@ -195,9 +210,9 @@ export function KernelEthFunding({ runtime, manifest }: {
           <div className="flex flex-wrap gap-2">
             {form === 'topup'
               ? <Button size="sm" disabled={busy || !canContinue || !walletClient || amount === undefined} onClick={requestTopUp}>Send ETH from Owner Wallet</Button>
-              : quote
-                ? <Button size="sm" disabled={busy || !canContinue || !readyForWithdrawal || amount === undefined || amount > snapshot[form]} onClick={confirmWithdrawal}>Continue to wallet</Button>
-                : <Button size="sm" disabled={busy || !canContinue || !readyForWithdrawal || amount === undefined || amount > snapshot[form]} onClick={reviewWithdrawal}>Review withdrawal</Button>}
+              : <Button size="sm" disabled={busy || !canContinue || !readyForWithdrawal || amount === undefined || amount > snapshot[form]} onClick={requestWithdrawal}>
+                  {paysEthFromWallet ? 'Withdraw to Owner Wallet' : quote ? 'Continue to wallet' : 'Review withdrawal'}
+                </Button>}
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => { choose() }}>Cancel</Button>
           </div>
         </div>}

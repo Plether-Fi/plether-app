@@ -60,6 +60,7 @@ function approvalMatches(gas: PerpsGasReviewView, quote: KernelActionQuote): boo
 
 export function useKernelGasApproval(gas: PerpsGasReviewView) {
   const scope = gas && [gas.chainId, gas.deployment, gas.sender, gas.preference.revision].join(':')
+  const paysFromWallet = gas?.preference.mode === 'eth' && gas.paysEthFromWallet === true
   const [pending, setPending] = useState<PendingApproval>()
   const active = useRef<PendingApproval>(undefined)
   const mounted = useRef(false)
@@ -88,20 +89,23 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
       })
     }
   }, [cancel, gas, scope])
-  const review = useCallback((quote: KernelActionQuote) => new Promise<void>((resolve, reject) => {
-    const { gas, scope } = current.current
-    if (!mounted.current || scope === undefined || active.current || !approvalMatches(gas, quote)) {
-      reject(new KernelGasReviewCancelled())
-      return
+  const review = useCallback(async (quote: KernelActionQuote) => {
+    const { gas, scope: currentScope } = current.current
+    if (!mounted.current || scope === undefined || scope !== currentScope || active.current ||
+        !approvalMatches(gas, quote) || paysFromWallet !== (quote.payer === 'wallet') ||
+        (quote.mode === 'eth' && paysFromWallet !== (gas?.paysEthFromWallet === true))) {
+      throw new KernelGasReviewCancelled()
     }
     if (!kernelQuoteIsFresh(quote)) {
-      reject(new Error('The network gas quote expired. Review again to continue.'))
-      return
+      throw new Error('The network gas quote expired. Try again for a fresh quote.')
     }
-    const approval = { quote, scope, resolve, reject }
-    active.current = approval
-    setPending(approval)
-  }), [])
+    if (paysFromWallet) return
+    return new Promise<void>((resolve, reject) => {
+      const approval = { quote, scope, resolve, reject }
+      active.current = approval
+      setPending(approval)
+    })
+  }, [paysFromWallet, scope])
   const confirm = () => {
     const approval = active.current
     if (!approval) return
@@ -122,5 +126,5 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
   }
   const quote = pending && pending.scope === scope ? pending.quote : undefined
   const canConfirm = quote !== undefined && gas?.available === true && gas.preference.mode === quote.mode
-  return { quote, canConfirm, review, confirm, cancel }
+  return { quote, canConfirm, requiresConfirmation: gas !== undefined && !paysFromWallet, review, confirm, cancel }
 }

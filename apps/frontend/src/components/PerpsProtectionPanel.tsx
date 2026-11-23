@@ -230,7 +230,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           <p className="text-xs leading-5 text-content-secondary">These trigger prices are fixed for confirmation. Reaching one queues a close; it does not guarantee that fill price.</p>
           <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={!pending} />
           {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmReview || !gasApproval.canConfirm} /> : <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={!canConfirmReview} onClick={() => void submit()}>{gasReview ? 'Review network gas' : 'Confirm TP/SL'}</Button>
+            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={!canConfirmReview} onClick={() => void submit()}>{gasApproval.requiresConfirmation ? 'Review network gas' : 'Confirm TP/SL'}</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('edit'); setError(undefined) }}>Back to edit</Button>
           </div>}
         </> : view === 'remove' ? <>
@@ -238,7 +238,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(reserve)} />.</p>
           <PerpsGasReview gas={gasReview} quote={gasApproval.quote} error={error} showSettings={!pending} />
           {gasApproval.quote ? <KernelGasApprovalButtons confirm={gasApproval.confirm} cancel={gasApproval.cancel} disabled={!canConfirmRemoval || !gasApproval.canConfirm} /> : <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="danger" isLoading={pending} disabled={!canConfirmRemoval} onClick={() => void submit(true)}>{gasReview ? 'Review network gas' : 'Confirm removal'}</Button>
+            <Button size="sm" variant="danger" isLoading={pending} disabled={!canConfirmRemoval} onClick={() => void submit(true)}>{gasApproval.requiresConfirmation ? 'Review network gas' : 'Confirm removal'}</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('overview'); setError(undefined) }}>Keep TP/SL</Button>
           </div>}
         </> : null}

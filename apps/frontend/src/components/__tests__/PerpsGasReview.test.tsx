@@ -13,7 +13,7 @@ const { scope, ownerAddress, runtime } = vi.hoisted(() => {
   const scope = { chainId: 421614, deployment: 'fresh', sender: '0x1000000000000000000000000000000000000000' as const }
   const ownerAddress = '0x2000000000000000000000000000000000000000'
   const kernel = { scope: { ...scope, entryPoint: '0x433709009b8330fda32311df1c2afa402ed8d009' } }
-  return { scope, ownerAddress, runtime: { ownerAddress, kernel, gasPayment: { scope, readiness: { sponsored: true, eth: true } } } }
+  return { scope, ownerAddress, runtime: { ownerAddress, kernel, gasPayment: { scope, paysEthFromWallet: false, readiness: { sponsored: true, eth: true } } } }
 })
 
 vi.mock('../../perps-aa/runtimeContext', () => ({ usePerpsAaRuntime: () => runtime }))
@@ -42,6 +42,7 @@ afterEach(() => {
   usePerpsUiStore.setState({ activityRequest: null })
   runtime.gasPayment.readiness.sponsored = true
   runtime.gasPayment.readiness.eth = true
+  runtime.gasPayment.paysEthFromWallet = false
 })
 
 describe('Kernel gas review', () => {
@@ -64,6 +65,33 @@ describe('Kernel gas review', () => {
     expect(approved).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Continue to wallet' }))
     await waitFor(() => { expect(approved).toHaveBeenCalledOnce() })
+  })
+
+  it('continues directly to the wallet for a current wallet-paid quote', async () => {
+    runtime.gasPayment.paysEthFromWallet = true
+    writeGasPaymentPreference(scope, 'eth')
+    const { result } = renderHook(() => useKernelGasApproval(usePerpsGasReview()))
+
+    expect(result.current.requiresConfirmation).toBe(false)
+    await expect(result.current.review({ ...ethQuote(), payer: 'wallet' })).resolves.toBeUndefined()
+    expect(result.current.quote).toBeUndefined()
+  })
+
+  it('rejects a wallet-paid quote if the payer, expiration, or preference changed during preparation', async () => {
+    runtime.gasPayment.paysEthFromWallet = true
+    writeGasPaymentPreference(scope, 'eth')
+    const { result } = renderHook(() => useKernelGasApproval(usePerpsGasReview()))
+    const { review } = result.current
+    const quote = { ...ethQuote(), payer: 'wallet' as const }
+
+    await expect(review(ethQuote())).rejects.toBeInstanceOf(KernelGasReviewCancelled)
+    await expect(review({ ...quote, expiresAt: 0 })).rejects.toThrow('The network gas quote expired')
+    act(() => {
+      writeGasPaymentPreference(scope, 'sponsored')
+      writeGasPaymentPreference(scope, 'eth')
+    })
+    await expect(review(quote)).rejects.toBeInstanceOf(KernelGasReviewCancelled)
+    expect(result.current.quote).toBeUndefined()
   })
 
   it('offers a top-up for an advisory shortfall without opening wallet approval', () => {

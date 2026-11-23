@@ -2010,7 +2010,7 @@ describe('perps lifecycle labels', () => {
     if (source === 'Trading Account') fireEvent.click(dialog.getByRole('radio', { name: source }))
     fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
     expect(dialog.queryByRole('button', { name: 'Transfer & Deposit' })).not.toBeInTheDocument()
-    fireEvent.click(dialog.getByRole('button', { name: source === 'Owner Wallet' ? 'Deposit' : 'Review network gas' }))
+    fireEvent.click(dialog.getByRole('button', { name: 'Deposit' }))
     if (source === 'Owner Wallet') {
       await waitFor(() => expect(perpsTradingMocks.depositMarginFromOwnerWallet).toHaveBeenCalledWith(1_000_000n, expect.any(Function)))
       expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()

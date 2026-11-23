@@ -5814,7 +5814,7 @@ export function PerpsTradeTicket({
                   void handleMarginActionSubmit()
                 }}
               >
-                {gasReview && !depositsFromOwnerWallet && !isMarginActionPending && !isConnectWalletCta && !isSwitchNetworkCta && !requiresOwnerWalletTransfer ? 'Review network gas' : marginActionCtaLabel}
+                {marginGasApproval.requiresConfirmation && !depositsFromOwnerWallet && !isMarginActionPending && !isConnectWalletCta && !isSwitchNetworkCta && !requiresOwnerWalletTransfer ? 'Review network gas' : marginActionCtaLabel}
               </Button>
               </div>
             )}
