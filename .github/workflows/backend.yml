@@ -155,7 +155,7 @@ jobs:
           cabal-update: false
 
       - name: Cache cabal store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
@@ -232,7 +232,7 @@ jobs:
           cabal-update: false
 
       - name: Cache cabal store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
@@ -316,7 +316,7 @@ jobs:
           cabal-update: false
 
       - name: Cache cabal store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
