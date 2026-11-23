@@ -1,540 +1,123 @@
 # Trader troubleshooting
 
-Plether actions can stop at different stages. A rejected wallet signature, unavailable sponsorship, a rejected or dropped UserOperation[^useroperation], a pending order and a terminally failed order require different responses.
+Plether actions can pause or fail at different stages — account deployment, gas sponsorship, wallet signing, bundler inclusion, delayed keeper[^keeper] execution or settlement. Always verify the current operation and onchain state before retrying so you never create an unintended duplicate order.
 
-Start by checking the operation and onchain state before submitting another action.
+## Check these first
 
-### Check these first
+1. Confirm your connected **owner wallet**, derived **Trading Account** and **Arbitrum Sepolia** network.
+2. Open **Trading Account activity** (round button beside your wallet) to check:
+   * Whether the **"Trading Account awaiting confirmation"** banner is active (first-time deployment waits for an Arbitrum Sepolia **`safe`** block — up to ~30 minutes).
+   * The collapsible **Trading status** monitor (**Bundler executors**, **Trade keeper**, **Oracle updater**, **Liquidation worker**, **Protection worker** and **LP settlement**).
+   * Any saved in-flight transaction needing **Wallet-Verified Recovery** (`1. Verify wallet to recover` via gasless `personal_sign` → `2. Check transaction outcome` / `Resume` / `Discard`).
+3. Check the market state (**Open**, **FAD close-only**[^fad], **Oracle frozen**, **Degraded** or **Paused**) and oracle[^oracle] timestamp.
+4. Check **Open Orders** (live onchain queue), **Order History** (indexed outcomes) and the **TP/SL** tab.
 
-For automatic exits, check the **TP/SL** tab as well as the linked order. **Active** means triggers are armed, not that a close has executed. **Close delayed** means an attempt failed but its original trigger remains binding, even if the price reverses. You can still add margin and inspect the worker notice; non-expiry failures require operator review. See the [TP/SL state and troubleshooting guide](take-profit-and-stop-loss.md#understand-every-protection-state).
+> Do not submit a replacement order while the original order still appears under **Open Orders**. A second commit creates another binding FIFO[^fifo] order.
 
-If **TP/SL activity** is unavailable, retry the history request and check the current onchain protection before submitting another operation. A history-service error does not cancel protection. If new protection or sponsorship is disabled, check service availability and transaction status rather than assuming a wallet signature saved the triggers.
+## Quick diagnostic table
 
-1. Confirm the connected owner wallet and active Trading Account.
-2. Confirm the supported network.
-3. Check the sponsorship status and any UserOperation hash.
-4. Check the market state and oracle[^oracle] timestamp.
-5. Open **Open Orders** and **Order History**.
-6. Inspect any linked transaction hash in the block explorer.
-7. Refresh the application.
-
-Do not commit a replacement order until the original is absent from **Open Orders**. A second commitment creates another binding order with its own margin and execution-reward reservations.
-
-### Identify the current state
-
-| What you see                       | Onchain result                         | Next step                                                     |
-| ---------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
-| Wallet-signature rejected          | Nothing was authorized or submitted    | Review the request and sign again only if it matches your intent |
-| Sponsor unavailable                | No sponsored operation was accepted    | Wait for recovery or contact support if it persists            |
-| Sponsor rate-limited               | No sponsored operation was accepted    | Wait a moment, then request a fresh operation                  |
-| Bundler rejected                   | UserOperation was not submitted onchain | Read the simulation or policy error and request a fresh operation |
-| Pending onchain                    | Inclusion is not yet known             | Check the UserOperation hash; do not submit a duplicate        |
-| Dropped by bundler                 | Usually nothing was submitted onchain  | Check for a transaction hash, then request a fresh operation   |
-| Failed onchain (commit)             | No order was created                   | Read the contract error and adjust the order                   |
-| Order appears in Open Orders       | Order is Pending                       | Wait for execution conditions or expiry                       |
-| Keeper execution attempt reverted  | Order usually remains Pending          | Refresh and continue monitoring keeper processing             |
-| Order appears as Failed            | Order is terminal                      | Create a new order after addressing the cause                 |
-| Order appears as Executed          | Position settlement is final           | Refresh account and position data                             |
-| App timed out after submission     | Result may still be pending             | Check the UserOperation and transaction hashes before retrying |
-
-A successful commitment only creates an order. The position changes only after that order executes; depending on the action, its size, entry price or both may change.
+| What you see | Onchain state | Next step |
+| --- | --- | --- |
+| **Trading Account awaiting confirmation** | Trading Account deployed; waiting for `safe` block | Wait for `safe` finality (up to ~30 min on Arbitrum Sepolia); one-time only |
+| **Wallet-signature rejected** | Nothing submitted | Review the request and sign again only if it matches your intent |
+| **Sponsor unavailable / rate-limited** | Nothing submitted | Check **Trading status**, wait briefly, then request a fresh operation |
+| **Bundler rejected / Dropped by bundler** | Usually nothing onchain | Check for a transaction hash or run **Wallet-Verified Recovery** before retrying |
+| **Pending onchain** / **Inclusion timeout** | Inclusion uncertain | Check the UserOperation[^useroperation] hash and **Open Orders** before retrying |
+| **Failed onchain (commit)** | Reverted; no order created | Read the contract error, adjust the ticket and submit a fresh commit |
+| **Order in Open Orders** | Pending in global FIFO | Wait for post-commit Pyth tick and keeper execution (no manual finalize needed) |
+| **Keeper execution attempt reverted** | Order usually stays Pending | Continue monitoring; keeper retries automatically until execution or `60s` expiry |
+| **Expired** under **Open Orders** | Awaiting keeper cleanup | Wait for **Keeper cleanup in progress** to finish; do not duplicate yet |
+| **Failed** in **Order History** | Terminal; will never execute | Review the failure reason, refresh balances and create a new order if needed |
+| **Executed** | Position updated | Refresh account and position panels |
 
 ![A successful sponsored commitment creates a pending order. Only a successful order execution applies the requested position change.](../.gitbook/assets/diagrams/confirmed-order-execution-path.svg)
 
-### My sponsored operation did not confirm
-
-The sponsored-submission lifecycle is:
+## Sponsored operation did not confirm
 
 ![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](../.gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg)
 
-These failures occur before the delayed order lifecycle:
+* **Sponsor unavailable or rate-limited:** No order was created. Because Plether's web app is sponsorship-only (to prevent acting on the wrong Margin Account), wait for service recovery or rate-limit reset rather than switching wallets. Existing positions, carry[^carry], pending orders and liquidation rules remain active during outages.
+* **Bundler rejected, dropped or app refreshed mid-flight:** Open **Trading Account activity** and use **Wallet-Verified Recovery** to check the onchain receipt before requesting a new signature, nonce and paymaster approval.
 
-#### Wallet-signature rejected
+## Cannot open or increase a position
 
-The owner wallet rejected or did not complete the authorization. Nothing was submitted, and Plether cannot create the signature on the user’s behalf.
+Common blockers include:
 
-Check the network, Trading Account, action, USDG[^usdg] amount and recipient before trying again.
+* **Active TP/SL protection:** An active TP/SL record can block discretionary orders. Remove untriggered protection in the **TP/SL** tab and wait for confirmation first. Triggered or latched exits cannot be removed while unresolved (see [Take profit and stop loss](take-profit-and-stop-loss.md#understand-every-protection-state)).
+* **Account or size checks:** Insufficient **Available to Trade** (must cover opening margin plus the `0.01–0.20 USDG` opening execution reward), order below the `1,000 USDG` minimum notional, leverage exceeding the initial-margin limit (`33x` normal UI cap / `416x` simulator cap), opposing position already open, or `5` pending orders already active.
+* **Market or pool limits:** `40%` net-pool skew[^skew] cap reached, pool solvency capacity reached, **FAD close-only**, **Oracle frozen**, **Degraded** mode or paused risk commitments.
 
-#### Sponsor unavailable
+A reverted commit rolls back atomically with no order or reservation created.
 
-The sponsor service did not approve gas funding. No sponsored operation or order was accepted.
+## Cannot reduce or close a position
 
-Existing positions, carry[^carry], pending orders and liquidation rules continue while sponsorship is unavailable. The current application has no owner-wallet or self-funded fallback, so wait for service recovery or contact support if the problem persists.
+* **No unreserved size left:** You can only reduce an executed position (not a pending open) in its matching direction, up to the size not already reserved by earlier pending closes.
+* **Dust residual:** A partial reduction cannot leave a remaining position below the `1,000 USDG` minimum notional — reduce less or submit a full close.
+* **Underfunded partial close:** A partial reduction must fully pay its realized price loss (from same-account trader claim first, then position margin) and its action charges (execution fee, signed VPI[^vpi], unpaid carry and any `50 bps`[^bps] frozen-close spread) without waiver. Add margin, reduce a smaller amount or submit a **full close** (which waives uncollectible action charges and records genuine uncovered price loss as bad debt).
 
-#### Sponsor rate-limited
+Reductions and full closes have **zero USDG execution reward** and remain available during FAD close-only, `oracleFrozen` (while the frozen basket is within its `3-day` staleness limit), degraded mode and paused risk commitments.
 
-The request reached a sponsorship rate limit. Wait a moment and request a fresh operation. Repeated submissions do not bypass account or service limits.
+## Order stays Pending, expires or fails
 
-#### Bundler rejected
+See [Why is my order pending or failed?](why-is-my-order-pending-or-failed.md) for the full breakdown. Key points:
 
-The bundler[^bundler] refused the UserOperation because simulation, nonce, account state, gas limits or bundler policy did not pass. No order was created.
+* **Why it stays Pending:** Earlier global FIFO orders, waiting for the first post-commit Pyth tick (`block > commitBlock`, `publishTime > commitTime`), transient Hermes/oracle validation errors (confidence above `0.10%` or timestamp spread above `5s`), an unexpected engine/receipt rollback (which **stays Pending** rather than automatically becoming terminal) or a close-only block on an opening order.
+* **Terminal failures:** **Expiry** (`> 60s`), **Slippage exceeded**, **Engine rejected** or **Account liquidated**.
+* **Execution rewards:** Opening orders pay their reserved `0.01–0.20 USDG` reward to the keeper on execution, terminal failure or expiry cleanup (or forfeit it to the protocol treasury on liquidation). Reductions and closes reserve and pay **zero** execution reward.
+* **Confirmed operation, unchanged position:** Check *which* step confirmed — a confirmed commit only creates a Pending order; only `OrderExecuted` changes the position.
 
-Refresh the Trading Account and request a newly prepared operation. A stale signed operation should not be resubmitted after account state changes.
+## Deposits, adding margin and withdrawals
 
-#### Dropped by bundler
+* **Deposit failed or requested ETH:** Testnet **Get 100,000 USDG** credits your Margin Account directly with zero ETH needed. If you deposit USDG sitting in your owner wallet (for example, after a withdrawal), **Transfer & Deposit** first sends the exact shortfall from your owner wallet to your Trading Account (which requires Arbitrum Sepolia ETH for gas), then runs the gas-sponsored deposit batch. If the transfer succeeds but the sponsored deposit fails, your USDG is safe in the Trading Account — simply retry the deposit without repeating the transfer.
+* **Deposit succeeded, but Available to Trade rose by less:** Depositing with an open position checkpoints carry (collecting from active position margin first, then eligible free USDG). Also note that **Deposit** adds to *free* Margin Account USDG; to add collateral directly to a position's price-loss buffer, use **Edit Position Margin** → **Add margin**.
+* **Cannot add position margin:** Requires an open position and sufficient free Margin Account USDG *after* the pre-action carry checkpoint. Assigned position margin cannot be removed directly — reducing or closing the position releases it.
+* **Withdrawable is zero or withdrawal failed:** Free USDG is reduced by position margin, pending-order commitments, reserved opening rewards and accrued carry. With an open position, withdrawals must preserve the higher of initial margin and active maintenance/FAD margin, require a fresh live mark and are blocked during **Degraded** mode. Trader withdrawals come from the Margin Clearinghouse and are independent of LP pool payout liquidity.
 
-The bundler accepted the UserOperation but stopped tracking it before confirmed inclusion.
+See [Your Margin Account](your-margin-account.md).
 
-1. Check the UserOperation hash for a linked transaction hash.
-2. Check **Open Orders** for an order ID.
-3. Request a fresh sponsored operation only when neither exists.
+## Execution price, realized PnL, liquidation and pending closes
 
-A replacement normally requires a new wallet signature, nonce and sponsorship decision.
+* **Execution price differs from preview:** Previews reflect current state; execution uses the later FIFO post-commit Pyth observation plus the `0.25×` adverse confidence shift during live/FAD (or the unshifted validated price plus the separate `50 bps` spread during `oracleFrozen`).
+* **Realized result differs from Unrealized PnL:** Realized settlement also includes the `0.04%` execution fee, signed VPI, carry, execution-price confidence shift and any frozen-close spread. Compare against the **Close Preview** and close reconciliation details rather than Unrealized PnL[^pnl] alone (see [How PnL is calculated](../how-plether-works/how-pnl-is-calculated.md) and [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md)).
+* **Liquidation price or health changed:** Price health equals `position margin (after projected carry) + same-account trader claim + exact PnL` compared against maintenance margin (`0.10%` live, `3.00%` during FAD). **Free Margin Account USDG and committed opening margin do not raise price equity or move your price liquidation threshold.** Actual liquidation also uses the adverse confidence-adjusted price, so liquidation can trigger slightly before the central displayed mark reaches the estimate. **Not in range** means the threshold lies outside Plether's bounded `[0, 2.00]` range.
+* **Close pending while health is falling:** A pending close does **not** reduce exposure or pause liquidation, and carry collected at commitment may have already lowered position margin. To strengthen price health immediately, use **Add margin** (not just Deposit, which only covers carry). If liquidation executes before the close, the position is closed, all pending orders fail, opening execution rewards are forfeited to the protocol treasury and committed opening margin is released (never backing price loss, though released free USDG can cover unpaid carry, VPI clawback or liquidation charges).
 
-### I cannot review or commit an open or increase
+## TP/SL protection issues
 
-An active TP/SL record can block discretionary orders. Remove untriggered protection in the **TP/SL** tab first and wait for confirmation. A triggered or latched exit cannot be removed while unresolved. See [Take profit and stop loss](take-profit-and-stop-loss.md).
+Check the **TP/SL** tab and linked close order (see [Take profit and stop loss](take-profit-and-stop-loss.md#understand-every-protection-state)):
 
-Common causes include:
+* **Active** means armed, not closed.
+* **Close delayed** (latched) means a trigger fired and remains binding even if price reverses. You can still add margin; non-expiry retries require operator review.
+* **History unavailable:** An API glitch in **TP/SL activity** never cancels onchain protection. Refresh and inspect the active onchain rule before submitting changes.
 
-* The wallet is disconnected or on the wrong network.
-* The plDXY price or oracle publish time is unavailable.
-* The order size is zero or below the minimum.
-* Available to Trade cannot cover the margin and execution reward.
-* The requested margin fails the initial-margin requirement.
-* The account already holds a position in the opposite direction.
-* The account has reached its pending-order limit.
-* The requested direction exceeds the current skew[^skew] limit.
-* The liquidity pool cannot admit the additional maximum liability.
-* The market is close-only.
-* The account has an open position and the protocol is in degraded mode.
-* New risk commitments are paused.
+## Trader claims and indexer lag
 
-The interface may show messages such as:
+* **Cannot settle a trader claim:** Settlement is all-or-nothing and requires `Recognized pool assets >= Total outstanding trader claims` across the entire protocol. Settled claims credit your **Margin Account** (position margin if a position is open, free USDG if flat), not your owner wallet. Same-account claims are also netted first against price losses on any losing partial close, full close or liquidation. See [Check and settle a trader claim](check-and-settle-a-trader-claim.md).
+* **Open Orders and Order History disagree:** **Open Orders** reads live onchain state; **Order History** and **Transaction History** come from the indexer and can lag briefly. Verify `OrderExecuted` or `OrderFailed` in the transaction receipt before submitting anything new.
 
-* **Deposit … USDG more before committing this order**
-* **Minimum order size is …**
-* **Max Long/Short exposure is … before hitting the market skew cap**
-* **Reduce or close the current position first**
-* **Trade preview is unavailable**
-* **You already have … pending orders**
+## Market states at a glance
 
-Adjust the size, leverage or margin according to the displayed reason. Market-state, skew and solvency limits may require waiting for protocol conditions to change.
+| Market state | Trader effect |
+| --- | --- |
+| **Open** | Opens, increases, reductions and closes active under normal rules |
+| **FAD close-only** | Opens blocked; closes use live post-commit pricing, `3.00%` FAD maintenance margin and no frozen spread |
+| **Oracle frozen** | Opens blocked; voluntary closes use the validated frozen basket (up to `3-day` staleness), signed VPI and `50 bps` spread |
+| **Degraded** | Opens and open-position withdrawals blocked; deposits, margin additions, closes, liquidations and flat-account withdrawals remain available |
+| **Risk commitments paused** | New opens blocked; closes and existing queue execution remain available onchain |
 
-A reverted sponsored commitment rolls back the complete action. No order, margin reservation or execution-reward reservation remains.
+Carry continues accruing through every market state, including weekend closures and stale periods.
 
-See [**Open or increase a position**](open-or-increase-a-position.md), [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md) and [**Solvency at a glance**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md#solvency-at-a-glance).
+## Information to include when contacting support
 
-### I cannot reduce or close
+Share your **Owner-wallet address**, **Trading Account address**, **network**, **UserOperation hash**, **Order ID**, **commit and keeper transaction hashes**, **approximate UTC time**, **market state**, **exact error message** and screenshots of **Open Orders**, **Order History** and **Trading Account activity**. Never share a seed phrase, private key or wallet recovery code.
 
-Check the following:
-
-* An executed position exists.
-* The selected direction matches that position.
-* Earlier pending reductions have not already reserved the requested size.
-* The reduction does not exceed the remaining unreserved position.
-* The residual position will remain above the minimum size.
-* A partial reduction can fully pay its losses and costs.
-
-Exposure from a pending open cannot be reduced yet. Wait for the open order to execute.
-
-#### Another order is already closing the position
-
-Pending close orders reserve their requested position size. If existing orders already cover the full position, the interface blocks another reduction.
-
-Wait for the keeper to execute the earlier order or clean it up after expiry.
-
-#### The remaining position would be too small
-
-Reduce a smaller amount or submit a full close.
-
-#### The partial reduction would be underfunded
-
-A partial reduction must fully cover its obligation, including:
-
-* Trading loss
-* Execution fee
-* Signed VPI[^vpi]
-* Carry
-* Frozen-close spread, when applicable
-
-Add collateral, reduce a smaller amount or submit a terminal full close.
-
-A full close can consume all reachable collateral and record a genuine uncovered trading obligation as bad debt. During `oracleFrozen`, only an uncollectible frozen-close spread may be waived.
-
-Full-close treatment does not bypass slippage, expiry or oracle validation. Reductions and full closes have zero keeper execution reward; no close reward needs backing.
-
-Close commitments remain available at contract level during degraded mode and while new risk commitments are paused.
-
-See [**Reduce or close a position**](reduce-or-close-a-position.md).
-
-### My order remains Pending
-
-An order can remain pending because:
-
-* Earlier orders are ahead in the global FIFO[^fifo] queue.
-* The first eligible post-commit Pyth observation is not available yet.
-* The order is still protected by same-block execution rules.
-* A keeper[^keeper] has not finalized it.
-* Historical oracle data could not be fetched or validated.
-* Oracle confidence is too wide.
-* Basket component timestamps are not sufficiently aligned.
-* An open order reached execution during a close-only state.
-* An earlier expired order needs cleanup.
-* The execution attempt supplied insufficient gas.
-* The order has not yet crossed its expiry time.
-
-A close-only block on a previously committed open leaves the order pending under the current contracts. The current maximum order age is 60 seconds, while scheduled close-only periods last much longer, so the blocked opening expires before the market reopens and then waits for keeper cleanup.
-
-While an order is pending:
-
-* Committed opening margin remains reserved.
-* The execution reward remains reserved.
-* A pending open creates no position exposure.
-* A pending close removes no position exposure.
-* The executed position continues accruing PnL[^pnl] and carry.
-* The executed position remains liquidatable.
-
-Pending orders cannot be cancelled or repriced. They end through execution, terminal failure or expiry cleanup.
-
-The current sponsored interface leaves finalization and expired-order cleanup to the keeper. Keep monitoring **Open Orders**; the owner wallet is not asked to select **Finalize Trade** or **Clean Up** and does not pay native gas for either step.
-
-See [**How orders execute**](../how-plether-works/how-orders-execute.md) and [**Why is my order pending or failed?**](why-is-my-order-pending-or-failed.md).
-
-### The keeper has not finalized my order
-
-A reverted keeper transaction usually leaves the order Pending.
-
-Possible causes include:
-
-* Finalization was attempted too early.
-* Eligible historical Pyth data was unavailable.
-* The Pyth update expired before confirmation.
-* The Pyth fee changed.
-* Oracle confidence was too wide.
-* Basket component publish times diverged.
-* An earlier FIFO order blocked execution.
-* The transaction supplied insufficient gas.
-* The network, RPC[^rpc] or oracle-data service was unavailable.
-
-Open **Open Orders** and check whether the order is still present.
-
-If it remains Pending and has not expired, no trader action is required. The keeper can retry after the transient condition changes.
-
-If a keeper transaction confirmed, also check **Order History**. A confirmed transaction can produce either `OrderExecuted` or a terminal `OrderFailed` result.
-
-If the row becomes **Expired**, the interface shows **Keeper cleanup in progress** and **Keeper processing** until cleanup removes it. The app does not expose manual finalization or owner-wallet cleanup for the current sponsored Trading Account.
-
-### My order Failed
-
-A Failed order cannot execute later. Creating another trade requires a new commitment.
-
-Terminal reasons include:
-
-* Expiry
-* Slippage exceeded
-* Execution-time engine rejection
-* Account liquidation
-* Unexpected engine failure
-
-After an ordinary failure:
-
-* The requested position change is not applied.
-* Any remaining committed opening margin is released.
-* The reserved execution reward is paid to the keeper or other account that processed the terminal result.
-* The account’s pending-order count decreases.
-
-The execution reward is spent even though the position change failed.
-
-#### Slippage exceeded
-
-The eligible execution price, including the oracle confidence adjustment, crossed the acceptable-price boundary.
-
-Use a new preview. Increase slippage only after reviewing how much execution-price movement you are prepared to accept.
-
-#### Order expired
-
-An **Expired** row can remain under **Open Orders** until keeper cleanup makes it terminal.
-
-Cleanup releases committed opening margin and pays the reserved execution reward to the cleanup keeper. After **Order History** shows **Expired / Cleaned up**, a new order is required.
-
-#### Account liquidated
-
-Liquidation removes the position and marks all of that account’s pending orders as Failed.
-
-See [**Why is my order pending or failed?**](why-is-my-order-pending-or-failed.md) for the detailed failure lifecycle.
-
-### My operation succeeded, but the position did not change
-
-Check which operation or transaction succeeded.
-
-A successful deposit changes the Margin Account. A successful sponsored commit creates a pending order. A successful keeper cleanup removes an expired order. Only successful order execution changes the position.
-
-Review:
-
-* Transaction events
-* UserOperation hash
-* Order ID
-* Open Orders
-* Order History
-* Position size and entry price
-
-If the order reached a terminal failure, the position remains unchanged.
-
-### My deposit failed
-
-Check:
-
-* Trading Account USDG balance
-* Deposit amount
-* Active Trading Account
-* Network
-* Sponsorship status
-* Owner-wallet Arbitrum Sepolia ETH when a transfer is required
-
-The deposit modal includes both Trading Account and owner-wallet MockUSDG in **Available to deposit**. The testnet welcome flow normally credits the Margin Account directly without a wallet approval. Earlier funding allocations remain in the Trading Account until deposited. If the requested amount exceeds that balance, the application first transfers the exact shortfall from the owner wallet. That regular token transfer requires Arbitrum Sepolia ETH for gas.
-
-After the required USDG is at the Trading Account address, the owner wallet authorizes one sponsored Trading Account operation. It batches:
-
-1. An exact approval to the Margin Clearinghouse.
-2. A deposit for the same amount.
-
-If the owner-wallet transfer confirms but the sponsored operation fails, the transferred USDG remains at the Trading Account address. Retry the deposit from the same modal or refresh first. The application will not request the completed shortfall transfer again once the updated balance is visible.
-
-#### The deposit succeeded, but Available to Trade increased by less
-
-Depositing into an account with an open position checkpoints carry. Some of the deposited USDG may be collected against accrued carry.
-
-Review:
-
-* Margin Account balance
-* Available to Trade
-* Cost of carry
-* Position margin
-* Transaction events
-
-A deposit increases free Margin Account USDG. To assign part of it directly to the current position, use **Edit Position Margin** and **Add margin**.
-
-See [**Your Margin Account**](your-margin-account.md).
-
-### I cannot add position margin
-
-Adding position margin requires:
-
-* The owner wallet controlling the Trading Account to be connected
-* An existing open position
-* Sufficient free Margin Account USDG
-* An amount greater than zero
-
-Carry is realized from existing active position margin first, then eligible free USDG, before new margin is assigned. If free USDG is insufficient after that carry collection, reduce the amount or deposit additional USDG first.
-
-Position margin can be added directly. Releasing assigned position margin requires reducing or closing the position.
-
-### Withdrawable is zero or my withdrawal failed
-
-Withdrawable can be lower than the Margin Account balance or Available to Trade.
-
-Common causes include:
-
-* Position margin is locked.
-* Pending orders reserve margin.
-* Execution rewards remain reserved.
-* Carry reduced the available balance.
-* An open position does not have enough post-withdraw margin.
-* The live mark required for an open-position withdrawal is stale.
-* The protocol is in degraded mode.
-
-An account with an open position must preserve the higher of the applicable initial-margin and current maintenance or FAD[^fad] requirement after withdrawal.
-
-A flat account can still have funds reserved by pending orders and execution rewards.
-
-Try:
-
-* Reducing the withdrawal amount
-* Waiting for keeper execution or cleanup of pending orders
-* Waiting for a fresh mark
-* Adding collateral
-* Reducing or closing the position
-
-Trader withdrawals are paid from the Margin Clearinghouse. Pool payout liquidity and trader-claim coverage do not determine ordinary Margin Account withdrawals.
-
-A reverted withdrawal leaves the account balance unchanged.
-
-See [**Your Margin Account**](your-margin-account.md) and [**Read your position and account health**](read-your-position-and-account-health.md).
-
-### The execution price differs from the preview
-
-The preview uses the current market and account state. Execution uses the eligible oracle observation reached later through FIFO.
-
-Differences can come from:
-
-* Market movement while the order waits
-* Adverse oracle-confidence adjustment
-* Earlier orders changing market skew
-* A change in market state
-* Rounding
-
-For the dollar-oriented price shown in the interface:
-
-| Action                     | Acceptable-price condition                         |
-| -------------------------- | -------------------------------------------------- |
-| Open or increase LONG USD  | Execution at or below the maximum acceptable price |
-| Open or increase SHORT USD | Execution at or above the minimum acceptable price |
-| Reduce or close LONG USD   | Execution at or above the minimum acceptable price |
-| Reduce or close SHORT USD  | Execution at or below the maximum acceptable price |
-
-A voluntary close during `oracleFrozen` uses the validated frozen basket and the fixed `50 bps`[^bps] frozen-close spread. The usual adverse confidence price shift is removed for this path, while confidence-width validation and signed VPI remain active.
-
-See [**How orders execute**](../how-plether-works/how-orders-execute.md) and [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md).
-
-### My realized result differs from Unrealized PnL
-
-Unrealized PnL reflects the price movement from entry to the current mark.
-
-Final settlement can also include:
-
-* Execution fee
-* Signed VPI
-* Carry
-* Execution-price confidence adjustment
-* Frozen-close spread
-* Rounding
-
-The execution reward is reserved separately when the order is committed.
-
-Compare the final execution result with the close preview and transaction details rather than the displayed Unrealized PnL alone.
-
-See [**How PnL is calculated**](../how-plether-works/how-pnl-is-calculated.md) and [**Fees, VPI and cost of carry**](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
-
-### Available to Trade is lower than expected
-
-Available to Trade excludes:
-
-* Assigned position margin
-* Committed-order margin
-* Reserved execution rewards
-
-Carry can also reduce the balance when an account action checkpoints it.
-
-Unrealized profit can contribute to Position equity before it becomes free Margin Account USDG. Released margin follows separately. At realization, the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on pool settlement liquidity.
-
-### My liquidation price or account health changed
-
-Check for changes in:
-
-* Current mark
-* Unrealized PnL
-* Carry
-* Position margin
-* Free Margin Account USDG
-* Pending-order reservations
-* Execution-reward reservations
-* Current FAD margin requirement
-
-Price health uses position margin after projected carry plus same-account claims and exact PnL. Uncovered carry and dedicated VPI reserve backing are checked separately; free USDG and order reservations do not increase price equity.
-
-Actual liquidation uses an adverse confidence-adjusted oracle price. A position close to the boundary can therefore become liquidatable before the central displayed mark reaches the estimated liquidation price.
-
-If **Liquidation price** shows **Not in range**, the projected threshold is outside the protocol’s bounded settlement range under the current position state.
-
-See [**Margin, leverage and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md) and [**Read your position and account health**](read-your-position-and-account-health.md).
-
-### My close is pending while liquidation risk is increasing
-
-The complete position remains active until the close executes.
-
-During the wait:
-
-* PnL continues moving.
-* Carry continues accruing.
-* The position remains liquidatable.
-* No close-execution reward is reserved or paid.
-* Carry collected at commitment may already have reduced position margin.
-
-Depositing USDG can restore carry coverage. To increase the price-loss buffer without changing size, assign free funds using Add Margin.
-
-If liquidation executes first:
-
-* The position is removed.
-* Every pending order for the account becomes Failed.
-* Reserved execution rewards are forfeited to the protocol treasury.
-* Committed-order margin may be consumed by terminal settlement.
-* Any remainder is released.
-* Released margin follows separately; a complete fresh positive payout is either credited immediately in full or recorded in full as a trader claim.
-
-Liquidation applies no new VPI delta and no frozen-close spread.
-
-### What each market state means for troubleshooting
-
-| Market state                | Trader effect                                                                                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Open**                    | Opens, increases, reductions and closes are available subject to normal checks                                                                               |
-| **FAD close-only**          | Opens are blocked; closes use live post-commit pricing, the FAD margin requirement and no frozen-close spread                                                |
-| **Oracle frozen**           | Opens are blocked; voluntary closes use the validated frozen basket, signed VPI and the fixed `50 bps` spread                                                |
-| **Degraded**                | Opens and withdrawals backed by an open position are blocked; deposits, margin additions, closes, liquidations and flat-account withdrawals remain available |
-| **Risk commitments paused** | New opens are blocked; close commitments and existing order execution remain available at contract level                                                     |
-
-An oracle-frozen close can still become unavailable if the stored basket exceeds the extended staleness limit.
-
-Carry continues accruing through FAD, oracle-frozen and stale periods.
-
-See [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md).
-
-### I have a trader claim but cannot settle it
-
-Settlement requires:
-
-```
-Recognized pool assets
-≥
-Total outstanding trader claims
-```
-
-The condition applies to aggregate claims. Cash sufficient for one individual claim does not make that claim serviceable during an aggregate shortfall.
-
-Claim settlement processes the Trading Account’s complete claim balance. Retrying while coverage remains insufficient cannot make the claim serviceable and may be rejected during simulation.
-
-Successful settlement credits the Margin Account. Moving the USDG to the wallet requires a separate withdrawal.
-
-An existing claim may also be consumed against a shortfall from a losing terminal full close or liquidation.
-
-See [**Check and settle a trader claim**](check-and-settle-a-trader-claim.md) and [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md).
-
-### Open Orders and Order History disagree
-
-**Open Orders** reads the current onchain queue. **Order History** and **Transaction History** depend on indexed events and may update later.
-
-If an order disappears from Open Orders:
-
-1. Check its commit or keeper transaction receipt.
-2. Look for `OrderExecuted` or `OrderFailed`.
-3. Refresh Order History.
-4. Check the current position and Margin Account.
-
-A history API error does not change the onchain order state.
-
-Avoid submitting a replacement while the result remains unclear.
-
-### Information to provide when reporting a problem
-
-Include:
-
-* Owner-wallet address
-* Trading Account address
-* Network
-* UserOperation hash
-* Order ID
-* Commit transaction hash
-* Keeper finalization or cleanup transaction hash, when shown in Order History
-* Approximate time
-* Market state
-* Exact error message
-* Screenshot of Open Orders
-* Screenshot of Order History
-* Screenshot of the relevant Margin Account or position field
-
-Never share a seed phrase, private key or wallet recovery code.
-
-[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
 [^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
-[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
-[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^bps]: Basis points; 100 bps equals 1%.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.

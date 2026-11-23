@@ -52,9 +52,9 @@ const snapshot = {
     seniorImpaired: false,
     seniorImpairmentGapAssets: 0n,
     seniorPoolWithdrawCapAssets: assets(70_000_000),
-    juniorPoolWithdrawCapAssets: 26_666_666_666_666n,
+    juniorPoolWithdrawCapAssets: assets(32_500_000),
     maxSeniorExposureAssets: assets(100_000_000),
-    maxSeniorShareBps: 7_500n,
+    maxSeniorShareBps: 8_000n,
     seniorRateBps: 800n,
     seniorDepositCapacityAssets: assets(25_000_000),
     reservedSeniorDepositAssets: assets(5_000_000),
@@ -101,9 +101,9 @@ const snapshot = {
     junior: {
       totalAssets: assets(50_000_000),
       totalSupply: shares(50_000_000),
-      effectiveTotalSupply: shares(50_000_000) + 99_985_740_167_002n,
-      pendingMaintenanceFeeShares: 99_985_740_167_002n,
-      maintenanceFeeAprBps: 100n,
+      effectiveTotalSupply: shares(50_000_000),
+      pendingMaintenanceFeeShares: 0n,
+      maintenanceFeeAprBps: 0n,
       maintenanceFeeRecipient: '0x0000000000000000000000000000000000000004',
       userShares: shares(8_500),
       maxRequestDeposit: MAX_UINT256,
@@ -121,8 +121,8 @@ const snapshot = {
       frozenLpFeeBps: 0n,
       depositEnabled: true,
       withdrawEnabled: true,
-      poolWithdrawCapAssets: 26_666_666_666_666n,
-      sharePrice: 50_000_000 / 50_099_985.740167,
+      poolWithdrawCapAssets: assets(32_500_000),
+      sharePrice: 1,
       hasCoreData: true,
       hasDepositData: true,
       hasUserData: true,
@@ -181,7 +181,7 @@ function historySeries(
 
 const seniorSupply = shares(35_000_000)
 const juniorSupply = shares(50_000_000)
-const juniorPendingFeeShares = 99_985_740_167_002n
+const juniorPendingFeeShares = 0n
 const seniorEndAssets = assets(70_000_000)
 const seniorStartAssets = (seniorEndAssets + 1n) * 1_000n / 1_001n - 1n
 const juniorEndAssets = assets(50_000_000)

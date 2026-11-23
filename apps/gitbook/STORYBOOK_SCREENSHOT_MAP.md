@@ -38,84 +38,84 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/how-pnl-is-calculated.md:77` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/how-pnl-is-calculated.md:544` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
+| `how-plether-works/how-pnl-is-calculated.md:40` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `how-plether-works/how-pnl-is-calculated.md:107` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
 
 ## Margin, leverage and liquidation
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/margin-leverage-and-liquidation.md:163` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/margin-leverage-and-liquidation.md:200` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
+| `how-plether-works/margin-leverage-and-liquidation.md:76` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `how-plether-works/margin-leverage-and-liquidation.md:84` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
 ## Market states and oracle closures
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/market-states-and-oracle-closures.md:509` | Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown; not the contract calendar |
+| `how-plether-works/market-states-and-oracle-closures.md:77` | Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown; not the contract calendar |
 
 ## Liquidity pool and tranche waterfall
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/the-liquidity-pool-and-tranche-waterfall.md:553` | Current Vaults withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
+| `how-plether-works/the-liquidity-pool-and-tranche-waterfall.md:109` | Current Vaults withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
 
 ## LP quickstart
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `liquidity-provider-quickstart.md:95` | Vaults overview with current pool liquidity and Senior and Junior Vault cards | [Overview](http://localhost:6006/?path=/story/documentation-vaults--overview) | Current production components, illustrative values |
+| `liquidity-provider-quickstart.md:44` | Vaults overview with current pool liquidity and Senior and Junior Vault cards | [Overview](http://localhost:6006/?path=/story/documentation-vaults--overview) | Current production components, illustrative values |
 
 ## Providing liquidity
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `providing-liquidity/deposit-liquidity.md:103` | Deposit preview for a queued Senior or Junior Vault deposit | [Deposit Preview](http://localhost:6006/?path=/story/documentation-vaults--deposit-preview) | Current production component, illustrative values |
-| `providing-liquidity/lp-risks-and-safeguards.md:13` | Current Junior Vault overview section with pool status and safeguards | [Junior Overview Section](http://localhost:6006/?path=/story/documentation-vaults--junior-overview-section) | Current production Vault overview section, illustrative values |
-| `providing-liquidity/lp-troubleshooting.md:144` | Pending deposit and withdrawal records with their current actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Current production Vault activity view, illustrative values |
+| `providing-liquidity/deposit-liquidity.md:45` | Deposit preview for a queued Senior or Junior Vault deposit | [Deposit Preview](http://localhost:6006/?path=/story/documentation-vaults--deposit-preview) | Current production component, illustrative values |
+| `providing-liquidity/lp-risks-and-safeguards.md:9` | Current Junior Vault overview section with pool status and safeguards | [Junior Overview Section](http://localhost:6006/?path=/story/documentation-vaults--junior-overview-section) | Current production Vault overview section, illustrative values |
+| `providing-liquidity/lp-troubleshooting.md:37` | Pending deposit and withdrawal records with their current actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Current production Vault activity view, illustrative values |
 | `providing-liquidity/manage-a-pending-deposit.md:20` | Pending deposit records with their expected processing time, status and available actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Current production Vault activity view, illustrative values |
-| `providing-liquidity/read-your-lp-position-and-pool-health.md:30` | Senior Vault Your position view with active shares and the current empty pending-request state | [Position](http://localhost:6006/?path=/story/documentation-vaults--position) | Current production Vault activity view, illustrative values |
-| `providing-liquidity/read-your-lp-position-and-pool-health.md:143` | Senior Vault Overview with current value, share-price context and operating rules | [Senior Overview Section](http://localhost:6006/?path=/story/documentation-vaults--senior-overview-section) | Current production Vault overview section, illustrative values |
-| `providing-liquidity/withdraw-liquidity.md:138` | Withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
+| `providing-liquidity/read-your-lp-position-and-pool-health.md:23` | Senior Vault Your position view with active shares and the current empty pending-request state | [Position](http://localhost:6006/?path=/story/documentation-vaults--position) | Current production Vault activity view, illustrative values |
+| `providing-liquidity/read-your-lp-position-and-pool-health.md:41` | Senior Vault Overview with current value, share-price context and operating rules | [Senior Overview Section](http://localhost:6006/?path=/story/documentation-vaults--senior-overview-section) | Current production Vault overview section, illustrative values |
+| `providing-liquidity/withdraw-liquidity.md:57` | Withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
 
 ## Read your position and account health
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/read-your-position-and-account-health.md:44` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `trading-on-plether-perps/read-your-position-and-account-health.md:210` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
+| `trading-on-plether-perps/read-your-position-and-account-health.md:28` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `trading-on-plether-perps/read-your-position-and-account-health.md:55` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
 ## Reduce or close a position
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/reduce-or-close-a-position.md:57` | Existing position fields before composing a reduction | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `trading-on-plether-perps/reduce-or-close-a-position.md:24` | Existing position fields before composing a reduction | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
 
 ## Your Margin Account
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/your-margin-account.md:202` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
+| `trading-on-plether-perps/your-margin-account.md:57` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
 ## Take profit and stop loss
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:39` | Trade ticket with Take profit / stop loss checked and both trigger inputs expanded | [New order with TP/SL](http://localhost:6006/?path=/story/perps-trade-ticket--add-take-profit-stop-loss) | Current component, illustrative values, no wallet transactions |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:61` | Active TP/SL with saved trigger prices and the worker monitoring notice | [Active TP/SL](http://localhost:6006/?path=/story/perps-position-protection--armed) | Current component, illustrative worker observation |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:102` | Close queued after a trigger, with the linked order awaiting execution | [Close Queued](http://localhost:6006/?path=/story/perps-position-protection--close-queued) | Current component, illustrative queued close |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:108` | Close delayed with a binding trigger and a queue-related retry delay | [Close Delayed](http://localhost:6006/?path=/story/perps-position-protection--latched) | Current component, illustrative latched close and worker observation |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:150` | Completed TP/SL record with expanded activity and transaction links | [Closed](http://localhost:6006/?path=/story/perps-position-protection--closed) | Current component, illustrative completed protection and events |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:29` | Trade ticket with Take profit / stop loss checked and both trigger inputs expanded | [New order with TP/SL](http://localhost:6006/?path=/story/perps-trade-ticket--add-take-profit-stop-loss) | Current component, illustrative values, no wallet transactions |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:43` | Active TP/SL with saved trigger prices and the worker monitoring notice | [Active TP/SL](http://localhost:6006/?path=/story/perps-position-protection--armed) | Current component, illustrative worker observation |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:73` | Close queued after a trigger, with the linked order awaiting execution | [Close Queued](http://localhost:6006/?path=/story/perps-position-protection--close-queued) | Current component, illustrative queued close |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:79` | Close delayed with a binding trigger and a queue-related retry delay | [Close Delayed](http://localhost:6006/?path=/story/perps-position-protection--latched) | Current component, illustrative latched close and worker observation |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:97` | Completed TP/SL record with expanded activity and transaction links | [Closed](http://localhost:6006/?path=/story/perps-position-protection--closed) | Current component, illustrative completed protection and events |
 
 ## USDG quickstart and account balance
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trader-quickstart.md:23` | Get 100,000 USDG directly in your Margin Account. Plether pays all funding gas. | [USDG component](http://localhost:6006/?path=/story/testnet-welcome-modal--request-funds) | Current production component, illustrative values |
-| `trader-quickstart.md:31` | A 10,000 USDG deposit from the Trading Account. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--deposit-margin) | Current production component, illustrative values |
-| `trader-quickstart.md:48` | The example long order uses 2,000 plDXY and 2x leverage. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-order) | Current production component, illustrative values |
-| `trader-quickstart.md:62` | Commit Preview shows the example order's margin, leverage, price limit and costs. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-preview) | Current production component, illustrative values |
-| `trading-on-plether-perps/your-margin-account.md:41` | USDG balance and signed Position equity are separate account metrics. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--margin-account-summary) | Current production component, illustrative values |
+| `trader-quickstart.md:18` | Get 100,000 USDG directly in your Margin Account. Plether pays all funding gas. | [USDG component](http://localhost:6006/?path=/story/testnet-welcome-modal--request-funds) | Current production component, illustrative values |
+| `trader-quickstart.md:29` | A 10,000 USDG deposit from the Trading Account. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--deposit-margin) | Current production component, illustrative values |
+| `trader-quickstart.md:51` | The example long order uses 2,000 plDXY and 2x leverage. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-order) | Current production component, illustrative values |
+| `trader-quickstart.md:63` | Commit Preview shows the example order's margin, leverage, price limit and costs. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-preview) | Current production component, illustrative values |
+| `trading-on-plether-perps/your-margin-account.md:30` | USDG balance and signed Position equity are separate account metrics. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--margin-account-summary) | Current production component, illustrative values |
 
 ## Inventory result
 

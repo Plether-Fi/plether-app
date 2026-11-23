@@ -1,605 +1,80 @@
-# Risks you should understand first
-
-> **Plether can bound a modeled obligation. It cannot remove risk.**
->
-> Traders can lose their collateral. Liquidity providers can lose principal. Either may be unable to access USDG[^usdg] when expected.
-
-Plether is designed to measure counterparty liabilities before accepting them. That is different from making capital safe.
-
-Before trading or providing liquidity, understand what the protocol’s safeguards do—and what they do not do.
-
-This page is a summary, not an exhaustive list. Smart contracts and financial systems can fail in ways that have not been anticipated or documented.
-
-### Read Plether’s claims precisely
-
-| Protocol property                    | What it provides                                                  | What it does not provide                                           |
-| ------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **Fixed 0.00–2.00 settlement range** | A calculable maximum modeled payout                               | A guarantee that external FX markets remain inside that range      |
-| **Entry solvency check**             | Rejects new exposure the pool cannot support at entry             | A guarantee that bad debt or later insolvency is impossible        |
-| **No counterparty ADL**              | Another trader’s failure does not reduce your profitable position | Protection from liquidation of your own under-margined position    |
-| **Delayed oracle execution**         | Reduces front-running and keeper price-selection risk             | Guaranteed execution, no slippage, or freedom from all MEV         |
-| **Gas-sponsored Trading Account**    | Eligible actions without owner-wallet native gas                       | Guaranteed sponsor or bundler availability, or permission to act without a wallet signature |
-| **Withdrawal firewall**              | Prevents encumbered LP capital from leaving the pool              | Immediate or unconditional LP withdrawals                          |
-| **Non-upgradeable perps logic**      | Prevents the owner from replacing deployed perps code             | Proof that the deployed code or the separate Trading Account stack is correct or immutable |
-| **Senior tranche priority**          | Junior absorbs losses before Senior                               | Principal protection or guaranteed yield                           |
-
-### Bounded liability is not guaranteed payment
-
-Plether clamps the raw basket to a settlement mark between **0.00 and 2.00**.
-
-The 2.00 ceiling is a protocol constant. It cannot be changed through governance.
-
-This lets Plether calculate the maximum gross directional payout of every position:
-
-* LONG USD cannot accrue directional profit below a raw basket mark of 0.00.
-* SHORT USD cannot accrue directional profit above a raw basket mark of 2.00.
-
-Before accepting a trade that increases risk, Plether checks whether physically backed pool assets, after existing trader-claim liabilities, can cover the resulting worst-case aggregate directional liability plus the configured liability-scaled settlement buffer.
-
-This is an admission rule. It does not guarantee that:
-
-* Every trader profit will be immediately withdrawable
-* LP[^lp] principal cannot be impaired
-* Bad debt cannot occur
-* USDG will remain worth one dollar
-* Pyth prices will always be correct or available
-* Keepers[^keeper] will always execute promptly
-* The contracts contain no defects
-* Governance will always make good decisions
-
-The solvency check depends on correct code, correct accounting, valid oracle[^oracle] data and functioning external infrastructure.
-
-A profitable close can complete even when its complete fresh pool-funded payout cannot be credited immediately. Released position margin follows separately; the complete fresh payout is recorded in full as a trader claim and is never split between an immediate credit and a new claim. The liability remains recorded, but settlement may be delayed until sufficient pool cash is available.
-
-### No counterparty ADL does not mean no forced exit
-
-[Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md) also does not prevent liquidation or guarantee a maximum loss. A trigger queues a close rather than executing at a promised price. Oracle availability, queue delays and keeper failures can leave the position exposed; a latched close remains binding even if the price reverses.
-
-Plether does not reduce or close an unrelated profitable position to cover another trader’s loss.
-
-There is no counterparty auto-deleveraging between traders.
-
-Your position can be fully liquidated if position margin after accrued carry plus same-account claims and exact price PnL falls to or below maintenance. Uncovered carry or insufficient VPI reserve backing can independently make it liquidatable.
-
-That requirement rises around FX-market[^fx] closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
-
-The distinction is simple:
-
-* Another trader’s failure does not force your profitable position to shrink.
-* Your own insufficient collateral can still force your position to close.
-
-### How losses move through the system
-
-| Event                                    | First affected                         | What happens next                                                                      |
-| ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
-| A trader loses                           | The trader’s reachable USDG collateral | An existing same-account trader claim can be netted next; any remaining deficit becomes bad debt absorbed by pool capital |
-| A trader profits                         | Available pool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
-| The liquidity pool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
-| Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
-| A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new trader risk and new LP deposits; eligible LP withdrawal requests may still queue, but no new withdrawal USDG is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. |
-
-This waterfall determines who bears economic losses. It does not guarantee when sufficient cash will be available.
-
-## Risks for traders
-
-### Directional and leverage risk
-
-LONG USD profits when the dollar strengthens against the Plether basket. SHORT USD profits when the dollar weakens.
-
-If the market moves in the opposite direction, the position loses value. Leverage magnifies that loss relative to the collateral posted.
-
-High leverage leaves less room for:
-
-* Adverse price movement
-* Carry[^carry] accrual
-* Execution fees
-* Virtual price impact
-* Oracle-confidence adjustments
-* Liquidation bounties
-
-A directionally correct position can still lose money if its gain does not exceed its accumulated costs.
-
-### Full-liquidation risk
-
-Plether uses full liquidation rather than partial liquidation.
-
-Once a position becomes liquidatable, the entire position can be closed. Reachable collateral pays the trading loss and liquidation bounty. An existing claim belonging to the same Trading Account can then be netted against a terminal shortfall before any remainder becomes pool bad debt. Any positive residual remains attributable to the trader.
-
-There is no partial-liquidation process that reduces an oversized position and leaves the remainder open.
-
-### Account-collateral risk
-
-Do not assume that the margin figure displayed beside a position is always the maximum USDG that can be reached during terminal settlement.
-
-Plether separates price risk from action obligations. Price equity is assigned position margin after accrued carry plus same-account claims and exact PnL. Carry consumes active position margin first, then eligible free USDG; it cannot consume trader claims or reserved funds. Reserves have dedicated purposes, and committed-order funds do not back price losses. Withdrawals check carry coverage, reserve backing, position equity and eligible mark data.
-
-A same-account trader claim supports price equity and can offset price losses. It is not cash available for carry, fees or withdrawal.
-
-The detailed rules for free balance, locked position margin, committed-order reservations and terminally reachable collateral should be understood before using leverage.
-
-### Carry risk
-
-Carry accrues on the portion of a position economically financed by LP capital.
-
-Carry can:
-
-* Reduce position equity over time
-* Bring a position closer to liquidation
-* Continue accruing while the oracle is stale or frozen
-* Change with pool utilization
-* Change after timelocked risk-parameter updates
-* Affect both LONG USD and SHORT USD simultaneously
-
-Carry is not trader-to-trader funding. It is the cost of using LP-backed capital.
-
-Carry reduces position margin and price equity before it reaches free USDG. A position can therefore become liquidatable without an adverse price move even when free funds remain. If position margin and eligible free USDG together cannot cover carry, the uncovered amount independently makes the position liquidatable, even if claims and price PnL keep price equity above maintenance.
-
-### Binding-order risk
-
-Plether orders are delayed, binding and non-cancellable.
-
-After commitment:
-
-* The market can move before execution.
-* The order enters a global first-in, first-out queue.
-* Missing or stale oracle data can leave the order pending.
-* Slippage, expiry or certain invalid states can fail it terminally.
-* A failed order is not automatically retried.
-* Depending on the failure reason, the reserved execution reward may still be paid to the keeper.
-
-A blocked queue head must be resolved before later orders can execute. Heavy queue cleanup can require more than one keeper transaction.
-
-Do not commit an order unless you accept its delayed and non-cancellable lifecycle.
-
-### Execution-price risk
-
-The price visible when an order is committed is not a guaranteed execution price.
-
-Execution and final trade economics depend on:
-
-* The eligible Pyth observation under the active market-state policy
-* The oracle-confidence policy active for that market state
-* Virtual price impact
-* Whether the eligible oracle price satisfies the acceptable-price limit chosen by the trader
-* The protocol execution fee
-* The execution reward
-
-Virtual price impact depends on pool depth and directional imbalance. It can add a USDG charge or a bounded rebate without changing the oracle execution price.
-
-During an oracle-frozen voluntary close, normal signed VPI[^vpi] remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies. A partial close must settle the full spread; any uncollectible portion on a terminal full close is waived rather than converted into bad debt.
-
-Plether’s execution model reduces specific forms of price-selection MEV[^mev]. It does not eliminate congestion, censorship, transaction-ordering effects or information leakage after an order is committed.
-
-### Oracle and market-closure risk
-
-Live execution depends on Pyth publishing timely and correct prices for all six basket components.
-
-Incorrect, stale, inconsistent or unavailable data can:
-
-* Distort the basket
-* Delay an order
-* Leave the global queue blocked
-* Cause an order to expire
-* Block new exposure
-* Affect liquidation timing
-* Move the protocol into conservative close-only behavior
-
-During genuine FX-market closures, eligible closes and liquidations use relaxed freshness rules and conservative pricing. Those rules prioritize risk reduction, but they do not provide the same price guarantees as a live market.
-
-Scheduled holidays, daylight-saving transitions and exceptional closures can create periods in which expected actions are unavailable.
-
-### Market-close liquidation risk
-
-Plether raises its applicable margin requirement before scheduled FX-market closures.
-
-This reduces the amount of highly leveraged risk carried into a stale-price window. It also means a position can become liquidatable without a large immediate price move if it does not satisfy the higher requirement.
-
-Carry continues accruing while the market is closed.
-
-Traders are responsible for reducing exposure or adding collateral before the stricter regime begins.
-
-### Delayed-profit risk
-
-A profitable close does not always produce immediately withdrawable USDG.
-
-Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or, if sufficient free cash is unavailable, recorded in full as a trader claim. Plether does not split it between an immediate credit and a new claim.
-
-A trader claim is:
-
-* A senior liability recorded by the protocol
-* Owned by a specific Trading Account
-* Settled only when aggregate claims are fully cash-covered
-* Credited into the Trading Account’s Margin Account rather than directly to the owner wallet
-
-It is not:
-
-* USDG already held in the trader’s wallet
-* Freely reusable position collateral
-* A payment with a guaranteed date
-* A first-in, first-out claim on incoming cash
-
-### Basis risk
-
-Plether’s index is DXY-inspired[^dxy], not raw DXY.
-
-It uses:
-
-* A weighted arithmetic basket
-* Fixed reference coefficients
-* Effective weights that drift without automatic rebalancing
-* Pyth component prices
-* A fixed 0.00–2.00 settlement range
-
-Its returns can diverge from DXY futures, another dollar index, or a user’s personal currency exposure.
-
-A SHORT USD position may reduce broad dollar exposure without perfectly hedging rent, payroll or expenses in one particular currency.
-
-The fixed 2.00 ceiling creates additional basis risk[^basis-risk] if the external currency basket rises beyond 2.00. Plether stops recognizing further price movement even if the external market continues moving.
-
-## Risks for liquidity providers
-
-This section summarizes the shared risk model. Before depositing, use [LP risks and safeguards](../providing-liquidity/lp-risks-and-safeguards.md) for the tranche-specific decision and action checklist.
-
-### LPs are the economic counterparty
-
-The liquidity pool backs trader payouts.
-
-LP return is compensation for underwriting that liability. It is not risk-free yield and does not come from a guaranteed external revenue source.
-
-LP economics are affected by:
-
-* Trader profits and losses
-* Bad debt
-* Realized carry
-* Virtual price impact
-* Directional skew[^skew]
-* Pool utilization
-* Senior coupon transfers
-* Outstanding trader claims
-
-Protocol execution fees belong to the protocol treasury, not automatically to LPs.
-
-### Junior tranche risk
-
-Junior is first-loss capital.
-
-Junior can be impaired or wiped out by:
-
-* Profitable trader settlement
-* Bad debt beyond reachable trader collateral
-* Senior coupon transfers
-* Oracle or accounting failures
-* Other losses affecting pool backing
-
-Junior receives residual upside because it occupies the first-loss position.
-
-A wiped Junior tranche[^tranche] cannot be silently restored through ordinary deposits. Recovery requires explicit recapitalization or future reconciled LP-owned value. A positive marked receivable can affect NAV but does not provide withdrawal cash until collected.
-
-### Senior tranche risk
-
-Senior has priority over Junior, not immunity from loss.
-
-The Senior target coupon is funded from available Junior value and capped by available Junior principal.
-
-It is not:
-
-* A guaranteed APY[^apy]
-* Fixed income in the legal sense
-* Principal protection
-* A claim on revenue that does not exist
-
-Senior capital can be impaired after Junior value is exhausted.
-
-“Senior” describes its position in the loss waterfall. It does not mean risk-free.
-
-### Directional-skew risk
-
-LPs do not choose LONG USD or SHORT USD, but the liquidity pool takes the other side of aggregate trader exposure.
-
-If open positions become concentrated:
-
-* A LONG USD-heavy market creates greater pool liability when USD strengthens.
-* A SHORT USD-heavy market creates greater pool liability when USD weakens.
-* A balanced market can still owe profitable traders on either side.
-
-The entry solvency check limits modeled exposure relative to backing. It does not prevent LP capital from being used to pay traders when the covered scenario occurs.
-
-Drift in the Plether basket’s effective currency weights can also change which underlying FX moves have the greatest influence on future pool liability.
-
-### Withdrawal-liquidity risk
-
-An LP share is not the same as immediately withdrawable USDG.
-
-Withdrawals depend on:
-
-* Holder cooldowns
-* Available pool cash
-* Reserved trader liabilities
-* Outstanding trader claims
-* Current solvency
-* Oracle freshness
-* Tranche impairment
-* Protocol lifecycle and pause state
-
-Withdrawals can be reduced, delayed or blocked.
-
-During frozen-oracle periods, withdrawals may remain available under stale-price rules but incur a tranche-specific surcharge.
-
-Capital already required to support trader obligations cannot leave the pool.
-
-### Hourly vault-request risk
-
-All LP deposits and withdrawals enter an hourly request queue. A deposit moves USDG into vault escrow before shares are ready; a withdrawal moves the quoted shares into escrow before USDG is funded.
-
-A request can normally be cancelled only while the interface still offers **Cancel deposit** or **Cancel withdrawal**. At the request's expected processing boundary, that cancellation window closes even if no settlement transaction has begun. The LP then waits for the outcomes shown under **Your position**:
-
-* **Shares ready** or **Refund available** for a deposit;
-* **USDG ready** and/or **Shares ready to return** for a withdrawal.
-
-A partly funded withdrawal can expose both actions only when the remaining shares quote to zero assets and enter terminal refund state. An ordinary insufficient-liquidity remainder stays queued. If any USDG is claimable, the interface shows **USDG ready** as the status even when a zero-value share remainder can also be returned.
-
-The final conversion is set during processing, not when the preview is opened. A deposit can therefore produce a different share count from its estimate, and queued withdrawal shares continue gaining or losing value until USDG is allocated. Senior withdrawals receive funding priority over Junior withdrawals.
-
-The settlement path is permissionless, and an enabled, healthy keeper can submit eligible hourly processing. The current interface exposes no user finalization action. An expected time is not a guarantee: a disabled or unavailable keeper, oracle, liquidity, health or governance gate can delay processing, and **Hourly processing paused** can leave otherwise valid requests waiting. Pending does not mean risk-free, immediately cancellable or fixed-price.
-
-### NAV and accounting risk
-
-Plether uses one exact signed, collateral-capped Terminal NAV snapshot for both deposit and withdrawal accounting. Marked trader gains reduce LP NAV; marked trader losses can increase it only up to the collectible amount backed by pledged collateral and eligible same-account claims.
-
-That positive marked receivable is accounting value, not physical pool cash, and does not increase free withdrawal liquidity until collected. Deposit and withdrawal quotes can still differ because ERC-4626 rounds in different directions and the frozen-oracle fee applies only to withdrawal funding.
-
-A displayed share price or historical APY is not a guarantee of future redemption value.
-
-## Risks shared by everyone
-
-### Smart-contract risk
-
-A defect in the contracts, integrations or economic assumptions can cause:
-
-* Loss of funds
-* Incorrect accounting
-* Delayed settlement
-* Unavailable withdrawals
-* Incorrect liquidation
-* Permanent protocol disruption
-
-The perps[^perps] contracts are non-upgradeable. This prevents the owner from replacing their deployed logic, but it also means a discovered defect cannot be patched in place. The separate smart-account stack used for sponsored trading has its own upgradeability and dependency risks.
-
-A material fix can require a new deployment and user migration.
-
-Immutability makes behavior harder to change. It does not make behavior correct.
-
-### Smart-account risk
-
-The current Arbitrum Sepolia sponsorship integration uses a deterministic permissionless.js SimpleAccount v0.8 at an address separate from the connected owner wallet. The owner wallet signs for that Trading Account, and there is no direct owner-wallet transaction fallback.
-
-This path depends on:
-
-* Smart-account code and signature validation
-* EntryPoint compatibility
-* Nonce and replay protection
-* Owner-wallet recovery and key security
-* The configured SimpleAccount factory, account index and deterministic address derivation
-* Correct account initialization and ownership checks
-
-The current testnet SimpleAccount implementation uses an upgradeable proxy (the UUPS pattern). It does not satisfy Plether’s stated production requirement for immutable execution semantics and is intended only for managed testnet testing. A defect, incompatible account state, account upgrade or replacement factory can reject an otherwise valid Plether action, lock the account out of the sponsored path or require a deliberate migration. A replacement factory derives a different Trading Account address, and the current test profile has no automatic state-migration path.
-
-The Trading Account owns the positions, orders, Margin Account and trader claims. Losing control of its owner wallet can therefore affect the ability to manage that complete protocol state.
-
-### Sponsor-service and bundler availability risk
-
-Eligible trader actions depend on a sponsor approving network-gas funding and a bundler[^bundler] accepting and submitting the signed UserOperation[^useroperation].
-
-An action can be delayed or rejected because of:
-
-* Sponsor downtime or depleted budgets
-* Per-account or protocol-wide rate limits
-* Gas-price or action-policy limits
-* Failed operation simulation
-* Bundler policy rejection
-* Bundler, RPC[^rpc] or EntryPoint outages
-* A UserOperation being dropped before inclusion
-* An expired signature, invalid nonce or changed account state or ownership
-
-Before the sponsored commitment confirms, these failures normally mean no order exists. After a commitment confirms, the order remains governed by the delayed FIFO[^fifo] execution rules even if sponsorship later becomes unavailable.
-
-A sponsorship outage can be especially consequential for a position that needs margin, reduction or closure. The position remains active, carry continues to accrue and liquidation rules continue to apply while the action is delayed.
-
-Sponsorship failure does not authorize Plether to transact for the user. The sponsor decides whether to pay gas; it cannot create the owner-wallet signature, replace the signed instruction with another action or withdraw funds without the required authorization. Plether also does not silently fall back to charging the owner wallet or submitting from a different address.
-
-### Audit and deployment risk
-
-Plether Perps has completed an external pre-audit security consultation.
-
-It has not completed a formal production audit.
-
-The pre-audit reviewed an earlier code snapshot. It should not be presented as formal coverage of every later change or of the complete current deployment.
-
-The active release is an Arbitrum Sepolia testnet deployment using MockUSDG. Testnet operation does not demonstrate mainnet safety, economic durability or production readiness.
-
-Every release should be assessed against its exact:
-
-* Source commit
-* Deployed bytecode
-* Oracle configuration
-* Risk parameters
-* Admin addresses
-* Audit scope
-
-### Oracle risk
-
-Plether assumes Pyth provides accurate and timely component prices.
-
-Confidence filters, freshness checks, publication-time checks and conservative execution adjustments reduce specific failure modes.
-
-They cannot eliminate:
-
-* Feed compromise
-* Incorrect prices
-* Publication outages
-* Historical-data unavailability
-* Pyth contract failures
-* Errors in Plether’s basket construction
-* Unexpected behavior during market closures
-
-Frozen-oracle rules deliberately prioritize close and liquidation liveness over normal live-price guarantees.
-
-### Keeper and queue risk
-
-Keepers are permissionless, but execution still requires someone to submit the correct transaction and any oracle data required by the active market state.
-
-If keeper infrastructure is unavailable:
-
-* Orders can remain queued
-* Liquidations can be delayed
-* Hourly LP requests can remain unprocessed
-* Users cannot cancel committed orders
-* Restoring service may not clear the entire queue immediately
-
-Permissionless execution removes an exclusive operator. It does not guarantee timely execution.
-
-### USDG risk
-
-The protocol accounts and settles in USDG.
-
-Users remain exposed to:
-
-* Loss of dollar parity
-* Issuer blacklisting or freezing
-* Token-contract upgrades
-* Collateral centralization
-* Disruption to transfers or redemptions
-
-Plether has no internal mechanism that converts impaired USDG into an unimpaired dollar.
-
-The current testnet uses MockUSDG, which has no claim on real dollars.
-
-### Chain and interface risk
-
-The current deployment depends on Arbitrum Sepolia and its surrounding infrastructure.
-
-Sequencer interruption, congestion, transaction-ordering effects, RPC failure or wider Ethereum and Arbitrum disruption can delay actions or make the protocol temporarily unavailable.
-
-Interfaces, APIs and indexers can display stale or incorrect information. The deployed contracts remain authoritative, but direct interaction still depends on the chain, oracle data, smart-account services and correct operation construction.
-
-Confirmed operations are generally irreversible, and a confirmed Plether order commitment cannot be cancelled. Wallet approvals and signed authorizations remain security-sensitive even when they can later expire, be superseded or be revoked. Users are responsible for verifying the network, owner wallet, Trading Account, contract addresses and action details.
-
-### Governance and pause risk
-
-Core perps runtime logic is non-upgradeable, and the **2.00 settlement ceiling is immutable**. Governance cannot alter either through parameter changes. This does not make the current testnet SimpleAccount implementation immutable.
-
-Governance still controls important economic and operational parameters, including:
-
-* Margin and carry settings
-* Execution fees
-* Market-close calendars
-* Oracle freshness limits
-* Senior target rate
-* Router and keeper-bounty configuration
-* The active oracle contract
-* Emergency pause state
-
-Most risk-sensitive changes currently use a 48-hour timelock. Emergency pauses can be applied immediately.
-
-Timelocks provide notice. They do not prevent:
-
-* Poor parameter choices
-* Key compromise
-* Operational error
-* Disruption from a pause
-* Economic terms changing during a position or LP deposit
-
-Users should monitor pending governance actions and current protocol state.
-
-### Model risk
-
-Plether’s controls rely on assumptions about:
-
-* The arithmetic currency basket
-* Effective weight drift
-* The fixed 0.00–2.00 settlement range
-* Trader behavior
-* Liquidation incentives
-* Keeper availability
-* Market hours
-* The relationship between modeled liability and realizable cash
-
-Extreme or previously unseen conditions can expose weaknesses that are not apparent in normal operation or historical testing.
-
-Code can enforce a model exactly and the model can still be wrong.
-
-## Before you use Plether
-
-### Trader checklist
-
-Do not open a position unless you can answer yes to each question:
-
-* Do I understand that LONG and SHORT refer to USD while the raw basket moves in the opposite direction?
-* Do I understand which same-account USDG balances can become reachable during settlement?
-* Can I afford to lose that collateral?
-* Can the position survive carry, fees and the higher market-close margin requirement?
-* Am I willing to submit a delayed order that cannot be cancelled?
-* Have I set an acceptable-price limit I understand?
-* Have I verified the active Trading Account and the action covered by sponsorship?
-* Can I tolerate sponsor or bundler unavailability while my position remains active?
-* Can I tolerate delayed execution during an oracle, keeper or chain outage?
-* Can I tolerate profitable settlement becoming a trader claim rather than immediate USDG?
-* Does Plether’s arithmetic basket actually hedge the exposure I intend to hedge?
-* Have I verified the network, contracts, current parameters and protocol state?
-
-### LP checklist
-
-Do not deposit unless you can answer yes to each question:
-
-* Do I understand that LP capital pays profitable traders and absorbs bad debt?
-* Have I chosen Senior or Junior based on its actual place in the loss waterfall?
-* Can I tolerate partial or total loss of principal?
-* Can I tolerate cooldowns, blocked withdrawals and frozen-market surcharges?
-* Do I understand that trader claims rank ahead of LP withdrawals?
-* Do I understand hourly deposit and withdrawal processing, the cancellation window, and the separate claim or refund actions?
-* Have I reviewed current directional skew, open liability, free cash and tranche impairment?
-* Do I understand that a target coupon or projected return is not guaranteed?
-* Can I hold the LP position through an extended period of reduced liquidity?
-
-### Everyone
-
-Before interacting:
-
-* Confirm that you are using the intended network and verified contracts.
-* Read the current deployment and audit disclosures.
-* Review live parameters rather than relying on examples in documentation.
-* Understand the dependencies on Pyth, USDG, smart accounts, sponsors, bundlers, keepers, the deployment chain and governance.
-* Use only capital you can afford to lose or have temporarily unavailable.
-
-## The short version
-
-1. The fixed 0.00–2.00 settlement range makes maximum directional liability measurable. It does not guarantee immediate payment.
-2. No counterparty ADL[^adl] protects positions from other traders’ failures. It does not prevent liquidation of your own position.
-3. Delayed oracle execution reduces price-selection risk. It does not remove delay, slippage or infrastructure risk.
-4. Junior absorbs LP losses first. Senior can still be impaired.
-5. Trader claims are senior obligations, but they may not be settled immediately.
-6. LP withdrawals depend on free, unencumbered pool cash.
-7. Non-upgradeable contracts can still contain defects.
-8. Testnet operation and a pre-audit consultation are not substitutes for a formal production audit.
-9. Gas sponsorship can fail or be delayed, but it never gives Plether authority to act without the owner wallet’s authorization.
+# Full risk disclosures
+
+> **Plether can bound a modeled obligation — it cannot remove risk.** Traders can lose their collateral, liquidity providers can lose principal, and either may face temporary or extended delays accessing USDG[^usdg].
+
+For a 2-minute summary before your first test trade, read [Key risks at a glance](key-risks-at-a-glance.md). For audit status, contract immutability and timelock controls, see [Security & governance](../reference/security-and-governance.md). This page details the full economic, operational and technical risks you accept when using Plether Perps[^perps]; smart contracts and markets can also fail in undocumented ways.
+
+## Read Plether's safeguards precisely
+
+| Safeguard | What it does | What it does *not* do |
+| --- | --- | --- |
+| **Fixed `0.00–2.00` range** | Bounds modeled directional payoff | Keep external FX[^fx] inside `[0.00, 2.00]` or prevent basis risk[^basis-risk] |
+| **Entry solvency check** | Rejects new opens if effective backing `< maxLiability + 0.25%` buffer | Guarantee zero bad debt, instant cash payouts or LP[^lp] principal safety |
+| **No counterparty ADL[^adl]** | Another trader's default never trims your winning trade | Prevent full liquidation of your own under-margined position |
+| **Delayed FIFO[^fifo] execution** | Reduces front-running and keeper price-cherry-picking | Guarantee execution, remove slippage or eliminate all MEV[^mev] |
+| **Gas-sponsored Trading Account** | Removes ETH gas need for eligible web trading actions | Guarantee sponsor/bundler uptime or allow gasless direct LP vault actions |
+| **LP withdrawal firewall** | Keeps trader-encumbered cash inside the pool | Guarantee immediate or fixed-date LP withdrawals |
+| **Non-upgradeable perps core** | Prevents silent in-place logic changes on core perps contracts | Prove code is bug-free or make the testnet UUPS `SimpleAccount` immutable |
+| **Senior tranche[^tranche] priority** | Places Junior first-loss ahead of Senior | Guarantee Senior principal or Senior APY[^apy] |
+
+## How losses flow through the protocol
+
+| Event | First affected | What follows |
+| --- | --- | --- |
+| **Trader realizes a price loss** | Same-account trader claim **first**, then position margin | Uncovered excess price loss becomes explicit LP bad debt; uncollectible full-close action charges are waived |
+| **Trader realizes a profit** | Free recognized pool cash above existing claims | Funded in full immediately (to position margin if open, free USDG if flat), or recorded in full as a senior trader claim |
+| **Pool realizes a loss** | Junior tranche principal | Senior absorbs excess loss only after Junior reaches zero |
+| **Senior accrues target coupon** | Available Junior principal | Capped by Junior principal; unpaid coupon never accrues as debt |
+| **Terminal shortfall breaches solvency** | Protocol latches **Degraded mode** | Blocks new trader risk, new LP deposits and new LP withdrawal USDG allocation until solvency recovers and the owner clears the latch |
+
+## Trader risks
+
+* **Directional & leverage risk:** Leverage magnifies losses relative to collateral. Even a directionally right trade can lose money after execution fees (`0.04%`), VPI[^vpi], carry[^carry] and the `0.25×` adverse confidence shift.
+* **Full-liquidation & FAD jump risk:** Plether never partially liquidates. Crossing maintenance (`0.10%` live; **`3.00%` during FAD close-only**) — or having uncovered carry or an underfunded VPI rebate reserve — puts the entire position at risk of immediate permissionless liquidation (with a `0.10%` charge, min `1.00 USDG`, split `50%` keeper / `50%` LPs).
+* **Isolated price collateral vs carry drain:** Free Margin Account USDG and committed opening margin do **not** back price losses or raise price equity. Carry collects from **active position margin first**, then eligible free USDG — meaning carry can lower position equity and trigger liquidation even while free USDG sits in your account.
+* **Binding delayed execution:** Committed orders cannot be cancelled or repriced. Pending orders wait in global FIFO for post-commit Pyth observations, can expire (`> 60s`), fail on slippage or risk checks, and (for opens/increases) still pay their `0.01–0.20 USDG` execution reward on failure or expiry (or forfeit it to treasury on liquidation). A pending close provides **zero** liquidation protection.
+* **TP/SL automation limits:** Armed TP/SL triggers queue a standard full close — they never guarantee a fill price or prevent liquidation. The current web UI submits TP/SL close intents with **uncapped `uint256.max` close bounds** (offering trigger automation, not finite slippage/cost protection). The protection worker indexes 12 blocks behind chain head, polls every `5s`, submits one transaction without fee-bumping, and automatically retries only latched `Expired` attempts; a latched exit remains binding even if price reverses.
+* **Oracle, FX-closure & frozen-spread risk:** Live trading requires all 6 Pyth feeds to be fresh, aligned within `5s` and within `0.10%` confidence. Voluntary closes during `oracleFrozen` incur the `50 bps` frozen-close spread (waived only when uncollectible on a full close). Carry accrues 24/7 through every closure and outage.
+* **Delayed profit settlement (trader claims):** An unfunded profit payout becomes a non-interest-bearing, non-transferable trader claim with no guaranteed settlement date. Claims settle all-or-nothing only when `Physical pool assets >= Aggregate trader claims`, credit your Margin Account (position margin if open, free USDG if flat) and can be netted first against later same-account price losses.
+* **Index & basis risk:** `plDXY` is an arithmetic, non-rebalancing, DXY-inspired[^dxy] basket bounded to `[0.00, 2.00]`. Effective currency weights drift and returns can diverge from ICE DXY or single-currency expenses, especially if external FX moves outside the `2.00` cap.
+
+## Liquidity provider risks
+
+Before depositing, also review [LP risks and safeguards](../providing-liquidity/lp-risks-and-safeguards.md).
+
+* **Counterparty & directional skew[^skew] risk:** The liquidity pool backs net trader exposure. Profitable traders, VPI rebates and bad debt directly reduce LP capital.
+* **Junior vs Senior tranche risk:** Junior takes first loss, funds Senior's target coupon and can be wiped to zero while Senior stays intact. Senior has last-loss priority inside the LP stack, not a principal or yield guarantee — once Junior hits zero, Senior takes losses and can also be wiped out.
+* **Withdrawal illiquidity & hourly queue risk:** Trader liabilities, the `0.25%` buffer and trader claims rank ahead of both vaults; Senior withdrawals settle ahead of Junior. Positive Terminal NAV (which includes non-cash collectible marked trader losses) never guarantees immediate cash. All requests execute at future hourly batch prices (with a 5-minute cutoff, narrow pre-epoch cancellation window, 1-hour cooldown that restarts on withdrawal cancellation or share returns, and `0.25%` Senior / `0.75%` Junior frozen-oracle withdrawal fees).
+* **Direct wallet gas:** Vault transactions execute from your owner wallet (not your Trading Account) and require Arbitrum Sepolia ETH.
+
+## Shared infrastructure, smart-account and governance risks
+
+* **Pre-audit testnet status:** Plether Perps Core v2.0.0 runs on Arbitrum Sepolia with **MockUSDG** (zero real-world value). It has completed an external pre-audit security consultation on an earlier snapshot, **not** a formal production audit.
+* **Core immutability vs testnet smart-account upgradeability:** Core perps contracts are non-upgradeable — defects cannot be patched in place and would require migration. Separately, sponsored trading uses a deterministic ERC-4337 `SimpleAccount` v0.8 (EntryPoint v0.8) controlled by your owner wallet (external wallet or Privy embedded wallet). On testnet, `SimpleAccount` uses a **UUPS upgradeable proxy** and does not meet production immutability requirements; losing control of your owner wallet compromises the Trading Account and all positions, margin and claims it holds.
+* **First-time `safe` confirmation wait & sponsorship availability:** Deploying a new Trading Account waits for Arbitrum Sepolia **`safe`** confirmation (up to **30 minutes**) before further actions can proceed. Ongoing web trading depends on Plether's self-hosted verifying paymaster (`PletherVerifyingPaymaster`) and private Alto bundler[^bundler]. Rate limits, budget caps, simulation failures or bundler/RPC[^rpc] outages can delay actions — including urgent closes or margin additions — while positions, carry and liquidation remain live. Because the web app has no owner-wallet fallback, sponsorship outages delay web actions (though the sponsor can never forge signatures or move your funds).
+* **Oracle & keeper[^keeper] liveness:** Feed compromise, Pyth outages, Hermes rate limits or offline keepers can stall order execution, liquidations, TP/SL triggers and hourly LP settlement.
+* **USDG & chain risk:** Real USDG carries issuer, freeze, depeg and upgrade risks; Arbitrum sequencer outages, congestion or reorgs can disrupt execution. Always treat onchain contract state and transaction receipts as authoritative over UI or indexer views.
+* **Governance & `72-hour` timelocks:** While core perps logic and the `2.00` cap are immutable, governance controls margin/carry/fee/calendar/oracle parameters under a **`72-hour` timelock** and can activate emergency pauses immediately. Timelocks provide notice — not protection against bad decisions or key compromise.
+
+## Pre-action checklists
+
+* **Traders:** Confirm you understand the inverse raw-basket convention, isolated position margin vs carry drain, `3.00%` FAD margin jump, binding FIFO execution, `uint256.max` TP/SL close bounds, trader-claim settlement delays, sponsorship/safe-confirmation dependencies and verified Arbitrum Sepolia addresses.
+* **LPs:** Confirm you accept principal loss up to full wipeout, Senior vs Junior priority, hourly batch pricing, 1-hour cooldown rules, trader-first withdrawal firewalls, frozen withdrawal fees and direct owner-wallet ETH gas requirements.
 
 [^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^fx]: Foreign exchange, the market for trading one currency against another.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
-[^mev]: Maximal extractable value, value obtained by controlling transaction inclusion or ordering.
-[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
 [^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.
-[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^adl]: Auto-deleveraging, the forced reduction of profitable positions to manage counterparty insolvency.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^mev]: Maximal extractable value, value obtained by controlling transaction inclusion or ordering.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.
-[^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
-[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
-[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
-[^adl]: Auto-deleveraging, the forced reduction of profitable positions to manage counterparty insolvency.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

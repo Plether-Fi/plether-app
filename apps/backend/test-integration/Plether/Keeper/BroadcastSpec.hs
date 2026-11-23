@@ -16,6 +16,7 @@ import Network.HTTP.Types (status200)
 import Network.Wai (responseLBS, strictRequestBody)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Rpc (TxReceipt (receiptTxHash))
 import Plether.Ethereum.Transaction (SignedTransaction (..), Tx1559 (..), signTransaction)
 import Plether.Keeper.Broadcast
 import Test.Hspec
@@ -35,7 +36,13 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
       mined <- newIORef False
       rpcFails <- newIORef False
       applied <- newIORef (0 :: Int)
-      let app request respond = do
+      hookObservations <- newIORef ([] :: [(Text, [Only Int], [Only Bool])])
+      let observeAfterCommit receipt = do
+            remaining <- query_ conn "SELECT count(*) FROM perps_keeper_broadcasts"
+            transactionAssigned <- query_ conn "SELECT pg_current_xact_id_if_assigned() IS NOT NULL"
+            modifyIORef' hookObservations (<> [(receiptTxHash receipt, remaining, transactionAssigned)])
+            fail "optional receipt hook interrupted"
+          app request respond = do
             body <- strictRequestBody request
             let Just (Object fields) = decode body
                 method = KM.lookup "method" fields
@@ -76,11 +83,15 @@ broadcastSpec url = describe "durable order broadcast PostgreSQL" $ do
         (query_ conn "SELECT count(*) FROM perps_keeper_broadcasts" :: IO [Only Int]) `shouldReturn` [Only 1]
         writeIORef rpcFails False
         writeIORef mined True
-        reconcileBroadcast conn router client (\_ -> fail "receipt persistence interrupted") `shouldThrow` anyIOException
+        reconcileBroadcastWithReceiptHook conn router client (\_ -> fail "receipt persistence interrupted") observeAfterCommit
+          `shouldThrow` anyIOException
+        readIORef hookObservations `shouldReturn` []
         (query_ conn "SELECT count(*) FROM perps_keeper_broadcasts" :: IO [Only Int]) `shouldReturn` [Only 1]
         restartedClient <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
-        reconcileBroadcast conn router restartedClient (\_ -> modifyIORef' applied (+1)) `shouldReturn` True
+        reconcileBroadcastWithReceiptHook conn router restartedClient (\_ -> modifyIORef' applied (+1)) observeAfterCommit
+          `shouldReturn` True
         readIORef applied `shouldReturn` 1
+        readIORef hookObservations `shouldReturn` [(hash, [Only 0], [Only False])]
         (query_ conn "SELECT count(*) FROM perps_keeper_broadcasts" :: IO [Only Int]) `shouldReturn` [Only 0]
 
   it "keeps a corrupt journal blocked without contacting the RPC" $

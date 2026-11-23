@@ -1,48 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="941" viewBox="0 0 640 941" role="img" aria-labelledby="delayed-order-execution-pipeline-title delayed-order-execution-pipeline-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="876" viewBox="0 0 640 876" role="img" aria-labelledby="delayed-order-execution-pipeline-title delayed-order-execution-pipeline-desc" focusable="false">
 <title id="delayed-order-execution-pipeline-title">From review to execution</title>
 <desc id="delayed-order-execution-pipeline-desc">A bounded order is committed, queued and assessed using the execution-time oracle regime. Success, temporary deferral and terminal failure are distinct. </desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="941" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / DELAYED ORDERS</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">From review to execution</text>
-<path d="M32 143 L608 143" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 143 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="188" r="14" fill="#9A8890"/>
-<circle cx="47" cy="188" r="5" fill="#250917"/>
-<text x="80" y="197" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Review the bounds</text>
-<text x="80" y="234" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Check size, acceptable price, expiry and</text>
-<text x="80" y="266" font-size="24" font-weight="400" fill="#250917" data-max-width="528">permitted execution modes.</text>
-<path d="M47 209 V290 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="319" r="14" fill="#FF512F"/>
-<circle cx="47" cy="319" r="5" fill="#250917"/>
-<text x="80" y="328" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Commit onchain</text>
-<text x="80" y="365" font-size="24" font-weight="400" fill="#250917" data-max-width="528">The signed operation creates the pending</text>
-<text x="80" y="397" font-size="24" font-weight="400" fill="#250917" data-max-width="528">order.</text>
-<path d="M47 340 V421 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="450" r="14" fill="#F7D977"/>
-<circle cx="47" cy="450" r="5" fill="#250917"/>
-<text x="80" y="459" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Wait for FIFO eligibility</text>
-<text x="80" y="496" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Earlier entries must be handled first.</text>
-<path d="M47 471 V520 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="549" r="14" fill="#9A8890"/>
-<circle cx="47" cy="549" r="5" fill="#250917"/>
-<text x="80" y="558" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Assess the execution</text>
-<text x="80" y="595" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Use an eligible oracle observation; check</text>
-<text x="80" y="627" font-size="24" font-weight="400" fill="#250917" data-max-width="528">mode, price, risk and signed bounds.</text>
-<rect x="32" y="651" width="278" height="258" rx="12" fill="#FFF5F9" stroke="#9A8890"/>
-<rect x="44" y="655" width="254" height="6" rx="3" fill="#00FF99" stroke="none"/>
-<text x="48" y="693" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Pass</text>
-<path d="M48 714 L294 714" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="48" y="744" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Execute</text>
-<text x="48" y="783" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Apply the position</text>
-<text x="48" y="815" font-size="24" font-weight="400" fill="#250917" data-max-width="246">and accounting</text>
-<text x="48" y="847" font-size="24" font-weight="400" fill="#250917" data-max-width="246">changes.</text>
-<rect x="330" y="651" width="278" height="258" rx="12" fill="#F7E4B2" stroke="none"/>
-<text x="346" y="693" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Cannot execute</text>
-<path d="M346 714 L592 714" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="346" y="744" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Defer or fail</text>
-<text x="346" y="783" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Temporary blockers</text>
-<text x="346" y="815" font-size="24" font-weight="400" fill="#250917" data-max-width="246">stay pending.</text>
-<text x="346" y="847" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Terminal reasons</text>
-<text x="346" y="879" font-size="24" font-weight="400" fill="#250917" data-max-width="246">end the order.</text>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="876" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · DELAYED ORDERS</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">From review to execution</text>
+<path d="M32 136 L608 136" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 136 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="177" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="177" r="5" fill="#9A8890"/>
+<text x="78" y="186" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Review the bounds</text>
+<text x="78" y="219" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Check size, acceptable price, expiry and</text>
+<text x="78" y="249" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">permitted execution modes.</text>
+<path d="M47 196 V273 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="296" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="296" r="5" fill="#FFAB96"/>
+<text x="78" y="305" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Commit onchain</text>
+<text x="78" y="338" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">The signed operation creates the pending</text>
+<text x="78" y="368" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">order.</text>
+<path d="M47 315 V392 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="415" r="13" fill="#3B212D" stroke="#F7D977" stroke-width="2.5"/>
+<circle cx="47" cy="415" r="5" fill="#F7D977"/>
+<text x="78" y="424" font-size="24" font-weight="700" fill="#F7D977" data-max-width="530">Wait for FIFO eligibility</text>
+<text x="78" y="457" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Earlier entries must be handled first.</text>
+<path d="M47 434 V481 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="504" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="504" r="5" fill="#9A8890"/>
+<text x="78" y="513" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Assess the execution</text>
+<text x="78" y="546" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Use an eligible oracle observation; check mode,</text>
+<text x="78" y="576" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">price, risk and signed bounds.</text>
+<rect x="32" y="600" width="278" height="242" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="44" y="603" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="48" y="642" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">Pass</text>
+<path d="M48 659 L294 659" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="685" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Execute</text>
+<text x="48" y="721" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Apply the position</text>
+<text x="48" y="751" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">and accounting</text>
+<text x="48" y="781" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">changes.</text>
+<rect x="330" y="600" width="278" height="242" rx="12" fill="#3B212D" stroke="#F7D977" stroke-width="1.5"/>
+<rect x="342" y="603" width="254" height="5" rx="3" fill="#F7D977" stroke="none"/>
+<text x="346" y="642" font-size="24" font-weight="700" fill="#F7D977" data-max-width="246">Cannot execute</text>
+<path d="M346 659 L592 659" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="685" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Defer or fail</text>
+<text x="346" y="721" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Temporary blockers</text>
+<text x="346" y="751" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">stay pending.</text>
+<text x="346" y="781" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Terminal reasons end</text>
+<text x="346" y="811" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">the order.</text>
 </svg>

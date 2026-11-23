@@ -65,7 +65,8 @@ import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, withTr
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
-import Plether.Keeper.Broadcast (saveOrderBroadcast, markBroadcastSubmitted, clearBroadcast, reconcileBroadcast)
+import Plether.Keeper.Broadcast (saveOrderBroadcast, markBroadcastSubmitted, clearBroadcast, reconcileBroadcastWithReceiptHook)
+import Plether.Keeper.OracleWakeup (notifyOracleWakeup)
 import Plether.Keeper.Submission (readPreparationInputs, pollReceiptWith, ReceiptPollError (..))
 import Plether.Keeper.Reliability (runOrderReliabilityObserver)
 import Plether.Keeper.Wakeup
@@ -380,7 +381,8 @@ runKeeperIteration cfg conn client dryRun observeCost = do
 
 reconcileOrderBroadcast :: Config -> Connection -> EthClient -> IO Bool
 reconcileOrderBroadcast cfg conn client =
-  reconcileBroadcast conn (cfgPerpsOrderRouter cfg) client (applyReceipt cfg conn [])
+  reconcileBroadcastWithReceiptHook conn (cfgPerpsOrderRouter cfg) client
+    (applyReceipt cfg conn []) (notifyOracleWakeup cfg)
 
 -- Diagnostic writes never alter trade admission or the keeper's existing
 -- transaction path. Missing additive schema degrades monitoring, not execution.
@@ -2581,9 +2583,11 @@ submitIntent cfg conn client dryRun observeCost deadlines intent = do
               sent <- submitKeeperTransaction cfg conn client targetIds value callData gasLimit observeCost
               case sent of
                 Left err -> recordAllErrors cfg conn targetIds err
-                Right receipt -> withTransaction conn $ do
-                  applyReceipt cfg conn targetIds receipt
-                  clearBroadcast conn (cfgPerpsOrderRouter cfg) (receiptTxHash receipt)
+                Right receipt -> do
+                  withTransaction conn $ do
+                    applyReceipt cfg conn targetIds receipt
+                    clearBroadcast conn (cfgPerpsOrderRouter cfg) (receiptTxHash receipt)
+                  notifyOracleWakeup cfg receipt
 
 intentValue :: Config -> EthClient -> ExecutionIntent -> IO (Either Text Integer)
 intentValue _ _ (CleanupExpired _) = pure $ Right 0
