@@ -12,9 +12,9 @@ jobs:
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the deployed Core source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Plether-Fi/plether-core
           ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
