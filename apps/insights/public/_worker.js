@@ -4,6 +4,9 @@ const REGISTRATION_PATH_PATTERN =
 const REGISTRATION_CALLBACK_PATH_PATTERN =
   /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations\/x|divisions\/registrations\/discord)\/callback$/;
 const REGISTRATION_ORIGIN_HEADER = 'X-Plether-Registration-Origin';
+const ORIGIN_READ_TIMEOUT_MS = 4_000;
+const MAX_ORIGIN_READ_ATTEMPTS = 2;
+const RETRYABLE_EDGE_ORIGIN_STATUSES = new Set([520, 522, 524, 525]);
 
 const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
@@ -103,6 +106,108 @@ function registrationBrowserOriginAllowed(request, pathname, publicOrigin) {
     request.method === 'GET' &&
     (request.headers.get('Sec-Fetch-Site') === 'same-origin' ||
       hasSameOriginReferer(request.headers, publicOrigin))
+  );
+}
+
+function createOriginTimeoutError(timeoutMs) {
+  const error = new Error(`Origin request timed out after ${timeoutMs}ms`);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+async function fetchWithBoundedTimeout(url, options, timeoutMs, callerSignal) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetch(url, options);
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort(callerSignal.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort(callerSignal.reason);
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createOriginTimeoutError(timeoutMs));
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw createOriginTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) {
+      callerSignal.removeEventListener('abort', onCallerAbort);
+    }
+  }
+}
+
+export async function fetchOriginWithResilience(
+  url,
+  options,
+  { timeoutMs, maxAttempts = 1, callerSignal } = {},
+) {
+  const attempts = Math.max(1, maxAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithBoundedTimeout(
+        url,
+        options,
+        timeoutMs,
+        callerSignal,
+      );
+      if (
+        attempt < attempts &&
+        RETRYABLE_EDGE_ORIGIN_STATUSES.has(response.status) &&
+        !callerSignal?.aborted
+      ) {
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (attempt >= attempts || callerSignal?.aborted) {
+        throw error;
+      }
+    }
+  }
+}
+
+function isRetryableInsightsRead(method, pathname) {
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  return !isRegistrationCallback(method, pathname);
+}
+
+function backendUnavailableError(pathname) {
+  return applyResponseHeaders(
+    Response.json(
+      {
+        error: {
+          code: 'edge_proxy_unavailable',
+          message: 'The edge proxy is temporarily unavailable.',
+        },
+      },
+      {
+        status: 503,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Retry-After': '1',
+        },
+      },
+    ),
+    pathname,
   );
 }
 
@@ -339,10 +444,27 @@ export default {
         headers.set('Pragma', 'no-cache');
       }
 
-      const response = await fetch(
-        backendUrl,
-        apiFetchOptions(request, headers, cacheTtl, forceNoStore),
-      );
+      const retryableRead = isRetryableInsightsRead(request.method, url.pathname);
+      let response;
+      try {
+        response = await fetchOriginWithResilience(
+          backendUrl,
+          apiFetchOptions(request, headers, cacheTtl, forceNoStore),
+          {
+            timeoutMs: retryableRead ? ORIGIN_READ_TIMEOUT_MS : undefined,
+            maxAttempts: retryableRead ? MAX_ORIGIN_READ_ATTEMPTS : 1,
+            callerSignal: request.signal,
+          },
+        );
+      } catch (error) {
+        console.error(JSON.stringify({
+          message: 'Insights Cloudflare Worker origin fetch failed',
+          method: request.method,
+          path: url.pathname,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }));
+        return backendUnavailableError(url.pathname);
+      }
 
       if (
         registrationRequest &&
