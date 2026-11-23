@@ -3,10 +3,30 @@ resource "aws_db_subnet_group" "main" {
   subnet_ids = aws_subnet.public[*].id
 }
 
+resource "aws_db_parameter_group" "postgres" {
+  name_prefix = "plether-${local.deployment_name}-pg16-"
+  family      = "postgres16"
+  description = "Hardened PostgreSQL 16 parameters for Plether ${local.deployment_name}."
+
+  parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+  }
+
+  parameter {
+    name  = "log_min_duration_statement"
+    value = "1000"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "aws_db_instance" "postgres" {
   identifier     = "plether-${local.deployment_name}"
   engine         = var.db_snapshot_identifier == null ? "postgres" : null
-  engine_version = var.db_snapshot_identifier == null ? "16" : null
+  engine_version = var.db_snapshot_identifier == null ? var.db_engine_version : null
   instance_class = var.db_instance_class
 
   snapshot_identifier = var.db_snapshot_identifier
@@ -19,18 +39,27 @@ resource "aws_db_instance" "postgres" {
   ca_cert_identifier    = var.db_ca_cert_identifier
   apply_immediately     = var.db_apply_immediately
 
-  db_name  = var.db_snapshot_identifier == null ? "plether" : null
-  username = var.db_snapshot_identifier == null ? var.db_username : null
-  password = var.db_snapshot_identifier == null ? var.db_password : null
+  db_name                     = var.db_snapshot_identifier == null ? "plether" : null
+  username                    = var.db_snapshot_identifier == null ? var.db_username : null
+  manage_master_user_password = var.db_snapshot_identifier == null && var.db_manage_master_user_password ? true : null
+  password                    = var.db_snapshot_identifier == null && !var.db_manage_master_user_password ? var.db_password : null
 
-  db_subnet_group_name      = aws_db_subnet_group.main.name
-  vpc_security_group_ids    = [aws_security_group.rds.id]
-  publicly_accessible       = false
-  deletion_protection       = var.db_deletion_protection
-  skip_final_snapshot       = var.db_skip_final_snapshot
-  final_snapshot_identifier = var.db_skip_final_snapshot ? null : var.db_final_snapshot_identifier
+  db_subnet_group_name       = aws_db_subnet_group.main.name
+  parameter_group_name       = aws_db_parameter_group.postgres.name
+  vpc_security_group_ids     = [aws_security_group.rds.id]
+  publicly_accessible        = false
+  deletion_protection        = var.db_deletion_protection
+  skip_final_snapshot        = var.db_skip_final_snapshot
+  final_snapshot_identifier  = var.db_skip_final_snapshot ? null : var.db_final_snapshot_identifier
+  copy_tags_to_snapshot      = true
+  auto_minor_version_upgrade = var.environment != "mainnet"
 
   backup_retention_period = var.db_backup_retention_days
+  backup_window           = "18:00-19:00"
+  maintenance_window      = "sun:19:30-sun:20:30"
+
+  performance_insights_enabled          = true
+  performance_insights_retention_period = 7
 
   lifecycle {
     # Storage encryption cannot be enabled in place. Keep Terraform from
@@ -58,11 +87,12 @@ resource "aws_db_instance" "postgres" {
 
     precondition {
       condition = var.environment != "mainnet" || (
-        var.db_backup_retention_days >= 7
+        var.db_storage_encrypted
+        && var.db_backup_retention_days >= 7
         && var.db_deletion_protection
         && !var.db_skip_final_snapshot
       )
-      error_message = "Mainnet requires at least seven days of RDS backups, deletion protection, and a final snapshot on deletion."
+      error_message = "Mainnet requires encrypted RDS storage, at least seven days of backups, deletion protection, and a final snapshot on deletion."
     }
 
     precondition {
@@ -77,4 +107,14 @@ resource "aws_db_instance" "postgres" {
       error_message = "Immediate RDS modification is allowed only for a supervised Sepolia gp3 conversion with at least seven days of backups, deletion protection, and final snapshots enabled."
     }
   }
+}
+
+resource "aws_db_event_subscription" "postgres" {
+  count = trimspace(var.operations_alarm_sns_topic_arn) != "" ? 1 : 0
+
+  name             = "plether-${local.deployment_name}-rds-events"
+  sns_topic        = var.operations_alarm_sns_topic_arn
+  source_type      = "db-instance"
+  source_ids       = [aws_db_instance.postgres.identifier]
+  event_categories = ["availability", "deletion", "failover", "failure", "low storage", "maintenance", "recovery"]
 }

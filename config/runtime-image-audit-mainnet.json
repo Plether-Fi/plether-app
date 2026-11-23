@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "accountId": "<MAINNET_AWS_ACCOUNT_ID>",
+  "region": "ap-southeast-1",
+  "clusters": ["plether-mainnet"],
+  "repositories": [
+    "plether-api",
+    "plether-otel-log-router",
+    "plether-alto-mainnet",
+    "plether-rpc-gateway-mainnet"
+  ],
+  "taskDefinitionFamilies": [
+    "plether-mainnet-aa-admin-kms-attest",
+    "plether-mainnet-aa-admin-resume-issuance"
+  ],
+  "rollbackTaskDefinitions": [],
+  "eventBuses": ["default"],
+  "schedulerGroups": ["default"],
+  "rollbackCatalog": "operations/backend-recovery-releases-mainnet.json"
+}

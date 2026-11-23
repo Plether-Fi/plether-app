@@ -30,19 +30,31 @@ variable "perps_commitment_wakeups_mode" {
   }
 
   validation {
-    condition     = var.perps_commitment_wakeups_mode == "off" || (var.environment == "sepolia" && var.perps_chain_id == "421614")
-    error_message = "Commitment wakeups may be enabled only for Arbitrum Sepolia."
+    condition     = var.perps_commitment_wakeups_mode == "off" || (var.environment == "sepolia" && var.perps_chain_id == "421614") || (var.environment == "mainnet" && var.perps_chain_id == "42161")
+    error_message = "Commitment wakeups require Arbitrum Sepolia (421614) on sepolia or Arbitrum One (42161) on mainnet."
   }
 }
 
 variable "posthog_project_token" {
   type        = string
+  default     = ""
   sensitive   = true
-  description = "PostHog project token (phc_*) used only by the ECS OTLP log driver."
+  description = "PostHog project token (phc_*) used only by the ECS OTLP log driver. On mainnet, prefer posthog_otlp_authorization_header_ssm_parameter_name so credentials never enter Terraform state."
 
   validation {
-    condition     = startswith(var.posthog_project_token, "phc_")
-    error_message = "posthog_project_token must be a PostHog project token beginning with phc_."
+    condition     = var.posthog_project_token == "" || startswith(var.posthog_project_token, "phc_")
+    error_message = "posthog_project_token must be empty or a PostHog project token beginning with phc_."
+  }
+}
+
+variable "posthog_otlp_authorization_header_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString containing 'Authorization Bearer phc_*' for the FireLens PostHog OTLP output. Required on mainnet so tokens never enter Terraform state."
+
+  validation {
+    condition     = trimspace(var.posthog_otlp_authorization_header_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.posthog_otlp_authorization_header_ssm_parameter_name)))
+    error_message = "posthog_otlp_authorization_header_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
   }
 }
 
@@ -194,15 +206,28 @@ variable "perps_rpc_auth_token_ssm_parameter_name" {
 }
 
 variable "keeper_private_key" {
-  type      = string
-  sensitive = true
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Inline keeper private key (Sepolia legacy). On mainnet, supply keeper_private_key_ssm_parameter_name instead."
+}
+
+variable "keeper_private_key_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString holding the dedicated keeper private key. Required on mainnet so hot-wallet keys never enter Terraform state."
+
+  validation {
+    condition     = trimspace(var.keeper_private_key_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.keeper_private_key_ssm_parameter_name)))
+    error_message = "keeper_private_key_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
 }
 
 variable "lp_settlement_private_key" {
   type        = string
   default     = ""
   sensitive   = true
-  description = "Dedicated private key used only for LP epoch settlement. Required outside off mode and kept separate from every other transaction worker."
+  description = "Dedicated private key used only for LP epoch settlement (Sepolia legacy). On mainnet, supply lp_settlement_private_key_ssm_parameter_name instead."
 
   validation {
     condition = var.lp_settlement_private_key == "" || (
@@ -210,6 +235,17 @@ variable "lp_settlement_private_key" {
       && lower(var.lp_settlement_private_key) != "0x0000000000000000000000000000000000000000000000000000000000000000"
     )
     error_message = "lp_settlement_private_key must be empty or a non-zero, 0x-prefixed 32-byte hexadecimal private key."
+  }
+}
+
+variable "lp_settlement_private_key_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString holding the dedicated LP settlement signer private key. Required on mainnet outside off mode."
+
+  validation {
+    condition     = trimspace(var.lp_settlement_private_key_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.lp_settlement_private_key_ssm_parameter_name)))
+    error_message = "lp_settlement_private_key_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
   }
 }
 
@@ -221,13 +257,38 @@ variable "lp_settlement_signer_funding_confirmed" {
 
 variable "oracle_updater_private_key" {
   type        = string
+  default     = ""
   sensitive   = true
-  description = "Dedicated private key for the on-chain perps oracle updater. Must not be shared with another transaction worker."
+  description = "Dedicated private key for the on-chain perps oracle updater (Sepolia legacy). On mainnet, supply oracle_updater_private_key_ssm_parameter_name instead."
+}
+
+variable "oracle_updater_private_key_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString holding the dedicated perps oracle updater private key. Required on mainnet so hot-wallet keys never enter Terraform state."
+
+  validation {
+    condition     = trimspace(var.oracle_updater_private_key_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.oracle_updater_private_key_ssm_parameter_name)))
+    error_message = "oracle_updater_private_key_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
 }
 
 variable "liquidation_keeper_private_key" {
-  type      = string
-  sensitive = true
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Dedicated private key for the liquidation keeper (Sepolia legacy). On mainnet, supply liquidation_keeper_private_key_ssm_parameter_name instead."
+}
+
+variable "liquidation_keeper_private_key_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString holding the dedicated liquidation keeper private key. Required on mainnet so hot-wallet keys never enter Terraform state."
+
+  validation {
+    condition     = trimspace(var.liquidation_keeper_private_key_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.liquidation_keeper_private_key_ssm_parameter_name)))
+    error_message = "liquidation_keeper_private_key_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
 }
 
 variable "testnet_margin_funding_enabled" {
@@ -312,6 +373,17 @@ variable "pimlico_sponsorship_policy_id" {
   type      = string
   default   = ""
   sensitive = true
+}
+
+variable "aa_proxy_origin_token_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString holding the 64-hex Worker-to-API AA origin credential. Required on mainnet when AA is enabled so tokens never enter Terraform state."
+
+  validation {
+    condition     = trimspace(var.aa_proxy_origin_token_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.aa_proxy_origin_token_ssm_parameter_name)))
+    error_message = "aa_proxy_origin_token_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
 }
 
 variable "aa_proxy_origin_token" {
@@ -727,8 +799,19 @@ variable "alto_rpc_auth_token_ssm_parameter_name" {
   description = "Optional existing SecureString for the reviewed Alto RPC authentication preload. Empty retains the original direct-provider configuration."
 
   validation {
-    condition     = contains(["", "/plether/sepolia/rpc-gateway-token"], var.alto_rpc_auth_token_ssm_parameter_name)
-    error_message = "Alto RPC authentication must be disabled or reference the exact existing Sepolia gateway-token parameter."
+    condition     = contains(["", "/plether/sepolia/rpc-gateway-token", "/plether/mainnet/rpc-gateway-token"], var.alto_rpc_auth_token_ssm_parameter_name)
+    error_message = "Alto RPC authentication must be disabled or reference /plether/<environment>/rpc-gateway-token."
+  }
+}
+
+variable "alto_rpc_gateway_url" {
+  type        = string
+  default     = ""
+  description = "Optional private RPC gateway URL for authenticated Alto preload. Defaults to https://rpc-internal.<environment>.plether.com/."
+
+  validation {
+    condition     = var.alto_rpc_gateway_url == "" || can(regex("^https://[a-z0-9][a-z0-9.-]+[a-z0-9]/$", var.alto_rpc_gateway_url))
+    error_message = "alto_rpc_gateway_url must be empty or a canonical HTTPS origin ending with /."
   }
 }
 
@@ -738,8 +821,8 @@ variable "alto_rpc_auth_image" {
   description = "Reviewed immutable Alto v1.2.7 image containing the scoped RPC authentication preload. Required only when alto_rpc_auth_token_ssm_parameter_name is enabled; publish and qualify the candidate before selecting its digest."
 
   validation {
-    condition     = var.alto_rpc_auth_image == "" || can(regex("^932542905614\\.dkr\\.ecr\\.ap-southeast-1\\.amazonaws\\.com/plether-alto-sepolia@sha256:[0-9a-f]{64}$", var.alto_rpc_auth_image))
-    error_message = "Select an exact immutable digest in the approved Singapore Sepolia Alto ECR repository."
+    condition     = var.alto_rpc_auth_image == "" || can(regex("^[0-9]{12}\\.dkr\\.ecr\\.ap-southeast-1\\.amazonaws\\.com/plether-alto-(sepolia|mainnet)@sha256:[0-9a-f]{64}$", var.alto_rpc_auth_image))
+    error_message = "Select an exact immutable digest in the approved Singapore Alto ECR repository."
   }
 }
 
@@ -1090,6 +1173,29 @@ variable "aa_paymaster_final_rate_limit_per_minute" {
   description = "Durable per-client rate limit for final paymaster-data issuance, evaluated before reservation and KMS signing."
 }
 
+variable "alb_allowed_cidrs" {
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+  description = "CIDR ranges permitted to reach the public API ALB on ports 80 and 443. On mainnet, restrict to Cloudflare IPv4 edge CIDRs."
+
+  validation {
+    condition     = length(var.alb_allowed_cidrs) > 0 && alltrue([for cidr in var.alb_allowed_cidrs : can(cidrhost(cidr, 0))])
+    error_message = "alb_allowed_cidrs must contain at least one valid IPv4 CIDR block."
+  }
+}
+
+variable "alb_origin_secret_header_value" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional shared secret enforced via an ALB HTTPS listener rule on X-Plether-Origin-Secret so only Cloudflare Workers/Pages can reach the API origin ($0 WAF alternative). Generate >=32 random characters."
+
+  validation {
+    condition     = var.alb_origin_secret_header_value == "" || (length(var.alb_origin_secret_header_value) >= 32 && trimspace(var.alb_origin_secret_header_value) == var.alb_origin_secret_header_value)
+    error_message = "alb_origin_secret_header_value must be empty or at least 32 whitespace-free characters."
+  }
+}
+
 variable "alb_certificate_arn" {
   type        = string
   default     = ""
@@ -1100,6 +1206,20 @@ variable "api_hostname" {
   type        = string
   default     = ""
   description = "Public DNS hostname covered by alb_certificate_arn and pointed at the API ALB."
+}
+
+variable "rpc_request_rate_warning_threshold" {
+  type        = number
+  default     = null
+  nullable    = true
+  description = "Optional override for the hourly RPC request-rate warning threshold. Defaults to 225000 on sepolia and 15000 otherwise; calibrate for mainnet traffic."
+}
+
+variable "rpc_request_rate_critical_threshold" {
+  type        = number
+  default     = null
+  nullable    = true
+  description = "Optional override for the hourly RPC request-rate critical threshold. Defaults to 275000 on sepolia and 25000 otherwise; calibrate for mainnet traffic."
 }
 
 variable "operations_alarm_sns_topic_arn" {
@@ -1204,14 +1324,32 @@ variable "perps_candle_finalization_grace_seconds" {
   }
 }
 
-variable "db_password" {
+variable "db_manage_master_user_password" {
+  type        = bool
+  default     = false
+  description = "Let AWS RDS manage the master password in Secrets Manager so no database password enters Terraform state. Required on mainnet unless restoring from db_snapshot_identifier."
+}
+
+variable "database_url_ssm_parameter_name" {
   type        = string
-  sensitive   = true
-  description = "RDS master password. It is percent-encoded before inclusion in the libpq URI."
+  default     = ""
+  description = "Existing SecureString containing the libpq DATABASE_URL (with sslmode=verify-full). Required on mainnet so DB credentials never enter Terraform state."
 
   validation {
-    condition     = can(regex("^[!-~]{8,128}$", var.db_password))
-    error_message = "db_password must contain 8-128 printable non-whitespace ASCII characters. URI-reserved characters are supported and percent-encoded."
+    condition     = trimspace(var.database_url_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.database_url_ssm_parameter_name)))
+    error_message = "database_url_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
+}
+
+variable "db_password" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "RDS master password (Sepolia legacy). Percent-encoded before inclusion in the libpq URI. On mainnet, use db_manage_master_user_password = true and database_url_ssm_parameter_name."
+
+  validation {
+    condition     = var.db_password == "" || can(regex("^[!-~]{8,128}$", var.db_password))
+    error_message = "db_password must be empty or contain 8-128 printable non-whitespace ASCII characters. URI-reserved characters are supported and percent-encoded."
   }
 }
 
@@ -1777,6 +1915,12 @@ variable "workers_container_cpu" {
 variable "workers_container_memory" {
   type    = number
   default = 1024
+}
+
+variable "db_engine_version" {
+  type        = string
+  default     = "16"
+  description = "PostgreSQL engine version. On mainnet, pin an explicit minor version (for example 16.4) because auto_minor_version_upgrade is disabled."
 }
 
 variable "db_instance_class" {

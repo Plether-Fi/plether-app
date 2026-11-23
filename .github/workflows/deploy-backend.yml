@@ -42,13 +42,12 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
-  BACKEND_ADMIN_ENVIRONMENT: backend-admin-sepolia
+  BACKEND_ADMIN_ENVIRONMENT: backend-admin-${{ inputs.environment }}
   TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
   sepolia_environment_preflight:
-    name: Require pre-provisioned protected Sepolia backend environment
-    if: ${{ inputs.environment == 'sepolia' }}
+    name: Require pre-provisioned protected ${{ inputs.environment }} backend environment
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -60,12 +59,13 @@ jobs:
       - name: Verify protected environment and master-only policy
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUIRE_PREVENT_SELF_REVIEW: ${{ inputs.environment == 'mainnet' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           umask 077
 
           if [ "$GITHUB_REF" != "refs/heads/master" ]; then
-            echo "::error title=Unsupported workflow ref::Sepolia backend deployments must be dispatched from master."
+            echo "::error title=Unsupported workflow ref::Backend deployments must be dispatched from master."
             exit 1
           fi
 
@@ -75,7 +75,7 @@ jobs:
               --method GET \
               "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT" \
               > "$environment_file"; then
-            echo "::error title=Backend environment unavailable::Provision and protect $BACKEND_ADMIN_ENVIRONMENT before dispatching a Sepolia backend deployment."
+            echo "::error title=Backend environment unavailable::Provision and protect $BACKEND_ADMIN_ENVIRONMENT before dispatching a $TARGET_ENV backend deployment."
             exit 1
           fi
           gh api \
@@ -83,28 +83,30 @@ jobs:
             "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
             > "$branch_policy_file"
 
-          if ! jq --exit-status --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+          if ! jq --exit-status \
+              --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+              --argjson prevent_self "$REQUIRE_PREVENT_SELF_REVIEW" \
               '.name == $name
                and .can_admins_bypass == false
                and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == $prevent_self)
                and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
                and .deployment_branch_policy.custom_branch_policies == true' \
               "$environment_file" >/dev/null \
               || ! jq --exit-status \
                 '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
                 "$branch_policy_file" >/dev/null; then
-            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require a reviewer with Sepolia sole-maintainer self-review allowed, and allow exactly the master branch."
+            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require reviewers (prevent_self_review=$REQUIRE_PREVENT_SELF_REVIEW), and allow exactly the master branch."
             exit 1
           fi
 
   sepolia_environment_gate:
-    name: Approve protected Sepolia backend mutation
+    name: Approve protected ${{ inputs.environment }} backend mutation
     needs: sepolia_environment_preflight
-    if: ${{ always() && inputs.environment == 'sepolia' && needs.sepolia_environment_preflight.result == 'success' }}
+    if: ${{ always() && needs.sepolia_environment_preflight.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: backend-admin-sepolia
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       actions: read
       contents: read
@@ -116,6 +118,7 @@ jobs:
       - name: Revalidate protected environment after approval
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUIRE_PREVENT_SELF_REVIEW: ${{ inputs.environment == 'mainnet' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           umask 077
@@ -130,11 +133,13 @@ jobs:
             --method GET \
             "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
             > "$branch_policy_file"
-          jq --exit-status --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+          jq --exit-status \
+            --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+            --argjson prevent_self "$REQUIRE_PREVENT_SELF_REVIEW" \
             '.name == $name
              and .can_admins_bypass == false
              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == $prevent_self)
              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
              and .deployment_branch_policy.custom_branch_policies == true' \
             "$environment_file" >/dev/null
@@ -143,7 +148,7 @@ jobs:
             "$branch_policy_file" >/dev/null
           [ "$GITHUB_REF" = "refs/heads/master" ]
 
-      - name: Load protected Sepolia AWS account boundary
+      - name: Load protected AWS account boundary
         id: account_boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.EXPECTED_AWS_ACCOUNT_ID }}
@@ -151,7 +156,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
-            echo "::error title=Missing AWS account boundary::Set EXPECTED_AWS_ACCOUNT_ID to the exact 12-digit deployment account in the protected backend-admin-sepolia environment."
+            echo "::error title=Missing AWS account boundary::Set EXPECTED_AWS_ACCOUNT_ID to the exact 12-digit deployment account in the protected $BACKEND_ADMIN_ENVIRONMENT environment."
             exit 1
           fi
           echo "expected_aws_account_id=$EXPECTED_AWS_ACCOUNT_ID" >> "$GITHUB_OUTPUT"
@@ -162,11 +167,11 @@ jobs:
       - sepolia_environment_gate
     if: >-
       ${{ always() &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
@@ -182,11 +187,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -196,7 +200,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -790,11 +794,11 @@ jobs:
       - sepolia_environment_gate
     if: >-
       ${{ always() &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
@@ -805,11 +809,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -819,7 +822,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -860,6 +863,7 @@ jobs:
             fi
 
             if ! jq --exit-status \
+                --arg target_env "$TARGET_ENV" \
                 --arg expected_signer_suffix ":parameter/plether/${TARGET_ENV}/lp-settlement-private-key" \
                 '
                 def env_map:
@@ -946,7 +950,7 @@ jobs:
                 and ($env.LP_SETTLEMENT_MAX_REPLACEMENTS | integer_between(0; 3))
                 and (($env.LP_SETTLEMENT_MAX_TX_COST_WEI // "") | test("^(0|[1-9][0-9]*)$"))
                 and ($mode != "execute" or $env.LP_SETTLEMENT_MAX_TX_COST_WEI != "0")
-                and ($mode == "off" or $env.PERPS_CHAIN_ID == "421614")
+                and ($mode == "off" or ($env.PERPS_CHAIN_ID == (if $target_env == "mainnet" then "42161" else "421614" end)))
               ' "$task_def_file" > /dev/null; then
               echo "::error title=LP settlement ECS preflight failed::${family}/plether-keeper is missing required fail-closed addresses, limits, mode, chain, or signer reference. Apply infra/terraform for ${TARGET_ENV}, then rerun this workflow."
               exit 1
@@ -1000,10 +1004,6 @@ jobs:
             echo "::error title=LP settlement ECS preflight failed::No LP_SETTLEMENT_MODE was found."
             exit 1
           fi
-          if [ "$TARGET_ENV" != "sepolia" ] && [ "$detected_mode" != "off" ]; then
-            echo "::error title=LP settlement environment guard failed::${TARGET_ENV} must keep LP settlement off until a production vault release is reviewed."
-            exit 1
-          fi
 
           if [ "$detected_mode" != "off" ]; then
             if [ "$workers_definition_validated" != true ]; then
@@ -1042,10 +1042,10 @@ jobs:
       ${{ always() &&
           needs['pyth-config-preflight'].result == 'success' &&
           needs['lp-settlement-config-preflight'].result == 'success' &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-24.04-arm
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
@@ -1056,26 +1056,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Validate Sepolia-only workers scope
-        env:
-          DEPLOYMENT_SCOPE: ${{ inputs.deployment_scope }}
-        run: |
-          set -euo pipefail
-          if [ "$DEPLOYMENT_SCOPE" = workers ] && [ "$TARGET_ENV" != sepolia ]; then
-            echo "::error::The consolidated workers-only scope is restricted to Sepolia."
-            exit 1
-          fi
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -1085,7 +1074,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -1175,6 +1164,33 @@ jobs:
           node scripts/runtime-release.mjs verify --repository "${APPLICATION_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --digest "$APPLICATION_DIGEST" --prefix application --output "$GITHUB_OUTPUT" --record application-release.json
           node scripts/runtime-release.mjs verify --repository "${ROUTER_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --digest "$ROUTER_DIGEST" --prefix router --output "$GITHUB_OUTPUT" --record router-release.json
 
+      - name: Verify ECR vulnerability scans (zero CRITICAL findings)
+        env:
+          APPLICATION_IMAGE: ${{ steps.verified_images.outputs.image }}
+          ROUTER_IMAGE: ${{ steps.verified_images.outputs.log_router_image }}
+        run: |
+          set -euo pipefail
+          for image_ref in "$APPLICATION_IMAGE" "$ROUTER_IMAGE"; do
+            repo="${image_ref#*amazonaws.com/}"
+            repo="${repo%@*}"
+            digest="${image_ref#*@}"
+            echo "Waiting for ECR scan on ${repo}@${digest}..."
+            aws ecr wait image-scan-complete \
+              --repository-name "$repo" \
+              --image-id "imageDigest=$digest"
+            scan_json=$(aws ecr describe-image-scan-findings \
+              --repository-name "$repo" \
+              --image-id "imageDigest=$digest" \
+              --output json)
+            status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<< "$scan_json")
+            critical_count=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<< "$scan_json")
+            echo "${repo}@${digest}: scan=${status}, CRITICAL=${critical_count}"
+            if [ "$status" != "COMPLETE" ] || [ "$critical_count" != "0" ]; then
+              echo "::error title=Container vulnerability gate failed::${repo}@${digest} reported status=${status}, CRITICAL=${critical_count}."
+              exit 1
+            fi
+          done
+
       - name: Retain verified release provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -1194,18 +1210,17 @@ jobs:
       ${{ always() &&
           inputs.bootstrap != true &&
           needs.build.result == 'success' &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-latest
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
     strategy:
       matrix:
-        # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
-        # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((inputs.deployment_scope == 'workers') && '[{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}]' || (inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"sepolia","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"},{"environment":"sepolia","task_suffix":"-protection-worker","service_name":"plether-position-protection-worker","container_name":"plether-position-protection-worker"}]')) }}
+        # Both Sepolia and mainnet mirror the same consolidated worker + AA + protection topology.
+        include: ${{ fromJson((inputs.deployment_scope == 'workers') && format('[{{"environment":"{0}","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}}]', inputs.environment) || (inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}},{{"environment":"{0}","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}},{{"environment":"{0}","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"}},{{"environment":"{0}","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"}},{{"environment":"{0}","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}},{{"environment":"{0}","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"}},{{"environment":"{0}","task_suffix":"-protection-worker","service_name":"plether-position-protection-worker","container_name":"plether-position-protection-worker"}}]', inputs.environment)) }}
 
     steps:
       - name: Configure AWS credentials
@@ -1213,11 +1228,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -1227,7 +1241,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 

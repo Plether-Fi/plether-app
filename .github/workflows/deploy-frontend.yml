@@ -1,11 +1,6 @@
 name: Deploy Frontend
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - apps/frontend/**
-      - .github/workflows/deploy-frontend.yml
   workflow_dispatch:
     inputs:
       environment:
@@ -16,18 +11,31 @@ on:
           - sepolia
           - mainnet
 
+concurrency:
+  group: plether-frontend-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
 env:
-  TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
+  TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: frontend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       deployments: write
       packages: read
 
     steps:
+      - name: Enforce master-only deployment
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::Frontend deployments must be dispatched from master."
+            exit 1
+          fi
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -44,25 +52,21 @@ jobs:
         run: npm install -g npm@11.6.2
 
       - name: Install dependencies
-        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Insights story dependencies
-        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/insights
         run: npm ci
 
       - name: Require TradingView repository token
-        if: env.TARGET_ENV == 'sepolia'
         env:
           TRADINGVIEW_GITHUB_TOKEN: ${{ secrets.TRADINGVIEW_GITHUB_TOKEN }}
         run: test -n "$TRADINGVIEW_GITHUB_TOKEN"
 
       - name: Checkout TradingView Advanced Charts
-        if: env.TARGET_ENV == 'sepolia'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: tradingview/charting_library
@@ -73,37 +77,40 @@ jobs:
           path: .private/tradingview-charting-library
 
       - name: Install TradingView runtime assets
-        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: npm run tradingview:install -- "$GITHUB_WORKSPACE/.private/tradingview-charting-library"
 
       - name: Resolve deploy target
         id: target
+        env:
+          MAINNET_CORE_MANIFEST: ${{ vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json' }}
         run: |
           if [ "$TARGET_ENV" = "sepolia" ]; then
             echo "project=plether-testnet" >> "$GITHUB_OUTPUT"
             echo "directory=dist" >> "$GITHUB_OUTPUT"
             echo "default_chain_id=421614" >> "$GITHUB_OUTPUT"
             echo "perps_aa_manifest_url=/perps-aa-manifest.json" >> "$GITHUB_OUTPUT"
+            echo "domain=app.sepolia.plether.com" >> "$GITHUB_OUTPUT"
+            echo "core_manifest=config/perps/arbitrum-sepolia-v2.0.0.json" >> "$GITHUB_OUTPUT"
           else
             echo "project=plether" >> "$GITHUB_OUTPUT"
-            echo "directory=mainnet-redirect" >> "$GITHUB_OUTPUT"
-            echo "default_chain_id=1" >> "$GITHUB_OUTPUT"
-            echo "perps_aa_manifest_url=" >> "$GITHUB_OUTPUT"
+            echo "directory=dist" >> "$GITHUB_OUTPUT"
+            echo "default_chain_id=42161" >> "$GITHUB_OUTPUT"
+            echo "perps_aa_manifest_url=/perps-aa-manifest.json" >> "$GITHUB_OUTPUT"
+            echo "domain=app.plether.com" >> "$GITHUB_OUTPUT"
+            echo "core_manifest=$MAINNET_CORE_MANIFEST" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Require private source-map upload credential
-        if: env.TARGET_ENV == 'sepolia'
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
         run: |
           if [ -z "$POSTHOG_CLI_API_KEY" ]; then
-            echo "::error::Set POSTHOG_CLI_API_KEY to a PostHog personal API key with error tracking write and organization read scopes. Do not use VITE_POSTHOG_KEY."
+            echo "::error title=Missing PostHog upload key::Set POSTHOG_CLI_API_KEY to a PostHog personal API key with error tracking write and organization read scopes. Do not use VITE_POSTHOG_KEY."
             exit 1
           fi
 
       - name: Validate wallet frontend configuration
-        if: env.TARGET_ENV == 'sepolia'
         env:
           VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
         run: |
@@ -113,19 +120,19 @@ jobs:
           fi
 
       - name: Build
-        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:
           VITE_PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
           VITE_PRIVY_CLIENT_ID: ${{ vars.PRIVY_TRADING_CLIENT_ID }}
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
           VITE_PERPS_AA_MANIFEST_URL: ${{ steps.target.outputs.perps_aa_manifest_url }}
-          VITE_PERPS_POSITION_PROTECTION_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_POSITION_PROTECTION_ENABLED_SEPOLIA || 'false') || 'false' }}
+          VITE_PERPS_POSITION_PROTECTION_ENABLED: ${{ env.TARGET_ENV == 'mainnet' && (vars.VITE_PERPS_POSITION_PROTECTION_ENABLED_MAINNET || 'true') || (vars.VITE_PERPS_POSITION_PROTECTION_ENABLED_SEPOLIA || 'false') }}
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
           VITE_DEPLOYMENT_ENV: ${{ env.TARGET_ENV }}
           VITE_MAINNET_RPC_URL: ${{ vars.VITE_MAINNET_RPC_URL }}
+          VITE_ARBITRUM_MAINNET_RPC_URL: ${{ vars.VITE_ARBITRUM_MAINNET_RPC_URL }}
           VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
           VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
@@ -133,29 +140,25 @@ jobs:
         run: npm run build
 
       - name: Upload private application source maps
-        if: env.TARGET_ENV == 'sepolia'
         uses: PostHog/upload-source-maps@991172e085213c222c61d2ba6a0b9e57c81e5066 # v2
         env:
-          # Associate releases through uploaded symbols; our SDK does not yet
-          # emit the newer per-event release ID.
           POSTHOG_RELEASE_MODE: symbol-set
         with:
           directory: apps/frontend/dist/assets
           api-key: ${{ secrets.POSTHOG_CLI_API_KEY }}
-          project-id: '208816'
+          project-id: ${{ vars.POSTHOG_PROJECT_ID || '208816' }}
           host: https://eu.posthog.com
-          release-name: plether-web-sepolia
+          release-name: plether-web-${{ env.TARGET_ENV }}
           release-version: ${{ github.sha }}
           cli-version: '0.18.3'
           delete-after-upload: 'true'
 
       - name: Remove source maps and verify publish payload
-        if: always() && env.TARGET_ENV == 'sepolia'
+        if: always()
         working-directory: apps/frontend
         run: node scripts/remove-source-maps.mjs dist
 
       - name: Validate TradingView runtime payload
-        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: |
           test -s dist/charting_library/charting_library.standalone.js
@@ -169,26 +172,34 @@ jobs:
           test ! -e dist/charting_library/charting_library.esm.js
           test ! -e dist/charting_library/charting_library.js
 
-      - name: Validate testnet AA manifest
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Validate AA manifest
         working-directory: apps/frontend
+        env:
+          CORE_MANIFEST: ${{ steps.target.outputs.core_manifest }}
         run: |
           test -s dist/perps-aa-manifest.json
+          test -s "../../$CORE_MANIFEST" || {
+            echo "::error title=Missing core manifest::../../$CORE_MANIFEST must exist before deploying $TARGET_ENV."
+            exit 1
+          }
           node ../../scripts/validate-perps-deployment.mjs aa \
-            ../../config/perps/arbitrum-sepolia-v2.0.0.json dist/perps-aa-manifest.json public/perps-aa-manifest.json
+            "../../$CORE_MANIFEST" dist/perps-aa-manifest.json public/perps-aa-manifest.json
 
-      - name: Validate testnet backend origin
+      - name: Validate backend origin
         id: backend-origin
-        if: env.TARGET_ENV == 'sepolia'
         env:
-          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+          BACKEND_URL: ${{ env.TARGET_ENV == 'mainnet' && vars.MAINNET_BACKEND_URL || vars.SEPOLIA_BACKEND_URL }}
         run: |
           set -euo pipefail
 
-          backend_origin=${SEPOLIA_BACKEND_URL%/}
-          if [ "$SEPOLIA_BACKEND_URL" != "$backend_origin" ] && \
-             [ "$SEPOLIA_BACKEND_URL" != "$backend_origin/" ]; then
-            echo "::error title=Invalid Sepolia backend URL::SEPOLIA_BACKEND_URL may contain only one optional trailing slash."
+          backend_origin=${BACKEND_URL%/}
+          if [ -z "$backend_origin" ]; then
+            echo "::error title=Missing backend URL::Configure MAINNET_BACKEND_URL (mainnet) or SEPOLIA_BACKEND_URL (sepolia)."
+            exit 1
+          fi
+          if [ "$BACKEND_URL" != "$backend_origin" ] && \
+             [ "$BACKEND_URL" != "$backend_origin/" ]; then
+            echo "::error title=Invalid backend URL::Backend URL may contain only one optional trailing slash."
             exit 1
           fi
           if ! BACKEND_ORIGIN="$backend_origin" node -e '
@@ -198,24 +209,30 @@ jobs:
                 url.pathname !== "/" || url.search || url.hash ||
                 url.origin !== value) process.exit(1);
           '; then
-            echo "::error title=Invalid Sepolia backend URL::SEPOLIA_BACKEND_URL must be an HTTPS origin without credentials, path, query, or fragment."
+            echo "::error title=Invalid backend URL::Backend URL must be an HTTPS origin without credentials, path, query, or fragment."
             exit 1
           fi
           echo "origin=$backend_origin" >> "$GITHUB_OUTPUT"
 
-      - name: Validate deployed testnet AA bindings
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Validate deployed AA bindings
         working-directory: apps/frontend
         env:
-          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          CORE_MANIFEST: ${{ steps.target.outputs.core_manifest }}
+          ALB_ORIGIN_SECRET: ${{ secrets.ALB_ORIGIN_SECRET }}
         run: |
           set -euo pipefail
+          origin_header_args=()
+          if [ -n "$ALB_ORIGIN_SECRET" ]; then
+            origin_header_args=(--header "X-Plether-Origin-Secret: $ALB_ORIGIN_SECRET")
+          fi
 
           curl --fail --silent --show-error \
-            "$SEPOLIA_BACKEND_URL/api/aa/status" > aa-status.json
+            "${origin_header_args[@]}" \
+            "$BACKEND_URL/api/aa/status" > aa-status.json
           jq --exit-status \
             --slurpfile manifest dist/perps-aa-manifest.json \
-            --slurpfile core ../../config/perps/arbitrum-sepolia-v2.0.0.json \
+            --slurpfile core "../../$CORE_MANIFEST" \
             '
               .manifestVersion == $manifest[0].version and
               .chainId == $manifest[0].chainId and
@@ -234,53 +251,66 @@ jobs:
               .sponsorshipEnabled == true
             ' aa-status.json >/dev/null
 
-      - name: Validate Sepolia candle prices and report volume readiness
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Validate candle prices and report volume readiness
         working-directory: apps/frontend
         env:
-          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
         run: |
           set -euo pipefail
-          test -n "$SEPOLIA_BACKEND_URL"
+          test -n "$BACKEND_URL"
           node scripts/validate-candle-volume-coverage.mjs \
-            --backend-url "$SEPOLIA_BACKEND_URL" \
+            --backend-url "$BACKEND_URL" \
             --manifest dist/perps-aa-manifest.json
 
-      - name: Configure testnet Pages bindings
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Configure Pages bindings
         working-directory: apps/frontend
         env:
-          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          PROJECT_NAME: ${{ steps.target.outputs.project }}
         run: |
-          test -n "$SEPOLIA_BACKEND_URL"
+          test -n "$BACKEND_URL"
           cat > wrangler.toml <<EOF
-          name = "plether-testnet"
+          name = "$PROJECT_NAME"
           pages_build_output_dir = "dist"
           compatibility_date = "2026-06-22"
 
           [vars]
-          SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
-          MAINNET_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          SEPOLIA_BACKEND_URL = "$BACKEND_URL"
+          MAINNET_BACKEND_URL = "$BACKEND_URL"
           EOF
 
-      - name: Ensure testnet Pages project
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Ensure Pages project
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         continue-on-error: true
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: 4.103.0
-          command: pages project create plether-testnet --production-branch=master --compatibility-date=2026-06-22
+          command: pages project create ${{ steps.target.outputs.project }} --production-branch=master --compatibility-date=2026-06-22
 
-      - name: Configure testnet AA proxy secret
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Configure ALB origin secret on Pages
+        if: secrets.ALB_ORIGIN_SECRET != ''
+        working-directory: apps/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ALB_ORIGIN_SECRET: ${{ secrets.ALB_ORIGIN_SECRET }}
+          PROJECT_NAME: ${{ steps.target.outputs.project }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$ALB_ORIGIN_SECRET" |
+            npx --yes wrangler@4.103.0 pages secret put ALB_ORIGIN_SECRET \
+              --project-name="$PROJECT_NAME"
+
+      - name: Configure AA proxy secret
         working-directory: apps/frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
-          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          ALB_ORIGIN_SECRET: ${{ secrets.ALB_ORIGIN_SECRET }}
+          BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+          PROJECT_NAME: ${{ steps.target.outputs.project }}
         run: |
           set -euo pipefail
           umask 077
@@ -300,7 +330,11 @@ jobs:
           esac
           echo "::add-mask::$AA_PROXY_ORIGIN_TOKEN"
 
-          backend_origin=$SEPOLIA_BACKEND_URL
+          origin_header_args=()
+          if [ -n "$ALB_ORIGIN_SECRET" ]; then
+            origin_header_args=(--header "X-Plether-Origin-Secret: $ALB_ORIGIN_SECRET")
+          fi
+          backend_origin=$BACKEND_URL
 
           health_body="$RUNNER_TEMP/frontend-aa-origin-health.json"
           health_status=$(curl \
@@ -310,18 +344,16 @@ jobs:
             --tlsv1.2 \
             --connect-timeout 10 \
             --max-time 30 \
+            "${origin_header_args[@]}" \
             --output "$health_body" \
             --write-out '%{http_code}' \
             "$backend_origin/api/health")
           if [ "$health_status" != "200" ] || \
              ! jq --exit-status '
-               # The current API encodes its health object as a JSON string.
-               # Accept that single legacy wrapper or a proper object, while
-               # rejecting malformed, unhealthy and repeatedly encoded bodies.
                (if type == "string" then fromjson else . end)
                | type == "object" and .status == "ok"
              ' "$health_body" >/dev/null; then
-            echo "::error title=Sepolia backend not ready::The intended API origin did not pass its exact health check."
+            echo "::error title=Backend not ready::The intended API origin did not pass its exact health check."
             exit 1
           fi
 
@@ -339,6 +371,7 @@ jobs:
             --tlsv1.2 \
             --connect-timeout 10 \
             --max-time 30 \
+            "${origin_header_args[@]}" \
             --output "$unauthenticated_body" \
             --write-out '%{http_code}' \
             --header 'Content-Type: application/json' \
@@ -360,6 +393,7 @@ jobs:
             --tlsv1.2 \
             --connect-timeout 10 \
             --max-time 30 \
+            "${origin_header_args[@]}" \
             --output "$authenticated_body" \
             --write-out '%{http_code}' \
             --header 'Content-Type: application/json' \
@@ -377,7 +411,7 @@ jobs:
 
           printf '%s\n' "$AA_PROXY_ORIGIN_TOKEN" |
             npx --yes wrangler@4.103.0 pages secret put AA_PROXY_ORIGIN_TOKEN \
-              --project-name=plether-testnet
+              --project-name="$PROJECT_NAME"
 
       - name: Configure testnet faucet proxy secret
         if: env.TARGET_ENV == 'sepolia'
@@ -401,14 +435,13 @@ jobs:
           workingDirectory: apps/frontend
           command: pages deploy ${{ steps.target.outputs.directory }} --project-name=${{ steps.target.outputs.project }} --branch=master
 
-      - name: Attach testnet custom domain
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Attach custom domain
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOMAIN: ${{ steps.target.outputs.domain }}
+          PROJECT: ${{ steps.target.outputs.project }}
         run: |
-          DOMAIN="app.sepolia.plether.com"
-          PROJECT="plether-testnet"
           API_BASE="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
 
           if curl --fail --silent --show-error \
@@ -425,15 +458,15 @@ jobs:
             --data "{\"name\":\"$DOMAIN\"}" \
             "$API_BASE"
 
-      - name: Configure testnet DNS record
-        if: env.TARGET_ENV == 'sepolia'
+      - name: Configure DNS record
         continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DOMAIN: ${{ steps.target.outputs.domain }}
+          PROJECT: ${{ steps.target.outputs.project }}
         run: |
           ZONE="plether.com"
-          DOMAIN="app.sepolia.plether.com"
-          TARGET="plether-testnet.pages.dev"
+          TARGET="${PROJECT}.pages.dev"
           API_BASE="https://api.cloudflare.com/client/v4"
 
           ZONE_ID=$(curl --fail --silent --show-error \

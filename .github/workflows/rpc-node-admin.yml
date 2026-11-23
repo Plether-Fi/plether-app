@@ -1,7 +1,13 @@
-name: Sepolia RPC administration
+name: RPC administration
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        default: sepolia
+        options: [sepolia, mainnet]
       operation:
         description: Bounded node operation or publish a gateway image (no traffic cutover)
         type: choice
@@ -12,34 +18,39 @@ permissions:
   contents: read
   id-token: write
 concurrency:
-  group: sepolia-rpc-admin
+  group: plether-rpc-admin-${{ inputs.environment }}
   cancel-in-progress: false
 jobs:
   admin:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: rpc-admin-sepolia
+    environment: rpc-admin-${{ inputs.environment }}
     env:
       AWS_REGION: ap-southeast-1
-      EXPECTED_ACCOUNT: '932542905614'
+      TARGET_ENV: ${{ inputs.environment }}
+      EXPECTED_ACCOUNT: ${{ vars.EXPECTED_AWS_ACCOUNT_ID || (inputs.environment == 'sepolia' && '932542905614' || '') }}
       OPERATION: ${{ inputs.operation }}
-      INSTANCE_ID: ${{ vars.SEPOLIA_RPC_NODE_INSTANCE_ID }}
-      ECR_URI: 932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-rpc-gateway-sepolia
+      INSTANCE_ID: ${{ vars.RPC_NODE_INSTANCE_ID || vars.SEPOLIA_RPC_NODE_INSTANCE_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          role-to-assume: ${{ vars.SEPOLIA_RPC_ADMIN_ROLE_ARN }}
+          role-to-assume: ${{ vars.RPC_ADMIN_ROLE_ARN || vars.SEPOLIA_RPC_ADMIN_ROLE_ARN }}
           aws-region: ap-southeast-1
+          allowed-account-ids: ${{ vars.EXPECTED_AWS_ACCOUNT_ID || (inputs.environment == 'sepolia' && '932542905614' || '') }}
       - name: Verify account and operation
+        id: verify
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_ACCOUNT" =~ ^[0-9]{12}$ ]]
           test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT"
           case "$OPERATION" in status|restart|publish-gateway) ;; *) exit 2 ;; esac
+          echo "ecr_repo=plether-rpc-gateway-${TARGET_ENV}" >> "$GITHUB_OUTPUT"
+          echo "ecr_uri=${EXPECTED_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/plether-rpc-gateway-${TARGET_ENV}" >> "$GITHUB_OUTPUT"
       - name: Inspect or restart the Nitro process
         if: inputs.operation != 'publish-gateway'
         shell: bash
@@ -47,23 +58,23 @@ jobs:
           set -euo pipefail
           [[ "$INSTANCE_ID" =~ ^i-[0-9a-f]+$ ]]
           parameters="$(jq -cn --arg operation "$OPERATION" '{operation:[$operation]}')"
-          command_id="$(aws ssm send-command --document-name plether-sepolia-rpc-node-admin --instance-ids "$INSTANCE_ID" --parameters "$parameters" --query Command.CommandId --output text)"
+          command_id="$(aws ssm send-command --document-name "plether-${TARGET_ENV}-rpc-node-admin" --instance-ids "$INSTANCE_ID" --parameters "$parameters" --query Command.CommandId --output text)"
           if ! aws ssm wait command-executed --command-id "$command_id" --instance-id "$INSTANCE_ID"; then
             aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID"
             exit 1
           fi
           aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID"
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         if: inputs.operation == 'publish-gateway'
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: inputs.operation == 'publish-gateway'
       - name: ECR login
         if: inputs.operation == 'publish-gateway'
         shell: bash
         run: |
           set -euo pipefail
-          aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_URI%%/*}"
-      - uses: docker/build-push-action@v6
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${EXPECTED_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         if: inputs.operation == 'publish-gateway'
         id: build
         with:
@@ -71,9 +82,31 @@ jobs:
           file: infra/rpc/gateway/Dockerfile
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_URI }}:${{ github.sha }}
+          tags: ${{ steps.verify.outputs.ecr_uri }}:${{ github.sha }}
+      - name: Verify ECR vulnerability scan (zero CRITICAL findings)
+        if: inputs.operation == 'publish-gateway'
+        env:
+          ECR_REPO: ${{ steps.verify.outputs.ecr_repo }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          aws ecr wait image-scan-complete \
+            --repository-name "$ECR_REPO" \
+            --image-id "imageDigest=$IMAGE_DIGEST"
+          scan_json=$(aws ecr describe-image-scan-findings \
+            --repository-name "$ECR_REPO" \
+            --image-id "imageDigest=$IMAGE_DIGEST" \
+            --output json)
+          status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<< "$scan_json")
+          critical_count=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<< "$scan_json")
+          echo "${ECR_REPO}@${IMAGE_DIGEST}: scan=${status}, CRITICAL=${critical_count}"
+          if [ "$status" != "COMPLETE" ] || [ "$critical_count" != "0" ]; then
+            echo "::error title=Gateway vulnerability gate failed::${ECR_REPO}@${IMAGE_DIGEST} reported status=${status}, CRITICAL=${critical_count}."
+            exit 1
+          fi
       - name: Record immutable deployment image
         if: inputs.operation == 'publish-gateway'
         env:
+          ECR_URI: ${{ steps.verify.outputs.ecr_uri }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: printf '%s@%s\n' "$ECR_URI" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"

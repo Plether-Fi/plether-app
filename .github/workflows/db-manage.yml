@@ -17,28 +17,96 @@ on:
         options:
           - init-schema
           - connect-info
+      skip_pre_migration_snapshot:
+        description: Skip pre-migration RDS snapshot (Sepolia only; ignored on mainnet)
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: plether-db-mutation-${{ inputs.environment }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   ENV: ${{ inputs.environment }}
+  DB_ADMIN_ENVIRONMENT: db-admin-${{ inputs.environment }}
 
 jobs:
   manage:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: db-admin-${{ inputs.environment }}
     permissions:
+      actions: read
       contents: read
+      deployments: read
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Verify protected database environment and master-only policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_PREVENT_SELF_REVIEW: ${{ inputs.environment == 'mainnet' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::Database management must be dispatched from master."
+            exit 1
+          fi
+
+          environment_file="$RUNNER_TEMP/db-admin-environment.json"
+          branch_policy_file="$RUNNER_TEMP/db-admin-branch-policies.json"
+          if ! gh api \
+              --method GET \
+              "repos/$GITHUB_REPOSITORY/environments/$DB_ADMIN_ENVIRONMENT" \
+              > "$environment_file"; then
+            echo "::error title=Database environment unavailable::Provision and protect $DB_ADMIN_ENVIRONMENT before running database management."
+            exit 1
+          fi
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$DB_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+
+          jq --exit-status \
+            --arg name "$DB_ADMIN_ENVIRONMENT" \
+            --argjson prevent_self "$REQUIRE_PREVENT_SELF_REVIEW" \
+            '.name == $name
+             and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == $prevent_self)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$environment_file" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$branch_policy_file" >/dev/null
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
-          role-session-name: plether-${{ github.run_id }}
+          allowed-account-ids: ${{ vars.EXPECTED_AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-db-${{ github.run_id }}
+
+      - name: Create pre-migration RDS snapshot
+        if: inputs.action == 'init-schema' && (inputs.environment == 'mainnet' || inputs.skip_pre_migration_snapshot != true)
+        run: |
+          set -euo pipefail
+          SNAPSHOT_ID="plether-${ENV}-pre-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "Creating RDS snapshot ${SNAPSHOT_ID} before schema execution..."
+          aws rds create-db-snapshot \
+            --db-instance-identifier "plether-${ENV}" \
+            --db-snapshot-identifier "$SNAPSHOT_ID" \
+            --tags Key=Project,Value=plether Key=Environment,Value="${ENV}" Key=Reason,Value=pre-migration >/dev/null
+          aws rds wait db-snapshot-available \
+            --db-instance-identifier "plether-${ENV}" \
+            --db-snapshot-identifier "$SNAPSHOT_ID"
+          echo "Pre-migration snapshot ready: ${SNAPSHOT_ID}"
 
       - name: Init schema
         if: inputs.action == 'init-schema'
@@ -118,7 +186,7 @@ jobs:
                   command: [
                     "sh",
                     "-c",
-                    "exec psql --set=ON_ERROR_STOP=1 --file=/app/schema.sql \"$DATABASE_URL\""
+                    "exec psql --set=ON_ERROR_STOP=1 --variable=VERBOSITY=terse -c \"SET lock_timeout = '\''15s'\''; SET statement_timeout = '\''10min'\'';\" --file=/app/schema.sql \"$DATABASE_URL\""
                   ],
                   secrets: [$databaseSecret],
                   environment: [],
@@ -141,6 +209,7 @@ jobs:
             --cli-input-json "file://$ADMIN_TASK_DEFINITION_FILE" \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
+          trap 'aws ecs deregister-task-definition --task-definition "$TASK_DEFINITION" >/dev/null 2>&1 || true' EXIT
 
           RUN_RESULT=$(aws ecs run-task \
             --cluster "$CLUSTER" \

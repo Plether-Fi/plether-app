@@ -102,6 +102,24 @@ class BootstrapPolicyTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith('--init.') for arg in live))
         self.assertFalse(any('fixture.invalid' in arg for arg in live))
 
+    def test_arbitrum_one_mainnet_config_requires_arb1_snapshot_and_l1_mainnet_parent(self):
+        mainnet = {
+            **self.config,
+            'chain_id': 42161,
+            'chain_name': 'arb1',
+            'parent_chain_id': 1,
+            'snapshot_url': 'https://snapshot.arbitrum.foundation/arb1/2026-10-20-dbd26a00/',
+            'log_group': '/plether/mainnet/rpc-node',
+        }
+        node.validate_config(mainnet, self.parent)
+        result = node.nitro_config(mainnet, self.parent)
+        self.assertEqual(result['chain'], {'id': 42161, 'name': 'arb1'})
+        self.assertEqual(result['parent-chain']['id'], 1)
+        with self.assertRaises(ValueError):
+            node.validate_config({**mainnet, 'snapshot_url': self.config['snapshot_url']}, self.parent)
+        with self.assertRaises(ValueError):
+            node.validate_config({**mainnet, 'parent_chain_id': 11155111}, self.parent)
+
 
 if __name__ == '__main__':
     unittest.main()

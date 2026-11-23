@@ -29,7 +29,9 @@ COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/schema.sql schema.sql
 COPY apps/backend/config/migrations/ config/migrations/
-COPY config/perps/arbitrum-sepolia-v2.0.0.json config/perps/arbitrum-sepolia-v2.0.0.json
+ARG PLETHER_PERPS_RELEASE_MANIFEST=config/perps/arbitrum-sepolia-v2.0.0.json
+ENV PLETHER_PERPS_RELEASE_MANIFEST=${PLETHER_PERPS_RELEASE_MANIFEST}
+COPY config/perps/ config/perps/
 COPY config/rpc-log-range-policy.json config/rpc-log-range-policy.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
@@ -68,7 +70,9 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 libsecp256k1-1 libstdc++6 ca-certificates postgresql-client && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 10001 plether && \
+    useradd --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin --no-create-home plether
 
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
 COPY --from=builder /build/plether-aa-reconciler-bin /usr/local/bin/plether-aa-reconciler
@@ -86,7 +90,7 @@ COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY --from=protection-worker /protection /app/protection
 COPY --from=return-attribution /return-attribution /app/return-attribution
-COPY config/perps/arbitrum-sepolia-v2.0.0.json /app/config/perps/arbitrum-sepolia-v2.0.0.json
+COPY config/perps/ /app/config/perps/
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
@@ -101,6 +105,11 @@ COPY apps/backend/config/migrations/testnet-margin-funding-v1.sql /app/config/mi
 COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql
 
 WORKDIR /app
+RUN chown -R 10001:10001 /app
+USER 10001:10001
 EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["plether-api", "+RTS", "-N", "-RTS"]

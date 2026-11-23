@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 4,
+  "orderInterfaceVersion": 3,
+  "network": {
+    "name": "arbitrum-one",
+    "chainId": 42161
+  },
+  "release": {
+    "id": "arbitrum-one-v1.0.0-template",
+    "phase": "prepared",
+    "deploymentBlock": null,
+    "deployer": null,
+    "owner": null,
+    "guardian": null,
+    "deploymentTimeProtocolTreasury": null,
+    "seniorSeedReceiver": null,
+    "juniorSeedReceiver": null,
+    "juniorMaintenanceFeeRecipient": null,
+    "notes": "Template only. Replace all null pins with verified Arbitrum One deployment addresses, code hashes, multisig governance addresses, and a passing authenticatedPythDryRun before setting phase to deployed/seeded/active."
+  },
+  "settlementToken": {
+    "name": "Global Dollar",
+    "symbol": "USDG",
+    "decimals": 6,
+    "isMock": false,
+    "supportsReceiveWithAuthorization": false,
+    "supportsBridgeFunding": false
+  },
+  "contracts": {
+    "settlementToken": { "address": null, "runtimeCodeHash": null },
+    "marginClearinghouse": { "address": null, "runtimeCodeHash": null },
+    "cfdEngine": { "address": null, "runtimeCodeHash": null },
+    "terminalNavBookV2": { "address": null, "runtimeCodeHash": null },
+    "cfdEnginePlanner": { "address": null, "runtimeCodeHash": null },
+    "cfdEnginePlanningReader": { "address": null, "runtimeCodeHash": null },
+    "cfdEngineSettlementSidecar": { "address": null, "runtimeCodeHash": null },
+    "cfdEngineAdmin": { "address": null, "runtimeCodeHash": null },
+    "housePoolRedemptionMathSidecar": { "address": null, "runtimeCodeHash": null },
+    "housePool": { "address": null, "runtimeCodeHash": null },
+    "cfdEngineProtocolLens": { "address": null, "runtimeCodeHash": null },
+    "seniorVault": { "address": null, "runtimeCodeHash": null },
+    "juniorVault": { "address": null, "runtimeCodeHash": null },
+    "cfdEngineAccountLens": { "address": null, "runtimeCodeHash": null },
+    "cfdEngineLens": { "address": null, "runtimeCodeHash": null },
+    "cfdEngineOpenQuoter": { "address": null, "runtimeCodeHash": null },
+    "cfdOrderPolicyEvaluator": { "address": null, "runtimeCodeHash": null },
+    "cfdClosePreview": { "address": null, "runtimeCodeHash": null },
+    "orderRouterExecutionSidecar": { "address": null, "runtimeCodeHash": null },
+    "orderRecoverySidecar": { "address": null, "runtimeCodeHash": null },
+    "pletherOracle": { "address": null, "runtimeCodeHash": null },
+    "orderRouterLiquidationBatchSidecar": { "address": null, "runtimeCodeHash": null },
+    "orderLifecycleBook": { "address": null, "runtimeCodeHash": null },
+    "orderRouter": { "address": null, "runtimeCodeHash": null },
+    "orderRouterAdmin": { "address": null, "runtimeCodeHash": null },
+    "positionProtectionBook": { "address": null, "runtimeCodeHash": null },
+    "perpsPublicLens": { "address": null, "runtimeCodeHash": null },
+    "settlementMonitorLens": { "address": null, "runtimeCodeHash": null },
+    "settlementMonitorLensSidecar": { "address": null, "runtimeCodeHash": null },
+    "emergencyPauseCoordinator": { "address": null, "runtimeCodeHash": null }
+  },
+  "verification": {
+    "authenticatedPythDryRun": {
+      "passed": false
+    }
+  }
+}

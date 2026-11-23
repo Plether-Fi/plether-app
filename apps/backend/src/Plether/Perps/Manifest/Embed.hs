@@ -17,13 +17,18 @@ import qualified Data.Text as T
 import Language.Haskell.TH (Exp, Q, runIO)
 import Language.Haskell.TH.Syntax (addDependentFile, lift)
 import System.Directory (doesFileExist, makeAbsolute)
+import System.Environment (lookupEnv)
 
 manifestRoot :: Q Value
 manifestRoot = do
-  let repositoryPath = "../../config/perps/arbitrum-sepolia-v2.0.0.json"
-      dockerPath = "config/perps/arbitrum-sepolia-v2.0.0.json"
-  inRepository <- runIO $ doesFileExist repositoryPath
-  path <- runIO $ makeAbsolute $ if inRepository then repositoryPath else dockerPath
+  mOverride <- runIO $ lookupEnv "PLETHER_PERPS_RELEASE_MANIFEST"
+  let defaultRepoPath = "../../config/perps/arbitrum-sepolia-v2.0.0.json"
+      defaultDockerPath = "config/perps/arbitrum-sepolia-v2.0.0.json"
+  path <- runIO $ case mOverride of
+    Just configured | not (null configured) -> makeAbsolute configured
+    _ -> do
+      inRepository <- doesFileExist defaultRepoPath
+      makeAbsolute $ if inRepository then defaultRepoPath else defaultDockerPath
   addDependentFile path
   decoded <- runIO $ eitherDecodeFileStrict' path
   root <- either fail pure decoded
@@ -52,12 +57,18 @@ settlementTokenField root field = do
 releaseIsDeployed :: Value -> Either String Bool
 releaseIsDeployed root = do
   _ <- settlementTokenField root "address"
-  forM_ [("name", String "Mock USDG"), ("symbol", String "USDG"), ("decimals", Number 6),
-         ("isMock", Bool True), ("supportsReceiveWithAuthorization", Bool False), ("supportsBridgeFunding", Bool False)] $ \(key, expected) -> do
-    actual <- fieldAt root ["settlementToken", key]
-    unless (actual == expected) $ Left $ "Invalid MockUSDG metadata: " <> key
   chain <- fieldAt root ["network", "chainId"]
-  unless (chain == Number 421614) $ Left "Unsupported perps chain"
+  case chain of
+    Number 421614 ->
+      forM_ [("name", String "Mock USDG"), ("symbol", String "USDG"), ("decimals", Number 6),
+             ("isMock", Bool True), ("supportsReceiveWithAuthorization", Bool False), ("supportsBridgeFunding", Bool False)] $ \(key, expected) -> do
+        actual <- fieldAt root ["settlementToken", key]
+        unless (actual == expected) $ Left $ "Invalid MockUSDG metadata: " <> key
+    Number 42161 -> do
+      forM_ [("symbol", String "USDG"), ("decimals", Number 6), ("isMock", Bool False)] $ \(key, expected) -> do
+        actual <- fieldAt root ["settlementToken", key]
+        unless (actual == expected) $ Left $ "Invalid mainnet USDG metadata: " <> key
+    _ -> Left "Unsupported perps chain"
   interface <- fieldAt root ["orderInterfaceVersion"]
   unless (interface == Number 3) $ Left "Unsupported perps order interface"
   phase <- fieldAt root ["release", "phase"]

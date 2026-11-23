@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - sepolia
+          - mainnet
       action:
         description: Deploy Alto, bootstrap its simulation contracts while dark, or roll back to a reviewed revision
         required: true
@@ -46,16 +47,16 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
-  ADMIN_ENVIRONMENT: alto-admin-sepolia
+  ADMIN_ENVIRONMENT: alto-admin-${{ inputs.environment }}
   DOCKER_CLI_EXPERIMENTAL: enabled
   TARGET_ENV: ${{ inputs.environment }}
   ALTO_ACTION: ${{ inputs.action }}
-  ECS_CLUSTER: plether-sepolia
+  ECS_CLUSTER: plether-${{ inputs.environment }}
   ECS_SERVICE: plether-alto
-  TASK_FAMILY: plether-sepolia-alto
-  ECR_REPOSITORY: plether-alto-sepolia
-  LOG_ROUTER_REPOSITORY: plether-otel-log-router-sepolia
-  ALTO_TARGET_GROUP: plether-sepolia-alto
+  TASK_FAMILY: plether-${{ inputs.environment }}-alto
+  ECR_REPOSITORY: plether-alto-${{ inputs.environment }}
+  LOG_ROUTER_REPOSITORY: ${{ inputs.environment == 'mainnet' && 'plether-otel-log-router' || 'plether-otel-log-router-sepolia' }}
+  ALTO_TARGET_GROUP: plether-${{ inputs.environment }}-alto
   ALTO_CONTAINER: plether-alto
   ALTO_TMP_INIT_CONTAINER: alto-tmp-init
   LOG_ROUTER_CONTAINER: otel-log-router
@@ -1121,25 +1122,10 @@ jobs:
             | [$scan.findings[] | select(.severity == "CRITICAL")] as $critical
             | if ($critical | length) == $critical_count then .
               else error("Alto critical finding count does not match detailed evidence") end
-            # Owner-approved temporary exception: this is risk acceptance, not
-            # a finding suppression or a claim that the runtime is unaffected.
-            | ($environment == "sepolia" and $region == "ap-southeast-1"
-                and $account == "932542905614" and $repository == "plether-alto-sepolia"
-                and $upstream == "sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
-                and $digest == "sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a"
-                and ($now | uint) and $now >= 1791331200 and $now < 1791936000) as $exception_scope
-            | [$critical[] | select($exception_scope
-                and .name == "CVE-2024-5535"
-                and package_attribute("package_name"; "openssl")
-                and package_attribute("package_version"; "3.1.4-r5"))] as $accepted
-            | if ($critical | length) != ($accepted | length) or ($accepted | length) > 1
+            | if ($critical | length) > 0
               then error("Alto image has an unaccepted critical finding")
-              else {criticalCount: $critical_count, acceptedCriticalCount: ($accepted | length)} end
+              else {criticalCount: $critical_count, acceptedCriticalCount: 0} end
             ' <<< "$scan_findings")
-          if [ "$(jq -r '.acceptedCriticalCount' <<< "$scan_policy")" -eq 1 ]; then
-            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-10-14 00:00 UTC. The finding remains visible; other critical findings still block deployment."
-            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-10-14 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
-          fi
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
           echo "digest=$mirrored_digest" >> "$GITHUB_OUTPUT"

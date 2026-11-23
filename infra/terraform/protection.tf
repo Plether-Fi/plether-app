@@ -38,8 +38,19 @@ variable "protection_worker_private_key" {
   }
 }
 
+variable "protection_worker_private_key_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString holding the dedicated SL/TP protection signer private key. Required on mainnet when protection execution is enabled."
+
+  validation {
+    condition     = trimspace(var.protection_worker_private_key_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.protection_worker_private_key_ssm_parameter_name)))
+    error_message = "protection_worker_private_key_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
+}
+
 resource "aws_ssm_parameter" "protection_worker_private_key" {
-  count = nonsensitive(var.protection_worker_private_key != "") ? 1 : 0
+  count = !local.protection_worker_key_external && nonsensitive(var.protection_worker_private_key != "") ? 1 : 0
   name  = "/plether/${local.deployment_name}/protection-worker-private-key"
   type  = "SecureString"
   value = var.protection_worker_private_key
@@ -55,13 +66,13 @@ resource "aws_ssm_parameter" "protection_worker_private_key" {
 }
 
 resource "aws_ecs_task_definition" "protection_worker" {
-  count                    = var.environment == "sepolia" ? 1 : 0
+  count                    = contains(["sepolia", "mainnet"], var.environment) ? 1 : 0
   family                   = "plether-${local.deployment_name}-protection-worker"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
   memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  execution_role_arn       = aws_iam_role.protection_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -69,7 +80,7 @@ resource "aws_ecs_task_definition" "protection_worker" {
   }
   lifecycle {
     precondition {
-      condition     = !var.protection_worker_execution_enabled || nonsensitive(var.protection_worker_private_key != "")
+      condition     = !var.protection_worker_execution_enabled || local.protection_worker_private_key_configured
       error_message = "Execution requires a dedicated protection signer."
     }
     precondition {
@@ -78,19 +89,34 @@ resource "aws_ecs_task_definition" "protection_worker" {
     }
   }
   container_definitions = jsonencode([{
-    name             = "plether-position-protection-worker"
-    image            = local.api_image
-    essential        = true
+    name                   = "plether-position-protection-worker"
+    image                  = local.api_image
+    essential              = true
+    readonlyRootFilesystem = true
+    user                   = "10001:10001"
+    stopTimeout            = 60
+    linuxParameters = {
+      initProcessEnabled = true
+      capabilities = {
+        add  = []
+        drop = ["ALL"]
+      }
+    }
+    dependsOn = [{
+      containerName = "otel-log-router"
+      condition     = "START"
+    }]
     command          = ["node", "/app/protection/main.mjs"]
     logConfiguration = local.posthog_log_configuration
     secrets = concat([
-      { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+      { name = "DATABASE_URL", valueFrom = local.database_url_parameter_arn },
       { name = "PERPS_RPC_URL", valueFrom = local.application_rpc_url_parameter_arn },
-      ], local.perps_rpc_auth_token_secret, nonsensitive(var.protection_worker_private_key != "") ? [
-      { name = "PROTECTION_WORKER_PRIVATE_KEY", valueFrom = aws_ssm_parameter.protection_worker_private_key[0].arn }
+      ], local.perps_rpc_auth_token_secret, local.protection_worker_private_key_parameter_arn != null ? [
+      { name = "PROTECTION_WORKER_PRIVATE_KEY", valueFrom = local.protection_worker_private_key_parameter_arn }
     ] : [])
     environment = [
-      { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/arbitrum-sepolia-v2.0.0.json" },
+      { name = "PERPS_RELEASE_MANIFEST", value = local.runtime_perps_release_manifest_path },
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PROTECTION_WORKER_EXECUTION_ENABLED", value = tostring(var.protection_worker_execution_enabled) },
       { name = "PROTECTION_WORKER_CONFIRMATIONS", value = "12" },
       { name = "PROTECTION_WORKER_POLL_SECONDS", value = var.protection_worker_poll_seconds },
@@ -101,7 +127,7 @@ resource "aws_ecs_task_definition" "protection_worker" {
 }
 
 resource "aws_ecs_service" "protection_worker" {
-  count                              = var.environment == "sepolia" ? 1 : 0
+  count                              = contains(["sepolia", "mainnet"], var.environment) ? 1 : 0
   name                               = "plether-position-protection-worker"
   cluster                            = aws_ecs_cluster.main.id
   task_definition                    = aws_ecs_task_definition.protection_worker[0].arn
@@ -109,6 +135,10 @@ resource "aws_ecs_service" "protection_worker" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]

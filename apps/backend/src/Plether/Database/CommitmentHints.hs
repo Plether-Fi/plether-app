@@ -29,7 +29,7 @@ ensureCommitmentHintSchema :: Connection -> IO ()
 ensureCommitmentHintSchema conn = bounded conn $ do
   void $ execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_commitment_hints (\
-    \chain_id BIGINT NOT NULL CHECK(chain_id=421614),router TEXT NOT NULL,\
+    \chain_id BIGINT NOT NULL CHECK(chain_id IN (421614, 42161)),router TEXT NOT NULL,\
     \operation_hash TEXT NOT NULL CHECK(operation_hash ~ '^0x[0-9a-f]{64}$'),\
     \sender TEXT NOT NULL CHECK(sender ~ '^0x[0-9a-f]{40}$'),\
     \state TEXT NOT NULL DEFAULT 'tracking' CHECK(state IN ('tracking','provisional','complete')),\

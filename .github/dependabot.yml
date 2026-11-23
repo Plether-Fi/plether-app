@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directory: /apps/frontend
     schedule:
       interval: weekly
     groups:
@@ -12,3 +12,47 @@ updates:
           - "viem"
           - "wagmi"
           - "@web3modal/*"
+  - package-ecosystem: npm
+    directory: /apps/insights
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /apps/landing
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /apps/backend/protection-worker
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /apps/backend/return-attribution
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /apps/backend/oracle-worker
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /apps/backend
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /apps/backend/otel-log-router
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /infra/rpc/gateway
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/terraform-rpc
+    schedule:
+      interval: weekly

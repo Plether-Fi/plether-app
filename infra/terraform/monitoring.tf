@@ -127,8 +127,8 @@ resource "aws_cloudwatch_log_metric_filter" "rpc_request_attribution" {
 
 locals {
   # Sepolia's Nov 6–20 hourly application traffic peaked at 187k after the RPC rollout.
-  rpc_request_rate_warning_threshold  = var.environment == "sepolia" ? 225000 : 15000
-  rpc_request_rate_critical_threshold = var.environment == "sepolia" ? 275000 : 25000
+  rpc_request_rate_warning_threshold  = var.rpc_request_rate_warning_threshold != null ? var.rpc_request_rate_warning_threshold : (var.environment == "sepolia" ? 225000 : 15000)
+  rpc_request_rate_critical_threshold = var.rpc_request_rate_critical_threshold != null ? var.rpc_request_rate_critical_threshold : (var.environment == "sepolia" ? 275000 : 25000)
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
@@ -143,7 +143,7 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
   threshold           = local.rpc_request_rate_warning_threshold
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
-  ok_actions          = []
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
@@ -360,7 +360,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_immediate_alarm" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_heartbeat" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   name           = "plether-${local.deployment_name}-vault-indexer-heartbeat"
   pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" }"
@@ -374,7 +374,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_heartbeat" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   alarm_name          = "plether-${local.deployment_name}-vault-indexer-heartbeat-missing"
   alarm_description   = "No successful vault-indexer heartbeat was observed for three minutes."
@@ -392,7 +392,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_heartbeat" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   name           = "plether-${local.deployment_name}-vault-request-share-attribution-heartbeat"
   pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" }"
@@ -406,7 +406,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_hea
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_heartbeat_missing" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   alarm_name          = "plether-${local.deployment_name}-vault-request-share-attribution-heartbeat-missing"
   alarm_description   = "No successful vault request-share-attribution heartbeat was observed for three minutes."
@@ -424,7 +424,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_heartbea
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_lag" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   name           = "plether-${local.deployment_name}-vault-request-share-attribution-lag"
   pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" && $.lag_seconds >= 0 }"
@@ -438,7 +438,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_lag
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_lag" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   alarm_name          = "plether-${local.deployment_name}-vault-request-share-attribution-lag"
   alarm_description   = "Vault request-share attribution lag exceeded two minutes for three consecutive periods."
@@ -456,7 +456,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_lag" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_backfill" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   name           = "plether-${local.deployment_name}-vault-request-share-attribution-backfill"
   pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" && $.state = \"backfilling\" }"
@@ -470,7 +470,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_bac
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_backfill" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   alarm_name          = "plether-${local.deployment_name}-vault-request-share-attribution-backfill-incomplete"
   alarm_description   = "Vault request-share attribution remained incomplete for ten minutes."
@@ -488,7 +488,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_backfill
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   name           = "plether-${local.deployment_name}-vault-indexer-lag"
   pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" && $.lag_seconds >= 0 }"
@@ -502,7 +502,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_lag" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   alarm_name          = "plether-${local.deployment_name}-vault-indexer-confirmed-data-lag"
   alarm_description   = "Confirmed vault activity lag exceeded two minutes for three consecutive periods."
@@ -520,7 +520,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_lag" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_backfill" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   name           = "plether-${local.deployment_name}-vault-indexer-backfill"
   pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" && $.state = \"backfilling\" }"
@@ -534,7 +534,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_backfill" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_backfill" {
-  count = var.perps_chain_id == "421614" ? 1 : 0
+  count = contains(["421614", "42161"], var.perps_chain_id) ? 1 : 0
 
   alarm_name          = "plether-${local.deployment_name}-vault-indexer-backfill-incomplete"
   alarm_description   = "The canonical vault index rebuild remained incomplete for ten minutes."
@@ -802,6 +802,90 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  alarm_name          = "plether-${local.deployment_name}-api-alb-unhealthy-hosts"
+  alarm_description   = "The public API ALB target group has at least one unhealthy target for two consecutive minutes."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+
+  dimensions = {
+    LoadBalancer = aws_lb.api.arn_suffix
+    TargetGroup  = aws_lb_target_group.api.arn_suffix
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_funding_monitor_failed" {
+  count = length(var.aa_funding_monitors) > 0 ? 1 : 0
+
+  name           = "plether-${local.deployment_name}-aa-funding-monitor-failed"
+  pattern        = "{ $.event = \"worker_funding_monitor_failed\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaFundingMonitorFailed-${local.deployment_name}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_funding_monitor_failed" {
+  count = length(var.aa_funding_monitors) > 0 ? 1 : 0
+
+  alarm_name          = "plether-${local.deployment_name}-aa-funding-monitor-failed"
+  alarm_description   = "The AA signer funding monitor sidecar exited or failed to publish observations."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.aa_funding_monitor_failed[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.aa_funding_monitor_failed[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}
+
+resource "aws_cloudwatch_log_metric_filter" "oracle_worker_errors" {
+  count = var.consolidate_workers ? 1 : 0
+
+  name           = "plether-${local.deployment_name}-oracle-worker-errors"
+  pattern        = "{ $.level = \"ERROR\" && $.event = \"oracle_*\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "OracleWorkerErrors-${local.deployment_name}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "oracle_worker_errors" {
+  count = var.consolidate_workers ? 1 : 0
+
+  alarm_name          = "plether-${local.deployment_name}-oracle-worker-errors"
+  alarm_description   = "The perps oracle updater emitted repeated ERROR events over a 5-minute window."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.oracle_worker_errors[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.oracle_worker_errors[0].metric_transformation[0].namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 3
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}
+
 locals {
   monitored_ecs_resources = merge(
     {
@@ -857,6 +941,26 @@ locals {
       aa_reconciler_memory = {
         metric  = "MemoryUtilization"
         service = aws_ecs_service.aa_reconciler[0].name
+      }
+    } : {},
+    var.liquidation_worker_desired_count > 0 ? {
+      liquidation_worker_cpu = {
+        metric  = "CPUUtilization"
+        service = aws_ecs_service.liquidation_worker.name
+      }
+      liquidation_worker_memory = {
+        metric  = "MemoryUtilization"
+        service = aws_ecs_service.liquidation_worker.name
+      }
+    } : {},
+    var.protection_worker_desired_count > 0 && contains(["sepolia", "mainnet"], var.environment) ? {
+      protection_worker_cpu = {
+        metric  = "CPUUtilization"
+        service = aws_ecs_service.protection_worker[0].name
+      }
+      protection_worker_memory = {
+        metric  = "MemoryUtilization"
+        service = aws_ecs_service.protection_worker[0].name
       }
     } : {}
   )

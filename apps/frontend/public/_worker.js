@@ -825,16 +825,13 @@ async function fetchPublicResponse(
         candleVariant.pricePageState,
       );
   }
-  if (/\bno-store\b/i.test(requestCacheControl)) {
+  if (url.pathname === CURRENT_CANDLE_PATH && /\bno-store\b/i.test(requestCacheControl)) {
     return candleVariant === undefined
       ? fetchBackend()
       : fetchUncachedCandlePage();
   }
   const cacheKey = new Request(cacheKeyUrl, { method: 'GET' });
-  const shouldRevalidate =
-    /\bno-cache\b/i.test(requestCacheControl) ||
-    /(?:^|,)\s*max-age\s*=\s*0\b/i.test(requestCacheControl);
-  const cached = shouldRevalidate ? undefined : await cache.match(cacheKey);
+  const cached = await cache.match(cacheKey);
 
   if (cached) {
     const storedAt = Number(cached.headers.get(EDGE_CACHE_STORED_AT_HEADER));
@@ -899,8 +896,12 @@ const requestHandler = {
         // Never trust or forward browser-supplied origin-auth tokens. The
         // backend may trust CF-Connecting-IP for protected endpoints only
         // after the matching Worker-to-origin credential has been verified.
+        headers.delete('X-Plether-Origin-Secret');
         headers.delete(AA_PROXY_AUTH_HEADER);
         headers.delete(FAUCET_PROXY_AUTH_HEADER);
+        if (env.ALB_ORIGIN_SECRET) {
+          headers.set('X-Plether-Origin-Secret', env.ALB_ORIGIN_SECRET);
+        }
         if (!AA_PROXY_PATHS.has(url.pathname)) {
           headers.delete('X-Plether-AA-Recovery');
           headers.delete('X-Plether-AA-Preparation-Recovery');
