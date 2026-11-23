@@ -16,7 +16,7 @@ const nodeInterfaceAbi = parseAbi(['function gasEstimateL1Component(address to, 
 const operationEvent = parseAbiItem('event UserOperationEvent(bytes32 indexed userOpHash, address indexed sender, address indexed paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)')
 // Leave room for validation and EntryPoint overhead under the Sepolia
 // public RPC's two-million-gas estimate ceiling.
-const callGasLimit = 1_200_000n
+const callGasLimit = 1_600_000n
 const verificationGasLimit = 650_000n
 const maxWalletFee = 50_000_000_000_000_000n
 // Use a full-length, high-entropy stub for the unsigned L1 data estimate.
