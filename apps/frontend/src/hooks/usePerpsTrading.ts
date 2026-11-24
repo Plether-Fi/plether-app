@@ -97,6 +97,8 @@ interface PrepareOrderInput {
   maxSize?: boolean
   signal?: AbortSignal
   reviewGas?: boolean
+  /** Fresh background preparation to reuse when only a Kernel gas quote is needed. */
+  existingPrepared?: PreparedPerpsOrderV3
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
@@ -950,6 +952,7 @@ export function usePerpsTrading() {
     maxSize,
     signal,
     reviewGas = false,
+    existingPrepared,
   }: PrepareOrderInput): Promise<PreparedPerpsOrderV3> => {
     try {
       if (!address) {
@@ -994,22 +997,46 @@ export function usePerpsTrading() {
       }
       const client = requireClient(publicClient)
       const closeAssistance = undefined
-      const prepared = await preparePerpsOrderV3(client, sponsored.manifest, {
-        closeAssistance,
-        account: sponsored.accountAddress,
-        direction,
-        side: directionToPerpsSide(direction),
-        sizeDelta,
-        marginDelta: isClose ? 0n : marginAssets,
-        slippagePercent,
-        isClose,
-        selectedMaxLeverageBps,
-        positionProtection,
-        maxSize,
-        signal,
-      })
+      const side = directionToPerpsSide(direction)
+      const canReuseExistingPrepared = Boolean(
+        sponsored.runtime.kernel &&
+        reviewGas &&
+        existingPrepared &&
+        isAddressEqual(existingPrepared.account, sponsored.accountAddress) &&
+        existingPrepared.manifestVersion === sponsored.manifest.version &&
+        isAddressEqual(existingPrepared.orderRouter, sponsored.manifest.orderRouter) &&
+        isAddressEqual(existingPrepared.orderLifecycleBook, sponsored.manifest.orderLifecycleBook) &&
+        existingPrepared.request.side === side &&
+        existingPrepared.request.isClose === isClose &&
+        (maxSize === true || existingPrepared.request.sizeDelta === sizeDelta) &&
+        Boolean(existingPrepared.positionProtection) === Boolean(positionProtection)
+      )
+      const prepared: PreparedPerpsOrderV3 = canReuseExistingPrepared && existingPrepared
+        ? { ...existingPrepared, kernelQuote: undefined }
+        : await preparePerpsOrderV3(client, sponsored.manifest, {
+            closeAssistance,
+            account: sponsored.accountAddress,
+            direction,
+            side,
+            sizeDelta,
+            marginDelta: isClose ? 0n : marginAssets,
+            slippagePercent,
+            isClose,
+            selectedMaxLeverageBps,
+            positionProtection,
+            maxSize,
+            signal,
+          })
       if (sponsored.runtime.kernel && reviewGas) {
-        const request = await finalizeOrderDeadline(client, prepared)
+        // Freshly prepared orders already verified latest block.timestamp and
+        // maxExecutionWindowSeconds; only refresh deadline when reusing a warm
+        // background preparation.
+        const request = canReuseExistingPrepared
+          ? await finalizeOrderDeadline(client, prepared)
+          : (() => {
+              confirmationRequests.set(prepared, Promise.resolve(prepared.request))
+              return prepared.request
+            })()
         signal?.throwIfAborted()
         const protection = prepared.positionProtection
         const action = protection

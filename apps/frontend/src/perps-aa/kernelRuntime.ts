@@ -197,11 +197,13 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
         throw error
       }
       const callData = encodeKernelCalls(action.calls)
-      const { factory, expectedNonce } = await readDeploymentAndNonce()
+      const [{ factory, expectedNonce }, reviewedState] = await Promise.all([
+        readDeploymentAndNonce(),
+        readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId }),
+      ])
       if (await getActiveKernelAttempt(scope, { mode, nonce: expectedNonce })) {
         throw new Error('Resolve the pending operation in Trading Account activity before getting a new gas quote')
       }
-      const reviewedState = await readReviewedActionState(publicClient, manifest, scope.sender, { action: action.kind, clientOrderId })
       signal?.throwIfAborted()
       let prepared: KernelActionPreparation
       try {

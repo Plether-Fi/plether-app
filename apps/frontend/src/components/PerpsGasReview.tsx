@@ -51,9 +51,9 @@ export function PerpsGasReview({ gas, quote, error, showSettings = true, onOpenS
       {payFromWallet && quote && <p>Sign the Trading Account action, then confirm the gas payment in your Owner Wallet.</p>}
       {funding && <p role="status">Add at least {formatEther(funding.shortfallWei)} ETH, then review a fresh gas quote.</p>}
       {!gas.available ? <p role="status">{mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.'}</p> : null}
-      {showSettings ? (
+      {showSettings && fundingError ? (
         <button type="button" className="font-semibold text-brand-peach underline underline-offset-4" onClick={onOpenSettings ?? gas.openActivity}>
-          {fundingError ? 'Add ETH' : 'Gas settings'}
+          Add ETH
         </button>
       ) : null}
     </div>
