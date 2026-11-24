@@ -12,7 +12,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   failOnFlakyTests: true,
-  workers: 1,
+  workers: process.env.CI ? 2 : 1,
   retries: 0,
   reporter: [['list'], ['junit', { outputFile: '.test-results/privy-sdk.xml' }]],
   use: { baseURL, trace: 'retain-on-failure' },
