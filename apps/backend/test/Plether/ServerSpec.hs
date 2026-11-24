@@ -24,8 +24,10 @@ spec = describe "API server connection lifecycle" $ do
     settingsTimeout configured `shouldBe` 120
     apiConnectionTimeoutSeconds `shouldSatisfy` (> 75)
 
-  it "keeps the same socket reusable beyond the ALB's 75-second idle timeout" $ do
-    let configured = settings $ apiServerOptions 0
+  it "keeps the same socket reusable across the configured idle timeout" $ do
+    -- Use a scaled timeout so this exercises Warp's keep-alive idle behavior
+    -- without an 80-second sleep; the production 120s timeout is asserted above.
+    let configured = setTimeout 3 $ settings $ apiServerOptions 0
         app _ respond = respond $ responseLBS status200 [("Content-Length", "2")] "ok"
     testWithApplicationSettings configured (pure app) $ \port -> do
       -- A raw socket cannot silently reconnect/retry, unlike http-client's
@@ -36,7 +38,7 @@ spec = describe "API server connection lifecycle" $ do
               Socket.sendAll connection "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
               readResponse connection BS.empty
         timeout 5_000_000 exchange `shouldReturn` Just True
-        threadDelay 80_000_000
+        threadDelay 1_500_000
         timeout 5_000_000 exchange `shouldReturn` Just True
 
   it "does not turn the connection timeout into a long-poll request deadline" $ do
