@@ -56,6 +56,13 @@ terraform plan -var-file=terraform.tfvars.sepolia -out=sepolia.tfplan
 terraform show sepolia.tfplan
 ```
 
+## Fresh Kernel AA deployment
+
+The isolated Sepolia Kernel canary uses its own Terraform state and variables.
+See [kernel-canary/README.md](kernel-canary/README.md) for the gated image,
+signing key, ECS, and route sequence. This live core state continues to own the
+EntryPoint v0.8 services.
+
 ## Retained runtime images
 
 Application, log-router and Alto repositories have no automatic image-expiration

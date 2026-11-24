@@ -9,7 +9,7 @@ import {
 import { readPersistedManagedUserOperation } from './persistedUserOperation'
 import type {
   ManagedUserOperation,
-  PerpsAaSmartAccountRuntime,
+  SimplePerpsAaSmartAccountRuntime,
 } from './runtimeContext'
 
 export type ProtocolOperationResolution =
@@ -27,7 +27,7 @@ export type ProtocolOperationResolution =
 
 function verifiedPersistedUserOperation(
   operation: SponsoredOperation,
-  runtime: PerpsAaSmartAccountRuntime,
+  runtime: SimplePerpsAaSmartAccountRuntime,
   userOperationHash: Hex
 ): ManagedUserOperation | undefined {
   if (operation.submissionMetadataVersion !== 1) {
@@ -63,7 +63,7 @@ function verifiedPersistedUserOperation(
  */
 export async function resolveProtocolOperation(input: {
   operation: SponsoredOperation
-  runtime: PerpsAaSmartAccountRuntime
+  runtime: SimplePerpsAaSmartAccountRuntime
   userOperationHash: Hex
 }): Promise<ProtocolOperationResolution | undefined> {
   if (input.runtime.getRecoverySnapshot === undefined) {

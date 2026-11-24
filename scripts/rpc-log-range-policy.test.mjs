@@ -36,8 +36,11 @@ test('Terraform rejects unsupported reconciler ranges, including stopped-service
     mkdirSync(moduleDirectory, { recursive: true })
     mkdirSync(join(directory, 'config'))
     writeFileSync(join(directory, 'config', 'rpc-log-range-policy.json'), JSON.stringify(policy))
-    const variable = read('infra/terraform/variables.tf').match(/variable "aa_reconciler_batch_blocks" \{[\s\S]*?\n\}/)?.[0]
-    writeFileSync(join(moduleDirectory, 'main.tf'), `${variable}\n${read('infra/terraform/rpc_log_range_policy.tf')}`)
+    const variables = read('infra/terraform/variables.tf')
+    const batchVariable = variables.match(/variable "aa_reconciler_batch_blocks" \{[\s\S]*?\n\}/)?.[0]
+    const entryPointVariable = variables.match(/variable "alto_entrypoint_version" \{[\s\S]*?\n\}/)?.[0]
+    assert.ok(batchVariable && entryPointVariable, 'load both production inputs for the range guard')
+    writeFileSync(join(moduleDirectory, 'main.tf'), `${batchVariable}\n${entryPointVariable}\n${read('infra/terraform/rpc_log_range_policy.tf')}`)
     const init = run(['init', '-backend=false', '-input=false', '-no-color'])
     assert.equal(init.status, 0, init.stderr)
     for (const [batch, accepted] of [
@@ -47,6 +50,11 @@ test('Terraform rejects unsupported reconciler ranges, including stopped-service
       const result = run(['plan', '-input=false', '-lock=false', '-no-color', `-var=aa_reconciler_batch_blocks=${batch}`])
       assert.equal(result.status === 0, accepted, `batch=${batch}\n${result.stderr}`)
       if (!accepted) assert.match(result.stderr, /Resource precondition failed/)
+    }
+    for (const [batch, accepted] of [['2000', true], ['2001', false]]) {
+      const result = run(['plan', '-input=false', '-lock=false', '-no-color', '-var=alto_entrypoint_version=0.9', `-var=aa_reconciler_batch_blocks=${batch}`])
+      assert.equal(result.status === 0, accepted, `Kernel batch=${batch}\n${result.stderr}`)
+      if (!accepted) assert.match(result.stderr, /cannot exceed the runtime's 2000-block\s+limit/)
     }
     for (const malformed of [{ ...policy, version: 2 }, { ...policy, maxLogRangeBlocks: 0 }, { ...policy, reconcilerDefaultBatchBlocks: 5001 }]) {
       writeFileSync(join(directory, 'config', 'rpc-log-range-policy.json'), JSON.stringify(malformed))

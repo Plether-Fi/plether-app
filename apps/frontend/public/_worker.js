@@ -8,7 +8,9 @@ const AA_PROXY_PATHS = new Set([
   '/api/perps/v1/aa/pimlico',
   '/api/perps/v1/aa/rpc',
   '/api/perps/v1/rpc',
+  '/api/perps/v1/aa/kernel/rpc',
 ]);
+const KERNEL_AA_PROXY_PATH = '/api/perps/v1/aa/kernel/rpc';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
 const MARGIN_FUNDING_PROXY_PATH = '/api/perps/v1/testnet/margin-funding';
@@ -907,12 +909,15 @@ const requestHandler = {
           headers.delete('X-Plether-AA-Preparation-Recovery');
         }
         if (AA_PROXY_PATHS.has(url.pathname)) {
-          if (!env.AA_PROXY_ORIGIN_TOKEN) {
+          const originToken = url.pathname === KERNEL_AA_PROXY_PATH
+            ? env.KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN
+            : env.AA_PROXY_ORIGIN_TOKEN;
+          if (!originToken) {
             return new Response('AA proxy authentication not configured', {
               status: 502,
             });
           }
-          headers.set(AA_PROXY_AUTH_HEADER, env.AA_PROXY_ORIGIN_TOKEN);
+          headers.set(AA_PROXY_AUTH_HEADER, originToken);
         }
         if (isFaucetProxyPath(url.pathname)) {
           if (!env.FAUCET_PROXY_ORIGIN_TOKEN) {

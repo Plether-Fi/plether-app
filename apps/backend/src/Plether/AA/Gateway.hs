@@ -15,9 +15,14 @@ module Plether.AA.Gateway
   , nativeStartupFailure
   , SecurityBlockHeader (..)
   , validateSecurityHeaderTime
+  , readAgreedSecurityBlock
+  , readAgreedLatestSecurityBlock
+  , readAgreedRecoveryAnchor
+  , readAgreedSecurityHeaderAt
   , advanceEvidenceSnapshots
   , buildPreparedOperation
   , revalidateSecuritySnapshot
+  , revalidateLatestSecuritySnapshot
   , agreeAccountIdentity
   , forwardAlto
   , forwardAltoWithCommitmentHint
@@ -1463,25 +1468,33 @@ revalidateSecurityContext context = revalidateSecuritySnapshot
 revalidateSecuritySnapshot
   :: AaRpcMode -> Integer -> EthClient -> EthClient -> SecurityBlockHeader
   -> IO (Either Text ())
-revalidateSecuritySnapshot mode maxSafeLag primaryClient secondaryClient captured = do
+revalidateSecuritySnapshot = revalidateSecuritySnapshotAt "safe"
+
+revalidateLatestSecuritySnapshot :: EthClient -> EthClient -> SecurityBlockHeader -> IO (Either Text ())
+revalidateLatestSecuritySnapshot = revalidateSecuritySnapshotAt "latest" DualIndependent 30
+
+revalidateSecuritySnapshotAt
+  :: Text -> AaRpcMode -> Integer -> EthClient -> EthClient -> SecurityBlockHeader
+  -> IO (Either Text ())
+revalidateSecuritySnapshotAt headTag mode maxLag primaryClient secondaryClient captured = do
   let blockNumber = sbhNumber captured
-  ((primarySafe, secondarySafe), current) <- concurrently
-    (providerPair mode (readSecurityHeader primaryClient "safe") (readSecurityHeader secondaryClient "safe"))
+  ((primaryHead, secondaryHead), current) <- concurrently
+    (providerPair mode (readSecurityHeader primaryClient headTag) (readSecurityHeader secondaryClient headTag))
     (readAgreedSecurityHeaderAt mode primaryClient secondaryClient blockNumber)
   now <- floor <$> getPOSIXTime
   pure $ do
-    firstSafe <- primarySafe
-    secondSafe <- secondarySafe
-    unless (sbhNumber firstSafe >= blockNumber && sbhNumber secondSafe >= blockNumber) $
-      Left "a security provider's safe head moved behind the authorization snapshot"
-    when (sbhNumber firstSafe == blockNumber && firstSafe /= captured) $
-      Left "primary safe head disagrees with the authorization snapshot"
-    when (sbhNumber secondSafe == blockNumber && secondSafe /= captured) $
-      Left "secondary safe head disagrees with the authorization snapshot"
+    firstHead <- primaryHead
+    secondHead <- secondaryHead
+    unless (sbhNumber firstHead >= blockNumber && sbhNumber secondHead >= blockNumber) $
+      Left $ "a security provider's " <> headTag <> " head moved behind the authorization snapshot"
+    when (sbhNumber firstHead == blockNumber && firstHead /= captured) $
+      Left $ "primary " <> headTag <> " head disagrees with the authorization snapshot"
+    when (sbhNumber secondHead == blockNumber && secondHead /= captured) $
+      Left $ "secondary " <> headTag <> " head disagrees with the authorization snapshot"
     header <- current
     unless (header == captured) $
       Left "the agreed security block changed during request authorization"
-    validateSecurityHeaderTime maxSafeLag now header
+    validateSecurityHeaderTime maxLag now header
 
 respondSecurityAttestationFailure :: Value -> Text -> ActionM ()
 respondSecurityAttestationFailure requestId reason = do
@@ -1954,22 +1967,50 @@ readAgreedSecurityBlock
   -> EthClient
   -> EthClient
   -> IO (Either Text SecurityBlockHeader)
-readAgreedSecurityBlock mode maxSafeLag primaryClient secondaryClient = do
-  (primarySafe, secondarySafe) <- providerPair mode (readSecurityHeader primaryClient "safe") (readSecurityHeader secondaryClient "safe")
-  case (primarySafe, secondarySafe) of
+readAgreedSecurityBlock = readFreshSecurityBlockAt "safe"
+
+readAgreedLatestSecurityBlock :: EthClient -> EthClient -> IO (Either Text SecurityBlockHeader)
+readAgreedLatestSecurityBlock = readFreshSecurityBlockAt "latest" DualIndependent 30
+
+readFreshSecurityBlockAt :: Text -> AaRpcMode -> Integer -> EthClient -> EthClient -> IO (Either Text SecurityBlockHeader)
+readFreshSecurityBlockAt headTag mode maxLag primaryClient secondaryClient = do
+  agreed <- readAgreedTaggedSecurityBlock headTag mode primaryClient secondaryClient
+  now <- floor <$> getPOSIXTime
+  pure $ agreed >>= \header -> validateSecurityHeaderTime maxLag now header >> pure header
+
+-- A recovery anchor is a conservative start for historical logs. It can
+-- predate the live snapshot by any amount; callers still attest live state.
+readAgreedRecoveryAnchor :: EthClient -> EthClient -> SecurityBlockHeader -> IO (Maybe Integer)
+readAgreedRecoveryAnchor primary secondary live = do
+  safe <- readAnchor "safe"
+  case safe of
+    Just _ -> pure safe
+    Nothing -> readAnchor "finalized"
+ where
+  readAnchor tag = do
+    result <- timeout 600_000 $ readAgreedTaggedSecurityBlock tag DualIndependent primary secondary
+    pure $ case result of
+      Just (Right header)
+        | sbhNumber header <= sbhNumber live
+        , sbhTimestamp header <= sbhTimestamp live
+        , sbhNumber header < sbhNumber live || header == live -> Just (sbhNumber header)
+      _ -> Nothing
+
+readAgreedTaggedSecurityBlock :: Text -> AaRpcMode -> EthClient -> EthClient -> IO (Either Text SecurityBlockHeader)
+readAgreedTaggedSecurityBlock headTag mode primaryClient secondaryClient = do
+  (primaryHead, secondaryHead) <- providerPair mode (readSecurityHeader primaryClient headTag) (readSecurityHeader secondaryClient headTag)
+  case (primaryHead, secondaryHead) of
     (Left err, _) -> pure $ Left $ "primary security RPC: " <> err
     (_, Left err) -> pure $ Left $ "secondary security RPC: " <> err
-    (Right firstSafe, Right secondSafe) -> do
-      let agreedNumber = min (sbhNumber firstSafe) (sbhNumber secondSafe)
+    (Right firstHead, Right secondHead) -> do
+      let agreedNumber = min (sbhNumber firstHead) (sbhNumber secondHead)
       agreed <- readAgreedSecurityHeaderAt mode primaryClient secondaryClient agreedNumber
-      now <- floor <$> getPOSIXTime
       pure $ do
         header <- agreed
-        when (sbhNumber firstSafe == agreedNumber && firstSafe /= header) $
-          Left "primary safe header disagrees with its explicit numeric header"
-        when (sbhNumber secondSafe == agreedNumber && secondSafe /= header) $
-          Left "secondary safe header disagrees with its explicit numeric header"
-        validateSecurityHeaderTime maxSafeLag now header
+        when (sbhNumber firstHead == agreedNumber && firstHead /= header) $
+          Left $ "primary " <> headTag <> " header disagrees with its explicit numeric header"
+        when (sbhNumber secondHead == agreedNumber && secondHead /= header) $
+          Left $ "secondary " <> headTag <> " header disagrees with its explicit numeric header"
         Right header
 
 validateSecurityHeaderTime :: Integer -> Integer -> SecurityBlockHeader -> Either Text ()

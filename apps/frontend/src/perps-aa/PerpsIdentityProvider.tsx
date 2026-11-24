@@ -9,7 +9,9 @@ import { getAddress, isAddress, isAddressEqual, type Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useWalletActions } from '../wallet/useWalletActions'
 import { UnsupportedEmbeddedOwnerError } from './embeddedOwner'
+import { UnsupportedKernelOwnerError } from './kernelAccount'
 import { verifyPerpsV3DeploymentBindings } from '../contracts/verifyPerpsV3Bindings'
+import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   comparePerpsIdentities,
   createPersistedPerpsIdentity,
@@ -21,8 +23,10 @@ import {
 } from './identityPersistence'
 import {
   fetchPerpsAaManifest,
+  KERNEL_DEPLOYMENT_PATTERN,
   type PerpsAaDeploymentManifest,
   type PerpsAaManifestFetch,
+  type PerpsEntryPointVersion,
 } from './manifest'
 import {
   PerpsIdentityContext,
@@ -36,7 +40,7 @@ export interface ResolvedPerpsAccount {
   accountVersion: string
   accountIndex: string
   entryPoint: Address
-  entryPointVersion: '0.8'
+  entryPointVersion: PerpsEntryPointVersion
   factoryAddress: Address
 }
 
@@ -51,6 +55,8 @@ export type PerpsDeploymentVerifier = (input: {
   manifest: PerpsAaDeploymentManifest
   signal: AbortSignal
 }) => void | Promise<void>
+
+type PerpsManifestLoader = (signal: AbortSignal) => Promise<PerpsAaDeploymentManifest>
 
 interface AsyncIdentityResolution {
   status:
@@ -75,6 +81,8 @@ interface PerpsIdentityProviderProps {
   refreshIntervalMs?: number | false
   storage?: PerpsIdentityStorage | null
   fetch?: PerpsAaManifestFetch
+  loadManifest?: PerpsManifestLoader
+  kernelDeployment?: string
 }
 
 type WagmiPerpsIdentityProviderProps = Omit<
@@ -126,6 +134,7 @@ function getBrowserStorage(
 
 async function resolveConfiguredIdentity(input: {
   manifestUrl: string
+  loadManifest?: PerpsManifestLoader
   ownerAddress: Address
   chainId: number
   accountAddressResolver: PerpsAccountAddressResolver
@@ -136,14 +145,13 @@ async function resolveConfiguredIdentity(input: {
 }): Promise<AsyncIdentityResolution> {
   let manifest: PerpsAaDeploymentManifest
   try {
-    manifest = await fetchPerpsAaManifest(input.manifestUrl, {
-      fetch: input.fetch,
-      signal: input.signal,
-    })
+    manifest = input.loadManifest
+      ? await input.loadManifest(input.signal)
+      : await fetchPerpsAaManifest(input.manifestUrl, { fetch: input.fetch, signal: input.signal })
   } catch {
     return blockedResolution(
       'MANIFEST_LOAD_FAILED',
-      'Gas sponsorship is unavailable because its deployment manifest could not be validated.'
+      'The Trading Account deployment manifest could not be validated.'
     )
   }
 
@@ -176,7 +184,7 @@ async function resolveConfiguredIdentity(input: {
       signal: input.signal,
     })
   } catch (error) {
-    if (error instanceof UnsupportedEmbeddedOwnerError) {
+    if (error instanceof UnsupportedEmbeddedOwnerError || error instanceof UnsupportedKernelOwnerError) {
       return blockedResolution('UNSUPPORTED_OWNER_WALLET', error.message, manifest)
     }
     return blockedResolution(
@@ -243,7 +251,8 @@ async function resolveConfiguredIdentity(input: {
   const persisted = readPersistedPerpsIdentity(
     input.storage,
     input.chainId,
-    input.ownerAddress
+    input.ownerAddress,
+    manifest.smartAccountMode === 'kernel' ? manifest.kernel.profile.deployment : undefined,
   )
   if (persisted.status === 'unavailable') {
     return blockedResolution(
@@ -286,6 +295,13 @@ async function resolveConfiguredIdentity(input: {
     proposedIdentity
   )
   if (!continuity.matches) {
+    if (manifest.smartAccountMode === 'kernel') {
+      return blockedResolution(
+        'ACCOUNT_RESOLUTION_FAILED',
+        'The Trading Account binding changed for this Kernel deployment. Trading is paused until the deployment is verified.',
+        manifest,
+      )
+    }
     const writeResult = writePersistedPerpsIdentity(
       input.storage,
       proposedIdentity
@@ -327,9 +343,11 @@ export function PerpsIdentityProvider({
   refreshIntervalMs = 30_000,
   storage: configuredStorage,
   fetch,
+  loadManifest,
+  kernelDeployment,
 }: PerpsIdentityProviderProps) {
   const normalizedManifestUrl = manifestUrl?.trim() ?? ''
-  const isAaManifestConfigured = normalizedManifestUrl !== ''
+  const isAaManifestConfigured = loadManifest !== undefined || normalizedManifestUrl !== ''
   const storage = getBrowserStorage(configuredStorage)
   const [reloadCount, setReloadCount] = useState(0)
   const identityKey = [
@@ -340,6 +358,7 @@ export function PerpsIdentityProvider({
     asyncInputIdentity(deploymentVerifier),
     asyncInputIdentity(storage),
     asyncInputIdentity(fetch),
+    asyncInputIdentity(loadManifest),
   ].join(':')
   const requestKey = `${identityKey}:${reloadCount.toString()}`
   const [asyncResolution, setAsyncResolution] = useState<{
@@ -367,6 +386,7 @@ export function PerpsIdentityProvider({
       deploymentVerifier,
       storage,
       fetch,
+      loadManifest,
       signal: abortController.signal,
     }).then((value) => {
       if (!abortController.signal.aborted) {
@@ -384,6 +404,7 @@ export function PerpsIdentityProvider({
     fetch,
     identityKey,
     isAaManifestConfigured,
+    loadManifest,
     normalizedManifestUrl,
     ownerAddress,
     requestKey,
@@ -491,6 +512,20 @@ export function PerpsIdentityProvider({
   }, [currentResolution, identityKey, requestKey, storage])
 
   const contextValue = useMemo<PerpsIdentityContextValue>(() => {
+    const settings: Pick<PerpsIdentityContextValue, 'confirmIdentityAfterContinuityCheck' | 'reloadIdentity' | 'kernelGasPreferenceScope'> = {
+      confirmIdentityAfterContinuityCheck,
+      reloadIdentity,
+    }
+    if (kernelDeployment !== undefined && KERNEL_DEPLOYMENT_PATTERN.test(kernelDeployment) && ownerAddress !== undefined) {
+      const kernelChainId = PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+      const saved = storage && readPersistedPerpsIdentity(storage, kernelChainId, ownerAddress, kernelDeployment)
+      settings.kernelGasPreferenceScope = {
+        chainId: kernelChainId,
+        deployment: kernelDeployment,
+        ownerAddress,
+        ...(saved?.status === 'found' ? { sender: saved.identity.accountAddress } : {}),
+      }
+    }
     if (!isAaManifestConfigured) {
       if (ownerAddress === undefined || chainId === undefined) {
         return {
@@ -505,8 +540,7 @@ export function PerpsIdentityProvider({
           proposedIdentity: null,
           changedIdentityFields: [],
           error: null,
-          confirmIdentityAfterContinuityCheck,
-          reloadIdentity,
+          ...settings,
         }
       }
 
@@ -525,8 +559,7 @@ export function PerpsIdentityProvider({
           code: 'SPONSORSHIP_MANIFEST_REQUIRED',
           message: 'Perps is sponsorship-only on testnet. A reviewed gas-sponsorship manifest is required before any Trading Account action can be used.',
         },
-        confirmIdentityAfterContinuityCheck,
-        reloadIdentity,
+        ...settings,
       }
     }
 
@@ -546,8 +579,7 @@ export function PerpsIdentityProvider({
           code: 'ACCOUNT_RESOLVER_MISSING',
           message: 'Gas sponsorship is configured without a reviewed trading account resolver.',
         },
-        confirmIdentityAfterContinuityCheck,
-        reloadIdentity,
+        ...settings,
       }
     }
 
@@ -564,8 +596,7 @@ export function PerpsIdentityProvider({
         proposedIdentity: null,
         changedIdentityFields: [],
         error: null,
-        confirmIdentityAfterContinuityCheck,
-        reloadIdentity,
+        ...settings,
       }
     }
 
@@ -582,8 +613,7 @@ export function PerpsIdentityProvider({
         proposedIdentity: null,
         changedIdentityFields: [],
         error: null,
-        confirmIdentityAfterContinuityCheck,
-        reloadIdentity,
+        ...settings,
       }
     }
 
@@ -602,8 +632,7 @@ export function PerpsIdentityProvider({
       proposedIdentity: currentResolution.proposedIdentity,
       changedIdentityFields: currentResolution.changedIdentityFields,
       error: currentResolution.error,
-      confirmIdentityAfterContinuityCheck,
-      reloadIdentity,
+      ...settings,
     }
   }, [
     accountAddressResolver,
@@ -611,8 +640,10 @@ export function PerpsIdentityProvider({
     confirmIdentityAfterContinuityCheck,
     currentResolution,
     isAaManifestConfigured,
+    kernelDeployment,
     ownerAddress,
     reloadIdentity,
+    storage,
   ])
 
   return (

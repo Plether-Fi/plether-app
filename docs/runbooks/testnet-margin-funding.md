@@ -4,8 +4,13 @@ New welcome allocations use three backend transactions: mint 100,000 MockUSDG to
 its dedicated faucet signer, approve exactly that amount to the clearinghouse,
 then `depositFor(canonicalTradingAccount, amount)`. This is one user action with
 no owner ETH, signature, UserOperation, paymaster or account deployment. The
-signer needs Arbitrum Sepolia ETH. Manual deposits and existing wallet-mint
-allocations retain their sponsored deposit flow.
+signer needs Arbitrum Sepolia ETH.
+
+On the two-wallet Kernel homepage opt-in, **Pay from wallet** sends manual
+deposits from the Owner Wallet through the same `depositFor` function. The
+wallet approves the exact USDG amount if its existing allowance is insufficient,
+then pays gas for the deposit. USDG already held by the Trading Account can be
+deposited by selecting that account as the funding source.
 
 ## Deployment and activation
 

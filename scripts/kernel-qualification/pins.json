@@ -1,0 +1,77 @@
+{
+  "chainId": 421614,
+  "deployment": "kernel-sepolia-direct-v1",
+  "viemVersion": "2.57.8",
+  "referenceBlock": 331101957,
+  "referenceBlockHash": "0xe4cf42a69df9e9f9b4164feeeea467093b82237808a6dc6de13121ebd00300fd",
+  "entryPoint": {
+    "address": "0x433709009B8330FDa32311DF1C2AFA402eD8D009",
+    "codeHash": "0x66104e61203e3b9cf29303ececd9367b6329f6caa2bb063361ea75b7b92a7678"
+  },
+  "senderCreator": {
+    "address": "0x0A630a99Df908A81115A3022927Be82f9299987e",
+    "codeHash": "0xa7d4dd260bca9c96da49f7c0682fdda7f0074694d935815a336d3e60ee3ec6ad"
+  },
+  "create2Deployer": {
+    "address": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+    "codeHash": "0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989"
+  },
+  "kernel": {
+    "commit": "c960b42d2ed4adb0d5328f6e762962debdf8e57a",
+    "release": "releases/v0.4.0.json",
+    "proxyCodeHash": "0xaaa52c8cc8a0e3fd27ce756cc6b4e70c51423e9b597b11f32d3e49f8b1fc890d",
+    "contracts": [
+      {
+        "name": "KernelUUPS",
+        "address": "0xc842fe2ac44046ae3cef033a16c67a9bc287cbd2",
+        "initCodeHash": "0x91b218fcd1d196f8d2e4ad7b34c1cf2175f50ecfb9e280f6fe5eb9069ab6bcb3",
+        "codeHash": "0x0cf809e8e95a40ca07da3762911609871facd76a6d717e5a95b813ba03e6e5c0"
+      },
+      {
+        "name": "KernelImmutableECDSA",
+        "address": "0x6f0999265b6e1dfbe875f104548b875a99a65d37",
+        "initCodeHash": "0x674820f5863657e1af42697645a152caa510f4acab17dda817de8f73561e051e",
+        "codeHash": "0x199b3d7b12928b49f8e06d7f69aec547c57ccc20c087b506d26729327de5aa76"
+      },
+      {
+        "name": "KernelFactory",
+        "address": "0xa299a4efee7bbfb2ea5668b30218c45fff78356c",
+        "initCodeHash": "0x9aaa8f211d7cdbb662c6add6c5068dd0bd992c403d09a62be36b82446c251495",
+        "codeHash": "0x0813fbfc2432a3ea3f7c06a1ac6a7a118faba748ab602aa711f567f212958426"
+      }
+    ]
+  },
+  "validator": {
+    "commit": "332deed6eeef3d6279cde50aa1d51eff53728bd4",
+    "solc": "0.8.30+commit.73712a01",
+    "address": "0x439CDE78158d8D5249395E40467B44182D57e4ec",
+    "initCodeHash": "0x3c4585b25b24b9db6c948475691e6d1f487b5b0205024d205a9aae20eb7ff96a",
+    "codeHash": "0x9ceb47b953e8d105f632c46394c66b9a4498cbea889fd45feab855feed4608fe"
+  },
+  "corePaymaster": {
+    "commit": "d4c34c8fe95775a5dbdab74caa90a211bee9970d",
+    "reviewedRef": "refs/remotes/origin/kernel-canary/paymaster-source-2026-11",
+    "compiler": "0.8.35+commit.47b9dedd",
+    "sourceHash": "0x966b92d629404137d7f98d1672ac9f3148c3957499458b40ddd045917111fb8a",
+    "creationCodeHash": "0x7abd8807b1eaa62596690a88f434602b25664ee701ba16ac1cd048e6128197aa",
+    "runtimeTemplateHash": "0x2fbebdbd71549946b2e5546227275c40e81e7db58d91052421ed9adb62fa9c6b",
+    "immutableLayoutHash": "0x5dc9dc0c47dad83ebb3ae54a690bac41a289bdb9f12985f6bdbb436c186b1995"
+  },
+  "alto": {
+    "commit": "37cade5d2804a60ab30362ea27054514e1d7a7c8",
+    "image": "ghcr.io/pimlicolabs/alto:v1.2.8@sha256:b37c5697bc5331391cb8bc5ac6e828d15019fc786c58a33a8650ff3c434ac2aa",
+    "simulationCompiler": "0.8.28+commit.7893614a",
+    "simulations": {
+      "entryPoint09": {
+        "creationCodeHash": "0x3822120e98fcc2d8ce3d8679d75df35f7cdfd258c804058b122586b0ae8495af",
+        "runtimeTemplateHash": "0xa4d1fdb368b81ae04e3a044503547fc20e5131ace6f9a2a891bcbf5ee3c50f68",
+        "immutableLayoutHash": "0x934f7e7f598823c4467ac1d57ea973c4bb9ba637134318ec020d55e0b9afb577"
+      },
+      "pimlico": {
+        "creationCodeHash": "0x30ce3bb225bd692e281ac353d86d259a666b3939d9e10d98014829e17e53e3ae",
+        "runtimeTemplateHash": "0x22dbcbfa136fcf31bd56a73a11492356bbfac658009dc867cfb0a61485bd7b37",
+        "immutableLayoutHash": "0xb48d38f93eaa084033fc5970bf96e559c33c4cdc07d889ab00b4d63f9590739d"
+      }
+    }
+  }
+}

@@ -11,6 +11,13 @@ on:
         options:
           - sepolia
           - mainnet
+      entrypoint_version:
+        description: Reviewed legacy EntryPoint profile from the Terraform task definition
+        required: true
+        default: '0.8'
+        type: choice
+        options:
+          - '0.8'
       action:
         description: Deploy Alto, bootstrap its simulation contracts while dark, or roll back to a reviewed revision
         required: true
@@ -51,6 +58,7 @@ env:
   DOCKER_CLI_EXPERIMENTAL: enabled
   TARGET_ENV: ${{ inputs.environment }}
   ALTO_ACTION: ${{ inputs.action }}
+  ALTO_ENTRYPOINT_VERSION: ${{ inputs.entrypoint_version || '0.8' }}
   ECS_CLUSTER: plether-${{ inputs.environment }}
   ECS_SERVICE: plether-alto
   TASK_FAMILY: plether-${{ inputs.environment }}-alto
@@ -64,7 +72,7 @@ env:
   ALTO_UPSTREAM_IMAGE: ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d
   ALTO_UPSTREAM_DIGEST: sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d
   ALTO_MIRROR_TAG: v1.2.7-arm64-28cee87ea6b5
-  ALTO_ENTRYPOINT: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+  ALTO_ENTRYPOINT_V8: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
   ALTO_DETERMINISTIC_DEPLOYER: '0x4e59b44847b379578588920cA78FbF26c0B4956C'
   ALTO_RPC_METHODS: eth_supportedEntryPoints,eth_estimateUserOperationGas,eth_sendUserOperation,eth_getUserOperationByHash,eth_getUserOperationReceipt,pimlico_getUserOperationGasPrice,pimlico_getUserOperationStatus
   ALTO_HEALTH_COMMAND: >-
@@ -87,6 +95,11 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+
+          if [ "$ALTO_ENTRYPOINT_VERSION" != "0.8" ]; then
+            echo "::error title=Unsupported EntryPoint profile::This workflow only administers legacy EntryPoint v0.8. Use the isolated Kernel canary with its reviewed patched Alto image for v0.9."
+            exit 1
+          fi
 
           if [ "$GITHUB_REF" != "refs/heads/master" ]; then
             echo "::error title=Unsupported workflow ref::Alto administration must be dispatched from master."
@@ -237,6 +250,17 @@ jobs:
             echo "::error::Alto deployment supports only sepolia and mainnet."
             exit 1
           fi
+          case "$ALTO_ENTRYPOINT_VERSION" in
+            0.8)
+              expected_entrypoint=$ALTO_ENTRYPOINT_V8
+              simulation_name=ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8
+              smoke_path=/api/aa/rpc
+              ;;
+            *)
+              echo "::error::Unsupported Alto EntryPoint version."
+              exit 1
+              ;;
+          esac
           case "$ALTO_ACTION" in
             deploy|bootstrap-simulations)
               if [ -n "$ROLLBACK_TASK_DEFINITION" ]; then
@@ -350,6 +374,20 @@ jobs:
           fi
 
           previous_task_definition=$(jq -r '.taskDefinition' "$service_file")
+          if [ "$desired_count" -eq 1 ]; then
+            previous_entrypoints=$(aws ecs describe-task-definition \
+              --task-definition "$previous_task_definition" \
+              --query taskDefinition.containerDefinitions \
+              --output json \
+              --no-cli-pager | jq -ce --arg alto "$ALTO_CONTAINER" '
+                [.[] | select(.name == $alto) | .environment[]
+                     | select(.name == "ALTO_ENTRYPOINTS") | (.value | ascii_downcase)]')
+            if ! jq -e --arg entrypoint "${expected_entrypoint,,}" '. == [$entrypoint]' \
+                <<< "$previous_entrypoints" >/dev/null; then
+              echo "::error title=Alto EntryPoint differs from the active service::Allow the old profile to drain and stop the service before staging a different profile."
+              exit 1
+            fi
+          fi
           source_task_definition=$(aws ecs describe-task-definition \
             --task-definition "$TASK_FAMILY" \
             --query taskDefinition.taskDefinitionArn \
@@ -361,6 +399,14 @@ jobs:
             --output json \
             --no-cli-pager > "$task_definition_file"
 
+          if jq -e --arg alto "$ALTO_CONTAINER" '
+              any(.containerDefinitions[] | select(.name == $alto);
+                  any((.secrets // [])[]; .name == "PLETHER_ALTO_RPC_AUTH_TOKEN"))
+              ' "$task_definition_file" >/dev/null; then
+            echo "::error title=Authenticated Alto profile requires separate procedure::Use the reviewed RPC gateway cutover for authenticated v0.8, or the isolated Kernel canary for v0.9."
+            exit 1
+          fi
+
           if ! jq -e \
               --arg account "$actual_account_id" \
               --arg region "$AWS_REGION" \
@@ -368,7 +414,8 @@ jobs:
               --arg alto "$ALTO_CONTAINER" \
               --arg tmp_init "$ALTO_TMP_INIT_CONTAINER" \
               --arg router "$LOG_ROUTER_CONTAINER" \
-              --arg entrypoint "${ALTO_ENTRYPOINT,,}" \
+              --arg entrypoint "${expected_entrypoint,,}" \
+              --arg simulation_name "$simulation_name" \
               --arg deterministic_deployer "${ALTO_DETERMINISTIC_DEPLOYER,,}" \
               --arg execution_role "arn:aws:iam::$actual_account_id:role/plether-${TARGET_ENV}-alto-execution" \
               --arg rpc_methods "$ALTO_RPC_METHODS" \
@@ -388,7 +435,7 @@ jobs:
                  else [] end) + [
                   "ALTO_ENTRYPOINTS",
                   "ALTO_DETERMINISTIC_DEPLOYER_ADDRESS",
-                  "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8",
+                  $simulation_name,
                   "ALTO_PIMLICO_SIMULATION_CONTRACT",
                   "ALTO_DEPLOY_SIMULATIONS_CONTRACT",
                   "ALTO_CHAIN_TYPE",
@@ -857,28 +904,28 @@ jobs:
               exit 1
             fi
           done
-          if [ "${entrypoint,,}" != "${ALTO_ENTRYPOINT,,}" ]; then
-            echo "::error title=Alto task-definition preflight failed::The configured EntryPoint is not the approved EntryPoint v0.8 address."
+          if [ "${entrypoint,,}" != "${expected_entrypoint,,}" ]; then
+            echo "::error title=Alto task-definition preflight failed::The configured EntryPoint does not match the selected reviewed profile."
             exit 1
           fi
 
           assert_chain_id ALTO_RPC_URL "$rpc_url"
           assert_rpc_override_capabilities
           assert_gas_price_rpc_capabilities
-          assert_deployed_code 'EntryPoint v0.8' "$rpc_url" "$entrypoint"
+          assert_deployed_code "EntryPoint v${ALTO_ENTRYPOINT_VERSION}" "$rpc_url" "$entrypoint"
           assert_deployed_code 'universal deterministic deployer' "$rpc_url" "$ALTO_DETERMINISTIC_DEPLOYER"
 
           if [ "$ALTO_ACTION" != "bootstrap-simulations" ]; then
-            simulation_v8=$(environment_value ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8)
+            entrypoint_simulation=$(environment_value "$simulation_name")
             pimlico_simulation=$(environment_value ALTO_PIMLICO_SIMULATION_CONTRACT)
-            for configured_address in "$simulation_v8" "$pimlico_simulation"; do
+            for configured_address in "$entrypoint_simulation" "$pimlico_simulation"; do
               if [[ ! "$configured_address" =~ ^0x[0-9a-fA-F]{40}$ ]] \
                   || [ "${configured_address,,}" = "0x0000000000000000000000000000000000000000" ]; then
                 echo "::error title=Alto task-definition preflight failed::Simulation contract values must be non-zero Ethereum addresses for deploy and rollback."
                 exit 1
               fi
             done
-            assert_deployed_code 'EntryPoint simulation contract v0.8' "$rpc_url" "$simulation_v8"
+            assert_deployed_code "EntryPoint simulation contract v${ALTO_ENTRYPOINT_VERSION}" "$rpc_url" "$entrypoint_simulation"
             assert_deployed_code 'Pimlico simulation contract' "$rpc_url" "$pimlico_simulation"
           fi
 
@@ -913,6 +960,8 @@ jobs:
           echo "executor_keys_parameter_ref=$(secret_ref ALTO_EXECUTOR_PRIVATE_KEYS)" >> "$GITHUB_OUTPUT"
           echo "utility_key_parameter_ref=$(secret_ref ALTO_UTILITY_PRIVATE_KEY)" >> "$GITHUB_OUTPUT"
           echo "desired_count=$desired_count" >> "$GITHUB_OUTPUT"
+          echo "entrypoint=$entrypoint" >> "$GITHUB_OUTPUT"
+          echo "smoke_path=$smoke_path" >> "$GITHUB_OUTPUT"
 
       - name: Pull, verify, mirror, and scan Alto image
         if: inputs.action != 'rollback'
@@ -1100,19 +1149,12 @@ jobs:
             --image-id imageDigest="$mirrored_digest" \
             --output json \
             --no-cli-pager)
-          scan_policy=$(jq -ce \
-            --arg environment "$TARGET_ENV" \
-            --arg region "$AWS_REGION" \
+          jq -e \
             --arg account "$EXPECTED_AWS_ACCOUNT_ID" \
             --arg repository "$ECR_REPOSITORY" \
             --arg digest "$mirrored_digest" \
-            --arg upstream "$ALTO_UPSTREAM_DIGEST" \
-            --argjson now "$(date -u +%s)" \
             '
             def uint: type == "number" and . >= 0 and floor == .;
-            def package_attribute($key; $value):
-              [.attributes[]? | select(.key == $key)]
-              | length == 1 and .[0].value == $value;
             if .registryId != $account or .repositoryName != $repository
               or .imageId.imageDigest != $digest
               or .imageScanStatus.status != "COMPLETE"
@@ -1130,10 +1172,9 @@ jobs:
             | [$scan.findings[] | select(.severity == "CRITICAL")] as $critical
             | if ($critical | length) == $critical_count then .
               else error("Alto critical finding count does not match detailed evidence") end
-            | if ($critical | length) > 0
-              then error("Alto image has an unaccepted critical finding")
-              else {criticalCount: $critical_count, acceptedCriticalCount: 0} end
-            ' <<< "$scan_findings")
+            | if $critical_count == 0 then true
+              else error("Alto image has a critical finding") end
+            ' <<< "$scan_findings" >/dev/null
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
           echo "digest=$mirrored_digest" >> "$GITHUB_OUTPUT"
@@ -1290,7 +1331,7 @@ jobs:
             echo "::error::The pinned Alto image did not verify all approved runtime bytecode hashes."
             exit 1
           fi
-          echo "Runtime bytecode hash gate passed for EntryPoint, account factory, and account implementation."
+          echo "Runtime bytecode hash gate passed for the legacy EntryPoint profile (3 pinned contracts)."
 
           IFS=',' read -r -a executor_key_values <<< "$executor_keys"
           if [ "${#executor_key_values[@]}" -ne 4 ]; then
@@ -1683,12 +1724,15 @@ jobs:
             sleep 15
           done
 
-          entrypoint_simulation_contract_v8=$(jq -er '.entrypointSimulationContractV8' \
+          simulation_version=${ALTO_ENTRYPOINT_VERSION#0.}
+          simulation_record_key="entrypointSimulationContractV${simulation_version}"
+          simulation_output_key="entrypoint_simulation_contract_v${simulation_version}"
+          entrypoint_simulation=$(jq -er --arg key "$simulation_record_key" '.[$key]' \
             <<< "$simulation_record")
           pimlico_simulation_contract=$(jq -er '.pimlicoSimulationContract' \
             <<< "$simulation_record")
           for deployed_address in \
-              "$entrypoint_simulation_contract_v8" \
+              "$entrypoint_simulation" \
               "$pimlico_simulation_contract"; do
             if [[ ! "$deployed_address" =~ ^0x[0-9a-fA-F]{40}$ ]] \
                 || [ "${deployed_address,,}" = "0x0000000000000000000000000000000000000000" ]; then
@@ -1735,30 +1779,31 @@ jobs:
               exit 1
             fi
           }
-          assert_bootstrap_code 'EntryPoint simulation contract v0.8' \
-            "$entrypoint_simulation_contract_v8"
+          assert_bootstrap_code "EntryPoint simulation contract v${ALTO_ENTRYPOINT_VERSION}" \
+            "$entrypoint_simulation"
           assert_bootstrap_code 'Pimlico simulation contract' \
             "$pimlico_simulation_contract"
           unset rpc_url
 
           bootstrap_result=$(jq -cn \
             --arg task_arn "$bootstrap_task" \
-            --arg entrypoint_simulation_contract_v8 "$entrypoint_simulation_contract_v8" \
+            --arg simulation_key "$simulation_record_key" \
+            --arg entrypoint_simulation "$entrypoint_simulation" \
             --arg pimlico_simulation_contract "$pimlico_simulation_contract" \
             '{schema:1,
               taskArn:$task_arn,
-              entrypointSimulationContractV8:$entrypoint_simulation_contract_v8,
+              ($simulation_key):$entrypoint_simulation,
               pimlicoSimulationContract:$pimlico_simulation_contract}')
           printf 'ALTO_BOOTSTRAP_RESULT=%s\n' "$bootstrap_result"
 
-          echo "entrypoint_simulation_contract_v8=$entrypoint_simulation_contract_v8" >> "$GITHUB_OUTPUT"
+          echo "$simulation_output_key=$entrypoint_simulation" >> "$GITHUB_OUTPUT"
           echo "pimlico_simulation_contract=$pimlico_simulation_contract" >> "$GITHUB_OUTPUT"
           {
             echo '### Alto simulation-contract bootstrap'
             echo
             echo '| Terraform variable | Deployed address |'
             echo '| --- | --- |'
-            echo "| \`alto_entrypoint_simulation_contract_v8\` | \`${entrypoint_simulation_contract_v8}\` |"
+            echo "| \`alto_${simulation_output_key}\` | \`${entrypoint_simulation}\` |"
             echo "| \`alto_pimlico_simulation_contract\` | \`${pimlico_simulation_contract}\` |"
             echo
             echo 'Copy these independently verified addresses into the Sepolia Terraform inputs, apply with the service still dark, then run the deploy action.'
@@ -2409,6 +2454,8 @@ jobs:
         env:
           APPROVED_API_ORIGIN: ${{ vars.SEPOLIA_BACKEND_URL }}
           API_HOSTNAME: ${{ inputs.api_hostname }}
+          ALTO_ENTRYPOINT: ${{ steps.preflight.outputs.entrypoint }}
+          ALTO_SMOKE_PATH: ${{ steps.preflight.outputs.smoke_path }}
         run: |
           set -euo pipefail
           umask 077
@@ -2475,7 +2522,7 @@ jobs:
           printf '::add-mask::%s\n' "$masked_origin_token"
           unset masked_origin_token
 
-          smoke_url="https://${API_HOSTNAME}/api/aa/rpc"
+          smoke_url="https://${API_HOSTNAME}${ALTO_SMOKE_PATH}"
           request_body='{"jsonrpc":"2.0","id":1,"method":"eth_supportedEntryPoints","params":[]}'
           gas_price_request_body='{"jsonrpc":"2.0","id":2,"method":"pimlico_getUserOperationGasPrice","params":[]}'
           unauthenticated_body="$RUNNER_TEMP/alto-unauthenticated-smoke.json"
@@ -2516,8 +2563,7 @@ jobs:
               || ! jq -e \
                 --arg entrypoint "${ALTO_ENTRYPOINT,,}" \
                 '.error == null
-                 and (.result | type == "array")
-                 and any(.result[]; ascii_downcase == $entrypoint)' \
+                 and (.result | type == "array" and map(ascii_downcase) == [$entrypoint])' \
                 "$authenticated_body" >/dev/null; then
             echo "::error title=Alto public smoke test failed::The authenticated eth_supportedEntryPoints request did not return the approved EntryPoint."
             exit 1

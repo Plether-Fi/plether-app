@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-aa'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
+import type { PerpsIdentityStatus } from '../../perps-aa/PerpsIdentityContext'
+import type { GasPaymentPreferenceScope } from '../../perps-aa/gasPaymentPreference'
+import type { KernelOperationAttempt } from '../../perps-aa/kernelOperationJournal'
 import deployedManifest from '../../contracts/__tests__/fixtures/perps-canonical-aa.json'
 
 vi.mock('../../hooks/usePerpsHistory', () => ({ usePerpsHistory: () => ({ orderHistory: [], refetch: vi.fn() }) }))
@@ -13,23 +16,34 @@ const identityMocks = vi.hoisted(() => ({
   chainId: 421614,
 }))
 
+const gasPreferenceMocks = vi.hoisted(() => ({
+  status: 'ready' as PerpsIdentityStatus,
+  scope: undefined as GasPaymentPreferenceScope | undefined,
+}))
+
+const kernelActivity = vi.hoisted(() => ({ attempts: [] as KernelOperationAttempt[] }))
+vi.mock('../../perps-aa/useKernelAttempts', () => ({
+  useKernelAttempts: () => ({ attempts: kernelActivity.attempts, refresh: vi.fn() }),
+}))
+
 vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   return {
     ...actual,
     usePerpsIdentity: () => ({
-      status: 'ready',
+      status: gasPreferenceMocks.status,
       ownerAddress: identityMocks.ownerAddress,
-      accountAddress: identityMocks.accountAddress,
+      accountAddress: gasPreferenceMocks.status === 'ready' ? identityMocks.accountAddress : undefined,
       chainId: identityMocks.chainId,
       isAaManifestConfigured: true,
-      sponsorshipEnabled: true,
-      manifest: {
+      sponsorshipEnabled: gasPreferenceMocks.status === 'ready',
+      kernelGasPreferenceScope: gasPreferenceMocks.scope,
+      manifest: gasPreferenceMocks.status === 'ready' ? {
         userOperationExplorerUrlTemplate:
           'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
         transactionExplorerUrlTemplate:
           'https://arbitrum-sepolia.blockscout.com/tx/{transactionHash}',
-      },
+      } : null,
       identity: null,
       proposedIdentity: null,
       changedIdentityFields: [],
@@ -52,6 +66,33 @@ const OTHER_ACCOUNT =
 const USER_OPERATION_HASH = `0x${'12'.repeat(32)}` as Hex
 const OTHER_USER_OPERATION_HASH = `0x${'34'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'34'.repeat(32)}` as Hex
+const KERNEL_ENTRY_POINT = '0x433709009b8330fda32311df1c2afa402ed8d009'
+
+const kernelRuntime = {
+  chainId: identityMocks.chainId,
+  ownerAddress: identityMocks.ownerAddress,
+  gasPayment: {
+    scope: {
+      chainId: identityMocks.chainId,
+      deployment: 'fresh-kernel',
+      ownerAddress: identityMocks.ownerAddress,
+      sender: identityMocks.accountAddress,
+    },
+    readiness: { sponsored: false, eth: true },
+  },
+  smartAccount: {
+    accountAddress: identityMocks.accountAddress,
+    entryPoint: KERNEL_ENTRY_POINT,
+  },
+  kernel: {
+    scope: {
+      chainId: identityMocks.chainId,
+      deployment: 'fresh-kernel',
+      sender: identityMocks.accountAddress,
+      entryPoint: KERNEL_ENTRY_POINT,
+    },
+  },
+} as unknown as PerpsAaSmartAccountRuntime
 
 function operation(input: {
   id: string
@@ -128,6 +169,9 @@ function timestampForLabel(
 describe('SponsoredOperationHistoryButton', () => {
   beforeEach(() => {
     usePerpsUiStore.setState({ activityRequest: null })
+    kernelActivity.attempts = []
+    gasPreferenceMocks.status = 'ready'
+    gasPreferenceMocks.scope = undefined
     globalThis.localStorage.clear()
     vi.stubGlobal('navigator', {
       locks: {
@@ -148,6 +192,94 @@ describe('SponsoredOperationHistoryButton', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('opens gas settings without a saved transaction and preserves the explicit choice during an outage', () => {
+    const activity = <PerpsAaRuntimeContext value={kernelRuntime}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>
+    usePerpsUiStore.getState().requestActivity({ ...identityMocks })
+    const { unmount } = render(activity)
+    const dialog = screen.getByRole('dialog', { name: 'Trading Account activity' })
+    expect(within(dialog).getByText('No Trading Account activity saved on this device.')).toBeInTheDocument()
+    expect(within(dialog).getByText('Sponsorship is currently unavailable.')).toBeInTheDocument()
+    const toggle = within(dialog).getByRole('switch', { name: 'Gas sponsorship' })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(within(dialog).getByText('Pay with ETH')).toBeInTheDocument()
+
+    unmount()
+    render(activity)
+    expect(screen.getByRole('switch', { name: 'Gas sponsorship' })).not.toBeChecked()
+  })
+
+  it.each(['loading', 'blocked'] as const)('saves the gas preference while the Kernel identity is %s and keeps Activity open when it resolves', status => {
+    const scope = {
+      chainId: identityMocks.chainId,
+      deployment: 'fresh-kernel',
+      ownerAddress: identityMocks.ownerAddress as Address,
+    }
+    gasPreferenceMocks.status = status
+    gasPreferenceMocks.scope = scope
+    const activity = (runtime?: PerpsAaSmartAccountRuntime) => (
+      <PerpsAaRuntimeContext value={runtime}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>
+    )
+
+    const { unmount } = render(activity())
+    fireEvent.click(screen.getByRole('button', { name: 'Open Trading Account activity.' }))
+    let dialog = within(screen.getByRole('dialog', { name: 'Trading Account activity' }))
+    let toggle = dialog.getByRole('switch', { name: 'Gas sponsorship' })
+    expect(toggle).toBeEnabled()
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(dialog.getByText('Pay with ETH')).toBeInTheDocument()
+
+    unmount()
+    const { rerender } = render(activity())
+    fireEvent.click(screen.getByRole('button', { name: 'Open Trading Account activity.' }))
+    dialog = within(screen.getByRole('dialog', { name: 'Trading Account activity' }))
+    toggle = dialog.getByRole('switch', { name: 'Gas sponsorship' })
+    expect(toggle).not.toBeChecked()
+
+    gasPreferenceMocks.status = 'ready'
+    gasPreferenceMocks.scope = { ...scope, sender: identityMocks.accountAddress as Address }
+    rerender(activity(kernelRuntime))
+    expect(screen.getByRole('dialog', { name: 'Trading Account activity' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Gas sponsorship' })).not.toBeChecked()
+  })
+
+  it('keeps the gas settings shortcut open when account verification becomes unavailable', () => {
+    gasPreferenceMocks.scope = {
+      chainId: identityMocks.chainId,
+      deployment: 'fresh-kernel',
+      ownerAddress: identityMocks.ownerAddress as Address,
+      sender: identityMocks.accountAddress as Address,
+    }
+    usePerpsUiStore.getState().requestActivity({ ...identityMocks })
+    const { rerender } = render(<PerpsAaRuntimeContext value={kernelRuntime}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>)
+    expect(screen.getByRole('switch', { name: 'Gas sponsorship' })).toBeEnabled()
+
+    gasPreferenceMocks.status = 'blocked'
+    rerender(<PerpsAaRuntimeContext value={undefined}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>)
+    expect(screen.getByRole('switch', { name: 'Gas sponsorship' })).toBeEnabled()
+    expect(screen.getByText('Trading Account history is temporarily unavailable.')).toBeInTheDocument()
+  })
+
+  it('keeps the verified ETH charge visible for an included revert during a sponsor outage', () => {
+    kernelActivity.attempts = [{
+      phase: 'included',
+      action: 'place-order',
+      createdAt: Date.now(),
+      prepared: { mode: 'eth', userOperationHash: USER_OPERATION_HASH },
+      receipt: { success: false, actualGasCost: 10n ** 15n, receipt: { transactionHash: TRANSACTION_HASH } },
+    } as KernelOperationAttempt]
+    render(<PerpsAaRuntimeContext value={kernelRuntime}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>)
+    fireEvent.click(screen.getByRole('button', { name: 'Open Trading Account activity.' }))
+    const recent = within(screen.getByRole('region', { name: 'Recent activity' }))
+    expect(recent.getByText('Failed onchain')).toBeInTheDocument()
+    expect(recent.getByText('Network gas paid by Trading Account')).toBeInTheDocument()
+    expect(recent.getByText('0.001 ETH')).toBeInTheDocument()
+    expect(recent.queryByText('Order submitted')).not.toBeInTheDocument()
   })
 
   it('keeps owner recovery visible after signed-attempt discovery retries are exhausted', async () => {
@@ -1004,6 +1136,7 @@ describe('SponsoredOperationHistoryButton', () => {
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).queryByText('You’re up to date')).not.toBeInTheDocument()
     expect(within(dialog).getByText('Recent activity')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('switch', { name: 'Gas sponsorship' })).not.toBeInTheDocument()
   })
 
   it('acknowledges visible failures until the operation fails again', () => {

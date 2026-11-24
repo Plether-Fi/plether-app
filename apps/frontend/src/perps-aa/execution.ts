@@ -54,7 +54,9 @@ import {
 import type {
   ManagedUserOperationReceipt,
   PerpsAaSmartAccountRuntime,
+  SimplePerpsAaSmartAccountRuntime,
 } from './runtimeContext'
+import type { KernelActionQuote } from './kernelRuntime'
 import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 import { operationNeedsFreshOrderReview, orderDeadlineNeedsReview, requireDeadlineHeadroom } from './deadline'
@@ -72,6 +74,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   protectionIntent?: PersistedProtectionIntent
   resumeOperationId?: string
   lane?: string
+  kernelQuote?: KernelActionQuote
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: ExecuteSponsoredPerpsActionResult) => void
 }
@@ -126,7 +129,7 @@ function asBundlerError(error: unknown): BundlerRequestError {
 }
 
 async function waitForUserOperationOutcome(input: {
-  runtime: PerpsAaSmartAccountRuntime
+  runtime: SimplePerpsAaSmartAccountRuntime
   userOperationHash: Hex
   signal: AbortSignal
   onTransactionHash: (hash: Hex) => void
@@ -303,6 +306,21 @@ async function waitForUserOperationOutcome(input: {
 export async function executeSponsoredPerpsAction(
   input: ExecuteSponsoredPerpsActionInput
 ): Promise<ExecuteSponsoredPerpsActionResult> {
+  if (input.runtime.kernel) {
+    if (input.manifest.smartAccountMode !== 'kernel' || input.resumeOperationId !== undefined ||
+        input.manifest.version !== input.runtime.manifestVersion) {
+      throw new Error('The Kernel Trading Account does not match the reviewed deployment')
+    }
+    return input.runtime.kernel.execute(input)
+  }
+  if (input.manifest.smartAccountMode === 'kernel') throw new Error('The Kernel Trading Account is unavailable')
+  return executeSimplePerpsAction({ ...input, manifest: input.manifest, runtime: input.runtime })
+}
+
+async function executeSimplePerpsAction(input: ExecuteSponsoredPerpsActionInput & {
+  manifest: Exclude<PerpsAaDeploymentManifest, { smartAccountMode: 'kernel' }>
+  runtime: SimplePerpsAaSmartAccountRuntime
+}): Promise<ExecuteSponsoredPerpsActionResult> {
   const lane = input.lane ?? DEFAULT_SPONSORED_OPERATION_LANE
   const analyticsMetadata = {
     accountMode: input.manifest.smartAccountMode,
@@ -738,6 +756,7 @@ export async function executeSponsoredPerpsAction(
 
 /** Explicit user action only. Never invoked by polling or automatic recovery. */
 export async function resumeSponsoredPerpsAction(operation: SponsoredOperation, runtime: PerpsAaSmartAccountRuntime) {
+  if (runtime.kernel) throw new Error('Resume this Kernel operation from Trading Account activity')
   const request = operation.nativePreparation
   if (!request || !isPreparationVersionSupported(request.version)) throw new Error('This older preparation has no recoverable payload. Review a new transaction.')
   const nativeRuntime = runtime.getPreparedOperationRuntime

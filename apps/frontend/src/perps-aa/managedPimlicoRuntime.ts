@@ -39,14 +39,14 @@ import {
   bundlerRpcUrlForManifest,
   isPerpsAaManifestV2 as isNativePaymasterManifest,
   paymasterRpcUrlForManifest,
-  type PerpsAaDeploymentManifest,
+  type SimplePerpsAaDeploymentManifest,
 } from './manifest'
 import { knownSponsorshipValidUntil } from './paymasterValidity'
 import { parsePreparationStatus } from './preparedOperation'
 import { preparationIdentifier, validateNativePreparation } from './nativePreparation'
 import type {
   ManagedUserOperation,
-  PerpsAaSmartAccountRuntime,
+  SimplePerpsAaSmartAccountRuntime,
   BundlerUserOperationStatus,
   BundlerUserOperationStatusResult,
   SponsoredOperationRecoverySnapshot,
@@ -71,7 +71,7 @@ const USER_OPERATION_EVENT = parseAbiItem(
   'event UserOperationEvent(bytes32 indexed userOpHash, address indexed sender, address indexed paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)'
 )
 interface CreateManagedAaRuntimeInput {
-  manifest: PerpsAaDeploymentManifest
+  manifest: SimplePerpsAaDeploymentManifest
   ownerAddress: Address
   walletClient: WalletClient
   publicClient: PublicClient
@@ -323,7 +323,7 @@ export async function createManagedAaRuntime({
   ownerAddress,
   walletClient,
   publicClient,
-}: CreateManagedAaRuntimeInput): Promise<PerpsAaSmartAccountRuntime> {
+}: CreateManagedAaRuntimeInput): Promise<SimplePerpsAaSmartAccountRuntime> {
   if (
     manifest.chainId !== arbitrumSepolia.id
   ) {
@@ -377,13 +377,13 @@ export async function createManagedAaRuntime({
     signMessage: message => owner.signMessage({ account: owner.account, message }),
   }) : undefined
   let prepareUserOperation:
-    PerpsAaSmartAccountRuntime['smartAccount']['prepareUserOperation']
+    SimplePerpsAaSmartAccountRuntime['smartAccount']['prepareUserOperation']
   let sendUserOperation:
-    PerpsAaSmartAccountRuntime['smartAccount']['sendUserOperation']
+    SimplePerpsAaSmartAccountRuntime['smartAccount']['sendUserOperation']
   let getUserOperationStatus:
-    PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationStatus']
+    SimplePerpsAaSmartAccountRuntime['smartAccount']['getUserOperationStatus']
   let getUserOperationReceipt:
-    PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationReceipt']
+    SimplePerpsAaSmartAccountRuntime['smartAccount']['getUserOperationReceipt']
 
   if (isNativePaymasterManifest(manifest)) {
     const paymasterClient = createPaymasterClient({

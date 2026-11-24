@@ -32,5 +32,13 @@ resource "terraform_data" "rpc_log_range_policy_guard" {
       )
       error_message = "aa_reconciler_batch_blocks must be a positive integer no larger than the shared RPC inclusive block-range limit."
     }
+
+    precondition {
+      condition = var.alto_entrypoint_version != "0.9" || try(
+        tonumber(var.aa_reconciler_batch_blocks) <= 2000,
+        false
+      )
+      error_message = "Kernel aa_reconciler_batch_blocks cannot exceed the runtime's 2000-block limit, including for stopped tasks."
+    }
   }
 }

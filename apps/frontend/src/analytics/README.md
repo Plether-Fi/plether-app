@@ -20,6 +20,8 @@ Use the typed helpers in `perps.ts` instead of calling PostHog directly. If a
 new property is genuinely needed, add it to the allow-list in `client.ts` and
 include a test proving sensitive values are still dropped or redacted.
 
+`perps kernel operation` carries the payment mode, outcome and known funding or sponsorship reason. For canonical inclusion, `gas_estimate_usage` is a bucket comparing the actual charge with the approved maximum. The event carries no operation identifier, raw RPC data or gas amounts.
+
 Sponsored actions that stop before the persisted operation tracker starts emit
 `perps sponsored operation` with `sponsorship_status=preflight_failed`,
 `terminal_outcome=preflight_failed`, and a stable `reason_code`. Supported
