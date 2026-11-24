@@ -139,11 +139,15 @@ export default defineConfig(({ mode }) => {
   },
   plugins: [
     react(),
-    visualizer({
-      filename: 'bundle-stats.html',
-      gzipSize: true,
-      brotliSize: true,
-    }),
+    ...(env.ANALYZE === '1'
+      ? [
+          visualizer({
+            filename: 'bundle-stats.html',
+            gzipSize: true,
+            brotliSize: true,
+          }),
+        ]
+      : []),
   ],
   server: {
     // Playwright traces contain HTML snapshots. Treating those generated files

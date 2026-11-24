@@ -6,6 +6,9 @@ on:
     branches: [master, main]
 permissions:
   contents: read
+concurrency:
+  group: order-v3-local-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   local-flow:
     name: Delayed approval and canonical recovery
@@ -25,7 +28,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: apps/frontend/package-lock.json
+          cache-dependency-path: |
+            apps/frontend/package-lock.json
+            apps/frontend/test/local-order-v3/package-lock.json
       - name: Pin npm to the frontend deployment version
         run: npm install -g npm@11.6.2
       - run: npm ci --no-audit --no-fund
@@ -40,6 +45,17 @@ jobs:
         run: node scripts/install-foundry-ci.mjs
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Cache pinned Core Solidity compiler and artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.svm
+            ~/.cache/svm
+            .ci-order-v3-core/packages/perps/out
+            .ci-order-v3-core/packages/perps/cache
+            .ci-order-v3-core/packages/perps-aa/out
+            .ci-order-v3-core/packages/perps-aa/cache
+          key: ubuntu-24.04-foundry-v1.5.1-order-v3-core-1209ca8a5b94a4fb6323c7c4585846ed93db3932
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
@@ -53,6 +69,22 @@ jobs:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
           restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
+      - name: Cache Haskell build artifacts
+        uses: actions/cache@v4
+        with:
+          path: apps/backend/dist-newstyle
+          key: ubuntu-24.04-ghc-9.4.8-dist-O0-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-lib-${{ hashFiles('apps/backend/schema.sql', 'apps/backend/config/migrations/**', 'config/**', 'apps/backend/src/**') }}
+          restore-keys: |
+            ubuntu-24.04-ghc-9.4.8-dist-O0-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-
+            ubuntu-24.04-ghc-9.4.8-dist-O0-
+      - name: Configure unoptimized local package build for CI tests
+        working-directory: apps/backend
+        run: |
+          cat <<'EOF' > cabal.project.local
+          tests: True
+          package plether-api
+            optimization: 0
+          EOF
       - run: cabal update
         working-directory: apps/backend
       - name: Typecheck the local integration harness

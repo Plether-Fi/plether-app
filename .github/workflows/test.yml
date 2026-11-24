@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master, main]
 
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   vault-return-attribution:
     name: Vault return attribution tests
@@ -19,6 +23,7 @@ jobs:
           POSTGRES_DB: attribution_test
         ports: ['5432:5432']
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=512m
           --health-cmd "pg_isready -U attribution_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
@@ -48,6 +53,7 @@ jobs:
           POSTGRES_DB: protection_test
         ports: ['5432:5432']
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=512m
           --health-cmd "pg_isready -U protection_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
@@ -60,7 +66,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: apps/backend/protection-worker/package-lock.json
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm test
         env:
           PROTECTION_TEST_DATABASE_URL: postgres://protection_test:protection_test@127.0.0.1:5432/protection_test
@@ -83,8 +89,116 @@ jobs:
             exit 1
           fi
 
-  test:
-    name: Frontend unit and build
+  frontend-lint-build:
+    name: Frontend lint and build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    defaults:
+      run:
+        working-directory: apps/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            apps/frontend/package-lock.json
+            apps/insights/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+
+      - name: Pin npm to the frontend deployment version
+        run: npm install -g npm@11.6.2
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Insights story dependencies
+        working-directory: apps/insights
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache ESLint and TypeScript incremental build info
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/frontend/.eslintcache
+            apps/frontend/node_modules/.tmp
+          key: ubuntu-24.04-frontend-lint-build-${{ hashFiles('apps/frontend/package-lock.json', 'apps/frontend/eslint.config.js', 'apps/frontend/tsconfig*.json') }}-${{ github.sha }}
+          restore-keys: |
+            ubuntu-24.04-frontend-lint-build-${{ hashFiles('apps/frontend/package-lock.json', 'apps/frontend/eslint.config.js', 'apps/frontend/tsconfig*.json') }}-
+
+      - name: Lint
+        run: npx eslint . --cache --cache-location .eslintcache
+
+      - name: Build
+        run: npm run build
+
+  frontend-unit-tests:
+    name: Frontend unit tests (${{ matrix.shard }}/2)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    defaults:
+      run:
+        working-directory: apps/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+
+      - name: Pin npm to the frontend deployment version
+        run: npm install -g npm@11.6.2
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check AA package migration tooling
+        if: matrix.shard == 1
+        working-directory: .
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs scripts/install-foundry-ci.test.mjs
+
+      - name: Run Vitest unit shard
+        run: npx vitest run --project unit --shard=${{ matrix.shard }}/2
+
+      - name: Run remaining frontend test suites
+        if: matrix.shard == 1
+        run: |
+          node --test ../../scripts/patch-privy-wallet-dialog.test.mjs
+          npm run test:wallet-integration
+          npm run test:worker
+          npm run test:mainnet-redirect
+          npm run test:deploy-validator
+          npm run test:diagnostics
+
+  aa-execution-regressions:
+    name: AA execution regressions
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -111,13 +225,9 @@ jobs:
         run: npm install -g npm@11.6.2
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check AA package migration tooling
-        working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs scripts/install-foundry-ci.test.mjs
 
       - name: Install pinned local EVM for AA execution regressions
         id: foundry
@@ -144,6 +254,39 @@ jobs:
         working-directory: .
         run: node --test scripts/aa-execution-regression.test.mjs
 
+  aa-core-regressions:
+    name: AA Core ABI, quoter and lifecycle regressions
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pinned local EVM for Core regressions
+        id: foundry
+        continue-on-error: true
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.5.1
+
+      - name: Install verified pinned Foundry through the GitHub API if release downloads fail
+        if: steps.foundry.outcome == 'failure'
+        working-directory: .
+        run: node scripts/install-foundry-ci.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Fetch the deployed Core lifecycle source
         uses: actions/checkout@v4
         with:
@@ -153,7 +296,20 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - name: Cache the pinned Core compiler (no RPC)
+      - name: Cache pinned Core Solidity compiler and artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.svm
+            ~/.cache/svm
+            .ci-core/packages/perps/out
+            .ci-core/packages/perps/cache
+            .ci-aa-lifecycle-cache
+          key: ubuntu-24.04-foundry-v1.5.1-core-1209ca8a5b94a4fb6323c7c4585846ed93db3932-${{ hashFiles('scripts/fixtures/**') }}
+          restore-keys: |
+            ubuntu-24.04-foundry-v1.5.1-core-1209ca8a5b94a4fb6323c7c4585846ed93db3932-
+
+      - name: Compile pinned Core contracts (no RPC)
         working-directory: .ci-core/packages/perps
         run: forge build --skip test --skip script
 
@@ -168,20 +324,16 @@ jobs:
 
       - name: Require AA lifecycle, bounty drift and keeper gas regressions (offline)
         working-directory: .
+        env:
+          PLETHER_AA_LIFECYCLE_CACHE_DIR: ${{ github.workspace }}/.ci-aa-lifecycle-cache
         run: node scripts/aa-lifecycle-regression.mjs .ci-core
 
-      - name: Install Insights story dependencies
-        working-directory: apps/insights
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build
-        run: npm run build
+  test:
+    name: Frontend unit and build
+    needs: [frontend-lint-build, frontend-unit-tests, aa-execution-regressions, aa-core-regressions]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All frontend unit, build, and AA regression checks passed."
 
   insights:
     name: Insights unit and build
@@ -204,10 +356,20 @@ jobs:
         run: npm install -g npm@11.6.2
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache ESLint and TypeScript incremental build info
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/insights/.eslintcache
+            apps/insights/node_modules/.tmp
+          key: ubuntu-latest-insights-lint-build-${{ hashFiles('apps/insights/package-lock.json', 'apps/insights/eslint.config.js', 'apps/insights/tsconfig*.json') }}-${{ github.sha }}
+          restore-keys: |
+            ubuntu-latest-insights-lint-build-${{ hashFiles('apps/insights/package-lock.json', 'apps/insights/eslint.config.js', 'apps/insights/tsconfig*.json') }}-
 
       - name: Lint
-        run: npm run lint
+        run: npx eslint . --cache --cache-location .eslintcache
 
       - name: Run tests
         run: npm test

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master, main]
 
+concurrency:
+  group: backend-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   faucet-recovery:
     name: Faucet and publication database tests
@@ -19,6 +23,7 @@ jobs:
           POSTGRES_DB: faucet_test
         ports: ['5432:5432']
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=512m
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
@@ -115,20 +120,9 @@ jobs:
         working-directory: .
         run: node scripts/test-terraform-bindings.mjs
 
-  test:
-    name: Backend unit tests
+  build-backend:
+    name: Build backend test binaries
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: passkey_names_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: apps/backend
@@ -155,6 +149,23 @@ jobs:
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
           restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
 
+      - name: Cache Haskell build artifacts
+        uses: actions/cache@v4
+        with:
+          path: apps/backend/dist-newstyle
+          key: ubuntu-24.04-ghc-9.4.8-dist-O0-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-${{ hashFiles('apps/backend/schema.sql', 'apps/backend/config/migrations/**', 'config/**', 'apps/backend/src/**', 'apps/backend/app/**', 'apps/backend/test/**', 'apps/backend/test-integration/**', 'apps/backend/test-aa-integration/**', 'apps/backend/test-support/**') }}
+          restore-keys: |
+            ubuntu-24.04-ghc-9.4.8-dist-O0-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-
+            ubuntu-24.04-ghc-9.4.8-dist-O0-
+
+      - name: Configure unoptimized local package build for CI tests
+        run: |
+          cat <<'EOF' > cabal.project.local
+          tests: True
+          package plether-api
+            optimization: 0
+          EOF
+
       - name: Update Cabal package index
         run: |
           for attempt in 1 2 3; do
@@ -173,19 +184,74 @@ jobs:
           done
 
       - name: Install dependencies
-        run: cabal build --only-dependencies
+        run: cabal build --only-dependencies --enable-tests all
 
-      - name: Build
-        run: cabal build
+      - name: Build backend and test binaries
+        run: |
+          cabal build --enable-tests all
+          mkdir -p .ci-bin
+          for target in \
+            test:plether-api-test \
+            test:plether-api-integration-test \
+            test:plether-aa-integration-test \
+            exe:plether-candle-admin \
+            exe:plether-candle-admin-fixture; do
+            bin="$(cabal list-bin --enable-tests "$target")"
+            cp "$bin" ".ci-bin/$(basename "$bin")"
+          done
+
+      - name: Upload compiled test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-binaries
+          path: apps/backend/.ci-bin/
+          retention-days: 1
+
+  test:
+    name: Backend unit tests
+    needs: build-backend
+    runs-on: ubuntu-24.04 # Matches build-backend glibc/runtime libraries.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: passkey_names_test
+        ports: ['5432:5432']
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=512m
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure Ubuntu package mirror
+        run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
+
+      - name: Install runtime native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq5 libsecp256k1-1
+
+      - name: Download compiled test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-test-binaries
+          path: apps/backend/.ci-bin
 
       - name: Run tests
-        run: cabal test plether-api-test
+        run: |
+          chmod +x .ci-bin/plether-api-test
+          ./.ci-bin/plether-api-test
         env:
           PASSKEY_NAMES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/passkey_names_test
 
   perps-critical-path-integration:
     name: Perps critical path integration
-    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
+    needs: build-backend
+    runs-on: ubuntu-24.04 # Matches build-backend glibc/runtime libraries.
     timeout-minutes: 20
     defaults:
       run:
@@ -204,6 +270,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=1g
           --health-cmd "pg_isready -U postgres -d plether_critical_path"
           --health-interval 5s
           --health-timeout 5s
@@ -215,42 +282,14 @@ jobs:
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
 
-      - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config postgresql-client
+      - name: Install runtime native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq5 libsecp256k1-1 postgresql-client
 
-      - name: Setup Haskell
-        uses: haskell-actions/setup@v2
+      - name: Download compiled test binaries
+        uses: actions/download-artifact@v4
         with:
-          ghc-version: '9.4.8'
-          cabal-version: 'latest'
-          cabal-update: false
-
-      - name: Cache cabal store
-        uses: actions/cache@v4
-        with:
-          path: ~/.cabal/store
-          key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
-          restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
-
-      - name: Update Cabal package index
-        run: |
-          for attempt in 1 2 3; do
-            if cabal update; then
-              exit 0
-            fi
-
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::cabal update failed after 3 attempts"
-              exit 1
-            fi
-
-            delay=$((attempt * 10))
-            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
-            sleep "$delay"
-          done
-
-      - name: Install integration test dependencies
-        run: cabal build --only-dependencies plether-api-integration-test
+          name: backend-test-binaries
+          path: apps/backend/.ci-bin
 
       - name: Verify PostgreSQL prerequisite
         run: |
@@ -258,12 +297,58 @@ jobs:
           psql "$PERPS_CRITICAL_PATH_DATABASE_URL" --set ON_ERROR_STOP=1 --command "SELECT 1;"
 
       - name: Run deterministic Perps critical path integration tests
-        working-directory: .
-        run: node scripts/test-backend-integration.mjs
+        run: |
+          set -euo pipefail
+          chmod +x .ci-bin/*
+          export PATH="$PWD/.ci-bin:$PATH"
+
+          psql "$PERPS_CRITICAL_PATH_DATABASE_URL" --set ON_ERROR_STOP=1 \
+            --command "CREATE DATABASE plether_critical_path_1;" \
+            --command "CREATE DATABASE plether_critical_path_2;" \
+            --command "CREATE DATABASE plether_critical_path_3;"
+
+          shard1_log="$RUNNER_TEMP/perps-integration-shard1.log"
+          shard2_log="$RUNNER_TEMP/perps-integration-shard2.log"
+          shard3_log="$RUNNER_TEMP/perps-integration-shard3.log"
+
+          PERPS_CRITICAL_PATH_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path_1" \
+            ./.ci-bin/plether-api-integration-test \
+            --match "liquidation worker DB/RPC orchestration" \
+            > "$shard1_log" 2>&1 &
+          pid1=$!
+
+          PERPS_CRITICAL_PATH_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path_2" \
+            ./.ci-bin/plether-api-integration-test \
+            --match "Perps candle rollup storage" \
+            --match "Plether Insights PostgreSQL lifecycle" \
+            > "$shard2_log" 2>&1 &
+          pid2=$!
+
+          PERPS_CRITICAL_PATH_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path_3" \
+            ./.ci-bin/plether-api-integration-test \
+            --skip "liquidation worker DB/RPC orchestration" \
+            --skip "Perps candle rollup storage" \
+            --skip "Plether Insights PostgreSQL lifecycle" \
+            > "$shard3_log" 2>&1 &
+          pid3=$!
+
+          status=0
+          wait "$pid1" || status=1
+          wait "$pid2" || status=1
+          wait "$pid3" || status=1
+
+          echo "=== Shard 1: liquidation worker DB/RPC orchestration ==="
+          cat "$shard1_log"
+          echo "=== Shard 2: Perps candle rollup & Plether Insights lifecycle ==="
+          cat "$shard2_log"
+          echo "=== Shard 3: remaining critical path integration specs ==="
+          cat "$shard3_log"
+          exit "$status"
 
   native-aa-integration:
     name: Native AA integration
-    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
+    needs: build-backend
+    runs-on: ubuntu-24.04 # Matches build-backend glibc/runtime libraries.
     timeout-minutes: 15
     defaults:
       run:
@@ -282,6 +367,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=512m
           --health-cmd "pg_isready -U postgres -d plether_aa_integration"
           --health-interval 5s
           --health-timeout 5s
@@ -293,48 +379,14 @@ jobs:
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
 
-      - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libpq-dev \
-            libsecp256k1-dev \
-            pkg-config \
-            postgresql-client
+      - name: Install runtime native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq5 libsecp256k1-1 postgresql-client
 
-      - name: Setup Haskell
-        uses: haskell-actions/setup@v2
+      - name: Download compiled test binaries
+        uses: actions/download-artifact@v4
         with:
-          ghc-version: '9.4.8'
-          cabal-version: 'latest'
-          cabal-update: false
-
-      - name: Cache cabal store
-        uses: actions/cache@v4
-        with:
-          path: ~/.cabal/store
-          key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
-          restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
-
-      - name: Update Cabal package index
-        run: |
-          for attempt in 1 2 3; do
-            if cabal update; then
-              exit 0
-            fi
-
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::cabal update failed after 3 attempts"
-              exit 1
-            fi
-
-            delay=$((attempt * 10))
-            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
-            sleep "$delay"
-          done
-
-      - name: Install native AA integration dependencies
-        run: cabal build --only-dependencies plether-aa-integration-test
+          name: backend-test-binaries
+          path: apps/backend/.ci-bin
 
       - name: Verify PostgreSQL prerequisite
         run: |
@@ -342,4 +394,6 @@ jobs:
           psql "$AA_INTEGRATION_DATABASE_URL" --set ON_ERROR_STOP=1 --command "SELECT 1;"
 
       - name: Run native AA integration tests
-        run: cabal test plether-aa-integration-test --test-show-details=direct -j1
+        run: |
+          chmod +x .ci-bin/plether-aa-integration-test
+          ./.ci-bin/plether-aa-integration-test
