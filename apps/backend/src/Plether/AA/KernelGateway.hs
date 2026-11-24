@@ -45,7 +45,7 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -537,10 +537,9 @@ prepare gateway cfg db primary secondary manager client intent = do
         historical <- liftIO $ Native.readAgreedRecoveryAnchor primary secondary snapshot
         maybe (throwE profileUnavailable) (pure . Just) historical
       Db.Sponsored -> do
-        safeAnchor <- liftIO $ timeout 600_000 $ Native.readAgreedSecurityBlock DualIndependent
-          (kgcMaxSafeLagSeconds gateway) primary secondary
+        safeAnchor <- liftIO $ timeout 600_000 $ Native.readAgreedRecoveryAnchor primary secondary snapshot
         pure $ case safeAnchor of
-          Just (Right safe) | Native.sbhNumber safe <= Native.sbhNumber snapshot -> Just (Native.sbhNumber safe)
+          Just (Just safe) | safe <= Native.sbhNumber snapshot -> Just safe
           _ -> Nothing
     revalidateSnapshot gateway primary secondary snapshot
     persistedAt <- seconds
@@ -809,7 +808,7 @@ submit gateway cfg db primary secondary manager client fields = do
     unless (alreadyAccepted || Db.kpExpiresAt preparation > toUtc now) $ throwE preparationExpired
     snapshot <- agreedSnapshot gateway primary secondary
     owner <- attestBoth gateway primary secondary snapshot $
-      verifyPerpsAccountAtBlock profile sender (Kernel.koFactoryOwner parsed)
+      verifyPerpsAccountForReplayAtBlock alreadyAccepted profile sender (Kernel.koFactoryOwner parsed)
     currentNonce <- if alreadyAccepted then pure Nothing else do
       nonce <- attestBoth gateway primary secondary snapshot $ \rpc block -> readNonce profile rpc block sender
       unless (nonce == Paymaster.puoNonce operation) $ throwE kernelNonceChanged
@@ -823,7 +822,8 @@ submit gateway cfg db primary secondary manager client fields = do
     except $ mapParseFailure $ validateKernelEconomicCaps operation
     unless (Paymaster.puoMaxFeePerGas operation <= Native.nativeMaxFeeAllowance (Native.sbhBaseFeePerGas snapshot)) $
       throwE $ Legacy.policyDenied "Gas price exceeds the current reviewed allowance"
-    checkFunding gateway primary secondary snapshot mode owner calls operation
+    unless alreadyAccepted $
+      checkFunding gateway primary secondary snapshot mode owner calls operation
     case mode of
       Db.PayWithEth -> pure ()
       Db.Sponsored -> do
@@ -1007,7 +1007,10 @@ createCancellationAnchor gateway db primary secondary fields ident operationHash
   snapshot <- agreedSnapshot gateway primary secondary
   _ <- cancellationAccount gateway primary secondary snapshot prepared
   revalidateSnapshot gateway primary secondary snapshot
-  accepted <- dbAction db $ \conn -> Db.acceptKernelCancellationAnchor conn scope ident recovered operationHash (Object raw)
+  accepted <- dbAction db $ \conn ->
+    if isJust (kgcAllowedOwners gateway) && not (maybe False kscEnabled (kgcSponsorship gateway))
+      then Db.acceptKernelCancellationAnchorAtNonce conn scope (Db.kpNonce prepared) ident recovered operationHash (Object raw)
+      else Db.acceptKernelCancellationAnchor conn scope ident recovered operationHash (Object raw)
   let findExact = dbAction db (\conn -> Db.getKernelOperationForClient conn scope operationHash recovered)
         >>= maybe (throwE operationNotAuthorized) pure
   case accepted of
@@ -1585,10 +1588,17 @@ matchesPerpsRelease profile cfg =
 
 verifyPerpsAccountAtBlock :: Kernel.KernelProfile -> Text -> Maybe Text -> EthClient -> Integer
   -> IO (Either Legacy.ProxyFailure Text)
-verifyPerpsAccountAtBlock profile sender factoryOwner client block = do
+verifyPerpsAccountAtBlock = verifyPerpsAccountForReplayAtBlock False
+
+verifyPerpsAccountForReplayAtBlock :: Bool -> Kernel.KernelProfile -> Text -> Maybe Text -> EthClient -> Integer
+  -> IO (Either Legacy.ProxyFailure Text)
+verifyPerpsAccountForReplayAtBlock allowDeployedFactory profile sender factoryOwner client block = do
+  let verifyAccount = if allowDeployedFactory
+        then Kernel.verifyKernelAccountForReplayAtBlock
+        else Kernel.verifyKernelAccountAtBlock
   (targets, account) <- concurrently
     (verifyPerpsTargetsAtBlock client block)
-    (Kernel.verifyKernelAccountAtBlock profile client block sender factoryOwner)
+    (verifyAccount profile client block sender factoryOwner)
   pure (targets >> account)
 
 verifyPerpsTargetsAtBlock :: EthClient -> Integer -> IO (Either Legacy.ProxyFailure ())

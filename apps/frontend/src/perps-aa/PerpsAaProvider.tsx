@@ -52,10 +52,11 @@ function configuredManifestUrl(): string | null {
 }
 
 function configuredKernelDeployment(owner: string | undefined, entry: URL | undefined): string | undefined {
+  if (!isSepoliaDeployment()) return undefined
   const value: unknown = import.meta.env.VITE_PERPS_KERNEL_AA_DEPLOYMENT
   if (typeof value !== 'string' || value === '') return undefined
   if (import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
-      (!isSepoliaDeployment() || !selectedKernelTestOwner(owner, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS, entry))) {
+      !selectedKernelTestOwner(owner, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS, entry)) {
     return undefined
   }
   return value

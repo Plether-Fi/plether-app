@@ -55,6 +55,12 @@ spec = do
       verifyAccount (Just approvedRoot) Nothing `shouldReturn` Right owner
     it "attests the same owner's counterfactual account before the first operation" $
       verifyAccount Nothing (Just owner) `shouldReturn` Right owner
+    it "rejects factory data on a deployed account for fresh submission but allows exact-owner replay" $ do
+      verifyAccount (Just approvedRoot) (Just owner) >>= (`shouldSatisfy` isLeft)
+      verifyKernelAccountWithRpcForReplayAtBlock attestedProfile (accountRpc (Just approvedRoot)) 42 (address '6') (Just owner)
+        `shouldReturn` Right owner
+      verifyKernelAccountWithRpcForReplayAtBlock attestedProfile (accountRpcWithOwner (Just approvedRoot) "0x" (address '9')) 42 (address '6') (Just owner)
+        >>= (`shouldSatisfy` isLeft)
     it "rejects a deployed account with a delegated root wallet" $
       verifyKernelAccountWithRpcAtBlock attestedProfile
         (accountRpcWithOwner (Just approvedRoot) ("0xef0100" <> T.drop 2 (address '9')) owner) 42 (address '6') Nothing

@@ -20,6 +20,7 @@ module Plether.Database.KernelOperation
   , acceptKernelEthOperationAtNonce
   , acceptKernelSponsoredOperationAtNonce
   , acceptKernelCancellationAnchor
+  , acceptKernelCancellationAnchorAtNonce
   , getKernelOperationForClient
   , finalizeKernelOperation
   , retireKernelOperation
@@ -356,6 +357,9 @@ acceptKernelSponsoredOperationAtNonce conn scope nonce = acceptKernelOperationWi
 -- The anchor holds the same account lane and cannot become relayable.
 acceptKernelCancellationAnchor :: Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
 acceptKernelCancellationAnchor = acceptKernelOperationWith True Nothing
+
+acceptKernelCancellationAnchorAtNonce :: Connection -> KernelScope -> Integer -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
+acceptKernelCancellationAnchorAtNonce conn scope nonce = acceptKernelOperationWith True (Just (PayWithEth, nonce)) conn scope
 
 acceptKernelOperationWith :: Bool -> Maybe (PaymentMode, Integer) -> Connection -> KernelScope -> Text -> Text -> Text -> Value -> IO AcceptOperationResult
 acceptKernelOperationWith cancellationOnly liveLane conn scope preparationId client operationHash signedOperation = withTransaction conn $ do

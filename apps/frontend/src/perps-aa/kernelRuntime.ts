@@ -21,6 +21,8 @@ import type { KernelPerpsAaSmartAccountRuntime } from './runtimeContext'
 import { hasKernelOrderSubmissionTime } from './kernelOrderDeadline'
 import { isExplicitSignatureRejection } from './preparedOperation'
 import { readKernelBundledInclusion, type KernelBundledInclusionReader } from './kernelBundledInclusion'
+import { hasPendingKernelOwnerDeposit } from './kernelMarginFunding'
+import { isTransactionFeeCapRejected } from '../utils/transactionFailure'
 
 export interface KernelActionQuote {
   readonly mode: GasPaymentMode
@@ -75,7 +77,13 @@ async function waitForAttemptOutcome(attempt: KernelOperationAttempt, isObservat
     } catch {
       // Loss of status connectivity leaves the signed operation unresolved.
     }
-    if (resolved && (resolved.observedReceipt || !['sending', 'submitted'].includes(resolved.phase))) return resolved
+    if (resolved) {
+      if (!['sending', 'submitted'].includes(resolved.phase)) return resolved
+      if (resolved.observedReceipt) {
+        if (!readBundledInclusion) return resolved
+        if (!await isObservationReorged(resolved.observedReceipt).catch(() => true)) return resolved
+      }
+    }
     await new Promise<void>(resolve => globalThis.setTimeout(resolve, 2_000))
   }
   throw new BundlerRequestError({
@@ -282,6 +290,9 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
           : undefined
         let walletSubmission
         if (walletTransaction) {
+          if (await hasPendingKernelOwnerDeposit(scope, ownerAddress)) {
+            throw new Error('Verify your pending Owner Wallet USDG deposit before sending another wallet transaction.')
+          }
           const [block, nonce] = await Promise.all([latestBlock(), publicClient.getTransactionCount({ address: ownerAddress, blockTag: 'pending' })])
           await Promise.all([assertConnectedOwner(), requireNonce(prepared.operation.nonce), requireReviewedState(), requireModeReady()])
           requirePreference()
@@ -303,9 +314,9 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
             try {
               transactionHash = await walletClient.sendTransaction({ ...walletTransaction, nonce: walletSubmission.nonce, chain: arbitrumSepolia })
             } catch (error) {
-              if (isExplicitSignatureRejection(error)) {
+              if (isExplicitSignatureRejection(error) || isTransactionFeeCapRejected(error)) {
                 await recordKernelWalletResponse(stored)
-                return { ...stored, phase: 'discarded' as const }
+                return { ...stored, phase: 'discarded' as const, discardCause: error }
               }
               throw error
             }
@@ -318,10 +329,17 @@ export async function createKernelRuntime({ manifest, ownerAddress, walletClient
           throw new BundlerRequestError({ message: 'Check Trading Account activity for the signed operation before trying again.',
             terminalStatus: 'submission-unknown', retryable: false, cause: error })
         }
-        return { ...stored, phase: 'submitted' as const }
+        return { ...stored, phase: 'submitted' as const, discardCause: undefined }
       }, { mode: prepared.mode, nonce: prepared.operation.nonce })
+      if (attempt.phase === 'discarded') {
+        if (attempt.discardCause && isTransactionFeeCapRejected(attempt.discardCause)) {
+          throw attempt.discardCause instanceof Error
+            ? attempt.discardCause
+            : new Error('The wallet transaction gas fee cap was too low. Retry with updated gas settings.')
+        }
+        throw new Error('The wallet transaction was declined.')
+      }
       onStatus?.('confirming')
-      if (attempt.phase === 'discarded') throw new Error('The wallet transaction was declined.')
       const settled = await waitForAttemptOutcome(attempt, isObservationReorged, readWalletOutcome, readBundledInclusion)
       const deploymentReceipt = settled.phase === 'included' ? settled.receipt
         : settled.observedReceipt?.success ? settled.observedReceipt : undefined

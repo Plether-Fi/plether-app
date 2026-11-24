@@ -42,6 +42,10 @@ describe('recovered order execution', () => {
     </QueryClientProvider>)
     expect(await screen.findByText('Executed')).toBeVisible()
     expect(readOrderLifecycleOutcome).toHaveBeenCalledWith(row.orderId)
+    // A subsequent refetch after the 1,000-block log window slides past must not regress Executed to Awaiting execution.
+    readOrderLifecycleOutcome.mockResolvedValueOnce(undefined)
+    await client.refetchQueries({ queryKey: ['perps', 'live-order-outcome'] })
+    expect(screen.getByText('Executed')).toBeVisible()
   })
   it('does not assign another account’s order or an ambiguous batch outcome to this attempt', () => {
     history.orderHistory = [{ ...row, account: '0x2222222222222222222222222222222222222222' }]

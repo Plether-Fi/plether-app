@@ -2,7 +2,7 @@ import { usePerpsHistory } from '../hooks/usePerpsHistory'
 import type { SponsoredOperation } from '../perps-aa/operationStore'
 import type { Address, Hex } from 'viem'
 import { Button } from './ui/Button'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePerpsTrading } from '../hooks/usePerpsTrading'
 import { PERPS_LIFECYCLE_STATUS } from '../contracts/perpsOrderV3'
 
@@ -41,14 +41,17 @@ export function RecoveredOrderStatus(props: { operation: SponsoredOperation } | 
 
 function LiveOrderOutcome({ orderId, account, clientOrderId }: { orderId: bigint; account: string; clientOrderId: string }) {
   const { readOrderLifecycleOutcome } = usePerpsTrading()
+  const queryClient = useQueryClient()
+  const queryKey = ['perps', 'live-order-outcome', account, clientOrderId, orderId.toString()] as const
   const { data } = useQuery({
-    queryKey: ['perps', 'live-order-outcome', account, clientOrderId, orderId.toString()],
+    queryKey,
     queryFn: async () => {
+      const previous = queryClient.getQueryData<'Executed' | 'Failed' | null>(queryKey) ?? null
       const outcome = await readOrderLifecycleOutcome(orderId)
-      if (outcome?.account.toLowerCase() !== account || outcome.clientOrderId.toLowerCase() !== clientOrderId) return null
+      if (outcome?.account.toLowerCase() !== account || outcome.clientOrderId.toLowerCase() !== clientOrderId) return previous
       return outcome.status === PERPS_LIFECYCLE_STATUS.EXECUTED ? 'Executed' : 'Failed'
     },
-    refetchInterval: 2_000,
+    refetchInterval: query => (query.state.data ? false : 2_000),
     retry: false,
   })
   return <p>Order #{orderId.toString()} · <strong>{data ?? 'Awaiting execution'}</strong></p>

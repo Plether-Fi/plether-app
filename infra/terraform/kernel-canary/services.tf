@@ -225,8 +225,16 @@ resource "aws_iam_role" "kernel_canary_execution" {
 
   name = each.value
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = local.expected_account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:ecs:${local.region}:${local.expected_account_id}:*" }
+      }
+    }]
   })
 }
 
@@ -262,8 +270,16 @@ resource "aws_iam_role" "kernel_canary_task" {
 
   name = each.value
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = local.expected_account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:ecs:${local.region}:${local.expected_account_id}:*" }
+      }
+    }]
   })
 }
 

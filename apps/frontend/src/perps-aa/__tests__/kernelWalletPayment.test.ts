@@ -9,7 +9,7 @@ import type { KernelOperationAttempt } from '../kernelOperationJournal'
 import { type KernelWalletPreparation } from '../kernelRpc'
 import { encodeKernelWalletTransaction, quoteKernelWalletPayment, readKernelWalletOutcome } from '../kernelWalletPayment'
 
-vi.mock('../deadlineClock', () => ({ deadlineNow: () => 1_000_000 }))
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => 1_000_000, refreshDeadlineClock: async () => ({ now: () => 1_000_000 }) }))
 
 const entryPoint = kernelSepoliaCanaryProfile.entryPoint
 const ownerAddress = '0x1100000000000000000000000000000000000000' as Address
@@ -23,9 +23,10 @@ async function setup(success: boolean, outerStatus: 'success' | 'reverted' = 'su
   const getBalance = vi.fn(async () => 3_000_000n)
   const block = { number: 92n, hash: blockHash }
   const client = { chain: arbitrumSepolia, estimateFeesPerGas: async () => ({ maxFeePerGas: 1n, maxPriorityFeePerGas: 0n }),
-    getBalance, readContract: async () => [10_000n], call: async () => ({}),
-    getBlock: vi.fn(async () => block), getTransactionCount: async () => 15,
-    getTransaction: vi.fn(), getTransactionReceipt: vi.fn(),
+    getBalance, readContract: vi.fn(async ({ functionName }: { functionName: string }) => functionName === 'getNonce' ? 1n : [10_000n]),
+    call: vi.fn(async () => ({})),
+    getBlock: vi.fn(async () => block), getTransactionCount: vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => blockNumber !== undefined && blockNumber < 92n ? 14 : 15),
+    getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getLogs: vi.fn(async () => []),
   }
   const rpc = client as unknown as PublicClient
   const prepared: KernelWalletPreparation = await quoteKernelWalletPayment(rpc, ownerAddress, {
@@ -69,5 +70,21 @@ describe('wallet-paid Kernel inclusion', () => {
     client.getTransaction.mockResolvedValueOnce({ ...transaction, to: ownerAddress, input: '0x' })
     await expect(readKernelWalletOutcome(rpc, { ...attempt, walletSubmission: { fromBlock: 92n, nonce: 14, transactionHash: originalHash } }))
       .resolves.toEqual({ state: 'wallet_replaced' })
+  })
+
+  it('resolves wallet_replaced when transactionHash was never returned and the owner nonce was replaced', async () => {
+    const { client, rpc, attempt, transaction } = await setup(true)
+    client.getTransaction.mockResolvedValueOnce({ ...transaction, to: ownerAddress, input: '0x' })
+    await expect(readKernelWalletOutcome(rpc, { ...attempt, walletSubmission: { fromBlock: 92n, nonce: 14 } }))
+      .resolves.toEqual({ state: 'wallet_replaced' })
+  })
+
+  it('retires an old unfound wallet attempt as nonce_consumed past the 4,000-block log window', async () => {
+    const { client, rpc, attempt } = await setup(true)
+    client.getBlock.mockResolvedValue({ number: 5_000n, hash: blockHash, transactions: [] })
+    client.getTransactionCount.mockResolvedValue(14)
+    client.readContract.mockResolvedValue(2n)
+    await expect(readKernelWalletOutcome(rpc, { ...attempt, walletSubmission: { fromBlock: 92n, nonce: 14 } }))
+      .resolves.toEqual({ state: 'nonce_consumed' })
   })
 })

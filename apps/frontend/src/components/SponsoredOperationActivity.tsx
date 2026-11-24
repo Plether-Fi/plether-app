@@ -16,7 +16,7 @@ import {
 import { usePerpsAaRuntime, type KernelPerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import { KernelAttemptRecoveryControls } from '../perps-aa/KernelAttemptRecoveryControls'
 import { KernelEthFunding } from './KernelEthFunding'
-import { isKernelAttemptPending, type KernelOperationAttempt } from '../perps-aa/kernelOperationJournal'
+import { isKernelAttemptPending, kernelAttemptBlocksFollowUp, type KernelOperationAttempt } from '../perps-aa/kernelOperationJournal'
 import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
 import {
   canCancelSponsoredOperationLocally,
@@ -745,18 +745,20 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
   runtime?: KernelPerpsAaSmartAccountRuntime['kernel']
 }) {
   const { prepared, receipt, observedReceipt } = attempt
+  const pending = isKernelAttemptPending(attempt)
   const sponsored = prepared.mode === 'sponsored'
   const cancelled = attempt.phase === 'cancelled'
   const walletPaid = prepared.transport === 'wallet'
-  const visibleReceipt = receipt ?? (runtime?.readBundledInclusion ? observedReceipt : undefined)
-  const transactionHash = attempt.outerReceipt?.transactionHash ?? (receipt ?? observedReceipt)?.receipt.transactionHash ?? attempt.walletSubmission?.transactionHash
+  const activeObservedReceipt = pending ? observedReceipt : undefined
+  const visibleReceipt = receipt ?? (runtime?.readBundledInclusion ? activeObservedReceipt : undefined)
+  const transactionHash = attempt.outerReceipt?.transactionHash ?? (receipt ?? activeObservedReceipt)?.receipt.transactionHash ?? attempt.walletSubmission?.transactionHash
   const actualGasCost = attempt.outerReceipt
     ? attempt.outerReceipt.gasUsed * attempt.outerReceipt.effectiveGasPrice
     : visibleReceipt?.actualGasCost
   const status = visibleReceipt && !cancelled
     ? visibleReceipt.success ? 'Confirmed onchain' : 'Failed onchain'
-    : observedReceipt
-    ? observedReceipt.success ? 'Included, awaiting confirmation' : 'Execution reverted, awaiting confirmation'
+    : activeObservedReceipt
+    ? activeObservedReceipt.success ? 'Included, awaiting confirmation' : 'Execution reverted, awaiting confirmation'
     : {
     signed: 'Awaiting submission',
     sending: 'Checking submission status',
@@ -800,7 +802,7 @@ function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
         <RecoveredOrderStatus accountAddress={attempt.scope.sender} transactionHash={transactionHash} clientOrderId={clientOrderId}
           liveOrderId={registered.length === 1 ? registered[0].args.orderId : undefined} />
       )}
-      {isKernelAttemptPending(attempt) && !visibleReceipt && (
+      {pending && !receipt && (
         <KernelAttemptRecoveryControls
           attempt={attempt}
           quoteCancellation={runtime?.quoteCancellation}
@@ -889,8 +891,11 @@ export function SponsoredOperationHistoryButton() {
         )
     : []
   const attentionOperations = accountOperations.filter(isAttentionOperation)
-  const awaitingKernelInclusion = (attempt: KernelOperationAttempt) => isKernelAttemptPending(attempt) &&
-    !(kernelRuntime?.kernel.readBundledInclusion && attempt.observedReceipt)
+  const gasPreference = useGasPaymentPreference(preferenceScope)
+  const awaitingKernelInclusion = (attempt: KernelOperationAttempt) => isKernelAttemptPending(attempt) && (
+    !(kernelRuntime?.kernel.readBundledInclusion && attempt.observedReceipt) ||
+    kernelAttemptBlocksFollowUp(attempt, { mode: gasPreference.mode })
+  )
   const kernelPending = kernelActivity.attempts.filter(awaitingKernelInclusion)
   const kernelRecent = kernelActivity.attempts.filter(attempt => !awaitingKernelInclusion(attempt))
   const unreviewedAttentionOperations = attentionOperations.filter(
