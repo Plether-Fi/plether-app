@@ -47,20 +47,20 @@ RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin e
     cp "$(cabal list-bin plether-insights-admin)" /build/plether-insights-admin-bin && \
     cp "$(cabal list-bin plether-candle-admin)" /build/plether-candle-admin-bin
 
-FROM node:22-bookworm-slim AS oracle-worker
+FROM node:25-bookworm-slim AS oracle-worker
 
 WORKDIR /oracle
 COPY apps/backend/oracle-worker/package.json apps/backend/oracle-worker/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/frontend/scripts/perps-oracle-worker.mjs scripts/perps-oracle-worker.mjs
 
-FROM node:22-bookworm-slim AS protection-worker
+FROM node:25-bookworm-slim AS protection-worker
 WORKDIR /protection
 COPY apps/backend/protection-worker/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/backend/protection-worker/ ./
 
-FROM node:22-bookworm-slim AS return-attribution
+FROM node:25-bookworm-slim AS return-attribution
 WORKDIR /return-attribution
 COPY apps/backend/return-attribution/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
