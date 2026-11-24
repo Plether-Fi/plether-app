@@ -15,7 +15,7 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://auth.privy.io https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://sepolia-rollup.arbitrum.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org; img-src 'self' data: blob: https://auth.privy.io https://explorer-api.walletconnect.com; font-src 'self' data:; child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; frame-src 'self' blob: https://challenges.cloudflare.com https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://auth.privy.io https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://arb1.arbitrum.io https://sepolia-rollup.arbitrum.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org; img-src 'self' data: blob: https://auth.privy.io https://explorer-api.walletconnect.com; font-src 'self' data:; child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; frame-src 'self' blob: https://challenges.cloudflare.com https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 };
 
 const API_CACHE_TTLS = {
@@ -374,7 +374,11 @@ export default {
       // A browser must never be able to choose the credential trusted by the
       // backend. Strip it on every API request and add the Pages secret only
       // for the tightly scoped registration namespace.
+      headers.delete('X-Plether-Origin-Secret');
       headers.delete(REGISTRATION_ORIGIN_HEADER);
+      if (env.ALB_ORIGIN_SECRET) {
+        headers.set('X-Plether-Origin-Secret', env.ALB_ORIGIN_SECRET);
+      }
       if (registrationRequest) {
         const registrationOrigin = resolveBackendOrigin(
           env.INSIGHTS_REGISTRATION_PUBLIC_ORIGIN,

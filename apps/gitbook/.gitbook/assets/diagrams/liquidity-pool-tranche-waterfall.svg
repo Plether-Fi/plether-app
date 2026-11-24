@@ -1,41 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="852" viewBox="0 0 640 852" role="img" aria-labelledby="liquidity-pool-tranche-waterfall-title liquidity-pool-tranche-waterfall-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1010" viewBox="0 0 640 1010" role="img" aria-labelledby="liquidity-pool-tranche-waterfall-title liquidity-pool-tranche-waterfall-desc" focusable="false">
 <title id="liquidity-pool-tranche-waterfall-title">The Senior–Junior waterfall</title>
 <desc id="liquidity-pool-tranche-waterfall-desc">Reconciliation compares distributable assets after trader liabilities with claimant principal. Losses hit Junior first; revenue restores Senior impairment before reaching Junior. The Senior coupon is a separate Junior-to-Senior transfer, capped by available Junior principal. Senior is last-loss, not risk-free.</desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="852" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / LIQUIDITY PROVIDERS</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">The Senior–Junior waterfall</text>
-<path d="M32 143 L608 143" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 143 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="188" r="14" fill="#9A8890"/>
-<circle cx="47" cy="188" r="5" fill="#250917"/>
-<text x="80" y="197" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Distributable pool value</text>
-<text x="80" y="234" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Reconcile value after trader liabilities.</text>
-<rect x="32" y="258" width="278" height="378" rx="12" fill="#FFAB96" stroke="none"/>
-<text x="48" y="300" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Loss</text>
-<path d="M48 321 L294 321" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="48" y="351" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Junior first</text>
-<text x="48" y="390" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Absorb loss up to</text>
-<text x="48" y="422" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Junior principal.</text>
-<path d="M56 439 V458 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<text x="48" y="502" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Senior second</text>
-<text x="48" y="541" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Absorb only the</text>
-<text x="48" y="573" font-size="24" font-weight="400" fill="#250917" data-max-width="246">remaining loss.</text>
-<rect x="330" y="258" width="278" height="378" rx="12" fill="#FFF5F9" stroke="#9A8890"/>
-<rect x="342" y="262" width="254" height="6" rx="3" fill="#00FF99" stroke="none"/>
-<text x="346" y="300" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Revenue</text>
-<path d="M346 321 L592 321" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="346" y="351" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Restore Senior</text>
-<text x="346" y="390" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Fill impairment up to</text>
-<text x="346" y="422" font-size="24" font-weight="400" fill="#250917" data-max-width="246">its high-water mark.</text>
-<path d="M354 439 V458 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<text x="346" y="502" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Junior receives</text>
-<text x="346" y="535" font-size="26" font-weight="700" fill="#250917" data-max-width="246">the rest</text>
-<text x="346" y="574" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Residual revenue</text>
-<text x="346" y="606" font-size="24" font-weight="400" fill="#250917" data-max-width="246">accrues to Junior.</text>
-<rect x="32" y="660" width="576" height="160" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="698" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">The Senior coupon is a separate</text>
-<text x="50" y="730" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Junior-to-Senior transfer, capped by</text>
-<text x="50" y="762" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">available Junior principal. Senior is last-loss,</text>
-<text x="50" y="794" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">not risk-free.</text>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="1010" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · LIQUIDITY PROVIDERS</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">The Senior–Junior waterfall</text>
+<path d="M32 136 L608 136" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 136 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<rect x="32" y="162" width="278" height="276" rx="12" fill="#3B212D" stroke="#FF512F" stroke-width="1.5"/>
+<rect x="44" y="165" width="254" height="5" rx="3" fill="#FF512F" stroke="none"/>
+<text x="50" y="204" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="242">Loss order</text>
+<rect x="50" y="222" width="242" height="72" rx="8" fill="#FF512F" stroke="none"/>
+<text x="171" y="266" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">1. Junior first</text>
+<path d="M171 298 V326 m-6 -6 6 6 6 -6" stroke="#FFAB96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="50" y="334" width="242" height="82" rx="8" fill="#FFAB96" stroke="none"/>
+<text x="171" y="382" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">2. Senior excess</text>
+<rect x="330" y="162" width="278" height="276" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="342" y="165" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="348" y="204" font-size="24" font-weight="700" fill="#00FF99" data-max-width="242">Recovery order</text>
+<rect x="348" y="222" width="242" height="72" rx="8" fill="#00FF99" stroke="none"/>
+<text x="469" y="266" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">1. Restore Senior</text>
+<path d="M348 314 L526 314" stroke="#F7D977" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+<text x="590" y="321" font-size="22" font-weight="700" fill="#F7D977" data-max-width="62" text-anchor="end">HWM</text>
+<path d="M386 298 V326 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="348" y="334" width="242" height="82" rx="8" fill="#F7E4B2" stroke="none"/>
+<text x="469" y="382" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">2. Residual → Jr</text>
+<rect x="32" y="460" width="278" height="348" rx="12" fill="#3B212D" stroke="#FF512F" stroke-width="1.5"/>
+<rect x="44" y="463" width="254" height="5" rx="3" fill="#FF512F" stroke="none"/>
+<text x="48" y="502" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="246">Loss</text>
+<path d="M48 519 L294 519" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="545" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Junior first</text>
+<text x="48" y="581" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Absorb loss up to</text>
+<text x="48" y="611" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Junior principal.</text>
+<path d="M171 627 V647 m-6 -6 6 6 6 -6" stroke="#FF512F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="48" y="683" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Senior second</text>
+<text x="48" y="719" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Absorb only the</text>
+<text x="48" y="749" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">remaining loss.</text>
+<rect x="330" y="460" width="278" height="348" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="342" y="463" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="346" y="502" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">Revenue</text>
+<path d="M346 519 L592 519" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="545" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Restore Senior</text>
+<text x="346" y="581" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Fill impairment up to</text>
+<text x="346" y="611" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">its high-water mark.</text>
+<path d="M469 627 V647 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="346" y="683" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Junior receives the</text>
+<text x="346" y="713" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">rest</text>
+<text x="346" y="749" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Residual revenue</text>
+<text x="346" y="779" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">accrues to Junior.</text>
+<rect x="32" y="830" width="576" height="148" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="840" width="5" height="128" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="864" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">The Senior coupon is a separate</text>
+<text x="56" y="894" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Junior-to-Senior transfer, capped by</text>
+<text x="56" y="924" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">available Junior principal. Senior is last-loss,</text>
+<text x="56" y="954" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">not risk-free.</text>
 </svg>

@@ -30,13 +30,14 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.Config (NativeAaConfig (..))
 import Plether.Ethereum.Abi (encodeAddress, encodeUint256, keccak256)
+import qualified Plether.Perps.Manifest as Manifest
 import Numeric (showHex)
 
 entryPointAddress :: Text
 entryPointAddress = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
 
 chainId :: Integer
-chainId = 421614
+chainId = Manifest.releaseChainId
 
 data PackedUserOperation = PackedUserOperation
   { puoObject :: KM.KeyMap Value

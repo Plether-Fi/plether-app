@@ -4,7 +4,7 @@ resource "aws_ecs_cluster" "main" {
 
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = "/ecs/plether-${local.deployment_name}"
-  retention_in_days = 14
+  retention_in_days = var.environment == "mainnet" ? 30 : 14
 }
 
 locals {
@@ -151,17 +151,17 @@ locals {
 
   # Declassifying key presence exposes no secret material and lets defaults-off
   # task definitions omit the signer env entirely, as required by Config.
-  lp_settlement_private_key_secret = nonsensitive(var.lp_settlement_private_key != "") ? [
+  lp_settlement_private_key_secret = local.lp_settlement_private_key_parameter_arn != null ? [
     {
       name      = "LP_SETTLEMENT_PRIVATE_KEY"
-      valueFrom = aws_ssm_parameter.lp_settlement_private_key[0].arn
+      valueFrom = local.lp_settlement_private_key_parameter_arn
     }
   ] : []
 
   aa_gateway_origin_secret = local.aa_gateway_enabled ? [
     {
       name      = "AA_PROXY_ORIGIN_TOKEN"
-      valueFrom = aws_ssm_parameter.aa_proxy_origin_token[0].arn
+      valueFrom = local.aa_proxy_origin_token_parameter_arn
     }
   ] : []
 
@@ -354,11 +354,11 @@ locals {
       tls                              = "on"
       "tls.verify"                     = "on"
       "tls.verify_hostname"            = "on"
-      Retry_Limit                      = "no_limits"
+      Retry_Limit                      = "5"
     }
     secretOptions = [{
       name      = "Header"
-      valueFrom = aws_ssm_parameter.posthog_otlp_authorization_header.arn
+      valueFrom = local.posthog_otlp_authorization_header_parameter_arn
     }]
   }
 
@@ -429,9 +429,36 @@ resource "aws_ecs_task_definition" "api" {
   }
 
   container_definitions = jsonencode([{
-    name      = "plether-api"
-    image     = local.aa_api_runtime_image
-    essential = true
+    name                   = "plether-api"
+    image                  = local.aa_api_runtime_image
+    essential              = true
+    readonlyRootFilesystem = true
+    user                   = "10001:10001"
+    stopTimeout            = 60
+
+    linuxParameters = {
+      initProcessEnabled = true
+      capabilities = {
+        add  = []
+        drop = ["ALL"]
+      }
+    }
+
+    dependsOn = [{
+      containerName = "otel-log-router"
+      condition     = "START"
+    }]
+
+    healthCheck = {
+      command = [
+        "CMD-SHELL",
+        "node -e \"fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+      ]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 60
+    }
 
     portMappings = [{
       containerPort = 3001
@@ -456,7 +483,7 @@ resource "aws_ecs_task_definition" "api" {
       },
       {
         name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
+        valueFrom = local.database_url_parameter_arn
       }
     ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.insights_registration_secrets, local.divisions_registration_secrets)
 
@@ -516,8 +543,13 @@ resource "aws_ecs_task_definition" "api" {
 
     precondition {
       condition = !local.aa_gateway_enabled || (
-        can(regex("^[0-9a-f]{64}$", var.aa_proxy_origin_token))
-        && !contains(local.aa_proxy_origin_token_rejected_values, var.aa_proxy_origin_token)
+        (
+          local.aa_proxy_origin_token_external
+          || (
+            can(regex("^[0-9a-f]{64}$", var.aa_proxy_origin_token))
+            && !contains(local.aa_proxy_origin_token_rejected_values, var.aa_proxy_origin_token)
+          )
+        )
         && (
           trimspace(var.alb_certificate_arn) != ""
           && trimspace(var.api_hostname) != ""
@@ -640,6 +672,11 @@ resource "aws_ecs_service" "api" {
   platform_version                  = local.self_hosted_aa_resource_count == 1 ? "1.4.0" : "LATEST"
   health_check_grace_period_seconds = 300
 
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   network_configuration {
     subnets = aws_subnet.public[*].id
     security_groups = concat(
@@ -696,7 +733,7 @@ resource "aws_ecs_task_definition" "keeper" {
     secrets = concat([
       {
         name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
+        valueFrom = local.database_url_parameter_arn
       },
       {
         name      = "PERPS_RPC_URL"
@@ -704,7 +741,7 @@ resource "aws_ecs_task_definition" "keeper" {
       },
       {
         name      = "KEEPER_PRIVATE_KEY"
-        valueFrom = aws_ssm_parameter.keeper_private_key.arn
+        valueFrom = local.keeper_private_key_parameter_arn
       }
     ], local.perps_rpc_auth_token_secret, local.lp_settlement_private_key_secret)
 
@@ -720,6 +757,11 @@ resource "aws_ecs_service" "keeper" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -738,7 +780,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
   memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  execution_role_arn       = aws_iam_role.liquidation_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
   enable_fault_injection   = false
   tags                     = {}
@@ -764,7 +806,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
     secrets = concat([
       {
         name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
+        valueFrom = local.database_url_parameter_arn
       },
       {
         name      = "PERPS_RPC_URL"
@@ -772,7 +814,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       },
       {
         name      = "LIQUIDATION_KEEPER_PRIVATE_KEY"
-        valueFrom = aws_ssm_parameter.liquidation_keeper_private_key.arn
+        valueFrom = local.liquidation_keeper_private_key_parameter_arn
       }
     ], local.perps_rpc_auth_token_secret)
 
@@ -810,6 +852,11 @@ resource "aws_ecs_service" "liquidation_worker" {
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
 
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
@@ -827,7 +874,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
   memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  execution_role_arn       = aws_iam_role.worker_readonly_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
   enable_fault_injection   = false
   tags                     = {}
@@ -863,7 +910,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
       },
       {
         name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
+        valueFrom = local.database_url_parameter_arn
       }
     ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret)
 
@@ -891,6 +938,11 @@ resource "aws_ecs_service" "basket_worker" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -943,7 +995,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       },
       {
         name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
+        valueFrom = local.database_url_parameter_arn
       }
     ], local.perps_rpc_auth_token_secret)
 
@@ -986,6 +1038,11 @@ resource "aws_ecs_service" "perps_indexer" {
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
 
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
@@ -1005,7 +1062,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
   memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  execution_role_arn       = aws_iam_role.worker_readonly_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
   enable_fault_injection   = false
   tags                     = {}
@@ -1035,7 +1092,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
         },
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         }
       ], local.perps_rpc_auth_token_secret)
 
@@ -1072,6 +1129,11 @@ resource "aws_ecs_service" "insights_worker" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -1124,7 +1186,7 @@ resource "aws_ecs_task_definition" "workers" {
       secrets = concat([
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         },
         {
           name      = "PERPS_RPC_URL"
@@ -1132,7 +1194,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "KEEPER_PRIVATE_KEY"
-          valueFrom = aws_ssm_parameter.keeper_private_key.arn
+          valueFrom = local.keeper_private_key_parameter_arn
         }
       ], local.perps_rpc_auth_token_secret, local.lp_settlement_private_key_secret)
 
@@ -1161,7 +1223,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         }
       ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret)
 
@@ -1186,12 +1248,16 @@ resource "aws_ecs_task_definition" "workers" {
 
       secrets = concat([
         {
+          name      = "PERPS_RPC_URL"
+          valueFrom = local.application_rpc_url_parameter_arn
+        },
+        {
           name      = "ARBITRUM_SEPOLIA_RPC_URL"
           valueFrom = local.application_rpc_url_parameter_arn
         },
         {
           name      = "PERPS_ORACLE_UPDATER_PRIVATE_KEY"
-          valueFrom = aws_ssm_parameter.oracle_updater_private_key.arn
+          valueFrom = local.oracle_updater_private_key_parameter_arn
         }
       ], local.perps_rpc_auth_token_secret)
 
@@ -1200,6 +1266,10 @@ resource "aws_ecs_task_definition" "workers" {
           name  = "PERPS_ORACLE_UPDATER_BACKEND_URL"
           value = var.api_hostname != "" ? "https://${var.api_hostname}" : "http://${aws_lb.api.dns_name}"
         },
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_RELEASE_MANIFEST", value = local.runtime_perps_release_manifest_path },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
         { name = "PERPS_ORACLE_UPDATER_HEALTH_POLL_SECONDS", value = var.perps_oracle_updater_health_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
@@ -1224,7 +1294,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         }
       ], local.perps_rpc_auth_token_secret)
 
@@ -1259,7 +1329,8 @@ resource "aws_ecs_task_definition" "workers" {
     {
       name             = "plether-insights-worker"
       image            = local.api_image
-      essential        = true
+      essential        = false
+      restartPolicy    = { enabled = true, restartAttemptPeriod = 60 }
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
 
@@ -1275,7 +1346,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         }
       ], local.perps_rpc_auth_token_secret)
 
@@ -1321,6 +1392,11 @@ resource "aws_ecs_service" "workers" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 

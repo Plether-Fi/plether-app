@@ -209,13 +209,13 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     }
 
     precondition {
-      condition     = var.lp_settlement_mode == "off" || var.environment == "sepolia"
-      error_message = "LP settlement observe/execute modes are Sepolia-only until a reviewed production vault release is configured."
+      condition     = var.lp_settlement_mode == "off" || contains(["sepolia", "mainnet"], var.environment)
+      error_message = "LP settlement observe/execute modes require a supported sepolia or mainnet deployment."
     }
 
     precondition {
       condition = var.lp_settlement_mode == "off" || (
-        var.perps_chain_id == "421614"
+        var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
         && alltrue([
           for address in [
             var.perps_house_pool,
@@ -241,7 +241,7 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
           lower(var.perps_plether_oracle),
         ])) == 7
       )
-      error_message = "Active LP settlement requires the Arbitrum Sepolia chain, pairwise-distinct execution contracts, and operational HousePool/Senior/Junior addresses matching the vault-history release."
+      error_message = "Active LP settlement requires the matching Arbitrum chain, pairwise-distinct execution contracts, and operational HousePool/Senior/Junior addresses matching the vault-history release."
     }
 
     precondition {
@@ -253,8 +253,8 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     }
 
     precondition {
-      condition     = var.lp_settlement_mode == "off" || trimspace(var.lp_settlement_private_key) != ""
-      error_message = "LP settlement observe/execute modes require a dedicated lp_settlement_private_key."
+      condition     = var.lp_settlement_mode == "off" || local.lp_settlement_private_key_configured
+      error_message = "LP settlement observe/execute modes require a dedicated lp_settlement_private_key (or lp_settlement_private_key_ssm_parameter_name)."
     }
 
     precondition {
@@ -325,17 +325,17 @@ resource "terraform_data" "self_hosted_aa_guard" {
     precondition {
       condition = !local.alto_rpc_auth_enabled ? var.alto_rpc_auth_image == "" : (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
-        && var.perps_chain_id == "421614"
+        && contains(["sepolia", "mainnet"], var.environment)
+        && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
         && var.aws_region == "ap-southeast-1"
-        && var.expected_aws_account_id == "932542905614"
-        && data.aws_caller_identity.current.account_id == "932542905614"
-        && var.alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
-        && var.alto_rpc_auth_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
+        && data.aws_caller_identity.current.account_id == var.expected_aws_account_id
+        && var.alto_rpc_url_ssm_parameter_name == "/plether/${local.deployment_name}/app-rpc-url"
+        && var.alto_rpc_auth_token_ssm_parameter_name == "/plether/${local.deployment_name}/rpc-gateway-token"
         && var.alto_send_transaction_rpc_url_ssm_parameter_name == ""
         && var.alto_rpc_auth_image != ""
+        && startswith(var.alto_rpc_auth_image, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/plether-alto-${local.deployment_name}@sha256:")
       )
-      error_message = "Authenticated Alto RPC requires the reviewed immutable preload image, exact Singapore Arbitrum Sepolia gateway URL/token parameters and no separate send RPC; omit its image when authentication is disabled."
+      error_message = "Authenticated Alto RPC requires the reviewed immutable preload image in the current account/environment, exact Singapore gateway URL/token parameters and no separate send RPC; omit its image when authentication is disabled."
     }
 
     precondition {
@@ -363,36 +363,36 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
     precondition {
       condition = !var.provision_self_hosted_aa || (
-        var.environment == "sepolia"
-        && var.perps_chain_id == "421614"
+        contains(["sepolia", "mainnet"], var.environment)
+        && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
       )
-      error_message = "The self-hosted AA stack is provisioned only for Arbitrum Sepolia (environment=sepolia, perps_chain_id=421614)."
+      error_message = "The self-hosted AA stack requires environment=sepolia with perps_chain_id=421614, or environment=mainnet with perps_chain_id=42161."
     }
 
     precondition {
       condition = var.alto_desired_count == 0 || (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
+        && contains(["sepolia", "mainnet"], var.environment)
       )
-      error_message = "alto_desired_count can be nonzero only for the provisioned Sepolia self-hosted AA stack."
+      error_message = "alto_desired_count can be nonzero only for a provisioned self-hosted AA stack."
     }
 
     precondition {
       condition = var.aa_reconciler_desired_count == 0 || (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
+        && contains(["sepolia", "mainnet"], var.environment)
       )
-      error_message = "aa_reconciler_desired_count can be nonzero only for the provisioned Sepolia self-hosted AA stack."
+      error_message = "aa_reconciler_desired_count can be nonzero only for a provisioned self-hosted AA stack."
     }
 
     precondition {
       condition = !var.configure_native_aa_backend || (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
+        && contains(["sepolia", "mainnet"], var.environment)
         && var.alto_desired_count == 1
         && var.aa_reconciler_desired_count == 1
       )
-      error_message = "configure_native_aa_backend=true requires the Sepolia self-hosted stack with both Alto and the AA reconciler running at desired_count=1."
+      error_message = "configure_native_aa_backend=true requires the provisioned self-hosted stack with both Alto and the AA reconciler running at desired_count=1."
     }
 
     precondition {
@@ -416,8 +416,8 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition     = !var.aa_native_global_rollout_enabled || (var.environment == "sepolia" && var.perps_chain_id == "421614" && var.aws_region == "ap-southeast-1" && var.expected_aws_account_id == "932542905614" && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
-      error_message = "Public native AA requires the approved Singapore Arbitrum Sepolia configuration and complete six-role funding monitoring."
+      condition     = !var.aa_native_global_rollout_enabled || (contains(["sepolia", "mainnet"], var.environment) && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614") && var.aws_region == "ap-southeast-1" && data.aws_caller_identity.current.account_id == var.expected_aws_account_id && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
+      error_message = "Public native AA requires the approved Singapore configuration matching the environment chain ID and complete six-role funding monitoring."
     }
 
     precondition {
@@ -724,14 +724,14 @@ resource "terraform_data" "close_assistance_guard" {
   lifecycle {
     precondition {
       condition = !var.perps_close_assistance_enabled || (
-        var.environment == "sepolia" && var.perps_chain_id == "421614"
+        contains(["sepolia", "mainnet"], var.environment) && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
         && var.configure_native_aa_backend && var.enable_native_aa_sponsorship && var.enable_native_aa_submission
         && var.aa_rpc_mode == "dual-independent"
         && can(regex("^0x[0-9a-fA-F]{40}$", var.perps_close_assistance_lens))
         && lower(var.perps_close_assistance_lens) != "0x0000000000000000000000000000000000000000"
         && can(regex("^0x[0-9a-fA-F]{64}$", var.perps_close_assistance_lens_code_hash))
       )
-      error_message = "Close assistance requires the pinned Sepolia deployment, independent verification RPCs, enabled native submission and sponsorship, and reviewed lens bindings."
+      error_message = "Close assistance requires a canonical sepolia/mainnet deployment, independent verification RPCs, enabled native submission and sponsorship, and reviewed lens bindings."
     }
   }
 }

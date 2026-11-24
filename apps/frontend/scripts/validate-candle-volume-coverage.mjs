@@ -118,11 +118,20 @@ async function fetchInterval({
   intervalSeconds,
   manifest,
   maxAttempts,
+  originSecret,
   retryDelayMs,
   timeoutMs,
 }) {
   const endpoint = new URL('/api/perps/basket/candles/current', backendUrl)
   endpoint.searchParams.set('interval', intervalSeconds.toString())
+
+  const headers = {
+    'Cache-Control': 'no-cache, no-store, max-age=0',
+    Pragma: 'no-cache',
+  }
+  if (typeof originSecret === 'string' && originSecret.trim() !== '') {
+    headers['X-Plether-Origin-Secret'] = originSecret.trim()
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController()
@@ -130,10 +139,7 @@ async function fetchInterval({
     try {
       const response = await fetchImpl(endpoint, {
         cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, max-age=0',
-          Pragma: 'no-cache',
-        },
+        headers,
         signal: controller.signal,
       })
       if (!response.ok) {
@@ -158,12 +164,15 @@ async function fetchInterval({
   throw new Error(`interval ${intervalSeconds}: request attempts were exhausted`)
 }
 
+export const SUPPORTED_CHAIN_IDS = Object.freeze([421_614, 42_161])
+
 export async function validateDeploymentCoverage({
   backendUrl,
   manifest,
   fetchImpl = globalThis.fetch,
   intervals = CANDLE_INTERVALS,
   maxAttempts = 3,
+  originSecret = process.env.ALB_ORIGIN_SECRET ?? '',
   retryDelayMs = 500,
   timeoutMs = 10_000,
 }) {
@@ -176,11 +185,11 @@ export async function validateDeploymentCoverage({
   }
   if (
     !manifest ||
-    manifest.chainId !== 421_614 ||
+    !SUPPORTED_CHAIN_IDS.includes(manifest.chainId) ||
     typeof manifest.orderRouter !== 'string' ||
     !/^0x[0-9a-fA-F]{40}$/.test(manifest.orderRouter)
   ) {
-    throw new Error('The checked-in Sepolia manifest has an invalid chain or order router')
+    throw new Error('The checked-in manifest has an invalid chain or order router')
   }
   if (typeof fetchImpl !== 'function') throw new Error('A fetch implementation is required')
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
@@ -193,6 +202,7 @@ export async function validateDeploymentCoverage({
     intervalSeconds,
     manifest,
     maxAttempts,
+    originSecret,
     retryDelayMs,
     timeoutMs,
   })))

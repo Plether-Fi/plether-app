@@ -3,11 +3,17 @@ import json
 import sys
 from pathlib import Path
 
+EXPECTED_CHAIN_BY_FAMILY = {
+    "plether-sepolia": 421614,
+    "plether-mainnet": 42161,
+}
+
 def configure(task, release, mode):
     if mode != "disabled":
-        raise ValueError("Close assistance issuance is unavailable for the canonical MockUSDG release")
-    if task.get("family") != "plether-sepolia" or release.get("schemaVersion") != 4 or release.get("network", {}).get("chainId") != 421614:
-        raise ValueError("Expected the canonical Arbitrum Sepolia release")
+        raise ValueError("Close assistance issuance is unavailable for the canonical release")
+    expected_chain_id = EXPECTED_CHAIN_BY_FAMILY.get(task.get("family"))
+    if expected_chain_id is None or release.get("schemaVersion") != 4 or release.get("network", {}).get("chainId") != expected_chain_id:
+        raise ValueError("Expected a canonical Arbitrum Sepolia or Arbitrum One release matching the task family")
     apis = [c for c in task["containerDefinitions"] if c["name"] == "plether-api"]
     if len(apis) != 1:
         raise ValueError("Expected exactly one API container")

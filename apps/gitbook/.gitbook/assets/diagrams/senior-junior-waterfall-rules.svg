@@ -1,31 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="830" viewBox="0 0 640 830" role="img" aria-labelledby="senior-junior-waterfall-rules-title senior-junior-waterfall-rules-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="929" viewBox="0 0 640 929" role="img" aria-labelledby="senior-junior-waterfall-rules-title senior-junior-waterfall-rules-desc" focusable="false">
 <title id="senior-junior-waterfall-rules-title">Three rules for LP returns</title>
 <desc id="senior-junior-waterfall-rules-desc">Losses go through Junior before Senior; revenue restores Senior impairment before reaching Junior; the coupon transfers available Junior principal to Senior. A target coupon is not guaranteed yield. Both tranches can lose value.</desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="830" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / SENIOR &amp; JUNIOR</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Three rules for LP returns</text>
-<path d="M32 143 L608 143" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 143 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<text x="32" y="203" font-size="24" font-weight="700" fill="#250917" data-max-width="576">01 · Loss absorption</text>
-<circle cx="47" cy="246" r="14" fill="#FF512F"/>
-<circle cx="47" cy="246" r="5" fill="#250917"/>
-<text x="80" y="255" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Junior → Senior</text>
-<text x="80" y="292" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Junior takes the first loss. Senior absorbs</text>
-<text x="80" y="324" font-size="24" font-weight="400" fill="#250917" data-max-width="528">the remainder.</text>
-<text x="32" y="380" font-size="24" font-weight="700" fill="#250917" data-max-width="576">02 · New revenue</text>
-<circle cx="47" cy="423" r="14" fill="#00FF99"/>
-<circle cx="47" cy="423" r="5" fill="#250917"/>
-<text x="80" y="432" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Restore Senior → Junior</text>
-<text x="80" y="469" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Restore Senior to its high-water mark, then</text>
-<text x="80" y="501" font-size="24" font-weight="400" fill="#250917" data-max-width="528">credit residual revenue to Junior.</text>
-<text x="32" y="557" font-size="24" font-weight="700" fill="#250917" data-max-width="576">03 · Target coupon</text>
-<circle cx="47" cy="600" r="14" fill="#FF512F"/>
-<circle cx="47" cy="600" r="5" fill="#250917"/>
-<text x="80" y="609" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Junior funds Senior</text>
-<text x="80" y="646" font-size="24" font-weight="400" fill="#250917" data-max-width="528">The transfer is capped by available Junior</text>
-<text x="80" y="678" font-size="24" font-weight="400" fill="#250917" data-max-width="528">principal.</text>
-<rect x="32" y="702" width="576" height="96" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="740" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">A target coupon is not guaranteed yield.</text>
-<text x="50" y="772" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Both tranches can lose value.</text>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="929" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · SENIOR &amp; JUNIOR</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Three rules for LP returns</text>
+<path d="M32 136 L608 136" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 136 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<rect x="32" y="162" width="278" height="276" rx="12" fill="#3B212D" stroke="#FF512F" stroke-width="1.5"/>
+<rect x="44" y="165" width="254" height="5" rx="3" fill="#FF512F" stroke="none"/>
+<text x="50" y="204" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="242">Loss order</text>
+<rect x="50" y="222" width="242" height="72" rx="8" fill="#FF512F" stroke="none"/>
+<text x="171" y="266" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">1. Junior first</text>
+<path d="M171 298 V326 m-6 -6 6 6 6 -6" stroke="#FFAB96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="50" y="334" width="242" height="82" rx="8" fill="#FFAB96" stroke="none"/>
+<text x="171" y="382" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">2. Senior excess</text>
+<rect x="330" y="162" width="278" height="276" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="342" y="165" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="348" y="204" font-size="24" font-weight="700" fill="#00FF99" data-max-width="242">Recovery order</text>
+<rect x="348" y="222" width="242" height="72" rx="8" fill="#00FF99" stroke="none"/>
+<text x="469" y="266" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">1. Restore Senior</text>
+<path d="M348 314 L526 314" stroke="#F7D977" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+<text x="590" y="321" font-size="22" font-weight="700" fill="#F7D977" data-max-width="62" text-anchor="end">HWM</text>
+<path d="M386 298 V326 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="348" y="334" width="242" height="82" rx="8" fill="#F7E4B2" stroke="none"/>
+<text x="469" y="382" font-size="22" font-weight="700" fill="#250917" data-max-width="230" text-anchor="middle">2. Residual → Jr</text>
+<circle cx="47" cy="475" r="13" fill="#3B212D" stroke="#FF512F" stroke-width="2.5"/>
+<circle cx="47" cy="475" r="5" fill="#FF512F"/>
+<text x="78" y="484" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">01 · Loss absorption</text>
+<text x="78" y="517" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Junior absorbs losses first; Senior takes only</text>
+<text x="78" y="547" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">excess beyond Junior.</text>
+<path d="M47 494 V571 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="594" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
+<circle cx="47" cy="594" r="5" fill="#00FF99"/>
+<text x="78" y="603" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">02 · New revenue</text>
+<text x="78" y="636" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Restores impaired Senior to its high-water</text>
+<text x="78" y="666" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">mark before residual flows to Junior.</text>
+<path d="M47 613 V690 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="713" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="713" r="5" fill="#FFAB96"/>
+<text x="78" y="722" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">03 · Target coupon</text>
+<text x="78" y="755" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Junior transfers target return to Senior,</text>
+<text x="78" y="785" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">capped by available Junior principal.</text>
+<rect x="32" y="809" width="576" height="88" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="819" width="5" height="68" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="843" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">A target coupon is not guaranteed yield. Both</text>
+<text x="56" y="873" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">tranches can lose value.</text>
 </svg>

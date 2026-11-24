@@ -1,10 +1,10 @@
 {
-  "diagramCount": 30,
+  "diagramCount": 33,
   "generator": "scripts/generate-diagrams.mjs",
   "reviewedRelease": {
-    "version": "v1.2.2",
+    "version": "v2.0.0",
     "sourceRepository": "Plether-Fi/plether-core",
-    "sourceCommit": "d704122c779d4d681d0fa2be517707b7f7df3902"
+    "sourceCommit": "1209ca8a5b94a4fb6323c7c4585846ed93db3932"
   },
   "design": {
     "width": 640,
@@ -14,7 +14,7 @@
       360,
       320
     ],
-    "paletteSource": "https://plether.com/media-kit",
+    "paletteSource": "https://plether.com/media-kit + apps/frontend/src/index.css",
     "positiveColorSource": "apps/frontend/src/index.css: --color-positive",
     "palette": {
       "orange": "#FF512F",
@@ -22,12 +22,52 @@
       "yellow": "#F7D977",
       "paleYellow": "#F7E4B2",
       "plum": "#250917",
+      "panel": "#3B212D",
       "gray": "#9A8890",
+      "mutedInk": "#D8CBD0",
       "cream": "#FFF5F9",
       "green": "#00FF99"
     }
   },
   "diagrams": [
+    {
+      "title": "How Plether Perps fits together",
+      "source": "README.md",
+      "asset": ".gitbook/assets/diagrams/plether-system-overview.svg",
+      "alt": "Pyth FX feeds set the bounded plDXY price. Traders commit LONG USD or SHORT USD orders via gas-sponsored Trading Accounts, while Senior and Junior LP vaults underwrite bounded payouts.",
+      "evidence": [
+        "config/perps/arbitrum-sepolia-v2.0.0.json",
+        "apps/backend/src/Plether/Pyth/Basket.hs:71-164",
+        "apps/frontend/src/utils/perps.ts:13,110-113",
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
+        "packages/perps/src/libraries/HousePoolWaterfallAccountingLib.sol:absorbLoss,distributeRevenue,paySeniorCoupon"
+      ]
+    },
+    {
+      "title": "Inverse basket, bounded 0.00 to 2.00",
+      "source": "welcome/how-plether-works-in-5-minutes.md",
+      "asset": ".gitbook/assets/diagrams/dollar-index-bounded-payoff.svg",
+      "alt": "The raw foreign-currency basket moves opposite to USD strength. The interface displays 2.00 minus the raw basket so LONG USD rises with the dollar and payouts stay bounded.",
+      "evidence": [
+        "config/perps/arbitrum-sepolia-v2.0.0.json",
+        "apps/backend/src/Plether/Pyth/Basket.hs:71-164",
+        "apps/frontend/src/utils/perps.ts:13,110-113",
+        "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState"
+      ]
+    },
+    {
+      "title": "Hourly epochs and 4-phase settlement",
+      "source": "liquidity-provider-quickstart.md",
+      "asset": ".gitbook/assets/diagrams/lp-hourly-epoch-timeline.svg",
+      "alt": "Owner-wallet LP requests queue before the five-minute hourly cutoff, settle in strict four-phase order (Senior withdraw, Junior withdraw, Junior deposit, Senior deposit), and age a one-hour cooldown.",
+      "evidence": [
+        "docs/runbooks/lp-settlement-keeper.md:6-10",
+        "apps/frontend/src/pages/Vaults.tsx:2678-2705,3620,4245-4289",
+        "packages/perps/src/libraries/HousePoolWaterfallAccountingLib.sol:absorbLoss,distributeRevenue,paySeniorCoupon"
+      ]
+    },
     {
       "title": "From review to execution",
       "source": "how-plether-works/how-orders-execute.md",
@@ -45,7 +85,7 @@
       "asset": ".gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -69,12 +109,12 @@
       "evidence": [
         "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/CfdEngine.sol#L612-L625",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/PositionProtectionBook.sol#L207-L212",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/CfdEngine.sol#L612-L625",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/PositionProtectionBook.sol#L207-L212",
         "apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty"
       ]
     },
@@ -87,10 +127,10 @@
         "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
         "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState",
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133"
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133"
       ]
     },
     {
@@ -110,10 +150,10 @@
       "evidence": [
         "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc",
         "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133"
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133"
       ]
     },
     {
@@ -134,12 +174,12 @@
       "evidence": [
         "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/CfdEngine.sol#L612-L625",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/PositionProtectionBook.sol#L207-L212",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/CfdEngine.sol#L612-L625",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/PositionProtectionBook.sol#L207-L212",
         "apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty"
       ]
     },
@@ -159,10 +199,10 @@
       "alt": "Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price.",
       "evidence": [
         "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133"
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133"
       ]
     },
     {
@@ -173,12 +213,12 @@
       "evidence": [
         "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/CfdEngine.sol#L612-L625",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/PositionProtectionBook.sol#L207-L212",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/CfdEngine.sol#L612-L625",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/PositionProtectionBook.sol#L207-L212",
         "apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty"
       ]
     },
@@ -189,8 +229,8 @@
       "alt": "For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.",
       "evidence": [
         "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638"
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638"
       ]
     },
     {
@@ -208,7 +248,7 @@
       "asset": ".gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -220,7 +260,7 @@
       "alt": "An unfunded residual price payout becomes a claim. Claim settlement is all-or-nothing once aggregate cash coverage returns, and the credit bucket depends on whether a position remains open.",
       "evidence": [
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -229,7 +269,7 @@
       "title": "Where settled claim funds go",
       "source": "trading-on-plether-perps/check-and-settle-a-trader-claim.md",
       "asset": ".gitbook/assets/diagrams/claim-settlement-funding-path.svg",
-      "alt": "Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free USDG otherwise.",
+      "alt": "Covered liquidity pool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free USDG otherwise.",
       "evidence": [
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts"
       ]
@@ -240,25 +280,25 @@
       "asset": ".gitbook/assets/diagrams/wallet-trading-account-ownership.svg",
       "alt": "The owner wallet signs for the distinct Trading Account. Protocol positions, orders, protection, margin and claims are keyed to that Trading Account.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx",
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts"
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/actions.ts"
       ]
     },
     {
       "title": "Sponsorship before the signature",
       "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
       "asset": ".gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg",
-      "alt": "Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result.",
+      "alt": "Prepare the action, request native paymaster data and gas estimates before the owner signs. Then submit the signed operation and verify the result.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/CfdEngine.sol#L612-L625",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/PositionProtectionBook.sol#L207-L212",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/CfdEngine.sol#L612-L625",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/PositionProtectionBook.sol#L207-L212",
         "apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty"
       ]
     },
@@ -270,8 +310,8 @@
       "evidence": [
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/actions.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -285,7 +325,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -296,7 +336,7 @@
       "asset": ".gitbook/assets/diagrams/open-increase-sponsored-submission.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -310,9 +350,9 @@
         "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState",
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638"
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/actions.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638"
       ]
     },
     {
@@ -324,7 +364,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -335,7 +375,7 @@
       "asset": ".gitbook/assets/diagrams/reduce-close-sponsored-submission.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -349,7 +389,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -360,7 +400,7 @@
       "asset": ".gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -369,12 +409,12 @@
       "title": "Two lifecycles, different failures",
       "source": "trading-on-plether-perps/why-is-my-order-pending-or-failed.md",
       "asset": ".gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg",
-      "alt": "Sponsored transaction success and order execution are different lifecycles. V2 transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.",
+      "alt": "Sponsored transaction success and order execution are different lifecycles. Transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.",
       "evidence": [
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -383,14 +423,14 @@
       "title": "USDG has distinct places to live",
       "source": "trading-on-plether-perps/your-margin-account.md",
       "asset": ".gitbook/assets/diagrams/usdg-account-flow.svg",
-      "alt": "Trading Account wallet USDG can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.",
+      "alt": "Testnet faucet USDG credits the Margin Account directly; existing wallet USDG deposits through the Trading Account. Free funds, PnL pledge and reserves have distinct permissions.",
       "evidence": [
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/actions.ts",
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638"
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
+        "https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638"
       ]
     },
     {
@@ -402,39 +442,10 @@
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
-        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/actions.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
-      ]
-    }
-  ],
-  "scopedSemanticReviews": [
-    {
-      "date": "2026-10-30",
-      "sourceRepository": "Plether-Fi/plether-core",
-      "sourceCommit": "e35cf0e0e9b880e07812e36321dee98bd299dcbd",
-      "scope": "Margin-first carry collection, price equity after carry, close action funding from safely released margin, and zero reduce/close execution rewards. This does not replace the original full-review pin.",
-      "diagramIds": [
-        "final-collection-priority",
-        "pnl-and-close-settlement-outcomes",
-        "frozen-close-collection-priority",
-        "claim-collateral-collection-order",
-        "trading-price-and-settlement-costs",
-        "protocol-close-collection-order",
-        "margin-reduces-future-carry",
-        "authorization-and-gas-sponsorship",
-        "account-health-reading-order",
-        "usdg-account-flow"
-      ],
-      "evidence": [
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/CfdEngine.sol#L612-L625",
-        "https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps/src/PositionProtectionBook.sol#L207-L212",
-        "apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty"
       ]
     }
   ]

@@ -902,8 +902,8 @@ loadConfig = do
                     maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 (aaSafeLagCeiling perpsChainId) nativeAaSafeLagStr
                     validateAaSafeLag perpsChainId globalRolloutEnabled canaryOwners maxSafeLag
                     unlessEither
-                      (perpsChainId == 421614)
-                      "Native AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
+                      (perpsChainId == Manifest.releaseChainId && perpsChainId `elem` [421614, 42161])
+                      "Native AA sponsorship requires PERPS_CHAIN_ID to match the embedded Arbitrum Sepolia (421614) or Arbitrum One (42161) release manifest"
                     unlessEither
                       ( validAaDeploymentAddresses
                           perpsSettlementToken
@@ -1400,10 +1400,11 @@ validateLpSettlementChainId mode rawChainId
   | otherwise =
       case parseNonNegativeInteger "PERPS_CHAIN_ID" rawChainId of
         Right 421_614 -> Right ()
+        Right 42_161 -> Right ()
         _ ->
           Left
             "LP_SETTLEMENT_MODE observe and execute are supported only on \
-            \PERPS_CHAIN_ID=421614"
+            \PERPS_CHAIN_ID=421614 or PERPS_CHAIN_ID=42161"
 
 parsePositiveDecimal :: String -> String -> Either String Integer
 parsePositiveDecimal name = parseDecimalBetween name 1 (2 ^ (128 :: Integer) - 1)

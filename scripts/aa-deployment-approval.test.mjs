@@ -271,19 +271,24 @@ test('Kernel Alto mirrors the pinned upstream ARM64 image and scans the exact EC
   }
 })
 
-test('active Kernel Pages requires ETH readiness on the requested direct deployment', () => {
+test('active Kernel Pages requires the direct deployment, ETH readiness and the pinned homepage sponsor', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-kernel-canary-frontend.yml', root), 'utf8')
-  const filter = source.match(/'(\s*\.jsonrpc == "2\.0" and \.id == 1[\s\S]*?)' "\$RUNNER_TEMP\/kernel-manifest\.json"/)?.[1]
-  assert.ok(filter, 'execute the exact active preview manifest check')
+  const filter = source.match(/KERNEL_ACTIVE_MANIFEST_FILTER: >-\n((?: {8}[^\n]+\n)+)/)?.[1]
+  assert.ok(filter, 'execute the shared pre- and post-publication manifest check')
   const {profile} = JSON.parse(readFileSync(new URL('apps/backend/test/fixtures/kernel-deployment.json', root), 'utf8'))
   const manifest = {version: 1, profile, readiness: {eth: true, sponsored: false}}
+  const sponsored = {...manifest, readiness: {eth: true, sponsored: true}}
+  const paymaster = '0x9ff288e30489c4e29b13d6ba960612b5d6db8d50'
   for (const [result, expected] of [
     [manifest, true],
+    [{...sponsored, paymaster}, true],
+    [sponsored, false],
+    [{...sponsored, paymaster: profile.factory}, false],
     [{...manifest, profile: {...profile, deployment: 'kernel-sepolia-canary-20261121'}}, false],
     [{...manifest, profile: {...profile, staker: profile.factory, stakerCodeHash: profile.factoryCodeHash}}, false],
     [{...manifest, readiness: {eth: false, sponsored: false}}, false],
   ]) {
-    const outcome = spawnSync('jq', ['-e', '--arg', 'deployment', profile.deployment, filter], {
+    const outcome = spawnSync('jq', ['-e', '--arg', 'deployment', profile.deployment, '--arg', 'phase', 'sepolia_homepage', filter], {
       input: JSON.stringify({jsonrpc: '2.0', id: 1, result}), encoding: 'utf8',
     })
     assert.ifError(outcome.error)
@@ -296,6 +301,7 @@ test('Alto image scans fail closed on critical findings and incomplete or mismat
   const section = source.split('scan_findings=$(aws ecr describe-image-scan-findings')[1]
   const filter = section?.match(/'([\s\S]*?)' <<< "\$scan_findings"/)?.[1]
   assert.ok(filter, 'execute the actual workflow scan policy')
+  assert.doesNotMatch(section, /Approved Sepolia image exception/, 'expired Sepolia CVE exception must not be re-introduced')
   assert.match(source, /aws ecr wait image-scan-complete/)
   const args = {
     account: '932542905614', repository: 'plether-alto-sepolia',
