@@ -334,6 +334,7 @@ jobs:
             ./ci-bin/plether-api-integration-test \
             --match "Perps candle rollup storage" \
             --match "Plether Insights PostgreSQL lifecycle" \
+            --match "Insights registration PostgreSQL completion" \
             > "$shard2_log" 2>&1 &
           pid2=$!
 
@@ -342,6 +343,7 @@ jobs:
             --skip "liquidation worker DB/RPC orchestration" \
             --skip "Perps candle rollup storage" \
             --skip "Plether Insights PostgreSQL lifecycle" \
+            --skip "Insights registration PostgreSQL completion" \
             > "$shard3_log" 2>&1 &
           pid3=$!
 
@@ -352,7 +354,7 @@ jobs:
 
           echo "=== Shard 1: liquidation worker DB/RPC orchestration ==="
           cat "$shard1_log"
-          echo "=== Shard 2: Perps candle rollup & Plether Insights lifecycle ==="
+          echo "=== Shard 2: Perps candle rollup & Insights PostgreSQL specs ==="
           cat "$shard2_log"
           echo "=== Shard 3: remaining critical path integration specs ==="
           cat "$shard3_log"
