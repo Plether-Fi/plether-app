@@ -186,7 +186,6 @@ type TradePreviewRequest =
       sizeDelta: bigint
       marginDelta: bigint
       oraclePrice: bigint
-      publishTime: bigint
     }
 
 interface OpenPreviewView {
@@ -332,6 +331,7 @@ interface PerpsTradeTicketProps {
 
 const MOCK_PREVIEW_PRICE = 0.9909
 const TRADE_PREVIEW_DEBOUNCE_MS = 300
+const PREVIEW_MARKET_REFRESH_INTERVAL_MS = 10_000
 const AVAILABLE_TO_TRADE_AMOUNT = '18 420'
 const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
@@ -2735,13 +2735,56 @@ export function PerpsTradeTicket({
       ? protectionConfiguration.triggerBountyAssets + protectionConfiguration.executionBountyAssets
       : undefined
     : 0n
+  // Keep polled oracle price and carry-adjusted balance steady between periodic
+  // refreshes so 2-second market/account polling does not abort in-flight
+  // quotes or continuously reset the preview while the user is idle.
+  const previewMarketResetKey = orderPreparationKey([
+    address,
+    chainId,
+    effectiveOrderDirection,
+    isReducingCurrentPosition,
+    isReduceOnly,
+    isMaxOpenIntent ? 'max' : isFullCloseIntent ? 'full-close' : enteredOrderSizeRaw,
+    activeLeverage,
+    maxProtectionRewardsAssets,
+    isReviewOpen,
+    oracleFrozen,
+  ])
+  const [settledPreviewMarket, setSettledPreviewMarket] = useState<{
+    oraclePrice?: bigint
+    availableToTrade?: bigint
+    resetKey: string
+    syncedAt: number
+  }>(() => ({
+    oraclePrice: oraclePriceRaw,
+    availableToTrade: availableToTradeRaw,
+    resetKey: previewMarketResetKey,
+    syncedAt: Date.now(),
+  }))
+  const resetKeyChanged = settledPreviewMarket.resetKey !== previewMarketResetKey
+  const availableToTradeChanged = settledPreviewMarket.availableToTrade !== availableToTradeRaw
+  const shouldSyncOraclePriceImmediately =
+    resetKeyChanged ||
+    (settledPreviewMarket.oraclePrice === undefined) !== (oraclePriceRaw === undefined)
+  const shouldSyncAvailableImmediately =
+    resetKeyChanged ||
+    (availableToTradeChanged && (
+      (settledPreviewMarket.availableToTrade === undefined) !== (availableToTradeRaw === undefined) ||
+      !currentPosition?.exists
+    ))
+  const quoteOraclePriceRaw = shouldSyncOraclePriceImmediately
+    ? oraclePriceRaw
+    : settledPreviewMarket.oraclePrice
+  const quoteAvailableToTradeRaw = shouldSyncAvailableImmediately
+    ? availableToTradeRaw
+    : settledPreviewMarket.availableToTrade
   const maxOpenQuote = usePerpsMaxOpenQuote({
     enabled: enableLiveTrading && isConnected && chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID &&
       !isReducingCurrentPosition && !isReduceOnly && !oracleFrozen,
     account: address,
     side: directionToPerpsSide(effectiveOrderDirection),
-    availableAssets: availableToTradeRaw,
-    oraclePrice: oraclePriceRaw,
+    availableAssets: quoteAvailableToTradeRaw,
+    oraclePrice: quoteOraclePriceRaw,
     publishTime: oraclePublishTime,
     protectionRewardsAssets: maxProtectionRewardsAssets,
     selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
@@ -2794,6 +2837,9 @@ export function PerpsTradeTicket({
   const calculationOraclePriceRaw = (isReviewOpen && reviewSnapshot ? reviewSnapshot.oraclePrice : oraclePriceRaw) ?? (
     enableLiveTrading ? undefined : BigInt(Math.round(MOCK_PREVIEW_PRICE * 100_000_000))
   )
+  const quoteCalculationOraclePriceRaw = (isReviewOpen && reviewSnapshot ? reviewSnapshot.oraclePrice : quoteOraclePriceRaw) ?? (
+    enableLiveTrading ? undefined : BigInt(Math.round(MOCK_PREVIEW_PRICE * 100_000_000))
+  )
   const orderDxyExposureAssets = orderSizeDelta > 0n
     ? sizeDeltaToNotionalAssets(
         orderSizeDelta,
@@ -2810,30 +2856,48 @@ export function PerpsTradeTicket({
   const contractNotionalAssets = orderSizeDelta > 0n
     ? sizeDeltaToNotionalAssets(orderSizeDelta, calculationOraclePriceRaw) ?? 0n
     : 0n
+  const quoteContractNotionalAssets = orderSizeDelta > 0n
+    ? sizeDeltaToNotionalAssets(orderSizeDelta, quoteCalculationOraclePriceRaw) ?? 0n
+    : 0n
   // Keeper rewards stay outside the engine margin. The canonical quote then
   // funds the position's reserves and selected leverage for every size.
   const estimatedKeeperBountyAssets = isReducingCurrentPosition ? 0n : estimateOpenBountyAssetsRaw(contractNotionalAssets)
+  const quoteEstimatedKeeperBountyAssets = isReducingCurrentPosition ? 0n : estimateOpenBountyAssetsRaw(quoteContractNotionalAssets)
   const openMarginInputs = useMemo(() => ({
     account: address,
     side: directionToPerpsSide(effectiveOrderDirection),
     sizeDelta: orderSizeDelta,
-    marginBudget: availableToTradeRaw !== undefined && maxProtectionRewardsAssets !== undefined
-      ? perpsMaxOpenMarginBudget(availableToTradeRaw, estimatedKeeperBountyAssets, maxProtectionRewardsAssets) : undefined,
-    oraclePrice: calculationOraclePriceRaw,
+    marginBudget: quoteAvailableToTradeRaw !== undefined && maxProtectionRewardsAssets !== undefined
+      ? perpsMaxOpenMarginBudget(quoteAvailableToTradeRaw, quoteEstimatedKeeperBountyAssets, maxProtectionRewardsAssets) : undefined,
+    oraclePrice: quoteCalculationOraclePriceRaw,
     selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
-  }), [address, effectiveOrderDirection, orderSizeDelta, availableToTradeRaw, maxProtectionRewardsAssets,
-    estimatedKeeperBountyAssets, calculationOraclePriceRaw, activeLeverage])
-  const debouncedOpenMarginInputs = useDebouncedValue(openMarginInputs, TRADE_PREVIEW_DEBOUNCE_MS)
+  }), [address, effectiveOrderDirection, orderSizeDelta, quoteAvailableToTradeRaw, maxProtectionRewardsAssets,
+    quoteEstimatedKeeperBountyAssets, quoteCalculationOraclePriceRaw, activeLeverage])
+  const openMarginEditKey = orderPreparationKey([
+    address,
+    effectiveOrderDirection,
+    orderSizeDelta,
+    maxProtectionRewardsAssets,
+    Math.round(activeLeverage * 10_000),
+  ])
+  const debouncedOpenMarginEditKey = useDebouncedValue(openMarginEditKey, TRADE_PREVIEW_DEBOUNCE_MS)
   const shouldQuoteOpenMargin = enableLiveTrading && isConnected && chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID &&
     !isReducingCurrentPosition && !isReviewOpen && orderSizeDelta > 0n && isOrderQuantityAligned &&
-    calculationOraclePriceRaw !== undefined && calculationOraclePriceRaw > 0n && (oraclePublishTime ?? 0) > 0
-  const isOpenMarginDebouncing = shouldQuoteOpenMargin && debouncedOpenMarginInputs !== openMarginInputs
+    quoteCalculationOraclePriceRaw !== undefined && quoteCalculationOraclePriceRaw > 0n && (oraclePublishTime ?? 0) > 0
+  const isOpenMarginDebouncing = shouldQuoteOpenMargin && debouncedOpenMarginEditKey !== openMarginEditKey
   const openMarginQuote = usePerpsOpenMargin({ ...openMarginInputs, enabled: shouldQuoteOpenMargin && !isOpenMarginDebouncing })
-  const isOpenMarginPending = shouldQuoteOpenMargin && (isOpenMarginDebouncing || openMarginQuote.isPending)
+  const effectiveOpenMarginPreview = shouldQuoteOpenMargin && !isOpenMarginDebouncing
+    ? (openMarginQuote.preview ?? openMarginQuote.displayPreview)
+    : undefined
+  const hasDirectOpenPreview = !isReducingCurrentPosition && effectiveOpenMarginPreview !== undefined
+  const isOpenMarginBlocking = shouldQuoteOpenMargin && (
+    isOpenMarginDebouncing ||
+    (openMarginQuote.isPending && effectiveOpenMarginPreview === undefined)
+  )
   const marginAssets = isReducingCurrentPosition ? 0n
     : isReviewOpen && reviewSnapshot ? reviewSnapshot.marginAssets
-      : openMarginQuote.preview?.marginDeltaAssets ?? (isMaxOpenIntent ? maxOpenQuote.marginDelta ?? 0n
-        : activeLeverage > 0 ? contractNotionalAssets / BigInt(activeLeverage) : 0n
+      : effectiveOpenMarginPreview?.marginDeltaAssets ?? (isMaxOpenIntent ? maxOpenQuote.marginDelta ?? 0n
+        : activeLeverage > 0 ? quoteContractNotionalAssets / BigInt(activeLeverage) : 0n
       )
   const defaultMaxLeverageMarginAssets = contractNotionalAssets > 0n
     ? contractNotionalAssets / BigInt(DEFAULT_MAX_LEVERAGE)
@@ -2896,14 +2960,13 @@ export function PerpsTradeTicket({
     isCorrectChain &&
     orderSizeDelta > 0n &&
     isOrderQuantityAligned &&
-    oraclePriceRaw !== undefined &&
-    oraclePriceRaw > 0n &&
+    quoteOraclePriceRaw !== undefined &&
+    quoteOraclePriceRaw > 0n &&
     (isReducingCurrentPosition || previewPublishTime > 0n)
   const previewRequestSide = isReducingCurrentPosition
     ? 0
     : directionToPerpsSide(effectiveOrderDirection)
   const previewRequestMargin = isReducingCurrentPosition ? 0n : marginAssets
-  const previewRequestPublishTime = isReducingCurrentPosition ? 0n : previewPublishTime
   const tradePreviewRequest = useMemo<TradePreviewRequest | undefined>(() => {
     if (!shouldReadTradePreview) return undefined
 
@@ -2912,7 +2975,7 @@ export function PerpsTradeTicket({
         kind: 'close',
         account: address ?? zeroAddress,
         sizeDelta: orderSizeDelta,
-        oraclePrice: oraclePriceRaw,
+        oraclePrice: quoteOraclePriceRaw,
       }
     }
 
@@ -2922,28 +2985,45 @@ export function PerpsTradeTicket({
       side: previewRequestSide,
       sizeDelta: orderSizeDelta,
       marginDelta: previewRequestMargin,
-      oraclePrice: oraclePriceRaw,
-      publishTime: previewRequestPublishTime,
+      oraclePrice: quoteOraclePriceRaw,
     }
   }, [
     address,
     isReducingCurrentPosition,
-    oraclePriceRaw,
     orderSizeDelta,
     previewRequestMargin,
-    previewRequestPublishTime,
     previewRequestSide,
+    quoteOraclePriceRaw,
     shouldReadTradePreview,
   ])
-  const debouncedTradePreviewRequest = useDebouncedValue(
-    tradePreviewRequest,
+  // Debounce user edits (size, leverage, direction, TP/SL) without re-debouncing
+  // background market/account polling updates.
+  const tradePreviewEditKey = tradePreviewRequest === undefined
+    ? undefined
+    : tradePreviewRequest.kind === 'close'
+      ? orderPreparationKey(['close', tradePreviewRequest.account, tradePreviewRequest.sizeDelta])
+      : orderPreparationKey([
+          'open',
+          tradePreviewRequest.account,
+          tradePreviewRequest.side,
+          tradePreviewRequest.sizeDelta,
+          Math.round(activeLeverage * 10_000),
+          maxProtectionRewardsAssets,
+        ])
+  const debouncedTradePreviewEditKey = useDebouncedValue(
+    tradePreviewEditKey,
     TRADE_PREVIEW_DEBOUNCE_MS
   )
   // Opening review is an explicit preflight boundary: read its exact current
   // inputs immediately, while free-form ticket edits remain debounced.
-  const isTradePreviewDebouncing = !isReviewOpen && tradePreviewRequest !== undefined &&
-    debouncedTradePreviewRequest !== tradePreviewRequest
-  const isTradePreviewQueryEnabled = tradePreviewRequest !== undefined && !isTradePreviewDebouncing && !isOpenMarginPending && !openMarginQuote.error
+  const isTradePreviewDebouncing = !isReviewOpen && tradePreviewEditKey !== undefined &&
+    debouncedTradePreviewEditKey !== tradePreviewEditKey
+  const isTradePreviewQueryEnabled =
+    tradePreviewRequest !== undefined &&
+    !hasDirectOpenPreview &&
+    !isTradePreviewDebouncing &&
+    !isOpenMarginBlocking &&
+    !openMarginQuote.error
   const {
     data: tradePreviewData,
     isLoading: isTradePreviewLoading,
@@ -2981,24 +3061,106 @@ export function PerpsTradeTicket({
     query: {
       enabled: isTradePreviewQueryEnabled,
       refetchInterval: 15_000,
+      meta: { tradePreviewDisplayKey: tradePreviewEditKey },
+      placeholderData: (previous, previousQuery) =>
+        isTradePreviewQueryEnabled &&
+        tradePreviewEditKey !== undefined &&
+        previousQuery?.meta?.tradePreviewDisplayKey === tradePreviewEditKey &&
+        previousQuery.state.status === 'success'
+          ? previous
+          : undefined,
     },
   })
   const activeTradePreviewData = isTradePreviewQueryEnabled ? tradePreviewData : undefined
   const openPreview = !isReducingCurrentPosition
-    ? parseOpenPreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0))
+    ? (hasDirectOpenPreview
+        ? parseOpenPreview(effectiveOpenMarginPreview)
+        : parseOpenPreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0)))
       ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
     ? parseClosePreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0))
       ?? (!enableLiveTrading ? closePreviewFixture : undefined)
     : undefined
-  const tradePreviewFailure = readFailure(activeTradePreviewData as readonly ContractResult[] | undefined, 0)
+  const tradePreviewFailure = hasDirectOpenPreview
+    ? undefined
+    : readFailure(activeTradePreviewData as readonly ContractResult[] | undefined, 0)
   const currentTradePreview = isReducingCurrentPosition ? closePreview : openPreview
-  const isTradePreviewPending = isOpenMarginPending || shouldReadTradePreview && (
-    isTradePreviewDebouncing ||
-    (isTradePreviewQueryEnabled && isTradePreviewLoading) ||
-    (isTradePreviewQueryEnabled && isTradePreviewFetching && currentTradePreview === undefined)
+  const isTradePreviewPending = isOpenMarginBlocking || (
+    shouldReadTradePreview && !hasDirectOpenPreview && (
+      isTradePreviewDebouncing ||
+      (isTradePreviewQueryEnabled && isTradePreviewLoading) ||
+      (isTradePreviewQueryEnabled && isTradePreviewFetching && currentTradePreview === undefined)
+    )
   )
+  const isAnyPreviewQuoteInFlight =
+    maxOpenQuote.isFetching ||
+    openMarginQuote.isFetching ||
+    (isTradePreviewQueryEnabled && isTradePreviewFetching)
+  const availableNeedsImmediateSync =
+    availableToTradeChanged && (
+      shouldSyncAvailableImmediately ||
+      marginShortfall > 0n ||
+      (currentTradePreview !== undefined && !currentTradePreview.valid) ||
+      (availableToTradeRaw !== undefined && availableToTradeRaw < openFundingRequirementAssets)
+    )
+  useEffect(() => {
+    const marketChanged =
+      settledPreviewMarket.oraclePrice !== oraclePriceRaw ||
+      availableToTradeChanged ||
+      resetKeyChanged
+    if (!marketChanged) return undefined
+
+    if (shouldSyncOraclePriceImmediately) {
+      const timeout = globalThis.setTimeout(() => {
+        setSettledPreviewMarket({
+          oraclePrice: oraclePriceRaw,
+          availableToTrade: availableToTradeRaw,
+          resetKey: previewMarketResetKey,
+          syncedAt: Date.now(),
+        })
+      }, 0)
+      return () => {
+        globalThis.clearTimeout(timeout)
+      }
+    }
+    if (availableNeedsImmediateSync) {
+      const timeout = globalThis.setTimeout(() => {
+        setSettledPreviewMarket((current) => ({
+          ...current,
+          availableToTrade: availableToTradeRaw,
+        }))
+      }, 0)
+      return () => {
+        globalThis.clearTimeout(timeout)
+      }
+    }
+    if (isAnyPreviewQuoteInFlight) return undefined
+
+    const remainingMs = Math.max(0, PREVIEW_MARKET_REFRESH_INTERVAL_MS - (Date.now() - settledPreviewMarket.syncedAt))
+    const timeout = globalThis.setTimeout(() => {
+      setSettledPreviewMarket({
+        oraclePrice: oraclePriceRaw,
+        availableToTrade: availableToTradeRaw,
+        resetKey: previewMarketResetKey,
+        syncedAt: Date.now(),
+      })
+    }, remainingMs)
+    return () => {
+      globalThis.clearTimeout(timeout)
+    }
+  }, [
+    availableNeedsImmediateSync,
+    availableToTradeChanged,
+    availableToTradeRaw,
+    isAnyPreviewQuoteInFlight,
+    oraclePriceRaw,
+    previewMarketResetKey,
+    resetKeyChanged,
+    settledPreviewMarket.oraclePrice,
+    settledPreviewMarket.syncedAt,
+    shouldSyncOraclePriceImmediately,
+  ])
   const minOpenDxyExposureAssets = minOpenNotionalAssets === undefined
     ? undefined
     : quantizedDxyExposureFromContractNotional(minOpenNotionalAssets, oraclePriceRaw, 'up') ?? minOpenNotionalAssets
@@ -3154,14 +3316,14 @@ export function PerpsTradeTicket({
         : `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
     }
     if (openMarginQuote.error) return 'Margin quote failed. Refresh market data and retry before reviewing this order.'
-    if (!isOpenMarginPending && openMarginQuote.preview) {
-      if (!openMarginQuote.preview.valid) return getPerpsOpenRevertMessage(openMarginQuote.preview.invalidReason)
-      const leverageBps = openPreviewLeverageBps(openMarginQuote.preview, openMarginQuote.preview.executionPrice)
+    if (!isOpenMarginBlocking && effectiveOpenMarginPreview) {
+      if (!effectiveOpenMarginPreview.valid) return getPerpsOpenRevertMessage(effectiveOpenMarginPreview.invalidReason)
+      const leverageBps = openPreviewLeverageBps(effectiveOpenMarginPreview, effectiveOpenMarginPreview.executionPrice)
       if (leverageBps === undefined || leverageBps > BigInt(Math.round(activeLeverage * 10_000))) {
         return 'Available margin cannot fund this order at the selected leverage. Reduce size or deposit more margin.'
       }
     }
-    if (marginShortfall > 0n && !isOpenMarginPending) return `Deposit ${formatPerpsAssets(marginShortfall)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more before committing this order.`
+    if (marginShortfall > 0n && !isOpenMarginBlocking) return `Deposit ${formatPerpsAssets(marginShortfall)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more before committing this order.`
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
       return 'Waiting for fresh oracle publish time before previewing this order.'
     }
