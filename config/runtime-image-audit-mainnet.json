@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "accountId": "<MAINNET_AWS_ACCOUNT_ID>",
+  "accountId": "366562432386",
   "region": "ap-southeast-1",
   "clusters": ["plether-mainnet"],
   "repositories": [

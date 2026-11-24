@@ -8,7 +8,7 @@ Because Single-AZ is an accepted cost trade-off, operators must run a **non-dest
 
 ## 1. Pre-Launch Non-Destructive Restore Drill
 
-1. Verify caller identity against the dedicated mainnet AWS account (`<MAINNET_AWS_ACCOUNT_ID>`):
+1. Verify caller identity against the dedicated mainnet AWS account (`366562432386`):
 
    ```bash
    aws --profile plether-mainnet sts get-caller-identity
