@@ -90,18 +90,40 @@ jobs:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          scan_digest=$(aws ecr batch-get-image \
+            --repository-name "$ECR_REPO" \
+            --image-ids "imageDigest=$IMAGE_DIGEST" \
+            --accepted-media-types \
+              application/vnd.oci.image.index.v1+json \
+              application/vnd.docker.distribution.manifest.list.v2+json \
+              application/vnd.oci.image.manifest.v1+json \
+              application/vnd.docker.distribution.manifest.v2+json \
+            --query 'images[0].imageManifest' \
+            --output text \
+            --no-cli-pager \
+            | jq -er --arg fallback "$IMAGE_DIGEST" '
+              if (.manifests | type) == "array" then
+                ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")]
+                 | if length == 1 then .[0].digest else error("Expected exactly one linux/arm64 child manifest") end)
+              else
+                $fallback
+              end
+            ')
+          echo "Waiting for ECR scan on ${ECR_REPO}@${scan_digest} (release ${IMAGE_DIGEST})..."
           aws ecr wait image-scan-complete \
             --repository-name "$ECR_REPO" \
-            --image-id "imageDigest=$IMAGE_DIGEST"
+            --image-id "imageDigest=$scan_digest" \
+            --no-cli-pager
           scan_json=$(aws ecr describe-image-scan-findings \
             --repository-name "$ECR_REPO" \
-            --image-id "imageDigest=$IMAGE_DIGEST" \
-            --output json)
+            --image-id "imageDigest=$scan_digest" \
+            --output json \
+            --no-cli-pager)
           status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<< "$scan_json")
           critical_count=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<< "$scan_json")
-          echo "${ECR_REPO}@${IMAGE_DIGEST}: scan=${status}, CRITICAL=${critical_count}"
+          echo "${ECR_REPO}@${scan_digest}: scan=${status}, CRITICAL=${critical_count}"
           if [ "$status" != "COMPLETE" ] || [ "$critical_count" != "0" ]; then
-            echo "::error title=Gateway vulnerability gate failed::${ECR_REPO}@${IMAGE_DIGEST} reported status=${status}, CRITICAL=${critical_count}."
+            echo "::error title=Gateway vulnerability gate failed::${ECR_REPO}@${scan_digest} reported status=${status}, CRITICAL=${critical_count}."
             exit 1
           fi
       - name: Record immutable deployment image

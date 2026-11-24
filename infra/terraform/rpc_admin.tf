@@ -48,7 +48,7 @@ resource "aws_iam_role_policy" "rpc_admin" {
       { Effect = "Allow", Action = ["ssm:SendCommand"], Resource = [aws_ssm_document.rpc_admin[0].arn, aws_instance.rpc_node[0].arn] },
       { Effect = "Allow", Action = ["ssm:GetCommandInvocation"], Resource = "*" },
       { Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" },
-      { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], Resource = aws_ecr_repository.rpc_gateway[0].arn },
+      { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:DescribeImageScanFindings", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], Resource = aws_ecr_repository.rpc_gateway[0].arn },
     ]
   })
 }

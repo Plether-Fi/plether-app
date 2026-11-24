@@ -454,7 +454,7 @@ resource "aws_cloudwatch_metric_alarm" "rpc_node_disk" {
   namespace           = "Plether/RPC"
   metric_name         = "disk_used_percent"
   comparison_operator = "GreaterThanThreshold"
-  threshold           = 70
+  threshold           = var.environment == "mainnet" ? 85 : 70
   evaluation_periods  = 3
   period              = 60
   statistic           = "Maximum"
