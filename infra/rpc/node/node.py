@@ -54,7 +54,7 @@ def resolve_chain(config):
     return chain_id, chain_name, parent_chain_id
 
 
-def validate_config(config, parent):
+def validate_node_config(config):
     chain_id, chain_name, _ = resolve_chain(config)
     if not re.fullmatch(r'offchainlabs/nitro-node@sha256:[0-9a-f]{64}', config['image']):
         raise ValueError('Nitro must be pinned to an official image digest')
@@ -66,6 +66,10 @@ def validate_config(config, parent):
     history = config['state_history_blocks']
     if isinstance(history, bool) or not isinstance(history, int) or not 16384 <= history <= 691200:
         raise ValueError('recent history must be explicitly bounded')
+
+
+def validate_config(config, parent):
+    validate_node_config(config)
     keys = ['execution_url', 'beacon_url']
     if parent.get('secondary_beacon_url'):
         keys.append('secondary_beacon_url')
@@ -226,11 +230,13 @@ def prepare(config, parent, region):
 def main():
     mode, name, region = sys.argv[1:]
     config = parameter(name, region)
+    if mode == 'initialize':
+        validate_node_config(config)
+        initialize(config)
+        return
     parent = parameter(config['parent_parameter'], region)
     validate_config(config, parent)
-    if mode == 'initialize':
-        initialize(config)
-    elif mode == 'prepare':
+    if mode == 'prepare':
         prepare(config, parent, region)
     elif mode == 'run':
         os.execvp('docker', docker(config, region))
