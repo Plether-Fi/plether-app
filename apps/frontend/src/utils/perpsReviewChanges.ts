@@ -14,6 +14,10 @@ export function perpsReviewChanges(before?: PreparedPerpsOrderV3, after?: Prepar
   const assets = (value: bigint | string | number) => `${formatUnits(BigInt(value), 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL}`
   const price = (value: bigint | string | number) => BigInt(value) === 0n ? 'No limit' : `${formatUnits(200_000_000n - BigInt(value), 8)} ${PERPS_SETTLEMENT_TOKEN_LABEL}`
   const leverage = (value: bigint | string | number) => `${formatUnits(BigInt(value), 4)}×`
+  add('Network gas payer', before.kernelQuote?.payer ?? before.kernelQuote?.mode, after.kernelQuote?.payer ?? after.kernelQuote?.mode,
+    value => value === 'sponsored' ? 'Sponsored by Plether' : value === 'wallet' ? 'Pay from wallet' : 'Pay with ETH')
+  add('Maximum network gas', before.kernelQuote?.mode === 'eth' ? before.kernelQuote.maxNetworkGasWei : undefined,
+    after.kernelQuote?.mode === 'eth' ? after.kernelQuote.maxNetworkGasWei : undefined, value => `${formatUnits(BigInt(value), 18)} ETH`)
   add('Order quantity', before.request.sizeDelta, after.request.sizeDelta, value => `${formatUnits(BigInt(value), 18)} plDXY`)
   add('Execution limit', before.request.targetPrice, after.request.targetPrice, price)
   add('Required margin', before.request.marginDelta, after.request.marginDelta, assets)

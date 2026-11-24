@@ -1,10 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { formatEther, isAddressEqual, parseEventLogs } from 'viem'
+import { PERPS_ORDER_LIFECYCLE_BOOK_ABI } from '../contracts/abis'
+import { trackPerpsButtonClicked } from '../analytics/perps'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { PreparedOperationRecovery } from '../perps-aa/PreparedOperationRecovery'
 import { RecoveredOrderStatus } from './RecoveredOrderStatus'
 import { TradingStatus } from './TradingStatus'
 import { OperationDiagnostic } from './OperationDiagnostic'
 import { isPerpsAaManifestV2 } from '../perps-aa/manifest'
+import {
+  useGasPaymentPreference,
+  writeGasPaymentPreference,
+  type GasPaymentPreferenceScope,
+} from '../perps-aa/gasPaymentPreference'
+import { usePerpsAaRuntime, type KernelPerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import { KernelAttemptRecoveryControls } from '../perps-aa/KernelAttemptRecoveryControls'
+import { KernelEthFunding } from './KernelEthFunding'
+import { isKernelAttemptPending, type KernelOperationAttempt } from '../perps-aa/kernelOperationJournal'
+import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
 import {
   canCancelSponsoredOperationLocally,
   canForceUnlockLegacySponsoredOperation,
@@ -680,8 +693,147 @@ function OperationHistoryItem({
   )
 }
 
+function GasSponsorshipSetting({ scope, readiness, paysEthFromWallet }: {
+  scope: GasPaymentPreferenceScope
+  readiness: { sponsored: boolean; eth: boolean }
+  paysEthFromWallet?: boolean
+}) {
+  const { mode } = useGasPaymentPreference(scope)
+  const [saveFailed, setSaveFailed] = useState(false)
+  const id = useId()
+  const sponsored = mode === 'sponsored'
+
+  return (
+    <div className="flex items-start justify-between gap-4 border border-brand-border/40 bg-app-bg/30 p-4">
+      <div>
+        <p id={`${id}-label`} className="text-sm font-semibold text-content-primary">Gas sponsorship</p>
+        <p id={`${id}-value`} className="mt-1 text-sm text-content-secondary" aria-live="polite">
+          {sponsored ? 'Sponsored by Plether' : paysEthFromWallet ? 'Pay from wallet' : 'Pay with ETH'}
+        </p>
+        <p className="mt-1 text-xs text-content-secondary">Applies to future transactions.</p>
+        {!readiness[mode] && (
+          <p className="mt-1 text-sm text-warning">
+            {sponsored ? 'Sponsorship is currently unavailable.' : 'ETH payments are currently unavailable.'}
+          </p>
+        )}
+        {saveFailed && <p role="alert" className="mt-1 text-sm text-warning">This device could not save your gas preference.</p>}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={sponsored}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-value`}
+        onClick={() => {
+          const nextMode = sponsored ? 'eth' : 'sponsored'
+          const saved = writeGasPaymentPreference(scope, nextMode)
+          setSaveFailed(!saved)
+          if (saved) trackPerpsButtonClicked('trading_account_gas_sponsorship', { account_mode: 'kernel', gas_payment_mode: nextMode })
+        }}
+        className={`relative flex min-h-11 shrink-0 items-center px-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-orange ${sponsored ? 'text-brand-orange' : 'text-content-secondary'}`}
+      >
+        <span aria-hidden="true" className="block h-6 w-11 border border-current" />
+        <span aria-hidden="true" className={`absolute left-2 h-4 w-4 bg-current transition-transform motion-reduce:transition-none ${sponsored ? 'translate-x-5' : ''}`} />
+      </button>
+    </div>
+  )
+}
+
+function KernelOperationHistoryItem({ attempt, manifest, runtime }: {
+  attempt: KernelOperationAttempt
+  manifest: ReturnType<typeof usePerpsIdentity>['manifest']
+  runtime?: KernelPerpsAaSmartAccountRuntime['kernel']
+}) {
+  const { prepared, receipt, observedReceipt } = attempt
+  const sponsored = prepared.mode === 'sponsored'
+  const cancelled = attempt.phase === 'cancelled'
+  const walletPaid = prepared.transport === 'wallet'
+  const visibleReceipt = receipt ?? (runtime?.readBundledInclusion ? observedReceipt : undefined)
+  const transactionHash = attempt.outerReceipt?.transactionHash ?? (receipt ?? observedReceipt)?.receipt.transactionHash ?? attempt.walletSubmission?.transactionHash
+  const actualGasCost = attempt.outerReceipt
+    ? attempt.outerReceipt.gasUsed * attempt.outerReceipt.effectiveGasPrice
+    : visibleReceipt?.actualGasCost
+  const status = visibleReceipt && !cancelled
+    ? visibleReceipt.success ? 'Confirmed onchain' : 'Failed onchain'
+    : observedReceipt
+    ? observedReceipt.success ? 'Included, awaiting confirmation' : 'Execution reverted, awaiting confirmation'
+    : {
+    signed: 'Awaiting submission',
+    sending: 'Checking submission status',
+    submitted: 'Pending onchain',
+    included: receipt?.success === false ? 'Failed onchain' : 'Confirmed onchain',
+    nonce_consumed: 'Another transaction used this nonce',
+    sponsorship_expired: 'Sponsorship expired',
+    cancelled: 'Cancelled onchain',
+    discarded: 'Discarded before submission',
+    wallet_failed: 'Wallet transaction failed onchain',
+    wallet_replaced: 'Replaced in Owner Wallet',
+  }[attempt.phase]
+  const orderCommitted = visibleReceipt?.success && !cancelled &&
+    (attempt.action === 'place-order' || attempt.action === 'place-protected-order' || attempt.action === 'cancel-protection-and-close')
+  const book = manifest?.smartAccountMode === 'kernel' ? manifest.orderLifecycleBook : undefined
+  const clientOrderId = attempt.orderRequestV3?.clientOrderId
+  const registered = orderCommitted && book && clientOrderId && runtime?.readBundledInclusion
+    ? parseEventLogs({ abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI, eventName: 'IntentRegistered', logs: visibleReceipt.logs })
+      .filter(log => isAddressEqual(log.address, book) && isAddressEqual(log.args.account, attempt.scope.sender)
+        && log.args.clientOrderId.toLowerCase() === clientOrderId.toLowerCase()) : []
+
+  return (
+    <article className="space-y-3 border border-brand-border/30 bg-app-bg/30 p-4">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="font-semibold text-content-primary">{sponsoredOperationActionLabel(attempt.action)}</h3>
+        <time dateTime={new Date(attempt.createdAt).toISOString()} className="text-xs text-content-secondary">
+          {formatOperationTime(attempt.createdAt)}
+        </time>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge variant={attempt.phase === 'wallet_failed' || (visibleReceipt?.success === false && !cancelled) ? 'danger' : visibleReceipt ? 'success' : 'default'}>{status}</Badge>
+        <span className="text-xs text-content-secondary">{sponsored ? 'Sponsored by Plether' : walletPaid ? 'Pay from wallet' : 'Pay with ETH'}</span>
+      </div>
+      {actualGasCost !== undefined && (
+        <dl className="flex flex-wrap items-baseline gap-x-2 text-xs text-content-secondary">
+          <dt>{cancelled ? 'Cancellation gas paid by Trading Account' : sponsored ? 'Network gas paid by Plether' : walletPaid ? 'Network gas paid by Owner Wallet' : 'Network gas paid by Trading Account'}</dt>
+          <dd className="font-semibold text-content-primary">{formatEther(actualGasCost)} ETH</dd>
+        </dl>
+      )}
+      {orderCommitted && transactionHash && (
+        <RecoveredOrderStatus accountAddress={attempt.scope.sender} transactionHash={transactionHash} clientOrderId={clientOrderId}
+          liveOrderId={registered.length === 1 ? registered[0].args.orderId : undefined} />
+      )}
+      {isKernelAttemptPending(attempt) && !visibleReceipt && (
+        <KernelAttemptRecoveryControls
+          attempt={attempt}
+          quoteCancellation={runtime?.quoteCancellation}
+          signPrepared={runtime?.signPrepared}
+          isObservationReorged={runtime?.isObservationReorged}
+          readWalletOutcome={runtime?.readWalletOutcome}
+          readBundledInclusion={runtime?.readBundledInclusion}
+        />
+      )}
+      <details className="border-t border-brand-border/20 pt-3">
+        <summary className="cursor-pointer text-xs font-semibold text-content-secondary">Technical details</summary>
+        <div className="mt-3 space-y-2">
+          <HashActions hash={prepared.userOperationHash} label="UserOperation" explorerUrl={manifest?.userOperationExplorerUrlTemplate.replace('{userOperationHash}', prepared.userOperationHash)} />
+          {transactionHash && (
+            <HashActions hash={transactionHash} label={cancelled ? 'Cancellation transaction' : 'Transaction'} explorerUrl={manifest?.transactionExplorerUrlTemplate.replace('{transactionHash}', transactionHash)} />
+          )}
+        </div>
+      </details>
+    </article>
+  )
+}
+
 export function SponsoredOperationHistoryButton() {
   const identity = usePerpsIdentity()
+  const runtime = usePerpsAaRuntime()
+  const kernelRuntime = identity.status === 'ready' && runtime?.kernel &&
+    runtime.chainId === identity.chainId &&
+    runtime.ownerAddress.toLowerCase() === identity.ownerAddress?.toLowerCase() &&
+    runtime.smartAccount.accountAddress.toLowerCase() === identity.accountAddress?.toLowerCase()
+    ? runtime : undefined
+  const gasPayment = kernelRuntime?.gasPayment
+  const preferenceScope = identity.kernelGasPreferenceScope ?? gasPayment?.scope
+  const kernelActivity = useKernelAttempts(kernelRuntime?.kernel.scope)
   const operations = useSponsoredOperationStore((state) => state.operations)
   const activityRequest = usePerpsUiStore(state => state.activityRequest)
   const activityDismissal = usePerpsUiStore(state => state.activityDismissal)
@@ -694,17 +846,21 @@ export function SponsoredOperationHistoryButton() {
     setOpenedActivity(null)
     if (activityRequest) usePerpsUiStore.getState().clearActivityRequest(activityRequest.id)
   }
-  const identityKey = identity.accountAddress && identity.chainId !== undefined
-    ? `${identity.chainId.toString()}:${identity.accountAddress.toLowerCase()}`
-    : null
+  const identityKey = preferenceScope?.ownerAddress !== undefined
+    ? `${preferenceScope.chainId.toString()}:${preferenceScope.deployment}:${preferenceScope.ownerAddress.toLowerCase()}`
+    : identity.accountAddress && identity.chainId !== undefined
+      ? `${identity.chainId.toString()}:${identity.accountAddress.toLowerCase()}`
+      : null
   const accountAddress = identity.accountAddress?.toLowerCase()
   const ownerAddress = identity.ownerAddress?.toLowerCase()
   const requestedIdentityMatches = activityRequest !== null &&
-    activityRequest.chainId === identity.chainId &&
-    activityRequest.accountAddress.toLowerCase() === accountAddress &&
-    activityRequest.ownerAddress.toLowerCase() === ownerAddress
+    activityRequest.ownerAddress.toLowerCase() === ownerAddress && (
+      (activityRequest.chainId === identity.chainId && activityRequest.accountAddress.toLowerCase() === accountAddress) ||
+      (activityRequest.operationId === undefined && activityRequest.chainId === preferenceScope?.chainId &&
+        activityRequest.accountAddress.toLowerCase() === preferenceScope.sender?.toLowerCase())
+    )
   const openedActivity = requestedIdentityMatches && identityKey
-    ? { identityKey, attentionOperationIds: [activityRequest.operationId] }
+    ? { identityKey, attentionOperationIds: activityRequest.operationId ? [activityRequest.operationId] : [] }
     : locallyOpenedActivity?.dismissal === activityDismissal ? locallyOpenedActivity : null
   useEffect(() => {
     if (!activityRequest) return
@@ -712,13 +868,14 @@ export function SponsoredOperationHistoryButton() {
       usePerpsUiStore.getState().clearActivityRequest(activityRequest.id)
       return
     }
+    if (activityRequest.operationId === undefined) return
     const store = useSponsoredOperationStore.getState()
     const operation = store.operations.find(item => item.id === activityRequest.operationId)
     if (operation && isUnreviewedAttentionOperation(operation)) {
       store.acknowledgeOperations([{ id: operation.id, attentionRevision: getSponsoredOperationAttentionRevision(operation) }])
     }
   }, [activityRequest, requestedIdentityMatches])
-  const accountOperations = accountAddress && identity.chainId !== undefined
+  const accountOperations = !preferenceScope && accountAddress && identity.chainId !== undefined
     ? operations
         .filter((operation) =>
           operation.accountAddress.toLowerCase() === accountAddress &&
@@ -732,6 +889,10 @@ export function SponsoredOperationHistoryButton() {
         )
     : []
   const attentionOperations = accountOperations.filter(isAttentionOperation)
+  const awaitingKernelInclusion = (attempt: KernelOperationAttempt) => isKernelAttemptPending(attempt) &&
+    !(kernelRuntime?.kernel.readBundledInclusion && attempt.observedReceipt)
+  const kernelPending = kernelActivity.attempts.filter(awaitingKernelInclusion)
+  const kernelRecent = kernelActivity.attempts.filter(attempt => !awaitingKernelInclusion(attempt))
   const unreviewedAttentionOperations = attentionOperations.filter(
     isUnreviewedAttentionOperation
   )
@@ -881,7 +1042,7 @@ export function SponsoredOperationHistoryButton() {
   const isConfirmationFeedbackExiting =
     activeConfirmationFeedback?.phase === 'exiting'
   const unreviewedAttentionCount = unreviewedAttentionOperations.length
-  const inProgressCount = inProgressOperations.length
+  const inProgressCount = inProgressOperations.length + kernelPending.length
   const includedCount = includedOperations.length
   const attentionSummaryCount = openedActivity?.identityKey === identityKey
     ? needsAttentionOperations.length
@@ -969,11 +1130,7 @@ export function SponsoredOperationHistoryButton() {
           }
         : null
 
-  if (
-    !identity.isAaManifestConfigured ||
-    identity.status !== 'ready' ||
-    identityKey === null
-  ) {
+  if (identityKey === null || (!preferenceScope && (!identity.isAaManifestConfigured || identity.status !== 'ready'))) {
     return null
   }
 
@@ -1047,7 +1204,12 @@ export function SponsoredOperationHistoryButton() {
         analyticsId="sponsored_operation_history"
       >
         <div className="space-y-5">
+          {preferenceScope && <GasSponsorshipSetting scope={preferenceScope} readiness={gasPayment?.readiness ?? { sponsored: false, eth: false }}
+            paysEthFromWallet={gasPayment?.paysEthFromWallet} />}
+          {kernelRuntime && identity.manifest?.smartAccountMode === 'kernel' &&
+            <KernelEthFunding key={identityKey} runtime={kernelRuntime} manifest={identity.manifest} />}
           {identity.manifest && isPerpsAaManifestV2(identity.manifest) && <TradingStatus />}
+          {kernelActivity.error && <p role="status" className="text-sm text-warning">{kernelActivity.error}</p>}
           {statusSummary ? (
             <div className={`border p-4 ${statusSummary.tone}`} aria-live="polite">
               <div className="font-semibold text-content-primary">
@@ -1075,7 +1237,7 @@ export function SponsoredOperationHistoryButton() {
             </section>
           ) : null}
 
-          {inProgressOperations.length > 0 ? (
+          {inProgressCount > 0 ? (
             <section className="space-y-3" aria-labelledby="sponsored-activity-progress">
               <h3 id="sponsored-activity-progress" className="text-sm font-semibold uppercase tracking-wide text-[#FFAB96]">
                 In progress
@@ -1087,6 +1249,9 @@ export function SponsoredOperationHistoryButton() {
                   manifest={identity.manifest}
                   onReturn={closeActivity}
                 />
+              ))}
+              {kernelPending.map(attempt => (
+                <KernelOperationHistoryItem key={attempt.prepared.userOperationHash} attempt={attempt} manifest={identity.manifest} runtime={kernelRuntime?.kernel} />
               ))}
             </section>
           ) : null}
@@ -1107,7 +1272,7 @@ export function SponsoredOperationHistoryButton() {
             </section>
           ) : null}
 
-          {recentOperations.length > 0 ? (
+          {recentOperations.length > 0 || kernelRecent.length > 0 ? (
             <section className="space-y-3" aria-labelledby="sponsored-activity-recent">
               <h3 id="sponsored-activity-recent" className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
                 Recent activity
@@ -1120,12 +1285,17 @@ export function SponsoredOperationHistoryButton() {
                   onReturn={closeActivity}
                 />
               ))}
+              {kernelRecent.map(attempt => (
+                <KernelOperationHistoryItem key={attempt.prepared.userOperationHash} attempt={attempt} manifest={identity.manifest} />
+              ))}
             </section>
           ) : null}
 
-          {accountOperations.length === 0 ? (
+          {accountOperations.length === 0 && kernelActivity.attempts.length === 0 && !kernelActivity.error ? (
             <div className="border border-dashed border-brand-border/40 p-8 text-center text-sm text-content-secondary">
-              No Trading Account activity saved on this device.
+              {preferenceScope && !kernelRuntime
+                ? 'Trading Account history is temporarily unavailable.'
+                : 'No Trading Account activity saved on this device.'}
             </div>
           ) : null}
 

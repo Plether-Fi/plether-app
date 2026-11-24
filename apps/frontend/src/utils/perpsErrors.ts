@@ -1,4 +1,4 @@
-import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
+import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, isTransactionFeeCapRejected, readableTransactionMessage } from './transactionFailure'
 import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { decodeErrorResult } from 'viem'
 import { PERPS_MAX_OPEN_QUOTER_ABI } from '../contracts/generated/perpsMaxOpenQuoter'
@@ -498,6 +498,7 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     if (typeof reason === 'string' && Object.hasOwn(TRANSACTION_FAILURE_MESSAGES, reason)
       && reason !== 'UNKNOWN' && reason !== 'SUBMISSION_OUTCOME_UNKNOWN') return TRANSACTION_FAILURE_MESSAGES[reason]
   }
+  if (isTransactionFeeCapRejected(error)) return TRANSACTION_FAILURE_MESSAGES.FEE_CAP_TOO_LOW
   const decoded = decodePerpsError(error)
   if (decoded.name === 'Panic') {
     const reason = argNumber(decoded.args) === 17 ? 'an internal arithmetic error' : 'an internal error'
@@ -521,9 +522,6 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
 
   if (lower.includes('user rejected') || lower.includes('user denied') || lower.includes('rejected the request')) {
     return 'Transaction rejected in wallet.'
-  }
-  if (lower.includes('max fee per gas less than block base fee')) {
-    return 'Gas price was below the current base fee. Retry; the app will request a higher gas fee.'
   }
   if (lower.includes('insufficient funds')) {
     return 'Not enough ETH for gas on Arbitrum Sepolia.'

@@ -109,6 +109,14 @@ export class BundlerRequestError extends Error {
   }
 }
 
+/** The journal will continue watching an included Kernel operation for confirmation. */
+export class KernelObservedPendingError extends Error {
+  constructor() {
+    super('The Trading Account operation was included and is awaiting confirmation. Follow its progress in Activity.')
+    this.name = 'KernelObservedPendingError'
+  }
+}
+
 function causeOf(value: unknown): unknown {
   if (!value || typeof value !== 'object') return undefined
   return (value as { cause?: unknown }).cause

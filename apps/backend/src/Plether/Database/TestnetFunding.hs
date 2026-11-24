@@ -1,15 +1,18 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Plether.Database.TestnetFunding
-  ( FundingClaim (..), FundingTransaction (..), ensureMarginFundingSchema
-  , reserveMarginFunding, getMarginFunding, nextMarginFunding
+  ( FundingClaim (..), FundingTransaction (..), ensureMarginFundingSchema, requireKernelMarginFundingSchema
+  , KernelFundingReservationFailure (..)
+  , reserveMarginFunding, reserveKernelMarginFunding, getMarginFunding, getMarginFundingProgram, nextMarginFunding
+  , nextMarginFundingForProgram
   , submittedFundingTransaction, hasSubmittedFundingTransaction
   , persistFundingTransaction, finishFundingTransaction, failMarginFunding
   ) where
 
-import Control.Monad (void)
+import Control.Monad (unless, void, when)
 import Data.Int (Int64)
 import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.FromRow
 import Language.Haskell.TH (runIO)
@@ -34,6 +37,11 @@ instance FromRow FundingTransaction where
   fromRow = FundingTransaction <$> field <*> field <*> field <*> field <*> field
     <*> field <*> field <*> field <*> field
 
+data KernelFundingReservationFailure
+  = KernelFundingBindingChanged
+  | KernelFundingAllocationExists
+  deriving stock (Eq, Show)
+
 schema :: Query
 schema = fromString $(do
   let path = "config/migrations/testnet-margin-funding-v1.sql"
@@ -43,31 +51,85 @@ schema = fromString $(do
 ensureMarginFundingSchema :: Connection -> IO ()
 ensureMarginFundingSchema conn = void $ execute_ conn schema
 
+-- The isolated API must not run writes to the shared funding schema during
+-- startup. Verify the rolled-out column and allocation constraint instead.
+requireKernelMarginFundingSchema :: Connection -> IO ()
+requireKernelMarginFundingSchema conn = do
+  [Only ready] <- query_ conn
+    "SELECT EXISTS (SELECT 1 FROM pg_attribute\
+    \ WHERE attrelid=to_regclass('testnet_margin_funding') AND attname='kernel_program'\
+    \ AND atttypid='text'::regtype AND NOT attisdropped AND NOT attnotnull)\
+    \ AND EXISTS (SELECT 1 FROM pg_index\
+    \ WHERE indrelid=to_regclass('testnet_margin_funding')\
+    \ AND indexrelid=to_regclass('testnet_margin_funding_kernel_owner_program')\
+    \ AND indisunique AND indisvalid AND indisready AND indislive AND indnatts=3 AND indnkeyatts=3\
+    \ AND pg_get_indexdef(indexrelid,1,true)='chain_id'\
+    \ AND pg_get_indexdef(indexrelid,2,true)='kernel_program'\
+    \ AND regexp_replace(pg_get_indexdef(indexrelid,3,true),'[[:space:]()]','','g')\
+    \ IN ('lowerowner_address::text','lowerowner_address')\
+    \ AND pg_get_expr(indpred,indrelid)='(kernel_program IS NOT NULL)')"
+  unless ready $ fail "Kernel funding schema is missing or incompatible. Apply the reviewed margin funding migration before starting the canary."
+
 -- Callers hold the shared faucet signer lock. The legacy allocation and new
 -- claim are committed together; an old binary sees an unknown, non-retryable
 -- marker, rather than a failed wallet mint that could grant another allocation.
 reserveMarginFunding :: Connection -> FundingClaim -> IO (Maybe FundingClaim)
 reserveMarginFunding conn claim = withTransaction conn $ do
-  allocated <- execute conn
-    "INSERT INTO testnet_faucet_claims(address,token_address,amount,status,delivery_mode) VALUES (?,?,?,'margin_reserved','margin') ON CONFLICT DO NOTHING"
-    (fcAddress claim, fcToken claim, fcAmount claim)
-  if allocated == 1 then do
+  allocated <- reserveEligibility conn claim
+  when allocated $ do
     void $ execute conn
       "INSERT INTO testnet_margin_funding(owner_address,address,token_address,chain_id,clearinghouse,signer,release_id,amount) VALUES (?,?,?,?,?,?,?,?)"
       (fcOwner claim,fcAddress claim,fcToken claim,fcChain claim,fcClearinghouse claim,fcSigner claim,fcRelease claim,fcAmount claim)
-    else pure ()
   rows <- query conn
     "SELECT id::text FROM testnet_margin_funding WHERE address=? AND token_address=?"
     (fcAddress claim,fcToken claim) :: IO [Only Text]
   case rows of
-    [Only identifier] -> do
-      -- Only explicit user retries release a known failure; mint is never
-      -- repeated after success, and deposit retries refresh exact allowance.
-      void $ execute conn
-        "UPDATE testnet_margin_funding SET status='pending',reason=NULL,phase=CASE WHEN phase='deposit' THEN 'approval' ELSE phase END,updated_at=NOW() WHERE id=?::uuid AND status='failed'"
-        (Only identifier)
-      getMarginFunding conn identifier
+    [Only identifier] -> retryMarginFunding conn identifier
     _ -> pure Nothing
+
+-- The address eligibility marker keeps wallet minting exclusive with direct
+-- margin funding. The program-and-owner index also prevents two simultaneous
+-- reservations for the same owner from allocating to different addresses.
+reserveKernelMarginFunding :: Connection -> Text -> FundingClaim -> IO (Either KernelFundingReservationFailure FundingClaim)
+reserveKernelMarginFunding conn program claim = withTransaction conn $ do
+  allocated <- reserveEligibility conn claim
+  let owner = T.toLower $ fcOwner claim
+  when allocated $ do
+    inserted <- execute conn
+      "INSERT INTO testnet_margin_funding(owner_address,address,token_address,chain_id,clearinghouse,signer,release_id,amount,kernel_program) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING"
+      (owner,fcAddress claim,fcToken claim,fcChain claim,fcClearinghouse claim,fcSigner claim,fcRelease claim,fcAmount claim,program)
+    -- This transaction owns a new marker only when reserveEligibility succeeds.
+    -- Remove it if the allocation lost a uniqueness race.
+    when (inserted == 0) $ void $ execute conn
+      "DELETE FROM testnet_faucet_claims WHERE address=? AND token_address=?"
+      (fcAddress claim,fcToken claim)
+  rows <- query conn (claimSelect <> "WHERE chain_id=? AND kernel_program=? AND lower(owner_address)=?")
+    (fcChain claim, program, owner)
+  case rows of
+    [existing] | sameBinding existing -> do
+      resumed <- retryMarginFunding conn $ fcId existing
+      pure $ maybe (Left KernelFundingAllocationExists) Right resumed
+    [_] -> pure $ Left KernelFundingBindingChanged
+    _ -> pure $ Left KernelFundingAllocationExists
+  where
+    sameBinding existing =
+      fcAddress existing == fcAddress claim && fcToken existing == fcToken claim
+      && fcClearinghouse existing == fcClearinghouse claim && fcSigner existing == fcSigner claim
+      && fcRelease existing == fcRelease claim && fcAmount existing == fcAmount claim
+
+reserveEligibility :: Connection -> FundingClaim -> IO Bool
+reserveEligibility conn claim = (== 1) <$> execute conn
+  "INSERT INTO testnet_faucet_claims(address,token_address,amount,status,delivery_mode) VALUES (?,?,?,'margin_reserved','margin') ON CONFLICT DO NOTHING"
+  (fcAddress claim, fcToken claim, fcAmount claim)
+
+retryMarginFunding :: Connection -> Text -> IO (Maybe FundingClaim)
+retryMarginFunding conn identifier = do
+  -- Only explicit user retries release a known failure; mint is never repeated
+  -- after success, and deposit retries refresh the exact allowance.
+  void $ execute conn
+    "UPDATE testnet_margin_funding SET status='pending',reason=NULL,phase=CASE WHEN phase='deposit' THEN 'approval' ELSE phase END,updated_at=NOW() WHERE id=?::uuid AND status='failed'"
+    (Only identifier)
+  getMarginFunding conn identifier
 
 claimSelect :: Query
 claimSelect = "SELECT id::text,owner_address,address,token_address,chain_id,clearinghouse,signer,release_id,amount,phase,status,reason,deposit_tx_hash,deposit_block_number FROM testnet_margin_funding "
@@ -75,8 +137,20 @@ claimSelect = "SELECT id::text,owner_address,address,token_address,chain_id,clea
 getMarginFunding :: Connection -> Text -> IO (Maybe FundingClaim)
 getMarginFunding conn identifier = first <$> query conn (claimSelect <> "WHERE id=?::uuid") (Only identifier)
 
+getMarginFundingProgram :: Connection -> Text -> IO (Maybe Text)
+getMarginFundingProgram conn identifier = do
+  rows <- query conn "SELECT kernel_program FROM testnet_margin_funding WHERE id=?::uuid" (Only identifier)
+  pure $ fromOnly =<< first rows
+
 nextMarginFunding :: Connection -> IO (Maybe FundingClaim)
 nextMarginFunding conn = first <$> query_ conn (claimSelect <> "WHERE status='pending' ORDER BY created_at,id LIMIT 1")
+
+nextMarginFundingForProgram :: Connection -> Maybe Text -> IO (Maybe FundingClaim)
+nextMarginFundingForProgram conn program = first <$> query conn
+  (claimSelect <> "WHERE status='pending' AND kernel_program IS NOT DISTINCT FROM ? \
+    \AND (reason IS DISTINCT FROM 'TRADING_ACCOUNT_VERIFICATION_UNAVAILABLE' OR updated_at <= NOW() - INTERVAL '15 seconds') \
+    \ORDER BY created_at,id LIMIT 1")
+  (Only program)
 
 submittedFundingTransaction :: Connection -> IO (Maybe FundingTransaction)
 submittedFundingTransaction conn = first <$> query_ conn

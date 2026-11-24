@@ -20,6 +20,9 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
   const [phase, setPhase] = useState<TestnetFundingPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const operation = useRef<AbortController | null>(null)
+  const isKernelAccount = identity.manifest?.smartAccountMode === 'kernel'
+  const legacySponsorshipEnabled = !isKernelAccount && identity.sponsorshipEnabled
+  const manifestVersion = identity.manifest?.version
 
   useEffect(() => () => {
     operation.current?.abort()
@@ -29,7 +32,8 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
     setError(null)
   }, [
     recipient, enabled, identity.ownerAddress, identity.accountAddress,
-    identity.chainId, identity.status, identity.isAaManifestConfigured, identity.sponsorshipEnabled,
+    identity.chainId, identity.status, identity.isAaManifestConfigured, manifestVersion,
+    isKernelAccount, legacySponsorshipEnabled,
   ])
 
   async function requestFunds(address: Address) {
@@ -107,6 +111,9 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
       }
       // Only an explicit legacy response can enter the old wallet-funded flow.
       // Failed or unavailable direct funding never falls back to another mint.
+      if (isKernelAccount) {
+        throw new Error('Direct margin funding is unavailable for this Trading Account. Please try again later.')
+      }
       const result = await perpsApi.claimTestnetFaucet(address)
       if (isCancelled()) return
       if (Result.isError(result)) {

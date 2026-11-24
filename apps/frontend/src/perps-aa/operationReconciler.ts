@@ -1,7 +1,7 @@
 import type { Hex } from 'viem'
 import type {
   ManagedUserOperationReceipt,
-  PerpsAaSmartAccountRuntime,
+  SimplePerpsAaSmartAccountRuntime,
   BundlerUserOperationStatus,
 } from './runtimeContext'
 import { UserOperationReceiptNotSafeError } from './runtimeContext'
@@ -89,7 +89,7 @@ type ExactReceiptResult =
     }
 
 async function getExactReceipt(input: {
-  runtime: PerpsAaSmartAccountRuntime
+  runtime: SimplePerpsAaSmartAccountRuntime
   userOperationHash: Hex
 }): Promise<ExactReceiptResult> {
   try {
@@ -111,12 +111,12 @@ async function getExactReceipt(input: {
   }
 }
 
-const pendingReconciliations = new WeakMap<PerpsAaSmartAccountRuntime, Map<Hex, Promise<UserOperationReconciliationOutcome>>>()
+const pendingReconciliations = new WeakMap<SimplePerpsAaSmartAccountRuntime, Map<Hex, Promise<UserOperationReconciliationOutcome>>>()
 
 // Coalesce only identical in-flight reads for this runtime. Do not cache chain
 // evidence or share results across accounts, providers or deployment changes.
 export function reconcileUserOperation(input: {
-  runtime: PerpsAaSmartAccountRuntime
+  runtime: SimplePerpsAaSmartAccountRuntime
   userOperationHash: Hex
 }): Promise<UserOperationReconciliationOutcome> {
   let requests = pendingReconciliations.get(input.runtime)
@@ -130,7 +130,7 @@ export function reconcileUserOperation(input: {
 }
 
 async function reconcileOnce(input: {
-  runtime: PerpsAaSmartAccountRuntime
+  runtime: SimplePerpsAaSmartAccountRuntime
   userOperationHash: Hex
 }): Promise<UserOperationReconciliationOutcome> {
   // The exact receipt is authoritative and must win over stale bundler status

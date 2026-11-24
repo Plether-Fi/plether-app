@@ -4,7 +4,7 @@ import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRunt
 import { useDepositOnConnect } from '../hooks/useDepositOnConnect'
 import { readinessBlocker, readinessMessage, useTradingReadiness } from '../perps-aa/readiness'
 import { restoredOrderDraft } from '../perps-aa/orderDraft'
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { formatUnits, zeroAddress, type Hex } from 'viem'
@@ -31,6 +31,11 @@ import { usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerps
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
+import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
+import { KernelGasReviewCancelled, kernelQuoteIsFresh, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
+import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
+import { kernelAttemptBlocksFollowUp } from '../perps-aa/kernelOperationJournal'
+import { KernelObservedPendingError } from '../perps-aa/errors'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV3'
 import type { BasketLatest } from '../api'
@@ -123,7 +128,7 @@ export type TradeLifecycleState =
   | 'failed'
 type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
 type MarginAction = 'deposit' | 'withdraw'
-type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
+type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'approving' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 interface PerpsOrderReviewSnapshot {
   preparationKey?: string
@@ -1828,16 +1833,36 @@ export function PerpsTradeTicket({
   const address = identity.accountAddress
   const isConnected = identity.ownerAddress !== undefined
   const isSponsoredAccountConfigured = identity.isAaManifestConfigured
+  const gasReview = usePerpsGasReview()
+  const { attempts: kernelAttempts } = useKernelAttempts(gasReview?.kernelScope)
+  const pendingKernelOperation = kernelAttempts.find(attempt => kernelAttemptBlocksFollowUp(attempt, { mode: gasReview?.preference.mode }))
+  const kernelOperationPending = pendingKernelOperation !== undefined
+  const kernelInclusionObserved = pendingKernelOperation?.observedReceipt
+  const showKernelInclusion = import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true'
+  const kernelPendingMessage = kernelInclusionObserved
+    ? showKernelInclusion
+      ? 'The last Trading Account action was included. Settlement is still in progress.'
+      : kernelInclusionObserved.success
+      ? 'The Trading Account transaction was included and is awaiting confirmation.'
+      : 'The Trading Account action reverted and is awaiting confirmation.'
+    : 'A Trading Account action is pending.'
+  const marginGasApproval = useKernelGasApproval(gasReview)
+  const kernelPaymentMode = gasReview?.preference.mode
+  const payingFromWallet = kernelPaymentMode === 'eth' && gasReview?.paysEthFromWallet
   const tradingReadiness = useTradingReadiness(enableLiveTrading && isSponsoredAccountConfigured)
   const sponsorshipBlocker = enableLiveTrading && isSponsoredAccountConfigured
-    ? readinessBlocker(tradingReadiness, 'deposit')
+    ? readinessBlocker(tradingReadiness, 'deposit', undefined, gasReview !== undefined)
     : undefined
-  const sponsorshipPauseMessage = sponsorshipBlocker ? readinessMessage(sponsorshipBlocker.reason) : undefined
+  const sponsorshipPauseMessage = sponsorshipBlocker ? readinessMessage(sponsorshipBlocker.reason)
+    : gasReview && !gasReview.available
+      ? kernelPaymentMode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.'
+      : undefined
   const chainId = useChainId()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const {
     abandonDepositAuthorization,
     fundTradingAccount,
+    depositMarginFromOwnerWallet,
     depositMargin,
     withdrawMargin,
     prepareOrder,
@@ -1931,8 +1956,10 @@ export function PerpsTradeTicket({
   ))
   const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
   const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
+  const [marginDepositSource, setMarginDepositSource] = useState<'owner' | 'account'>('owner')
+  const marginDepositSourceName = useId()
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
-  const [marginActionError, setMarginActionError] = useState<string | undefined>()
+  const [marginActionError, setMarginActionError] = useState<{ message: string; cause: unknown }>()
   const [locallyConfirmedFundingBalances, setLocallyConfirmedFundingBalances] = useState<{
     ownerWallet: bigint
     tradingAccount: bigint
@@ -2015,22 +2042,25 @@ export function PerpsTradeTicket({
     commitExecutionStatus === 'journaling'
       ? 'Saving signed transaction'
       : commitExecutionStatus === 'submitting'
-        ? 'Submitting sponsored transaction'
+        ? payingFromWallet ? 'Confirm gas payment in your wallet' : gasReview ? 'Submitting Trading Account transaction' : 'Submitting sponsored transaction'
         : commitExecutionStatus === 'confirming'
-          ? 'Waiting for on-chain confirmation'
+          ? kernelInclusionObserved ? showKernelInclusion ? 'Transaction included' : 'Included, awaiting confirmation' : 'Waiting for on-chain confirmation'
           : commitExecutionStatus === 'confirmed'
             ? 'Transaction confirmed'
             : 'Waiting for wallet confirmation'
+  const commitOperationLabel = gasReview ? 'UserOperation' : 'sponsored UserOperation'
   const commitPendingDescription =
     commitExecutionStatus === 'journaling'
-      ? 'Your wallet approved the sponsored UserOperation. Plether is saving its recovery record before submission.'
+      ? `Your wallet approved the ${commitOperationLabel}. Plether is saving its recovery record before submission.`
       : commitExecutionStatus === 'submitting'
-        ? 'Your wallet approved the sponsored UserOperation. Plether is submitting it to the network.'
+        ? payingFromWallet ? 'Approve the Arbitrum Sepolia transaction in your Owner Wallet to pay for gas.'
+          : `Your wallet approved the ${commitOperationLabel}. Plether is submitting it to the network.`
         : commitExecutionStatus === 'confirming'
-          ? 'Your wallet approved the sponsored UserOperation and it was submitted. Plether is waiting for on-chain confirmation.'
+          ? kernelInclusionObserved ? kernelPendingMessage
+            : `Your wallet approved the ${commitOperationLabel} and it was submitted. Plether is waiting for on-chain confirmation.`
           : commitExecutionStatus === 'confirmed'
-            ? 'The sponsored UserOperation is confirmed on-chain. Plether is loading the committed order.'
-            : isSponsoredAccountConfigured
+            ? `The ${commitOperationLabel} is confirmed on-chain. Plether is loading the committed order.`
+            : gasReview ? 'Confirm the reviewed Trading Account transaction in your owner wallet.' : isSponsoredAccountConfigured
               ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
               : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
 
@@ -2039,7 +2069,8 @@ export function PerpsTradeTicket({
   }, [onAccountRefresh])
 
   useEffect(() => {
-    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined && !activeAccountOperation) return undefined
+    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined && !activeAccountOperation &&
+      (!isReviewOpen || kernelPaymentMode === undefined)) return undefined
     const interval = window.setInterval(() => {
       setNowSeconds(Math.floor(Date.now() / 1000))
     }, 1_000)
@@ -2047,7 +2078,7 @@ export function PerpsTradeTicket({
     return () => {
       window.clearInterval(interval)
     }
-  }, [firstPendingOrderExpiryTime, oraclePublishTime, activeAccountOperation])
+  }, [firstPendingOrderExpiryTime, oraclePublishTime, activeAccountOperation, isReviewOpen, kernelPaymentMode])
 
   useEffect(() => {
     if ((!enableLiveTrading && !showFinalizationProgress) || lifecycleState !== 'revealPending') return
@@ -2714,10 +2745,10 @@ export function PerpsTradeTicket({
   const isMaxOpenRefreshing = !isReducingCurrentPosition && maxOpenQuote.isFetching && maxOpenDisplayQuote?.preview.valid === true
   const maxOpenQuoteMessage = maxOpenQuote.error
     ? 'Maximum size quote failed. Refresh market data or enter a quantity manually.'
-    : maxOpenQuote.quote?.maxSizeDelta === 0n
-      ? maxOpenQuote.quote.preview.valid
+    : maxOpenDisplayQuote?.maxSizeDelta === 0n
+      ? maxOpenDisplayQuote.preview.valid
         ? 'Available margin cannot fund an opening order at the selected leverage.'
-        : getPerpsOpenRevertMessage(maxOpenQuote.quote.preview.invalidReason || maxOpenQuote.quote.limitingReason)
+        : getPerpsOpenRevertMessage(maxOpenDisplayQuote.preview.invalidReason || maxOpenDisplayQuote.limitingReason)
       : undefined
   const maxOrderSizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenSizeRaw
   const maxOrderDisplaySizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenDisplaySizeRaw
@@ -2988,7 +3019,8 @@ export function PerpsTradeTicket({
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
-  const canAttachProtection = !isReduceOnly && !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
+  const protectionCommitsEnabled = identity.manifest?.smartAccountMode !== 'kernel' || identity.manifest.kernel.protectionCommitsEnabled
+  const canAttachProtection = protectionCommitsEnabled && !isReduceOnly && !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
   const protectionPriceContext = {
     direction: effectiveOrderDirection,
     rawMark: oraclePriceRaw,
@@ -3024,6 +3056,7 @@ export function PerpsTradeTicket({
         'Confirm the Plether Trading Account before trading.'
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
+    if (kernelOperationPending) return `${kernelPendingMessage} Check activity before reviewing a new order.`
     if (sponsorshipPauseMessage) return sponsorshipPauseMessage
     if (protectionInput.error) return protectionInput.error
     if (activePositionProtectionId > 0n) {
@@ -3196,9 +3229,9 @@ export function PerpsTradeTicket({
     ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
   const frozenPreparationKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
-  const candidateKey = orderPreparationKey([frozenPreparationKey, slippageNumber])
+  const candidateKey = orderPreparationKey([frozenPreparationKey, slippageNumber, gasReview?.preference.revision, gasReview ? isReviewOpen : undefined])
   const canPrepare = enableLiveTrading && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
-    (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation && !sponsorshipPauseMessage &&
+    (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation && !kernelOperationPending && !sponsorshipPauseMessage &&
     typeof prepareOrder === 'function'
   const preparation = usePerpsOrderPreparation({
     candidate: { key: candidateKey, input: candidateSnapshot },
@@ -3208,7 +3241,7 @@ export function PerpsTradeTicket({
     reviewValid: !liveValidationError && !activeAccountOperation,
     mode: !canPrepare ? 'inactive' : isReviewOpen ? 'review'
       : !liveValidationError && !isTradePreviewPending && currentTradePreview?.valid ? 'background' : 'inactive',
-    prepare: (input, signal) => prepareOrder({ ...input, signal }),
+    prepare: (input, signal) => prepareOrder({ ...input, signal, ...(gasReview ? { reviewGas: isReviewOpen } : {}) }),
   })
   // Initial-open stories and the account panel's close action also freeze inputs.
   useEffect(() => {
@@ -3250,7 +3283,12 @@ export function PerpsTradeTicket({
   const fundingShortfallMessage = reviewFundingShortfallAssets === undefined
     ? undefined
     : `Deposit ${formatPerpsAssets(reviewFundingShortfallAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more or reduce the order before committing.`
-  const reviewFooterError = sponsorshipPauseMessage ?? executionProtectionsError
+  const preparedGasQuote = preparation.ready && !preparationError ? preparedOrder?.kernelQuote : undefined
+  const reviewedGasQuote = preparedGasQuote?.mode === gasReview?.preference.mode ? preparedGasQuote : undefined
+  const gasQuoteExpired = reviewedGasQuote !== undefined && !kernelQuoteIsFresh(reviewedGasQuote)
+  const canConfirmGasReview = !gasReview || (gasReview.available && reviewedGasQuote !== undefined && !gasQuoteExpired)
+  const reviewFooterError = executionProtectionsError ?? sponsorshipPauseMessage ?? (gasQuoteExpired
+    ? 'The network gas quote expired. Retry review before confirming.' : undefined)
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
     ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
   const accountBlockReason = pendingOperationGuidance
@@ -3721,11 +3759,13 @@ export function PerpsTradeTicket({
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
   const ownerWalletBalance = ownerWalletAssetsRaw ?? walletAssetsRaw
   const usesOwnerDepositAuthorization = isSponsoredAccountConfigured &&
-    identity.manifest?.smartAccountMode === 'simple' &&
+    (identity.manifest?.smartAccountMode === 'simple' || identity.manifest?.smartAccountMode === 'kernel') &&
     identity.manifest.settlementTokenSupportsEip3009
   const usesTradingAccountDepositBalance = isSponsoredAccountConfigured &&
-    identity.manifest?.smartAccountMode === 'simple' &&
+    (identity.manifest?.smartAccountMode === 'simple' || identity.manifest?.smartAccountMode === 'kernel') &&
     !identity.manifest.settlementTokenSupportsEip3009
+  const offersDirectDeposit = marginAction === 'deposit' && usesTradingAccountDepositBalance && payingFromWallet
+  const depositsFromOwnerWallet = offersDirectDeposit && marginDepositSource === 'owner'
   const effectiveOwnerWalletBalance = locallyConfirmedFundingBalances &&
       ownerWalletBalance !== undefined
     ? ownerWalletBalance < locallyConfirmedFundingBalances.ownerWallet
@@ -3742,9 +3782,9 @@ export function PerpsTradeTicket({
       effectiveTradingAccountBalance !== undefined
     ? effectiveOwnerWalletBalance + effectiveTradingAccountBalance
     : undefined
-  const depositSourceBalance = usesTradingAccountDepositBalance
-    ? manualTransferDepositBalance
-    : ownerWalletBalance
+  const depositSourceBalance = offersDirectDeposit
+    ? depositsFromOwnerWallet ? effectiveOwnerWalletBalance : effectiveTradingAccountBalance
+    : usesTradingAccountDepositBalance ? manualTransferDepositBalance : ownerWalletBalance
   const marginActionLimit = marginAction === 'withdraw'
     ? withdrawableAssetsRaw
     : depositSourceBalance
@@ -3760,6 +3800,7 @@ export function PerpsTradeTicket({
     isDepositBalanceUnavailable
   const ownerWalletTransferAmountRaw = marginAction === 'deposit' &&
       usesTradingAccountDepositBalance &&
+      !offersDirectDeposit &&
       effectiveTradingAccountBalance !== undefined &&
       marginActionAmountRaw > effectiveTradingAccountBalance
     ? marginActionAmountRaw - effectiveTradingAccountBalance
@@ -3767,6 +3808,7 @@ export function PerpsTradeTicket({
   const requiresOwnerWalletTransfer = ownerWalletTransferAmountRaw > 0n
   const isMarginActionPending = marginActionStatus === 'pending' ||
     marginActionStatus === 'funding' ||
+    marginActionStatus === 'approving' ||
     marginActionStatus === 'depositing'
   const marginActionCtaLabel = enableLiveTrading && !isConnected
     ? 'Connect Wallet'
@@ -3774,17 +3816,17 @@ export function PerpsTradeTicket({
       ? 'Switch Network'
       : marginActionStatus === 'funding'
         ? `Transferring ${PERPS_SETTLEMENT_TOKEN_LABEL}`
-        : marginActionStatus === 'depositing'
-          ? 'Depositing'
-          : requiresOwnerWalletTransfer
-            ? 'Transfer & Deposit'
-            : marginActionLabel
+        : marginActionStatus === 'approving'
+          ? `Approving ${PERPS_SETTLEMENT_TOKEN_LABEL}`
+          : marginActionStatus === 'depositing'
+            ? 'Depositing'
+            : requiresOwnerWalletTransfer ? 'Transfer & Deposit' : marginActionLabel
   const marginActionCurrentCollateral = currentPosition?.exists
     ? currentPosition.marginAssets
     : undefined
   const shouldShowMarginActionPositionContext = currentPosition?.exists && marginActionCurrentCollateral !== undefined
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
-  const isMarginActionSubmitDisabled = isAwaitingAccountConfirmation || isMarginActionPending
+  const isMarginActionSubmitDisabled = isAwaitingAccountConfirmation || isMarginActionPending || kernelOperationPending
     || (enableLiveTrading && !isConnected && (!walletReady || !walletConfigured))
     || Boolean(sponsorshipPauseMessage)
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
@@ -3833,6 +3875,7 @@ export function PerpsTradeTicket({
     trackPerpsMarginLifecycle(`${action}_opened`, commonAnalyticsProperties)
     setMarginAction(action)
     setMarginActionAmount('')
+    setMarginDepositSource('owner')
     setMarginActionStatus('idle')
     setMarginActionError(undefined)
     setLocallyConfirmedFundingBalances(null)
@@ -3861,7 +3904,7 @@ export function PerpsTradeTicket({
   }, [clearMarginActionRequest, marginActionRequest, openMarginAction])
 
   async function handleMarginActionSubmit() {
-    if (!marginAction) return
+    if (!marginAction || isMarginActionPending || kernelOperationPending) return
     if (sponsorshipPauseMessage) return
     if (enableLiveTrading && !isConnected) {
       connect()
@@ -3880,7 +3923,10 @@ export function PerpsTradeTicket({
     try {
       trackPerpsMarginLifecycle(`${marginAction}_submitted`, commonAnalyticsProperties)
       setMarginActionError(undefined)
-      if (marginAction === 'deposit') {
+      if (depositsFromOwnerWallet) {
+        setMarginActionStatus('depositing')
+        await depositMarginFromOwnerWallet(marginActionAmountRaw, setMarginActionStatus)
+      } else if (marginAction === 'deposit') {
         if (requiresOwnerWalletTransfer) {
           if (
             effectiveOwnerWalletBalance === undefined ||
@@ -3898,19 +3944,13 @@ export function PerpsTradeTicket({
           void onAccountRefresh?.()
         }
         setMarginActionStatus('depositing')
-        const depositSource = isSponsoredAccountConfigured &&
-          identity.manifest?.smartAccountMode === 'simple' &&
-          identity.manifest.settlementTokenSupportsEip3009
-          ? 'owner'
-          : 'account'
-        await depositMargin(
-          marginActionAmountRaw,
-          marginAllowanceAssets,
-          depositSource
-        )
+        const depositSource = usesOwnerDepositAuthorization ? 'owner' : 'account'
+        if (gasReview) await depositMargin(marginActionAmountRaw, marginAllowanceAssets, depositSource, marginGasApproval.review)
+        else await depositMargin(marginActionAmountRaw, marginAllowanceAssets, depositSource)
       } else {
         setMarginActionStatus('pending')
-        await withdrawMargin(marginActionAmountRaw)
+        if (gasReview) await withdrawMargin(marginActionAmountRaw, marginGasApproval.review)
+        else await withdrawMargin(marginActionAmountRaw)
       }
       setMarginActionStatus('idle')
       setMarginAction(null)
@@ -3919,13 +3959,29 @@ export function PerpsTradeTicket({
       trackPerpsMarginLifecycle(`${marginAction}_succeeded`, commonAnalyticsProperties)
       void onAccountRefresh?.()
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled) {
+        setMarginActionStatus('idle')
+        return
+      }
+      if (error instanceof KernelObservedPendingError) {
+        setMarginActionStatus('idle')
+        setMarginAction(null)
+        setMarginActionAmount('')
+        setLocallyConfirmedFundingBalances(null)
+        void onAccountRefresh?.()
+        gasReview?.openActivity()
+        return
+      }
       setMarginActionStatus('failed')
       const errorMessage = error instanceof Error
         ? error.message
         : `${marginActionLabel} failed. Check wallet and retry.`
-      setMarginActionError(ownerWalletTransferConfirmed
-        ? `The transfer succeeded, but the Margin Account deposit failed. The ${PERPS_SETTLEMENT_TOKEN_LABEL} remains in your Trading Account and will not be transferred again when you retry. ${errorMessage}`
-        : errorMessage)
+      setMarginActionError({
+        message: ownerWalletTransferConfirmed
+          ? `The transfer succeeded, but the Margin Account deposit failed. The ${PERPS_SETTLEMENT_TOKEN_LABEL} remains in your Trading Account and will not be transferred again when you retry. ${errorMessage}`
+          : errorMessage,
+        cause: error,
+      })
       trackPerpsMarginLifecycle(`${marginAction}_failed`, {
         ...commonAnalyticsProperties,
         error_category: perpsErrorCategory(error),
@@ -3941,7 +3997,8 @@ export function PerpsTradeTicket({
 
   async function handleConfirmCommit() {
     if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
-      document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase())) {
+      document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase() ||
+      !canConfirmGasReview || (reviewedGasQuote && !kernelQuoteIsFresh(reviewedGasQuote)))) {
       setFlowError('Wait for a fresh order review before confirming.')
       return
     }
@@ -4138,6 +4195,11 @@ export function PerpsTradeTicket({
         debugPerpsCommit('ticket:commit-error-after-inclusion', {
           message: error instanceof Error ? error.message : String(error),
         })
+        return
+      }
+      if (error instanceof KernelObservedPendingError) {
+        closeReviewModal()
+        gasReview?.openActivity()
         return
       }
       if (!inclusionWasReported() && findSponsorRequestError(error)?.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
@@ -4542,7 +4604,9 @@ export function PerpsTradeTicket({
               <span>Take profit / stop loss</span>
             </label>
             {!canAttachProtection ? <Tooltip
-              content={`Manage ${activePositionProtectionId > 0n ? 'your active protection' : 'protection for your existing position'} in the TP/SL tab.`}
+              content={protectionCommitsEnabled
+                ? `Manage ${activePositionProtectionId > 0n ? 'your active protection' : 'protection for your existing position'} in the TP/SL tab.`
+                : 'New TP/SL protections are currently unavailable for this Trading Account.'}
               position="top"
               className={INFO_TOOLTIP_PANEL_CLASS_NAME}
             >
@@ -4735,12 +4799,18 @@ export function PerpsTradeTicket({
 
         {restoredDraftNotice && <p role="status" className="mb-3 text-sm text-content-secondary">{restoredDraftNotice}</p>}
         {sponsorshipPauseMessage && (
-          <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-            {sponsorshipPauseMessage}
-          </p>
+          <div className="space-y-2 border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+            <p role="status">{sponsorshipPauseMessage}</p>
+            {gasReview ? <PerpsGasReview gas={gasReview} /> : null}
+          </div>
         )}
         {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
           <AccountOperationNotice confirmation={savedConfirmation} operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+        ) : enableLiveTrading && kernelOperationPending && gasReview ? (
+          <div className="space-y-2 border border-brand-border/25 p-3 text-sm text-content-secondary">
+            <p role="status">{kernelPendingMessage}</p>
+            <button type="button" className="font-semibold text-brand-peach underline underline-offset-4" onClick={gasReview.openActivity}>Check activity</button>
+          </div>
         ) : displayedValidationError && displayedValidationError !== sponsorshipPauseMessage && !isZeroSize &&
         (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
@@ -4878,7 +4948,14 @@ export function PerpsTradeTicket({
               error={reviewFooterError}
               changes={reviewChanges}
               direction={direction}
-              canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready)}
+              canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready) &&
+                canConfirmGasReview}
+              gasReview={gasReview ? (
+                <PerpsGasReview gas={gasReview} quote={reviewedGasQuote} error={preparationError} onOpenSettings={() => {
+                  closeReviewModal()
+                  gasReview.openActivity()
+                }} />
+              ) : null}
               onCancel={closeReviewModal}
               onConfirm={() => { void handleConfirmCommit() }}
               onRetry={!sponsorshipPauseMessage && reviewFundingShortfallAssets === undefined ? retryExecutionProtections : undefined}
@@ -5247,9 +5324,9 @@ export function PerpsTradeTicket({
           {lifecycleState === 'commitPreparing' ? (
             <>
               <PendingStateCard
-                title={isSponsoredAccountConfigured ? 'Preparing sponsored transaction' : 'Preparing wallet request'}
+                title={isSponsoredAccountConfigured && !gasReview ? 'Preparing sponsored transaction' : 'Preparing wallet request'}
                 description={
-                  isSponsoredAccountConfigured
+                  gasReview ? 'Checking the reviewed gas terms and order before opening your wallet.' : isSponsoredAccountConfigured
                     ? 'Plether is requesting sponsorship and estimating the final UserOperation before asking for your signature.'
                     : 'Checking gas and wallet network before opening your wallet. If this takes more than a few seconds, switch to Arbitrum Sepolia manually and try again.'
                 }
@@ -5707,7 +5784,14 @@ export function PerpsTradeTicket({
         analyticsProperties={commonAnalyticsProperties}
         footer={
           <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {marginGasApproval.quote ? (
+              <KernelGasApprovalButtons
+                confirm={marginGasApproval.confirm}
+                cancel={marginGasApproval.cancel}
+                disabled={isMarginActionInvalid || kernelOperationPending || Boolean(sponsorshipPauseMessage) || !marginGasApproval.canConfirm}
+              />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
                 type="button"
                 variant="secondary"
@@ -5733,9 +5817,10 @@ export function PerpsTradeTicket({
                   void handleMarginActionSubmit()
                 }}
               >
-                {marginActionCtaLabel}
+                {marginGasApproval.requiresConfirmation && !depositsFromOwnerWallet && !isMarginActionPending && !isConnectWalletCta && !isSwitchNetworkCta && !requiresOwnerWalletTransfer ? 'Review network gas' : marginActionCtaLabel}
               </Button>
-            </div>
+              </div>
+            )}
             {enableLiveTrading && isConnected && !isCorrectChain && networkSwitchError ? (
               <div className="text-xs leading-4 text-[#FFAB96]">
                 {networkSwitchError}
@@ -5768,14 +5853,23 @@ export function PerpsTradeTicket({
               {sponsorshipPauseMessage}
             </p>
           )}
+          {kernelOperationPending && (
+            <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+              {kernelPendingMessage} Check Trading Account activity before submitting another action.
+            </p>
+          )}
           <p className="text-sm leading-6 text-content-secondary">
             {marginAction === 'withdraw'
               ? isSponsoredAccountConfigured
-                ? `Withdraw free ${PERPS_SETTLEMENT_TOKEN_LABEL} from the Margin Account. Separate Trading Accounts return the exact withdrawal to the connected owner wallet in the same sponsored action.`
+                ? `Withdraw free ${PERPS_SETTLEMENT_TOKEN_LABEL} from the Margin Account. Separate Trading Accounts return the exact withdrawal to the connected owner wallet in one action.`
                 : `Withdraw free ${PERPS_SETTLEMENT_TOKEN_LABEL} from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.`
+              : depositsFromOwnerWallet
+                ? `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} directly from your Owner Wallet into margin. Your wallet may ask you to approve ${PERPS_SETTLEMENT_TOKEN_LABEL} first.`
+              : offersDirectDeposit
+                ? `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} held in your Trading Account into margin.`
               : isSponsoredAccountConfigured
                 ? usesOwnerDepositAuthorization
-                  ? `Authorize ${PERPS_SETTLEMENT_TOKEN_LABEL} from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account. Plether sponsors network gas; ${PERPS_SETTLEMENT_TOKEN_LABEL} protocol costs still apply.`
+                  ? `Authorize ${PERPS_SETTLEMENT_TOKEN_LABEL} from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account.${gasReview ? '' : ` Plether sponsors network gas; ${PERPS_SETTLEMENT_TOKEN_LABEL} protocol costs still apply.`}`
                   : `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into the Plether Trading Account Margin Account. If the Trading Account needs funds, Plether first transfers the exact shortfall from the Owner Wallet.`
                 : `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account. Deposited margin increases available buying power and can be used for committed orders.`}
           </p>
@@ -5786,15 +5880,32 @@ export function PerpsTradeTicket({
                 Transfer <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(ownerWalletTransferAmountRaw)} /> from Owner Wallet
               </p>
               <p className="mt-1 text-content-secondary">
-                This first confirmation is a regular Arbitrum Sepolia {PERPS_SETTLEMENT_TOKEN_LABEL} transfer to your Trading Account and requires ETH for network gas. The following Margin Account deposit is gas-sponsored.
+                This first confirmation is a regular Arbitrum Sepolia {PERPS_SETTLEMENT_TOKEN_LABEL} transfer to your Trading Account and requires ETH for network gas. {gasReview ? 'You will review the Margin Account deposit gas separately.' : 'The following Margin Account deposit is gas-sponsored.'}
               </p>
             </div>
           ) : null}
+
+          {offersDirectDeposit && ((effectiveTradingAccountBalance ?? 0n) > 0n || marginDepositSource === 'account') && (
+            <fieldset disabled={isMarginActionPending} className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-content-secondary">
+              <legend className="mb-2 text-content-primary">Deposit from</legend>
+              {(['owner', 'account'] as const).map(source => (
+                <label key={source} className="flex items-center gap-2">
+                  <input type="radio" name={marginDepositSourceName} className="accent-brand-orange" checked={marginDepositSource === source} onChange={() => {
+                    setMarginDepositSource(source)
+                    setMarginActionStatus('idle')
+                    setMarginActionError(undefined)
+                  }} />
+                  {source === 'owner' ? 'Owner Wallet' : 'Trading Account'}
+                </label>
+              ))}
+            </fieldset>
+          )}
 
           <div className="space-y-2">
             <Input
               label="Amount"
               value={marginActionAmount}
+              disabled={isMarginActionPending}
               onChange={(event) => {
                 if (isNumericInput(event.target.value)) {
                   setMarginActionAmount(event.target.value)
@@ -5832,9 +5943,9 @@ export function PerpsTradeTicket({
                 <AccountSummaryRow
                   label={marginActionLimitLabel}
                   value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginActionLimitDisplay} />}
-                  tooltip={usesTradingAccountDepositBalance
-                    ? `Combined Trading Account and Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL} available for this flow. Any required Owner Wallet transfer confirms before the sponsored deposit.`
-                    : `Wallet-held ${PERPS_SETTLEMENT_TOKEN_LABEL} available to move into the Margin Account. It cannot fund orders until the deposit confirms.`}
+                  tooltip={usesTradingAccountDepositBalance && !offersDirectDeposit
+                    ? `Combined Trading Account and Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL} available for this flow. Any required Owner Wallet transfer confirms before the deposit.`
+                    : `${PERPS_SETTLEMENT_TOKEN_LABEL} available from the selected source. The deposit credits free margin for trading.`}
                   tooltipDocsLink={DOCS_LINKS.withdrawable}
                 />
               ) : (
@@ -5884,6 +5995,11 @@ export function PerpsTradeTicket({
             </div>
           </div>
 
+          <PerpsGasReview gas={gasReview} quote={marginGasApproval.quote} error={marginActionError?.cause} showSettings={!isMarginActionPending} onOpenSettings={() => {
+            setMarginAction(null)
+            gasReview?.openActivity()
+          }} />
+
           {isMarginActionInsufficient ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
               Amount exceeds {marginActionLimitLabel.toLowerCase()}.
@@ -5892,7 +6008,7 @@ export function PerpsTradeTicket({
 
           {marginActionError ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-              <p className="whitespace-pre-line [overflow-wrap:anywhere]">{marginActionError}</p>
+              <p className="whitespace-pre-line [overflow-wrap:anywhere]">{marginActionError.message}</p>
               {marginAction === 'deposit' && usesOwnerDepositAuthorization && !activeAccountOperation?.nativePreparation ? (
                 <button
                   type="button"

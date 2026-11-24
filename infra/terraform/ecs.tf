@@ -258,10 +258,41 @@ locals {
     }
   ] : []
 
+  kernel_aa_secrets = local.kernel_aa_backend_configured ? [
+    {
+      name      = "AA_SECURITY_RPC_URL"
+      valueFrom = local.aa_reconciler_secondary_rpc_url_parameter_arn
+    }
+  ] : []
+
   aa_proxy_secrets = concat(
     local.aa_gateway_origin_secret,
     local.pimlico_proxy_secrets,
     local.native_aa_secrets,
+    local.kernel_aa_secrets,
+  )
+
+  kernel_aa_environment = concat(
+    local.kernel_aa_backend_configured ? [
+      { name = "AA_KERNEL_PROFILE_JSON", value = var.aa_kernel_profile_json },
+      { name = "AA_KERNEL_ETH_ENABLED", value = tostring(var.enable_kernel_aa_eth) },
+      { name = "AA_KERNEL_SPONSORSHIP_ENABLED", value = tostring(local.kernel_aa_sponsorship_enabled) },
+      { name = "AA_KERNEL_PROTECTION_COMMITS_ENABLED", value = tostring(var.enable_kernel_aa_protection_commits) },
+      { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },
+      { name = "AA_KERNEL_ALTO_RPC_URL", value = "http://${aws_lb.alto[0].dns_name}" },
+      { name = "AA_KERNEL_PUBLIC_ADMISSION", value = tostring(var.aa_kernel_public_admission) },
+      { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
+      { name = "AWS_REGION", value = var.aws_region },
+    ] : [],
+    local.kernel_aa_backend_configured && !var.aa_kernel_public_admission ? [
+      { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = jsonencode(var.aa_kernel_canary_owners) },
+    ] : [],
+    local.kernel_aa_sponsorship_configured ? [
+      { name = "AA_KERNEL_SPONSORSHIP_JSON", value = var.aa_kernel_sponsorship_json },
+    ] : [],
+    local.kernel_aa_sponsorship_enabled ? [
+      { name = "AA_KERNEL_PAYMASTER_KMS_KEY_ID", value = aws_kms_key.aa_paymaster_signer[0].arn },
+    ] : [],
   )
 
   native_aa_environment = local.native_aa_backend_configured ? [
@@ -492,7 +523,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment, local.commitment_wakeup_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.kernel_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment, local.commitment_wakeup_environment)
   }, merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image })])
 
   lifecycle {

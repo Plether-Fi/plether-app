@@ -40,6 +40,8 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'duration_ms',
   'error_category',
   'error_code',
+  'gas_payment_mode',
+  'gas_estimate_usage',
   'contract_function',
   'assessment_point',
   'lifecycle_state',

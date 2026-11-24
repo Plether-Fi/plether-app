@@ -98,6 +98,12 @@ jobs:
           terraform -chdir=infra/terraform validate
           terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -filter=tests/mainnet.tftest.hcl -filter=tests/alto_ingress.tftest.hcl -filter=tests/rpc.tftest.hcl -no-color
 
+      - name: Test mocked Kernel canary deployment guards
+        working-directory: infra/terraform/kernel-canary
+        run: |
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform test -filter=tests/services.tftest.hcl -no-color
+
       - name: Test retained artifacts, immutable releases and protected recovery
         working-directory: .
         run: |

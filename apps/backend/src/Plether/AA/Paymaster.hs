@@ -6,7 +6,9 @@ module Plether.AA.Paymaster
   , makeSponsorshipEnvelope
   , decodeSponsorshipEnvelope
   , sponsorshipDigest
+  , sponsorshipDigestFor
   , userOperationHash
+  , userOperationHashFor
   , maximumUserOperationCost
   , paymasterAndData
   , paymasterDataHex
@@ -243,8 +245,11 @@ maximumUserOperationCost operation envelope =
     * puoMaxFeePerGas operation
 
 sponsorshipDigest :: PackedUserOperation -> SponsorshipEnvelope -> ByteString
-sponsorshipDigest operation envelope =
-  keccak256 $ BS.pack [0x19, 0x01] <> domainSeparator envelope <> structHash
+sponsorshipDigest = sponsorshipDigestFor chainId entryPointAddress
+
+sponsorshipDigestFor :: Integer -> Text -> PackedUserOperation -> SponsorshipEnvelope -> ByteString
+sponsorshipDigestFor operationChain entryPoint operation envelope =
+  keccak256 $ BS.pack [0x19, 0x01] <> domainSeparator operationChain envelope <> structHash
  where
   structHash =
     keccak256 $
@@ -263,13 +268,18 @@ sponsorshipDigest operation envelope =
         <> encodeUint256 (seMaxCost envelope)
         <> sePolicyId envelope
         <> seAccountCodeHash envelope
-        <> encodeAddress entryPointAddress
+        <> encodeAddress entryPoint
 
 userOperationHash :: PackedUserOperation -> ByteString
-userOperationHash operation =
+userOperationHash = userOperationHashFor chainId entryPointAddress
+
+-- Applies to the ordinary packed envelope. The caller must reject delegation
+-- and EntryPoint 0.9's optional paymaster signature suffix before calling.
+userOperationHashFor :: Integer -> Text -> PackedUserOperation -> ByteString
+userOperationHashFor operationChain entryPoint operation =
   keccak256 $
     BS.pack [0x19, 0x01]
-      <> entryPointDomainSeparator
+      <> entryPointDomainSeparator operationChain entryPoint
       <> packedHash
  where
   packedHash =
@@ -286,14 +296,14 @@ userOperationHash operation =
 
 -- EntryPoint v0.8 hashes PackedUserOperation as EIP-712 data.  This domain is
 -- deliberately separate from the verifying-paymaster sponsorship domain.
-entryPointDomainSeparator :: ByteString
-entryPointDomainSeparator =
+entryPointDomainSeparator :: Integer -> Text -> ByteString
+entryPointDomainSeparator operationChain entryPoint =
   keccak256 $
     eip712DomainTypeHash
       <> keccak256 "ERC4337"
       <> keccak256 "1"
-      <> encodeUint256 chainId
-      <> encodeAddress entryPointAddress
+      <> encodeUint256 operationChain
+      <> encodeAddress entryPoint
 
 packedUserOperationTypeHash :: ByteString
 packedUserOperationTypeHash =
@@ -309,13 +319,13 @@ dummyPaymasterSignature = BS.replicate 65 0
 canonicalQuantity :: Integer -> Text
 canonicalQuantity value = "0x" <> T.pack (showHex value "")
 
-domainSeparator :: SponsorshipEnvelope -> ByteString
-domainSeparator envelope =
+domainSeparator :: Integer -> SponsorshipEnvelope -> ByteString
+domainSeparator operationChain envelope =
   keccak256 $
     eip712DomainTypeHash
       <> keccak256 "PletherVerifyingPaymaster"
       <> keccak256 "1"
-      <> encodeUint256 chainId
+      <> encodeUint256 operationChain
       <> encodeAddress (sePaymaster envelope)
 
 accountGasLimits :: PackedUserOperation -> ByteString
