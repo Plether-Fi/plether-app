@@ -611,15 +611,26 @@ jobs:
 
             if [ "$requires_perps_admission" = true ] && \
                 ! jq -e --arg container "$container_name" \
-                  '(.[] | select(.name == $container)) as $definition
+                  --arg allow_bootstrap "$ALLOW_MISSING_TASK_DEFINITIONS" \
+                  'def nonempty($value): ($value | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0));
+                   (.[] | select(.name == $container)) as $definition
                    | ["PERPS_CHAIN_ID", "PERPS_ORDER_ROUTER", "PERPS_PLETHER_ORACLE"] as $requiredEnvironment
                    | ($definition.secrets // [] | map(select(.name == "PERPS_RPC_URL"))) as $rpcSecrets
                    | ($definition.environment // [] | map(select(.name as $name | $requiredEnvironment | index($name)))) as $perpsEnvironment
+                   | ($perpsEnvironment | map({key: .name, value: (.value // "")}) | from_entries) as $perpsValues
                    | ($rpcSecrets | length) == 1
-                   and (($rpcSecrets[0].valueFrom // "") | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0))
+                   and nonempty($rpcSecrets[0].valueFrom // "")
                    and ($perpsEnvironment | length) == ($requiredEnvironment | length)
                    and (([$perpsEnvironment[].name] | sort) == ($requiredEnvironment | sort))
-                   and all($perpsEnvironment[]; ((.value // "") | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0)))' \
+                   and nonempty($perpsValues.PERPS_CHAIN_ID)
+                   and (
+                     (nonempty($perpsValues.PERPS_ORDER_ROUTER) and nonempty($perpsValues.PERPS_PLETHER_ORACLE))
+                     or (
+                       $allow_bootstrap == "true"
+                       and $perpsValues.PERPS_ORDER_ROUTER == ""
+                       and $perpsValues.PERPS_PLETHER_ORACLE == ""
+                     )
+                   )' \
                   "$task_def_file" > /dev/null; then
               report_failure "$task_family" "$container_name" \
                 "on-chain payload admission requires non-empty PERPS_RPC_URL, PERPS_CHAIN_ID, PERPS_ORDER_ROUTER, and PERPS_PLETHER_ORACLE references."
@@ -868,6 +879,7 @@ jobs:
 
             if ! jq --exit-status \
                 --arg target_env "$TARGET_ENV" \
+                --arg allow_bootstrap "$ALLOW_MISSING_TASK_DEFINITIONS" \
                 --arg expected_signer_suffix ":parameter/plether/${TARGET_ENV}/lp-settlement-private-key" \
                 '
                 def env_map:
@@ -892,6 +904,15 @@ jobs:
                 | ($keeper | env_map) as $env
                 | ($env.LP_SETTLEMENT_MODE // "") as $mode
                 | ([($keeper.secrets // [])[] | select(.name == "LP_SETTLEMENT_PRIVATE_KEY")]) as $settlement_signers
+                | [
+                    $env.PERPS_HOUSE_POOL,
+                    $env.PERPS_SENIOR_VAULT,
+                    $env.PERPS_JUNIOR_VAULT,
+                    $env.PERPS_SETTLEMENT_MONITOR_LENS,
+                    $env.PERPS_ORDER_ROUTER,
+                    $env.PERPS_CFD_ENGINE,
+                    $env.PERPS_PLETHER_ORACLE
+                  ] as $contract_addresses
                 | ($keepers | length) == 1
                 and all(
                   [
@@ -925,28 +946,13 @@ jobs:
                 and ($mode == "off" or ($settlement_signers | length == 1))
                 and ($mode == "off" or ([($keeper.secrets // [])[] | select(.name != "LP_SETTLEMENT_PRIVATE_KEY" and .valueFrom == $settlement_signers[0].valueFrom)] | length == 0))
                 and ($mode == "off" or $mode == "observe" or $mode == "execute")
-                and ($env.PERPS_HOUSE_POOL | valid_address)
-                and ($env.PERPS_SENIOR_VAULT | valid_address)
-                and ($env.PERPS_JUNIOR_VAULT | valid_address)
-                and ($env.PERPS_SETTLEMENT_MONITOR_LENS | valid_address)
-                and ($env.PERPS_ORDER_ROUTER | valid_address)
-                and ($env.PERPS_CFD_ENGINE | valid_address)
-                and ($env.PERPS_PLETHER_ORACLE | valid_address)
-                and ([
-                  $env.PERPS_HOUSE_POOL,
-                  $env.PERPS_SENIOR_VAULT,
-                  $env.PERPS_JUNIOR_VAULT,
-                  $env.PERPS_SETTLEMENT_MONITOR_LENS,
-                  $env.PERPS_ORDER_ROUTER,
-                  $env.PERPS_CFD_ENGINE,
-                  $env.PERPS_PLETHER_ORACLE
-                ] | map(ascii_downcase) | unique | length == 7)
-                and (($env.PERPS_HOUSE_POOL | ascii_downcase) != ($env.PERPS_SENIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_HOUSE_POOL | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_SENIOR_VAULT | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_HOUSE_POOL | ascii_downcase))
-                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_SENIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
+                and (
+                  ($allow_bootstrap == "true" and $mode == "off" and ($contract_addresses | all(. == "")))
+                  or (
+                    all($contract_addresses[]; valid_address)
+                    and ($contract_addresses | map(ascii_downcase) | unique | length == 7)
+                  )
+                )
                 and ($env.LP_SETTLEMENT_POLL_SECONDS == "15")
                 and ($env.KEEPER_CONFIRMATIONS | integer_between(1; 10000))
                 and ($env.LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS | integer_between(1; 4))
