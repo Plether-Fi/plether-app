@@ -120,6 +120,15 @@ class BootstrapPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             node.validate_config({**mainnet, 'parent_chain_id': 11155111}, self.parent)
 
+    def test_initialize_mounts_disks_before_parent_secret_exists(self):
+        config = {**self.config, 'parent_parameter': '/plether/mainnet/rpc-node/parent', 'staging_volume_id': 'vol-0123456789abcdef0'}
+        with patch.object(node.sys, 'argv', ['node.py', 'initialize', '/plether/mainnet/rpc-node/config', 'ap-southeast-1']), \
+                patch.object(node, 'parameter', return_value=config) as get_param, \
+                patch.object(node, 'initialize') as init:
+            node.main()
+        get_param.assert_called_once_with('/plether/mainnet/rpc-node/config', 'ap-southeast-1')
+        init.assert_called_once_with(config)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -102,3 +102,37 @@ test('Pyth and LP settlement preflights allow empty contract addresses only on d
   lpObserve[0].secrets.push({ name: 'LP_SETTLEMENT_PRIVATE_KEY', valueFrom: 'arn:aws:ssm:ap-southeast-1:366562432386:parameter/plether/mainnet/lp-settlement-private-key' })
   assert.notEqual(runLp(lpObserve, 'true').status, 0)
 })
+
+test('ECR vulnerability scan gate resolves linux/arm64 child manifest from OCI image index', () => {
+  const scanSection = source.split('Verify ECR vulnerability scans (zero CRITICAL findings)')[1]
+  const scanFilter = scanSection?.match(/jq -er --arg fallback "\$digest" '\n([\s\S]*?)\n\s+'\) /m)?.[1]
+    ?? scanSection?.match(/jq -er --arg fallback "\$digest" '([\s\S]*?)'\)/)?.[1]
+  assert.ok(scanFilter, 'extract actual ECR scan child-manifest jq filter')
+
+  const indexDigest = 'sha256:' + '1'.repeat(64)
+  const childDigest = 'sha256:' + '2'.repeat(64)
+  const attestationDigest = 'sha256:' + '3'.repeat(64)
+  const runSelect = (manifest) => spawnSync('jq', [
+    '-er', '--arg', 'fallback', indexDigest, scanFilter,
+  ], { input: JSON.stringify(manifest), encoding: 'utf8' })
+
+  const ociIndex = {
+    schemaVersion: 2,
+    mediaType: 'application/vnd.oci.image.index.v1+json',
+    manifests: [
+      { digest: childDigest, platform: { os: 'linux', architecture: 'arm64' } },
+      { digest: attestationDigest, platform: { os: 'unknown', architecture: 'unknown' } },
+    ],
+  }
+  const indexRes = runSelect(ociIndex)
+  assert.equal(indexRes.status, 0, indexRes.stderr)
+  assert.equal(indexRes.stdout.trim(), childDigest)
+
+  const singleManifest = { schemaVersion: 2, config: { digest: childDigest }, layers: [] }
+  const singleRes = runSelect(singleManifest)
+  assert.equal(singleRes.status, 0, singleRes.stderr)
+  assert.equal(singleRes.stdout.trim(), indexDigest)
+
+  const missingArm64 = { schemaVersion: 2, manifests: [{ digest: attestationDigest, platform: { os: 'linux', architecture: 'amd64' } }] }
+  assert.notEqual(runSelect(missingArm64).status, 0)
+})

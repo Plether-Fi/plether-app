@@ -360,7 +360,7 @@ describe('Cloudflare API proxy vault history caching', () => {
     assert.equal(await response.text(), '{"data":{"complete":true}}');
   });
 
-  it('does not share-cache vault history with missing, duplicate, extra, or unsupported queries', async () => {
+  it('rejects vault history with missing, duplicate, extra, or unsupported queries at the edge', async () => {
     const cacheMatch = mock.fn(async () => undefined);
     const cachePut = mock.fn(async () => undefined);
     const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
@@ -395,10 +395,12 @@ describe('Cloudflare API proxy vault history caching', () => {
       else Object.defineProperty(globalThis, 'caches', originalCaches);
     }
 
-    assert.equal(fetchMock.mock.callCount(), urls.length);
+    assert.equal(fetchMock.mock.callCount(), 0);
     assert.equal(cacheMatch.mock.callCount(), 0);
     assert.equal(cachePut.mock.callCount(), 0);
     for (const response of responses) {
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get('Cache-Control'), 'no-store');
       assert.equal(response.headers.get('X-Plether-Edge-Cache'), null);
     }
   });

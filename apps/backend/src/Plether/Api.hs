@@ -36,7 +36,10 @@ import Network.Wai.Middleware.Cors
   , cors
   , simpleCorsResourcePolicy
   )
-import Plether.Cache (AppCache (cachePrivyVerifier))
+import Plether.Cache
+  ( AppCache (cacheBasketLatest, cachePerpsMarketStats, cachePrivyVerifier)
+  , runSingleFlightCache
+  )
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness, closeAssistanceStatus)
 import Plether.AA.KernelGateway (KernelGatewayConfig (kgcOriginToken), handleKernelAaRpc)
@@ -684,13 +687,22 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
     Nothing -> pure ()
 
   get "/api/perps/market/stats" $ do
-    case mPool of
-      Just pool -> do
-        result <- liftIO $ getPerpsMarketStatsResponse pool cfg
-        handleResult result
-      Nothing ->
-        handleServiceUnavailable $
-          E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
+    queryKeys <- currentQueryKeys
+    if not $ null queryKeys
+      then handleError $ E.invalidAmount "market stats does not accept query parameters"
+      else case mPool of
+        Just pool -> do
+          (_, result) <-
+            liftIO $
+              runSingleFlightCache
+                (cachePerpsMarketStats cache)
+                ()
+                isRight
+                (getPerpsMarketStatsResponse pool cfg)
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
 
   get "/api/perps/vaults/history" $ do
     queryKeys <- currentQueryKeys
@@ -845,13 +857,22 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
     handleBasketCurrentCandleAt cache cfg mPool validatedAt
 
   get "/api/perps/basket/latest" $ do
-    case mPool of
-      Just pool -> do
-        result <- liftIO $ getBasketLatest pool cfg
-        handleResult result
-      Nothing ->
-        handleServiceUnavailable $
-          E.internalError "DATABASE_URL is not configured; perps basket latest is unavailable"
+    queryKeys <- currentQueryKeys
+    if not $ null queryKeys
+      then handleError $ E.invalidAmount "basket latest does not accept query parameters"
+      else case mPool of
+        Just pool -> do
+          (_, result) <-
+            liftIO $
+              runSingleFlightCache
+                (cacheBasketLatest cache)
+                ()
+                isRight
+                (getBasketLatest pool cfg)
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; perps basket latest is unavailable"
 
   get "/api/perps/orders/:orderId/reveal-payload" $ do
     rawOrderId <- pathParam "orderId"

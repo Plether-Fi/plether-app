@@ -1,13 +1,14 @@
 module Plether.ServerSpec (spec) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, threadDelay)
+import Control.Concurrent.Async (async, wait)
 import Control.Exception (bracket)
 import qualified Data.ByteString as BS
 import qualified Network.HTTP.Client as HTTP
 import qualified Network.Socket as Socket
 import qualified Network.Socket.ByteString as Socket
-import Network.HTTP.Types (status200)
-import Network.Wai (responseLBS)
+import Network.HTTP.Types (status200, status503)
+import Network.Wai (pathInfo, responseLBS)
 import Network.Wai.Handler.Warp (getPort, setTimeout, testWithApplicationSettings)
 import Network.Wai.Handler.Warp.Internal (Settings (settingsTimeout))
 import Plether.Server
@@ -48,6 +49,48 @@ spec = describe "API server connection lifecycle" $ do
       request <- HTTP.parseRequest $ "http://127.0.0.1:" <> show port
       response <- HTTP.httpLbs request manager
       HTTP.responseBody response `shouldBe` "complete"
+
+  it "sheds excess concurrent foreground requests while keeping health checks and long polls isolated" $ do
+    entered <- newEmptyMVar
+    release <- newEmptyMVar
+    limitMiddleware <- newConcurrencyLimitMiddleware 1 1
+    let app req respond = case pathInfo req of
+          ["api", "health"] -> respond $ responseLBS status200 [] "healthy"
+          ["api", "perps", "orders", "1", "wait"] -> respond $ responseLBS status200 [] "longpoll"
+          _ -> do
+            putMVar entered ()
+            takeMVar release
+            respond $ responseLBS status200 [] "ok"
+    testWithApplicationSettings (settings $ apiServerOptions 0) (pure $ limitMiddleware app) $ \port -> do
+      manager <- HTTP.newManager HTTP.defaultManagerSettings
+      let baseUrl = "http://127.0.0.1:" <> show port
+      fgReq <- HTTP.parseRequest $ baseUrl <> "/api/perps/basket/candles/current?interval=900"
+      healthReq <- HTTP.parseRequest $ baseUrl <> "/api/health"
+      longPollReq <- HTTP.parseRequest $ baseUrl <> "/api/perps/orders/1/wait"
+
+      inFlight <- async $ HTTP.httpLbs fgReq manager
+      takeMVar entered
+
+      shedResp <- HTTP.httpLbs fgReq manager
+      HTTP.responseStatus shedResp `shouldBe` status503
+      lookup "Retry-After" (HTTP.responseHeaders shedResp) `shouldBe` Just "1"
+      lookup "Cache-Control" (HTTP.responseHeaders shedResp) `shouldBe` Just "no-store"
+
+      healthResp <- HTTP.httpLbs healthReq manager
+      HTTP.responseStatus healthResp `shouldBe` status200
+
+      longPollResp <- HTTP.httpLbs longPollReq manager
+      HTTP.responseStatus longPollResp `shouldBe` status200
+
+      putMVar release ()
+      firstResp <- wait inFlight
+      HTTP.responseStatus firstResp `shouldBe` status200
+
+      recoveredResp <- async $ HTTP.httpLbs fgReq manager
+      takeMVar entered
+      putMVar release ()
+      finalResp <- wait recoveredResp
+      HTTP.responseStatus finalResp `shouldBe` status200
 
 readResponse :: Socket.Socket -> BS.ByteString -> IO Bool
 readResponse connection accumulated
