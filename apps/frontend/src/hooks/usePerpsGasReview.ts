@@ -58,13 +58,15 @@ function approvalMatches(gas: PerpsGasReviewView, quote: KernelActionQuote): boo
   return current.mode === quote.mode && current.revision === gas.preference.revision
 }
 
-export function useKernelGasApproval(gas: PerpsGasReviewView) {
+export function useKernelGasApproval(gas: PerpsGasReviewView, options?: { autoConfirm?: boolean; blocked?: boolean }) {
   const scope = gas && [gas.chainId, gas.deployment, gas.sender, gas.preference.revision].join(':')
+  const autoConfirm = options?.autoConfirm === true
+  const blocked = options?.blocked === true
   const paysFromWallet = gas?.preference.mode === 'eth' && gas.paysEthFromWallet === true
   const [pending, setPending] = useState<PendingApproval>()
   const active = useRef<PendingApproval>(undefined)
   const mounted = useRef(false)
-  const current = useRef({ gas, scope })
+  const current = useRef({ gas, scope, blocked })
   const cancel = useCallback(() => {
     const approval = active.current
     if (!approval) return
@@ -81,17 +83,17 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
     }
   }, [])
   useLayoutEffect(() => {
-    current.current = { gas, scope }
+    current.current = { gas, scope, blocked }
     const approval = active.current
     if (approval && (approval.scope !== scope || !approvalMatches(gas, approval.quote))) {
       queueMicrotask(() => {
         if (active.current === approval) cancel()
       })
     }
-  }, [cancel, gas, scope])
+  }, [blocked, cancel, gas, scope])
   const review = useCallback(async (quote: KernelActionQuote) => {
-    const { gas, scope: currentScope } = current.current
-    if (!mounted.current || scope === undefined || scope !== currentScope || active.current ||
+    const { gas, scope: currentScope, blocked: currentBlocked } = current.current
+    if (!mounted.current || currentBlocked || scope === undefined || scope !== currentScope || active.current ||
         !approvalMatches(gas, quote) || paysFromWallet !== (quote.payer === 'wallet') ||
         (quote.mode === 'eth' && paysFromWallet !== (gas?.paysEthFromWallet === true))) {
       throw new KernelGasReviewCancelled()
@@ -99,13 +101,13 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
     if (!kernelQuoteIsFresh(quote)) {
       throw new Error('The network gas quote expired. Try again for a fresh quote.')
     }
-    if (paysFromWallet) return
+    if (autoConfirm || paysFromWallet) return
     return new Promise<void>((resolve, reject) => {
       const approval = { quote, scope, resolve, reject }
       active.current = approval
       setPending(approval)
     })
-  }, [paysFromWallet, scope])
+  }, [autoConfirm, paysFromWallet, scope])
   const confirm = () => {
     const approval = active.current
     if (!approval) return
@@ -126,5 +128,5 @@ export function useKernelGasApproval(gas: PerpsGasReviewView) {
   }
   const quote = pending && pending.scope === scope ? pending.quote : undefined
   const canConfirm = quote !== undefined && gas?.available === true && gas.preference.mode === quote.mode
-  return { quote, canConfirm, requiresConfirmation: gas !== undefined && !paysFromWallet, review, confirm, cancel }
+  return { quote, canConfirm, requiresConfirmation: gas !== undefined && !autoConfirm && !paysFromWallet, review, confirm, cancel }
 }

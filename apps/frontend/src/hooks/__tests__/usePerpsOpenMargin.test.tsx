@@ -56,5 +56,23 @@ it('propagates a quote failure without returning a previous margin', async () =>
   const { result } = renderHook(() => usePerpsOpenMargin(input), { wrapper: wrapper() })
   await waitFor(() => expect(result.current.error).toBe(error))
   expect(result.current.preview).toBeUndefined()
+  expect(result.current.displayPreview).toBeUndefined()
   expect(result.current.isPending).toBe(false)
+})
+
+it('retains displayPreview across background price and budget updates without carrying across user edits', async () => {
+  const { result, rerender } = renderHook(props => usePerpsOpenMargin(props), { initialProps: input, wrapper: wrapper() })
+  await waitFor(() => expect(result.current.preview).toBe(preview))
+
+  mocks.quote.mockReturnValueOnce(new Promise(() => {}))
+  rerender({ ...input, oraclePrice: 100_050_000n })
+  expect(result.current).toMatchObject({ preview: undefined, displayPreview: preview, isPending: true, isFetching: true })
+
+  mocks.quote.mockReturnValueOnce(new Promise(() => {}))
+  rerender({ ...input, marginBudget: 499_900_000n })
+  expect(result.current).toMatchObject({ preview: undefined, displayPreview: preview, isPending: true, isFetching: true })
+
+  mocks.quote.mockReturnValueOnce(new Promise(() => {}))
+  rerender({ ...input, sizeDelta: 500n * 10n ** 18n })
+  expect(result.current).toMatchObject({ preview: undefined, displayPreview: undefined, isPending: true })
 })
