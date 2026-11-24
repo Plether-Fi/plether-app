@@ -59,7 +59,6 @@ jobs:
       - name: Verify protected environment and master-only policy
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUIRE_PREVENT_SELF_REVIEW: ${{ inputs.environment == 'mainnet' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           umask 077
@@ -88,14 +87,14 @@ jobs:
               '.name == $name
                and .can_admins_bypass == false
                and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == ($name | endswith("-mainnet")))
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
                and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
                and .deployment_branch_policy.custom_branch_policies == true' \
               "$environment_file" >/dev/null \
               || ! jq --exit-status \
                 '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
                 "$branch_policy_file" >/dev/null; then
-            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require reviewers (prevent_self_review=$REQUIRE_PREVENT_SELF_REVIEW), and allow exactly the master branch."
+            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require explicit reviewer approval, and allow exactly the master branch."
             exit 1
           fi
 
@@ -117,7 +116,6 @@ jobs:
       - name: Revalidate protected environment after approval
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUIRE_PREVENT_SELF_REVIEW: ${{ inputs.environment == 'mainnet' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           umask 077
@@ -137,7 +135,7 @@ jobs:
             '.name == $name
              and .can_admins_bypass == false
              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == ($name | endswith("-mainnet")))
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
              and .deployment_branch_policy.custom_branch_policies == true' \
             "$environment_file" >/dev/null

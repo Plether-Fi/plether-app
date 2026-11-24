@@ -33,6 +33,7 @@ locals {
     [
       "repo:Plether-Fi/plether-app:ref:refs/heads/master",
       "repo:Plether-Fi/plether-app:environment:backend-admin-sepolia",
+      "repo:Plether-Fi/plether-app:environment:db-admin-sepolia",
       "repo:Plether-Fi/plether-app:environment:candle-admin-sepolia",
       "repo:Plether-Fi/plether-app:environment:insights-sepolia-admin",
     ],
