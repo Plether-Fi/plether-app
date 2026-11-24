@@ -2,22 +2,45 @@ name: Deploy Insights
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        default: sepolia
+        options:
+          - sepolia
+          - mainnet
 
 concurrency:
-  group: deploy-insights-production
-  cancel-in-progress: true
+  group: deploy-insights-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: insights-admin-${{ inputs.environment }}
     permissions:
       contents: read
       deployments: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Enforce master-only deployment
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::Insights deployments must be dispatched from master."
+            exit 1
+          fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 25.2.1
           cache: npm
@@ -26,12 +49,30 @@ jobs:
       - name: Pin npm
         run: npm install -g npm@11.6.2
 
-      - name: Validate backend origin
+      - name: Resolve target configuration
+        id: target
         env:
+          MAINNET_BACKEND_URL: ${{ vars.MAINNET_BACKEND_URL }}
           SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
         run: |
+          if [ "$TARGET_ENV" = "mainnet" ]; then
+            echo "backend_url=$MAINNET_BACKEND_URL" >> "$GITHUB_OUTPUT"
+            echo "rpc_url=https://arb1.arbitrum.io/rpc" >> "$GITHUB_OUTPUT"
+            echo "project=plether-insights" >> "$GITHUB_OUTPUT"
+            echo "domain=insights.plether.com" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend_url=$SEPOLIA_BACKEND_URL" >> "$GITHUB_OUTPUT"
+            echo "rpc_url=https://sepolia-rollup.arbitrum.io/rpc" >> "$GITHUB_OUTPUT"
+            echo "project=plether-insights" >> "$GITHUB_OUTPUT"
+            echo "domain=insights.plether.com" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate backend origin
+        env:
+          BACKEND_URL: ${{ steps.target.outputs.backend_url }}
+        run: |
           node --input-type=module --eval '
-            const configuredOrigin = process.env.SEPOLIA_BACKEND_URL ?? "";
+            const configuredOrigin = process.env.BACKEND_URL ?? "";
             let origin;
             try {
               origin = new URL(configuredOrigin);
@@ -49,20 +90,26 @@ jobs:
               origin.hash === "";
 
             if (!isHttpsOrigin) {
-              console.error("::error title=Invalid Insights backend origin::SEPOLIA_BACKEND_URL must be an HTTPS origin without credentials, a path, query parameters, or a fragment (for example, https://api.example.com).");
+              console.error("::error title=Invalid Insights backend origin::Configured backend URL must be an HTTPS origin without credentials, a path, query parameters, or a fragment.");
               process.exit(1);
             }
           '
 
       - name: Verify Insights backend is ready
         env:
-          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+          BACKEND_URL: ${{ steps.target.outputs.backend_url }}
+          ALB_ORIGIN_SECRET: ${{ secrets.ALB_ORIGIN_SECRET }}
         run: |
+          origin_header_args=()
+          if [ -n "$ALB_ORIGIN_SECRET" ]; then
+            origin_header_args=(--header "X-Plether-Origin-Secret: $ALB_ORIGIN_SECRET")
+          fi
           RESPONSE=$(curl --fail --silent --show-error \
             --retry 3 \
             --retry-all-errors \
             --max-time 15 \
-            "$SEPOLIA_BACKEND_URL/api/insights/v1/status")
+            "${origin_header_args[@]}" \
+            "$BACKEND_URL/api/insights/v1/status")
 
           echo "$RESPONSE" | jq --exit-status \
             '.data.competition.scoringVersion and .data.status' >/dev/null
@@ -101,33 +148,35 @@ jobs:
           VITE_PRIVY_CLIENT_ID: ${{ vars.PRIVY_INSIGHTS_CLIENT_ID }}
           # Keep this origin aligned with the exact connect-src entry in the
           # Pages Worker CSP. Do not substitute a credential-bearing RPC URL.
-          VITE_ARBITRUM_SEPOLIA_RPC_URL: https://sepolia-rollup.arbitrum.io/rpc
+          VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ steps.target.outputs.rpc_url }}
         run: npm run build
 
       - name: Configure Pages bindings
         working-directory: apps/insights
         env:
-          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+          BACKEND_URL: ${{ steps.target.outputs.backend_url }}
+          PROJECT_NAME: ${{ steps.target.outputs.project }}
+          DOMAIN: ${{ steps.target.outputs.domain }}
         run: |
           cat > wrangler.toml <<EOF
-          name = "plether-insights"
+          name = "$PROJECT_NAME"
           pages_build_output_dir = "dist"
           compatibility_date = "2026-07-17"
 
           [vars]
-          SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
-          INSIGHTS_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
-          INSIGHTS_REGISTRATION_PUBLIC_ORIGIN = "https://insights.plether.com"
+          SEPOLIA_BACKEND_URL = "$BACKEND_URL"
+          INSIGHTS_BACKEND_URL = "$BACKEND_URL"
+          INSIGHTS_REGISTRATION_PUBLIC_ORIGIN = "https://$DOMAIN"
           EOF
 
       - name: Ensure Pages project
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         continue-on-error: true
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: 4.103.0
-          command: pages project create plether-insights --production-branch=master --compatibility-date=2026-07-17
+          command: pages project create ${{ steps.target.outputs.project }} --production-branch=master --compatibility-date=2026-07-17
 
       - name: Configure registration proxy secret
         working-directory: apps/insights
@@ -183,7 +232,7 @@ jobs:
               --project-name=plether-insights
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,11 +1,11 @@
 import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from '../perps-aa/readiness'
-import { SponsorRequestError } from '../perps-aa/errors'
+import { KernelObservedPendingError, SponsorRequestError } from '../perps-aa/errors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
-import { useCallback } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { PerpsKeeperExecutionProgress } from './usePerpsHistory'
 import { KeeperExecutionReorgedError } from '../utils/keeperExecutionCanonicality'
 import { useQueryClient } from '@tanstack/react-query'
@@ -77,6 +77,12 @@ import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, g
 import { buildPlaceOrderV3Action } from '../perps-aa/orderActionV3'
 import { persistProtectionIntent, relaxedProtectionCloseLimits, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
 import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV3Bindings'
+import { readGasPaymentPreference } from '../perps-aa/gasPaymentPreference'
+import { estimateKernelOwnerTransactionFees } from '../perps-aa/kernelEthFunding'
+import { depositKernelMarginFromOwner } from '../perps-aa/kernelMarginFunding'
+import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
+import type { KernelPerpsAaSmartAccountRuntime, PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import { KernelGasReviewCancelled, kernelQuoteIsFresh } from './usePerpsGasReview'
 
 interface PrepareOrderInput {
   direction: PerpsDirection
@@ -90,6 +96,9 @@ interface PrepareOrderInput {
   positionProtection?: PositionProtectionParams
   maxSize?: boolean
   signal?: AbortSignal
+  reviewGas?: boolean
+  /** Fresh background preparation to reuse when only a Kernel gas quote is needed. */
+  existingPrepared?: PreparedPerpsOrderV3
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
@@ -114,6 +123,8 @@ interface ExecuteOrderResult {
   executionPrice?: bigint
   failedReason?: number
 }
+
+export type ReviewKernelGas = (quote: KernelActionQuote) => Promise<void>
 
 const PERPS_CONTRACT_ADDRESSES = new Set(
   Object.values(PERPS_ARBITRUM_SEPOLIA)
@@ -509,6 +520,53 @@ export function usePerpsTrading() {
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync } = useWriteContract()
   const queryClient = useQueryClient()
+  const liveAccount = useRef({ runtime: aaRuntime, identity })
+  useLayoutEffect(() => {
+    liveAccount.current = { runtime: aaRuntime, identity }
+  }, [aaRuntime, identity])
+
+  const requireCurrentKernelRuntime = useCallback((runtime: KernelPerpsAaSmartAccountRuntime) => {
+    const { runtime: current, identity: liveIdentity } = liveAccount.current
+    const expected = runtime.kernel.scope
+    if (!current?.kernel || liveIdentity.status !== 'ready' ||
+        !liveIdentity.accountAddress || !isAddressEqual(liveIdentity.accountAddress, expected.sender) ||
+        !liveIdentity.ownerAddress || !isAddressEqual(liveIdentity.ownerAddress, runtime.ownerAddress) ||
+        current.kernel.scope.chainId !== expected.chainId ||
+        current.kernel.scope.deployment !== expected.deployment ||
+        !isAddressEqual(current.kernel.scope.sender, expected.sender) ||
+        !isAddressEqual(current.kernel.scope.entryPoint, expected.entryPoint) ||
+        !isAddressEqual(current.ownerAddress, runtime.ownerAddress)) {
+      throw new Error('The Trading Account changed. Review the action again.')
+    }
+    return current
+  }, [])
+
+  const requireCurrentKernelQuote = useCallback((runtime: PerpsAaSmartAccountRuntime, quote?: KernelActionQuote) => {
+    if (!runtime.kernel) return
+    const current = requireCurrentKernelRuntime(runtime)
+    if (!quote || !kernelQuoteIsFresh(quote)) {
+      throw new Error('Review a current network gas quote before approving this Trading Account action.')
+    }
+    const { mode } = readGasPaymentPreference(current.gasPayment.scope)
+    if (quote.mode !== mode) throw new Error('The gas setting changed. Review a fresh quote to continue.')
+    const expectWalletPayer = mode === 'eth' && current.gasPayment.paysEthFromWallet === true
+    if ((quote.payer === 'wallet') !== expectWalletPayer) {
+      throw new Error('The gas setting changed. Review a fresh quote to continue.')
+    }
+    if (!current.gasPayment.readiness[quote.mode]) {
+      throw new Error(mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.')
+    }
+  }, [requireCurrentKernelRuntime])
+
+  const approveKernelAction = useCallback(async (runtime: PerpsAaSmartAccountRuntime, action: PerpsActionPlan, reviewGas?: ReviewKernelGas) => {
+    if (!runtime.kernel) return undefined
+    if (!reviewGas) throw new Error('Review the network gas before approving this Trading Account action.')
+    const quote = await runtime.kernel.quoteAction(action)
+    requireCurrentKernelQuote(runtime, quote)
+    await reviewGas(quote)
+    requireCurrentKernelQuote(runtime, quote)
+    return quote
+  }, [requireCurrentKernelQuote])
 
   const invalidatePerpsReads = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -516,7 +574,7 @@ export function usePerpsTrading() {
     })
   }, [queryClient])
 
-  const requireSponsoredExecution = useCallback(() => {
+  const requireTradingExecution = useCallback((forWrite = true) => {
     if (!PERPS_RELEASE_IS_DEPLOYED) {
       throw new SponsoredPreflightError({ reason: 'MANIFEST_UNAVAILABLE', message: 'The perps release is prepared and has not been deployed.' })
     }
@@ -558,7 +616,7 @@ export function usePerpsTrading() {
           'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.',
       })
     }
-    if (!identity.sponsorshipEnabled) {
+    if (identity.manifest.smartAccountMode !== 'kernel' && !identity.sponsorshipEnabled) {
       throw new SponsoredPreflightError({
         reason: 'SPONSORSHIP_DISABLED',
         message:
@@ -571,6 +629,17 @@ export function usePerpsTrading() {
         message:
           'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.',
       })
+    }
+    if (identity.manifest.smartAccountMode === 'kernel') {
+      if (!aaRuntime.kernel) {
+        throw new Error('The Kernel Trading Account is unavailable.')
+      }
+      if (forWrite) {
+        const { mode } = readGasPaymentPreference(aaRuntime.gasPayment.scope)
+        if (!aaRuntime.gasPayment.readiness[mode]) {
+          throw new Error(mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.')
+        }
+      }
     }
 
     return {
@@ -594,11 +663,12 @@ export function usePerpsTrading() {
         throw new Error('Funding amount must be greater than zero')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       await refreshReadiness()
-      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, sponsored.runtime.kernel !== undefined)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const client = requireClient(publicClient)
+      const ownerFees = sponsored.runtime.kernel ? await estimateKernelOwnerTransactionFees(client) : undefined
       const hash = await writeContractAsync({
         account: sponsored.ownerAddress,
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -606,6 +676,7 @@ export function usePerpsTrading() {
         abi: ERC20_ABI,
         functionName: 'transfer',
         args: [sponsored.accountAddress, amount],
+        ...ownerFees,
       })
       const receipt = await client.waitForTransactionReceipt({ hash })
       if (receipt.status === 'reverted') {
@@ -620,14 +691,56 @@ export function usePerpsTrading() {
   }, [
     invalidatePerpsReads,
     publicClient,
-    requireSponsoredExecution,
+    requireTradingExecution,
     writeContractAsync,
   ])
+
+  const depositMarginFromOwnerWallet = useCallback(async (amount: bigint, onStage?: (stage: 'approving' | 'depositing') => void) => {
+    const progress: { stage: 'preparing' | 'approving' | 'depositing'; approved: boolean } = {
+      stage: 'preparing',
+      approved: false,
+    }
+    try {
+      const { runtime } = requireTradingExecution()
+      if (!runtime.kernel || !runtime.gasPayment.paysEthFromWallet || !walletClient) {
+        throw new Error('Connect an eligible Owner Wallet to deposit margin directly.')
+      }
+      const { revision } = readGasPaymentPreference(runtime.gasPayment.scope)
+      await refreshReadiness()
+      const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, true)
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
+      return await depositKernelMarginFromOwner({
+        client: requireClient(publicClient), wallet: walletClient, runtime, amount,
+        onStage: next => {
+          if (progress.stage === 'approving' && next === 'depositing') progress.approved = true
+          progress.stage = next
+          onStage?.(next)
+        },
+        requireCurrent: () => {
+          const current = requireCurrentKernelRuntime(runtime)
+          const preference = readGasPaymentPreference(current.gasPayment.scope)
+          if (!current.gasPayment.paysEthFromWallet || !current.gasPayment.readiness.eth ||
+              preference.mode !== 'eth' || preference.revision !== revision) {
+            throw new Error('Select Pay from wallet in Gas settings before depositing from the Owner Wallet.')
+          }
+        },
+      })
+    } catch (error) {
+      const baseMessage = getPerpsErrorMessage(error, 'deposit')
+      const message = progress.approved
+        ? `USDG approval succeeded, but the Margin Account deposit did not complete. Retry to deposit without approving again. ${baseMessage}`
+        : baseMessage
+      throw reportedTransactionError(error, message, { surface: 'perps', action: 'deposit', stage: progress.stage })
+    } finally {
+      invalidatePerpsReads()
+    }
+  }, [invalidatePerpsReads, publicClient, requireCurrentKernelRuntime, requireTradingExecution, walletClient])
 
   const depositMargin = useCallback(async (
     amount: bigint,
     _allowance?: bigint,
-    source?: 'owner' | 'account'
+    source?: 'owner' | 'account',
+    reviewGas?: ReviewKernelGas,
   ) => {
     let executionStarted = false
     try {
@@ -644,9 +757,9 @@ export function usePerpsTrading() {
         })
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       await refreshReadiness()
-      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      const blocker = readinessBlocker(currentReadiness(), 'deposit', undefined, sponsored.runtime.kernel !== undefined)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const useOwnerAuthorization = source === 'owner' || (
         source === undefined &&
@@ -717,12 +830,14 @@ export function usePerpsTrading() {
           })
         }
       }
+      const kernelQuote = await approveKernelAction(sponsored.runtime, action, reviewGas)
       executionStarted = true
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote,
         authorizationTokenToClearOnConfirmation: useOwnerAuthorization
           ? sponsored.manifest.settlementToken
           : undefined,
@@ -732,6 +847,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       if (!executionStarted) {
         trackSponsoredOperationPreflightFailure({
           action: 'deposit',
@@ -748,13 +864,14 @@ export function usePerpsTrading() {
   }, [
     aaRuntime,
     address,
+    approveKernelAction,
     identity.manifest,
     invalidatePerpsReads,
-    requireSponsoredExecution,
+    requireTradingExecution,
     signTypedDataAsync,
   ])
 
-  const withdrawMargin = useCallback(async (amount: bigint) => {
+  const withdrawMargin = useCallback(async (amount: bigint, reviewGas?: ReviewKernelGas) => {
     try {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before withdrawing margin')
@@ -763,7 +880,7 @@ export function usePerpsTrading() {
         throw new Error('Withdraw amount must be greater than zero')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const action = buildWithdrawToOwnerAction({
         account: sponsored.accountAddress,
         owner: sponsored.ownerAddress,
@@ -776,18 +893,20 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, reviewGas),
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'withdraw' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'withdraw'), { surface: 'perps', action: 'withdraw' })
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution])
+  }, [address, approveKernelAction, invalidatePerpsReads, requireTradingExecution])
 
-  const addPositionMargin = useCallback(async (amount: bigint) => {
+  const addPositionMargin = useCallback(async (amount: bigint, reviewGas?: ReviewKernelGas) => {
     try {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before adding position margin')
@@ -796,7 +915,7 @@ export function usePerpsTrading() {
         throw new Error('Position margin amount must be greater than zero')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const action = buildAddMarginAction({
         account: sponsored.accountAddress,
         cfdEngine: sponsored.manifest.cfdEngine,
@@ -807,16 +926,18 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, reviewGas),
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'addPositionMargin' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'addPositionMargin'), { surface: 'perps', action: 'addPositionMargin' })
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution])
+  }, [address, approveKernelAction, invalidatePerpsReads, requireTradingExecution])
 
   const prepareOrder = useCallback(async ({
     direction,
@@ -830,6 +951,8 @@ export function usePerpsTrading() {
     positionProtection,
     maxSize,
     signal,
+    reviewGas = false,
+    existingPrepared,
   }: PrepareOrderInput): Promise<PreparedPerpsOrderV3> => {
     try {
       if (!address) {
@@ -850,7 +973,12 @@ export function usePerpsTrading() {
         throw new Error('Order size must use 100 plDXY increments')
       }
       const sizeDelta = requestedSizeDelta
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
+      if (sponsored.runtime.kernel) {
+        await refreshReadiness()
+        const blocker = readinessBlocker(currentReadiness(), isClose ? 'close' : 'open', undefined, true)
+        if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
+      }
       const activeOperation = useSponsoredOperationStore
         .getState()
         .getActiveOperation(sponsored.accountAddress)
@@ -861,32 +989,69 @@ export function usePerpsTrading() {
       }
       if (activeOperation?.protectionIntent) throw new Error('A protection operation is awaiting recovery. Resolve it in account activity before reviewing another order.')
       if (positionProtection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
+      if (positionProtection && sponsored.manifest.smartAccountMode === 'kernel' && !sponsored.manifest.kernel.protectionCommitsEnabled) {
+        throw new Error('New TP/SL protections are currently unavailable for this Trading Account.')
+      }
       if (activeOperation) {
         throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
       const closeAssistance = undefined
-      return await preparePerpsOrderV3(client, sponsored.manifest, {
-        closeAssistance,
-        account: sponsored.accountAddress,
-        direction,
-        side: directionToPerpsSide(direction),
-        sizeDelta,
-        marginDelta: isClose ? 0n : marginAssets,
-        slippagePercent,
-        isClose,
-        selectedMaxLeverageBps,
-        positionProtection,
-        maxSize,
-        signal,
-      })
+      const side = directionToPerpsSide(direction)
+      const canReuseExistingPrepared = Boolean(
+        sponsored.runtime.kernel &&
+        reviewGas &&
+        existingPrepared &&
+        isAddressEqual(existingPrepared.account, sponsored.accountAddress) &&
+        existingPrepared.manifestVersion === sponsored.manifest.version &&
+        isAddressEqual(existingPrepared.orderRouter, sponsored.manifest.orderRouter) &&
+        isAddressEqual(existingPrepared.orderLifecycleBook, sponsored.manifest.orderLifecycleBook) &&
+        existingPrepared.request.side === side &&
+        existingPrepared.request.isClose === isClose &&
+        (maxSize === true || existingPrepared.request.sizeDelta === sizeDelta) &&
+        Boolean(existingPrepared.positionProtection) === Boolean(positionProtection)
+      )
+      const prepared: PreparedPerpsOrderV3 = canReuseExistingPrepared && existingPrepared
+        ? { ...existingPrepared, kernelQuote: undefined }
+        : await preparePerpsOrderV3(client, sponsored.manifest, {
+            closeAssistance,
+            account: sponsored.accountAddress,
+            direction,
+            side,
+            sizeDelta,
+            marginDelta: isClose ? 0n : marginAssets,
+            slippagePercent,
+            isClose,
+            selectedMaxLeverageBps,
+            positionProtection,
+            maxSize,
+            signal,
+          })
+      if (sponsored.runtime.kernel && reviewGas) {
+        // Freshly prepared orders already verified latest block.timestamp and
+        // maxExecutionWindowSeconds; only refresh deadline when reusing a warm
+        // background preparation.
+        const request = canReuseExistingPrepared
+          ? await finalizeOrderDeadline(client, prepared)
+          : (() => {
+              confirmationRequests.set(prepared, Promise.resolve(prepared.request))
+              return prepared.request
+            })()
+        signal?.throwIfAborted()
+        const protection = prepared.positionProtection
+        const action = protection
+          ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
+          : buildPlaceOrderV3Action({ account: address, orderRouter: prepared.orderRouter, request })
+        prepared.kernelQuote = await sponsored.runtime.kernel.quoteAction(action, signal, request.clientOrderId)
+      }
+      return prepared
     } catch (error) {
       if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'review' })
       throw new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
     }
-  }, [address, publicClient, requireSponsoredExecution])
+  }, [address, publicClient, requireTradingExecution])
 
   const commitOrder = useCallback(async ({
     direction,
@@ -949,7 +1114,7 @@ export function usePerpsTrading() {
       const client = requireClient(publicClient)
       diagnosticClient = client
       debugPerpsCommit('client-ready')
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       if (
         sponsored.manifest.version !== preparedOrder.manifestVersion ||
         !isAddressEqual(sponsored.manifest.orderRouter, preparedOrder.orderRouter) ||
@@ -1026,6 +1191,8 @@ export function usePerpsTrading() {
       })
 
       const assisted = preparedOrder.sponsoredClose
+      if (sponsored.runtime.kernel && assisted) throw new Error('Review a current network gas quote before committing this order.')
+      requireCurrentKernelQuote(sponsored.runtime, preparedOrder.kernelQuote)
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
         : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
         : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
@@ -1059,11 +1226,13 @@ export function usePerpsTrading() {
         clientOrderId: request.clientOrderId,
         positionProtectionBook: protection?.book,
       }
+      requireCurrentKernelQuote(executionRuntime, preparedOrder.kernelQuote)
       const result = await executeSponsoredPerpsAction({
         manifest: executionManifest,
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: executionRuntime,
+        kernelQuote: preparedOrder.kernelQuote,
         orderDraft,
         orderRequestV3: { ...persistPerpsOrderRequestV3(address, request),
           closeAssistance: assisted ? { amountAssets: assisted.amountAssets.toString(), lens: assisted.config.lens,
@@ -1084,6 +1253,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return committedResult
     } catch (error) {
+      if (error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) {
         throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'commit' })
@@ -1124,7 +1294,7 @@ export function usePerpsTrading() {
 
       throw reportedTransactionError(error, message, { surface: 'perps', action: 'commit' })
     }
-  }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution, walletClient])
+  }, [address, invalidatePerpsReads, publicClient, requireCurrentKernelQuote, requireTradingExecution, walletClient])
 
   const executeOrder = useCallback(async (orderId: bigint): Promise<ExecuteOrderResult> => {
     void orderId
@@ -1138,7 +1308,8 @@ export function usePerpsTrading() {
     candidate?: PerpsKeeperExecutionProgress & { observedInclusion?: { blockNumber: bigint; blockHash: Hex } },
   ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
     const client = requireClient(publicClient)
-    const sponsored = requireSponsoredExecution()
+    const sponsored = requireTradingExecution(false)
+    const confirmOnInclusion = sponsored.runtime.kernel?.readBundledInclusion !== undefined
     if (candidate) {
       if (candidate.orderId !== orderId || !isAddressEqual(candidate.account, sponsored.accountAddress)
         || !isAddressEqual(candidate.orderRouter, sponsored.manifest.orderRouter)
@@ -1156,7 +1327,7 @@ export function usePerpsTrading() {
       ])
       if (transaction.transactionHash.toLowerCase() !== candidate.transactionHash.toLowerCase()
         || transaction.status !== 'success') return undefined
-      const depth = BigInt(candidate.requiredConfirmations)
+      const depth = confirmOnInclusion ? 0n : BigInt(candidate.requiredConfirmations)
       const ready = head.number >= transaction.blockNumber + depth
       const [includedResult, terminalResult] = await Promise.allSettled([
         client.getBlock({ blockNumber: transaction.blockNumber }),
@@ -1207,13 +1378,14 @@ export function usePerpsTrading() {
         receiptHash: verified.receiptHash, receipt: verified.receipt, transactionHash: transaction.transactionHash,
         transactionBlockNumber: transaction.blockNumber, transactionBlockHash: transaction.blockHash }
     }
-    const safe = await client.getBlock({ blockTag: 'safe' })
+
+    const head = await client.getBlock({ blockTag: confirmOnInclusion ? 'latest' : 'safe' })
     const terminal = await client.readContract({
       address: sponsored.manifest.orderLifecycleBook,
       abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
       functionName: 'terminalOutcome',
       args: [orderId],
-      blockNumber: safe.number,
+      blockNumber: head.number,
     })
     if (terminal.status !== PERPS_LIFECYCLE_STATUS.EXECUTED && terminal.status !== PERPS_LIFECYCLE_STATUS.FAILED) return undefined
     // The V5 book stores the authenticated terminal summary; full economics
@@ -1224,13 +1396,19 @@ export function usePerpsTrading() {
       eventName: 'OrderFinalized',
       args: { orderId },
       // Public RPC allows 1,000 blocks inclusive; older evidence comes from indexed history.
-      fromBlock: safe.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 999n
-        ? safe.number - 999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
-      toBlock: safe.number,
+      fromBlock: head.number > BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK) + 999n
+        ? head.number - 999n : BigInt(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK),
+      toBlock: head.number,
       strict: true,
     })
     const event = events.find(log => !log.removed && log.args.receiptHash === terminal.receiptHash && log.args.account.toLowerCase() === terminal.account.toLowerCase())
     if (!event) return undefined
+    if (confirmOnInclusion) {
+      const [canonicalHead, canonicalEvent] = await Promise.all([
+        client.getBlock({ blockNumber: head.number }), client.getBlock({ blockNumber: event.blockNumber }),
+      ])
+      if (canonicalHead.hash !== head.hash || canonicalEvent.hash !== event.blockHash) return undefined
+    }
     const verified = decodeVerifiedOrderFinalized({
       chainId: BigInt(sponsored.manifest.chainId), book: sponsored.manifest.orderLifecycleBook,
       router: sponsored.manifest.orderRouter, summary: terminal,
@@ -1264,7 +1442,7 @@ export function usePerpsTrading() {
       transactionBlockNumber: event.blockNumber,
       transactionBlockHash: event.blockHash,
     }
-  }, [publicClient, requireSponsoredExecution])
+  }, [publicClient, requireTradingExecution])
 
   const cleanupExpiredOrder = useCallback(async (
     orderId: bigint
@@ -1275,13 +1453,13 @@ export function usePerpsTrading() {
     )
   }, [])
 
-  const settleTraderClaim = useCallback(async () => {
+  const settleTraderClaim = useCallback(async (reviewGas?: ReviewKernelGas) => {
     try {
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before settling a claim')
       }
 
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const action = buildSettleTraderClaimAction({
         account: sponsored.accountAddress,
         cfdEngine: sponsored.manifest.cfdEngine,
@@ -1291,16 +1469,18 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, reviewGas),
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'settleClaim' })
       throw reportedTransactionError(error, getPerpsErrorMessage(error, 'settleClaim'), { surface: 'perps', action: 'settleClaim' })
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution])
+  }, [address, approveKernelAction, invalidatePerpsReads, requireTradingExecution])
 
   const abandonDepositAuthorization = useCallback(() => {
     if (
@@ -1325,11 +1505,15 @@ export function usePerpsTrading() {
     protectionId?: bigint
     params?: PositionProtectionParams
     onStatus?: (status: SponsoredExecutionStatus) => void
+    reviewGas?: ReviewKernelGas
   }) => {
     try {
-      const sponsored = requireSponsoredExecution()
+      const sponsored = requireTradingExecution()
       const client = requireClient(publicClient)
       if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
+      if (input.action !== 'cancel' && sponsored.manifest.smartAccountMode === 'kernel' && !sponsored.manifest.kernel.protectionCommitsEnabled) {
+        throw new Error('New TP/SL protections are currently unavailable for this Trading Account.')
+      }
       await verifyPerpsV3DeploymentBindings(client, sponsored.manifest)
       await verifyProtectionDeployment(client, sponsored.manifest)
       const book = sponsored.manifest.positionProtectionBook
@@ -1353,6 +1537,7 @@ export function usePerpsTrading() {
       }
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest, ownerAddress: sponsored.ownerAddress, runtime: sponsored.runtime, action,
+        kernelQuote: await approveKernelAction(sponsored.runtime, action, input.reviewGas),
         protectionIntent: persistProtectionIntent(book, params, input.protectionId),
         onStatus: input.onStatus,
       })
@@ -1363,15 +1548,17 @@ export function usePerpsTrading() {
       if (events.length !== 1) throw new Error('The operation was included but its protection event could not be reconciled. Refresh protections before another submission.')
       return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
     } catch (error) {
+      if (error instanceof KernelGasReviewCancelled || error instanceof KernelObservedPendingError) throw error
       const sponsorError = findSponsorRequestError(error)
       throw reportedTransactionError(error, sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { surface: 'perps', action: 'protection' })
     }
-  }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
+  }, [approveKernelAction, invalidatePerpsReads, publicClient, requireTradingExecution])
 
   return {
     managePositionProtection,
     approveSettlementTokenForMargin,
     fundTradingAccount,
+    depositMarginFromOwnerWallet,
     depositMargin,
     refreshAccount: invalidatePerpsReads,
     abandonDepositAuthorization,

@@ -32,14 +32,18 @@ export async function verifyClosePreviewDeployment(
   if (!PERPS_RELEASE_IS_DEPLOYED) throw new Error('The perps release is prepared and unavailable.')
   const pin = release.contracts.cfdClosePreview
   if (!pin.address || !isAddress(pin.address) || !pin.runtimeCodeHash) throw new Error('Close review deployment pins are missing.')
-  if (manifest.chainId !== release.network.chainId || await client.getChainId() !== release.network.chainId) throw new Error('Close review requires Arbitrum Sepolia.')
+  if (manifest.chainId !== release.network.chainId) throw new Error('Close review requires Arbitrum Sepolia.')
   requireSameAddress('Close preview Engine', manifest.cfdEngine, PERPS_ARBITRUM_SEPOLIA.cfdEngine)
   requireSameAddress('Close preview Router', manifest.orderRouter, PERPS_ARBITRUM_SEPOLIA.orderRouter)
   requireSameAddress('Close preview execution evaluator', manifest.policyEvaluator, PERPS_ARBITRUM_SEPOLIA.policyEvaluator)
   if (isAddressEqual(pin.address, manifest.policyEvaluator)) {
     throw new Error('Close review is unavailable: preview aliases the execution evaluator.')
   }
-  const code = await client.getCode({ address: pin.address, blockNumber })
+  const [chainId, code] = await Promise.all([
+    client.getChainId(),
+    client.getCode({ address: pin.address, blockNumber }),
+  ])
+  if (chainId !== release.network.chainId) throw new Error('Close review requires Arbitrum Sepolia.')
   if (!code || code === '0x' || keccak256(code) !== pin.runtimeCodeHash.toLowerCase()) {
     throw new Error('Close review is unavailable: preview bytecode does not match the verified deployment.')
   }
@@ -48,14 +52,30 @@ export async function verifyClosePreviewDeployment(
 
 export async function verifyProtectionDeployment(client: PublicClient, manifest: PerpsAaDeploymentManifest, blockNumber?: bigint): Promise<void> {
   if (!PERPS_RELEASE_IS_DEPLOYED) throw new Error('The perps release is prepared and unavailable.')
-  if (manifest.chainId !== release.network.chainId || await client.getChainId() !== release.network.chainId) throw new Error('TP/SL requires the reviewed Arbitrum Sepolia release')
-  for (const [key, address] of [['positionProtectionBook', manifest.positionProtectionBook], ['orderRouter', manifest.orderRouter], ['orderLifecycleBook', manifest.orderLifecycleBook]] as const) {
+  if (manifest.chainId !== release.network.chainId) throw new Error('TP/SL requires the reviewed Arbitrum Sepolia release')
+  const checks = [
+    ['positionProtectionBook', manifest.positionProtectionBook],
+    ['orderRouter', manifest.orderRouter],
+    ['orderLifecycleBook', manifest.orderLifecycleBook],
+  ] as const
+  for (const [key, address] of checks) {
     const contract = release.contracts[key]
     if (!contract.address || !contract.runtimeCodeHash) throw new Error('Protection deployment pins are missing.')
     requireSameAddress(`TP/SL ${key}`, address, contract.address)
-    const code = await client.getCode({ address, blockNumber })
-    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match ${release.release.version ?? 'the reviewed release'}`)
   }
+  const [chainId, ...codes] = await Promise.all([
+    client.getChainId(),
+    ...checks.map(([, address]) => client.getCode({ address, blockNumber })),
+  ])
+  if (chainId !== release.network.chainId) throw new Error('TP/SL requires the reviewed Arbitrum Sepolia release')
+  checks.forEach(([key], index) => {
+    const contract = release.contracts[key]
+    const code = codes[index]
+    const expectedHash = contract.runtimeCodeHash?.toLowerCase()
+    if (!code || !expectedHash || keccak256(code) !== expectedHash) {
+      throw new Error(`TP/SL ${key} bytecode does not match ${release.release.version ?? 'the reviewed release'}`)
+    }
+  })
 }
 
 /**

@@ -2,10 +2,18 @@ module Plether.AA.Reconciler
   ( AaReconcilerConfig (..)
   , BlockHeader (..)
   , UserOperationEvent (..)
+  , ProviderResult (..)
   , loadAaReconcilerConfig
   , runAaReconciler
   , parseUserOperationEvent
+  , parseUserOperationEventAt
   , agreeUserOperationLogs
+  , readRpcChainId
+  , readAgreedSafeBoundary
+  , readAgreedBlock
+  , readAgreedRuntimeCode
+  , readAgreedUserOperationLogsAt
+  , verifyEventBlockHeaders
   , validateTargetTimestamp
   , validateSafeHeadFreshness
   , boundariesRemainCanonical
@@ -623,9 +631,15 @@ readAgreedUserOperationLogs
   -> Integer
   -> Integer
   -> IO (ProviderResult [UserOperationEvent])
-readAgreedUserOperationLogs primaryClient secondaryClient cfg fromBlock toBlock = do
-  primary <- readUserOperationLogs primaryClient cfg fromBlock toBlock
-  secondary <- readUserOperationLogs secondaryClient cfg fromBlock toBlock
+readAgreedUserOperationLogs primaryClient secondaryClient cfg =
+  readAgreedUserOperationLogsAt primaryClient secondaryClient entryPointAddress (arcPaymaster cfg)
+
+readAgreedUserOperationLogsAt
+  :: EthClient -> EthClient -> Text -> Text -> Integer -> Integer
+  -> IO (ProviderResult [UserOperationEvent])
+readAgreedUserOperationLogsAt primaryClient secondaryClient entryPoint paymaster fromBlock toBlock = do
+  primary <- readUserOperationLogsAt primaryClient entryPoint paymaster fromBlock toBlock
+  secondary <- readUserOperationLogsAt secondaryClient entryPoint paymaster fromBlock toBlock
   pure $ case (primary, secondary) of
     (Left err, _) -> ProviderUnavailable $ "primary log scan: " <> err
     (_, Left err) -> ProviderUnavailable $ "secondary log scan: " <> err
@@ -844,13 +858,14 @@ readBlock client blockTag = do
       Right $ BlockHeader number blockHash timestamp
     _ -> Left "eth_getBlockByNumber returned an invalid block"
 
-readUserOperationLogs
+readUserOperationLogsAt
   :: EthClient
-  -> AaReconcilerConfig
+  -> Text
+  -> Text
   -> Integer
   -> Integer
   -> IO (Either Text [UserOperationEvent])
-readUserOperationLogs client cfg fromBlock toBlock = do
+readUserOperationLogsAt client entryPoint paymaster fromBlock toBlock = do
   result <- scanLogRange fetch fromBlock toBlock
   pure $ either (Left . rpcFailureCode) Right result
  where
@@ -858,14 +873,14 @@ readUserOperationLogs client cfg fromBlock toBlock = do
     result <- rpcCall client "eth_getLogs" $
       toJSON
         [ object
-            [ "address" .= entryPointAddress
+            [ "address" .= entryPoint
             , "fromBlock" .= quantity first
             , "toBlock" .= quantity lastBlock
             , "topics"
                 .= [ String userOperationEventTopic
                    , Null
                    , Null
-                   , String $ addressTopic $ arcPaymaster cfg
+                   , String $ addressTopic paymaster
                    ]
             ]
         ]
@@ -873,13 +888,16 @@ readUserOperationLogs client cfg fromBlock toBlock = do
       Left err -> Left $ rpcFailureCategory err
       Right (Array values) ->
         either (const $ Left RpcInvalidResponse) Right $
-          traverse (parseUserOperationEvent (arcPaymaster cfg) first lastBlock) (V.toList values)
+          traverse (parseUserOperationEventAt entryPoint paymaster first lastBlock) (V.toList values)
       _ -> Left RpcInvalidResponse
 
 parseUserOperationEvent :: Text -> Integer -> Integer -> Value -> Either Text UserOperationEvent
-parseUserOperationEvent expectedPaymaster fromBlock toBlock raw@(Object logObject) = do
+parseUserOperationEvent = parseUserOperationEventAt entryPointAddress
+
+parseUserOperationEventAt :: Text -> Text -> Integer -> Integer -> Value -> Either Text UserOperationEvent
+parseUserOperationEventAt entryPoint expectedPaymaster fromBlock toBlock raw@(Object logObject) = do
   emittingAddress <- requiredText logObject "address"
-  unless (T.toLower emittingAddress == entryPointAddress) $
+  unless (T.toLower emittingAddress == T.toLower entryPoint) $
     Left "UserOperationEvent was not emitted by the reviewed EntryPoint"
   topics <- case KM.lookup "topics" logObject of
     Just (Array values) -> Right $ V.toList values
@@ -931,7 +949,7 @@ parseUserOperationEvent expectedPaymaster fromBlock toBlock raw@(Object logObjec
       (decodeUint256 $ word 2 dataBytes)
       (decodeUint256 $ word 3 dataBytes)
       raw
-parseUserOperationEvent _ _ _ _ = Left "UserOperationEvent must be an object"
+parseUserOperationEventAt _ _ _ _ _ = Left "UserOperationEvent must be an object"
 
 paymasterHealth :: EthClient -> AaReconcilerConfig -> IO (Either Text (Integer, Bool, Integer))
 paymasterHealth client cfg = do

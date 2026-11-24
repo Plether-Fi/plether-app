@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -30,8 +33,8 @@ jobs:
       run:
         working-directory: apps/backend/return-attribution
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -60,8 +63,8 @@ jobs:
       run:
         working-directory: apps/backend/protection-worker
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -75,7 +78,7 @@ jobs:
     name: Credential hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Reject committed Alchemy endpoint credentials
         working-directory: .
@@ -100,7 +103,7 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -158,7 +161,7 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -184,6 +187,16 @@ jobs:
         working-directory: .
         run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs scripts/install-foundry-ci.test.mjs
 
+      - name: Check Kernel qualification against the shared deployment fixture
+        if: matrix.shard == 1
+        working-directory: .
+        run: node --test scripts/kernel-qualification/live-gas.test.mjs scripts/kernel-qualification/nitro-sepolia-gas.test.mjs
+
+      - name: Verify Sepolia canary funding invariants
+        if: matrix.shard == 1
+        working-directory: .
+        run: node --test scripts/kernel-qualification/bridge-sepolia.test.mjs scripts/kernel-qualification/verify-topup.test.mjs
+
       - name: Run Vitest unit shard
         run: npx vitest run --project unit --shard=${{ matrix.shard }}/2
 
@@ -208,7 +221,7 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -264,7 +277,7 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -343,7 +356,7 @@ jobs:
         working-directory: apps/insights
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

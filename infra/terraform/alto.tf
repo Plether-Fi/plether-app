@@ -1,6 +1,6 @@
 locals {
   # Owner-approved testnet exception: normal UserOperation validation stays on.
-  alto_safe_mode = !(var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614")
+  alto_safe_mode = !(var.alto_entrypoint_version == "0.8" && var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614")
   alto_validation_exception_environment = local.alto_safe_mode ? [] : [
     { name = "PLETHER_ALTO_VALIDATION_POLICY", value = "sepolia-testnet-exception-v1" },
     { name = "PLETHER_ALTO_NETWORK_CHAIN_ID", value = var.perps_chain_id },
@@ -15,17 +15,37 @@ locals {
     { name = "ALTO_MAX_GAS_PER_USER_OP", value = var.alto_max_gas_per_user_operation },
     { name = "ALTO_MAX_GAS_PER_BUNDLE", value = var.alto_max_gas_per_bundle },
   ]
-  self_hosted_aa_resource_count = var.provision_self_hosted_aa && var.environment == "sepolia" ? 1 : 0
-  native_aa_backend_configured  = local.self_hosted_aa_resource_count == 1 && var.configure_native_aa_backend
-  native_aa_sponsorship_enabled = local.native_aa_backend_configured && var.enable_native_aa_sponsorship
-  aa_gateway_enabled            = var.provision_aa_proxy || local.native_aa_backend_configured
-  alto_ecr_image_tag            = "v1.2.7-arm64-28cee87ea6b5"
+  alto_entrypoint_addresses = {
+    "0.8" = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+    "0.9" = "0x433709009b8330fda32311df1c2afa402ed8d009"
+  }
+  alto_entrypoint_simulation_environment = var.alto_entrypoint_version == "0.9" ? {
+    name  = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V9"
+    value = var.alto_entrypoint_simulation_contract_v9
+    } : {
+    name  = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8"
+    value = var.alto_entrypoint_simulation_contract_v8
+  }
+  self_hosted_aa_resource_count    = var.provision_self_hosted_aa && contains(["sepolia", "mainnet"], var.environment) ? 1 : 0
+  native_aa_backend_configured     = local.self_hosted_aa_resource_count == 1 && var.configure_native_aa_backend
+  native_aa_sponsorship_enabled    = local.native_aa_backend_configured && var.enable_native_aa_sponsorship
+  kernel_aa_backend_configured     = var.environment == "sepolia" && local.self_hosted_aa_resource_count == 1 && var.alto_entrypoint_version == "0.9" && var.aa_kernel_profile_json != ""
+  kernel_aa_sponsorship_configured = local.kernel_aa_backend_configured && var.aa_kernel_sponsorship_json != ""
+  kernel_aa_sponsorship_enabled    = local.kernel_aa_sponsorship_configured && var.enable_kernel_aa_sponsorship
+  aa_gateway_enabled               = var.provision_aa_proxy || local.native_aa_backend_configured || local.kernel_aa_backend_configured
+  alto_ecr_image_tag               = "v1.2.7-arm64-28cee87ea6b5"
 
   alto_rpc_url_parameter_arn        = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_rpc_url_ssm_parameter_name)}"
   alto_rpc_auth_enabled             = var.alto_rpc_auth_token_ssm_parameter_name != ""
   alto_rpc_auth_token_parameter_arn = local.alto_rpc_auth_enabled ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${var.alto_rpc_auth_token_ssm_parameter_name}" : null
+  alto_rpc_auth_gateway_environment = local.alto_rpc_auth_enabled ? [
+    {
+      name  = "PLETHER_ALTO_RPC_GATEWAY_URL"
+      value = var.alto_rpc_gateway_url != "" ? var.alto_rpc_gateway_url : "https://rpc-internal.${local.deployment_name}.plether.com/"
+    }
+  ] : []
   # Keep the previous task revision restartable during a guarded RPC rollback.
-  alto_rollback_rpc_url_parameter_arn         = local.alto_rpc_auth_enabled ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/sepolia/perps-rpc-url" : null
+  alto_rollback_rpc_url_parameter_arn         = local.alto_rpc_auth_enabled ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/perps-rpc-url" : null
   alto_entrypoint                             = local.alto_rpc_auth_enabled ? ["node", "--import", "/app/plether-rpc-auth.mjs", "/app/src/esm/cli/alto.js"] : ["node", "/app/src/esm/cli/alto.js"]
   alto_executor_keys_parameter_arn            = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_executor_private_keys_ssm_parameter_name)}"
   alto_utility_key_parameter_arn              = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.alto_utility_private_key_ssm_parameter_name)}"
@@ -277,7 +297,7 @@ resource "aws_ecs_task_definition" "alto" {
       environment = concat(local.alto_validation_exception_environment, [
         { name = "ALTO_ENTRYPOINTS", value = var.alto_entrypoint_address },
         { name = "ALTO_DETERMINISTIC_DEPLOYER_ADDRESS", value = "0x4e59b44847b379578588920ca78fbf26c0b4956c" },
-        { name = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8", value = var.alto_entrypoint_simulation_contract_v8 },
+        local.alto_entrypoint_simulation_environment,
         { name = "ALTO_PIMLICO_SIMULATION_CONTRACT", value = var.alto_pimlico_simulation_contract },
         { name = "ALTO_DEPLOY_SIMULATIONS_CONTRACT", value = "false" },
         { name = "ALTO_CHAIN_TYPE", value = "arbitrum" },
@@ -313,7 +333,7 @@ resource "aws_ecs_task_definition" "alto" {
         { name = "ALTO_UTILITY_WALLET_MONITOR", value = "true" },
         { name = "ALTO_UTILITY_WALLET_MONITOR_INTERVAL", value = "15000" },
         { name = "ALTO_EXECUTOR_REFILL_INTERVAL", value = "1200" },
-      ], local.alto_gas_environment, local.alto_zero_post_op_environment)
+      ], local.alto_gas_environment, local.alto_zero_post_op_environment, local.alto_rpc_auth_gateway_environment)
     },
     {
       name                   = "alto-tmp-init"

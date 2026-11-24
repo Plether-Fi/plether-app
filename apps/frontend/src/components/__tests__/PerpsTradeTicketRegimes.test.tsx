@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { entryPoint09Address } from 'viem/account-abstraction'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
 import { useSponsoredOperationStore, type SponsoredOperationStatus } from '../../perps-aa'
@@ -10,6 +11,10 @@ import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 import type { ReadinessSnapshot } from '../../perps-aa/readiness'
+import { observeDeadlineResponse } from '../../perps-aa/deadlineClock'
+import { writeGasPaymentPreference } from '../../perps-aa/gasPaymentPreference'
+import type { KernelActionQuote } from '../../perps-aa/kernelRuntime'
+import { PerpsAaRuntimeContext, type KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
 
 const readinessFixture = vi.hoisted(() => ({ snapshot: undefined as ReadinessSnapshot | undefined }))
 vi.mock('../../perps-aa/readiness', async importOriginal => ({
@@ -432,6 +437,144 @@ describe('perps ticket oracle regime matrix', () => {
     view.rerender(<PerpsTradeTicket enableLiveTrading />)
     expect(screen.queryByText(/Gas sponsorship is temporarily paused/)).not.toBeInTheDocument()
     expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+  })
+
+  function kernelRuntime(paysEthFromWallet = false): KernelPerpsAaSmartAccountRuntime {
+    const ownerAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    const scope: KernelPerpsAaSmartAccountRuntime['kernel']['scope'] = {
+      deployment: 'kernel-test', chainId: 421614, entryPoint: entryPoint09Address, sender: ownerAddress,
+    }
+    return {
+      chainId: scope.chainId, ownerAddress, factoryAddress: ownerAddress, accountVersion: 'kernel-v4-uups', accountIndex: '0',
+      smartAccount: { accountAddress: scope.sender, entryPoint: scope.entryPoint },
+      gasPayment: { scope: { ...scope, ownerAddress }, paysEthFromWallet, readiness: { sponsored: true, eth: true } },
+      kernel: { scope, verifyAccount: vi.fn(), quoteAction: vi.fn(), execute: vi.fn(), quoteCancellation: vi.fn(), signPrepared: vi.fn() },
+    }
+  }
+
+  it('submits Deposit and Withdraw Margin in one click without Gas settings or Continue to wallet', async () => {
+    identityFixture.isAaManifestConfigured = true
+    const runtime = kernelRuntime()
+    const now = Date.now()
+    observeDeadlineResponse(new Response(null, { headers: { Date: new Date(now).toUTCString() } }), performance.now())
+    const quote: KernelActionQuote = { mode: 'sponsored', maxNetworkGasWei: 15n, expiresAt: Math.floor(now / 1_000) + 60 }
+    const continueToWallet = vi.fn()
+    perpsTradingMocks.depositMargin.mockImplementationOnce(async (
+      amount, _allowance, _source, approve: (quote: KernelActionQuote) => Promise<void>,
+    ) => {
+      await approve(quote)
+      continueToWallet('deposit', amount)
+    })
+    perpsTradingMocks.withdrawMargin.mockImplementationOnce(async (
+      amount, approve: (quote: KernelActionQuote) => Promise<void>,
+    ) => {
+      await approve(quote)
+      continueToWallet('withdraw', amount)
+    })
+    render(
+      <PerpsAaRuntimeContext value={runtime}>
+        <PerpsTradeTicket enableLiveTrading walletAssetsRaw={2_000_000n} withdrawableAssetsRaw={2_000_000n} />
+      </PerpsAaRuntimeContext>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    let dialog = within(screen.getByRole('dialog'))
+    expect(dialog.queryByRole('button', { name: 'Gas settings' })).not.toBeInTheDocument()
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    expect(dialog.queryByRole('button', { name: 'Review network gas' })).not.toBeInTheDocument()
+    fireEvent.click(dialog.getByRole('button', { name: 'Deposit' }))
+    await waitFor(() => expect(continueToWallet).toHaveBeenCalledWith('deposit', 1_000_000n))
+    expect(screen.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel gas review' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }))
+    dialog = within(screen.getByRole('dialog'))
+    expect(dialog.queryByRole('button', { name: 'Gas settings' })).not.toBeInTheDocument()
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    expect(dialog.queryByRole('button', { name: 'Review network gas' })).not.toBeInTheDocument()
+    fireEvent.click(dialog.getByRole('button', { name: 'Withdraw' }))
+    await waitFor(() => expect(continueToWallet).toHaveBeenCalledWith('withdraw', 1_000_000n))
+    expect(screen.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel gas review' })).not.toBeInTheDocument()
+  })
+
+  it('cancels a one-click Margin deposit without opening the wallet if trading pauses before approval', async () => {
+    identityFixture.isAaManifestConfigured = true
+    const runtime = kernelRuntime()
+    const now = Date.now()
+    observeDeadlineResponse(new Response(null, { headers: { Date: new Date(now).toUTCString() } }), performance.now())
+    const quote: KernelActionQuote = { mode: 'sponsored', maxNetworkGasWei: 15n, expiresAt: Math.floor(now / 1_000) + 60 }
+    const continueToWallet = vi.fn()
+    const quoteDeferred = Promise.withResolvers<KernelActionQuote>()
+    perpsTradingMocks.depositMargin
+      .mockImplementationOnce(async (
+        _amount, _allowance, _source, approve: (quote: KernelActionQuote) => Promise<void>,
+      ) => {
+        await approve(await quoteDeferred.promise)
+        continueToWallet()
+      })
+      .mockImplementationOnce(async (
+        _amount, _allowance, _source, approve: (quote: KernelActionQuote) => Promise<void>,
+      ) => {
+        await approve(quote)
+        continueToWallet()
+      })
+    const ticket = () => (
+      <PerpsAaRuntimeContext value={runtime}>
+        <PerpsTradeTicket enableLiveTrading walletAssetsRaw={1_000_000n} />
+      </PerpsAaRuntimeContext>
+    )
+    const view = render(ticket())
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Deposit' }))
+
+    const checks = [{ component: 'bundler', status: 'blocked' as const, reason: 'BUNDLER_UNAVAILABLE' }]
+    readinessFixture.snapshot = {
+      version: 1, enforcementEnabled: true, observedAt: now, expiresAt: now + 15_000,
+      actions: { open: checks, close: checks, deposit: checks, protection: checks },
+    }
+    view.rerender(ticket())
+    expect(dialog.getByText('Transaction submission could not be verified.')).toBeVisible()
+    await act(async () => {
+      quoteDeferred.resolve(quote)
+      await Promise.resolve()
+    })
+    expect(continueToWallet).not.toHaveBeenCalled()
+    expect(dialog.getByRole('button', { name: 'Deposit' })).toBeDisabled()
+
+    readinessFixture.snapshot = undefined
+    view.rerender(ticket())
+    const depositButton = dialog.getByRole('button', { name: 'Deposit' })
+    expect(depositButton).toBeEnabled()
+    fireEvent.click(depositButton)
+    await waitFor(() => expect(continueToWallet).toHaveBeenCalledOnce())
+  })
+
+  it('goes directly to wallet approval from Withdraw Margin in Pay from wallet mode', async () => {
+    identityFixture.isAaManifestConfigured = true
+    const runtime = kernelRuntime(true)
+    writeGasPaymentPreference(runtime.gasPayment.scope, 'eth')
+    const now = Date.now()
+    observeDeadlineResponse(new Response(null, { headers: { Date: new Date(now).toUTCString() } }), performance.now())
+    const quote: KernelActionQuote = { mode: 'eth', payer: 'wallet', maxNetworkGasWei: 15n, expiresAt: Math.floor(now / 1_000) + 60 }
+    const continueToWallet = vi.fn()
+    perpsTradingMocks.withdrawMargin.mockImplementationOnce(async (amount, approve: (quote: KernelActionQuote) => Promise<void>) => {
+      await approve(quote)
+      continueToWallet(amount)
+    })
+    render(<PerpsAaRuntimeContext value={runtime}>
+      <PerpsTradeTicket enableLiveTrading withdrawableAssetsRaw={2_000_000n} />
+    </PerpsAaRuntimeContext>)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Withdraw' }))
+
+    await waitFor(() => expect(continueToWallet).toHaveBeenCalledExactlyOnceWith(1_000_000n))
+    expect(dialog.queryByRole('button', { name: 'Continue to wallet' })).not.toBeInTheDocument()
+    act(() => { writeGasPaymentPreference(runtime.gasPayment.scope, 'sponsored') })
   })
 
   function seedActiveOperation(status: SponsoredOperationStatus) {

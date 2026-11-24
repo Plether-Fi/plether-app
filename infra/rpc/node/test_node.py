@@ -102,6 +102,33 @@ class BootstrapPolicyTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith('--init.') for arg in live))
         self.assertFalse(any('fixture.invalid' in arg for arg in live))
 
+    def test_arbitrum_one_mainnet_config_requires_arb1_snapshot_and_l1_mainnet_parent(self):
+        mainnet = {
+            **self.config,
+            'chain_id': 42161,
+            'chain_name': 'arb1',
+            'parent_chain_id': 1,
+            'snapshot_url': 'https://snapshot.arbitrum.foundation/arb1/2026-10-20-dbd26a00/',
+            'log_group': '/plether/mainnet/rpc-node',
+        }
+        node.validate_config(mainnet, self.parent)
+        result = node.nitro_config(mainnet, self.parent)
+        self.assertEqual(result['chain'], {'id': 42161, 'name': 'arb1'})
+        self.assertEqual(result['parent-chain']['id'], 1)
+        with self.assertRaises(ValueError):
+            node.validate_config({**mainnet, 'snapshot_url': self.config['snapshot_url']}, self.parent)
+        with self.assertRaises(ValueError):
+            node.validate_config({**mainnet, 'parent_chain_id': 11155111}, self.parent)
+
+    def test_initialize_mounts_disks_before_parent_secret_exists(self):
+        config = {**self.config, 'parent_parameter': '/plether/mainnet/rpc-node/parent', 'staging_volume_id': 'vol-0123456789abcdef0'}
+        with patch.object(node.sys, 'argv', ['node.py', 'initialize', '/plether/mainnet/rpc-node/config', 'ap-southeast-1']), \
+                patch.object(node, 'parameter', return_value=config) as get_param, \
+                patch.object(node, 'initialize') as init:
+            node.main()
+        get_param.assert_called_once_with('/plether/mainnet/rpc-node/config', 'ap-southeast-1')
+        init.assert_called_once_with(config)
+
 
 if __name__ == '__main__':
     unittest.main()

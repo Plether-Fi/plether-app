@@ -13,7 +13,9 @@ module Plether.AA.Pimlico
   , recordSubmittedOperation
   , decodeSmartAccountCalls
   , validateActionSequence
+  , validateActionSequenceWithProtection
   , orderSubmissionDeadline
+  , orderSubmissionDeadlineForCalls
   , capSponsorshipDeadline
   , validateSubmissionHeadroom
   , capSponsorshipExpiry
@@ -833,8 +835,10 @@ capSponsorshipExpiry sponsorshipExpiry callData = do
   pure $ maybe sponsorshipExpiry (min sponsorshipExpiry) deadline
 
 orderSubmissionDeadline :: ByteString -> Either ProxyFailure (Maybe Integer)
-orderSubmissionDeadline callData = do
-  calls <- decodeSmartAccountCalls callData
+orderSubmissionDeadline callData = decodeSmartAccountCalls callData >>= orderSubmissionDeadlineForCalls
+
+orderSubmissionDeadlineForCalls :: [SmartCall] -> Either ProxyFailure (Maybe Integer)
+orderSubmissionDeadlineForCalls calls = do
   deadlines <- traverse orderDeadline calls
   pure $ case [deadline | Just deadline <- deadlines] of
     [] -> Nothing
@@ -882,7 +886,17 @@ validateActionSequence
   -> Text
   -> [SmartCall]
   -> Either ProxyFailure ()
-validateActionSequence cfg sender owner calls = do
+validateActionSequence cfg =
+  validateActionSequenceWithProtection (maybe False aaProtectionCommitsEnabled $ cfgAaConfig cfg) cfg
+
+validateActionSequenceWithProtection
+  :: Bool
+  -> Config
+  -> Text
+  -> Text
+  -> [SmartCall]
+  -> Either ProxyFailure ()
+validateActionSequenceWithProtection protectionCommitsEnabled cfg sender owner calls = do
   unless
     ( all
         isJust
@@ -1010,7 +1024,7 @@ validateActionSequence cfg sender owner calls = do
           unless (protectionId > 0 && protectionId <= maxUint64) $
             Left $ policyDenied "Protection ID is invalid"
       | otherwise = do
-          unless (maybe False aaProtectionCommitsEnabled $ cfgAaConfig cfg) $
+          unless protectionCommitsEnabled $
             Left $ policyDenied "New protection sponsorship is disabled"
           case BS.take 4 dataBytes of
             selector | selector == decodeSelector "bc2651ff" -> do

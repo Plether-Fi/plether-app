@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const identityMocks = vi.hoisted(() => ({
   isAaManifestConfigured: false,
   settlementTokenSupportsEip3009: false,
+  paysEthFromWallet: false,
   accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
 }))
 
@@ -49,7 +50,8 @@ vi.mock('../../perps-aa', async () => {
       sponsorshipEnabled: identityMocks.isAaManifestConfigured,
       manifest: identityMocks.isAaManifestConfigured
         ? {
-            smartAccountMode: 'simple',
+            smartAccountMode: identityMocks.paysEthFromWallet ? 'kernel' : 'simple',
+            kernel: { protectionCommitsEnabled: false },
             settlementTokenSupportsEip3009: identityMocks.settlementTokenSupportsEip3009,
             userOperationExplorerUrlTemplate:
               'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
@@ -65,6 +67,12 @@ vi.mock('../../perps-aa', async () => {
   }
 })
 vi.mock('../../hooks/usePerpsCloseMargin', () => ({ usePerpsCloseMargin: () => undefined }))
+vi.mock('../../hooks/usePerpsGasReview', async importOriginal => ({
+  ...await importOriginal<typeof import('../../hooks/usePerpsGasReview')>(),
+  usePerpsGasReview: () => identityMocks.paysEthFromWallet
+    ? { paysEthFromWallet: true, available: true, preference: { mode: 'eth', revision: 'test' } }
+    : undefined,
+}))
 import { OpenOrderStatus, PerpsAccountPanel } from '../PerpsAccountPanel'
 import { replaceTextNodes } from '../../test/replaceTextNodes'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
@@ -151,6 +159,7 @@ vi.mock('../../wallet/useWalletActions', () => ({
 let mockIsConnected = false
 const perpsTradingMocks = vi.hoisted(() => ({
   fundTradingAccount: vi.fn(),
+  depositMarginFromOwnerWallet: vi.fn(),
   depositMargin: vi.fn(),
   withdrawMargin: vi.fn(),
   addPositionMargin: vi.fn(),
@@ -185,6 +194,7 @@ vi.mock('wagmi', () => ({
 vi.mock('../../hooks', () => ({
   usePerpsTrading: () => ({
     fundTradingAccount: perpsTradingMocks.fundTradingAccount,
+    depositMarginFromOwnerWallet: perpsTradingMocks.depositMarginFromOwnerWallet,
     depositMargin: perpsTradingMocks.depositMargin,
     withdrawMargin: perpsTradingMocks.withdrawMargin,
     addPositionMargin: perpsTradingMocks.addPositionMargin,
@@ -217,6 +227,7 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
     identityMocks.settlementTokenSupportsEip3009 = false
+    identityMocks.paysEthFromWallet = false
     identityMocks.accountAddress = V2_ACCOUNT
     wagmiMocks.readContractsData = undefined
     useSponsoredOperationStore.setState({
@@ -1569,6 +1580,17 @@ describe('perps lifecycle labels', () => {
     if (_state === 'failed') expect(screen.getByText(/Maximum size quote failed/)).toBeInTheDocument()
   })
 
+  it('keeps the zero-capacity message while refreshing the maximum', () => {
+    mockIsConnected = true
+    maxQuoteMocks.value = { ...maxQuoteMocks.value, quote: undefined, isFetching: true, isPending: true,
+      displayQuote: { maxSizeDelta: 0n, preview: { valid: true } } }
+    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="0"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} />)
+    expect(screen.getByText('Available margin cannot fund an opening order at the selected leverage.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Max' })).toBeDisabled()
+  })
+
   it('reviews and commits the refreshed lens maximum after validating its funded preview', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
@@ -1972,6 +1994,31 @@ describe('perps lifecycle labels', () => {
     expect(within(dialog).queryByText('Trading Account balance')).not.toBeInTheDocument()
     expect(within(dialog).getByText('Trading Account USDG')).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: /Max:/ })).toHaveTextContent('200 000')
+  })
+
+  it.each(['Owner Wallet', 'Trading Account'] as const)('uses the selected %s source on the wallet-paid deposit', async source => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    identityMocks.paysEthFromWallet = true
+    perpsTradingMocks.depositMarginFromOwnerWallet.mockResolvedValue('0xownerdeposit')
+    perpsTradingMocks.depositMargin.mockResolvedValue('0xaccountdeposit')
+    render(<PerpsTradeTicket enableLiveTrading availableToTradeRaw={0n}
+      ownerWalletAssetsRaw={10_000_000n} tradingAccountAssetsRaw={2_000_000n} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByRole('radio', { name: 'Owner Wallet' })).toBeChecked()
+    if (source === 'Trading Account') fireEvent.click(dialog.getByRole('radio', { name: source }))
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Amount' }), { target: { value: '1' } })
+    expect(dialog.queryByRole('button', { name: 'Transfer & Deposit' })).not.toBeInTheDocument()
+    fireEvent.click(dialog.getByRole('button', { name: 'Deposit' }))
+    if (source === 'Owner Wallet') {
+      await waitFor(() => expect(perpsTradingMocks.depositMarginFromOwnerWallet).toHaveBeenCalledWith(1_000_000n, expect.any(Function)))
+      expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+    } else {
+      await waitFor(() => expect(perpsTradingMocks.depositMargin).toHaveBeenCalledWith(1_000_000n, undefined, 'account', expect.any(Function)))
+      expect(perpsTradingMocks.depositMarginFromOwnerWallet).not.toHaveBeenCalled()
+    }
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
   })
 
   it('transfers only the Trading Account shortfall before depositing margin', async () => {

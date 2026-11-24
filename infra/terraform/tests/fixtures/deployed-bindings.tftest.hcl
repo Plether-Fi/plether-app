@@ -177,3 +177,97 @@ run "reject_mismatched_vault_history_deployment_block" {
   variables { vault_history_deployment_block = "124" }
   expect_failures = [terraform_data.deployment_target_guard]
 }
+
+# Kernel infrastructure uses the full module with mock AWS resources.
+run "prepare_dormant_kernel_bindings_for_api_and_reconciler" {
+  command = plan
+
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    alto_entrypoint_simulation_contract_v9 = "0x0000000000000000000000000000000000000022"
+    aa_kernel_canary_owners                = [format("0x%040d", 36)]
+    aa_reconciler_max_safe_lag_seconds     = tostring(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.maximum)
+    aa_reconciler_batch_blocks             = "2000"
+    aa_kernel_profile_json                 = jsonencode(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile)
+    aa_kernel_sponsorship_json = jsonencode({
+      paymaster            = format("0x%040d", 34)
+      paymasterCodeHash    = format("0x%064d", 6)
+      policyId             = format("0x%064d", 7)
+      signerAddress        = format("0x%040d", 35)
+      deploymentBlock      = 123
+      deploymentBlockHash  = format("0x%064d", 8)
+      minDepositWei        = 1000
+      verificationGasLimit = 150000
+      validitySeconds      = 300
+      canaryOwners         = [format("0x%040d", 36)]
+      budget = {
+        maxCostWei            = 10
+        accountOutstandingWei = 100
+        clientOutstandingWei  = 100
+        globalOutstandingWei  = 1000
+        accountHourlyWei      = 100
+        globalHourlyWei       = 1000
+        globalDailyWei        = 10000
+      }
+    })
+  }
+
+  assert {
+    condition     = local.kernel_aa_backend_configured && local.kernel_aa_sponsorship_configured && !local.kernel_aa_sponsorship_enabled && length(local.native_aa_environment) == 0
+    error_message = "The dormant Kernel gateway must accept the execution and sponsorship profiles without enabling sponsorship or native v0.8."
+  }
+  assert {
+    condition = contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_ALTO_RPC_URL") && (
+      !contains([for entry in local.kernel_aa_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
+      && length(aws_iam_role_policy.api_paymaster_kms_signer) == 0
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_CANARY_OWNERS_JSON", value = jsonencode(var.aa_kernel_canary_owners) })
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_PUBLIC_ADMISSION", value = "false" })
+      && contains(local.kernel_aa_environment, { name = "AA_RPC_MODE", value = "dual-independent" })
+      && contains(local.kernel_aa_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds })
+    )
+    error_message = "The Kernel API must use explicit canary admission and independent RPCs without access to the paymaster signer."
+  }
+  assert {
+    condition = contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_SPONSORSHIP_JSON") && (
+      !contains([for entry in local.kernel_aa_reconciler_environment : entry.name], "AA_KERNEL_PAYMASTER_KMS_KEY_ID")
+      && local.kernel_aa_secrets[0].name == "AA_SECURITY_RPC_URL"
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_RPC_MODE", value = "dual-independent" })
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds })
+      && contains(local.kernel_aa_reconciler_environment, { name = "AA_KERNEL_RECONCILER_BATCH_BLOCKS", value = "2000" })
+    )
+    error_message = "The reconciler receives the current paymaster anchor and independent RPC without signing access."
+  }
+}
+
+run "accept_kernel_profile_at_minimum_safe_lag" {
+  command = plan
+
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    aa_kernel_profile_json                 = jsonencode(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile)
+    aa_reconciler_max_safe_lag_seconds     = tostring(jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).safeHeadLagSeconds.minimum)
+  }
+}
+
+run "reject_kernel_staker_profile" {
+  command = plan
+
+  variables {
+    alto_entrypoint_version                = "0.9"
+    alto_entrypoint_address                = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    alto_entrypoint_simulation_contract_v8 = ""
+    aa_kernel_profile_json = jsonencode(merge(
+      jsondecode(file("../../apps/backend/test/fixtures/kernel-deployment.json")).profile,
+      {
+        staker         = format("0x%040d", 9)
+        stakerCodeHash = format("0x%064d", 9)
+      },
+    ))
+  }
+
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}

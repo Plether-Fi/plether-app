@@ -1,5 +1,5 @@
--- | Read-only, operation-scoped credentials. Never use these for issuance or
--- submission. Database recovery authorization/expiry must still be checked.
+-- | Operation-scoped credentials for locating database recovery state. The
+-- capability alone cannot authorize issuance or relay.
 module Plether.AA.RecoveryCapability (issue, verify) where
 
 import Crypto.Hash (SHA256)

@@ -92,6 +92,22 @@ it('keeps an old price quote for display only until the new maximum arrives', as
   expect(result.current.displayQuote).toEqual(updated.quote)
 })
 
+it('keeps the capacity message through price updates and clears it on a margin change', async () => {
+  const zero = { ...successful, quote: { ...quote, maxSizeDelta: 0n } }
+  mocks.quotePerpsMaxOpen.mockResolvedValueOnce(zero)
+  const { result, rerender } = renderHook(props => usePerpsMaxOpenQuote(props), { initialProps: input, wrapper: Wrapper })
+  await waitFor(() => expect(result.current.quote).toEqual(zero.quote))
+  const next = deferred<typeof successful>()
+  mocks.quotePerpsMaxOpen.mockReturnValue(next.promise)
+  const updatedPrice = { ...input, oraclePrice: 100_001_000n }
+  rerender(updatedPrice)
+  expect(result.current.quote).toBeUndefined()
+  expect(result.current.displayQuote).toEqual(zero.quote)
+  rerender({ ...updatedPrice, availableAssets: 110_000_000n })
+  expect(result.current.displayQuote).toBeUndefined()
+  await act(async () => { next.resolve(successful) })
+})
+
 it('drops display-only data if a price refresh fails', async () => {
   const { result, rerender } = renderHook(props => usePerpsMaxOpenQuote(props), { initialProps: input, wrapper: Wrapper })
   await waitFor(() => expect(result.current.quote).toEqual(quote))

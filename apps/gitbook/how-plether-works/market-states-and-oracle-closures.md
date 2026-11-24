@@ -1,592 +1,105 @@
 # Market states and oracle closures
 
-Plether runs on a 24/7 chain. The FX[^fx] market underlying the Plether Dollar Index does not.
+Plether runs on a 24/7 blockchain, while the global FX[^fx] market underlying `plDXY` closes on weekends and holidays. Rather than inventing weekend prices, Plether changes which actions are allowed and how recent oracle[^oracle] data must be:
 
-The protocol does not manufacture a weekend price. Instead, it changes which actions are permitted and how recent the oracle[^oracle] data must be.
+* **Scheduled close-only (FAD[^fad] live shoulders):** New risk is blocked, closure margin (`3.00%`) applies, and live post-commit oracle rules stay in force.
+* **Oracle frozen (`oracleFrozen`):** New FX updates are not expected; voluntary closes and liquidations use a bounded stale-data policy (up to `3 days`).
+* **Oracle data unavailable / over-stale:** Available data fails validation or exceeds the active age cap, halting price-dependent actions.
 
-There are three important conditions:
+> **`oracleFrozen` is a calendar state, not an outage detector.** An unexpected Pyth outage during open FX hours never automatically activates frozen pricing.
 
-* **Scheduled close-only:** new risk is blocked, but the oracle is still treated as live.
-* **Oracle frozen:** new FX observations are not expected, so reductions use a bounded stale-data policy.
-* **Oracle data unavailable:** the available data is too old or invalid even for the active policy, so price-dependent actions stop.
+See [Oracle & execution model](oracle-and-execution-model.md) for confidence checks and pending-order pricing rules.
 
-These conditions are related, but they are not interchangeable.
+## Weekly FX schedule
 
-See [Oracle & execution model](oracle-and-execution-model.md) for how data validation affects pending orders and how confidence changes execution prices.
-
-> **Oracle frozen is a calendar state, not an outage detector.** It does not automatically activate whenever Pyth stops publishing.
-
-### The weekly schedule
-
-Plether’s regular market calendar follows **America/New_York**, including US daylight saving time. The Friday FX close and Sunday FX reopen are at 17:00 New York time: 21:00 UTC[^utc] during daylight time and 22:00 UTC during standard time.
+Plether's regular calendar follows **America/New_York** (with US daylight saving time evaluated independently at each boundary — `17:00 NY = 21:00 UTC`[^utc] in EDT / `22:00 UTC` in EST):
 
 ![Regular weekly phases in America/New_York: open until Friday 16:30, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:15. UTC offsets change with US daylight saving.](../.gitbook/assets/diagrams/weekly-market-state-schedule.svg)
 
-| Time in New York          | Public market state | Oracle policy | New risk |
-| ------------------------- | ------------------- | ------------- | -------- |
-| Sunday 17:15–Friday 16:30 | Open                | Live          | Allowed  |
-| Friday 16:30–17:00        | Close-only          | Live          | Blocked  |
-| Friday 17:00–Sunday 17:00 | Close-only          | Frozen        | Blocked  |
-| Sunday 17:00–17:15        | Close-only          | Live          | Blocked  |
+| Time in America/New_York | Public UI state | Oracle policy | Maintenance margin | New risk |
+| --- | --- | --- | --- | --- |
+| **Sunday 17:15 – Friday 16:30** | Open | Live | `0.10%` | Allowed |
+| **Friday 16:30 – 17:00** *(30m pre-close runway)* | Close-only | Live | `3.00%` | Blocked |
+| **Friday 17:00 – Sunday 17:00** | Close-only | Frozen (`oracleFrozen`) | `3.00%` | Blocked |
+| **Sunday 17:00 – 17:15** *(15m reopen lag)* | Close-only | Live | `3.00%` | Blocked |
 
-Frozen pricing ends at Sunday 17:00 New York time, but the market remains close-only for another 15 minutes. The pre-close runway on Friday is 30 minutes. Configured closure days can extend these restrictions.
+The contracts call the wider Friday 16:30 – Sunday 17:15 window the **FAD window** (Friday Afternoon Deleverage); the UI labels the entire window **Close-only**. Starting close-only 30 minutes before FX stops publishing gives traders a live-priced runway to add margin or reduce leverage before weekend gaps and closure margin take full effect.
 
-The contracts refer to the wider close-only period as the **FAD[^fad] window**, short for Friday Afternoon Deleverage. The public interface simply calls it **Close-only**.
+## Action matrix
 
-### Why closure has two stages
+Assuming the protocol is active and all account, capacity and acceptable-price checks pass:
 
-Plether begins close-only operation before fresh FX observations are expected to stop.
+| Action | Open (live) | Close-only (live) | `oracleFrozen` (within `3d` limit) | Over-stale / unavailable |
+| --- | --- | --- | --- | --- |
+| **Open or increase** | Allowed | Blocked | Blocked | Blocked |
+| **Execute queued open** | Allowed | Blocked (stays Pending → expires) | Blocked (stays Pending → expires) | Blocked |
+| **Commit reduce / close** | Allowed | Allowed | Allowed | May commit with stored mark; cannot execute |
+| **Execute reduce / close** | Live post-commit + `0.25×` confidence shift | Live post-commit + `0.25×` confidence shift | Validated frozen price (unshifted) + `50 bps`[^bps] spread | Blocked |
+| **Liquidate** | Live policy (`0.10%` maint.) | Live policy (`3.00%` maint.) | Frozen policy (`3.00%` maint.); **no** frozen spread | Blocked |
+| **Add position margin** | Allowed | Allowed | Allowed | Allowed |
+| **Withdraw USDG[^usdg] (open position)** | Fresh mark + headroom | Live mark + `3.00%` headroom | Frozen mark within limit + `3.00%` headroom | Blocked |
+| **Withdraw USDG (flat account)** | Free unreserved USDG | Same | Same | Same |
 
-This first stage provides time to:
+## Scheduled close-only (live oracle) vs `oracleFrozen`
 
-* Reduce leverage
-* Close positions
-* Add margin
-* Liquidate positions that no longer satisfy the closure margin requirement
-* Stop new risk from entering immediately before the weekend gap
-
-The oracle rules remain strict during this runway. A close still needs the first eligible post-commit observation, just as it would during ordinary trading.
-
-Only when the calendar enters the narrower oracle-frozen interval does Plether relax the post-commit timing requirement and permit bounded stale data.
-
-This preserves normal execution rules while the reference market may still be publishing, without making risk reduction impossible once it stops.
-
-### Action matrix
-
-The following assumes the protocol is active and all other account, liquidity, queue and acceptable-price checks pass.
-
-| Action                                    | Open market                                 | Close-only, live oracle                 | Oracle frozen, data within limit                          | Data unavailable or over-stale                          |
-| ----------------------------------------- | ------------------------------------------- | --------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| Open or increase LONG USD                 | Allowed                                     | Blocked                                 | Blocked                                                   | Cannot execute                                          |
-| Open or increase SHORT USD                | Allowed                                     | Blocked                                 | Blocked                                                   | Cannot execute                                          |
-| Execute a queued opening                  | Allowed                                     | Blocked; remains pending                | Blocked; remains pending                                  | Blocked                                                 |
-| Commit a reduction or close               | Allowed                                     | Allowed                                 | Allowed                                                   | May be accepted using a stored mark, but cannot execute |
-| Execute a reduction or close              | Live historical pricing                     | Live historical pricing                 | Frozen-market pricing plus the 0.50% frozen-close spread  | Blocked                                                 |
-| Liquidate                                 | Live liquidation policy                     | Live policy with closure margin         | Frozen policy with closure margin; no frozen-close spread | Blocked                                                 |
-| Add margin                                | Allowed                                     | Allowed                                 | Allowed                                                   | Allowed                                                 |
-| Withdraw USDG with an open position       | Requires fresh mark and sufficient headroom | Requires live mark and closure headroom | Requires mark within frozen limit                         | Blocked                                                 |
-| Withdraw from an account with no position | Subject to free and reserved balances       | Same                                    | Same                                                      | Same                                                    |
-
-Data availability is an overlay rather than a separate calendar phase. An oracle problem can occur while the calendar says **Open**, and valid bounded data can remain available while the calendar says **Oracle frozen**.
-
-### Open market
-
-During the open state, traders can:
-
-* Open LONG USD or SHORT USD
-* Increase an existing position
-* Reduce or close a position
-* Add margin
-* Finalize eligible pending orders
-
-Order execution uses the first eligible Pyth basket observation strictly after commitment and inside the settlement window.
-
-Normal protections apply:
-
-* No same-block live execution
-* Strict post-commit publication
-* Component freshness and timestamp alignment
-* Confidence limits
-* Adverse confidence adjustment
-* Acceptable-price checks
-
-Liquidation uses its own, stricter live-market freshness requirement.
-
-The **Open** state means the calendar permits new risk. It does not guarantee that an individual order will pass oracle, margin, capacity or solvency checks.
-
-### Scheduled close-only with a live oracle
-
-Scheduled close-only begins every Friday at 16:30 New York time and ends Sunday at 17:15. Its live-oracle shoulders are the 30 minutes before Friday’s FX close and the 15 minutes after Sunday’s FX reopen.
-
-During these intervals:
-
-* New positions cannot be committed
-* Existing positions cannot be increased
-* Reductions and closes remain available
-* Liquidations remain available
-* The higher market-close margin requirement applies
-* Live-market oracle protections remain active
-* Normal signed VPI[^vpi] and its lifetime rebate clamp remain active
-* The frozen-close spread is not active
-* Frozen LP[^lp] withdrawal surcharges are not active
-
-A close submitted during this period still requires a valid post-commit observation. Plether does not accept an older price merely because the market is close-only.
-
-If fresh observations have already stopped, the close remains pending. It does not automatically switch to stale pricing until the calendar enters the actual oracle-frozen interval.
-
-### Oracle-frozen operation
-
-The oracle-frozen calendar state covers the period in which continuous FX updates are not expected.
-
-New risk remains blocked. Plether relaxes the oracle policy for reductions and liquidations, while a separate frozen-close spread applies only to voluntary reductions and closes.
-
-A close or reduction uses the latest validated Pyth basket available within the frozen-market age limit.
-
-The protocol no longer requires:
-
-* Publication strictly after the order commitment
-* A new observation within the order’s post-commit settlement window
-* A different block from the commitment block
-
-Those requirements would make weekend execution impossible when no new FX observation exists.
-
-The following protections remain:
-
-* Every component price must be positive and valid
-* Confidence must remain within its limit
-* Component timestamps must remain sufficiently aligned
-* The basket must remain within the frozen staleness limit
-* The execution price remains inside the fixed `0.00–2.00` range
-* Confidence-width validation still applies, but voluntary closes waive the adverse confidence price shift
-* The trader’s acceptable-price boundary still applies
-
-Frozen execution does not necessarily use “Friday’s closing price.” It uses the latest basket that Pyth can validate within the active policy. That basket may have been updated after the initial closure observation.
-
-### VPI and the frozen-close spread
-
-Normal signed VPI and its existing lifetime rebate clamp apply to every voluntary close and reduction, including during `oracleFrozen`.
-
-Frozen operation does not switch to a one-way VPI curve:
-
-* A close that increases directional imbalance can incur positive VPI
-* A close that reduces directional imbalance can receive a bounded VPI rebate
-* The existing lifetime rebate clamp remains unchanged
-
-Separately, a voluntary close or reduction executed while `oracleFrozen` is assessed a fixed spread on the USDG[^usdg] value of the notional[^notional] being reduced:
-
-```
-Frozen-close spread
-= reduced position notional × 0.50%
-```
-
-For example, reducing `$100,000` of notional produces a `$500` frozen-close spread.
-
-The spread:
-
-* Applies only to voluntary closes and reductions executed while `oracleFrozen`
-* Is currently **50 bps[^bps]**, or **0.50% of reduced notional**
-* Does not vary with pool skew[^skew], VPI, elapsed closure time or mark staleness
-* Is separate from VPI, the execution fee, accrued carry[^carry] and the active Pyth confidence policy
-* Does not apply during the open market
-* Does not apply during the live-oracle shoulders of the close-only window
-* Does not apply to liquidations
-* Belongs entirely to LPs and never becomes protocol treasury revenue
-
-The state at execution determines whether the spread applies. A close committed before `oracleFrozen` but executed after the boundary is assessed the spread.
-
-#### How the spread is settled
-
-Frozen spread is part of the action charge. Attribution of recovered spread follows the prior charges shown below; this is not a shared collateral queue for price losses:
+* **Live-oracle shoulders (Fri 16:30–17:00 & Sun 17:00–17:15 NY):** Opens and increases are blocked and maintenance margin jumps immediately to **`3.00%`**, but closes still require live post-commit Pyth observations, pay **no** frozen-close spread and trigger **no** LP[^lp] frozen withdrawal fee. If FX feeds have not yet resumed during the Sunday 17:00–17:15 window, closes and liquidations wait until live updates arrive.
+* **`oracleFrozen` (Fri 17:00 – Sun 17:00 NY and configured holidays):** Voluntary closes waive the post-commit ordering requirement, same-block check and `0.25×` adverse confidence price shift, settling against the latest validated Pyth basket (within the `3-day` staleness ceiling, `0.10%` max confidence ratio, `5s` alignment and `[0.00, 2.00]` bounds) while assessing the fixed **`50 bps` (`0.50%`)** frozen-close spread on reduced contract notional[^notional] (`100,000 USDG` reduced notional → `500 USDG` spread).
+  * Normal signed VPI[^vpi] and its lifetime clamp still apply alongside the spread.
+  * The spread belongs **100% to LPs** (never the treasury), applies strictly by **execution-time** market state (not commit time) and never applies to liquidations.
 
 ![Frozen-close spread is an action charge, not a price change. Recovery follows execution fee, carry left unpaid after initial collection, and positive VPI; unrecovered spread is waived.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
 
-Carry consumes active position margin first, then eligible free USDG, before close accounting. Price losses then use the same account’s nettable trader claim and remaining collectible PnL pledge. Other close charges, including any unpaid carry, can use margin safely released by the close; they cannot consume the margin still backing a residual position.
+* **Collection & waiver:** Carry[^carry] collects first (active position margin → free USDG), then realized price loss consumes same-account trader claims → position margin. Action charges (execution fee, unpaid carry, positive VPI, frozen spread) settle separately from positive PnL, VPI reserve, free USDG and safely released margin. Partial reductions must pay the full spread or fail; terminal full closes waive uncollectible action charges (`assessed = paid + waived`, and waived spread is neither bad debt, a claim nor LP revenue).
 
-A partial reduction must settle its action charge without waiver. If eligible action funds are insufficient after any withholding from a price gain, the reduction does not execute.
+## Margin jump, continuous carry and FIFO queue behavior
 
-A terminal full close may waive uncollectible action charges, including frozen spread. The spread event distinguishes assessed, recovered and waived amounts.
+* **Immediate `3.00%` maintenance jump:** Takes effect at Friday 16:30 NY (not 17:00). An over-leveraged position can become liquidatable without any price move. Liquidations remain full and permissionless during both live close-only and `oracleFrozen` (using adverse confidence pricing and zero frozen spread).
+* **Carry never pauses:** Carry accrues 24/7 by wall-clock time through weekends, holidays, frozen windows and oracle outages.
+* **Global FIFO[^fifo] queue:** An opening order committed right before close-only stays Pending when close-only starts and cannot be jumped by later closes; under the `60-second` execution deadline, it expires and is cleaned up by a keeper[^keeper]. Separate signed execution bounds govern permitted modes and financial limits alongside your acceptable-price boundary.
 
-The waived amount:
+## What closures mean for LPs
 
-* Does not become bad debt
-* Does not become a trader claim
-* Does not become an LP receivable or LP revenue
+* **Scheduled close-only (live oracle):** Normal LP deposit, withdrawal, cooldown and share-pricing rules continue unchanged — **no** frozen LP fee applies.
+* **`oracleFrozen`:** New vault deposits are blocked and previously queued deposits wait until live pricing returns (deposits pay no frozen fee). Withdrawals remain queueable while the mark stays within the frozen staleness limit and apply a tranche[^tranche]-specific **Temporary pricing fee** retained **100% inside that tranche**:
+  * **Senior Vault (`psLP`):** **`0.25%`** (`25 bps`)
+  * **Junior Vault (`pjLP`):** **`0.75%`** (`75 bps`)
+  * Because a withdrawal request locks its quoted share count, fee or price changes before hourly processing adjust final USDG rather than pulling extra shares.
+* **Over-stale mark:** Once the stored mark exceeds the `3-day` frozen limit while open trader liabilities require mark-to-market accounting, hourly settlement pauses and **Available withdrawal liquidity** can drop to zero until valid data returns.
 
-Price losses beyond the terminal collectible cap are recorded separately as price-loss write-offs. Unpaid action charges are not added to that price-loss amount.
+See [LP risks and safeguards](../providing-liquidity/lp-risks-and-safeguards.md) and [Read your LP position and pool health](../providing-liquidity/read-your-lp-position-and-pool-health.md).
 
-Close previews expose the result separately:
+## Holiday overrides, protective overlays and UI banner
 
-* **Assessed spread (USDG)** — spread assessed
-* **Paid spread (USDG)** — spread collected for LPs
-* **Waived spread (USDG)** — spread waived on a terminal full close
-
-For a valid close:
-
-```
-spread assessed
-= spread paid
-+ spread waived
-```
-
-All three values are zero outside `oracleFrozen`.
-
-A successful close with a nonzero assessment records the assessed, paid and waived USDG amounts in its onchain result.
-
-“Fixed” means that the percentage does not respond dynamically to VPI, skew or staleness. It does not mean that the parameter is immutable. Changes require the protocol’s timelocked risk-configuration process.
-
-The fixed spread reduces the stale-price risk borne by LPs. It does not guarantee that LPs are fully compensated for an external FX move during the closure.
-
-Frozen mode preserves a bounded path for reducing risk. It does not guarantee a cost-free exit.
-
-### When oracle data is unavailable
-
-Oracle data is unavailable when Plether cannot construct a valid basket under the relevant policy.
-
-Possible causes include:
-
-* One or more components are too old
-* A component price is invalid
-* Confidence is too wide
-* Component timestamps are too far apart
-* Required historical data cannot be proven
-* Pyth updates are temporarily unavailable
-
-When that happens, Plether does not:
-
-* Invent a weekend price
-* Extrapolate the previous movement
-* Substitute an arbitrary later observation
-* Accept data older than the configured maximum
-
-Close execution and liquidation revert rather than settle against an unbounded price.
-
-The affected order normally remains pending until:
-
-* Valid data becomes available
-* The order expires and is cleared
-* Another terminal condition applies
-
-A close intent may still be committed if the protocol has a stored mark and passes the close-commit checks. Reductions and closes have zero keeper execution reward; no reward reserve is required. Commitment still checkpoints carry and does not imply that the close can currently execute.
-
-### A live-market oracle outage is not frozen mode
-
-The oracle-frozen flag is determined by the market calendar and configured closure days.
-
-If Pyth stops publishing unexpectedly during ordinary market hours, Plether does not automatically relax into frozen pricing.
-
-Instead:
-
-* The calendar may still show **Open**
-* New order commitments may still reach preflight
-* Execution remains blocked without valid post-commit data
-* Liquidation remains blocked without data satisfying its live freshness limit
-* Existing orders remain pending until recovery or expiry
-
-This avoids turning an unexpected oracle failure into permission to trade against stale data.
-
-### Margin requirements rise before closure
-
-The close-only window activates a higher margin requirement for existing positions.
-
-This happens as soon as the window begins—not when the oracle later becomes frozen.
-
-A position that was healthy immediately before Friday 16:30 New York time can become liquidatable after the boundary if its equity falls below the closure requirement.
-
-No position is closed automatically. A keeper[^keeper] must still submit a valid liquidation using an eligible oracle price.
-
-Before the close-only window, traders should consider:
-
-* Adding margin
-* Reducing contract size
-* Closing the position
-* Leaving enough headroom for fees and carry
-* Avoiding reliance on a last-minute pending close
-
-The current protocol setting uses a **3.00% market-close margin requirement**. This is a timelocked risk parameter, not part of the fixed index formula.
-
-### Carry does not pause
-
-Carry accrues according to elapsed time.
-
-It continues during:
-
-* Scheduled close-only operation
-* Oracle-frozen periods
-* Weekends
-* Holiday closures
-* Temporary oracle outages
-
-A market that is not publishing a new price is not a position with no cost.
-
-If a close remains pending through the weekend, the position remains open and carry continues to accrue until settlement.
-
-### What happens to queued orders?
-
-Plether’s global FIFO[^fifo] queue does not reorder itself when the market state changes.
-
-#### Queued opening or increase
-
-An opening committed before close-only begins cannot execute after the boundary.
-
-It remains pending at the queue head until it expires and is cleared, fails another terminal check or is removed after account liquidation. The router requires `maxOrderAge` to be no more than one hour, which is shorter than the scheduled close-only period, so a blocked opening cannot wait through the weekend and execute after reopening.
-
-Later orders cannot jump ahead, including risk-reducing orders.
-
-The current deployment expires an order once its age exceeds **60 seconds**. Expiry still requires a keeper or another direct contract caller to process the queue head before the queue advances.
-
-#### Queued reduction or close
-
-A pending close uses the policy active when it is finalized.
-
-For example:
-
-* A close committed on Friday at 16:59:30 New York time may use live historical execution and pay no frozen-close spread if finalized before 17:00.
-* The same close, if finalized at 17:00:10 while still unexpired and authorized for frozen execution, uses frozen-market execution and is assessed the frozen-close spread.
-
-The spread is determined by the state at execution, not the state at commitment.
-
-The acceptable-price boundary continues to constrain the oracle-derived execution price in either case. Separate signed V2 execution bounds constrain permitted modes and financial outcomes; the acceptable price alone is not a fee or carry limit.
-
-A pending close is not a completed close. The position remains exposed and liquidatable until execution succeeds.
-
-### Liquidations during closures
-
-Liquidation remains available during scheduled close-only and oracle-frozen operation, provided the oracle satisfies the active policy.
-
-During the live-oracle shoulders:
-
-* The higher closure margin requirement applies
-* Liquidation still requires live data
-* The normal adverse liquidation confidence adjustment applies
-
-During oracle-frozen operation:
-
-* The higher closure margin requirement remains active
-* The extended frozen staleness limit applies
-* The liquidation price remains adverse to the account
-* Full liquidation remains the only liquidation mode
-* The frozen-close spread is not assessed
-
-The spread protects LPs against voluntary stale-price exits without reducing the value available for keeper incentives or changing liquidation settlement.
-
-If data becomes too old even for frozen policy, liquidation cannot execute.
-
-This is a liveness risk, not debt forgiveness. The position remains open, carry continues, and liquidation can resume when acceptable data returns.
-
-### Adding and withdrawing trader margin
-
-Depositing USDG into the Margin Account and adding margin to an existing position remain available even when the oracle is stale.
-
-These actions reduce risk and do not require a current index price.
-
-Withdrawing USDG from an account that has an open position is different. It requires:
-
-* A sufficiently recent mark for the active market state
-* A non-degraded protocol
-* A position that is not liquidatable
-* Enough post-withdrawal equity to satisfy the stricter of the initial and active maintenance requirements
-
-During close-only, the closure margin requirement is included in this check.
-
-If the mark is over-stale, withdrawal from an account with an open position is blocked. An account with no position may still withdraw unreserved USDG without requiring an oracle price.
-
-### What closures mean for LPs
-
-LP operations distinguish scheduled close-only from actual oracle-frozen operation.
-
-For the LP-facing action and monitoring checklist, see [LP risks and safeguards](../providing-liquidity/lp-risks-and-safeguards.md) and [Read your LP position and pool health](../providing-liquidity/read-your-lp-position-and-pool-health.md).
-
-#### Scheduled close-only, oracle still live
-
-The normal LP rules remain in force:
-
-* Ordinary freshness requirements
-* Tranche[^tranche] liquidity limits
-* Senior impairment rules
-* One-hour holder cooldowns
-* Hourly deposit and withdrawal requests
-* No frozen-market surcharge
-
-The fact that trader openings are blocked does not itself change LP share pricing.
-
-#### Oracle frozen
-
-New vault deposits are unavailable while the interface cannot obtain live pricing. Withdrawal requests may remain available while the stored mark is within the frozen-market limit, although their eventual funding still depends on the hourly processing gates.
-
-The trader frozen-close spread and the tranche-specific LP withdrawal surcharge are different charges:
-
-* A collected trader spread becomes LP-owned pool revenue and never protocol treasury revenue.
-* An LP withdrawal surcharge remains inside the tranche in which it was charged.
-* A trader spread waived on a terminal full close is not LP revenue or bad debt.
-
-A tranche-specific frozen surcharge applies when an eligible queued withdrawal is funded under frozen pricing:
-
-* Redeeming a fixed number of shares returns less USDG
-* Withdrawing a target USDG amount requires more shares in the request-time quote
-
-The retained value stays in the same tranche for the benefit of its incumbent LPs.
-
-The current settings are:
-
-| Tranche | Frozen withdrawal surcharge |
-| ------- | --------------------------- |
-| Senior  | 0.25%                       |
-| Junior  | 0.75%                       |
-
-These are timelocked pool parameters and should be read from the live contract or interface before acting.
-
-The interface blocks new deposit requests while the oracle is frozen, and deposit activation is deferred until the entry gates—including live pricing—clear. Deposits do not pay the frozen withdrawal surcharge. For withdrawals, the preview includes the current temporary fee in the share quote. The queued share amount is fixed; if pricing or fee state changes before processing, the final USDG receipt changes rather than the vault pulling additional shares.
-
-#### Oracle data over-stale
-
-When trader liabilities require a mark and the available mark exceeds the frozen limit:
-
-* Hourly deposit and withdrawal processing can be blocked
-* Pending withdrawals can remain in **Waiting for USDG**
-* Available withdrawal liquidity can fall to zero
-
-If there are no open trader liabilities requiring mark-to-market accounting, freshness may not be required solely for LP reconciliation. All other tranche, liquidity and lifecycle restrictions still apply.
-
-Frozen mode keeps LP exits available under bounded conditions. It does not make liquidity unlimited or remove the liquidity pool’s withdrawal firewall.
-
-### Holiday closures
-
-Plether can register additional full-day FX closures through timelocked calendar configuration.
-
-For a configured closure day:
-
-* The entire UTC day is close-only
-* Oracle-frozen policy is active
-* A configurable close-only runway begins before the day starts
-
-The override runway is a configured calendar parameter. The built-in Friday close-only shoulder is separate.
-
-Holiday calendar changes are subject to a 48-hour timelock.
-
-Because closure days use UTC calendar boundaries, their relationship to a local exchange holiday or daylight-saving transition may not be exact to the minute.
-
-### Daylight saving time and reopening gaps
-
-The weekly schedule moves with US daylight saving time. The contracts evaluate Friday and Sunday independently, so a clock-change weekend can have different UTC offsets at its two boundaries.
-
-During the 15 minutes after Sunday 17:00 New York time:
-
-* Oracle-frozen policy has ended
-* The market remains close-only
-* Strict live oracle rules apply again
-* Fresh FX updates may or may not have resumed yet
-
-If no eligible live observation exists, closes and liquidations remain blocked despite the oracle-frozen flag being off.
-
-Actual oracle publication can still be delayed or stop early. Until Friday 17:00 New York time, the live-oracle policy requires fresh eligible data; the calendar does not manufacture missing observations.
-
-Calendar permission never overrides oracle validation.
-
-### Other protective states
-
-Calendar mode and oracle freshness are not the only controls. Other protocol overlays can exist at the same time.
-
-| Overlay                         | Main effect                                                                                                                                     |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Router paused                   | Blocks new opening and increase commitments; reductions, queued execution, liquidations and mark updates remain available where otherwise valid |
-| Liquidity pool paused                | Blocks new LP deposits; eligible LP withdrawals and trader operations are evaluated separately                                                  |
-| Degraded mode                   | Blocks new trader risk and new LP deposits; otherwise-eligible LP withdrawal requests can still queue, but no new withdrawal USDG is allocated until effective solvency recovers and the protocol owner explicitly clears the mode |
-| Trading inactive or configuring | The market is not yet active for new trader risk                                                                                                |
-| Oracle stale                    | Blocks actions requiring a valid current or bounded-frozen price                                                                                |
-
-Degraded mode is a solvency-containment state. It does not mean the market has settled or that all positions have been terminated.
-
-Plether Perps[^perps] has no boundary-triggered **SETTLED** state. Reaching `0.00` or `2.00` does not end the market.
-
-### What the interface shows
-
-The current banner uses the public states:
-
-* **Open**
-* **Close-only**
-* **Closed**
-* **Degraded**
-
-It shows messages such as:
-
-> Market is **open** for another `…`. Then **close-only** for `…`.
-
-or:
-
-> Market is **close-only** for another `…`. Then **open** for `…`.
-
-The interface combines the live-oracle shoulders and the actual frozen interval into the single public label **Close-only**.
-
-That label is enough to determine whether new risk is permitted. It is not enough to determine which oracle policy will price a close.
-
-Check the oracle freshness indicator as well:
-
-* `Oracle fresh`
-* `Oracle stale`
-* `updated … ago`
-* `checking backend for a fresh update`
+* **Holiday closures:** Governance can register full UTC-day FX closures (with a configurable `1-hour` pre-day runway) subject to a **`72-hour` timelock**.
+* **Other overlays:** **Router pause** blocks new opens/increases while keeping closes and liquidations open; **Pool pause** blocks new LP deposits; **Degraded mode** latches after an under-backed terminal event, blocking new trader risk, new LP deposits and new LP withdrawal funding until solvency recovers and the owner explicitly clears it. Plether Perps[^perps] has no boundary-triggered `SETTLED` state — touching `0.00` or `2.00` never terminates the market.
+* **Live UI banner:** Shows **Open**, **Close-only**, **Closed** or **Degraded** alongside the oracle freshness badge (`Oracle fresh` / `Oracle stale`). Because **Close-only** spans both the live shoulders and `oracleFrozen`, always check oracle state and onchain `fadWindow` / `oracleFrozen` flags rather than relying on the countdown estimate alone.
 
 ![Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
 
-This Storybook countdown is an illustrative UI fixture, not the current weekly schedule. Use the New York schedule above and the live application’s market state for timing.
+## Current closure parameters (Core v2.0.0)
 
-The weekly countdown is an interface estimate, not a protocol state transition. The onchain `fadWindow` and `oracleFrozen` flags are authoritative, including around configured holiday closures or if an interface countdown does not match the deployed calendar.
+All closure parameters below are governed via a **`72-hour` timelock** (live onchain values are authoritative):
 
-The interface may also allow an opening to reach the review screen during close-only. The contract will reject the commitment. A successful preview is not permission to open new risk.
-
-### Current closure parameters
-
-Unlike the fixed `2.00` index boundary, the following values are timelocked risk parameters.
-
-| Parameter                       | Current setting           |
-| ------------------------------- | ------------------------- |
-| Market-close margin requirement | 3.00%                     |
-| Maximum frozen oracle age       | 3 days                    |
-| Additional closure-day runway   | 1 hour                    |
-| Frozen-close spread             | 0.50% of reduced notional |
-| Senior frozen withdrawal surcharge | 0.25%                  |
-| Junior frozen withdrawal surcharge | 0.75%                  |
-
-The frozen-close spread is separate from VPI. It is part of the 48-hour timelocked risk configuration, must remain nonzero.
-
-Live onchain values are authoritative.
-
-### Trader checklist before closure
-
-Before Friday 16:30 New York time or an announced closure day:
-
-* Check when close-only begins
-* Recalculate health using the closure margin requirement
-* Add margin or reduce exposure before the boundary
-* Leave room for carry, execution fees, VPI and—if the close may execute while `oracleFrozen`—the frozen-close spread
-* Do not treat a submitted close as completed
-* Avoid leaving an opening order near the state transition
-* Check the age of the latest oracle update
-* Remember that carry continues through the closure
-
-During oracle-frozen operation:
-
-* Confirm the timestamp of the price being used
-* Confirm that the voluntary close uses the unshifted validated price
-* Review normal signed VPI and the separate 0.50% frozen-close spread
-* If reducing only part of a position, confirm that the account can settle the complete close obligation
-* Check the assessed, paid and waived spread amounts in the close preview or result
-* Set an acceptable-price boundary
-* Confirm that the order executed before treating the position as closed
-
-For LPs:
-
-* Check whether the protocol is actually oracle-frozen or only close-only
-* Review the active tranche withdrawal surcharge
-* Check available withdrawal liquidity, shares available to withdraw and the holder cooldown
-* Confirm the expected hourly processing time and whether new deposits are currently available
-* Do not assume a frozen-window withdrawal request will be funded at its estimate or expected time
-* Count only collected frozen-close spread as LP revenue; waived spread is not an LP receivable
-
-### The central distinction
-
-A 24/7 chain does not create a 24/7 reference market.
-
-Plether handles that boundary in stages:
-
-1. **Close-only** prevents new weekend risk while the live-oracle policy remains usable.
-2. **Oracle-frozen policy** preserves bounded risk reduction and adds a fixed LP-owned spread to voluntary exits.
-3. **Freshness limits** stop execution when the available price can no longer be defended.
-
-The purpose is not to pretend the FX market remains open. It is to keep the protocol honest about when it has a price—and what it can safely do with it.
+| Parameter | Active Core v2.0.0 setting |
+| --- | --- |
+| **FAD / market-close maintenance margin** | `3.00%` (`300 bps`) |
+| **Maximum frozen oracle age (`fadMaxStaleness`)** | `3 days` (`259,200s`) |
+| **Additional holiday closure-day runway** | `1 hour` |
+| **Frozen-close spread (voluntary closes only)** | `0.50%` (`50 bps`, nonzero up to `10.00%` cap) |
+| **Senior frozen LP withdrawal fee** | `0.25%` (`25 bps`, retained in Senior) |
+| **Junior frozen LP withdrawal fee** | `0.75%` (`75 bps`, retained in Junior) |
 
 [^fx]: Foreign exchange, the market for trading one currency against another.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^utc]: Coordinated Universal Time, the time standard used by the protocol schedule.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
-[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^utc]: Coordinated Universal Time, the time standard used by the protocol schedule.
 [^bps]: Basis points; 100 bps equals 1%.
-[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.

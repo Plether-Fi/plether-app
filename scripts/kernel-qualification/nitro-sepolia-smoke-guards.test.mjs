@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import {
+  assertExactGasDebit, assertRecoveredEthSmokeOperation, readSafeBundleReceipts, validateSmokeRpcUrls,
+} from './nitro-sepolia-smoke-guards.mjs'
+
+const localUrls = {
+  alto: 'http://127.0.0.1:18080/',
+  primary: 'http://127.0.0.1:18081/',
+  secondary: 'https://independent-rpc.example.invalid/v2/test',
+}
+
+test('smoke RPCs accept a private Alto tunnel with managed independent chain providers', () => {
+  assert.deepEqual(validateSmokeRpcUrls(localUrls), localUrls)
+  const managed = { ...localUrls, primary: 'https://sepolia-rollup.arbitrum.io/rpc' }
+  assert.deepEqual(validateSmokeRpcUrls(managed), managed)
+  assert.throws(() => validateSmokeRpcUrls(managed, { bearer: 'x'.repeat(32) }), /legacy Nitro bearer/u)
+  assert.throws(() => validateSmokeRpcUrls({ ...managed, secondary: 'https://sepolia-rollup.arbitrum.io/other' }),
+    /different hosts/u)
+})
+
+test('direct private ALBs require exact reviewed hosts', () => {
+  const urls = { ...localUrls, alto: 'http://internal-plether-kernel-alto-123.ap-southeast-1.elb.amazonaws.com/' }
+  assert.throws(() => validateSmokeRpcUrls(urls), /exact reviewed KERNEL_SMOKE_EXPECTED_ALTO_ALB_HOST/u)
+  assert.deepEqual(validateSmokeRpcUrls(urls, { alto: new URL(urls.alto).hostname }), urls)
+})
+
+test('smoke RPCs reject credential-bearing URLs and unreviewed public endpoints', () => {
+  for (const changed of [
+    { alto: 'https://bundler.example/rpc' },
+    { primary: 'http://sepolia-rollup.arbitrum.io/rpc' },
+    { alto: 'http://user:pass@127.0.0.1:18080/' },
+    { primary: 'http://127.0.0.1:18081/?token=secret' },
+    { secondary: 'http://independent-rpc.example.invalid/v2/key' },
+  ]) assert.throws(() => validateSmokeRpcUrls({ ...localUrls, ...changed }))
+})
+
+test('payer debit must exactly equal EntryPoint gas charged', () => {
+  assert.doesNotThrow(() => assertExactGasDebit(100n, 77n, 23n, 'test'))
+  assert.throws(() => assertExactGasDebit(100n, 76n, 23n, 'test'), /payer debit differs/u)
+})
+
+test('waits for the common safe block before the secondary receipt lookup', async () => {
+  const hash = `0x${'a1'.repeat(32)}`
+  const receipt = { blockNumber: 42n }
+  let safe = false
+  let secondaryReads = 0
+  const clients = {
+    primary: { async getTransactionReceipt(request) { assert.deepEqual(request, { hash }); return receipt } },
+    secondary: { async getTransactionReceipt(request) {
+      assert.ok(safe, 'Secondary provider is still behind')
+      assert.deepEqual(request, { hash })
+      secondaryReads++
+      return { ...receipt }
+    } },
+  }
+  await assert.rejects(readSafeBundleReceipts(clients, hash, async () => { throw Error('Safe head lagged') }), /Safe head lagged/u)
+  assert.equal(secondaryReads, 0)
+  const receipts = await readSafeBundleReceipts(clients, hash, async (readers, block) => {
+    assert.equal(readers, clients)
+    assert.equal(block, receipt.blockNumber)
+    safe = true
+  })
+  assert.deepEqual(receipts, [receipt, receipt])
+  assert.equal(secondaryReads, 1)
+})
+
+const reviewed = {
+  sender: '0x1111111111111111111111111111111111111111',
+  callData: '0x1234',
+  factory: '0x2222222222222222222222222222222222222222',
+  factoryData: '0xabcd',
+  estimate: { callGasLimit: '300000', verificationGasLimit: '400000', preVerificationGas: '500000' },
+  gasCap: { callGasLimit: 3_000_000n, verificationGasLimit: 1_000_000n, preVerificationGas: 12_000_000n },
+  maxFeeCap: 10_000_000_000n,
+  maxPrefundCap: 50_000_000_000_000_000n,
+  maxPrefundWei: '1200000000000000',
+}
+const included = {
+  sender: reviewed.sender, nonce: 0n, callData: reviewed.callData,
+  factory: reviewed.factory, factoryData: reviewed.factoryData,
+  callGasLimit: 300_000n, verificationGasLimit: 400_000n, preVerificationGas: 500_000n,
+  maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 1_000_000n,
+}
+
+test('recovery accepts only the exact reviewed ETH first operation', () => {
+  assert.doesNotThrow(() => assertRecoveredEthSmokeOperation(included, reviewed))
+  for (const changed of [
+    { nonce: 1n }, { callData: '0x5678' }, { factoryData: '0x5678' },
+    { paymaster: reviewed.factory }, { preVerificationGas: 500_001n },
+    { maxFeePerGas: 2_000_000_000n },
+  ]) assert.throws(() => assertRecoveredEthSmokeOperation({ ...included, ...changed }, reviewed))
+  assert.throws(() => assertRecoveredEthSmokeOperation(included, { ...reviewed, maxPrefundCap: 1n }),
+    /exceeds the 0.05 ETH smoke cap/u)
+})

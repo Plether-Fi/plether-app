@@ -16,7 +16,9 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Base16 as B16
 import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
-import Plether.AA.Pimlico (resolveOwnedTradingAccountAtBlock)
+import Plether.AA.Kernel (KernelProfile (..))
+import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelTradingAccountProof (..), resolveOwnedKernelTradingAccount)
+import Plether.AA.Pimlico (OwnedTradingAccountFailure (..), resolveOwnedTradingAccountAtBlock)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool)
 import Plether.Database.Schema (TestnetFaucetClaimRow (..))
@@ -37,15 +39,16 @@ validFundingId identifier =
   map T.length parts == [8,4,4,4,12] && all (T.all isHexDigit) parts
   where parts = T.splitOn "-" identifier
 
-claimMarginFunding :: DbPool -> EthClient -> Config -> Text -> Text -> IO (Either ApiError (ApiResponse Value))
-claimMarginFunding pool client cfg owner beneficiary
+claimMarginFunding :: DbPool -> EthClient -> Config -> Maybe KernelGatewayConfig -> Text -> Text -> IO (Either ApiError (ApiResponse Value))
+claimMarginFunding pool client cfg kernel owner beneficiary
   | not (configurationMatches cfg) = pure $ Left $ E.forbidden "Direct margin funding is unavailable for this deployment."
   | otherwise = do
-      block <- ethBlockNumber client
-      canonical <- case block of
-        Left _ -> pure $ Left ("Trading Account verification is unavailable." :: Text)
-        Right number -> either (const $ Left ("Trading Account verification failed." :: Text)) Right
-          <$> resolveOwnedTradingAccountAtBlock client owner number
+      canonical <- case kernel of
+        Just gateway -> fmap ktapAddress <$> resolveOwnedKernelTradingAccount gateway cfg client owner
+        Nothing -> do
+          block <- ethBlockNumber client
+          either (const $ pure $ Left OwnedTradingAccountProofUnavailable)
+            (resolveOwnedTradingAccountAtBlock client owner) block
       case canonical of
         Right address | T.toLower address == T.toLower beneficiary -> do
           signer <- maybe (pure $ Left "Faucet signer is unavailable.") deriveAddress $ cfgFaucetPrivateKey cfg
@@ -59,31 +62,49 @@ claimMarginFunding pool client cfg owner beneficiary
                   (T.toLower beneficiary,T.toLower $ cfgPerpsSettlementToken cfg) :: IO [Only Text]
                 if null existing && not (cfgTestnetMarginFundingEnabled cfg)
                   then pure $ Left $ E.networkError "Direct margin funding is temporarily unavailable."
-                  else do
-                    claim <- reserveMarginFunding conn $ FundingClaim "" (T.toLower owner) (T.toLower beneficiary)
-                      (T.toLower $ cfgPerpsSettlementToken cfg) (cfgPerpsChainId cfg)
-                      (T.toLower $ cfgPerpsMarginClearinghouse cfg) (T.toLower payer) Manifest.releaseVersion
-                      Legacy.testnetFaucetAmount "mint" "pending" Nothing Nothing Nothing
-                    pure $ Right $ case claim of
-                      Just value -> fundingResponse value
-                      Nothing -> mkResponse 0 (cfgPerpsChainId cfg) $ object
-                        [ "version" .= (1 :: Int), "destination" .= ("wallet" :: Text)
-                        , "status" .= ("legacy_wallet" :: Text), "address" .= T.toLower beneficiary
-                        , "token" .= cfgPerpsSettlementToken cfg
-                        ]
+                  else reserve conn payer
               pure $ either Left id result
+        Left OwnerWalletIsContract | isJust kernel -> pure $ Left $ E.forbidden "Connect the owner wallet for the Trading Account."
         Left _ -> pure $ Left $ E.networkError "Trading Account verification is temporarily unavailable."
         Right _ -> pure $ Left $ E.forbidden "The beneficiary does not match the canonical Trading Account."
+ where
+  reserve conn payer = do
+    let request = FundingClaim "" (T.toLower owner) (T.toLower beneficiary)
+          (T.toLower $ cfgPerpsSettlementToken cfg) (cfgPerpsChainId cfg)
+          (T.toLower $ cfgPerpsMarginClearinghouse cfg) (T.toLower payer) Manifest.releaseVersion
+          Legacy.testnetFaucetAmount "mint" "pending" Nothing Nothing Nothing
+    case kernelProgram kernel of
+      Just program -> do
+        result <- reserveKernelMarginFunding conn program request
+        pure $ case result of
+          Left KernelFundingAllocationExists -> Left $ E.forbidden "Welcome funding has already been allocated for this program."
+          Left KernelFundingBindingChanged -> Left $ E.forbidden "The saved welcome funding allocation uses a different Trading Account or deployment binding."
+          Right claim -> Right $ fundingResponse claim
+      Nothing -> do
+        claim <- reserveMarginFunding conn request
+        pure $ Right $ case claim of
+          Just value -> fundingResponse value
+          Nothing -> mkResponse 0 (cfgPerpsChainId cfg) $ object
+            [ "version" .= (1 :: Int), "destination" .= ("wallet" :: Text)
+            , "status" .= ("legacy_wallet" :: Text), "address" .= T.toLower beneficiary
+            , "token" .= cfgPerpsSettlementToken cfg
+            ]
 
-marginFundingStatus :: DbPool -> Config -> Text -> IO (Either ApiError (ApiResponse Value))
-marginFundingStatus pool cfg identifier
+marginFundingStatus :: DbPool -> Config -> Maybe KernelGatewayConfig -> Text -> IO (Either ApiError (ApiResponse Value))
+marginFundingStatus pool cfg kernel identifier
   | not (validFundingId identifier) = pure $ Left $ E.invalidAddress "Invalid funding reference."
   | otherwise = do
-      result <- Legacy.withFaucetDb pool $ \conn -> getMarginFunding conn identifier
+      result <- Legacy.withFaucetDb pool $ \conn -> do
+        claim <- getMarginFunding conn identifier
+        program <- getMarginFundingProgram conn identifier
+        pure $ if program == kernelProgram kernel then claim else Nothing
       pure $ case result of
         Left failure -> Left failure
         Right (Just claim) | claimMatches cfg claim -> Right $ fundingResponse claim
         _ -> Left $ E.mkError E.NotFound "Funding reference was not found for this deployment."
+
+kernelProgram :: Maybe KernelGatewayConfig -> Maybe Text
+kernelProgram = fmap $ kpDeployment . kgcProfile
 
 fundingResponse :: FundingClaim -> ApiResponse Value
 fundingResponse claim = mkResponse (maybe 0 id $ fcDepositBlock claim) (fcChain claim) $ object
@@ -104,11 +125,16 @@ claimMatches cfg claim = configurationMatches cfg && fcChain claim == cfgPerpsCh
   && fcClearinghouse claim == T.toLower (cfgPerpsMarginClearinghouse cfg)
   && fcRelease claim == Manifest.releaseVersion && fcAmount claim == Legacy.testnetFaucetAmount
 
+data FundingDestinationVerification
+  = FundingDestinationVerified
+  | FundingDestinationUnavailable
+  | FundingDestinationChanged
+
 -- The database is the queue. No request-owned thread or browser heartbeat is
 -- needed to finish a reserved allocation. Turning issuance off does not stop it.
-startMarginFundingProcessor :: DbPool -> EthClient -> Config -> IO ()
-startMarginFundingProcessor pool client cfg = forever $ do
-  result <- try @SomeException $ processMarginFundingOnce pool client cfg
+startMarginFundingProcessor :: DbPool -> EthClient -> Config -> Maybe KernelGatewayConfig -> IO ()
+startMarginFundingProcessor pool client cfg kernel = forever $ do
+  result <- try @SomeException $ processMarginFundingOnce pool client cfg kernel
   case result of
     Left err -> case fromException err :: Maybe SomeAsyncException of
       Just _ -> throwIO err
@@ -116,8 +142,8 @@ startMarginFundingProcessor pool client cfg = forever $ do
     Right () -> pure ()
   threadDelay 2_000_000
 
-processMarginFundingOnce :: DbPool -> EthClient -> Config -> IO ()
-processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJust (cfgFaucetPrivateKey cfg)) $ do
+processMarginFundingOnce :: DbPool -> EthClient -> Config -> Maybe KernelGatewayConfig -> IO ()
+processMarginFundingOnce pool client cfg kernel = when (configurationMatches cfg && isJust (cfgFaucetPrivateKey cfg)) $ do
   result <- Legacy.withFaucetSignerLock pool $ \conn -> do
     -- Resume durable direct intent before considering another nonce. Historical
     -- legacy rows must not starve its receipt lookup or exact rebroadcast.
@@ -126,13 +152,17 @@ processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJ
       Just tx -> do
         claim <- getMarginFunding conn $ ftClaim tx
         case claim of
-          Just value | fcStatus value == "recovery" -> pure ()
-          Just value | claimMatches cfg value -> reconcile conn value tx
-          Just value -> failMarginFunding conn value "recovery" "DEPLOYMENT_CHANGED"
+          Just value -> do
+            program <- getMarginFundingProgram conn $ fcId value
+            -- An already submitted intent keeps the signer fenced. Only its
+            -- original program can reconcile or rebroadcast it.
+            when (program == kernelProgram kernel && fcStatus value /= "recovery") $
+              if claimMatches cfg value then reconcile conn value tx
+                else failMarginFunding conn value "recovery" "DEPLOYMENT_CHANGED"
           Nothing -> fail "Funding journal has no allocation"
         pure Nothing
       Nothing -> do
-        claim <- nextMarginFunding conn
+        claim <- nextMarginFundingForProgram conn $ kernelProgram kernel
         case claim of
           Nothing -> pure Nothing
           Just value | not (claimMatches cfg value) -> do
@@ -153,13 +183,28 @@ processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJ
                     legacy <- legacySubmitted conn (cfgPerpsChainId cfg) signer nonceFloor
                     case legacy of
                       Just historical -> pure $ Just historical
-                      Nothing -> prepare conn value nonceFloor >> pure Nothing
+                      Nothing -> do
+                        delivery <- verifyDelivery value
+                        case delivery of
+                          FundingDestinationVerified -> prepare conn value nonceFloor
+                          FundingDestinationUnavailable -> failMarginFunding conn value "pending" "TRADING_ACCOUNT_VERIFICATION_UNAVAILABLE"
+                          FundingDestinationChanged -> failMarginFunding conn value "failed" "TRADING_ACCOUNT_BINDING_CHANGED"
+                        pure Nothing
   case result of
     Left _ -> logWarn "margin_funding_database_unavailable" "Funding will resume from the durable journal." []
     Right Nothing -> pure ()
     -- The legacy resumer owns the same lock, so invoke it after releasing ours.
     Right (Just claim) -> void $ Legacy.resumeSubmittedClaim pool client cfg (tfcAddress claim) (tfcTokenAddress claim) claim
   where
+    verifyDelivery claim = case kernel of
+      Just gateway | fcPhase claim == "deposit" -> do
+        proof <- resolveOwnedKernelTradingAccount gateway cfg client $ fcOwner claim
+        pure $ case proof of
+          Right account | T.toLower (ktapAddress account) == T.toLower (fcAddress claim) -> FundingDestinationVerified
+          Right _ -> FundingDestinationChanged
+          Left OwnerWalletIsContract -> FundingDestinationChanged
+          Left OwnedTradingAccountProofUnavailable -> FundingDestinationUnavailable
+      _ -> pure FundingDestinationVerified
     prepare conn claim nonceFloor = case cfgFaucetPrivateKey cfg of
       Nothing -> pure ()
       Just key -> do
@@ -196,7 +241,12 @@ processMarginFundingOnce pool client cfg = when (configurationMatches cfg && isJ
           Left _ -> failMarginFunding conn claim "pending" "RPC_UNAVAILABLE"
           Right Nothing -> case hexToByteStringEither $ ftRaw tx of
             Left _ -> failMarginFunding conn claim "recovery" "SIGNED_INTENT_MISMATCH"
-            Right raw -> broadcast conn claim (ftHash tx) raw
+            Right raw -> do
+              delivery <- verifyDelivery claim
+              case delivery of
+                FundingDestinationVerified -> broadcast conn claim (ftHash tx) raw
+                FundingDestinationUnavailable -> failMarginFunding conn claim "pending" "TRADING_ACCOUNT_VERIFICATION_UNAVAILABLE"
+                FundingDestinationChanged -> failMarginFunding conn claim "recovery" "TRADING_ACCOUNT_BINDING_CHANGED"
           Right (Just value) -> do
             chain <- ethChainId client
             headBlock <- ethBlockNumber client

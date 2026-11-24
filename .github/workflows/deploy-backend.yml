@@ -42,13 +42,12 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
-  BACKEND_ADMIN_ENVIRONMENT: backend-admin-sepolia
+  BACKEND_ADMIN_ENVIRONMENT: backend-admin-${{ inputs.environment }}
   TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
   sepolia_environment_preflight:
-    name: Require pre-provisioned protected Sepolia backend environment
-    if: ${{ inputs.environment == 'sepolia' }}
+    name: Require pre-provisioned protected ${{ inputs.environment }} backend environment
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -65,7 +64,7 @@ jobs:
           umask 077
 
           if [ "$GITHUB_REF" != "refs/heads/master" ]; then
-            echo "::error title=Unsupported workflow ref::Sepolia backend deployments must be dispatched from master."
+            echo "::error title=Unsupported workflow ref::Backend deployments must be dispatched from master."
             exit 1
           fi
 
@@ -75,7 +74,7 @@ jobs:
               --method GET \
               "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT" \
               > "$environment_file"; then
-            echo "::error title=Backend environment unavailable::Provision and protect $BACKEND_ADMIN_ENVIRONMENT before dispatching a Sepolia backend deployment."
+            echo "::error title=Backend environment unavailable::Provision and protect $BACKEND_ADMIN_ENVIRONMENT before dispatching a $TARGET_ENV backend deployment."
             exit 1
           fi
           gh api \
@@ -83,7 +82,8 @@ jobs:
             "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
             > "$branch_policy_file"
 
-          if ! jq --exit-status --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+          if ! jq --exit-status \
+              --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
               '.name == $name
                and .can_admins_bypass == false
                and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
@@ -94,17 +94,17 @@ jobs:
               || ! jq --exit-status \
                 '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
                 "$branch_policy_file" >/dev/null; then
-            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require a reviewer with Sepolia sole-maintainer self-review allowed, and allow exactly the master branch."
+            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require explicit reviewer approval, and allow exactly the master branch."
             exit 1
           fi
 
   sepolia_environment_gate:
-    name: Approve protected Sepolia backend mutation
+    name: Approve protected ${{ inputs.environment }} backend mutation
     needs: sepolia_environment_preflight
-    if: ${{ always() && inputs.environment == 'sepolia' && needs.sepolia_environment_preflight.result == 'success' }}
+    if: ${{ always() && needs.sepolia_environment_preflight.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: backend-admin-sepolia
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       actions: read
       contents: read
@@ -130,7 +130,8 @@ jobs:
             --method GET \
             "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
             > "$branch_policy_file"
-          jq --exit-status --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+          jq --exit-status \
+            --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
             '.name == $name
              and .can_admins_bypass == false
              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
@@ -143,7 +144,7 @@ jobs:
             "$branch_policy_file" >/dev/null
           [ "$GITHUB_REF" = "refs/heads/master" ]
 
-      - name: Load protected Sepolia AWS account boundary
+      - name: Load protected AWS account boundary
         id: account_boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.EXPECTED_AWS_ACCOUNT_ID }}
@@ -151,7 +152,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
-            echo "::error title=Missing AWS account boundary::Set EXPECTED_AWS_ACCOUNT_ID to the exact 12-digit deployment account in the protected backend-admin-sepolia environment."
+            echo "::error title=Missing AWS account boundary::Set EXPECTED_AWS_ACCOUNT_ID to the exact 12-digit deployment account in the protected $BACKEND_ADMIN_ENVIRONMENT environment."
             exit 1
           fi
           echo "expected_aws_account_id=$EXPECTED_AWS_ACCOUNT_ID" >> "$GITHUB_OUTPUT"
@@ -162,11 +163,11 @@ jobs:
       - sepolia_environment_gate
     if: >-
       ${{ always() &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
@@ -182,11 +183,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -196,7 +196,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -258,22 +258,30 @@ jobs:
             if [ "$container" = "plether-aa-reconciler" ]; then
               reconciler_exists=true
             fi
-            local secret_count
-            secret_count=$(jq --arg container "$container" \
-              '[.containerDefinitions[]
-                | select(.name == $container)
-                | (.secrets // [])[]
-                | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL")] | length' \
-              "$definition_file")
-            if [ "$requires_secret" = true ] && [ "$secret_count" -ne 1 ]; then
-              echo "::error title=Secondary RPC secret missing::${family}/${container} must contain exactly one AA_RECONCILER_SECONDARY_RPC_URL reference."
+            local counts secret_count kernel_env_count kernel_secret_count
+            counts=$(jq -er --arg container "$container" '
+              .containerDefinitions[]
+              | select(.name == $container)
+              | [
+                  ([(.secrets // [])[] | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL" or .name == "AA_SECURITY_RPC_URL")] | length),
+                  ([(.environment // [])[] | select(.name == "AA_KERNEL_PROFILE_JSON")] | length),
+                  ([(.secrets // [])[] | select(.name == "AA_KERNEL_PROFILE_JSON")] | length)
+                ] | @tsv
+              ' "$definition_file") || return 1
+            read -r secret_count kernel_env_count kernel_secret_count <<< "$counts"
+            if [ "$kernel_secret_count" -ne 0 ]; then
+              echo "::error title=Unsafe Kernel profile source::${family}/${container} must supply the public Kernel profile as environment data."
+              return 1
+            fi
+            if { [ "$requires_secret" = true ] || [ "$kernel_env_count" -ne 0 ]; } && [ "$secret_count" -ne 1 ]; then
+              echo "::error title=Secondary RPC secret missing::${family}/${container} must contain exactly one AA secondary RPC reference."
               return 1
             fi
             if [ "$secret_count" -eq 0 ]; then
               return 0
             fi
             if [ "$secret_count" -ne 1 ]; then
-              echo "::error title=Secondary RPC secret ambiguous::${family}/${container} contains duplicate AA_RECONCILER_SECONDARY_RPC_URL references."
+              echo "::error title=Secondary RPC secret ambiguous::${family}/${container} contains duplicate AA secondary RPC references."
               return 1
             fi
 
@@ -291,7 +299,7 @@ jobs:
               '.containerDefinitions[]
                | select(.name == $container)
                | .secrets[]
-               | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL")
+               | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL" or .name == "AA_SECURITY_RPC_URL")
                | .valueFrom' "$definition_file")")
             execution_roles+=("$(jq -er '.executionRoleArn' "$definition_file")")
           }
@@ -603,15 +611,26 @@ jobs:
 
             if [ "$requires_perps_admission" = true ] && \
                 ! jq -e --arg container "$container_name" \
-                  '(.[] | select(.name == $container)) as $definition
+                  --arg allow_bootstrap "$ALLOW_MISSING_TASK_DEFINITIONS" \
+                  'def nonempty($value): ($value | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0));
+                   (.[] | select(.name == $container)) as $definition
                    | ["PERPS_CHAIN_ID", "PERPS_ORDER_ROUTER", "PERPS_PLETHER_ORACLE"] as $requiredEnvironment
                    | ($definition.secrets // [] | map(select(.name == "PERPS_RPC_URL"))) as $rpcSecrets
                    | ($definition.environment // [] | map(select(.name as $name | $requiredEnvironment | index($name)))) as $perpsEnvironment
+                   | ($perpsEnvironment | map({key: .name, value: (.value // "")}) | from_entries) as $perpsValues
                    | ($rpcSecrets | length) == 1
-                   and (($rpcSecrets[0].valueFrom // "") | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0))
+                   and nonempty($rpcSecrets[0].valueFrom // "")
                    and ($perpsEnvironment | length) == ($requiredEnvironment | length)
                    and (([$perpsEnvironment[].name] | sort) == ($requiredEnvironment | sort))
-                   and all($perpsEnvironment[]; ((.value // "") | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0)))' \
+                   and nonempty($perpsValues.PERPS_CHAIN_ID)
+                   and (
+                     (nonempty($perpsValues.PERPS_ORDER_ROUTER) and nonempty($perpsValues.PERPS_PLETHER_ORACLE))
+                     or (
+                       $allow_bootstrap == "true"
+                       and $perpsValues.PERPS_ORDER_ROUTER == ""
+                       and $perpsValues.PERPS_PLETHER_ORACLE == ""
+                     )
+                   )' \
                   "$task_def_file" > /dev/null; then
               report_failure "$task_family" "$container_name" \
                 "on-chain payload admission requires non-empty PERPS_RPC_URL, PERPS_CHAIN_ID, PERPS_ORDER_ROUTER, and PERPS_PLETHER_ORACLE references."
@@ -790,11 +809,11 @@ jobs:
       - sepolia_environment_gate
     if: >-
       ${{ always() &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
@@ -805,11 +824,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -819,7 +837,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -860,6 +878,8 @@ jobs:
             fi
 
             if ! jq --exit-status \
+                --arg target_env "$TARGET_ENV" \
+                --arg allow_bootstrap "$ALLOW_MISSING_TASK_DEFINITIONS" \
                 --arg expected_signer_suffix ":parameter/plether/${TARGET_ENV}/lp-settlement-private-key" \
                 '
                 def env_map:
@@ -884,6 +904,15 @@ jobs:
                 | ($keeper | env_map) as $env
                 | ($env.LP_SETTLEMENT_MODE // "") as $mode
                 | ([($keeper.secrets // [])[] | select(.name == "LP_SETTLEMENT_PRIVATE_KEY")]) as $settlement_signers
+                | [
+                    $env.PERPS_HOUSE_POOL,
+                    $env.PERPS_SENIOR_VAULT,
+                    $env.PERPS_JUNIOR_VAULT,
+                    $env.PERPS_SETTLEMENT_MONITOR_LENS,
+                    $env.PERPS_ORDER_ROUTER,
+                    $env.PERPS_CFD_ENGINE,
+                    $env.PERPS_PLETHER_ORACLE
+                  ] as $contract_addresses
                 | ($keepers | length) == 1
                 and all(
                   [
@@ -917,28 +946,13 @@ jobs:
                 and ($mode == "off" or ($settlement_signers | length == 1))
                 and ($mode == "off" or ([($keeper.secrets // [])[] | select(.name != "LP_SETTLEMENT_PRIVATE_KEY" and .valueFrom == $settlement_signers[0].valueFrom)] | length == 0))
                 and ($mode == "off" or $mode == "observe" or $mode == "execute")
-                and ($env.PERPS_HOUSE_POOL | valid_address)
-                and ($env.PERPS_SENIOR_VAULT | valid_address)
-                and ($env.PERPS_JUNIOR_VAULT | valid_address)
-                and ($env.PERPS_SETTLEMENT_MONITOR_LENS | valid_address)
-                and ($env.PERPS_ORDER_ROUTER | valid_address)
-                and ($env.PERPS_CFD_ENGINE | valid_address)
-                and ($env.PERPS_PLETHER_ORACLE | valid_address)
-                and ([
-                  $env.PERPS_HOUSE_POOL,
-                  $env.PERPS_SENIOR_VAULT,
-                  $env.PERPS_JUNIOR_VAULT,
-                  $env.PERPS_SETTLEMENT_MONITOR_LENS,
-                  $env.PERPS_ORDER_ROUTER,
-                  $env.PERPS_CFD_ENGINE,
-                  $env.PERPS_PLETHER_ORACLE
-                ] | map(ascii_downcase) | unique | length == 7)
-                and (($env.PERPS_HOUSE_POOL | ascii_downcase) != ($env.PERPS_SENIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_HOUSE_POOL | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_SENIOR_VAULT | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_HOUSE_POOL | ascii_downcase))
-                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_SENIOR_VAULT | ascii_downcase))
-                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
+                and (
+                  ($allow_bootstrap == "true" and $mode == "off" and ($contract_addresses | all(. == "")))
+                  or (
+                    all($contract_addresses[]; valid_address)
+                    and ($contract_addresses | map(ascii_downcase) | unique | length == 7)
+                  )
+                )
                 and ($env.LP_SETTLEMENT_POLL_SECONDS == "15")
                 and ($env.KEEPER_CONFIRMATIONS | integer_between(1; 10000))
                 and ($env.LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS | integer_between(1; 4))
@@ -946,7 +960,7 @@ jobs:
                 and ($env.LP_SETTLEMENT_MAX_REPLACEMENTS | integer_between(0; 3))
                 and (($env.LP_SETTLEMENT_MAX_TX_COST_WEI // "") | test("^(0|[1-9][0-9]*)$"))
                 and ($mode != "execute" or $env.LP_SETTLEMENT_MAX_TX_COST_WEI != "0")
-                and ($mode == "off" or $env.PERPS_CHAIN_ID == "421614")
+                and ($mode == "off" or ($env.PERPS_CHAIN_ID == (if $target_env == "mainnet" then "42161" else "421614" end)))
               ' "$task_def_file" > /dev/null; then
               echo "::error title=LP settlement ECS preflight failed::${family}/plether-keeper is missing required fail-closed addresses, limits, mode, chain, or signer reference. Apply infra/terraform for ${TARGET_ENV}, then rerun this workflow."
               exit 1
@@ -1000,10 +1014,6 @@ jobs:
             echo "::error title=LP settlement ECS preflight failed::No LP_SETTLEMENT_MODE was found."
             exit 1
           fi
-          if [ "$TARGET_ENV" != "sepolia" ] && [ "$detected_mode" != "off" ]; then
-            echo "::error title=LP settlement environment guard failed::${TARGET_ENV} must keep LP settlement off until a production vault release is reviewed."
-            exit 1
-          fi
 
           if [ "$detected_mode" != "off" ]; then
             if [ "$workers_definition_validated" != true ]; then
@@ -1042,10 +1052,10 @@ jobs:
       ${{ always() &&
           needs['pyth-config-preflight'].result == 'success' &&
           needs['lp-settlement-config-preflight'].result == 'success' &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-24.04-arm
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
@@ -1056,26 +1066,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Validate Sepolia-only workers scope
-        env:
-          DEPLOYMENT_SCOPE: ${{ inputs.deployment_scope }}
-        run: |
-          set -euo pipefail
-          if [ "$DEPLOYMENT_SCOPE" = workers ] && [ "$TARGET_ENV" != sepolia ]; then
-            echo "::error::The consolidated workers-only scope is restricted to Sepolia."
-            exit 1
-          fi
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -1085,7 +1084,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -1175,6 +1174,66 @@ jobs:
           node scripts/runtime-release.mjs verify --repository "${APPLICATION_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --digest "$APPLICATION_DIGEST" --prefix application --output "$GITHUB_OUTPUT" --record application-release.json
           node scripts/runtime-release.mjs verify --repository "${ROUTER_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --digest "$ROUTER_DIGEST" --prefix router --output "$GITHUB_OUTPUT" --record router-release.json
 
+      - name: Verify ECR vulnerability scans (zero CRITICAL findings)
+        env:
+          APPLICATION_IMAGE: ${{ steps.verified_images.outputs.image }}
+          ROUTER_IMAGE: ${{ steps.verified_images.outputs.log_router_image }}
+        run: |
+          set -euo pipefail
+          for image_ref in "$APPLICATION_IMAGE" "$ROUTER_IMAGE"; do
+            repo="${image_ref#*amazonaws.com/}"
+            repo="${repo%@*}"
+            digest="${image_ref#*@}"
+            # ECR basic scanning attaches findings to the linux/arm64 child manifest
+            # rather than the top-level OCI image index produced by Docker Buildx.
+            scan_digest=$(aws ecr batch-get-image \
+              --repository-name "$repo" \
+              --image-ids "imageDigest=$digest" \
+              --accepted-media-types \
+                application/vnd.oci.image.index.v1+json \
+                application/vnd.docker.distribution.manifest.list.v2+json \
+                application/vnd.oci.image.manifest.v1+json \
+                application/vnd.docker.distribution.manifest.v2+json \
+              --query 'images[0].imageManifest' \
+              --output text \
+              --no-cli-pager \
+              | jq -er --arg fallback "$digest" '
+                if (.manifests | type) == "array" then
+                  ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")]
+                   | if length == 1 then .[0].digest else error("Expected exactly one linux/arm64 child manifest") end)
+                else
+                  $fallback
+                end
+              ')
+            echo "Waiting for ECR scan on ${repo}@${scan_digest} (release ${digest})..."
+            for attempt in 1 2 3 4 5 6; do
+              if aws ecr describe-image-scan-findings \
+                  --repository-name "$repo" \
+                  --image-id "imageDigest=$scan_digest" \
+                  --output json \
+                  --no-cli-pager >/dev/null 2>&1; then
+                break
+              fi
+              sleep 5
+            done
+            aws ecr wait image-scan-complete \
+              --repository-name "$repo" \
+              --image-id "imageDigest=$scan_digest" \
+              --no-cli-pager
+            scan_json=$(aws ecr describe-image-scan-findings \
+              --repository-name "$repo" \
+              --image-id "imageDigest=$scan_digest" \
+              --output json \
+              --no-cli-pager)
+            status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<< "$scan_json")
+            critical_count=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<< "$scan_json")
+            echo "${repo}@${scan_digest}: scan=${status}, CRITICAL=${critical_count}"
+            if [ "$status" != "COMPLETE" ] || [ "$critical_count" != "0" ]; then
+              echo "::error title=Container vulnerability gate failed::${repo}@${scan_digest} reported status=${status}, CRITICAL=${critical_count}."
+              exit 1
+            fi
+          done
+
       - name: Retain verified release provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -1194,18 +1253,17 @@ jobs:
       ${{ always() &&
           inputs.bootstrap != true &&
           needs.build.result == 'success' &&
-          (inputs.environment != 'sepolia' ||
-           (needs.sepolia_environment_preflight.result == 'success' &&
-            needs.sepolia_environment_gate.result == 'success')) }}
+          needs.sepolia_environment_preflight.result == 'success' &&
+          needs.sepolia_environment_gate.result == 'success' }}
     runs-on: ubuntu-latest
+    environment: backend-admin-${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
     strategy:
       matrix:
-        # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
-        # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((inputs.deployment_scope == 'workers') && '[{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}]' || (inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"sepolia","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"},{"environment":"sepolia","task_suffix":"-protection-worker","service_name":"plether-position-protection-worker","container_name":"plether-position-protection-worker"}]')) }}
+        # Both Sepolia and mainnet mirror the same consolidated worker + AA + protection topology.
+        include: ${{ fromJson((inputs.deployment_scope == 'workers') && format('[{{"environment":"{0}","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}}]', inputs.environment) || (inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}},{{"environment":"{0}","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"}},{{"environment":"{0}","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"}},{{"environment":"{0}","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"}},{{"environment":"{0}","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}},{{"environment":"{0}","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"}},{{"environment":"{0}","task_suffix":"-protection-worker","service_name":"plether-position-protection-worker","container_name":"plether-position-protection-worker"}}]', inputs.environment)) }}
 
     steps:
       - name: Configure AWS credentials
@@ -1213,11 +1271,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Verify Sepolia AWS account boundary
-        if: inputs.environment == 'sepolia'
+      - name: Verify AWS account boundary
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
@@ -1227,7 +1284,7 @@ jobs:
           if [ "$AWS_REGION" != "ap-southeast-1" ] \
               || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
               || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
             exit 1
           fi
 
@@ -1338,7 +1395,7 @@ jobs:
           node image-policy/scripts/runtime-release.mjs verify-task --task-definition task-def.json --account "$EXPECTED_ACCOUNT" --region "$AWS_REGION"
 
       - name: Check out reviewed public AA deployment policy
-        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+        if: steps.task-definition-status.outputs.exists == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -1354,6 +1411,8 @@ jobs:
       - name: Validate AA reconciler task topology
         if: matrix.task_suffix == '-aa-reconciler' && steps.task-definition-status.outputs.exists == 'true'
         env:
+          TARGET_ENV: ${{ matrix.environment }}
+          EXPECTED_CHAIN_ID: ${{ matrix.environment == 'mainnet' && '42161' || '421614' }}
           RECONCILER_DESIRED_COUNT: ${{ steps.task-definition-status.outputs.desired_count }}
           RECONCILER_CONTAINER: ${{ matrix.container_name }}
           TASK_FAMILY: plether-${{ matrix.environment }}${{ matrix.task_suffix }}
@@ -1363,6 +1422,8 @@ jobs:
           max_log_range=$(jq -er 'select(.version == 1 and (.maxLogRangeBlocks | type == "number" and floor == . and . > 0)) | .maxLogRangeBlocks' deployment-policy/config/rpc-log-range-policy.json)
 
           if ! jq -e \
+              --arg target_env "$TARGET_ENV" \
+              --arg expected_chain_id "$EXPECTED_CHAIN_ID" \
               --arg family "$TASK_FAMILY" \
               --arg reconciler "$RECONCILER_CONTAINER" \
               --arg desired_count "$RECONCILER_DESIRED_COUNT" \
@@ -1383,14 +1444,79 @@ jobs:
                 type == "string"
                 and test("^0x[0-9A-Fa-f]{40}$")
                 and ascii_downcase != "0x0000000000000000000000000000000000000000";
+              def kernel_code_hash:
+                type == "string" and test("^0x[0-9a-fA-F]{64}$") and (
+                  ascii_downcase
+                  | canonical_nonzero_hash
+                  and . != "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+                );
+              def kernel_profile:
+                . as $profile
+                | keys == ([
+                    "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
+                    "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
+                    "implementation", "implementationCodeHash", "validator", "validatorCodeHash"
+                  ] | sort)
+                and (.deployment | type == "string" and test("^[a-z0-9._-]{1,96}$"))
+                and .chainId == 421614
+                and .entryPointVersion == "0.9"
+                and (.entryPoint | canonical_nonzero_address)
+                and (.entryPoint | ascii_downcase) == "0x433709009b8330fda32311df1c2afa402ed8d009"
+                and .accountVersion == "kernel-v4-uups"
+                and .accountIndex == 0
+                and all(["factory", "implementation", "validator"][]; . as $key | $profile[$key] | canonical_nonzero_address)
+                and all(
+                  ["entryPointCodeHash", "accountCodeHash", "factoryCodeHash", "implementationCodeHash", "validatorCodeHash"][];
+                  . as $key | $profile[$key] | kernel_code_hash
+                );
+              def kernel_configuration($main; $environment):
+                (($main.secrets // []) | map(.name) | sort) as $secrets
+                | ($secrets == ["AA_SECURITY_RPC_URL", "DATABASE_URL", "PERPS_RPC_URL"]
+                   or $secrets == ["AA_SECURITY_RPC_URL", "DATABASE_URL", "PERPS_RPC_AUTH_TOKEN", "PERPS_RPC_URL"])
+                and (($main.environment // []) | map(.name) | sort) == ([
+                      "AA_KERNEL_PROFILE_JSON",
+                      "AA_KERNEL_SPONSORSHIP_JSON",
+                      "AA_KERNEL_MAX_SAFE_LAG_SECONDS",
+                      "AA_KERNEL_RECONCILER_POLL_SECONDS",
+                      "AA_KERNEL_RECONCILER_BATCH_BLOCKS",
+                      "AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS",
+                      "AA_RPC_MODE",
+                      "HOME", "PERPS_CHAIN_ID", "TMPDIR"
+                    ] | sort)
+                and $environment.HOME == "/tmp"
+                and $environment.TMPDIR == "/tmp"
+                and $environment.PERPS_CHAIN_ID == "421614"
+                and $environment.AA_RPC_MODE == "dual-independent"
+                and ($environment.AA_KERNEL_RECONCILER_POLL_SECONDS | canonical_positive_decimal and (tonumber <= 60))
+                and ($environment.AA_KERNEL_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= ([2000, $max_log_range] | min)))
+                and ($environment.AA_KERNEL_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 1800))
+                and $environment.AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS == "60"
+                and (
+                  if $desired_count == "0" and $environment.AA_KERNEL_PROFILE_JSON == "" then
+                    $environment.AA_KERNEL_SPONSORSHIP_JSON == ""
+                  else
+                    ($environment.AA_KERNEL_PROFILE_JSON | fromjson | kernel_profile)
+                      and (
+                        if $desired_count == "0" and $environment.AA_KERNEL_SPONSORSHIP_JSON == "" then true
+                        elif $desired_count == "0" or $desired_count == "1" then
+                          ($environment.AA_KERNEL_SPONSORSHIP_JSON | fromjson) as $sponsorship
+                          | ($sponsorship.paymaster | canonical_nonzero_address)
+                            and ($sponsorship.paymasterCodeHash | kernel_code_hash)
+                            and ($sponsorship.deploymentBlock | tostring | canonical_positive_decimal)
+                            and ($sponsorship.deploymentBlockHash | canonical_nonzero_hash)
+                          else false
+                        end
+                      )
+                  end
+                );
               .family == $family
               and .status == "ACTIVE"
               and .networkMode == "awsvpc"
               and (.requiresCompatibilities | index("FARGATE") != null)
               and .runtimePlatform.cpuArchitecture == "ARM64"
               and .runtimePlatform.operatingSystemFamily == "LINUX"
-              and (.executionRoleArn | endswith(":role/plether-sepolia-aa-reconciler-execution"))
-              and (.taskRoleArn | endswith(":role/plether-sepolia-aa-reconciler-task"))
+              and (.executionRoleArn | endswith(":role/plether-\($target_env)-aa-reconciler-execution"))
+              and (.taskRoleArn | endswith(":role/plether-\($target_env)-aa-reconciler-task"))
               and (.containerDefinitions | length) == 3
               and (container($reconciler) | length) == 1
               and (container("aa-reconciler-tmp-init") | length) == 1
@@ -1413,10 +1539,15 @@ jobs:
                             {"containerName":"aa-reconciler-tmp-init","condition":"SUCCESS"},
                             {"containerName":"otel-log-router","condition":"START"}
                           ] | sort_by([.containerName, .condition]))
-                  and (($main.secrets // []) | map(select(.name != "PERPS_RPC_AUTH_TOKEN") | .name) | sort)
+                  and all(($main.secrets // [])[]; ((.valueFrom // "") | length) > 0)
+                  and (
+                    (envmap($main)) as $profile_environment
+                    | if $profile_environment | has("AA_KERNEL_PROFILE_JSON") then
+                      kernel_configuration($main; $profile_environment)
+                    else
+                      (($main.secrets // []) | map(select(.name != "PERPS_RPC_AUTH_TOKEN") | .name) | sort)
                       == (["AA_RECONCILER_SECONDARY_RPC_URL", "DATABASE_URL", "PERPS_RPC_URL"] | sort)
                   and ([($main.secrets // [])[] | select(.name == "PERPS_RPC_AUTH_TOKEN")] | length) <= 1
-                  and all(($main.secrets // [])[]; ((.valueFrom // "") | length) > 0)
                   and (($main.environment // []) | map(.name) | sort)
                       == ([
                             "AA_PAYMASTER_ADDRESS",
@@ -1438,7 +1569,7 @@ jobs:
                     envmap($main) as $environment
                     | $environment.HOME == "/tmp"
                       and $environment.TMPDIR == "/tmp"
-                      and $environment.PERPS_CHAIN_ID == "421614"
+                      and $environment.PERPS_CHAIN_ID == $expected_chain_id
                       and (
                         if $desired_count == "1" then
                           ($environment.AA_PAYMASTER_ADDRESS | canonical_nonzero_address)
@@ -1465,6 +1596,8 @@ jobs:
                       and ($environment.AA_RECONCILER_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 1800))
                       and ($environment.AA_PAYMASTER_MIN_DEPOSIT_WEI | canonical_positive_decimal)
                   )
+                    end
+                  )
                   and $tmp.essential == false
                   and $tmp.readonlyRootFilesystem == true
                   and $tmp.user == "0:0"
@@ -1480,7 +1613,7 @@ jobs:
                   and $router.firelensConfiguration.type == "fluentbit"
               )' \
               task-def.json >/dev/null; then
-            echo "::error title=AA reconciler task-definition preflight failed::Apply the reviewed Sepolia reconciler Terraform topology before deploying its image. A stopped bootstrap definition may leave all four paymaster deployment-anchor values empty; a running definition, or a configured stopped definition, must provide the complete canonical anchor."
+            echo "::error title=AA reconciler task-definition preflight failed::Apply the reviewed $TARGET_ENV reconciler Terraform topology before deploying its image. A stopped bootstrap definition may leave all four paymaster deployment-anchor values empty; a running definition, or a configured stopped definition, must provide the complete canonical anchor."
             exit 1
           fi
 
@@ -1509,11 +1642,12 @@ jobs:
             ' task-def.json > /dev/null
 
 
-      - name: Configure exact Sepolia close assistance release
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
+      - name: Configure exact close assistance release
+        if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
         env:
           CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
-        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/config/perps/arbitrum-sepolia-v2.0.0.json "$CLOSE_ASSISTANCE_MODE"
+          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.0.0.json' }}
+        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json "deployment-policy/$RELEASE_MANIFEST" "$CLOSE_ASSISTANCE_MODE"
 
       - name: Configure liquidation worker reliability controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
@@ -1548,25 +1682,30 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
-      - name: Validate Terraform-managed Sepolia release manifest
-        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+      - name: Validate Terraform-managed release manifest
+        if: steps.task-definition-status.outputs.exists == 'true'
+        env:
+          TARGET_ENV: ${{ matrix.environment }}
+          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.0.0.json' }}
         run: |
           aws ecs describe-task-definition \
-            --task-definition plether-sepolia \
+            --task-definition "plether-$TARGET_ENV" \
             --query taskDefinition > canonical-api-task-def.json
 
           node deployment-policy/scripts/validate-perps-deployment.mjs backend \
-            deployment-policy/config/perps/arbitrum-sepolia-v2.0.0.json \
+            "deployment-policy/$RELEASE_MANIFEST" \
             task-def.json canonical-api-task-def.json
 
       - name: Require active Alto with reviewed validation policy for public native API
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
         run: |
           set -euo pipefail
           if jq -e '[.containerDefinitions[] | select(.name == "plether-api")
               | .environment[] | select(.name == "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED")
               | .value] == ["true"]' task-def.json >/dev/null; then
-            aws ecs describe-services --cluster plether-sepolia --services plether-alto > public-alto-service.json
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services plether-alto > public-alto-service.json
             jq -e '.failures == [] and (.services | length) == 1
               and .services[0].desiredCount == 1 and .services[0].runningCount == 1
               and .services[0].pendingCount == 0 and (.services[0].deployments | length) == 1' public-alto-service.json >/dev/null
@@ -1597,8 +1736,8 @@ jobs:
           ' task-def.json > task-def.funding.json
           mv task-def.funding.json task-def.json
 
-      - name: Configure Sepolia Privy app for passkey names
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+      - name: Configure Privy app for passkey names
+        if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         env:
           PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}
         run: python3 deployment-policy/.github/scripts/configure-privy-app.py task-def.json "$PRIVY_APP_ID"

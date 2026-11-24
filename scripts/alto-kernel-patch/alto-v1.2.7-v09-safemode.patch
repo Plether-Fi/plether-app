@@ -1,0 +1,272 @@
+diff --git a/src/cli/customTransport.ts b/src/cli/customTransport.ts
+index a6b99f9..ecb1042 100644
+--- a/src/cli/customTransport.ts
++++ b/src/cli/customTransport.ts
+@@ -22,6 +22,28 @@ export type RpcRequest = {
+     id?: number
+ }
+ 
++// Plether's private Nitro gateway expects a bearer token on its primary RPC.
++// Keep the token out of the Alto config and never attach it to a distinct
++// transaction relay URL.
++export function getPrimaryRpcAuthToken(): string | undefined {
++    const token = process.env.PLETHER_ALTO_RPC_AUTH_TOKEN
++    if (token === undefined) return undefined
++    if (token.length < 32 || token.length > 512 || !/^[\x21-\x7e]+$/.test(token)) {
++        throw new Error("PLETHER_ALTO_RPC_AUTH_TOKEN is malformed")
++    }
++    return token
++}
++
++export function primaryRpcFetchOptions(
++    primaryUrl: string,
++    requestUrl: string,
++    token: string | undefined
++): HttpTransportConfig["fetchOptions"] {
++    return token !== undefined && requestUrl === primaryUrl
++        ? { headers: { Authorization: `Bearer ${token}` } }
++        : undefined
++}
++
+ const EXECUTION_RESULT_SELECTOR = toFunctionSelector(
+     formatAbiItem(
+         getAbiItem({
+diff --git a/src/cli/deploySimulationsContract.ts b/src/cli/deploySimulationsContract.ts
+index 1f04f32..45e471f 100644
+--- a/src/cli/deploySimulationsContract.ts
++++ b/src/cli/deploySimulationsContract.ts
+@@ -24,6 +24,7 @@ import pimlicoSimulationsJson from "../contracts/PimlicoSimulations.sol/PimlicoS
+     type: "json"
+ }
+ import type { CamelCasedProperties } from "./parseArgs"
++import { getPrimaryRpcAuthToken, primaryRpcFetchOptions } from "./customTransport"
+ 
+ export const DETERMINISTIC_DEPLOYER_TRANSACTION =
+     "0xf8a58V85174876e80V830186aV8V80b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600V81602V82378035828234f58015156039578182fd5b8V82525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222"
+@@ -125,7 +126,9 @@ export const deploySimulationsContract = async ({
+     }
+ 
+     const walletClient = createWalletClient({
+-        transport: http(args.rpcUrl),
++        transport: http(args.rpcUrl, {
++            fetchOptions: primaryRpcFetchOptions(args.rpcUrl, args.rpcUrl, getPrimaryRpcAuthToken())
++        }),
+         account: utilityPrivateKey
+     })
+ 
+diff --git a/src/cli/handler.ts b/src/cli/handler.ts
+index 0ae83d8..3ffc166 100644
+--- a/src/cli/handler.ts
++++ b/src/cli/handler.ts
+@@ -19,7 +19,11 @@ import { type AltoConfig, createConfig } from "../createConfig"
+ import { getSenderManager } from "../executor/senderManager/index"
+ import { UtilityWalletMonitor } from "../executor/utilityWalletMonitor"
+ import type { IOptionsInput } from "./config"
+-import { customTransport } from "./customTransport"
++import {
++    customTransport,
++    getPrimaryRpcAuthToken,
++    primaryRpcFetchOptions
++} from "./customTransport"
+ import { deploySimulationsContract } from "./deploySimulationsContract"
+ import { parseArgs } from "./parseArgs"
+ import { setupServer } from "./setupServer"
+@@ -130,6 +134,7 @@ const getViemChain = ({
+ 
+ export async function bundlerHandler(args_: IOptionsInput): Promise<void> {
+     const args = parseArgs(args_)
++    const primaryRpcAuthToken = getPrimaryRpcAuthToken()
+     const enableCors = args.enableCors
+     const logger = args.json
+         ? initProductionLogger(args.logLevel)
+@@ -138,6 +143,7 @@ export async function bundlerHandler(args_: IOptionsInput): Promise<void> {
+     const getChainId = async () => {
+         const client = createPublicClient({
+             transport: customTransport(args.rpcUrl, {
++                fetchOptions: primaryRpcFetchOptions(args.rpcUrl, args.rpcUrl, primaryRpcAuthToken),
+                 logger: logger.child(
+                     { module: "public_client" },
+                     {
+@@ -172,6 +178,7 @@ export async function bundlerHandler(args_: IOptionsInput): Promise<void> {
+ 
+     let publicClient = createPublicClient({
+         transport: customTransport(args.rpcUrl, {
++            fetchOptions: primaryRpcFetchOptions(args.rpcUrl, args.rpcUrl, primaryRpcAuthToken),
+             logger: logger.child(
+                 { module: "public_client" },
+                 {
+@@ -199,6 +206,7 @@ export async function bundlerHandler(args_: IOptionsInput): Promise<void> {
+ 
+     const createWalletTransport = (url: string) =>
+         customTransport(url, {
++            fetchOptions: primaryRpcFetchOptions(args.rpcUrl, url, primaryRpcAuthToken),
+             logger: logger.child(
+                 { module: "wallet_client" },
+                 { level: args.walletClientLogLevel || args.logLevel }
+diff --git a/src/rpc/validation/BundlerCollectorTracerV07.ts b/src/rpc/validation/BundlerCollectorTracerV07.ts
+index efca511..a1940c8 100644
+--- a/src/rpc/validation/BundlerCollectorTracerV07.ts
++++ b/src/rpc/validation/BundlerCollectorTracerV07.ts
+@@ -33,6 +33,10 @@ declare function toAddress(a: any): string
+  * keccak, calls and logs are collected globally, since the levels are unimportant for them.
+  */
+ export interface BundlerTracerResult {
++    /** Full output of the traced top-level simulation call. */
++    output: Hex
++    /** EVM error of the top-level call, if one occurred. */
++    error?: string
+     /**
+      * storage and opcode info, collected on top-level calls from EntryPoint
+      */
+@@ -127,6 +131,7 @@ interface BundlerCollectorTracer extends LogTracer, BundlerTracerResult {
+  */
+ export function bundlerCollectorTracer(): BundlerCollectorTracer {
+     return {
++        output: "0x",
+         callsFromEntryPoint: [],
+         // biome-ignore lint/suspicious/noExplicitAny: it's a generic type
+         currentLevel: null as any,
+@@ -154,8 +159,13 @@ export function bundlerCollectorTracer(): BundlerCollectorTracer {
+             )
+         },
+ 
+-        result(_ctx: LogContext, _db: LogDb): BundlerTracerResult {
++        result(
++            ctx: LogContext & { error?: string },
++            _db: LogDb
++        ): BundlerTracerResult {
+             return {
++                output: ctx.output ? toHex(ctx.output) : "0x",
++                error: ctx.error || "",
+                 callsFromEntryPoint: this.callsFromEntryPoint,
+                 keccak: this.keccak,
+                 logs: this.logs,
+diff --git a/src/rpc/validation/SafeValidator.ts b/src/rpc/validation/SafeValidator.ts
+index 373e248..2ee7e88 100644
+--- a/src/rpc/validation/SafeValidator.ts
++++ b/src/rpc/validation/SafeValidator.ts
+@@ -5,6 +5,7 @@ import {
+     CodeHashGetterAbi,
+     CodeHashGetterBytecode,
+     ERC7769Errors,
++    EntryPointV07Abi,
+     EntryPointV06Abi,
+     type InterfaceValidator,
+     type ReferencedCodeHashes,
+@@ -32,6 +33,7 @@ import {
+     type ExecutionRevertedError,
+     type Hex,
+     decodeErrorResult,
++    decodeFunctionResult,
+     encodeDeployData,
+     encodeFunctionData,
+     zeroAddress
+@@ -475,35 +477,88 @@ export class SafeValidator
+             `tracerResult: ${jsonStringifyWithBigint(tracerResult)}`
+         )
+ 
+-        const lastResult = tracerResult.calls.slice(-1)[0]
+-        if (lastResult.type !== "REVERT") {
+-            throw new Error("Invalid response. simulateCall must revert")
++        const lastResult = Array.isArray(tracerResult?.calls)
++            ? tracerResult.calls.slice(-1)[0]
++            : undefined
++        if (lastResult?.type !== "REVERT") {
++            throw new RpcError(
++                "Expected a reverted EntryPoint simulation frame",
++                ERC7769Errors.SimulateValidation
++            )
+         }
+         const resultData = lastResult.data as Hex
+ 
+-        // Decode the validation result from the revert data
+-        const { errorName, args } = decodeErrorResult({
+-            abi: pimlicoSimulationsAbi,
+-            data: resultData
+-        })
++        let validationResult: ValidationResult07
++        try {
++            if (getViemEntryPointVersion(userOp, entryPoint) === "0.9") {
++                // The nested EntryPoint frame always reverts. PimlicoSimulations
++                // returns a ValidationResult only when the delegate call succeeds.
++                const delegated = decodeErrorResult({
++                    abi: EntryPointV07Abi,
++                    data: resultData
++                })
++                if (delegated.errorName !== "DelegateAndRevert") {
++                    throw new RpcError(
++                        "Unexpected EntryPoint simulation result",
++                        ERC7769Errors.SimulateValidation
++                    )
++                }
++                if (!delegated.args[0]) {
++                    const failure = decodeErrorResult({
++                        abi: EntryPointV07Abi,
++                        data: delegated.args[1]
++                    })
++                    const reason = failure.errorName === "FailedOp" ||
++                        failure.errorName === "FailedOpWithRevert"
++                        ? failure.args[1]
++                        : "EntryPoint simulation failed"
++                    const errorCode = /^AA(?:24|34)\b/.test(reason)
++                        ? ERC7769Errors.InvalidSignature
++                        : /^AA31\b/.test(reason)
++                          ? ERC7769Errors.PaymasterDepositTooLow
++                          : ERC7769Errors.SimulateValidation
++                    throw new RpcError(reason, errorCode)
++                }
++                if (tracerResult.error || !tracerResult.output || tracerResult.output === "0x") {
++                    throw new RpcError(
++                        "EntryPoint simulation wrapper failed",
++                        ERC7769Errors.SimulateValidation
++                    )
++                }
++                validationResult = decodeFunctionResult({
++                    abi: pimlicoSimulationsAbi,
++                    functionName: "simulateValidation",
++                    data: tracerResult.output
++                }) as ValidationResult07
++            } else {
++                const { errorName, args } = decodeErrorResult({
++                    abi: pimlicoSimulationsAbi,
++                    data: resultData
++                })
++                if (errorName !== "ValidationResult") {
++                    let errorCode = ERC7769Errors.SimulateValidation
++                    const errorMessage = errorName || "Unknown validation error"
+ 
+-        if (errorName !== "ValidationResult") {
+-            let errorCode = ERC7769Errors.SimulateValidation
+-            const errorMessage = errorName || "Unknown validation error"
++                    if (errorMessage.includes("AA24")) {
++                        errorCode = ERC7769Errors.InvalidSignature
++                    }
+ 
+-            if (errorMessage.includes("AA24")) {
+-                errorCode = ERC7769Errors.InvalidSignature
+-            }
++                    if (errorMessage.includes("AA31")) {
++                        errorCode = ERC7769Errors.PaymasterDepositTooLow
++                    }
+ 
+-            if (errorMessage.includes("AA31")) {
+-                errorCode = ERC7769Errors.PaymasterDepositTooLow
++                    throw new RpcError(errorMessage, errorCode)
++                }
++                validationResult = args[0] as ValidationResult07
+             }
+-
+-            throw new RpcError(errorMessage, errorCode)
++        } catch (error) {
++            if (error instanceof RpcError) throw error
++            throw new RpcError(
++                "Malformed EntryPoint simulation result",
++                ERC7769Errors.SimulateValidation
++            )
+         }
+ 
+-        const validationResult = args[0] as ValidationResult07
+-
+         const mergedValidation = this.mergeValidationDataValues(
+             validationResult.returnInfo.accountValidationData,
+             validationResult.returnInfo.paymasterValidationData

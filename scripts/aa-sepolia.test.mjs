@@ -12,11 +12,12 @@ test('v2 release pins Terraform while defaults remain unbound', () => {
   assert.equal(release.release.deploymentBlock, 323658447)
   const guards = read('infra/terraform/deployment_target.tf')
   assert.ok(guards.includes('config/perps/arbitrum-sepolia-v2.0.0.json'))
-  assert.ok(guards.includes('contains(["active", "seeded", "deployed"], local.sepolia_core.release.phase)'))
+  assert.ok(guards.includes('contains(["active", "seeded", "deployed"], try(local.active_core.release.phase, ""))'))
+  assert.ok(guards.includes('var.environment != "mainnet" || try(local.active_core.settlementToken.isMock, true) == false'))
   const variables = read('infra/terraform/variables.tf')
   for (const [name, contract] of Object.entries(terraformBindings)) {
     assert.match(release.contracts[contract].address, /^0x[0-9a-f]{40}$/)
-    assert.ok(guards.includes('lower(var.' + name + ') == try(lower(local.sepolia_core.contracts.' + contract + '.address), "")'))
+    assert.ok(guards.includes('lower(var.' + name + ') == try(lower(local.active_core.contracts.' + contract + '.address), "")'))
     assert.match(variables, new RegExp('variable "' + name + '" \\{[^}]*default\\s*= ""', 's'))
   }
 })
@@ -35,7 +36,7 @@ test('public overlay stages policy without enabling sponsorship or preparation',
 })
 test('active Alto gate requires safe mode or the exact Sepolia exception', () => {
   assert.match(read('infra/terraform/alto.tf'), /name = "ALTO_SAFE_MODE", value = tostring\(local.alto_safe_mode\)/)
-  assert.match(read('infra/terraform/alto.tf'), /alto_safe_mode\s*= !\(var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614"\)/)
+  assert.match(read('infra/terraform/alto.tf'), /alto_safe_mode\s*= !\(var.alto_entrypoint_version == "0\.8" && var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614"\)/)
   assert.match(read('infra/terraform/variables.tf'), /variable "alto_sepolia_safe_mode_exception" \{[^}]*default\s*= false/s)
   assert.match(read('infra/terraform/alto.tf'), /name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false"/)
   const fixture = () => ({containerDefinitions:[{name:'plether-alto',environment:[

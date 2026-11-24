@@ -28,7 +28,7 @@ export const OpenThenCloseOnly: Story = {
     currentPhase: 'open',
     currentDuration: '1d 12h 35m',
     nextPhase: 'close-only',
-    nextDuration: '3h',
+    nextDuration: '2d 45m',
   },
   render: (args) => <PanelFrame {...args} />,
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { SponsoredOperation } from './operationStore'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
-import { usePerpsAaRuntime, type PerpsAaSmartAccountRuntime } from './runtimeContext'
+import { usePerpsAaRuntime, type SimplePerpsAaSmartAccountRuntime } from './runtimeContext'
 import { useConfirmationStatus, useDeploymentConfirmationDetails } from './useAccountDeploymentConfirmation'
 import { confirmationPending } from './deploymentConfirmation'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
@@ -10,9 +10,10 @@ import { useSponsoredOperationStore } from './operationStore'
 const normalized = (address?: string) => address?.toLowerCase()
 
 export function useSavedOperationRuntime(operation?: SponsoredOperation, fallbackManifest?: PerpsAaDeploymentManifestV2) {
-  const base = usePerpsAaRuntime()
+  const connectedRuntime = usePerpsAaRuntime()
+  const base = connectedRuntime?.kernel ? undefined : connectedRuntime
   const manifest = operation?.nativePreparation?.manifest ?? fallbackManifest
-  const [resolved, setResolved] = useState<{ base: PerpsAaSmartAccountRuntime; manifest: PerpsAaDeploymentManifestV2; runtime?: PerpsAaSmartAccountRuntime }>()
+  const [resolved, setResolved] = useState<{ base: SimplePerpsAaSmartAccountRuntime; manifest: PerpsAaDeploymentManifestV2; runtime?: SimplePerpsAaSmartAccountRuntime }>()
   useEffect(() => {
     if (!base?.getPreparedOperationRuntime || !manifest) return
     let stopped = false

@@ -1,0 +1,239 @@
+name: Build Kernel API canary image
+run-name: Kernel API image / Sepolia / ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full reviewed PR head commit SHA to build without deploying a service
+        required: true
+        type: string
+      pr_number:
+        description: Open same-repository PR containing the reviewed candidate commit
+        required: true
+        type: string
+
+concurrency:
+  group: plether-kernel-api-image-sepolia
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-1
+  ADMIN_ENVIRONMENT: backend-admin-sepolia
+  ECR_REPOSITORY: plether-kernel-api-sepolia
+
+jobs:
+  reviewed-candidate-preflight:
+    name: Check reviewed candidate and protected environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      deployments: read
+      pull-requests: read
+    steps:
+      - name: Require an exact, same-repository PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [ "$GITHUB_REF" = refs/heads/master ] || {
+            echo '::error::Dispatch the canary image workflow from master only.'
+            exit 1
+          }
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::candidate_sha must be a full lowercase commit SHA.'
+            exit 1
+          }
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+            echo '::error::pr_number must be a positive decimal PR number.'
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/kernel-api-pr.json"
+          jq --exit-status --arg repo "$GITHUB_REPOSITORY" --arg sha "$CANDIDATE_SHA" \
+            '.state == "open" and .base.ref == "master"
+             and .head.repo.full_name == $repo and .head.sha == $sha
+             and (.head.ref | test("^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$"))' \
+            "$RUNNER_TEMP/kernel-api-pr.json" >/dev/null || {
+              echo '::error::Candidate must be the exact current head of an open same-repository kernel-canary PR targeting master.'
+              exit 1
+            }
+
+      - name: Verify existing protected backend environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" > "$RUNNER_TEMP/kernel-api-environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" > "$RUNNER_TEMP/kernel-api-branches.json"
+          jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+            '.name == $name and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$RUNNER_TEMP/kernel-api-environment.json" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$RUNNER_TEMP/kernel-api-branches.json" >/dev/null
+
+  build:
+    name: Build, scan and pin canary API image
+    needs: reviewed-candidate-preflight
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    environment: backend-admin-sepolia
+    permissions:
+      contents: read
+      deployments: read
+      id-token: write
+      pull-requests: read
+    steps:
+      - name: Check out the exact reviewed candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          persist-credentials: false
+
+      - name: Confirm checked-out commit
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$CANDIDATE_SHA" ]
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # Build before obtaining AWS credentials. The reviewed Dockerfile cannot
+      # read the deployment role or ECR authorization token during the build.
+      - name: Build local ARM64 image without cloud credentials
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: plether-kernel-api-candidate:local
+
+      - name: Recheck PR head after the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/kernel-api-pr-recheck.json"
+          jq --exit-status --arg repo "$GITHUB_REPOSITORY" --arg sha "$CANDIDATE_SHA" \
+            '.state == "open" and .base.ref == "master"
+             and .head.repo.full_name == $repo and .head.sha == $sha
+             and (.head.ref | test("^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$"))' \
+            "$RUNNER_TEMP/kernel-api-pr-recheck.json" >/dev/null || {
+              echo '::error::The reviewed PR head changed during the canary build.'
+              exit 1
+          }
+
+      - name: Require the isolated canary image role
+        env:
+          CANARY_ROLE_ARN: ${{ vars.KERNEL_CANARY_BUILD_ROLE_ARN }}
+          TARGET_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [ "$TARGET_ACCOUNT_ID" = 932542905614 ] || {
+            echo '::error::The protected environment targets the wrong AWS account.'
+            exit 1
+          }
+          [ "$CANARY_ROLE_ARN" = "arn:aws:iam::$TARGET_ACCOUNT_ID:role/plether-sepolia-kernel-canary-image-build" ] || {
+            echo '::error::Set KERNEL_CANARY_BUILD_ROLE_ARN in the protected environment to the dedicated canary ECR role.'
+            exit 1
+          }
+
+      - name: Configure AWS credentials for ECR only
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.KERNEL_CANARY_BUILD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-kernel-api-${{ github.run_id }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Push immutable canary tag without touching ECS or latest
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/kernel-api-pr-before-push.json"
+          jq --exit-status --arg repo "$GITHUB_REPOSITORY" --arg sha "$CANDIDATE_SHA" \
+            '.state == "open" and .base.ref == "master"
+             and .head.repo.full_name == $repo and .head.sha == $sha
+             and (.head.ref | test("^kernel-canary/[a-z0-9][a-z0-9._-]{0,63}$"))' \
+            "$RUNNER_TEMP/kernel-api-pr-before-push.json" >/dev/null || {
+              echo '::error::The reviewed PR head changed before ECR publication.'
+              exit 1
+            }
+          [ "$(aws sts get-caller-identity --query Account --output text --no-cli-pager)" = '${{ vars.AWS_ACCOUNT_ID }}' ]
+          [ "$AWS_REGION" = ap-southeast-1 ]
+          tag="kernel-canary-${CANDIDATE_SHA:0:12}"
+          image="$ECR_REGISTRY/$ECR_REPOSITORY:$tag"
+          local_id=$(docker image inspect --format '{{.Id}}' plether-kernel-api-candidate:local)
+          if existing_digest=$(aws ecr describe-images \
+              --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$tag" \
+              --query 'imageDetails[0].imageDigest' --output text --no-cli-pager \
+              2> "$RUNNER_TEMP/kernel-api-image-lookup.error"); then
+            [[ "$existing_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            docker pull --platform linux/arm64 "$image"
+            [ "$(docker image inspect --format '{{.Id}}' "$image")" = "$local_id" ] || {
+              echo '::error::Existing canary tag contains different image content.'
+              exit 1
+            }
+          elif grep -Fq ImageNotFoundException "$RUNNER_TEMP/kernel-api-image-lookup.error"; then
+            docker tag plether-kernel-api-candidate:local "$image"
+            docker push "$image"
+          else
+            echo '::error::Could not verify canary API image tag in ECR.'
+            exit 1
+          fi
+          digest=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$tag" \
+            --query 'imageDetails[0].imageDigest' --output text --no-cli-pager)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_ENV"
+          printf 'image=%s@%s\n' "$ECR_REGISTRY/$ECR_REPOSITORY" "$digest" >> "$GITHUB_ENV"
+
+      - name: Require complete ECR scan without critical findings
+        run: |
+          set -euo pipefail
+          scan_error="$RUNNER_TEMP/kernel-api-scan.error"
+          if ! aws ecr start-image-scan --repository-name "$ECR_REPOSITORY" \
+              --image-id imageDigest="$digest" --no-cli-pager >/dev/null 2> "$scan_error"; then
+            grep -Eq 'LimitExceededException|ScanAlreadyExistsException' "$scan_error" || {
+              echo '::error::Could not start the canary API image scan.'
+              exit 1
+            }
+          fi
+          aws ecr wait image-scan-complete --repository-name "$ECR_REPOSITORY" \
+            --image-id imageDigest="$digest" --no-cli-pager
+          aws ecr describe-image-scan-findings --repository-name "$ECR_REPOSITORY" \
+            --image-id imageDigest="$digest" --output json --no-cli-pager \
+            > "$RUNNER_TEMP/kernel-api-image-scan.json"
+          jq --exit-status --arg digest "$digest" --arg repository "$ECR_REPOSITORY" \
+            '.repositoryName == $repository and .imageId.imageDigest == $digest
+             and .imageScanStatus.status == "COMPLETE"
+             and (.imageScanFindings.findingSeverityCounts.CRITICAL // 0) == 0
+             and (.nextToken == null or .nextToken == "")' \
+            "$RUNNER_TEMP/kernel-api-image-scan.json" >/dev/null || {
+              echo '::error::Canary API image scan is incomplete or has critical findings.'
+              exit 1
+            }
+          printf 'Built and scanned isolated API image `%s` from reviewed commit `%s`.\n' "$image" '${{ inputs.candidate_sha }}' >> "$GITHUB_STEP_SUMMARY"
+          printf 'This workflow did not deploy ECS or update the live latest tag.\n' >> "$GITHUB_STEP_SUMMARY"
