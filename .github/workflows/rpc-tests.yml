@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - run: node --test infra/rpc/gateway/server.test.mjs
@@ -41,8 +41,8 @@ jobs:
       run:
         working-directory: infra/terraform
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: '1.16.1'
       - run: terraform fmt -check rpc.tf rpc_variables.tf rpc_admin.tf rpc_monitoring.tf tests/rpc.tftest.hcl
@@ -61,8 +61,8 @@ jobs:
       run:
         working-directory: infra/terraform-rpc
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: '1.16.1'
       - run: terraform fmt -check
