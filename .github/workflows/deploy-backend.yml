@@ -1206,6 +1206,16 @@ jobs:
                 end
               ')
             echo "Waiting for ECR scan on ${repo}@${scan_digest} (release ${digest})..."
+            for attempt in 1 2 3 4 5 6; do
+              if aws ecr describe-image-scan-findings \
+                  --repository-name "$repo" \
+                  --image-id "imageDigest=$scan_digest" \
+                  --output json \
+                  --no-cli-pager >/dev/null 2>&1; then
+                break
+              fi
+              sleep 5
+            done
             aws ecr wait image-scan-complete \
               --repository-name "$repo" \
               --image-id "imageDigest=$scan_digest" \
