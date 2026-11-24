@@ -16,13 +16,13 @@ concurrency:
 
 jobs:
   browser-e2e:
-    name: ${{ matrix.suite == 'e2e' && 'Frontend E2E (app)' || 'Frontend E2E (Privy SDK)' }}
+    name: ${{ matrix.suite == 'e2e' && 'Frontend E2E (app)' || (matrix.suite == 'privy-sdk-1' && 'Frontend E2E (Privy SDK 1/2)' || 'Frontend E2E (Privy SDK 2/2)') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        suite: [e2e, privy-sdk]
+        suite: [e2e, privy-sdk-1, privy-sdk-2]
     defaults:
       run:
         working-directory: apps/frontend
@@ -62,9 +62,12 @@ jobs:
       - name: Run asserted app E2E coverage
         if: matrix.suite == 'e2e'
         run: npm run test:e2e
-      - name: Run actual Privy SDK wallet lifecycle coverage
-        if: matrix.suite == 'privy-sdk'
-        run: npm run test:e2e:privy-sdk
+      - name: Run actual Privy SDK wallet lifecycle coverage (shard 1/2)
+        if: matrix.suite == 'privy-sdk-1'
+        run: npm run test:e2e:privy-sdk -- --shard=1/2
+      - name: Run actual Privy SDK wallet lifecycle coverage (shard 2/2)
+        if: matrix.suite == 'privy-sdk-2'
+        run: npm run test:e2e:privy-sdk -- --shard=2/2
       - name: Preserve results, traces and assertion failures
         if: always()
         uses: actions/upload-artifact@v4

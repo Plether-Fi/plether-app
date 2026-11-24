@@ -256,6 +256,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Cache GHC 9.4.8 toolchain
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/.ghcup/ghc/9.4.8
+          key: ubuntu-24.04-ghc-9.4.8-toolchain-v1
+
       - name: Install the compiler for the production gas-policy adapter
         uses: haskell-actions/setup@v2
         with:

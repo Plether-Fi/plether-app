@@ -147,6 +147,12 @@ jobs:
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
 
+      - name: Cache GHC 9.4.8 toolchain
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/.ghcup/ghc/9.4.8
+          key: ubuntu-24.04-ghc-9.4.8-toolchain-v1
+
       - name: Setup Haskell
         uses: haskell-actions/setup@v2
         with:
@@ -160,6 +166,13 @@ jobs:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
           restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
+
+      - name: Cache Cabal package index
+        id: cabal-index-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/packages
+          key: ubuntu-24.04-cabal-packages-${{ hashFiles('apps/backend/cabal.project.freeze') }}
 
       - name: Cache Haskell build artifacts
         uses: actions/cache@v4
@@ -179,6 +192,7 @@ jobs:
           EOF
 
       - name: Update Cabal package index
+        if: steps.cabal-index-cache.outputs.cache-hit != 'true'
         run: |
           for attempt in 1 2 3; do
             if cabal update; then
