@@ -127,10 +127,23 @@ run "isolated_sepolia_pilot" {
 run "reject_mainnet_pilot" {
   command = plan
   variables {
-    provision_sepolia_rpc           = true
-    environment                     = "mainnet"
-    operations_alarm_sns_topic_arn  = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"
-    pyth_api_key_ssm_parameter_name = "/plether/mainnet/pyth-api-key"
+    provision_sepolia_rpc                                = true
+    environment                                          = "mainnet"
+    api_hostname                                         = "api.plether.example.com"
+    alb_certificate_arn                                  = "arn:aws:acm:ap-southeast-1:932542905614:certificate/11111111-1111-1111-1111-111111111111"
+    operations_alarm_sns_topic_arn                       = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"
+    pyth_api_key_ssm_parameter_name                      = "/plether/mainnet/pyth-api-key"
+    keeper_private_key                                   = ""
+    oracle_updater_private_key                           = ""
+    liquidation_keeper_private_key                       = ""
+    db_password                                          = ""
+    posthog_project_token                                = ""
+    keeper_private_key_ssm_parameter_name                = "/plether/mainnet/keeper-private-key"
+    oracle_updater_private_key_ssm_parameter_name        = "/plether/mainnet/oracle-updater-private-key"
+    liquidation_keeper_private_key_ssm_parameter_name    = "/plether/mainnet/liquidation-keeper-private-key"
+    database_url_ssm_parameter_name                      = "/plether/mainnet/database-url"
+    posthog_otlp_authorization_header_ssm_parameter_name = "/plether/mainnet/posthog-otlp-authorization-header"
+    db_manage_master_user_password                       = true
   }
   expect_failures = [terraform_data.rpc_guard]
 }
@@ -138,8 +151,21 @@ run "reject_mainnet_pilot" {
 run "retain_mainnet_rpc_volume_thresholds" {
   command = plan
   variables {
-    environment                     = "mainnet"
-    pyth_api_key_ssm_parameter_name = "/plether/mainnet/pyth-api-key"
+    environment                                          = "mainnet"
+    api_hostname                                         = "api.plether.example.com"
+    alb_certificate_arn                                  = "arn:aws:acm:ap-southeast-1:932542905614:certificate/11111111-1111-1111-1111-111111111111"
+    pyth_api_key_ssm_parameter_name                      = "/plether/mainnet/pyth-api-key"
+    keeper_private_key                                   = ""
+    oracle_updater_private_key                           = ""
+    liquidation_keeper_private_key                       = ""
+    db_password                                          = ""
+    posthog_project_token                                = ""
+    keeper_private_key_ssm_parameter_name                = "/plether/mainnet/keeper-private-key"
+    oracle_updater_private_key_ssm_parameter_name        = "/plether/mainnet/oracle-updater-private-key"
+    liquidation_keeper_private_key_ssm_parameter_name    = "/plether/mainnet/liquidation-keeper-private-key"
+    database_url_ssm_parameter_name                      = "/plether/mainnet/database-url"
+    posthog_otlp_authorization_header_ssm_parameter_name = "/plether/mainnet/posthog-otlp-authorization-header"
+    db_manage_master_user_password                       = true
   }
   assert {
     condition = (

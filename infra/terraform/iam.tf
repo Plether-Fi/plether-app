@@ -1,9 +1,39 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  github_actions_oidc_subjects = concat(
+  ecs_tasks_assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Condition = {
+        StringEquals = {
+          "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+        }
+        ArnLike = {
+          "aws:SourceArn" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
+        }
+      }
+    }]
+  })
+
+  github_actions_oidc_subjects = var.environment == "mainnet" ? concat(
+    [
+      "repo:Plether-Fi/plether-app:environment:backend-admin-mainnet",
+      "repo:Plether-Fi/plether-app:environment:db-admin-mainnet",
+      "repo:Plether-Fi/plether-app:environment:candle-admin-mainnet",
+      "repo:Plether-Fi/plether-app:environment:insights-admin-mainnet",
+    ],
+    local.self_hosted_aa_resource_count == 1 ? [
+      "repo:Plether-Fi/plether-app:environment:aa-admin-mainnet",
+      "repo:Plether-Fi/plether-app:environment:alto-admin-mainnet",
+    ] : []
+    ) : concat(
     [
       "repo:Plether-Fi/plether-app:ref:refs/heads/master",
+      "repo:Plether-Fi/plether-app:environment:backend-admin-sepolia",
+      "repo:Plether-Fi/plether-app:environment:db-admin-sepolia",
       "repo:Plether-Fi/plether-app:environment:candle-admin-sepolia",
       "repo:Plether-Fi/plether-app:environment:insights-sepolia-admin",
     ],
@@ -34,7 +64,7 @@ locals {
         "plether-insights-worker",
         "plether-workers",
       ],
-      var.environment == "sepolia" ? [
+      contains(["sepolia", "mainnet"], var.environment) ? [
         "plether-position-protection-worker",
       ] : [],
       local.self_hosted_aa_resource_count == 1 ? [
@@ -47,6 +77,9 @@ locals {
   github_deploy_ecs_role_arns = concat(
     [
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-ecs-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-worker-readonly-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-liquidation-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-protection-execution",
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-ecs-task",
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-api-execution",
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-api-task",
@@ -125,6 +158,7 @@ resource "aws_iam_role_policy" "github_deploy" {
           "ecr:BatchCheckLayerAvailability",
           "ecr:BatchGetImage",
           "ecr:CompleteLayerUpload",
+          "ecr:DescribeImageScanFindings",
           "ecr:DescribeImages",
           "ecr:DescribeRepositories",
           "ecr:GetDownloadUrlForLayer",
@@ -204,19 +238,43 @@ resource "aws_iam_role_policy" "github_deploy" {
         }
       },
       {
-        Sid    = "ReadPletherParameters"
+        Sid    = "ReadExactNonSignerParameters"
         Effect = "Allow"
         Action = [
           "ssm:GetParameter",
           "ssm:GetParameters",
         ]
-        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/*"
+        Resource = distinct(compact([
+          aws_ssm_parameter.rpc_url.arn,
+          aws_ssm_parameter.perps_rpc_url.arn,
+          local.application_rpc_url_parameter_arn,
+          local.rpc_auth_token_parameter_arn,
+          local.perps_rpc_auth_token_parameter_arn,
+          local.effective_pyth_api_key_parameter_arn,
+          local.database_url_parameter_arn,
+          local.aa_proxy_origin_token_parameter_arn,
+          local.self_hosted_aa_resource_count == 1 ? local.alto_rpc_url_parameter_arn : null,
+          "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/insights-admin/requests/*",
+        ]))
       },
       {
         Sid      = "DeleteConsumedInsightsRequests"
         Effect   = "Allow"
         Action   = "ssm:DeleteParameter"
         Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/insights-admin/requests/*"
+      },
+      {
+        Sid    = "CreatePreMigrationRdsSnapshots"
+        Effect = "Allow"
+        Action = [
+          "rds:CreateDBSnapshot",
+          "rds:DescribeDBSnapshots",
+          "rds:AddTagsToResource",
+        ]
+        Resource = [
+          "arn:aws:rds:${var.aws_region}:${data.aws_caller_identity.current.account_id}:db:plether-${local.deployment_name}",
+          "arn:aws:rds:${var.aws_region}:${data.aws_caller_identity.current.account_id}:snapshot:plether-${local.deployment_name}-*",
+        ]
       },
       {
         Sid    = "ReadRuntimeTopology"
@@ -428,16 +486,8 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
 }
 
 resource "aws_iam_role" "ecs_execution" {
-  name = "plether-${local.deployment_name}-ecs-execution"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
+  name               = "plether-${local.deployment_name}-ecs-execution"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_execution" {
@@ -457,25 +507,130 @@ resource "aws_iam_role_policy" "ecs_execution_ssm" {
         "ssm:GetParameters",
         "ssm:GetParameter"
       ]
-      Resource = compact([
-        "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/*",
-        local.external_pyth_api_key_parameter_arn,
-      ])
+      Resource = distinct(compact(concat(
+        [
+          aws_ssm_parameter.rpc_url.arn,
+          local.application_rpc_url_parameter_arn,
+          local.database_url_parameter_arn,
+          local.posthog_otlp_authorization_header_parameter_arn,
+          local.rpc_auth_token_parameter_arn,
+          local.perps_rpc_auth_token_parameter_arn,
+          local.keeper_private_key_parameter_arn,
+          local.oracle_updater_private_key_parameter_arn,
+          local.lp_settlement_private_key_parameter_arn,
+        ],
+        [for secret in local.pyth_api_key_secret : secret.valueFrom],
+      )))
+    }]
+  })
+}
+
+resource "aws_iam_role" "worker_readonly_execution" {
+  name               = "plether-${local.deployment_name}-worker-readonly-execution"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
+}
+
+resource "aws_iam_role_policy_attachment" "worker_readonly_execution" {
+  role       = aws_iam_role.worker_readonly_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "worker_readonly_execution_ssm" {
+  name = "exact-readonly-ssm-secret-access"
+  role = aws_iam_role.worker_readonly_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameters",
+        "ssm:GetParameter"
+      ]
+      Resource = distinct(compact(concat(
+        [
+          aws_ssm_parameter.rpc_url.arn,
+          local.application_rpc_url_parameter_arn,
+          local.database_url_parameter_arn,
+          local.posthog_otlp_authorization_header_parameter_arn,
+          local.rpc_auth_token_parameter_arn,
+          local.perps_rpc_auth_token_parameter_arn,
+        ],
+        [for secret in local.pyth_api_key_secret : secret.valueFrom],
+      )))
+    }]
+  })
+}
+
+resource "aws_iam_role" "liquidation_execution" {
+  name               = "plether-${local.deployment_name}-liquidation-execution"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
+}
+
+resource "aws_iam_role_policy_attachment" "liquidation_execution" {
+  role       = aws_iam_role.liquidation_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "liquidation_execution_ssm" {
+  name = "exact-liquidation-ssm-secret-access"
+  role = aws_iam_role.liquidation_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameters",
+        "ssm:GetParameter"
+      ]
+      Resource = distinct(compact([
+        local.application_rpc_url_parameter_arn,
+        local.database_url_parameter_arn,
+        local.posthog_otlp_authorization_header_parameter_arn,
+        local.perps_rpc_auth_token_parameter_arn,
+        local.liquidation_keeper_private_key_parameter_arn,
+      ]))
+    }]
+  })
+}
+
+resource "aws_iam_role" "protection_execution" {
+  name               = "plether-${local.deployment_name}-protection-execution"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
+}
+
+resource "aws_iam_role_policy_attachment" "protection_execution" {
+  role       = aws_iam_role.protection_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "protection_execution_ssm" {
+  name = "exact-protection-ssm-secret-access"
+  role = aws_iam_role.protection_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameters",
+        "ssm:GetParameter"
+      ]
+      Resource = distinct(compact([
+        local.application_rpc_url_parameter_arn,
+        local.database_url_parameter_arn,
+        local.posthog_otlp_authorization_header_parameter_arn,
+        local.perps_rpc_auth_token_parameter_arn,
+        local.protection_worker_private_key_parameter_arn,
+      ]))
     }]
   })
 }
 
 resource "aws_iam_role" "ecs_task" {
-  name = "plether-${local.deployment_name}-ecs-task"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
+  name               = "plether-${local.deployment_name}-ecs-task"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
 }
 
 resource "aws_iam_role_policy" "ecs_task_firelens_cloudwatch" {
@@ -497,16 +652,8 @@ resource "aws_iam_role_policy" "ecs_task_firelens_cloudwatch" {
 }
 
 resource "aws_iam_role" "api_execution" {
-  name = "plether-${local.deployment_name}-api-execution"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
+  name               = "plether-${local.deployment_name}-api-execution"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
 }
 
 resource "aws_iam_role_policy_attachment" "api_execution" {
@@ -530,8 +677,8 @@ resource "aws_iam_role_policy" "api_execution_ssm" {
         [
           aws_ssm_parameter.rpc_url.arn,
           local.application_rpc_url_parameter_arn,
-          aws_ssm_parameter.database_url.arn,
-          aws_ssm_parameter.posthog_otlp_authorization_header.arn,
+          local.database_url_parameter_arn,
+          local.posthog_otlp_authorization_header_parameter_arn,
           local.rpc_auth_token_parameter_arn,
           local.perps_rpc_auth_token_parameter_arn,
         ],
@@ -547,7 +694,7 @@ resource "aws_iam_role_policy" "api_execution_ssm" {
 }
 
 resource "aws_iam_role_policy" "api_execution_aa_reconciler_secondary_rpc_kms" {
-  count = local.native_aa_backend_configured && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? 1 : 0
+  count = (local.native_aa_backend_configured || local.kernel_aa_backend_configured) && var.aa_reconciler_secondary_rpc_url_kms_key_arn != "" ? 1 : 0
 
   name = "aa-reconciler-secondary-rpc-kms-decrypt"
   role = aws_iam_role.api_execution.id
@@ -570,16 +717,8 @@ resource "aws_iam_role_policy" "api_execution_aa_reconciler_secondary_rpc_kms" {
 }
 
 resource "aws_iam_role" "api_task" {
-  name = "plether-${local.deployment_name}-api-task"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
+  name               = "plether-${local.deployment_name}-api-task"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
 }
 
 resource "aws_iam_role_policy" "api_task_firelens_cloudwatch" {
@@ -601,7 +740,7 @@ resource "aws_iam_role_policy" "api_task_firelens_cloudwatch" {
 }
 
 resource "aws_iam_role_policy" "api_paymaster_kms_key_metadata" {
-  count = local.native_aa_sponsorship_enabled ? 1 : 0
+  count = local.native_aa_sponsorship_enabled || local.kernel_aa_sponsorship_enabled ? 1 : 0
 
   name = "aa-paymaster-kms-key-metadata"
   role = aws_iam_role.api_task.id
@@ -618,7 +757,7 @@ resource "aws_iam_role_policy" "api_paymaster_kms_key_metadata" {
 }
 
 resource "aws_iam_role_policy" "api_paymaster_kms_signer" {
-  count = local.native_aa_sponsorship_enabled ? 1 : 0
+  count = local.native_aa_sponsorship_enabled || local.kernel_aa_sponsorship_enabled ? 1 : 0
 
   name = "aa-paymaster-kms-signer"
   role = aws_iam_role.api_task.id
@@ -642,16 +781,8 @@ resource "aws_iam_role_policy" "api_paymaster_kms_signer" {
 resource "aws_iam_role" "alto_execution" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${local.deployment_name}-alto-execution"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
+  name               = "plether-${local.deployment_name}-alto-execution"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
 }
 
 resource "aws_iam_role_policy_attachment" "alto_execution" {
@@ -684,7 +815,7 @@ resource "aws_iam_role_policy" "alto_execution_secrets" {
           local.alto_send_transaction_rpc_url_parameter_arn,
           local.alto_executor_keys_parameter_arn,
           local.alto_utility_key_parameter_arn,
-          aws_ssm_parameter.posthog_otlp_authorization_header.arn,
+          local.posthog_otlp_authorization_header_parameter_arn,
         ])
       }],
       trimspace(var.alto_secrets_kms_key_arn) == "" ? [] : [{
@@ -692,6 +823,11 @@ resource "aws_iam_role_policy" "alto_execution_secrets" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
         Resource = trimspace(var.alto_secrets_kms_key_arn)
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
+          }
+        }
       }]
     )
   })
@@ -700,16 +836,8 @@ resource "aws_iam_role_policy" "alto_execution_secrets" {
 resource "aws_iam_role" "alto_task" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${local.deployment_name}-alto-task"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
+  name               = "plether-${local.deployment_name}-alto-task"
+  assume_role_policy = local.ecs_tasks_assume_role_policy
 }
 
 resource "aws_iam_role_policy" "alto_task_firelens_cloudwatch" {

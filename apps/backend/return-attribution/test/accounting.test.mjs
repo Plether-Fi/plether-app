@@ -181,3 +181,40 @@ test('multiple deposits in one block use their own observed valuation boundaries
   assert.equal(result.netReturnUsdg, '300000')
   assert.deepEqual(result.notes, [])
 })
+
+test('negative-VPI open attributes actual pool outflow when protocol fee top-up fails soft', () => {
+  // Mirrors Arbitrum Sepolia order #9717 (block 329855884): -67.646963 USDG gross VPI rebate,
+  // 19.998032 USDG execution fee, 47.648931 USDG trader payout, 7.300688 USDG free-cash top-up.
+  const ledger = new EntryLedger()
+  const sources = ledger.apply({
+    kind: 'Open', markPrice: 94867329n, openPoolOutflow: 54949619n,
+    delta: {
+      account, sizeDelta: 527n * 10n ** 20n, newPosSize: 527n * 10n ** 20n, posSide: 1n,
+      posVpiAccruedDelta: -67646963n, poolRebatePayoutAssets: 47648931n,
+    },
+  })
+  assert.equal(sources.netVpi, -54949619n)
+
+  // When |vpi| <= executionFee, poolRebatePayoutAssets is 0 and top-up can fail soft to 0.
+  const zeroTopUp = new EntryLedger().apply({
+    kind: 'Open', markPrice: 100n, openPoolOutflow: 0n,
+    delta: {
+      account, sizeDelta: 10n ** 20n, newPosSize: 10n ** 20n, posSide: 0n,
+      posVpiAccruedDelta: -14118532n, poolRebatePayoutAssets: 0n,
+    },
+  })
+  assert.equal(zeroTopUp.netVpi, 0n)
+
+  // Fail closed on missing or out-of-bounds outflows.
+  const negOpen = extra => ({
+    kind: 'Open', markPrice: 100n,
+    delta: {
+      account, sizeDelta: 10n ** 20n, newPosSize: 10n ** 20n, posSide: 0n,
+      posVpiAccruedDelta: -67646963n, poolRebatePayoutAssets: 47648931n,
+    }, ...extra,
+  })
+  assert.throws(() => new EntryLedger().apply(negOpen({})), /missing pool outflow/)
+  assert.throws(() => new EntryLedger().apply(negOpen({ openPoolOutflow: 47648930n })), /out of bounds/)
+  assert.throws(() => new EntryLedger().apply(negOpen({ openPoolOutflow: 67646964n })), /out of bounds/)
+  assert.throws(() => new EntryLedger().apply({ ...open(1n), openPoolOutflow: 1n }), /cannot pay out/)
+})

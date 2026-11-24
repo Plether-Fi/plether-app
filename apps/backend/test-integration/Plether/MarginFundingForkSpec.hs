@@ -143,11 +143,11 @@ marginFundingForkSpec databaseUrl = do
             beginTestnetFaucetClaim conn activeRecipient 100_000_000_000 Manifest.settlementTokenAddress `shouldReturn` True
             markTestnetFaucetClaimSubmitted conn activeRecipient Manifest.settlementTokenAddress
               (signedTransactionHash activeIntent) ("0x" <> hex (signedRawTransaction activeIntent)) `shouldReturn` True
-          requests <- replicateConcurrently 4 $ claimMarginFunding pool client config owner beneficiary
+          requests <- replicateConcurrently 4 $ claimMarginFunding pool client config Nothing owner beneficiary
           identifiers <- mapM identifier requests
           identifiers `shouldBe` replicate 4 (head identifiers)
           let claimId = head identifiers
-          processMarginFundingOnce pool client config
+          processMarginFundingOnce pool client config Nothing
           premature <- withDb pool submittedFundingTransaction
           maybe True (const False) premature `shouldBe` True
           void $ rpcCall client "evm_mine" $ toJSON ([] :: [Value])
@@ -155,7 +155,7 @@ marginFundingForkSpec databaseUrl = do
           receiptSucceeded legacyReceipt `shouldBe` True
           void $ rpcCall client "evm_setAutomine" $ toJSON [False]
           forM_ ["mint","approval","deposit"] $ \phase -> do
-            processMarginFundingOnce pool client config
+            processMarginFundingOnce pool client config Nothing
             Just original <- withDb pool submittedFundingTransaction
             ftPhase original `shouldBe` phase
             when (phase == "mint") $ do
@@ -166,14 +166,14 @@ marginFundingForkSpec databaseUrl = do
               hashes `shouldBe` [Only Nothing]
             void $ rpcCall client "anvil_dropTransaction" $ toJSON [ftHash original]
             restarted <- newClient rpcUrl
-            processMarginFundingOnce pool restarted config
+            processMarginFundingOnce pool restarted config Nothing
             Just recovered <- withDb pool submittedFundingTransaction
             ftHash recovered `shouldBe` ftHash original
             -- Mine the receipt and its confirmation, then restart the client
             -- before reconciling. Every phase resumes entirely from the DB.
             forM_ [1 :: Int,2] $ \_ -> void $ rpcCall client "evm_mine" $ toJSON ([] :: [Value])
             fresh <- newClient rpcUrl
-            processMarginFundingOnce pool fresh config
+            processMarginFundingOnce pool fresh config Nothing
           Just completed <- withDb pool $ \conn -> getMarginFunding conn claimId
           fcStatus completed `shouldBe` "funded"
           Right balance <- ethCall client $ CallParams Manifest.marginClearinghouseAddress
@@ -181,9 +181,9 @@ marginFundingForkSpec databaseUrl = do
           decodeUint256 balance `shouldBe` 100_000_000_000
           ethGetBalance client owner `shouldReturn` Right 0
           ethGetCode client beneficiary `shouldReturn` Right mempty
-          repeated <- claimMarginFunding pool client config owner beneficiary
+          repeated <- claimMarginFunding pool client config Nothing owner beneficiary
           identifier repeated `shouldReturn` claimId
-          processMarginFundingOnce pool client config
+          processMarginFundingOnce pool client config Nothing
           counts <- withDb pool $ \conn -> query_ conn
             "SELECT COUNT(*) FROM testnet_margin_funding_transactions" :: IO [Only Int]
           counts `shouldBe` [Only 3]

@@ -157,4 +157,29 @@ describe('Sepolia candle volume deployment validator', () => {
     assert.equal(attempts, 2)
     assert.equal(results[0].intervalSeconds, 3600)
   })
+
+  it('supports Arbitrum One mainnet manifests and forwards the optional ALB origin secret', async () => {
+    const mainnetManifest = {
+      chainId: 42_161,
+      orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
+    }
+    let seenHeader = null
+    const results = await validateDeploymentCoverage({
+      backendUrl: 'https://api.plether.com',
+      manifest: mainnetManifest,
+      intervals: [300],
+      originSecret: 'test-origin-secret',
+      retryDelayMs: 0,
+      fetchImpl: async (_input, init) => {
+        seenHeader = init.headers['X-Plether-Origin-Secret']
+        return response({
+          ...payload(300, { volumeChainId: 42_161 }),
+          meta: { blockNumber: 0, cached: false, chainId: 42_161 },
+        })
+      },
+    })
+
+    assert.equal(seenHeader, 'test-origin-secret')
+    assert.equal(results[0].intervalSeconds, 300)
+  })
 })

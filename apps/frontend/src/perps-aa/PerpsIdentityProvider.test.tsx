@@ -114,6 +114,29 @@ describe('PerpsIdentityProvider', () => {
     })
   })
 
+  it('keeps Kernel gas settings available while account resolution is unavailable', async () => {
+    const loadManifest = async () => { throw new Error('Gateway unavailable') }
+    const accountAddressResolver = vi.fn<PerpsAccountAddressResolver>()
+    function wrapper({ children }: { children: ReactNode }) {
+      return <PerpsIdentityProvider
+        ownerAddress={ownerAddress}
+        chainId={421614}
+        kernelDeployment="fresh-kernel"
+        loadManifest={loadManifest}
+        accountAddressResolver={accountAddressResolver}
+      >{children}</PerpsIdentityProvider>
+    }
+
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+    await waitFor(() => expect(result.current.status).toBe('blocked'))
+    expect(result.current).toMatchObject({
+      accountAddress: undefined,
+      sponsorshipEnabled: false,
+      kernelGasPreferenceScope: { chainId: 421614, deployment: 'fresh-kernel', ownerAddress },
+    })
+    expect(accountAddressResolver).not.toHaveBeenCalled()
+  })
+
   it('blocks an unsupported embedded owner with actionable guidance and retains saved identity', async () => {
     const previousIdentity = createPersistedPerpsIdentity({
       chainId: 421614,

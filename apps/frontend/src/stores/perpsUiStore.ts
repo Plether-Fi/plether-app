@@ -12,7 +12,7 @@ interface PerpsActivityTarget {
   chainId: number
   accountAddress: string
   ownerAddress: string
-  operationId: string
+  operationId?: string
 }
 
 interface PerpsUiState {

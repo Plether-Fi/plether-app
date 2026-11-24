@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
+import { entryPoint09Address } from 'viem/account-abstraction'
 import {
   comparePerpsIdentities,
   createPersistedPerpsIdentity,
@@ -66,6 +67,24 @@ describe('Perps identity persistence', () => {
     expect(
       readPersistedPerpsIdentity(storage, identity.chainId, ownerAddress)
     ).toEqual({ status: 'found', identity })
+  })
+
+  it('keeps Kernel continuity isolated from other deployments of the same owner', () => {
+    const storage = memoryStorage()
+    const simple = sponsoredIdentity()
+    const kernel = createPersistedPerpsIdentity({
+      ...simple,
+      accountMode: 'kernel',
+      entryPoint: entryPoint09Address,
+      entryPointVersion: '0.9',
+      accountVersion: 'kernel-v4-uups',
+      manifestVersion: 'perps-aa-kernel-v1:fresh.sepolia',
+    })
+    expect(writePersistedPerpsIdentity(storage, simple)).toEqual({ ok: true })
+    expect(writePersistedPerpsIdentity(storage, kernel)).toEqual({ ok: true })
+    expect(readPersistedPerpsIdentity(storage, 421614, ownerAddress)).toEqual({ status: 'found', identity: simple })
+    expect(readPersistedPerpsIdentity(storage, 421614, ownerAddress, 'fresh.sepolia')).toEqual({ status: 'found', identity: kernel })
+    expect(readPersistedPerpsIdentity(storage, 421614, ownerAddress, 'next.sepolia')).toEqual({ status: 'missing' })
   })
 
   it('rejects identities from unsupported future manifest versions', () => {

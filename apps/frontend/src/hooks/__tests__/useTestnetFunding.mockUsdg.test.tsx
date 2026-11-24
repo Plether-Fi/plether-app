@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     ownerAddress: '0x1111111111111111111111111111111111111111',
     chainId: 421614, status: 'ready', isAaManifestConfigured: true, sponsorshipEnabled: true,
     manifest: {
+      smartAccountMode: 'simple',
       settlementToken: '0x3333333333333333333333333333333333333333',
       marginClearinghouse: '0x4444444444444444444444444444444444444444',
       settlementTokenSupportsEip3009: false,
@@ -50,6 +51,8 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.identity.status = 'ready'
   mocks.identity.chainId = 421614
+  mocks.identity.sponsorshipEnabled = true
+  mocks.identity.manifest.smartAccountMode = 'simple'
   mocks.start.mockResolvedValue(Result.ok({ data: { version: 1, destination: 'wallet', status: 'legacy_wallet', address: account, token: mocks.identity.manifest.settlementToken }, meta: { chainId: 421614 } }))
   mocks.claim.mockResolvedValue(faucetResponse())
   mocks.receipt.mockResolvedValue({ status: 'success' })
@@ -73,6 +76,40 @@ function marginResponse(status = 'pending', phase = 'mint', overrides = {}) {
 }
 
 describe('direct margin funding', () => {
+  it('credits a verified Kernel account while sponsorship changes', async () => {
+    vi.useFakeTimers()
+    mocks.identity.manifest.smartAccountMode = 'kernel'
+    mocks.identity.sponsorshipEnabled = false
+    mocks.start.mockResolvedValue(marginResponse())
+    mocks.status.mockResolvedValue(marginResponse('funded', 'deposit'))
+
+    const { result, rerender } = renderHook(() => useTestnetFunding(account, true))
+    let pending!: Promise<void>
+    await act(async () => { pending = result.current.requestFunds(account) })
+    expect(mocks.start).toHaveBeenCalledExactlyOnceWith(mocks.identity.ownerAddress, account)
+    expect(result.current.phase).toBe('claiming')
+
+    mocks.identity.sponsorshipEnabled = true
+    rerender()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await pending })
+
+    expect(result.current.phase).toBe('deposited')
+    expect(mocks.status).toHaveBeenCalledExactlyOnceWith(fundingId)
+    expect(mocks.claim).not.toHaveBeenCalled()
+    expect(mocks.deposit).not.toHaveBeenCalled()
+  })
+
+  it('does not mint or ask for a user-paid deposit if Kernel receives the legacy wallet flow', async () => {
+    mocks.identity.manifest.smartAccountMode = 'kernel'
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+
+    expect(result.current.phase).toBe('idle')
+    expect(result.current.error).toContain('Direct margin funding is unavailable')
+    expect(mocks.claim).not.toHaveBeenCalled()
+    expect(mocks.deposit).not.toHaveBeenCalled()
+  })
+
   it('follows all three backend phases without a wallet mint or sponsored user deposit', async () => {
     vi.useFakeTimers()
     mocks.start.mockResolvedValue(marginResponse())

@@ -1,197 +1,88 @@
 # How Plether works in 5 minutes
 
-> **Traders take a view on the dollar.** [**LPs**](#user-content-fn-1)[^1] **underwrite it. Plether keeps the obligation measurable and accounts for everything in** [**USDG**](#user-content-fn-2)[^2]**.**
+> **Traders take a view on the dollar. LPs underwrite it. Plether bounds the worst-case payout and accounts for everything in USDG.**
 
-Plether is an oracle-priced[^3] perpetual market, not an order book.
+Plether is an oracle-priced perpetual market—not an order book and not an AMM. Traders open **LONG USD** or **SHORT USD** positions against Plether’s shared USDG liquidity pool.
 
-Traders are not matched against other traders. They open **LONG USD** or **SHORT USD** positions against Plether's shared USDG liquidity pool.
+### 1. One dollar index, bounded between 0.00 and 2.00
 
-Four components connect them:
+Plether combines six Pyth FX feeds—**EUR (57.6%), JPY (13.6%), GBP (11.9%), CAD (9.1%), SEK (4.2%), and CHF (3.6%)**—into a normalized basket centered at `1.00`.
 
-1. A currency basket measures the direction of the dollar.
-2. Traders deposit USDG as margin.
-3. Delayed orders determine when and how positions execute.
-4. Senior and Junior LP capital backs trader payouts.
+* The displayed **plDXY Perp price** rises when USD strengthens (**LONG USD** profits) and falls when USD weakens (**SHORT USD** profits).
+* Internally, contracts compute a raw foreign-currency basket `B` that moves opposite to USD, and the app displays `D = 2.00 − B`.
+* Settlement prices are permanently clamped between **`0.00` and `2.00`**. That fixed ceiling makes every position’s maximum possible payout knowable before the trade is accepted.
 
-### 1. One market, two directions
+![The raw foreign-currency basket moves opposite to USD strength. The interface displays 2.00 minus the raw basket so LONG USD rises with the dollar and payouts stay bounded.](../.gitbook/assets/diagrams/dollar-index-bounded-payoff.svg)
 
-Plether derives dollar exposure from six major currencies:
+For the full arithmetic formula and why effective weights drift over time, see [Understanding the Plether Dollar Index](understanding-the-plether-dollar-index.md).
 
-* Euro
-* Japanese yen
-* British pound
-* Canadian dollar
-* Swedish krona
-* Swiss franc
+### 2. Margin and your Trading Account
 
-Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired[^4] weights to produce a transparent basket-derived market.
+When you connect a wallet (or sign in with Email, Google, or a passkey), Plether derives a dedicated **Plether Trading Account** controlled by your wallet’s signatures. Eligible Perps actions are gas-sponsored—your wallet does not need Arbitrum Sepolia ETH to deposit test USDG or trade.
 
-It is not raw DXY, a wrapped futures contract, or a claim on an offchain index.
+Each Trading Account holds **one live direction at a time**: you can open, increase, add margin, partially reduce, or fully close. To flip from LONG USD to SHORT USD, close the existing position first.
 
-| Position      | Your view                  | Profits when                                 |
-| ------------- | -------------------------- | -------------------------------------------- |
-| **LONG USD**  | The dollar will strengthen | The dollar gains against the currency basket |
-| **SHORT USD** | The dollar will weaken     | The dollar loses against the currency basket |
-
-The dollar index price rises when USD strengthens and falls when USD weakens. LONG USD profits from a rising index; SHORT USD profits from a falling index.
-
-```plether-dollar-index
-Dollar index trade example
-```
-
-The dollar index price has fixed lower and upper bounds. This limits the maximum possible payout and makes the protocol’s worst-case obligation calculable before accepting a trade.
-
-### 2. Traders deposit margin
-
-Every position starts with USDG margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
-
-Position margin after accrued carry and same-account trader claims back price losses. Carry consumes active position margin first, then eligible free USDG. A deposit adds free USDG for actions and any carry left after position margin is exhausted. Assigning free USDG to position margin increases the price-loss buffer and can reduce future carry; later carry can reduce that margin again.
-
-Each Trading Account can hold one live direction at a time. A trader can:
-
-* Open a position
-* Increase its size
-* Add margin
-* Partially reduce it
-* Close it completely
-
-To switch from LONG USD to SHORT USD, or the other way around, the existing position must be closed first.
-
-Positions have no scheduled expiry. They remain open until the trader closes them or a keeper liquidates them after the account no longer satisfies its maintenance requirement.
+Position equity is your assigned position margin (after accrued carry) plus any same-account trader claim plus unrealized price PnL. Free USDG stays available for new orders, fees, and fallback carry—it does not raise your price-liquidation buffer until you assign it with **Add Margin**.
 
 ### 3. Orders commit first and price later
 
-Plether does not execute an order in the same operation in which it is committed.
+Plether never fills an order in the same block it is submitted:
 
-Instead:
+1. You review the trade preview and sign the sponsored commitment.
+2. The order joins a global **first-in, first-out (FIFO)** queue. Once confirmed onchain, it is **binding and cannot be cancelled**.
+3. A permissionless keeper finalizes the order using the **first eligible Pyth observation published after commitment** (or bounded frozen-market rules during weekend FX closures).
+4. If the price stays within your acceptable-price limit and passes risk checks, the trade executes; otherwise it fails cleanly or expires after 60 seconds.
 
-1. The owner wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
-2. Any required margin and an execution reward are reserved.
-3. The order enters a global first-in, first-out queue.
-4. A permissionless keeper[^5] submits execution and any Pyth update data required by the active market state.
-5. While the FX[^6] market is live, execution uses the first eligible oracle update published after the order was committed.
-6. The protocol applies the active confidence policy, VPI[^7] and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
-7. The position executes or the order fails according to protocol rules.
+This prevents queued orders from becoming free options and keeps keepers from cherry-picking favorable prices. See [Oracle & execution model](../how-plether-works/oracle-and-execution-model.md) and [How orders execute](../how-plether-works/how-orders-execute.md).
 
-The trader cannot cancel an order after commitment.
+### 4. What drives a trade's result
 
-This prevents queued orders from becoming free options. It also reduces front-running and keeper price-selection risk: neither the trader nor the keeper can simply choose a later, more favorable price update.
+| Component | What it does |
+| --- | --- |
+| **Directional PnL** | Linear gain or loss as the index moves (`quantity × price move`) |
+| **Execution fee** | Protocol fee (`0.04%` of executed contract notional) on size changes |
+| **Virtual Price Impact (VPI)** | Separate USDG charge when adding to pool skew, or a bounded rebate when reducing skew |
+| **Carry** | Continuous time-based cost for LP-backed payout capacity—not trader-to-trader funding; both LONG and SHORT can pay carry at once, including over weekends |
+| **Execution reward** | Small USDG bounty (`0.01–0.20 USDG`) reserved on **opens and increases** for the keeper; **reductions and closes have zero execution reward** |
 
-Delayed execution is still execution risk. The market may move between commitment and settlement, and an order may fail because of slippage, expiry, missing oracle data, or protocol state.
+If position equity reaches or falls below **maintenance margin** (or if carry or VPI reserves go uncovered), a keeper can execute a **full liquidation**. See [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md) and [Margin, leverage and liquidation](../how-plether-works/margin-leverage-and-liquidation.md).
 
-### 4. What determines a position’s result?
+### 5. LPs supply the balance sheet in two tranches
 
-A position has several separate economic components:
+Liquidity providers deposit USDG directly from their connected owner wallet (paying ordinary Arbitrum Sepolia ETH gas) into two ERC-4626 vaults backed by the same pool:
 
-| Component            | What it does                                                     |
-| -------------------- | ---------------------------------------------------------------- |
-| **Directional PnL**  | Gains or loses value as the dollar moves relative to the basket  |
-| **Margin**           | Supports the position and absorbs losses                         |
-| **Execution fee**    | Protocol fee charged when position size changes                  |
-| **Price impact**     | Applies a separate USDG charge or rebate based on pool imbalance |
-| **Carry**            | Time-based cost for using LP-backed capital                      |
-| **Execution reward** | Pays the account that processes the delayed order                |
+| Tranche | Return profile | Loss & withdrawal order |
+| --- | --- | --- |
+| **Senior (`psLP`)** | Targets a coupon funded from available Junior value | Takes losses only after Junior is exhausted; withdrawals funded before Junior |
+| **Junior (`pjLP`)** | Receives residual pool trading revenue after Senior obligations | Absorbs losses first; withdrawals wait behind Senior and a Senior-share covenant |
 
-#### Price impact
+**Liability is the product. Return is what LPs receive for underwriting it.** Senior is last-loss, not risk-free—its target coupon is not guaranteed, and Senior principal can be impaired if Junior is wiped out.
 
-Plether uses virtual price impact to respond to directional imbalance.
+All LP deposits and withdrawals run through **hourly vault processing** (requests included within 5 minutes of the hour roll to the next hour) and carry a **one-hour withdrawal cooldown** from deposit activation. See [Choose Senior or Junior](../providing-liquidity/choose-senior-or-junior.md).
 
-A trade that adds to the pool’s existing imbalance can pay a VPI charge. A trade that reduces that imbalance can receive a bounded VPI rebate. This signed VPI treatment also remains active for eligible frozen-market closes.
+### 6. Solvency checks and trader claims
 
-VPI changes the trade’s USDG economics. It does not change the oracle execution price recorded on the position or move the external oracle price.
+Before admitting risk-increasing trades, Plether checks that physically backed pool assets (after existing trader claims) cover the worst-case aggregate payout across LONG or SHORT positions plus a settlement buffer. If not, the trade is rejected.
 
-#### Carry instead of funding
+Because there is **no counterparty auto-deleveraging**, winning positions are never forcibly trimmed. If a profitable close completes when free pool cash cannot fund the entire fresh payout immediately, your released position margin follows its normal path and the complete fresh payout is recorded as a **senior trader claim**. Claims rank ahead of LP withdrawals and settle in full once pool cash covers all outstanding claims. See [Settlement liquidity and trader claims](../how-plether-works/settlement-liquidity-and-trader-claims.md).
 
-Plether does not transfer funding payments between LONG and SHORT traders.
+### 7. FX market hours matter
 
-Carry[^8] is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
+Global FX closes from Friday **17:00** to Sunday **17:00** New York time (including US DST):
 
-Both LONG USD and SHORT USD positions can pay carry simultaneously. Carry can also continue accruing while the FX oracle is stale or frozen.
-
-When collected, realized carry becomes pool trading revenue.
-
-#### Liquidation
-
-A position is eligible for liquidation when position margin after accrued carry plus same-account claims and exact price PnL is at or below maintenance. Carry can therefore bring the position closer to liquidation without a price move. Carry left uncovered after both position margin and eligible free USDG are exhausted, or an insufficient VPI reserve, can independently trigger liquidation. The price threshold does not guarantee the eventual execution price, which also uses the adverse oracle-confidence policy.
-
-Available collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader. If collateral cannot cover the full loss, an existing trader claim belonging to the same Trading Account can be netted against the terminal shortfall; any remainder becomes pool bad debt.
-
-### 5. LPs provide the counterparty capital
-
-The liquidity pool holds the USDG that backs trader payouts. LPs enter through two tranches[^9] with different positions in the loss waterfall.
-
-| Tranche    | Return profile                                      | Loss position                                 |
-| ---------- | --------------------------------------------------- | --------------------------------------------- |
-| **Senior** | Targets a coupon funded from available Junior value | Losses reach Senior after Junior is exhausted |
-| **Junior** | Receives residual upside after Senior obligations   | Absorbs losses first                          |
-
-The Senior target rate is configurable, and the resulting coupon is not guaranteed. Senior capital can still be impaired.
-
-Junior takes more risk because it absorbs bad debt first. In return, it receives the residual economics after Senior has been accounted for.
-
-**Liability is the product. Return is what LPs receive for underwriting it.**
-
-LP entry and exit use hourly vault processing:
-
-* Deposits and withdrawals whose transactions are included onchain strictly before the five-minute cutoff target the next processing window; inclusion at or after the cutoff rolls into the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so the confirmed request record is authoritative.
-* A processed deposit creates shares that the LP moves from vault escrow to the owner wallet.
-* A processed withdrawal creates USDG that the LP moves to the owner wallet. Senior requests are funded before Junior requests.
-* Successful deposit activation starts a one-hour source cooldown. Claiming processed shares preserves that activation timestamp and cannot weaken a newer wallet cooldown; after expiry, an available direct route can queue the claimable lot for withdrawal without a wallet transfer. Withdrawal cancellation and return of a zero-value remainder restart the wallet cooldown. An ordinary wallet transfer propagates the sender's existing timestamp instead of starting a fresh hour.
-* Capital reserved for trader payouts or claims cannot fund LP withdrawals.
-* Processing can wait on free pool cash, solvency, oracle state, protocol health or an explicit hourly-processing pause.
-
-### 6. Solvency is checked before exposure grows
-
-The bounded market price lets Plether calculate the maximum aggregate payout for each direction.
-
-Before accepting a trade that increases risk, the protocol compares physically backed pool assets—after existing trader-claim liabilities—with the worst-case directional liability after the trade plus the configured liability-scaled settlement buffer.
-
-If the pool cannot support that obligation, the trade is rejected.
-
-This is **solvency before volume**. It does not mean that LP principal is guaranteed or that bad debt is impossible. It means the protocol measures the bounded obligation before choosing to accept it.
-
-Plether does not forcibly reduce unrelated profitable positions to cover another trader’s loss. There is no counterparty auto-deleveraging.
-
-Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim remains an obligation of the pool and can later settle when aggregate claims are fully cash-covered: into PnL pledge if a position remains open, or into free Margin Account balance if the account is flat.
-
-If a terminal settlement reveals insolvency, the protocol enters degraded mode. New risk is blocked while closes, liquidations and recapitalization remain available.
-
-### 7. FX market hours affect available actions
-
-The dollar market does not trade like crypto. Plether changes behavior around FX-market closures.
-
-| State                   | What changes                                                                                                                                                                                                                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Live market**         | Normal opens, increases, closes and liquidations                                                                                                                                                                                                                                                                    |
-| **Market-close runway** | New risk is blocked and a higher margin requirement applies; closes and liquidations continue                                                                                                                                                                                                                       |
-| **Oracle frozen**       | Opens remain blocked; eligible closes and liquidations use conservative frozen-market rules; carry continues                                                                                                                                                                                                        |
-| **Paused**              | New trader risk or LP deposits may be blocked while protective actions remain available                                                                                                                                                                                                                             |
-| **Degraded**            | New risk and LP deposits are blocked; LP withdrawal requests may still queue, but no new withdrawal USDG is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. Closes, liquidations and recapitalization continue. |
-
-Frozen-market execution prioritizes risk reduction over normal live-price guarantees. Voluntary closes use special pricing rules and a fixed LP-owned frozen-close spread; liquidations keep their separate adverse-confidence policy and do not pay that spread.
+| Market state | What is allowed |
+| --- | --- |
+| **Open** (Sun 17:15 – Fri 16:30 NY) | Normal opens, increases, closes, liquidations, and LP actions |
+| **Close-only · live oracle** (Fri 16:30–17:00 & Sun 17:00–17:15 NY) | New risk blocked; maintenance margin rises to `3.00%`; closes and liquidations use live pricing |
+| **Close-only · oracle frozen** (Fri 17:00 – Sun 17:00 NY) | New risk, new LP deposits, and new TP/SL triggers blocked; voluntary closes use bounded frozen pricing + `0.50%` LP-owned spread; carry continues |
+| **Paused / Degraded** | New risk (and in degraded mode, new LP deposits and withdrawal funding) blocked while risk-reducing closes and liquidations stay available |
 
 ### Five things to remember
 
-1. LONG USD profits when the dollar index rises; SHORT USD profits when it falls.
+1. **LONG USD** profits when the displayed index rises; **SHORT USD** profits when it falls.
 2. **Orders are delayed, binding and non-cancellable.**
-3. **The liquidity pool—not another trader—is the economic counterparty.**
+3. **The liquidity pool—not another trader—is your counterparty.**
 4. **Carry pays for LP-backed exposure; it is not trader-to-trader funding.**
-5. **Bounded liability makes risk measurable. It does not make trading or LPing risk-free.**
+5. **Bounded payouts make risk measurable—not risk-free.**
 
-[^1]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-
-[^2]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-
-[^3]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-
-[^4]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
-
-[^5]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-
-[^6]: Foreign exchange, the market for trading one currency against another.
-
-[^7]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
-
-[^8]: The time-based cost charged on the portion of a position financed by LP capital.
-
-[^9]: A pool layer with its own loss priority, withdrawal priority and return profile.
+Next: read [Key risks at a glance](key-risks-at-a-glance.md) or jump into the [Trader quickstart](../trader-quickstart.md).

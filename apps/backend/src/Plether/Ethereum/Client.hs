@@ -68,6 +68,7 @@ import Network.HTTP.Client
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
+import Network.URI (URI (..), URIAuth (..), parseURI, unEscapeString)
 import Plether.Logging (field, logInfo, logWarnEvery)
 import Plether.Utils.Hex (hexToInteger, intToHex)
 import System.IO.Unsafe (unsafePerformIO)
@@ -204,11 +205,15 @@ withRpcObserver observer client = client {clientObserver = clientObserver client
 -- Never let an ordinary failover alias turn AA verification into a different
 -- provider halfway through an attestation. Other endpoints are unchanged.
 directSecurityRpcEndpoint :: Text -> Text
-directSecurityRpcEndpoint endpoint
-  | endpoint `elem` [gateway, gateway <> "/"] = gateway <> "/primary"
-  | otherwise = endpoint
+directSecurityRpcEndpoint endpoint = case parseURI (T.unpack endpoint) of
+  Just uri
+    | T.toLower (T.pack $ uriScheme uri) == "https:"
+    , Just auth <- uriAuthority uri
+    , gatewayHost == T.dropWhileEnd (== '.') (T.toLower $ T.pack $ unEscapeString $ uriRegName auth) ->
+        "https://" <> gatewayHost <> "/primary"
+  _ -> endpoint
  where
-  gateway = "https://rpc-internal.sepolia.plether.com"
+  gatewayHost = "rpc-internal.sepolia.plether.com"
 
 withoutRpcFallback :: EthClient -> EthClient
 withoutRpcFallback client = client {clientRpcUrl = directSecurityRpcEndpoint $ clientRpcUrl client}

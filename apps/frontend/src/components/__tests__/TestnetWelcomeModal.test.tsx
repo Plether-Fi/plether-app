@@ -97,6 +97,18 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
     expect(screen.getByText(/You do not need Arbitrum Sepolia ETH/)).toBeInTheDocument()
   })
 
+  it('explains that a completed Kernel margin allocation leaves ETH gas funding separate', () => {
+    render(<TestnetWelcomeModalView isOpen isWalletConnected isTradingAccountRecipient isKernelAccount
+      walletAddress={walletAddress} fundingPhase="deposited"
+      claim={{ address: walletAddress, token: walletAddress, amount: '100000000000',
+        destination: 'margin', status: 'margin_funded', txHash: null }}
+      onClose={() => {}} onConnectWallet={() => {}} onWalletAddressChange={() => {}} onRequestFunds={() => {}} />)
+
+    expect(screen.getByText('USDG deposited into your Margin Account.')).toBeInTheDocument()
+    expect(screen.getByText(/add Arbitrum Sepolia ETH to your Trading Account/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start trading' })).toBeEnabled()
+  })
+
   it('offers checking pending direct funding without opening a deposit', () => {
     render(<TestnetWelcomeModalView isOpen isWalletConnected isTradingAccountRecipient
       walletAddress={walletAddress} claim={{address:walletAddress,token:walletAddress,amount:'100000000000',

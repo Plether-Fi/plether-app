@@ -1,75 +1,122 @@
-aws_region                  = "ap-southeast-1"
-expected_aws_account_id     = "932542905614"
-environment         = "mainnet"
-# Replace the example account ID with the account that owns the operations topic.
-operations_alarm_sns_topic_arn = "arn:aws:sns:ap-southeast-1:932542905614:plether-mainnet-operations"
-posthog_project_token = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
-posthog_otlp_host     = "eu.i.posthog.com"
-rpc_url                        = "https://eth-mainnet.g.alchemy.com/v2"
-perps_rpc_url                  = "https://arb-sepolia.g.alchemy.com/v2"
-# Provision these SecureStrings outside Terraform; only their names enter state.
-rpc_auth_token_ssm_parameter_name       = "/plether/mainnet/rpc-auth-token"
-perps_rpc_auth_token_ssm_parameter_name = "/plether/mainnet/perps-rpc-auth-token"
-keeper_private_key             = "0xYOUR_KEEPER_PRIVATE_KEY"
-lp_settlement_private_key       = ""
-lp_settlement_signer_funding_confirmed = false
-oracle_updater_private_key     = "0xYOUR_ORACLE_UPDATER_PRIVATE_KEY"
-liquidation_keeper_private_key = "0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY"
-enable_aa_sponsorship          = false # Perps managed sponsorship is Sepolia-only.
-provision_self_hosted_aa       = false # The self-hosted Alto/paymaster stack is Sepolia-only.
-configure_native_aa_backend    = false
-enable_native_aa_sponsorship   = false
-enable_native_aa_submission    = false
-aa_native_global_rollout_enabled = false
-alto_desired_count             = 0
-aa_reconciler_desired_count    = 0
-pyth_api_key                    = "PYTH_API_KEY_WITH_FX_FEED_ACCESS"
-enable_pyth_api_key             = true
-pyth_latest_max_age_seconds     = "10"
-db_password         = "CHANGE_ME_STRONG_PASSWORD"
-db_username         = "plether"
-chain_id            = "1"
-cors_origins        = "*"
-indexer_start_block = "24427188"
-perps_chain_id      = "421614"
-perps_indexer_start_block = "273137426"
-# LP settlement is Sepolia-only. Terraform rejects observe or execute here
-# until a reviewed production vault release replaces the testnet manifest.
-lp_settlement_mode = "off"
-consolidate_workers = true
-# At least one consolidated worker is required before enabling candle dual
-# writes; it owns both the basket source watermark and Perps volume indexer.
-workers_desired_count = 1
-liquidation_worker_desired_count = 0
-api_desired_count                = 1
-api_container_cpu   = 512
-api_container_memory = 1024
-container_cpu       = 256
-container_memory    = 1024
-workers_container_memory = 1024
-db_instance_class          = "db.t4g.small"
-# Re-size from measured mainnet demand before first creation; allocated storage
-# cannot be reduced in place.
-db_allocated_storage       = 20
-# Desired final/new-instance type. Preserve a live gp2 value until any pending
-# retention/PITR activation completes, then plan gp3 separately.
-db_storage_type            = "gp3"
-db_storage_encrypted       = true
-db_kms_key_id              = ""
-db_ssl_root_cert_path      = "/etc/ssl/certs/aws-rds-global-bundle.pem"
-db_ca_cert_identifier      = "rds-ca-rsa2048-g1"
-db_apply_immediately       = false
-db_backup_retention_days   = 7
-db_max_allocated_storage   = 100
-db_deletion_protection     = true
-db_skip_final_snapshot     = false
-# Must be unique in this AWS region for the current DB lifecycle. Choose a new
-# suffix before recreating the instance so the prior final snapshot is retained.
-db_final_snapshot_identifier = "plether-mainnet-final-20260812-a"
-db_snapshot_identifier       = null
+# Mainnet production configuration template (dedicated mainnet AWS account).
+# Keep real mainnet tfvars outside Git. Never supply plaintext private keys,
+# database passwords, or API tokens here — provision all secrets out-of-band
+# as SSM SecureStrings under /plether/mainnet/*.
 
-# Mainnet remains on legacy reads until dual-write soak, backfill, comparison,
-# and load-test gates have passed for every canonical resolution.
+aws_region              = "ap-southeast-1"
+expected_aws_account_id = "000000000000" # Replace with dedicated 12-digit mainnet AWS account ID
+environment             = "mainnet"
+
+# Verified immutable image digests (required before starting any ECS service).
+api_image_digest        = "sha256:REPLACE_WITH_REVIEWED_API_DIGEST"
+log_router_image_digest = "sha256:REPLACE_WITH_REVIEWED_LOG_ROUTER_DIGEST"
+
+# Mandatory HTTPS ALB endpoint + zero-cost Cloudflare origin lock-down.
+api_hostname        = "api.plether.com"
+alb_certificate_arn = "arn:aws:acm:ap-southeast-1:000000000000:certificate/REPLACE_WITH_MAINNET_CERT_ID"
+cors_origins        = "https://app.plether.com,https://insights.plether.com"
+# Restrict ALB ingress to published Cloudflare IPv4 edge ranges (https://www.cloudflare.com/ips-v4).
+alb_allowed_cidrs = [
+  "173.245.48.0/20",
+  "103.21.244.0/22",
+  "103.22.200.0/22",
+  "103.31.4.0/22",
+  "141.101.64.0/18",
+  "108.162.192.0/18",
+  "190.93.240.0/20",
+  "188.114.96.0/20",
+  "197.234.240.0/22",
+  "198.41.128.0/17",
+  "162.158.0.0/15",
+  "104.16.0.0/13",
+  "104.24.0.0/14",
+  "172.64.0.0/13",
+  "131.0.72.0/22",
+]
+
+# Email SNS alerting & ECS incident observer (SPOF rapid detection).
+operations_alarm_sns_topic_arn      = "arn:aws:sns:ap-southeast-1:000000000000:plether-mainnet-operations"
+enable_incident_observer            = true
+incident_escalation_sns_topic_arn   = "arn:aws:sns:ap-southeast-1:000000000000:plether-mainnet-operations"
+rpc_request_rate_warning_threshold  = 225000
+rpc_request_rate_critical_threshold = 275000
+
+# External SSM SecureStrings (provisioned out-of-band; zero secrets in state).
+rpc_url                                              = "https://eth-mainnet.g.alchemy.com/v2"
+perps_rpc_url                                        = "https://arb-mainnet.g.alchemy.com/v2"
+rpc_auth_token_ssm_parameter_name                    = "/plether/mainnet/rpc-auth-token"
+perps_rpc_auth_token_ssm_parameter_name              = "/plether/mainnet/perps-rpc-auth-token"
+pyth_api_key_ssm_parameter_name                      = "/plether/mainnet/pyth-api-key"
+keeper_private_key_ssm_parameter_name                = "/plether/mainnet/keeper-private-key"
+oracle_updater_private_key_ssm_parameter_name        = "/plether/mainnet/oracle-updater-private-key"
+liquidation_keeper_private_key_ssm_parameter_name    = "/plether/mainnet/liquidation-keeper-private-key"
+lp_settlement_private_key_ssm_parameter_name         = "/plether/mainnet/lp-settlement-private-key"
+protection_worker_private_key_ssm_parameter_name     = "/plether/mainnet/protection-worker-private-key"
+database_url_ssm_parameter_name                      = "/plether/mainnet/database-url"
+posthog_otlp_authorization_header_ssm_parameter_name = "/plether/mainnet/posthog-otlp-authorization-header"
+aa_proxy_origin_token_ssm_parameter_name             = "/plether/mainnet/aa-proxy-origin-token"
+posthog_otlp_host                                    = "eu.i.posthog.com"
+
+# Chain & canonical Arbitrum One release bindings.
+chain_id                    = "1"
+indexer_start_block         = "24427188"
+perps_chain_id              = "42161"
+perps_release_manifest_path = "../../config/perps/arbitrum-one-v1.json"
+pyth_latest_max_age_seconds = "10"
+
+# Full Sepolia parity: Self-hosted AA / Alto (dual-independent RPC required on mainnet).
+provision_self_hosted_aa                           = true
+aa_rpc_mode                                        = "dual-independent"
+alto_rpc_url_ssm_parameter_name                    = "/plether/mainnet/alto-rpc-url"
+alto_executor_private_keys_ssm_parameter_name      = "/plether/mainnet/alto-executor-private-keys"
+alto_utility_private_key_ssm_parameter_name        = "/plether/mainnet/alto-utility-private-key"
+aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/mainnet/aa-reconciler-secondary-rpc-url"
+aa_reconciler_max_safe_lag_seconds                 = "600"
+alto_desired_count                                 = 0 # Scale to 1 after simulation bootstrap
+aa_reconciler_desired_count                        = 0 # Scale to 1 after start block pin
+configure_native_aa_backend                        = false
+enable_native_aa_sponsorship                       = false
+enable_native_aa_submission                        = false
+aa_native_global_rollout_enabled                   = false
+
+# SL/TP Position Protection & LP Settlement (enable after preflight & signer funding).
+protection_worker_desired_count        = 0
+protection_worker_execution_enabled    = false
+lp_settlement_mode                     = "off"
+lp_settlement_signer_funding_confirmed = false
+
+# Cost-constrained single-instance compute topology (protected by circuit breakers & incident observer).
+consolidate_workers              = true
+workers_desired_count            = 1
+liquidation_worker_desired_count = 1
+api_desired_count                = 1
+api_container_cpu                = 1024
+api_container_memory             = 2048
+container_cpu                    = 256
+container_memory                 = 1024
+workers_container_cpu            = 512
+workers_container_memory         = 1024
+
+# Cost-constrained Single-AZ RDS with encryption, AWS-managed password, PITR, and forced SSL.
+db_engine_version               = "16.4"
+db_instance_class               = "db.t4g.small"
+db_username                     = "plether"
+db_manage_master_user_password  = true
+db_allocated_storage            = 20
+db_max_allocated_storage        = 100
+db_storage_type                 = "gp3"
+db_storage_encrypted            = true
+db_kms_key_id                   = ""
+db_ssl_root_cert_path           = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+db_ca_cert_identifier           = "rds-ca-rsa2048-g1"
+db_apply_immediately            = false
+db_backup_retention_days        = 14
+db_deletion_protection          = true
+db_skip_final_snapshot          = false
+db_final_snapshot_identifier    = "plether-mainnet-final-20261123-a"
+db_snapshot_identifier          = null
+
+# Candle rollups remain legacy until dual-write soak passes on mainnet.
 perps_candle_write_mode                 = "off"
 perps_candle_read_mode                  = "legacy"
 perps_candle_read_intervals             = ""

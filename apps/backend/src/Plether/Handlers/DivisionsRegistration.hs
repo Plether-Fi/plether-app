@@ -29,11 +29,9 @@ import qualified Network.Wai as Wai
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import qualified Plether.Database.Insights.Registration as LegacyDb
-import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.InsightsRegistration
-  ( TradingAccountProof (..), readBoundedRequestBody, registrationHeaders
+  ( TradingAccountProof (..), TradingAccountVerifier, readBoundedRequestBody, registrationHeaders
   , respondError, safeRegistrationIO, trustedClientIp, validateJsonRequest
-  , verifyOwnedTradingAccount
   )
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Insights.Registration.Crypto
@@ -129,8 +127,8 @@ data DiscordUser = DiscordUser Text Text
 instance FromJSON DiscordUser where
   parseJSON = withObject "DiscordUser" $ \v -> DiscordUser <$> v .: "id" <*> v .: "username"
 
-registerDivisionsRegistrationRoutes :: DbPool -> EthClient -> Config -> Manager -> Maybe DiscordConfig -> ScottyM ()
-registerDivisionsRegistrationRoutes pool perpsClient config manager maybeDiscord =
+registerDivisionsRegistrationRoutes :: DbPool -> TradingAccountVerifier -> Config -> Manager -> Maybe DiscordConfig -> ScottyM ()
+registerDivisionsRegistrationRoutes pool verifyTradingAccount config manager maybeDiscord =
   case (cfgRegistrationConfig config, maybeDiscord) of
     (Just registrationConfig, Just discord) -> do
 
@@ -274,7 +272,7 @@ registerDivisionsRegistrationRoutes pool perpsClient config manager maybeDiscord
                             recovered <- recoverPersonalSignAddress message signature
                             case recovered of
                               Right signer | signer == owner -> do
-                                proof <- verifyOwnedTradingAccount perpsClient owner
+                                proof <- verifyTradingAccount owner
                                 case proof of
                                   Left err -> pure $ Left err
                                   Right accountProof -> do
@@ -305,7 +303,7 @@ registerDivisionsRegistrationRoutes pool perpsClient config manager maybeDiscord
                         then pure $ Left $ registrationError ConsentMismatch "Rules and privacy acceptance are required"
                         else case (lsDiscordId session, lsDiscordName session, lsOwner session, lsTradingAccount session) of
                           (Just discordId, Just username, Just owner, Just account) -> do
-                            proof <- verifyOwnedTradingAccount perpsClient owner
+                            proof <- verifyTradingAccount owner
                             case proof of
                               Right latest | tapTradingAccount latest == account -> do
                                 completed <- withDb pool $ \connection -> withTransaction connection $ do

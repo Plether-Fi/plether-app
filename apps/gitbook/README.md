@@ -1,95 +1,49 @@
 # What is Plether Perps DEX?
 
-> **Trade and hedge dollar index perpetuals. Onchain.**
+> **Trade and hedge U.S. dollar strength onchain.**
 >
-> Margined and settled in USDG[^usdg]. Bounded payouts. Solvency-checked entry. Delayed oracle[^oracle] execution.
-
-The USDG testnet release is being prepared. Funding and trading open after deployment. Testnet examples use MockUSDG, which has no real-world value.
+> Margined and settled in USDG. Bounded payouts. Solvency-checked entry. Delayed oracle execution.
 
 Holding dollars feels neutral. It isn’t.
 
-Much of onchain finance is already denominated in dollars. If you hold USDG but earn, spend, or report in another currency, changes in the dollar affect your purchasing power. That exposure is a position, whether you chose it or not.
+Most of onchain finance is denominated in dollars. If you hold USDG while earning, spending, or reporting in another currency, moves in the dollar change your purchasing power. That exposure is a position whether you chose it or not.
 
 Plether makes that position explicit.
 
-Plether Perps[^perps] DEX[^dex] is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. It is built for **USDG-first, gas-sponsored trading**: eligible perps actions use wallet authorization and a sponsored operation instead of requiring the trader to hold the network’s native gas token. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for the account model, eligible actions and availability limits.
+**Plether Perps DEX** is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies (EUR, JPY, GBP, CAD, SEK, CHF).
 
-Traders use USDG margin to take either side:
+| Position | Your view | Profits when |
+| --- | --- | --- |
+| **LONG USD** | The dollar will strengthen | The dollar gains against the six-currency basket |
+| **SHORT USD** | The dollar will weaken | The dollar loses against the six-currency basket |
 
-| Position      | Your view                  | Profits when                        |
-| ------------- | -------------------------- | ----------------------------------- |
-| **LONG USD**  | The dollar will strengthen | The dollar gains against the basket |
-| **SHORT USD** | The dollar will weaken     | The dollar loses against the basket |
+Positions have no scheduled expiry. They stay open until you close them or a keeper liquidates them if the account drops below its maintenance requirement.
 
-Positions have no scheduled expiry. They remain open until you close them or a keeper liquidates them after the account no longer satisfies its maintenance requirement.
+> **Active testnet deployment**
+>
+> Plether Perps DEX and LP Vaults are live on **Arbitrum Sepolia** (`chainId: 421614`) at [app.sepolia.plether.com](https://app.sepolia.plether.com) using **MockUSDG** (a test token with no real-world value). The primary domain [app.plether.com](https://app.plether.com) currently serves the legacy Ethereum `/spot` interface (`plDXY-BULL` / `plDXY-BEAR` in USDC).
 
-The market is basket-derived. It is not a wrapped futures contract or a tokenized claim on an offchain index.
+### The big picture
 
-### How a trade works
+Plether does not match traders on an order book or price trades on an AMM curve. Instead, three parts work together:
 
-1. Deposit USDG into your Margin Account.
-2. Authorize the Trading Account action; Plether submits the eligible sponsored operation that commits the binding order.
-3. A keeper[^keeper] executes the order against the eligible Pyth observation under the active market-state policy. Live execution uses the first eligible post-commit observation.
-4. The liquidity pool takes the other side of the position.
-5. Profit, loss, fees, and remaining margin are accounted for in USDG.
+1. **Pyth FX feeds** supply the underlying exchange rates for the Plether Dollar Index.
+2. **Traders** post USDG margin and commit delayed LONG USD or SHORT USD orders. Eligible trading actions are **gas-sponsored** through a derived Plether Trading Account—no Arbitrum Sepolia ETH required for trading or test funding.
+3. **A shared USDG liquidity pool**—funded by **Senior** and **Junior** LP vaults—takes the economic other side of every position.
 
-Orders enter a global first-in, first-out queue and cannot be cancelled after commitment.
+![Pyth FX feeds set the bounded plDXY price. Traders commit LONG USD or SHORT USD orders via gas-sponsored Trading Accounts, while Senior and Junior LP vaults underwrite bounded payouts.](.gitbook/assets/diagrams/plether-system-overview.svg)
 
-During live execution, the price comes from a post-commit oracle update—not a price selected by the trader or keeper. Frozen voluntary closes use Plether’s bounded frozen-market policy. Both paths reduce keeper price-selection risk while preserving the applicable oracle safeguards.
+### Why Plether is built this way
 
-### Solvency before volume
+* **Solvency before volume:** The index settles inside a fixed **`0.00–2.00`** range, so the protocol calculates every position's worst-case payout before accepting it. If pool backing cannot cover aggregate worst-case payouts plus a buffer, new risk is rejected.
+* **No counterparty auto-deleveraging (ADL):** Plether never forcibly trims your profitable position to cover another trader's loss.
+* **Carry instead of peer-to-peer funding:** Rather than unpredictable trader-to-trader funding swings, positions pay continuous **carry** for using LP-backed payout capacity.
+* **Two LP risk layers:** **Junior** LPs absorb losses first in exchange for residual trading revenue; **Senior** LPs target a coupon funded from Junior value and take losses only after Junior is exhausted. **Liability is the product. Return is what LPs receive for underwriting it.**
+* **FX market hours:** Global FX closes over weekends. New risk is blocked during scheduled close-only windows, while closes and liquidations remain available under explicit rules.
 
-Plether uses a bounded market price. This makes the maximum modeled payout of every position calculable before the protocol accepts it.
+### Where to go next
 
-Before a trade can increase risk, the protocol checks whether the liquidity pool has enough physically backed assets, after existing trader-claim liabilities, to cover the resulting worst-case aggregate trader payout plus the configured liability-scaled settlement buffer. If it does not, the trade is rejected.
-
-Plether does not forcibly reduce an unrelated profitable position to cover another trader’s loss. There is no counterparty auto-deleveraging.
-
-Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim is not erased, but its settlement may be delayed until sufficient cash is available.
-
-Bounded liability does not remove risk. Traders can still be liquidated, and liquidity providers can still lose capital. It makes the obligation measurable before the protocol takes it on.
-
-### Where liquidity comes from
-
-Liquidity providers deposit USDG into the liquidity pool through two tranches[^tranche]:
-
-* The **Senior tranche** targets a coupon funded from available Junior value and has last-loss priority. The target is not guaranteed, and Senior capital can still be impaired after Junior capital is exhausted.
-* The **Junior tranche** absorbs losses first and receives the residual upside after Senior obligations have been accounted for.
-
-LP[^lp] capital backs trader payouts and absorbs bad debt. Realized carry[^carry] becomes pool trading revenue.
-
-**Liability is the product. Return is what LPs receive for underwriting it.**
-
-LP deposits and withdrawals use hourly vault requests. Withdrawals are also subject to holder cooldowns, Senior-first funding, reserved obligations, available pool liquidity, oracle state, and solvency checks. Capital already required to support trader liabilities cannot leave the pool.
-
-To provide liquidity, start with the [Liquidity provider quickstart](liquidity-provider-quickstart.md). The task-oriented guides under **Providing liquidity on Plether** cover tranche selection, hourly deposits and withdrawals, pending-request management, performance, position monitoring and risk.
-
-### Market hours and risk
-
-The underlying FX[^fx] market does not operate like crypto markets.
-
-Plether remains onchain during weekends and market closures, but new risk is blocked during the configured market-close runway and frozen-oracle period. Once the oracle is frozen, eligible closes and liquidations follow special frozen-market rules. Positions can continue accruing carry throughout these periods.
-
-Before using Plether, understand that:
-
-* Orders are delayed, binding, and non-cancellable.
-* Leveraged positions can be liquidated.
-* Profitable settlements can temporarily become trader claims.
-* LP deposits can lose value or become temporarily unavailable for withdrawal.
-* Smart-contract, oracle, USDG, keeper, liquidity, and governance risks remain.
-
-### Onchain macro starts here
-
-Onchain finance already runs on dollars. Plether makes the dollar itself a market.
-
-Building an automated strategy? [AI trading agents](welcome/ai-trading-agents.md) explains how oracle execution, bounded liability and verifiable financial limits support systematic dollar trading and hedging.
-
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
-[^dex]: Decentralized exchange, an onchain venue for trading without a traditional centralized intermediary.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^fx]: Foreign exchange, the market for trading one currency against another.
+* **New here?** Read [How Plether works in 5 minutes](welcome/how-plether-works-in-5-minutes.md), then skim [Key risks at a glance](welcome/key-risks-at-a-glance.md).
+* **Ready to trade?** Follow the [Trader quickstart](trader-quickstart.md) (takes under 5 minutes with free test USDG) and check [Plether Divisions](get-started/plether-divisions.md).
+* **Providing liquidity?** Start with the [Liquidity provider quickstart](liquidity-provider-quickstart.md).
+* **Building bots or verifying contracts?** Jump to [AI trading agents](welcome/ai-trading-agents.md) or [Deployments, contracts and live parameters](reference/deployments-and-parameters.md).

@@ -1,417 +1,146 @@
 # Margin, leverage and liquidation
 
-Position margin remaining after accrued carry and same-account trader claims back price risk. Carry is collected from active position margin first, then eligible free USDG.
+Plether uses **isolated position price collateral**: only **position margin (after accrued carry)** and **same-account trader claims** back position price risk. Free Margin Account USDG[^usdg] and committed-order margin do **not** move your price liquidation threshold until explicitly assigned to the position.
 
-The USDG[^usdg] shown as **Position margin** is pledged to price losses. Adding free USDG does not move the price-liquidation threshold until funds are assigned to position margin. A same-account claim also supports price equity.
+* **Position margin** backs price losses on the open position.
+* **Position equity** determines price health (while uncovered carry and dedicated VPI[^vpi] rebate reserve backing are checked separately).
+* **Maintenance margin** sets the liquidation trigger.
 
-The practical model is:
+## Where your USDG sits
 
-* **Position margin** organizes collateral.
-* **Position equity** determines price health; carry coverage and reserve backing are checked separately.
-* **Maintenance margin** determines when the account becomes liquidatable.
+All trader collateral is held in the **Margin Clearinghouse** across separate accounting buckets:
 
-### Where your USDG sits
+| Bucket | Role |
+| --- | --- |
+| **Free USDG** | Buying power for new orders, carry overflow, action charges or withdrawal — **excluded** from price equity |
+| **Position margin** | Assigned to the active position; backs price losses and pays carry first |
+| **Committed order margin** | Reserved for a pending open/increase — **excluded** from price equity |
+| **Execution-reward / TP-SL reserves** | Reserved for opening-order execution or TP/SL triggering — **excluded** from price equity |
 
-All trader collateral is held in the MarginClearinghouse. Within it, USDG is divided into separate accounting buckets.
+> **Carry vs price losses:** Carry[^carry] consumes **active position margin first, then eligible free USDG** (trader claims and reserved funds cannot pay carry). Price losses net **same-account trader claims first, then position margin** (free USDG and committed-order margin never absorb price losses). Plether can never debit assets sitting in your external wallet.
 
-| Bucket                   | What it means                                                                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Free USDG                | Available for new orders, fees, carry, margin additions or withdrawal—subject to action checks |
-| Position margin          | USDG assigned to the active position                                                                  |
-| Committed order margin   | USDG reserved for a pending order                                                                     |
-| Execution reward reserve | USDG reserved to reward the account executing or cleaning up an order                                 |
+## Contract notional vs displayed exposure
 
-The total of these buckets forms the account’s USDG balance, but not every bucket is available for every purpose.
+While the interface displays `D = 2.00 − B`, the risk engine computes **contract notional**[^notional] from the raw basket price `B`:
 
-Position margin and same-account claims support price health. Free USDG, committed-order funds and execution rewards do not support price losses. Dedicated action and liquidation reserves have separate purposes.
-
-A trader claim is not spendable cash, but the same account’s claim is included in its position equity and can offset its price losses.
-
-> Carry consumes active position margin first, then eligible free USDG. Same-account claims support price equity and can offset price losses, but claims and other reserved funds cannot pay carry.
-
-Plether cannot debit USDG or other assets held in your wallet, another protocol or another Plether account.
-
-### The notional used for margin
-
-Plether displays the dollar-oriented index price:
-
-```
-D = 2.00 − B
+```text
+Contract notional N = Q × B = Q × (2.00 − D)
 ```
 
-Where:
+Margin requirements and leverage use `N`, whereas directional PnL[^pnl] uses `ΔD`.
 
-* `D` is the displayed Plether Dollar Index price.
-* `B` is the raw foreign-currency basket price.
+## Initial margin
 
-The risk engine calculates current contract notional[^notional] from the raw basket:
+Initial margin governs opening or increasing exposure (`initialMarginBps = 0.20%` on Core v2.0.0; normal UI cap `33x`, Margin Call Simulator cap `416x`):
 
-```
-N = S × B
-  = S × (2.00 − D)
+```text
+Initial requirement = max(N × 0.20%, minimum liquidation charge floor)
 ```
 
-Where `S` is the protocol position size.
+Both assigned position margin and post-trade position equity (after execution fee, VPI and carry) must meet the initial requirement, pass the `1,000 USDG` minimum open notional, stay within the `40%` skew cap and pass pool solvency.
 
-This means the notional used for leverage and margin is not simply position size multiplied by the displayed index price.
+## Maintenance margin
 
-Directional PnL[^pnl] is still calculated from changes in `D`. The distinction above applies to margin and risk accounting.
+Maintenance margin determines whether an open position stays alive:
 
-### Initial margin
-
-Initial margin governs the creation of risk.
-
-When you open or increase a position, Plether checks that both:
-
-1. The margin assigned to the position meets the initial requirement.
-2. The account’s post-trade equity meets the same requirement.
-
-Conceptually:
-
-```
-Initial requirement
-= max(
-    current contract notional × initial margin rate,
-    minimum liquidation-bounty floor
-  )
+```text
+Maintenance margin = N × active maintenance margin rate
 ```
 
-The post-trade check includes the applicable execution fee, VPI[^vpi] adjustment and accrued carry[^carry]. An order that appears sufficiently collateralized before costs may fail after those costs are applied.
+Active Core v2.0.0 rates:
 
-The protocol also verifies that:
+* **Live market:** `0.10%` (`10 bps`)
+* **FAD close-only window (market-close regime):** `3.00%` (`300 bps`)
 
-* the resulting position is not immediately liquidatable;
-* the liquidity pool can cover its bounded maximum liability;
-* the resulting market imbalance remains within protocol limits.
+Price liquidation triggers as soon as:
 
-Initial margin rates and bounty parameters are protocol settings. Use the live onchain values rather than values from static examples.
-
-### Maintenance margin
-
-Maintenance margin determines whether an existing position may remain open.
-
-```
-Maintenance margin
-= current contract notional × active maintenance margin rate
+```text
+Position equity <= Maintenance margin
 ```
 
-The central liquidation condition is:
+Equality counts (`<=`, not `<`). Crossing into a FAD window raises maintenance from `0.10%` to `3.00%` immediately — a high-leverage position can become liquidatable without any move in `plDXY`.
 
-```
-Position equity ≤ Maintenance margin
-```
+## Position leverage and equity leverage
 
-Equality counts. If account equity is exactly equal to the requirement, the position is eligible for liquidation.
+Plether separates nominal position leverage from real-time equity leverage:
 
-Maintenance margin is normally lower than initial margin. This gives a valid position some room to move after opening—but it is not a guaranteed safety buffer.
-
-### Position leverage and equity leverage
-
-Plether can describe leverage in two different ways.
-
-#### Position leverage
-
-```
-Position leverage
-= current contract notional ÷ assigned position margin
+```text
+Position leverage = Contract notional ÷ Assigned position margin
+Equity leverage   = Contract notional ÷ Position equity
 ```
 
-This is the leverage shown in the **Current Position** panel. It describes the relationship between the position’s current notional and the USDG explicitly assigned to it.
+**Example:** With `10,000 USDG` contract notional, `1,000 USDG` assigned position margin and a `500 USDG` same-account claim (`Position equity = 1,500 USDG`), **Position leverage** is `10.00×` and **Equity leverage** is `6.67×`. If price losses drop position equity to `800 USDG`, **Equity leverage** rises to `12.50×` while Position leverage stays `10.00×`. Adding free USDG alone does not change Equity leverage.
 
-#### Equity leverage
-
-```
-Equity leverage
-= current contract notional ÷ position equity
-```
-
-Equity leverage includes position margin after accrued carry, same-account claims and exact price PnL. Free funds are excluded. Carry consumes active margin before free USDG and can therefore change equity leverage. If carry remains uncovered, positive price equity does not imply a healthy account.
-
-If position equity is zero or negative, effective leverage is no longer a meaningful finite number. The account should instead be treated as critically undercollateralized.
-
-#### Example
-
-Suppose:
-
-```
-Current contract notional:  $10,000
-Assigned position margin:    $1,000
-Position equity:             $1,500 (including a $500 same-account claim)
-```
-
-Then:
-
-```
-Position leverage:          10.00×
-Equity leverage:  6.67×
-```
-
-If price losses reduce position equity to `$800`, equity leverage rises to `12.50×`, even if assigned position margin and contract notional remain unchanged.
-
-A same-account claim or price profit can reduce equity leverage without changing assigned margin. Free USDG does not change price equity.
-
-Leverage is also a snapshot. It can change because:
-
-* the oracle[^oracle] price changes current notional;
-* unrealized PnL changes equity;
-* position margin or the same-account claim changes;
-* fees or VPI affect a newly executed trade;
-* the active margin regime changes.
-
-Higher leverage means less room for adverse movement and costs. Leverage itself, however, is not the liquidation trigger. The equity test is.
+If position equity hits zero or negative, treat the account as critically undercollateralized rather than relying on a finite leverage ratio.
 
 ![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
-### Depositing USDG versus adding position margin
+## Depositing USDG vs adding position margin
 
-These actions are not equivalent.
-
-#### Depositing new USDG
-
-Depositing new USDG into the Margin Account increases the account’s USDG balance. In the current sponsored flow, that USDG is sourced from the separate Trading Account.
-
-If carry is due, the deposit action checkpoints it: active position margin pays first, then eligible free USDG. Depositing adds free funds as a fallback but does not automatically assign new position margin. Carry realized during the action can reduce position equity even though funds are being deposited.
-
-#### Adding position margin
-
-Adding position margin moves existing free USDG into the position-margin bucket. It does not:
-
-* increase position size;
-* change entry price;
-* change the total USDG held in settlement.
-
-After the carry checkpoint, moving that USDG into the position increases price-risk backing and leaves less free USDG for actions. Future carry can consume the newly assigned margin before drawing on free funds.
-
-Adding position margin can still:
-
-* lower the displayed position leverage;
-* satisfy position-level requirements for a later increase;
-* reduce the part of the position economically financed by LP[^lp] capital;
-* reduce future carry.
-
-Plether realizes collectible carry from existing active position margin first, then eligible free USDG, before locking added margin. The form’s maximum uses free USDG remaining after that projection. Keep account health under review: future carry can reduce the new margin, and the transaction checks the actual state at execution.
-
-#### Removing position margin
-
-Direct position-margin removal is not supported.
-
-Reducing or closing the position releases assigned margin proportionally. Once released into free USDG, it may be withdrawn if the account passes the post-withdrawal risk checks.
+* **Depositing USDG** adds to **free Margin Account USDG** (and checkpoints carry from active position margin first, then eligible free USDG). It provides carry fallback and buying power, but does **not** raise price equity or move your liquidation price.
+* **Adding position margin** (**Edit Position Margin → Add margin**) checkpoints carry first, then moves free USDG into **Position margin** — immediately raising price equity, lowering Position leverage and shrinking your LP[^lp]-financed borrow base (reducing future carry). Future carry can still draw down the added margin first.
+* **Direct margin removal is not supported:** Releasing assigned position margin requires reducing or closing the position.
 
 ![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
-### Available to trade is not the same as withdrawable
+**Available to Trade vs Withdrawable:** Withdrawable can be lower than Available to Trade (or zero) because open-position withdrawals must preserve the higher of initial margin and active maintenance/FAD margin, require a fresh live mark and are blocked during degraded mode.
 
-Free buying power shows USDG not currently locked in accounting buckets. It does not, by itself, prove that the same amount can safely leave the account.
+## Three independent liquidation triggers
 
-Before allowing a withdrawal, Plether accounts for:
+An account is liquidatable whenever **any one** of these three conditions holds:
 
-* unrealized PnL;
-* accrued carry;
-* current oracle freshness;
-* initial and maintenance requirements;
-* pending order reservations;
-* the active protocol state;
-* the account’s health after withdrawal.
+1. **Price liquidation:** `Position equity <= Active maintenance margin`, where `Position equity = position margin (after accrued carry) + same-account trader claim + exact price PnL`.
+2. **Uncovered carry:** Pending carry exceeds `position margin + eligible free USDG`.
+3. **Underfunded VPI rebate reserve:** Accumulated VPI is negative (provisional rebate) and dedicated `vpiRebateReserve` is smaller than the clawback owed.
 
-The interface therefore shows a separate **Withdrawable** amount. It may be lower than **Available to Trade**, and may temporarily be zero even when some free USDG is visible.
+**Example:** With `1,000 USDG` position margin, `500 USDG` same-account claim, `50 USDG` carry due and `1,150 USDG` unrealized price loss, carry lowers position margin to `950 USDG` (even if free USDG sits in the account), leaving `Position equity = 950 + 500 − 1,150 = 300 USDG`. Against `250 USDG` maintenance margin, only `50 USDG` of further price loss triggers liquidation.
 
-### How liquidation equity is calculated
+## Liquidation price
 
-```
-Position equity = position margin after accrued carry + same-account claim + exact price PnL
-Price liquidation: Position equity ≤ active maintenance margin
-```
+The displayed **Liquidation price** estimates where price equity reaches active maintenance margin:
 
-Free USDG, order commitments, liquidation reserves and VPI reserves do not enter this price-equity formula. Pending carry first reduces the active position margin used in the formula, then uses eligible free USDG if margin is exhausted. Claims and other reserved funds cannot pay carry. Any uncovered carry or insufficient VPI reserve is a separate account-health failure.
+* **LONG USD:** Vulnerable at or below its liquidation price.
+* **SHORT USD:** Vulnerable at or above its liquidation price.
 
-For example, with 1,000 USDG of position margin before carry, a 500 USDG claim and a 1,150 USDG price loss, equity before carry would be 350 USDG. If 50 USDG of carry is due, active margin falls to 950 USDG even when free USDG is available. Position equity is then `950 + 500 − 1,150 = 300 USDG`. Against 250 USDG maintenance, only a further 50 USDG price loss reaches liquidation equality.
+Actual liquidation evaluates against a **side-adverse confidence-adjusted oracle[^oracle] price** (lower for LONG USD, higher for SHORT USD), so a position near its threshold can be liquidated slightly before the neutral chart mark reaches the displayed estimate. Live/FAD liquidations use the live freshness limit; `oracleFrozen` liquidations use the extended `3-day` (`259,200s`) staleness ceiling.
 
-### Liquidation price
+* **Not in range:** No price liquidation threshold exists inside Plether's bounded `[0.00, 2.00]` range under the current snapshot (uncovered carry or VPI reserve shortfalls can still liquidate the account independently).
+* **Unavailable:** A required onchain read is missing or refreshing — never assume safety. Watch the **Liquidatable** status banner separately.
 
-The displayed liquidation price estimates where position equity reaches the active maintenance requirement, using exact entry cost and contract rounding.
+## How liquidation works (always full, permissionless)
 
-In displayed index terms:
+There is no onchain margin call or grace period. Once liquidatable, any permissionless keeper[^keeper] can trigger liquidation on a dedicated path that does **not** wait behind the FIFO order queue:
 
-* A **LONG USD** position is normally vulnerable at or below its liquidation price.
-* A **SHORT USD** position is normally vulnerable at or above its liquidation price.
+1. Validates an oracle update under the active liquidation policy and applies the side-adverse confidence shift.
+2. Deletes the **entire position** (Plether never partially liquidates) without trading through an AMM[^amm] or order book.
+3. Settles price loss against same-account trader claim first, then position margin (any excess price loss becomes LP bad debt).
+4. Collects non-price terminal charges in order (**VPI clawback → remaining carry → liquidation charge**) from dedicated VPI reserve, remaining margin and free USDG.
+   * **Liquidation charge (Core v2.0.0):** **`0.10%`** of notional (minimum **`1.00 USDG`**), split **`50%` to the keeper** (min `0.50 USDG`), **`50%` to the liquidity pool LPs** and **`0%` to the protocol treasury**.
+   * Liquidation charges **no** voluntary execution fee, **no** new closing VPI and **no** frozen-close spread (even during `oracleFrozen`).
+5. Preserves any remaining positive residual for the trader (or records an unfunded fresh payout as a trader claim).
+6. Fails and clears all pending orders for the account: **reserved opening execution rewards are forfeited to the protocol treasury**, while committed opening margin is released to free USDG (never backing price losses, though free USDG can cover separate non-price liquidation charges if needed).
 
-The threshold is not permanent. It can move because:
+**A pending close never protects against liquidation:** Until a close executes, the full position stays live and liquidatable.
 
-* assigned position margin or same-account claims change;
-* a trade changes size or exact entry cost;
-* the maintenance margin regime changes.
+| Dimension | Voluntary close | Liquidation |
+| --- | --- | --- |
+| **Initiator & path** | Trader (or TP/SL) via global FIFO queue | Any keeper via separate direct path |
+| **Size** | Partial or full | Full only |
+| **Costs** | `0.04%` execution fee, signed VPI, carry, `50 bps` frozen spread (if frozen); `0` close reward | Carry, VPI clawback (if negative), `0.10%` liquidation charge (`50%` keeper / `50%` LPs; min `1.00 USDG`) |
+| **Pending orders** | Unaffected | All failed; opening rewards forfeited to treasury |
 
-Actual liquidation uses a side-adverse confidence-adjusted oracle price validated under the active liquidation policy. Live and FAD-only liquidations require the configured live-liquidation freshness limit; during `oracleFrozen`, the protocol uses its explicitly relaxed frozen-market staleness limit. For liquidation testing, the protocol shifts the accepted price against the account:
+## Margin Call Simulator
 
-* lower for LONG USD;
-* higher for SHORT USD.
+**Margin Call Simulator** removes the normal `33x` UI leverage cap so advanced users can test closer to onchain bounds. Its entry cap equals `floor(10,000 / max(activeMaintenanceBps, initialMarginBps + executionFeeBps))` — **`416x`** under current `20 bps` initial margin and `4 bps` execution fee (and lower whenever FAD `300 bps` applies).
 
-The chart mark and displayed liquidation price should therefore be treated as estimates, not guaranteed execution boundaries.
-
-#### What “Not in range” means
-
-The displayed index has a fixed settlement range:
-
-```
-0.00 ≤ D ≤ 2.00
-```
-
-If the interface shows **Not in range**, it means that no liquidation threshold was found inside that range under the current account and risk snapshot.
-
-It only describes price risk. Uncovered carry or an insufficient dedicated VPI reserve can independently make an account liquidatable. New position backing or a stricter margin regime can change the price threshold.
-
-**Unavailable** means a required risk read is missing, failed or awaiting refresh after a transaction. It is not a statement of safety. The **Liquidatable** notice reports the contract’s status separately.
-
-### The market-close margin regime
-
-As Plether approaches a scheduled market closure, the protocol can enter a close-only risk window.
-
-During this period:
-
-* new positions and increases are blocked;
-* reductions and full closes remain available;
-* a higher market-close margin rate replaces ordinary maintenance margin.
-
-An account can therefore become liquidatable without any movement in the index if the higher requirement becomes active.
-
-Traders should not wait until the close-only window begins to evaluate whether they have sufficient collateral to remain open.
-
-### What happens during liquidation
-
-Liquidation is permissionless. Once an account satisfies the liquidation condition, a keeper[^keeper] may submit a liquidation transaction.
-
-There is no separate onchain margin-call state and no guaranteed grace period.
-
-A successful liquidation proceeds broadly as follows:
-
-1. The protocol validates an oracle update under the active liquidation freshness policy.
-2. It applies the side-adverse confidence adjustment.
-3. It calculates current PnL, carry, reachable collateral and maintenance margin.
-4. If equity remains above maintenance, the transaction is rejected.
-5. If equity is at or below maintenance, the entire position is deleted.
-6. Reachable account value is used for settlement.
-7. The keeper receives a liquidation bounty, capped by collateral the protocol can physically reach.
-8. Any positive value remaining belongs to the trader.
-9. Any uncovered shortfall becomes protocol bad debt.
-10. The account’s pending orders are failed and cleaned up.
-
-Liquidation does not charge the normal voluntary-close execution fee or a new voluntary-close VPI adjustment. Pending carry and any applicable negative accrued-VPI adjustment still form part of terminal accounting.
-
-The liquidation bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
-
-### Liquidation is always full
-
-Plether does not partially liquidate positions.
-
-Once liquidation succeeds, the complete position is closed. The protocol does not reduce the position just enough to restore a target leverage ratio.
-
-Crossing the maintenance threshold therefore puts the entire position at risk.
-
-Liquidation also does not force-sell the position through an AMM[^amm] or order book. It settles against the protocol oracle. One liquidation does not mechanically move the execution price for the next account, although the same oracle move may make many accounts liquidatable at once.
-
-### A pending close does not protect the position
-
-Submitting a close order does not immediately reduce exposure.
-
-Until the close executes:
-
-* the original position remains active;
-* PnL and carry continue changing;
-* the account remains liquidatable;
-* the submitted close does not reserve an execution price.
-
-Liquidation uses a separate protective path and does not wait behind the global order queue. If liquidation happens first, pending orders for that account fail with **Account liquidated**.
-
-Reserved order execution rewards are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
-
-### Liquidation does not necessarily consume everything
-
-An account can be liquidatable while it still has positive equity. Maintenance margin is a safety threshold above zero.
-
-After carry, applicable adjustments and the liquidation bounty:
-
-* a positive residual is preserved for the trader;
-* reachable collateral, including released position margin, is preserved up to the trader’s positive residual; if any additional pool-funded payout cannot be funded in full, that complete fresh payout is recorded as a trader claim;
-* an existing trader claim may be netted against a terminal shortfall;
-* only the remaining uncovered loss becomes bad debt borne by the LP waterfall.
-
-Liquidation means the entire position is closed. It does not automatically mean every dollar in the account is lost.
-
-### Voluntary close versus liquidation
-
-|                 | Voluntary close                                                           | Liquidation                                                |
-| --------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Initiated by    | Trader or delegated account operator                                      | Any keeper                                                 |
-| Execution path  | Delayed global order queue                                                | Separate permissionless path                               |
-| Position size   | Partial or full                                                           | Full only                                                  |
-| Pricing         | Eligible delayed execution mark                                           | Active-policy adverse confidence-adjusted liquidation mark |
-| Costs           | Carry, execution fee, applicable VPI and frozen-close spread; zero keeper execution reward | Carry, applicable VPI clawback and liquidation bounty  |
-| Pending orders  | Continue independently                                                    | Failed and cleaned up                                      |
-| Trader residual | Preserved                                                                 | Preserved after terminal costs                             |
-
-A submitted voluntary close remains only an intention until it executes.
-
-### Margin Call Simulator
-
-The advanced **Margin Call Simulator** removes the interface’s ordinary leverage limit and allows testing much closer to the protocol’s margin boundaries.
-
-The simulator’s displayed entry cap uses the stricter of:
-
-* the active maintenance-margin rate; and
-* the initial-margin rate plus the execution-fee rate.
-
-The interface displays the maintenance boundary separately for context. It is not presented as openable leverage.
-
-Despite its name, it does not create a margin call or grace period. Plether still uses full liquidation.
-
-At extreme leverage, a position may become invalid or liquidatable because of:
-
-* a very small adverse move;
-* execution fees or rewards;
-* VPI;
-* carry;
-* the stricter market-close requirement.
-
-VPI, carry, execution rewards, minimum-bounty rules and rounding are order-dependent, so they can still reduce the usable leverage below the estimated entry cap. The live order preview remains authoritative.
-
-Treat this as a testing tool, not a risk-control feature.
-
-### Managing liquidation risk
-
-The useful question is not only:
-
-> How much margin is assigned to my position?
-
-It is:
-
-> How does position equity compare with maintenance margin, and are carry and dedicated reserves covered separately?
-
-In practice:
-
-* Monitor position equity and maintenance margin together, plus the contract’s liquidatable status.
-* Leave room for price movement, carry and the market-close regime.
-* Deposit USDG for carry and actions; assign margin explicitly to increase price-risk backing.
-* Monitor the margin left after projected carry. Free USDG is a fallback only after active position margin is exhausted.
-* Treat **Withdrawable**, not free buying power, as the withdrawal limit.
-* Remember that a pending close leaves the position live.
-* Treat the displayed liquidation price as an estimate.
-* Reduce or close early enough for delayed execution to complete.
-
-### The central distinction
-
-* **Position size** determines price sensitivity.
-* **Assigned margin** satisfies position-level requirements.
-* **Position equity** determines price health; carry coverage and reserve backing remain separate checks.
-* **Maintenance margin** determines when full liquidation is permitted.
-
-The fixed `0.00–2.00` range bounds directional price PnL for a fixed position. That PnL bound does not include carry, execution fees, execution rewards, VPI or a liquidation bounty, and it does not prevent liquidation before either price boundary is reached.
+Despite the name, there is still **no margin call or grace period** — liquidation remains full and immediate, and tiny price ticks, VPI, carry or fees can liquidate an extreme-leverage position almost instantly. Treat it strictly as a testing control.
 
 [^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.

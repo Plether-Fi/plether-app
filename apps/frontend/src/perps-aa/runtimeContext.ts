@@ -4,6 +4,8 @@ import type { ReviewedActionStateInput } from './reviewedActionState'
 import type { PreparationStatusV1 } from './preparedOperation'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import type { DeploymentConfirmationMonitor } from './deploymentConfirmation'
+import type { GasPaymentPreferenceScope } from './gasPaymentPreference'
+import type { KernelRuntime } from './kernelRuntime'
 import type {
   PerpsActionKind,
   SmartAccountCall,
@@ -115,20 +117,25 @@ export interface RecoveryOperationContext {
   attemptId?: string
 }
 
-export interface PerpsAaSmartAccountRuntime {
+interface PerpsAaRuntimeIdentity {
   readReviewedActionState?(input: ReviewedActionStateInput): Promise<string>
-  getPreparedOperationRuntime?(manifest: PerpsAaDeploymentManifestV2): Promise<PerpsAaSmartAccountRuntime>
-  preparationRecovery?: WalletPreparationRecovery
-  deploymentConfirmation?: DeploymentConfirmationMonitor
   chainId: number
   ownerAddress: Address
-  smartAccount: ManagedSmartAccount
   factoryAddress: Address
   accountVersion: string
   accountIndex: string
   manifestVersion?: string
   walletFamily?: string
   walletVersion?: string
+}
+
+export interface SimplePerpsAaSmartAccountRuntime extends PerpsAaRuntimeIdentity {
+  kernel?: never
+  gasPayment?: never
+  getPreparedOperationRuntime?(manifest: PerpsAaDeploymentManifestV2): Promise<SimplePerpsAaSmartAccountRuntime>
+  preparationRecovery?: WalletPreparationRecovery
+  deploymentConfirmation?: DeploymentConfirmationMonitor
+  smartAccount: ManagedSmartAccount
   sponsorshipValidUntil?(
     operation: ManagedUserOperation
   ): bigint | undefined
@@ -141,6 +148,15 @@ export interface PerpsAaSmartAccountRuntime {
     inclusion: ObservedUserOperationInclusion
   ): Promise<ObservedInclusionCanonicality>
 }
+
+export interface KernelPerpsAaSmartAccountRuntime extends PerpsAaRuntimeIdentity {
+  deploymentConfirmation?: never
+  smartAccount: Pick<ManagedSmartAccount, 'accountAddress' | 'entryPoint'>
+  kernel: KernelRuntime
+  gasPayment: { scope: GasPaymentPreferenceScope & { sender: Address }; readiness: { sponsored: boolean; eth: boolean }; paysEthFromWallet?: boolean }
+}
+
+export type PerpsAaSmartAccountRuntime = SimplePerpsAaSmartAccountRuntime | KernelPerpsAaSmartAccountRuntime
 
 export const PerpsAaRuntimeContext = createContext<
   PerpsAaSmartAccountRuntime | undefined

@@ -16,7 +16,10 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.AA.Preparation
 import qualified Plether.AA.Pimlico as Legacy
 import Plether.AA.EvidenceCache
-import Plether.AA.Gateway (SecurityBlockHeader (..), advanceEvidenceSnapshots, attestNativePaymasterProfile, buildPreparedOperation, revalidateSecuritySnapshot)
+import Plether.AA.Gateway
+  ( SecurityBlockHeader (..), advanceEvidenceSnapshots, attestNativePaymasterProfile, buildPreparedOperation
+  , readAgreedLatestSecurityBlock, readAgreedRecoveryAnchor, revalidateLatestSecuritySnapshot, revalidateSecuritySnapshot
+  )
 import Plether.AA.Timing (newTiming)
 import qualified Plether.AA.Paymaster as Paymaster
 import Plether.AA.PaymasterSpec (fixtureConfig)
@@ -183,6 +186,54 @@ spec = do
           second <- newClient $ "http://127.0.0.1:" <> T.pack (show secondPort)
           revalidateSecuritySnapshot DualIndependent 600 first second
             (SecurityBlockHeader 100 snapshotHash now 1) >>= (`shouldSatisfy` isLeft)
+  describe "Kernel latest security snapshot" $ do
+    it "uses the lower latest height and exact numeric agreement without reading safe" $ do
+      now <- floor <$> getPOSIXTime
+      let captured = SecurityBlockHeader 100 snapshotHash now 1
+      withLatestProviders (securityHeader 101 otherHash now) (securityHeader 100 snapshotHash now)
+        (securityHeader 100 snapshotHash now) (securityHeader 100 snapshotHash now) $ \first second -> do
+          readAgreedLatestSecurityBlock first second `shouldReturn` Right captured
+          revalidateLatestSecuritySnapshot first second captured `shouldReturn` Right ()
+    it "rejects a stale common latest block, a conflicting header, and a regressing revalidation head" $ do
+      now <- floor <$> getPOSIXTime
+      let current = securityHeader 100 snapshotHash now
+          stale = securityHeader 100 snapshotHash (now - 31)
+          changed = securityHeader 100 otherHash now
+          reorged = securityHeader 99 otherHash now
+      withLatestProviders stale stale stale stale $ \first second ->
+        readAgreedLatestSecurityBlock first second >>= (`shouldSatisfy` isLeft)
+      withLatestProviders current current current changed $ \first second ->
+        readAgreedLatestSecurityBlock first second >>= (`shouldSatisfy` isLeft)
+      withLatestProviders reorged current current current $ \first second ->
+        revalidateLatestSecuritySnapshot first second (SecurityBlockHeader 100 snapshotHash now 1) >>= (`shouldSatisfy` isLeft)
+  describe "Kernel historical recovery anchor" $ do
+    it "accepts an agreed safe block even when it is far older than the live snapshot" $ do
+      now <- floor <$> getPOSIXTime
+      let old = securityHeader 100 snapshotHash (now - 9_000)
+          provider = [("safe", old), ("0x64", old)]
+          live = SecurityBlockHeader 101 otherHash now 1
+      withSecurityProviders provider provider $ \first second ->
+        readAgreedRecoveryAnchor first second live `shouldReturn` Just 100
+    it "uses an agreed finalized block when the safe tag is missing or diverges" $ do
+      now <- floor <$> getPOSIXTime
+      let safe = securityHeader 100 snapshotHash (now - 9_000)
+          divergent = securityHeader 100 otherHash (now - 9_000)
+          finalized = securityHeader 99 snapshotHash (now - 10_000)
+          fallback = [("finalized", finalized), ("0x63", finalized)]
+          firstProvider = [("safe", safe), ("0x64", safe)] <> fallback
+          live = SecurityBlockHeader 101 otherHash now 1
+      withSecurityProviders firstProvider fallback $ \first second ->
+        readAgreedRecoveryAnchor first second live `shouldReturn` Just 99
+      withSecurityProviders firstProvider ([("safe", divergent), ("0x64", divergent)] <> fallback) $ \first second ->
+        readAgreedRecoveryAnchor first second live `shouldReturn` Just 99
+    it "rejects anchors above the live snapshot or at its height on a different branch" $ do
+      now <- floor <$> getPOSIXTime
+      let ahead = securityHeader 101 snapshotHash now
+          conflict = securityHeader 100 otherHash now
+          provider = [("safe", ahead), ("0x65", ahead), ("finalized", conflict), ("0x64", conflict)]
+          live = SecurityBlockHeader 100 snapshotHash now 1
+      withSecurityProviders provider provider $ \first second ->
+        readAgreedRecoveryAnchor first second live `shouldReturn` Nothing
   describe "bounded native execution gas headroom" $ do
     it "covers the historical reverted deposit" $
       executionGasWithHeadroom 419_155 `shouldBe` Right 628_733
@@ -363,6 +414,27 @@ spec = do
       wait first `shouldReturn` Right "a"
       wait second `shouldReturn` Right "b"
  where
+  withLatestProviders firstLatest secondLatest firstNumeric secondNumeric action =
+    withSecurityProviders [("latest", firstLatest), ("0x64", firstNumeric)]
+      [("latest", secondLatest), ("0x64", secondNumeric)] action
+  withSecurityProviders firstHeaders secondHeaders action =
+    testWithApplication (pure $ securityProvider firstHeaders) $ \firstPort ->
+      testWithApplication (pure $ securityProvider secondHeaders) $ \secondPort -> do
+        first <- newClient $ "http://127.0.0.1:" <> T.pack (show firstPort)
+        second <- newClient $ "http://127.0.0.1:" <> T.pack (show secondPort)
+        action first second
+  securityProvider headers request respond = do
+    bytes <- strictRequestBody request
+    case eitherDecode bytes of
+      Right (Object input) -> do
+        let result = case KM.lookup "params" input of
+              Just (Array values) -> case toList values of
+                [String tag, Bool False] -> maybe Null id $ lookup tag headers
+                _ -> Null
+              _ -> Null
+        respond $ responseLBS status200 [] $ encode $ object
+          ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" input, "result" .= result]
+      _ -> respond $ responseLBS status200 [] "{}"
   snapshotHash = "0x" <> T.replicate 64 "a"
   otherHash = "0x" <> T.replicate 64 "b"
   securityHeader :: Integer -> T.Text -> Integer -> Value

@@ -51,10 +51,10 @@ class ConfigurePrivyTest(unittest.TestCase):
     def test_actual_workflow_command_configures_the_existing_task_before_deployment(self):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/deploy-backend.yml").read_text()
-        step = workflow.split("      - name: Configure Sepolia Privy app for passkey names\n", 1)[1]
+        step = workflow.split("      - name: Configure Privy app for passkey names\n", 1)[1]
         self.assertIn("PRIVY_APP_ID: ${{ vars.PRIVY_APP_ID }}", step.split("      - name:", 1)[0])
-        self.assertLess(workflow.index("Check out reviewed public AA deployment policy"), workflow.index("Configure Sepolia Privy app for passkey names"))
-        self.assertLess(workflow.index("Configure Sepolia Privy app for passkey names"), workflow.index("Update application images and service version"))
+        self.assertLess(workflow.index("Check out reviewed public AA deployment policy"), workflow.index("Configure Privy app for passkey names"))
+        self.assertLess(workflow.index("Configure Privy app for passkey names"), workflow.index("Update application images and service version"))
         command = next(line.split("run:", 1)[1].strip() for line in step.splitlines() if line.strip().startswith("run:"))
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)

@@ -1,98 +1,99 @@
 # Trader quickstart
 
-> **Connect your wallet. Deposit test USDG. Review your first dollar trade.**
+> **Sign in or connect your wallet. Claim 100,000 test USDG. Place your first dollar trade in minutes.**
 
-Try Plether on **Arbitrum Sepolia** with MockUSDG, a test token with no real-world value. This walkthrough uses a **100,000 USDG test allocation** and a **2,000 plDXY order at 2x leverage** to illustrate the controls. Prices, fees and limits change; follow the live preview.
+Try Plether Perps DEX on **Arbitrum Sepolia** (`chainId: 421614`) with **MockUSDG**, a test token with no real-world value. This walkthrough uses the **100,000 USDG test allocation** and a **2,000 plDXY order at 2x leverage** to show every control. Live prices, fees and limits change—always check the live preview.
 
-The USDG release is being prepared. Follow these steps after funding and trading open. Product screenshots show illustrative USDG states.
+Your connected wallet (or Privy social login) controls a separate **Plether Trading Account** that holds your margin and positions. Eligible trading actions and test funding are **gas-sponsored**—you do not need Arbitrum Sepolia ETH to claim test USDG or trade.
 
-Your wallet controls a separate **Plether Trading Account**. That account holds your collateral and positions. You do not receive a LONG or SHORT token in your wallet.
+### 1. Connect and claim test USDG
 
-You need MetaMask or another compatible wallet and time to watch the order finish. Plether pays gas to mint and deposit your test USDG allocation; your owner wallet does not need Arbitrum Sepolia ETH for this funding flow. Eligible deposits and trades are gas-sponsored while sponsorship is available. Use only the official app and never share your seed phrase.
+1. Open [app.sepolia.plether.com](https://app.sepolia.plether.com) and select `Connect Wallet`.
+2. Sign in with **Email**, **Google**, or a **passkey** (which creates an embedded EOA wallet via Privy), **or** connect an external wallet such as **MetaMask**, **Coinbase Wallet**, **Rainbow**, or **WalletConnect**.
+3. Confirm the app and wallet are on **Arbitrum Sepolia** (chain ID `421614`).
+4. In the **Welcome to Plether on Sepolia** dialog (or via `Get USDG` in the top banner), check your pre-filled **Trading Account address** and select `Get 100,000 USDG`.
 
-### 1. Connect and get test funds
-
-Open [Plether on Arbitrum Sepolia](https://app.sepolia.plether.com), select `Connect Wallet`, then choose `MetaMask`.
-
-In MetaMask, check **app.sepolia.plether.com** and select your intended owner account. Connect it, then confirm that the app and wallet use **Arbitrum Sepolia**, chain ID **421614**.
-
-Select `Get USDG` in the testnet banner. Check the pre-filled **Trading Account address**, then select `Get 100,000 USDG`. Plether adds the allocation directly to your Margin Account and pays all funding gas. No wallet approval is needed.
-
-Funding continues in the background if you close the dialog. If confirmation is delayed, use `Check funding` to resume checking the same allocation. Accounts funded by the earlier flow keep their saved allocation and may still need to authorize its sponsored deposit.
+Plether mints and deposits **100,000 USDG directly into your Margin Account** and covers all funding gas—no wallet signature or separate deposit step is required. Funding continues in the background if you close the dialog; use `Check funding` if confirmation is delayed.
 
 ![Get 100,000 USDG directly in your Margin Account. Plether pays all funding gas.](.gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png)
 
-### 2. Check your USDG balance
+### 2. Verify your balance (optional manual deposit)
 
-Wait for `USDG deposited into your Margin Account. You are ready to trade.`, then check **Available to Trade**. The welcome flow deposits the 100,000 USDG test allocation; it does not open a position.
+Wait for `USDG deposited into your Margin Account. You are ready to trade.`, then confirm `100,000 USDG` appears in **Available to Trade**.
 
-To deposit funds already held by the Trading Account, select `Deposit` in **Margin Account**, enter an amount within **Available to deposit**, and authorize the sponsored action. The example below shows a separate 10,000 USDG deposit.
+You only need the **Deposit** button in **Margin Account** if you later want to deposit additional USDG held in your Trading Account or owner wallet:
+
+* If your **Trading Account** already holds the amount, the deposit is gas-sponsored.
+* If the button reads `Transfer & Deposit`, the app first sends the shortfall from your **owner wallet** to your Trading Account (a regular Arbitrum Sepolia transfer that requires ETH for gas), then runs the sponsored Margin Account deposit.
 
 ![A 10,000 USDG deposit from the Trading Account.](.gitbook/assets/screenshots/storybook-perps-trade-ticket--deposit-margin.png)
 
-In MetaMask, verify the owner account, requesting site and **Arbitrum Sepolia** network before confirming. If the button says `Transfer & Deposit`, the app first transfers the shortfall from your owner wallet; that transfer needs ETH for gas. See [deposit sources and account balances](trading-on-plether-perps/your-margin-account.md).
+See [Your Margin Account](trading-on-plether-perps/your-margin-account.md) for all balance buckets and deposit rules.
 
-### 3. Set a small example order
+### 3. Configure an example order
 
-Check the market banner above the ticket. A new position needs an **Open** market and a valid preview. If the interface blocks the order, follow its message before continuing.
+Check the market banner above the trade ticket. Opening a position requires an **Open** market and a valid preview.
 
 Choose your direction:
 
-| Button | Dollar view | Benefits when the displayed price… |
+| Button | Your view | Profits when the displayed price… |
 | --- | --- | --- |
-| **Long plDXY Perp** | USD strengthens against the currency basket | Rises |
-| **Short plDXY Perp** | USD weakens against the currency basket | Falls |
+| **Long plDXY Perp** | USD strengthens against the basket | Rises |
+| **Short plDXY Perp** | USD weakens against the basket | Falls |
 
-For the example, select `Long plDXY Perp`, enter `2000` in **Order quantity**, and set **Leverage** to `2x`. Leave **Reduce only**, **Take profit / stop loss** and **Margin Call Simulator** unchecked for this first walkthrough.
+For this walkthrough:
+
+1. Select `Long plDXY Perp`.
+2. Enter `2000` in **Order quantity** (typed orders use `100 plDXY` increments).
+3. Set **Leverage** to `2x`.
+4. Leave **Reduce only**, **Take profit / stop loss**, and **Margin Call Simulator** unchecked.
 
 ![The example long order uses 2,000 plDXY and 2x leverage.](.gitbook/assets/screenshots/storybook-perps-trade-ticket--quickstart-order.png)
 
-Quantity is measured in **plDXY contracts**. **Order exposure** values those contracts in USDG at the current price. It is not the deposit amount. Higher leverage uses less position margin and leaves less room before liquidation; keep free USDG available in the account.
-
-Review **Max slippage**. It sets the worst acceptable execution price. Avoid **Infinity**, which removes that protection. The [position-opening guide](trading-on-plether-perps/open-or-increase-a-position.md) covers sizing and limits in more detail.
+**Order quantity** is measured in `plDXY` contracts; **Order exposure** values those contracts in USDG at the current price. Review **Max slippage** (`0.1%` default live) to set your worst acceptable execution price—avoid `Infinity`, which removes price protection.
 
 ### 4. Review and authorize
 
-Select `Review Long` or `Review Short`. In **Commit Preview**, check:
+Select `Review Long` (or `Review Short`). In **Commit Preview**, check:
 
-* **Direction, Order quantity and Order exposure** — the trade you intend.
-* **Required margin, Highest reviewed leverage and Liquidation price** — the collateral and risk.
-* **Execution limit, Estimated fee, VPI, oracle confidence spread and execution reward** — the price protection and costs.
+* **Order quantity** and **Order exposure** — the trade you intend.
+* **Required margin**, **Highest reviewed leverage**, and **Liquidation price** — collateral and risk.
+* **Execution limit**, **Estimated fee**, **VPI**, **Adverse oracle confidence spread**, and **Estimated execution reward** — price bounds and costs.
 
 ![Commit Preview shows the example order's margin, leverage, price limit and costs.](.gitbook/assets/screenshots/storybook-perps-trade-ticket--quickstart-preview.png)
 
-VPI is a separate USDG charge or credit for price impact. The preview is an estimate; execution uses eligible oracle data published after commitment. Learn more in [trading costs](how-plether-works/trading-costs-fees-carry-and-vpi.md).
+**Once confirmed onchain, the order is binding and cannot be cancelled.** Its margin and opening execution reward are reserved while it waits in the global FIFO queue.
 
-**Once confirmed onchain, the order is binding and cannot be cancelled.** Its margin and execution reward are reserved while it waits to execute.
+Select `Confirm Commit` and approve the signature in your wallet (MetaMask may label it `PackedUserOperation`; the human-readable terms are in Plether’s preview).
 
-If the preview matches your intent, select `Confirm Commit`. Plether prepares the sponsored action, then MetaMask asks for a signature. Check the account, site and network again. MetaMask may label the message `PackedUserOperation`; the readable trade terms are in Plether's preview.
+> **First-time Trading Account confirmation**
+>
+> Your Trading Account smart contract deploys automatically with your first sponsored action. On Arbitrum Sepolia, waiting for the network's `safe` block to confirm that new account before your *next* action can take several minutes; a sticky banner under the header tracks this automatically.
 
-### 5. Wait, then check the position
+### 5. Wait for keeper execution, then check your position
 
-**Confirmed** means the commitment reached the chain. Wait for `Finalizing execution price` to finish; confirmation alone does not mean you have an open position.
+**Confirmed** means your commitment reached the chain—not that the trade filled. Wait for `Finalizing execution price` to finish.
 
 ![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](.gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg)
 
-A keeper finalizes the order automatically. Follow **Open Orders** while it is pending and **Order History** for the result. Do not submit a duplicate because the first order is still waiting.
+A permissionless keeper finalizes the order automatically using the first eligible post-commit Pyth update. Track active commitments in **Open Orders** and completed outcomes in **Order History**. Do not submit a duplicate order while the first is still pending.
 
-When the status is **Executed**, open **Position** and check direction, quantity, entry price, leverage, liquidation price and unrealized profit or loss. Use the executed values rather than the original estimate.
+Once status reaches **Executed**, open **Position** to verify direction, exposure, **Order quantity**, entry price, leverage, liquidation price, unrealized PnL, and **Cost of carry**. Carry accrues continuously while open—see [Read your position and account health](trading-on-plether-perps/read-your-position-and-account-health.md).
 
-Carry accrues while the position is open. Monitor account health even when the market price is quiet. See [position and account health](trading-on-plether-perps/read-your-position-and-account-health.md) for adding margin and other management actions.
-
-If the order **fails**, read its reason before trying again. If it **expires**, wait for keeper cleanup. Neither is retried automatically. [Pending and failed orders](trading-on-plether-perps/why-is-my-order-pending-or-failed.md) explains the next steps.
+If an order **fails** or **expires** (after 60 seconds), it is never retried automatically; see [Why is my order pending or failed?](trading-on-plether-perps/why-is-my-order-pending-or-failed.md).
 
 ### 6. Close when you are ready
 
-In **Position**, select `Close position`. Review the close terms, select `Confirm Commit`, authorize it in MetaMask and wait for **Executed** again. A pending close leaves the position exposed until execution.
+In **Position**, select `Close position`, review the close preview, click `Confirm Commit`, authorize in your wallet, and wait for **Executed**. Reductions and closes have **zero USDG keeper execution reward**. A pending close leaves your position exposed until it executes.
 
-Closing releases funds into the **Margin Account**; it does not send them directly to your owner wallet. In a pool funding shortfall, a payout may instead become a [trader claim](trading-on-plether-perps/check-and-settle-a-trader-claim.md) that must settle before it becomes available margin.
+Closing releases margin and settles profit into your **Margin Account** (or records a senior [trader claim](trading-on-plether-perps/check-and-settle-a-trader-claim.md) if pool free cash cannot fund a full fresh payout immediately). For partial exits or switching sides, see [Reduce or close a position](trading-on-plether-perps/reduce-or-close-a-position.md).
 
-For partial closes or changing direction, see [reduce or close a position](trading-on-plether-perps/reduce-or-close-a-position.md). An existing position must finish closing before you open the opposite direction.
+### 7. Withdraw to your owner wallet
 
-### 7. Withdraw to your wallet
+Select `Withdraw` in **Margin Account**, enter an amount within **Withdrawable**, review the verified owner recipient, and sign the sponsored action. Plether withdraws from your Margin Account and transfers the exact USDG to your connected owner wallet in one atomic sponsored batch.
 
-Select `Withdraw` in **Margin Account**. Enter an amount within **Withdrawable**, review it and authorize the sponsored action in MetaMask. It sends the exact withdrawal through your Trading Account to the connected owner wallet.
+### Continue from here
 
-Withdrawable can be below USDG balance because margin or rewards are reserved and withdrawal checks apply. Carry consumes active position margin first, then eligible free USDG; free-fund withdrawals reduce that fallback. Price equity uses the margin left after carry plus same-account claims and price PnL. See [your Margin Account](trading-on-plether-perps/your-margin-account.md) for the balance rules.
-
-For connection, sponsorship or validation problems, use [trader troubleshooting](trading-on-plether-perps/trader-troubleshooting.md).
+* Want to rank on the testnet leaderboard? See [Plether Divisions](get-started/plether-divisions.md).
+* Ready to automate exits? Read [Take profit and stop loss](trading-on-plether-perps/take-profit-and-stop-loss.md).
+* Hit a snag? Jump to [Trader troubleshooting](trading-on-plether-perps/trader-troubleshooting.md).

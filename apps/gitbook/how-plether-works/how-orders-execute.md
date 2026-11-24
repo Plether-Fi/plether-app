@@ -1,601 +1,133 @@
 # How orders execute
 
-Plether does not match traders in an order book, and it does not let an AMM[^amm] determine the index price.
+Plether executes trades through **delayed, oracle-settled[^oracle] global FIFO[^fifo] execution** — never an order book or AMM[^amm].
 
-Orders use delayed, oracle-settled[^oracle] execution.
+**Commit first. Price second.** You commit direction, whole-lot quantity, margin and an acceptable-price limit before the fill price is known. After the commitment lands onchain, the order settles under the oracle regime active at execution:
 
-For a focused explanation of stale data, confidence-based price adjustments and the frozen-market exception, see [Oracle & execution model](oracle-and-execution-model.md).
-
-**Commit first. Price second.**
-
-A trader commits the direction, size, margin and acceptable-price boundary before the final execution price is known.
-
-The order enters a global queue, then settles under the oracle regime active when it is finalized:
-
-* Live and FAD-only[^fad] execution uses the first eligible post-commit observation.
-* An `oracleFrozen` voluntary close uses the bounded frozen-market policy.
+* **Live & FAD-only:**[^fad] First eligible Pyth basket observation strictly after commitment, shifted adversely by `0.25×` basket confidence.
+* **`oracleFrozen` voluntary close:** Latest validated frozen basket (up to `3-day` staleness), unshifted plus the separate `50 bps`[^bps] frozen-close spread.
 
 ![A bounded order is committed, queued and assessed using the execution-time oracle regime. Success, temporary deferral and terminal failure are distinct.](../.gitbook/assets/diagrams/delayed-order-execution-pipeline.svg)
 
-This introduces a short delay by design. The delay separates the trading decision from the price used to settle it, reducing the surface for front-running and selective execution.
+For oracle confidence and staleness rules, see [Oracle & execution model](oracle-and-execution-model.md). For automated exits that add a trigger stage before queuing a close, see [Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md).
 
-### Two related lifecycles
+## Two separate lifecycles: sponsorship vs delayed execution
 
-[Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md) adds a trigger stage before close-order execution. Attached triggers wait for the opening order to fill; armed triggers wait for an eligible oracle price. A trigger transaction queues a full close, which still has to execute through the router. **Active**, **Close queued** and **Closed** are distinct states. If an attempt fails into **Close delayed** (`Latched`), the original exit remains binding even if the price reverses.
-
-The sponsored commitment first moves through:
+1. **Sponsored commitment:** Your owner wallet signs a prepared Trading Account operation and Plether's bundler submits it onchain. **Confirmed** here means only that the order was committed — not that the trade filled.
 
 ![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](../.gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg)
 
-Here, **Confirmed** means the order commitment reached the chain. It does not mean the trade has executed.
-
-The delayed order then follows the protocol stages:
+2. **Delayed keeper execution:** A separate permissionless keeper[^keeper] transaction supplies Pyth data and executes the order (or cleans it up after expiry).
 
 ![Preview is not a transaction. Commitment and later keeper execution are separate onchain stages.](../.gitbook/assets/diagrams/preview-commit-finalize.svg)
 
-The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper[^keeper] submits the separate finalization transaction.
+## 1. Preview the order
 
-Execution and expired-order cleanup are permissionless at the contract level, but the current Plether interface does not submit either action from the owner wallet. It leaves both actions to keepers.
+Before commitment, **Commit Preview** snapshots the estimated result from current state, including direction, **Order exposure**, **Order quantity**, margin, leverage, **Execution limit**, adverse oracle confidence spread, **Estimated fee** (`0.04%`), **VPI: Pay / Receive**[^vpi], opening execution reward (`0.01–0.20 USDG` on opens/increases; `0` on closes), **Liquidation price** and **Execution protections** (including `submitBy` validity and the `60-second` execution deadline).
 
-### 1. Preview the order
+On voluntary reductions and closes, the close preview also projects **Commitment carry**, **USDG after execution**, **Trader claim after execution**, **Position VPI balance**, and — if `oracleFrozen` is active — **Assessed / Paid / Waived spread** (`assessed = paid + waived`).
 
-The **Commit Preview** shows the expected result using the market state available before commitment.
+### Order quantity
 
-This includes:
+**Order quantity** is the `plDXY` quantity committed onchain. Opens, increases and partial reductions require whole **`100 plDXY` lots** (minimum open notional `1,000 USDG`[^usdg]); the interface rejects non-lot quantities instead of silently rounding them.
 
-* Direction: LONG USD or SHORT USD
-* Order exposure
-* Order quantity
-* Contract notional[^notional]
-* Margin
-* Resulting leverage
-* Execution limit
-* Adverse oracle confidence spread
-* Estimated protocol execution fee
-* Estimated VPI[^vpi]
-* Estimated execution reward
-* Liquidation price
-* Available side capacity
-
-#### Order quantity
-
-The value entered in `Order quantity` is the plDXY quantity stored in the order. Typed open, increase and partial-reduction quantities must use whole `100 plDXY` increments. The interface rejects a quantity outside that increment instead of silently changing it.
-
-The corresponding USDG[^usdg] value is derived from the quantity:
-
-```
-Order exposure
-= Order quantity × current displayed price
+```text
+Order exposure = Order quantity × current displayed plDXY price
 ```
 
-The ticket keeps **Order quantity** visible in the input and the inline **Preview** shows its derived **Order exposure**. **Commit Preview** confirms both values before submission:
+An explicit full close with no earlier pending orders uses your exact live position quantity directly (selecting **Current Position**, **Max** or the Position close button leaves zero rounding dust). If earlier orders are still pending, **Max** targets only the projected remainder and is treated as a conditional reduction rather than a guaranteed full close until earlier orders finish.
 
-* **Order exposure** — the whole-lot order quantity valued at the current displayed price
-* **Order quantity** — the plDXY quantity that will be committed
+**Previews are estimates, not locked quotes:**
 
-The fixed Order quantity does not change after commitment, but its displayed USDG exposure can change when that quantity is valued at the final execution price.
+| Fixed at commitment | Determined at execution |
+| --- | --- |
+| Direction, open vs reduce/close | Eligible Pyth observation & active market state |
+| Exact `plDXY` quantity (100-lot increments) | Final execution price & USDG notional[^notional] |
+| Margin to assign & acceptable-price limit | Execution fee (`0.04%`), signed VPI, carry[^carry] & frozen spread |
+| `submitBy` (`+120s`) & `executionWindowSeconds` (`60s`) | Resulting account health, payout destination or trader claim |
+| Opening execution reward (opens/increases only) | Whether the order executes, fails or stays Pending |
 
-An explicit full close with no earlier pending orders uses the exact live position quantity. Selecting `Current Position`, `Max` or the Position panel’s close action fills that quantity directly, so the interface does not convert the displayed USDG exposure or leave a rounding residual.
+## 2. Commit the order (binding & non-cancellable)
 
-When earlier orders are still pending, `Max` can target only the projected remainder. Because an earlier order may fail, that later order is treated as a conditional reduction rather than a guaranteed full close. Finalize or clean up the earlier orders first if you want the later action to be labelled and protected as a full close.
+Confirming **Confirm Commit** submits your signed sponsored operation. Order V3 pins `submitBy = confirmationBlock + 120s` (with `45s` sign and `30s` relay client guards) and `executionWindowSeconds = 60s` (`executionDeadline = commitTimestamp + 60s`).
 
-For a voluntary reduction or close, the onchain preview also exposes:
+* **Opens & increases:** Immediately reserve submitted opening margin plus the opening execution reward (`1 bp`, clamped `0.01–0.20 USDG`).
+* **Reductions & closes (including TP/SL closes):** Reserve **zero** execution reward and no new margin; they reserve only the requested position quantity against overlapping closes and checkpoint accrued carry (from active position margin first, then eligible free USDG).
 
-* **Assessed spread (USDG)** — frozen-close spread assessed
-* **Paid spread (USDG)** — amount collected for LPs[^lp]
-* **Waived spread (USDG)** — uncollectible amount waived
+**Committed orders cannot be cancelled or repriced.** Allowing cancellation after seeing the next oracle tick would create a free option against the liquidity pool. A committed order leaves the queue only through execution, terminal failure, expiry cleanup or account liquidation.
 
-These values are nonzero only when the previewed execution is during `oracleFrozen`.
+## 3. Global FIFO queue and oracle observation
 
-For a valid close:
+Every committed order enters one global first-in, first-out queue (`nextExecuteId`). Keepers must process the head first — they cannot skip ahead to cherry-pick profitable fills, higher rewards or specific directions.
 
-```
-spread assessed
-= spread paid
-+ spread waived
-```
+During live and FAD-only sessions, execution requires:
 
-The preview is an estimate, not a quote.
+* `executionBlock > commitBlock` and `publishTime > commitTimestamp`
+* The **unique first eligible Pyth basket observation** inside the onchain settlement window (all 6 feeds valid, aligned within `5s`, confidence `<= 0.10%`).
 
-Some values become fixed when the order is committed. Others are determined only when it executes.
+**Finalization time ≠ pricing time:** A keeper may finalize later while the order is unexpired (`chainNow <= executionDeadline`), still proving that exact post-commit historical tick.
 
-| Fixed at commitment              | Determined at execution                    |
-| -------------------------------- | ------------------------------------------ |
-| Direction                        | Eligible oracle observation                |
-| Order quantity in 100 plDXY lots | Final execution price                      |
-| Margin to assign                 | Final USDG notional                        |
-| Open, increase, reduce or close  | Protocol execution fee                     |
-| Acceptable-price boundary        | VPI charge or rebate                       |
-| Reserved execution reward        | Accrued carry and resulting account health |
+## Who finalizes the order?
 
-The execution-time oracle regime and final frozen-close spread are also determined at execution.
+At the contract level, `executeOrder`, `executeOrderBatch` and `expireOrder` are permissionless — any address with ETH for gas and Pyth fees can call them. In the sponsored web application, Plether's keeper handles all execution and expired-order cleanup so your owner wallet never pays ETH or manually finalizes trades.
 
-A preview can therefore show no spread and later execute with one if the market enters `oracleFrozen`. The reverse is also possible if frozen operation ends before finalization.
+* **Opens and increases:** The reserved opening execution reward (`0.01–0.20 USDG`) is credited to the keeper's Margin Account on execution, terminal failure or expiry cleanup (or forfeited to the protocol treasury if liquidation clears the order first).
+* **Reductions and full closes:** Pay **zero** USDG execution reward in every outcome.
 
-Pool depth, directional imbalance, market state and account state can change while the order is waiting. The final settlement can therefore differ from the preview even when the execution price remains within the accepted boundary.
+## Acceptable-price protection
 
-### 2. Commit the order
+The **Execution limit** sets the worst policy-adjusted oracle price you will accept (displayed in dollar-oriented `plDXY` terms):
 
-Selecting **Confirm Commit** requests the owner-wallet authorization and submits the eligible sponsored Trading Account operation.
+| Action | Limit meaning | Passes when |
+| --- | --- | --- |
+| **Open / increase LONG USD** | Max acceptable price | `Execution price <= Limit` |
+| **Reduce / close LONG USD** | Min acceptable price | `Execution price >= Limit` |
+| **Open / increase SHORT USD** | Min acceptable price | `Execution price >= Limit` |
+| **Reduce / close SHORT USD** | Max acceptable price | `Execution price <= Limit` |
 
-The commitment records:
+This is **slippage protection, not a resting limit order** — if the eligible observation crosses your limit, the order terminally fails (`Slippage exceeded`). Choosing **Market** (**Infinity**) removes the price check but never bypasses delayed execution, the `0.25×` confidence shift, fees, VPI, carry, frozen spread or solvency checks.
 
-* LONG USD or SHORT USD
-* Whole-lot order quantity to add or remove
-* Margin to assign
-* Acceptable-price boundary
-* Whether the order opens risk or reduces it
-* Commitment time and block
+**What Execution limit does not cap:** Execution fees (`0.04%`), signed VPI, accrued carry, the `50 bps` frozen-close spread or opening execution rewards are settled separately and are not bounded by the price limit.
 
-For an opening or increase, Plether reserves the submitted margin and an **execution reward** immediately. This reward compensates whoever later finalizes or clears that opening order. It is separate from:
+## Final settlement, collection priority and frozen-close spread
 
-* Position margin
-* Protocol execution fees
-* VPI
-* Carry[^carry]
-* Any frozen-close spread
-* Network gas
-
-Reductions and full closes have zero USDG[^usdg] execution reward, including closes created by TP/SL. They reserve no new opening margin or execution reward. TP/SL triggering can have a separate reward. Commitment still collects carry from active position margin first, then eligible free USDG.
-
-At this point, no position size has been added or removed. The order is pending. Any funds reserved for an opening order are unavailable for another order or withdrawal; a pending reduction instead counts against the position quantity available to later close orders.
-
-Commitment does not lock whether the frozen-close spread will apply. When a reduction or close reaches execution, Plether recalculates:
-
-* The active market state
-* The final execution price
-* Reduced contract notional
-* Signed VPI
-* Accrued carry
-* Frozen spread assessed, paid and waived
-
-### Committed orders are binding
-
-A pending order cannot be manually cancelled or replaced.
-
-This is part of the execution model. If traders could cancel after seeing the next oracle observation, a commitment would become a free option:
-
-* Keep the order when the observation is favourable
-* Cancel it when the observation is unfavourable
-
-Plether therefore keeps the order binding until it:
-
-* Executes
-* Fails a terminal check
-* Expires and is cleared
-* Is removed following liquidation
-
-There is no trader-cancellation phase. After expiry, the order becomes eligible for permissionless cleanup; the current interface leaves that cleanup to a keeper.
-
-### 3. Enter the global FIFO queue
-
-Every committed order enters a global first-in, first-out queue.
-
-Keepers must begin with the current queue head. They cannot skip a valid earlier order to finalize a later one.
-
-This prevents a keeper from choosing orders based on:
-
-* Direction
-* Size
-* Expected profitability
-* Execution reward
-* Whether the result is favourable to the trader or the liquidity pool
-
-Several consecutive orders may be processed together, but batching does not change their order.
-
-FIFO[^fifo] also creates a trade-off: if the queue head is temporarily blocked, later orders may have to wait.
-
-### 4. Select the oracle observation
-
-During normal market operation, Plether settles an order using the first eligible Pyth observation after commitment.
-
-The observation must:
-
-* Be strictly later than the commitment time
-* Fall inside the protocol’s settlement window
-* Contain valid prices for all six index components
-* Keep component timestamps sufficiently aligned
-* Satisfy the configured confidence limits
-
-The historical proof prevents the finalizer from ignoring the first eligible observation and submitting a more favourable later one.
-
-The settlement window determines **which observation may price the order**. It does not necessarily determine when the finalization transaction must arrive. A keeper can submit the transaction later, while the order is still unexpired, and prove the eligible historical observation.
-
-On the current deployment, the historical settlement window is **15 seconds** after commitment and an order expires once its age exceeds **60 seconds**. These are separate, timelocked router and oracle parameters; the live onchain values are authoritative.
-
-If no valid observation exists inside the window, Plether does not substitute a later market price.
-
-> **Finalization time is not pricing time.** During live execution, an order finalized later is still priced from its eligible post-commit observation.
-
-Because the market mark may have moved since that observation, a newly executed position can show unrealized profit or loss immediately.
-
-The dedicated frozen-market exception is explained under **Execution during protective market states** below.
-
-### Who finalizes the order?
-
-A keeper supplies the historical Pyth data, pays the oracle update fee and submits the finalization transaction.
-
-The reserved USDG execution reward is then credited to the finalizer.
-
-At the protocol level, any address can call the permissionless execution endpoint. Doing so outside the Plether interface requires:
-
-* A wallet transaction
-* ETH for network gas
-* ETH for the Pyth update fee
-
-For an open or increase, the caller receives the reserved execution reward through its Margin Account. A reduction or close pays no execution reward. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts. The current Plether interface does not provide this direct owner-wallet path.
-
-### From index observation to execution price
-
-Plether distinguishes five different quantities.
-
-| Quantity            | Meaning                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| Central index price | The neutral oracle-derived Plether Dollar Index value                                                   |
-| Execution price     | The policy-adjusted oracle price: adverse during live/FAD execution and unshifted for frozen voluntary closes |
-| Execution limit     | The trader’s acceptable-price boundary                                                                  |
-| VPI                 | A separate USDG charge or rebate based on pool imbalance                                           |
-| Frozen-close spread | A separate LP-owned USDG charge on reduced notional for voluntary closes executed during `oracleFrozen` |
-
-The displayed Plether Dollar Index is:
-
-```
-D = 2.00 − B
-```
-
-Where `B` is the underlying foreign-currency basket. All prices shown below use the displayed index `D`, bounded to the fixed `0.00–2.00` range.
-
-### The adverse confidence adjustment
-
-Pyth provides a price and a confidence interval for each component.
-
-During live and FAD-only execution, Plether propagates those intervals through the index, then shifts the execution price conservatively against the trader:
-
-| Action                     | Execution adjustment |
-| -------------------------- | -------------------- |
-| Open or increase LONG USD  | Price shifted higher |
-| Reduce or close LONG USD   | Price shifted lower  |
-| Open or increase SHORT USD | Price shifted lower  |
-| Reduce or close SHORT USD  | Price shifted higher |
-
-For example, a LONG USD position opens slightly above the central index price and closes slightly below it.
-
-During an `oracleFrozen` voluntary reduction or close, confidence-width validation remains active but this adverse price shift is waived. The validated unshifted price is used, and the separate frozen-close spread applies instead. Liquidations continue using their liquidation-specific adverse confidence policy.
-
-This adjustment is not a separate USDG fee. It changes the price at which the position enters or exits.
-
-It is also not the frozen-close spread:
-
-* When applicable, the confidence adjustment changes the execution price.
-* The frozen-close spread is a separate USDG settlement charge.
-
-As a result, a position may initially show a small unrealized loss even if the central index has not moved.
-
-### Acceptable-price protection
-
-The **Execution limit** defines the worst confidence-adjusted oracle price the trader accepts.
-
-| Order                      | Meaning of the execution limit | Required condition                            |
-| -------------------------- | ------------------------------ | --------------------------------------------- |
-| Open or increase LONG USD  | Maximum acceptable price       | Execution price must be at or below the limit |
-| Reduce or close LONG USD   | Minimum acceptable price       | Execution price must be at or above the limit |
-| Open or increase SHORT USD | Minimum acceptable price       | Execution price must be at or above the limit |
-| Reduce or close SHORT USD  | Maximum acceptable price       | Execution price must be at or below the limit |
-
-Suppose a trader submits a LONG USD opening with an execution limit of `1.0150`:
-
-* Execution at `1.0148` passes
-* Execution at `1.0150` passes
-* Execution at `1.0152` fails
-
-This is slippage protection, not a resting limit order.
-
-If the eligible observation breaches the boundary, the order fails. It does not remain open waiting for the index to return to the requested price.
-
-Selecting **Market** removes the price boundary. It does not remove:
-
-* Delayed execution
-* The adverse confidence adjustment
-* Protocol fees
-* VPI
-* Carry
-* The frozen-close spread, when applicable
-* Margin and solvency checks
-
-A market-style order is therefore not guaranteed to execute.
-
-### What the execution limit does not protect
-
-The execution limit applies only to the confidence-adjusted oracle price.
-
-It does not directly cap:
-
-* Protocol execution fees
-* VPI
-* Accrued carry
-* The frozen-close spread, when applicable
-* The execution reward
-* Network or oracle fees
-
-VPI depends on pool depth and directional imbalance when the order executes. It may therefore differ from the commitment preview even when the oracle price barely changes.
-
-The frozen-close spread is a separate fixed settlement charge. The execution limit does not cap it or guarantee a maximum all-in close cost.
-
-### Final risk and settlement checks
-
-Passing the acceptable-price check does not guarantee execution.
-
-The engine evaluates the complete position using the state that exists at finalization.
-
-For an opening or increase, this includes:
-
-* Available and assigned margin
-* Initial and maintenance margin requirements
-* Resulting account equity
-* Position-size rules
-* Directional imbalance
-* Available side capacity
-* Pool solvency
-* Current market mode
-
-For a reduction or close, settlement can include:
-
-* Realized PnL[^pnl]
-* Released margin
-* Protocol execution fee
-* VPI charge or rebate
-* Accrued carry
-* Frozen-close spread assessed, paid and waived, when applicable
-* Remaining position health
-* Immediate USDG credit or a trader claim
-
-The execution-time regime determines how VPI and the frozen-close spread are handled:
-
-| Execution regime    | Voluntary-close VPI                   | Frozen-close spread |
-| ------------------- | ------------------------------------- | ------------------- |
-| Live market         | Normal signed VPI with lifetime clamp | None                |
-| FAD-only close-only | Normal signed VPI with lifetime clamp | None                |
-| `oracleFrozen`      | Normal signed VPI with lifetime clamp | Currently 50 bps    |
-| Liquidation         | Liquidation settlement path           | None                |
-
-During `oracleFrozen`:
-
-```
-Frozen-close spread
-= reduced contract notional × 0.50%
-```
-
-The rate is fixed rather than dependent on VPI, skew[^skew] or oracle age. It belongs entirely to LPs and never credits the protocol treasury.
-
-The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps`[^bps], or `10.00%`. The live onchain value is authoritative.
-
-V2 separates price-loss collection from action-charge funding:
+At finalization, the engine verifies full post-trade risk and solvency (for opens: initial margin, `1,000 USDG` min size, `40%` net-pool skew[^skew] cap, pool solvency with `0.25%` buffer, active session; for closes: size availability, non-dust residual, payment coverage).
 
 ![Carry consumes active position margin first, then free USDG. Price losses then use claims and remaining collectible pledge; later action charges can use safely released margin, not residual position backing.](../.gitbook/assets/diagrams/final-collection-priority.svg)
 
-Before close accounting, carry consumes active position margin first, then eligible free USDG. A price loss then consumes the same account’s nettable claim before the remaining collectible PnL pledge. Fees, VPI, frozen spread and any still-unpaid carry use the separate close action-charge sources, including margin safely released by the close. They do not consume the margin still backing a residual position. A partial reduction cannot waive an uncollectible action charge.
+Plether separates **price-loss collection** from **action-charge funding**:
 
-A terminal full close may waive uncollectible action charges, including frozen spread. Excess price loss beyond the collectible cap is recorded separately; it is not a fee shortfall.
+1. **Carry checkpoint:** Collects from active position margin first, then eligible free USDG (never from trader claims).
+2. **Realized price loss:** Nets same-account trader claims **first**, then remaining collectible position margin / pledge. Free USDG and committed-order margin never back price losses.
+3. **Action charges** (execution fee, unpaid carry, positive VPI / clawback, `50 bps` frozen-close spread): Paid from positive realized PnL, dedicated VPI rebate reserve, safely released margin, free USDG and (full close only) eligible committed-order margin — never draining margin required to keep a residual position healthy.
+4. **Shortfall rules:** Partial reductions cannot waive any cost and reject if underfunded. Terminal full closes record uncovered price loss as explicit bad debt, while waiving uncollectible action charges (including frozen-close spread — waived spread is neither bad debt, a trader claim nor an LP[^lp] receivable).
 
-A waived spread:
+During `oracleFrozen`, voluntary closes assess a fixed **`50 bps` (`0.50%`)** spread on reduced notional (`100%` LP-owned; timelocked with a `72-hour` notice, capped onchain at `10.00%`). Execution-time market state controls whether the spread applies — committing during live hours and filling after freeze activates it, and vice versa.
 
-* Does not become bad debt
-* Does not become a trader claim
-* Does not become an LP receivable
+## Order outcomes and `60-second` expiry
 
-Only a complete, valid transition changes the position.
+| Outcome | What happens |
+| --- | --- |
+| **Executed** | Position updates; close/open receipt records final price, quantity, execution exposure, fee, VPI, carry and any assessed/paid/waived frozen spread; opening reward pays to executing keeper (`0` on closes). |
+| **Failed** (`Slippage exceeded`, `Engine rejected`, `Expired`, `Account liquidated`) | Terminal; no trade applied, no execution fee/VPI/frozen spread charged. Committed opening margin releases to free USDG; **opening** execution reward pays to processing/cleanup keeper (or treasury on liquidation); closes pay `0`. |
+| **Still Pending** | Transient condition (missing historical Pyth tick, confidence `> 0.10%`, timestamp spread `> 5s`, same-block attempt, insufficient keeper gas, unexpected engine/receipt rollback or open blocked by close-only). Reverts cleanly and waits for retry until `executionDeadline`. |
 
-### Possible order outcomes
+Once `block.timestamp > commitTimestamp + 60s`, an order is eligible for FIFO expiry cleanup. Until a keeper clears it, reservations stay locked and it counts toward the `5`-order account cap.
 
-An order has three practical outcomes.
+## A pending close is still an open position
 
-| Outcome           | What happens                                                                                                                  |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Executed**      | The position changes, settlement is applied and the execution reward is paid to the finalizer                                 |
-| **Failed**        | The intended size change is not applied, committed opening margin is released and the execution reward is paid to the clearer |
-| **Still pending** | Nothing is finalized, reservations remain locked and the queue waits                                                          |
+Committing a close does **not** pause PnL[^pnl], carry or liquidation risk. Liquidation runs on a separate path without waiting in FIFO, never assesses the voluntary frozen-close spread, and — if it executes first — fails all of the account's pending orders and forfeits pending opening execution rewards to the protocol treasury.
 
-#### Executed
-
-The order passes its price and risk checks.
-
-The interface shows a **Final Result** containing:
-
-* Final price
-* Order quantity
-* Execution exposure
-* Contract notional
-* Margin posted
-* Protocol execution fee
-* Oracle confidence spread
-* VPI
-* Execution reward
-* Commit transaction
-* Finalization transaction
-
-Execution exposure can differ from previewed Order exposure because the committed Order quantity is valued at the final execution price.
-
-For a voluntary frozen close, the onchain result also exposes:
-
-* Frozen spread assessed
-* Frozen spread paid to LPs
-* Frozen spread waived
-
-A successful close with a nonzero assessment records the assessed, paid and waived USDG amounts in its onchain result.
-
-The result always satisfies:
-
-```
-assessed spread
-= paid spread
-+ waived spread
-```
-
-Every paid dollar belongs to LPs. None is credited to the protocol treasury.
-
-A terminal full close remains an **Executed** order when part of the spread is waived. The position closes successfully, and the event records the paid and waived amounts.
-
-#### Failed
-
-Terminal failures include:
-
-* Acceptable price exceeded
-* Order expired
-* Account state no longer supports the requested action
-* Position changed or disappeared before execution
-* A partial reduction cannot settle its complete obligation, including the frozen-close spread
-* Engine risk or solvency rejection
-
-A terminally failed order is removed from the live queue. It is not retried or requeued.
-
-Committed opening margin is released, but the execution reward is paid to the finalizer or clearer. Every clearing transaction consumes gas and queue-processing work; failures discovered during priced execution also consume the submitted oracle data and its update fee. Expired-head cleanup can use the stored mark without a fresh Pyth payload.
-
-No protocol execution fee, VPI or frozen-close spread is charged for a trade that never executes. An existing position can, however, continue accruing carry while its close order is pending.
-
-#### Still pending
-
-Some conditions prevent safe execution without making the order terminal.
-
-Examples include:
-
-* Missing historical oracle data
-* Invalid or excessively wide oracle confidence
-* Excessive timestamp differences between index components
-* An attempted live-market execution in the commitment block
-* Insufficient finalization gas
-* An opening order blocked by close-only mode
-
-In these cases, the execution transaction reverts or a batch stops. The order and its reservations remain pending.
-
-A reverted finalization transaction does not necessarily mean the order failed. The onchain order status is authoritative.
-
-### Expiry and cleanup
-
-Orders have a maximum lifetime.
-
-Reaching the expiry time does not automatically change onchain state. Someone must process the expired order so the queue and reservations can be updated.
-
-On the current deployment, cleanup becomes available once the order is more than **60 seconds** old. Reaching that age does not itself change onchain state. After a keeper or another direct contract caller processes the expired head:
-
-* The order is marked failed
-* Committed opening margin is released
-* The execution reward is paid to the clearer
-* The global queue advances
-
-The current Plether interface does not submit this cleanup transaction from the owner wallet.
-
-### Execution during protective market states
-
-Plether distinguishes scheduled close-only operation from its scheduled `oracleFrozen` state.
-
-#### Close-only operation
-
-During a scheduled close-only window with a live oracle:
-
-* New openings and increases are blocked
-* Reductions and closes remain eligible
-* Live post-commit oracle rules still apply
-* Normal signed VPI and its lifetime clamp remain active
-* No frozen-close spread applies
-
-An earlier opening order already sitting at the global queue head remains pending rather than being silently discarded. It can delay later orders until it executes, expires or otherwise reaches a terminal outcome.
-
-#### Frozen oracle
-
-When the protocol is in `oracleFrozen`:
-
-* New risk remains blocked
-* Reductions use the dedicated frozen-market oracle policy
-* Available oracle data must still remain within bounded staleness rules
-* Voluntary reductions and closes continue using normal signed VPI and its lifetime clamp
-* A separate fixed 50 bps spread is assessed on reduced contract notional
-* The paid spread belongs entirely to LPs
-* Partial reductions must settle the spread in full
-* Terminal full closes waive only the uncollectible spread
-* Liquidations do not assess the spread
-
-The execution-time state controls the result.
-
-A close committed during the live-oracle shoulder can incur the spread if it is finalized after `oracleFrozen` begins. Conversely, a close finalized after frozen operation ends pays no frozen-close spread, even if the market remains FAD-only close-only.
-
-Frozen does not mean that any old price can be used. If the available data is too stale even for the frozen-market policy, execution remains blocked.
-
-### A pending close is still an open position
-
-Submitting a close order does not close the position.
-
-Until the order executes:
-
-* The position remains exposed to index movements
-* Carry can continue to accrue
-* Margin requirements continue to apply
-* The position can still be liquidated
-
-Liquidation uses a separate keeper path and does not wait for the trader’s close order to reach the front of the FIFO queue.
-
-Liquidation never assesses the voluntary frozen-close spread, even when it executes during `oracleFrozen`.
-
-If liquidation happens first, the account’s pending orders fail. Their reserved execution rewards are forfeited to the protocol treasury rather than paid to an order finalizer.
-
-### What traders should verify
-
-Before committing:
-
-* Correct direction and action
-* Order quantity, Order exposure and contract notional
-* Assigned margin and resulting leverage
-* Execution-limit direction
-* Adverse confidence spread
-* Estimated execution fee
-* Estimated VPI
-* Whether the order could finalize during `oracleFrozen`
-* Estimated frozen-close spread, if shown
-* Execution reward
-* Liquidation price
-* Available side capacity
-
-While pending:
-
-* Do not treat the order as executed
-* Remember that it cannot be cancelled
-* Keep monitoring the underlying position
-* Check whether the execution regime has changed
-* Check the expiry countdown
-* Distinguish a failed finalization attempt from a failed order
-
-After finalization:
-
-* Confirm whether the order executed or failed
-* Check the final execution price
-* Compare the committed Order quantity, previewed Order exposure and execution exposure
-* Separate released margin from realized profit
-* Review fees, VPI, carry and execution reward separately
-* Review frozen spread assessed, paid and waived, when applicable
-* Do not treat a waived spread as bad debt or a trader claim
-
-### The central distinction
-
-Plether’s execution model separates five decisions:
-
-* **Market observation:** the oracle supplies the eligible market data.
-* **Execution price:** the active confidence policy converts that observation into a conservative execution price.
-* **Price acceptance:** the trader’s execution limit determines whether the calculated price is acceptable.
-* **Execution regime:** the market state at execution determines which oracle rules apply and whether the frozen-close spread is charged.
-* **Final validity:** the engine verifies that the resulting position and settlement satisfy the protocol’s risk and accounting rules.
-
-Plether does not promise instant execution. It provides rule-bound execution: globally ordered, tied to the applicable oracle regime and subject to the protocol’s solvency checks, trader-claim accounting and terminal bad-debt rules.
-
-[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
-[^eoa]: Externally owned account, a conventional blockchain account controlled by a private key.
-[^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^bps]: Basis points; 100 bps equals 1%.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.

@@ -36,9 +36,9 @@ resource "aws_vpc_security_group_ingress_rule" "rpc_alb_from_alto" {
     precondition {
       condition = (
         data.aws_security_group.existing_alto[0].vpc_id == local.rpc_vpc_id &&
-        startswith(data.aws_security_group.existing_alto[0].name, "plether-sepolia-alto-task-")
+        startswith(data.aws_security_group.existing_alto[0].name, "plether-${local.deployment_name}-alto-task-")
       )
-      error_message = "The Alto group must belong to the existing Sepolia VPC and expected task family."
+      error_message = "The Alto group must belong to the existing environment VPC and expected task family."
     }
   }
 }
@@ -61,9 +61,9 @@ resource "aws_vpc_security_group_ingress_rule" "rpc_alb_from_aa_reconciler" {
     precondition {
       condition = (
         data.aws_security_group.existing_aa_reconciler[0].vpc_id == local.rpc_vpc_id &&
-        startswith(data.aws_security_group.existing_aa_reconciler[0].name, "plether-sepolia-aa-reconciler-")
+        startswith(data.aws_security_group.existing_aa_reconciler[0].name, "plether-${local.deployment_name}-aa-reconciler-")
       )
-      error_message = "The reconciler group must belong to the existing Sepolia VPC and expected task family."
+      error_message = "The reconciler group must belong to the existing environment VPC and expected task family."
     }
   }
 }

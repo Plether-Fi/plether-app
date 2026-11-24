@@ -1,484 +1,125 @@
 # Why is my order pending or failed?
 
-For the pricing rules behind oracle-related delays, see [Oracle & execution model](../how-plether-works/oracle-and-execution-model.md).
+An action can fail **before** an order exists (during sponsorship, signing or onchain commitment) or **after** a confirmed commitment (during delayed keeper execution). These are separate lifecycles and require different responses.
 
-An action can fail before an order exists or after a confirmed order commitment. These are separate lifecycles and require different responses.
+![Sponsored transaction success and order execution are different lifecycles. Transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
 
-![Sponsored transaction success and order execution are different lifecycles. V2 transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
+A sponsored commit is **Confirmed** once it lands onchain and creates an order ID in Plether's global FIFO[^fifo] queue. For **opens and increases**, committed margin and the opening execution reward (`0.01–0.20 USDG`) are reserved while the order is **Pending**. For **reductions and closes**, no execution reward or new margin is reserved, though the requested position quantity is reserved against overlapping closes.
 
-The sponsored operation is **Confirmed** when the commitment call succeeds onchain and creates an order ID. The order then enters Plether’s global FIFO[^fifo] queue with its own **Pending** status. Margin and execution-reward reservations become active while the requested position change waits for execution.
+Committed orders cannot be cancelled, resized or repriced. A **Failed** order is terminal and cannot execute later.
 
-A **Failed** order has reached a terminal state. The same order cannot execute later.
+## First identify what happened
 
-Committed orders cannot be cancelled, resized or given a new acceptable price.
+| What you see | Does an order exist? | Meaning |
+| --- | --- | --- |
+| **Wallet signature rejected** | No | Your owner wallet declined the authorization |
+| **Sponsorship unavailable / rate-limited** | No | The paymaster did not approve gas funding for this attempt |
+| **Bundler rejected** | No | The bundler[^bundler] refused the UserOperation[^useroperation] before submission |
+| **Pending onchain** | Not yet known | Waiting for onchain inclusion; do not submit a duplicate |
+| **Dropped by bundler** | Usually no | Bundler stopped tracking it; check for a transaction receipt before retrying |
+| **Failed onchain** | No | The included commit call reverted; no order or reservation remains |
+| Order listed under **Open Orders** | Yes | Commitment succeeded and the order is **Pending** in FIFO |
+| **Keeper execution attempt failed** | Yes, usually still Pending | A keeper's execution attempt reverted; the keeper can retry |
+| **Expired** under **Open Orders** | Yes, awaiting cleanup | The 60-second execution window passed; awaiting keeper[^keeper] cleanup |
+| **Order failed** / **Expired / Cleaned up** in **Order History** | No longer active | An onchain `OrderFailed` event terminally closed the order |
+| **Executed** | No longer active | The trade completed and updated your position |
 
-### First identify what failed
+### UserOperation hash vs transaction hash
 
-| What you see                              | Does an order exist?        | Meaning                                                                  |
-| ----------------------------------------- | --------------------------- | ------------------------------------------------------------------------ |
-| **Wallet signature rejected**             | No                          | The owner wallet did not authorize the prepared action                   |
-| **Sponsorship unavailable / rate-limited** | No                          | The sponsor did not approve gas funding for this attempt                 |
-| **Bundler rejected**                      | No                          | The bundler refused the UserOperation before submission                  |
-| **Pending onchain**                       | Not yet known               | The UserOperation is waiting for inclusion; do not submit a duplicate    |
-| **Dropped by bundler**                    | Usually no                  | The bundler stopped tracking it; check for a transaction receipt first   |
-| **Failed onchain**                        | No                          | The included commitment call failed and reservations reverted            |
-| Order appears under **Open Orders**       | Yes                         | The commitment succeeded and the order remains Pending                   |
-| **Keeper execution attempt failed**       | Yes, usually still Pending  | The delayed execution attempt reverted                                   |
-| **Order failed**                          | No longer active            | An onchain `OrderFailed` event made the order terminal                    |
-| **Expired** under Open Orders             | Yes, awaiting keeper cleanup | Its lifetime passed, but terminal cleanup is still required              |
-| **Expired / Cleaned up** in Order History | No longer active            | The expired order has been terminally removed                            |
-| **Executed**                              | No longer active            | The requested position change completed                                  |
+A **UserOperation hash** identifies your signed smart-account request at the bundler (before or after inclusion). Once included, its receipt reveals the onchain **transaction hash**, which records EntryPoint and Plether contract events.
 
-A confirmed UserOperation[^useroperation] or transaction does not always mean the trade executed. A commitment only creates the order, and a later keeper transaction can confirm while emitting `OrderFailed`.
+A confirmed bundler transaction alone does not prove your trade executed: a commit transaction only creates the pending order, and a later keeper transaction can confirm onchain while emitting `OrderFailed`. Always verify the final outcome in **Open Orders** and **Order History**.
 
-Check **Order History** for the terminal result.
+## Quick troubleshooting sequence
 
-### UserOperation hash versus transaction hash
+1. Check **Trading Account activity** for the operation status, UserOperation hash and transaction hash (and check **Trading status** for bundler/keeper/oracle health).
+2. If the transaction confirmed, locate the order ID under **Open Orders** and check its expiry countdown.
+3. Check the market state (**Open**, **FAD close-only**[^fad] or **Oracle frozen**) and latest oracle[^oracle] timestamp.
+4. Wait for automatic keeper execution or expiry cleanup — do not submit a replacement while the original order is still Pending, or you will create a second binding FIFO order.
+5. Once **Order History** shows a terminal failure or **Expired / Cleaned up**, request a fresh preview and submit a new order if still needed.
 
-A sponsored smart-account action can expose two different identifiers:
+## When the sponsored commit fails (no order created)
 
-| Identifier             | What it identifies                                                                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **UserOperation hash** | The signed smart-account operation sent to the bundler; it can exist before any onchain transaction includes it     |
-| **Transaction hash**   | The onchain transaction submitted by the bundler; it can contain one or more UserOperations                         |
+Pre-inclusion errors (rate limit, stale `submitBy` window, invalid nonce/signature, failed simulation, bundler rejection) and reverted onchain commits leave **zero** order ID and **zero** reservations. For eligible sponsored attempts that revert onchain, Plether still pays the network gas.
 
-Use the UserOperation hash to check sponsorship and bundler[^bundler] status. Once included, its receipt should identify the transaction hash. Use the transaction hash to inspect the block, EntryPoint events and Plether contract events.
+Common onchain commit reverts:
 
-A UserOperation hash is not interchangeable with a transaction hash. A dropped UserOperation may never receive a transaction hash. Conversely, a confirmed bundler transaction does not by itself prove that the specific UserOperation’s inner Plether call succeeded.
+| Commit error | Typical cause |
+| --- | --- |
+| **Insufficient free USDG** | Available to Trade cannot cover the opening margin and opening execution reward |
+| **Too many pending orders** | Account already has the maximum `5` active pending orders |
+| **Position too small** | Opening size is below the `1,000 USDG` minimum notional (or partial close leaves a dust residual) |
+| **Insufficient initial margin** | Requested size and margin exceed the initial leverage limit |
+| **Opposing position** | Account already holds exposure in the opposite direction |
+| **Skew or solvency limit** | Trade exceeds the `40%` net-pool skew cap or pool solvency capacity |
+| **Close-only, frozen, degraded or paused** | New risk-increasing exposure is blocked in the current market state |
+| **Invalid reduction** | No executed position exists, side mismatches, or earlier pending closes already reserve that size |
 
-For an order commitment, the strongest confirmation is:
+## Why a committed order stays Pending
 
-1. The UserOperation receipt shows successful inclusion.
-2. The transaction receipt shows the successful Plether commitment event.
-3. An order ID appears under **Open Orders** or **Order History**.
+* **Behind earlier global FIFO orders:** Plether processes every account through one global FIFO queue. Open Orders only shows your own orders; an earlier blocked or expired order from another account can briefly delay later orders (including closes) until the queue head executes or is cleaned up.
+* **Waiting for the first post-commit Pyth tick:** Live and FAD-only execution requires `execution block > commit block` and `oracle publish time > commit time`, using the unique first eligible Pyth basket observation inside the order's settlement window. Keepers cannot skip ahead to a newer price.
+* **Transient historical oracle or gas issues:** Hermes rate limiting, missing historical VAAs, wide oracle confidence (above `0.10%`), component timestamp divergence (above `5s`), Pyth fee changes or insufficient forwarded keeper gas all cause the keeper transaction to revert while leaving your order **Pending** for automatic retry.
+* **Market entered close-only (`FAD` or `oracleFrozen`):** An open or increase committed right before close-only remains Pending because risk-increasing execution is blocked. Since the active `executionWindowSeconds` is `60` seconds and scheduled closures last much longer, the blocked open expires and is then cleaned up by a keeper. Reductions and closes remain executable in both FAD-only (live rules) and `oracleFrozen` (validated frozen price plus the `50 bps` spread).
+* **Keeper or RPC[^rpc] delay:** The web app leaves execution and expired-order cleanup to Plether's keeper; your owner wallet is never prompted to finalize or clean up an order.
 
-### A quick troubleshooting sequence
+For pricing details behind oracle delays, see [Oracle & execution model](../how-plether-works/oracle-and-execution-model.md).
 
-1. Check the sponsored operation status and UserOperation hash.
-2. If included, open the linked transaction hash and check whether the commitment call succeeded.
-3. Find the order ID under **Open Orders**.
-4. Check its expiry countdown.
-5. Check whether the market is live, FAD-only[^fad] or `oracleFrozen`.
-6. Read the latest keeper-progress or oracle[^oracle] message.
-7. Wait for automatic keeper[^keeper] processing.
-8. If the order is **Expired**, leave it for keeper cleanup and continue monitoring **Open Orders**.
-9. If **Order History** shows a terminal failure, request a new preview and create a new order.
+## What remains reserved while Pending
 
-Do not submit a replacement until you know whether the original order is still Pending. A replacement creates another binding FIFO order.
+* **Open or increase:** Submitted order margin and the opening execution reward (`0.01–0.20 USDG`) leave **Available to Trade**. Committed opening margin creates no live exposure and does **not** back price losses on an existing position.
+* **Reduce or close:** Reserves **zero** execution reward and no new margin, only the requested position quantity against further closes. Committing checkpoints accrued carry (from active position margin first, then eligible free USDG), which can reduce position margin while the position stays fully exposed until execution. **A pending close provides no liquidation protection.**
 
-### The sponsored commitment failed
+## Expired orders and keeper cleanup
 
-Failures before successful inclusion include:
+An order becomes expired onchain once `block.timestamp > executionDeadline` (`commitTimestamp + 60s` on the current deployment). Until a keeper processes terminal cleanup, an expired order still holds its reservations (for an open) and counts toward the `5`-order cap.
 
-* Sponsorship unavailable
-* Sponsor rate limit reached
-* Invalid owner signature or stale operation
-* Invalid nonce
-* Failed smart-account simulation
-* Bundler policy rejection
-* Dropped by bundler before inclusion
+**Open Orders** labels expired rows **Keeper cleanup in progress** / **Keeper processing**. Once FIFO reaches the order, cleanup emits `OrderFailed (Expired)`, removes it from the queue, releases committed opening margin to free USDG and — for **opens and increases only** — pays the reserved execution reward to the cleanup keeper. Expired reductions and closes pay **zero** execution reward.
 
-These failures create no order ID and no margin or execution-reward reservation.
+## Terminal failure reasons in Order History
 
-If the UserOperation is included but the commitment call reverts, the attempted state changes revert atomically. No order or reservation remains. The sponsored submission can still consume network gas, but Plether pays that gas for an eligible sponsored operation rather than charging the owner wallet’s native-token balance.
+| Terminal status | Why it happened |
+| --- | --- |
+| **Failed: Slippage exceeded** | The eligible execution price (including the `0.25×` adverse confidence shift during live/FAD, or the unshifted validated price during `oracleFrozen`) crossed your acceptable-price bound (disabled only when set to **Infinity**). Terminal for that order. |
+| **Failed: Engine rejected** | Execution-time state failed validation — for opens: opposing position still open, below `1,000 USDG` minimum, fees/VPI[^vpi]/carry drained usable margin, insufficient initial margin, skew/solvency cap or degraded mode; for closes: size exceeds remaining position, dust residual, or a partial close could not pay its losses and action charges without waiver. |
+| **Failed: Account liquidated** | Liquidation occurred before the order executed. All of the account's pending orders are cleared and marked failed; opening-order execution rewards are forfeited to the protocol treasury while committed opening margin is released to free USDG (never backing price losses, though free USDG can cover separate non-price liquidation charges such as unpaid carry, VPI clawback or liquidation fees). |
+| **Expired / Cleaned up** | Passed its `60`-second execution deadline without executing and was terminally removed by a keeper. |
 
-The underlying commitment call can fail for:
+> **Unexpected engine or receipt error (not automatically terminal):** If an execution attempt encounters an unexpected engine panic, malformed response or receipt error, the transaction rolls back and the order **stays Pending** for retry rather than silently failing. If this persists, save the Order ID, commit hash, block number and market state and contact support.
 
-| Commit error                     | Typical cause                                                                                   |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Insufficient free USDG           | Available to Trade cannot cover the margin and execution reward                                 |
-| Too many pending orders          | The account has reached the active pending-order limit                                          |
-| Position too small               | The opening or partial reduction is below the minimum supported size                            |
-| Insufficient initial margin      | Size and margin would create excessive leverage                                                 |
-| Opposing position                | The account already has exposure in the other direction                                         |
-| Skew limit                       | The requested direction would exceed the current skew boundary                                  |
-| Solvency limit                   | The liquidity pool cannot admit the requested maximum liability                                      |
-| Close-only or frozen market      | New exposure is unavailable in the current market state                                         |
-| Degraded mode                    | New risk is blocked                                                                             |
-| Router pause or pool restriction | Risk-increasing commits are temporarily unavailable                                             |
-| Invalid reduction                | No executed position exists, the side differs or earlier queued reductions already use the size |
+## Opening-order reservation outcomes
 
-Correct the displayed sponsorship, account or ticket issue and request a fresh operation. Use **Retry Commit** only after the previous UserOperation is confirmed failed or dropped and no order ID exists.
+| Outcome | Committed opening margin | Opening execution reward (`0.01–0.20 USDG`) |
+| --- | --- | --- |
+| **Pending** | Reserved | Reserved |
+| **Executed** | Becomes active position margin | Paid to executing keeper |
+| **Slippage / engine failure** | Released to free Margin Account USDG | Paid to processing keeper |
+| **Expired and cleaned** | Released to free Margin Account USDG | Paid to cleanup keeper |
+| **Keeper transaction reverted** | Unchanged (still Pending) | Unchanged (still Pending) |
+| **Account liquidated first** | Released when pending order clears (cannot absorb price loss; released free USDG can cover non-price charges if needed) | Forfeited to protocol treasury |
 
-### Why an order remains Pending
+Reductions and full closes reserve and pay **zero** execution reward in every outcome. Carry already collected at commitment remains paid.
 
-#### It is behind an earlier global order
+## Why a valid preview can fail — and why Available to Trade can lag
 
-Plether processes all accounts through one global FIFO queue.
+Previews snapshot current state, whereas execution happens later in FIFO after price moves, carry accrual, skew/solvency changes, earlier orders or market-state transitions.
 
-An order can execute after every earlier unresolved order has:
+If **Available to Trade** has not recovered right after a failure, check whether:
 
-* Executed
-* Failed
-* Expired and been cleaned
-* Been removed during liquidation cleanup
+* The order is **Expired** and waiting for keeper cleanup.
+* Other pending orders still reserve margin or opening rewards.
+* Carry was checkpointed on an open position.
+* **Order History** (indexed) has not yet caught up with **Open Orders** (read directly onchain).
 
-Your Open Orders list shows account-local orders. It does not show the complete global queue ahead of them.
+## Before submitting a replacement
 
-A temporary problem at the global head delays every later order. FIFO does not prioritize reductions and closes. An opening order blocked by a close-only state can therefore delay a later close until the earlier order becomes executable or expires.
-
-Expired-head cleanup is bounded per transaction. Several expired orders may require multiple keeper calls.
-
-#### It is waiting for the post-commit price
-
-During live and FAD-only execution, Plether requires:
-
-```
-execution block > commit block
-```
-
-and:
-
-```
-oracle publish time > commit time
-```
-
-The execution price comes from the unique first eligible Pyth basket observation inside the order’s historical settlement window.
-
-A keeper cannot skip that observation and select a later, more favorable price.
-
-Immediately after commitment, the interface may show:
-
-* **Pending**
-* **Waiting for reveal**
-* **Pending reveal**
-
-Wait for the next eligible observation and FIFO processing.
-
-#### The historical oracle payload is unavailable
-
-The keeper needs Pyth data covering the order’s specific execution window.
-
-A finalization attempt can revert because of:
-
-* Missing update data
-* Historical data retrieval delay
-* Hermes rate limiting
-* Pyth update fee changing before submission
-* Failure to identify a unique post-commit tick
-* Confidence width above the permitted limit
-* Basket component timestamps too far apart
-* Invalid or out-of-order oracle data
-
-These failures normally leave the order Pending.
-
-The current sponsored interface leaves these retries to the keeper. Keep the order under **Open Orders** and monitor its status; the owner wallet is not asked to fetch price data or submit a finalization transaction.
-
-Retries still target the order’s eligible historical observation. They do not move the order to the latest market price.
-
-#### The market became close-only
-
-An open or increase committed while live remains Pending if it reaches execution during:
-
-* A FAD close-only window
-* `oracleFrozen`
-
-At protocol level it could execute if risk-increasing trading resumed before expiry. On the current deployment, however, the maximum order age is 60 seconds and scheduled close-only periods last much longer, so such an order expires before reopening and then waits for keeper cleanup.
-
-| Market state                       | Open or increase                          | Reduce or close                           |
-| ---------------------------------- | ----------------------------------------- | ----------------------------------------- |
-| Live                               | Eligible under historical execution rules | Eligible under historical execution rules |
-| FAD-only                           | Blocked and remains Pending               | Eligible under live historical rules      |
-| `oracleFrozen`                     | Blocked and remains Pending               | Eligible under frozen-market rules        |
-| Frozen data beyond its allowed age | Blocked                                   | Ineligible unless eligible data arrives before expiry |
-
-A voluntary frozen close uses the validated unshifted oracle price, retains slippage and normal signed VPI[^vpi], and pays the separate frozen-close spread.
-
-#### A finalization attempt was too early
-
-During live and FAD-only execution, same-block execution and observations published at or before commitment are rejected.
-
-The keeper transaction reverts and the order stays Pending. A later keeper attempt can retry after the same-block restriction has passed.
-
-#### The keeper finalization transaction lacked enough gas
-
-Insufficient forwarded gas prevents the execution attempt from reaching the engine.
-
-The order and its reservations remain unchanged. The keeper can retry with a sufficient gas limit; the owner wallet does not configure this transaction in the current interface.
-
-#### Keeper or network delay
-
-A confirmed commitment still requires a keeper to submit the finalization transaction.
-
-RPC[^rpc] interruptions, congestion, keeper downtime and delayed Pyth caching can extend the wait.
-
-The trade modal continues to show keeper progress. It does not expose **Finalize Trade** for the current sponsored Trading Account.
-
-### Keeper-operated finalization
-
-The underlying order-execution function is permissionless, but the current sponsored interface does not expose an owner-wallet manual-finalization route. Plether’s keeper supplies the execution transaction, the required Pyth update data and any native-token Pyth fee.
-
-For an ordinary terminal result processed by the keeper, the reserved USDG[^usdg] execution reward is credited to the keeper account. If liquidation clears the order first, the reward is forfeited to the protocol treasury. The owner wallet is not charged native gas for keeper processing.
-
-#### A keeper finalization attempt failed
-
-A reverted keeper transaction usually leaves:
-
-* Order status: Pending
-* Committed margin: reserved
-* Execution reward: reserved
-* Position: unchanged by that attempt
-
-No trader action is required. Refresh **Open Orders** and continue monitoring. The keeper can retry while the order remains Pending or clean it up after strict expiry.
-
-#### Finalization confirmed without a result for your order
-
-A transaction can advance or clean earlier FIFO orders without reaching the selected order.
-
-If the transaction confirms without an `OrderExecuted` or `OrderFailed` event for your Order ID:
-
-1. Refresh **Open Orders**.
-2. Check whether earlier orders were removed.
-3. Confirm whether the selected order is still Pending.
-4. Continue monitoring keeper processing.
-
-### What remains reserved while Pending
-
-#### Open or increase
-
-A pending open or increase reserves:
-
-* Submitted order margin
-* Execution reward
-
-Committed margin:
-
-* Leaves Available to Trade
-* Cannot be withdrawn or reused
-* Remains part of terminally reachable account collateral
-* Creates no live exposure before execution
-
-The execution reward:
-
-* Leaves Available to Trade
-* Stops contributing to account health
-* Remains reserved for terminal processing
-
-An existing position keeps its current size, entry price, PnL[^pnl] and carry[^carry] exposure until the increase executes.
-
-#### Reduce or close
-
-A reduction or full close reserves no execution reward and no new opening margin. It still reserves the requested position quantity against later reductions.
-
-Commitment realizes carry from active position margin first, then eligible free USDG. This can lower position margin, increase leverage and reduce account health while the complete position remains exposed. Additional carry continues to accrue until execution.
-
-A pending close provides no liquidation protection.
-
-### Expired orders and keeper cleanup
-
-The active onchain maximum order age determines expiry. Use the countdown shown by the interface.
-
-The contract treats an order as expired only when the block timestamp is strictly greater than its commit time plus the maximum order age. After that boundary, the order is ineligible for trade execution, but reservations remain until terminal cleanup.
-
-An expired order continues to:
-
-* Hold committed opening margin
-* Hold its execution reward
-* Count toward the pending-order limit
-* Leave a pending close’s position fully exposed
-
-The current sponsored interface changes the status to **Expired** and shows **Keeper cleanup in progress** and **Keeper processing**. It does not submit cleanup from the owner wallet.
-
-Cleanup:
-
-* Emits `OrderFailed` with reason `Expired`
-* Removes the order from the queue
-* Releases committed opening margin
-* Pays the execution reward to the keeper that processes the cleanup
-* Records **Expired / Cleaned up** in Order History
-
-Cleanup remains subject to global FIFO. An earlier unexpired order cannot be skipped, so the expired row can remain visible until the earlier queue head progresses.
-
-The interface can reach zero slightly before the contract considers the order strictly older than its maximum age. The keeper waits for the strict onchain boundary and retries; no owner-wallet action is required.
-
-### What Failed means
-
-A terminal failure emits `OrderFailed`, removes the order from the queue and makes another execution attempt impossible.
-
-The requested trade is not applied. Earlier orders and separate carry checkpoints may already have changed the account since commitment.
-
-For an ordinary terminal failure:
-
-* Remaining committed opening margin is released.
-* The execution reward is paid to the keeper or other terminal processor.
-* The proposed execution fee and VPI are not charged.
-* A new order is required.
-* Existing position exposure continues unless another action changed it.
-
-### Failure reasons in Order History
-
-#### Failed: Slippage exceeded
-
-The execution price fell outside the committed acceptable-price boundary.
-
-Using the dollar-oriented index shown by the application:
-
-| Action                     | Required execution condition                   |
-| -------------------------- | ---------------------------------------------- |
-| Open or increase LONG USD  | Price at or below the maximum acceptable price |
-| Open or increase SHORT USD | Price at or above the minimum acceptable price |
-| Reduce or close LONG USD   | Price at or above the minimum acceptable price |
-| Reduce or close SHORT USD  | Price at or below the maximum acceptable price |
-
-A target of **Infinity** disables this price check.
-
-Live and FAD-only checks use the adverse confidence-adjusted execution price. A frozen voluntary close uses the unshifted validated price; its frozen-close spread is charged separately.
-
-Slippage failure is terminal for that observation. A later favorable price cannot revive the same order.
-
-Before resubmitting:
-
-* Check the current index.
-* Review the applicable confidence adjustment.
-* Set a new boundary deliberately.
-* Request a fresh preview.
-
-#### Failed: Engine rejected
-
-The engine found the order invalid against execution-time state.
-
-An open or increase can be rejected because:
-
-* The account still holds an opposing position.
-* The resulting position is below minimum size.
-* Fees, VPI or accrued carry drain the usable margin.
-* Initial margin is insufficient.
-* Current skew[^skew] exceeds the admitted limit.
-* Pool solvency capacity is insufficient.
-* The protocol entered degraded mode.
-* Earlier terminal settlement consumed margin reserved for the order.
-
-A reduction or close can be rejected because:
-
-* Requested size exceeds the current position.
-* Earlier orders changed the available exposure.
-* The residual position would be too small.
-* Remaining margin would fall below the applicable minimum.
-* A partial reduction cannot fully settle its losses and costs.
-* A frozen partial reduction cannot pay its complete frozen-close spread.
-
-Refresh the position, account and preview before submitting again.
-
-#### Failed: Account liquidated
-
-The account became liquidatable before the order executed.
-
-Plether then:
-
-* Liquidates the live position
-* Clears the account’s pending orders
-* Marks them failed due to liquidation
-* Uses eligible committed margin during terminal settlement
-* Releases any remaining committed reservation
-* Forfeits pending execution rewards to the protocol treasury
-
-Review the liquidation result and current Margin Account before creating new exposure.
-
-#### Still pending: engine or receipt failure
-
-An unexpected engine panic, malformed response or receipt failure is not automatically a terminal V2 order failure. The execution attempt rolls back and the order can remain pending for retry. Known planner or signed-bound rejections have separate terminal reasons. Check the stored pending reason and terminal receipt instead of inferring failure from an error message alone.
-
-Save:
-
-* Order ID
-* Commit transaction hash
-* Reveal transaction hash
-* Block number
-* Current market state
-
-Contact the team if the failure persists.
-
-#### Expired / Cleaned up
-
-The order passed its lifetime and was removed without executing.
-
-Committed opening margin is released and its execution reward is paid to the keeper that cleaned the opening order. A reduction or close has no execution reward to pay on expiry.
-
-Submit a fresh order if the trade is still required.
-
-### Opening-order reservation outcomes
-
-| Outcome                          | Committed opening margin                         | Execution reward               |
-| -------------------------------- | ------------------------------------------------ | ------------------------------ |
-| Pending                          | Remains reserved                                 | Remains reserved               |
-| Executed                         | Becomes active position margin as applicable     | Paid to terminal processor     |
-| Slippage or engine failure       | Released to free Margin Account USDG             | Paid to terminal processor     |
-| Expired and cleaned              | Released to free Margin Account USDG             | Paid to cleanup keeper         |
-| Keeper transaction reverts       | Unchanged                                        | Unchanged                      |
-| Liquidation happens first        | May be consumed before any remainder is released | Forfeited to protocol treasury |
-
-A failed reduction or close pays no execution reward. Carry already collected at commitment remains paid; the position is still exposed until a later order executes or liquidation occurs.
-
-### Why a valid preview can still fail
-
-The preview uses current account and protocol state. Execution occurs later, after earlier global FIFO activity.
-
-The result can change through:
-
-* Price movement
-* Carry accrual
-* Execution fees and VPI at the final price
-* Earlier orders changing account exposure
-* Earlier orders changing market skew
-* Pool liability or solvency changes
-* Margin being consumed during terminal settlement
-* FAD or frozen-market activation
-* Degraded mode
-* Liquidation
-
-For example, an opposite-direction open may be queued behind a full close. If the close fails its slippage check, the later opening order reaches execution while the original position still exists and is rejected.
-
-### Why Available to Trade has not fully recovered
-
-After failure, possible causes include:
-
-* The order is expired but has not yet been cleaned by a keeper.
-* Another pending order still reserves margin.
-* Another execution reward remains reserved.
-* Carry was checkpointed or realized.
-* Terminal close or liquidation settlement consumed committed margin.
-* The interface is waiting for the history indexer to catch up.
-
-Open Orders are read from onchain state, while Order History is indexed separately. A processed order may briefly disappear from Open Orders before appearing in history.
-
-### Common interface situations
-
-| What you see                                                      | What to do                                                                                    |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Sponsorship unavailable or rate-limited                            | Wait a moment or for service recovery; no order exists                                          |
-| Dropped by bundler and no transaction hash exists                   | Request a fresh sponsored operation                                                            |
-| Bundler transaction confirmed but no order appears                 | Inspect the UserOperation receipt and Plether commitment event                                 |
-| Keeper execution attempt failed, but order remains in Open Orders | Continue monitoring; the keeper can retry                                                      |
-| Order disappeared and position did not change                     | Check Order History for a terminal failure                                                    |
-| Order History shows Type: Commit and Status beginning **Failed:** | Commitment succeeded; later execution failed before producing trade activity                  |
-| Failed row shows Not executed for price and size                  | The order reached a terminal state without applying the trade                                 |
-| Expired row remains visible                                       | Wait for the strict expiry boundary and FIFO keeper cleanup                                    |
-| Maximum pending-order message                                     | Wait for existing orders to execute, fail or be cleaned by a keeper                            |
-| Close remains Pending while position health falls                 | Deposit collateral if appropriate and monitor liquidation; the close has not reduced exposure |
-| History has not appeared yet                                      | Refresh after the indexer updates and verify the transaction onchain                          |
-
-### Before creating a replacement
-
-1. Confirm the original order is absent from Open Orders.
-2. Check its terminal status in Order History.
-3. Refresh the current position and Margin Account.
-4. Review other pending orders.
-5. Check live, FAD and frozen-market state.
-6. Request a new preview.
-7. Review carry and account health.
-8. Set a new acceptable price.
-9. Confirm the new execution reward.
-10. Monitor the replacement until it reaches a terminal state.
+Confirm the original order is gone from **Open Orders**, check its terminal status in **Order History**, refresh your position and Margin Account balances, verify the current market state and request a fresh preview with deliberate slippage bounds.
 
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
-[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-[^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.

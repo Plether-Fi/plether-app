@@ -99,6 +99,12 @@ alto_utility_private_key_ssm_parameter_name = "/plether/sepolia/alto-utility-pri
 alto_secrets_kms_key_arn                    = ""
 alto_entrypoint_simulation_contract_v8      = ""
 alto_pimlico_simulation_contract            = ""
+# The live EntryPoint v0.8 profile stays selected during the isolated Kernel
+# canary. The separate canary inputs below carry its v0.9 simulator and profile.
+enable_kernel_aa_eth                         = false
+enable_kernel_aa_sponsorship                 = false
+enable_kernel_aa_protection_commits          = false
+
 alto_min_executor_balance_wei               = "5000000000000000"
 alto_max_gas_per_user_operation             = "5000000"
 alto_max_gas_per_bundle                     = "20000000"

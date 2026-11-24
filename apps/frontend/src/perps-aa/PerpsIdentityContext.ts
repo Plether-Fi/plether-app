@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { Address } from 'viem'
+import type { GasPaymentPreferenceScope } from './gasPaymentPreference'
 import type {
   PerpsIdentityField,
   PersistedPerpsIdentity,
@@ -38,6 +39,7 @@ export interface PerpsIdentityContextValue {
   chainId: number | undefined
   isAaManifestConfigured: boolean
   sponsorshipEnabled: boolean
+  kernelGasPreferenceScope?: GasPaymentPreferenceScope
   manifest: PerpsAaDeploymentManifest | null
   identity: PersistedPerpsIdentity | null
   proposedIdentity: PersistedPerpsIdentity | null

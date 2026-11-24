@@ -24,6 +24,7 @@ import {
   type PerpsAccountAddressResolver,
 } from './PerpsIdentityProvider'
 import { resolvePerpsAaManifestUrl } from './manifestUrl'
+import { selectedKernelTestOwner } from './kernelTestOptIn'
 import {
   bundlerRpcUrlForManifest,
   isPerpsAaManifestV2 as isNativePaymasterManifest,
@@ -33,10 +34,15 @@ import {
   PerpsAaRuntimeProvider,
 } from './runtime'
 import type { PerpsAaSmartAccountRuntime } from './runtimeContext'
+import { usePerpsIdentity } from './usePerpsIdentity'
 
 const SponsoredOperationRecovery = lazy(async () => {
   const module = await import('./SponsoredOperationRecovery')
   return { default: module.SponsoredOperationRecovery }
+})
+const KernelOperationRecovery = lazy(async () => {
+  const module = await import('./useKernelAttempts')
+  return { default: module.KernelOperationRecovery }
 })
 
 function configuredManifestUrl(): string | null {
@@ -45,19 +51,66 @@ function configuredManifestUrl(): string | null {
   return resolvePerpsAaManifestUrl(value, isSepoliaDeployment())
 }
 
+function configuredKernelDeployment(owner: string | undefined, entry: URL | undefined): string | undefined {
+  if (!isSepoliaDeployment()) return undefined
+  const value: unknown = import.meta.env.VITE_PERPS_KERNEL_AA_DEPLOYMENT
+  if (typeof value !== 'string' || value === '') return undefined
+  if (import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
+      !selectedKernelTestOwner(owner, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS, entry)) {
+    return undefined
+  }
+  return value
+}
+
+function ConnectedPerpsAaRuntime({
+  runtime, kernelDeployment, children,
+}: {
+  runtime: PerpsAaSmartAccountRuntime | undefined
+  kernelDeployment: string | undefined
+  children: ReactNode
+}) {
+  const identity = usePerpsIdentity()
+  const effectiveRuntime = runtime?.kernel && (
+    identity.status !== 'ready' || identity.chainId !== runtime.chainId ||
+    identity.manifest?.smartAccountMode !== 'kernel' ||
+    identity.manifest.version !== runtime.manifestVersion ||
+    identity.manifest.kernel.profile.deployment !== runtime.kernel.scope.deployment ||
+    !identity.ownerAddress || !isAddressEqual(identity.ownerAddress, runtime.ownerAddress) ||
+    !identity.accountAddress || !isAddressEqual(identity.accountAddress, runtime.smartAccount.accountAddress)
+  ) ? undefined : runtime
+
+  return (
+    <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
+      <Suspense fallback={null}>
+        {PERPS_RELEASE_IS_DEPLOYED && (effectiveRuntime?.kernel
+          ? <KernelOperationRecovery scope={effectiveRuntime.kernel.scope} isObservationReorged={effectiveRuntime.kernel.isObservationReorged}
+              readWalletOutcome={effectiveRuntime.kernel.readWalletOutcome} readBundledInclusion={effectiveRuntime.kernel.readBundledInclusion} />
+          : kernelDeployment === undefined && <SponsoredOperationRecovery />)}
+      </Suspense>
+      {children}
+    </PerpsAaRuntimeProvider>
+  )
+}
+
 export function PerpsAaProvider({
   children,
   manifestUrl = configuredManifestUrl(),
+  kernelDeployment: kernelDeploymentOverride,
   runtime,
 }: {
   children: ReactNode
   manifestUrl?: string | null
+  kernelDeployment?: string
   runtime?: PerpsAaSmartAccountRuntime
 }) {
   const publicClient = usePublicClient()
   const { data: connectedWalletClient } = useWalletClient()
   const wallet = useWalletActions()
   const walletClient = wallet.configured && !wallet.signerReady ? undefined : connectedWalletClient
+  const [entry] = useState(() => typeof window === 'undefined' ? undefined : new URL(window.location.href))
+  const kernelDeployment = kernelDeploymentOverride ?? configuredKernelDeployment(walletClient?.account.address, entry)
+  const payEthFromWallet = import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true' &&
+    isSepoliaDeployment() && selectedKernelTestOwner(walletClient?.account.address, import.meta.env.VITE_PERPS_KERNEL_TEST_OWNERS, entry)
   const [resolvedRuntime, setResolvedRuntime] = useState<{
     connectionKey: string
     runtime: PerpsAaSmartAccountRuntime
@@ -73,6 +126,7 @@ export function PerpsAaProvider({
         publicClient.chain.id,
         walletClient.chain.id,
         walletClient.account.address.toLowerCase(),
+        kernelDeployment ?? 'simple',
       ].join(':')
     : 'wallet-unavailable'
 
@@ -88,7 +142,10 @@ export function PerpsAaProvider({
         throw new Error('The connected wallet client is unavailable')
       }
 
-      const key = [
+      const key = manifest.smartAccountMode === 'kernel' ? [
+        chainId, ownerAddress.toLowerCase(), publicClient.uid, walletClient.uid,
+        JSON.stringify(manifest.kernel), payEthFromWallet,
+      ].join(':') : [
         chainId,
         ownerAddress.toLowerCase(),
         publicClient.uid,
@@ -110,14 +167,14 @@ export function PerpsAaProvider({
       ].join(':')
       let cacheEntry = runtimeCache.current
       if (cacheEntry?.key !== key) {
-        const promise = import('./managedPimlicoRuntime').then(
-          async ({ createManagedAaRuntime }) => withCloseAssistanceRecovery(
-            await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
-            () => useSponsoredOperationStore.getState().operations,
-            config => createManagedAaRuntime({ manifest: closeAssistanceManifest(manifest, config), ownerAddress, walletClient, publicClient }),
-            preparedManifest => createManagedAaRuntime({ manifest: preparedManifest, ownerAddress, walletClient, publicClient }),
-          )
-        )
+        const promise = manifest.smartAccountMode === 'kernel'
+          ? import('./kernelRuntime').then(({ createKernelRuntime }) => createKernelRuntime({ manifest, ownerAddress, walletClient, publicClient, payEthFromWallet }))
+          : import('./managedPimlicoRuntime').then(async ({ createManagedAaRuntime }) => withCloseAssistanceRecovery(
+              await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
+              () => useSponsoredOperationStore.getState().operations,
+              config => createManagedAaRuntime({ manifest: closeAssistanceManifest(manifest, config), ownerAddress, walletClient, publicClient }),
+              preparedManifest => createManagedAaRuntime({ manifest: preparedManifest, ownerAddress, walletClient, publicClient }),
+            ))
         cacheEntry = {
           key,
           promise,
@@ -135,10 +192,9 @@ export function PerpsAaProvider({
         throw error
       }
       signal.throwIfAborted()
-      setResolvedRuntime({ connectionKey, runtime: nextRuntime })
       return nextRuntime
     },
-    [connectionKey, publicClient, runtime, walletClient]
+    [payEthFromWallet, publicClient, runtime, walletClient]
   )
 
   const effectiveRuntime = runtime ??
@@ -159,6 +215,7 @@ export function PerpsAaProvider({
         signal,
       })
       if (
+        Boolean(nextRuntime.kernel) !== (manifest.smartAccountMode === 'kernel') ||
         nextRuntime.chainId !== chainId ||
         nextRuntime.chainId !== manifest.chainId ||
         manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
@@ -191,28 +248,32 @@ export function PerpsAaProvider({
           'Smart-account runtime owner, chain, or deployment metadata does not match the reviewed manifest'
         )
       }
+      setResolvedRuntime({ connectionKey, runtime: nextRuntime })
       return {
         accountAddress: nextRuntime.smartAccount.accountAddress,
         accountVersion: nextRuntime.accountVersion,
         accountIndex: nextRuntime.accountIndex,
         entryPoint: nextRuntime.smartAccount.entryPoint,
-        entryPointVersion: '0.8',
+        entryPointVersion: manifest.entryPointVersion,
         factoryAddress: nextRuntime.factoryAddress,
       }
     }
-  }, [getRuntime])
+  }, [connectionKey, getRuntime])
+
+  const loadManifest = useMemo(() => kernelDeployment === undefined
+    ? undefined
+    : async (signal: AbortSignal) => (await import('./kernelManifest')).loadKernelTradingManifest(kernelDeployment, signal), [kernelDeployment])
 
   return (
-    <PerpsAaRuntimeProvider runtime={effectiveRuntime}>
-      <WagmiPerpsIdentityProvider
-        manifestUrl={manifestUrl}
-        accountAddressResolver={accountAddressResolver}
-      >
-        <Suspense fallback={null}>
-          {PERPS_RELEASE_IS_DEPLOYED && <SponsoredOperationRecovery />}
-        </Suspense>
+    <WagmiPerpsIdentityProvider
+      manifestUrl={manifestUrl}
+      loadManifest={loadManifest}
+      kernelDeployment={kernelDeployment}
+      accountAddressResolver={accountAddressResolver}
+    >
+      <ConnectedPerpsAaRuntime runtime={effectiveRuntime} kernelDeployment={kernelDeployment}>
         {children}
-      </WagmiPerpsIdentityProvider>
-    </PerpsAaRuntimeProvider>
+      </ConnectedPerpsAaRuntime>
+    </WagmiPerpsIdentityProvider>
   )
 }

@@ -64,6 +64,89 @@ test('Alto checks out the exact reviewed policy before invoking repository files
   assert.match(step, /sparse-checkout: \.github\/scripts/)
 })
 
+test('legacy Alto refuses v0.9 deploy, bootstrap and rollback before credentials', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const selection = source.match(/^\s+case "\$ALTO_ENTRYPOINT_VERSION" in\n[\s\S]*?^\s+esac$/m)?.[0]
+  const refusal = source.match(/^([ \t]+)if \[ "\$ALTO_ENTRYPOINT_VERSION" != "0.8" \]; then\n[\s\S]*?^\1fi$/m)?.[0]
+  assert.ok(selection, 'execute the actual workflow profile selection')
+  assert.ok(refusal, 'execute the actual early workflow refusal')
+  assert.ok(source.indexOf(refusal) < source.indexOf('gh api'))
+  assert.ok(source.indexOf(refusal) < source.indexOf('- name: Configure AWS credentials'))
+  assert.doesNotMatch(source.split('      action:')[0], /^\s+- '0.9'$/m)
+  const entrypointV8 = '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+  const legacySelection = [entrypointV8, 'ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8', '/api/aa/rpc']
+  const cases = [
+    ['0.8', 'deploy', legacySelection],
+    ['0.8', 'rollback', legacySelection],
+    ['0.9', 'deploy', null],
+    ['0.9', 'bootstrap-simulations', null],
+    ['0.9', 'rollback', null],
+    ['0.7', 'deploy', null],
+  ]
+  for (const [version, action, expected] of cases) {
+    const script = [refusal, selection, 'printf "%s\\n" "$expected_entrypoint" "$simulation_name" "$smoke_path"'].join('\n')
+    const result = spawnSync('bash', ['-euc', script], {
+      encoding: 'utf8',
+      env: {...process.env, ALTO_ENTRYPOINT_VERSION: version, ALTO_ACTION: action, ALTO_ENTRYPOINT_V8: entrypointV8},
+    })
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected !== null, result.stderr + result.stdout)
+    if (expected) assert.deepEqual(result.stdout.trim().split('\n'), expected)
+  }
+})
+
+test('Alto smoke rejects ambiguous supported EntryPoint responses', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const smoke = source.split(/^\s+authenticated_status=\$\(curl/m)[1]?.split('gas_price_status=$(curl')[0]
+  const filter = smoke?.match(/'([^']+)' \\\n\s+"\$authenticated_body"/)?.[1]
+  assert.ok(filter, 'execute the actual workflow smoke filter')
+  const ep = '0x433709009b8330fda32311df1c2afa402ed8d009'
+  const other = '0x4337084d9e255ff0702461cf8895ce9e3b5ff108'
+  const cases = [
+    [{result: [ep.toUpperCase()]}, true],
+    [{result: [other]}, false],
+    [{result: [ep, other]}, false],
+    [{result: [ep, ep]}, false],
+    [{result: []}, false],
+    [{result: ep}, false],
+    [{result: {entrypoint: ep}}, false],
+    [{result: [null]}, false],
+    [{error: {code: -32602}, result: [ep]}, false],
+  ]
+  for (const [body, expected] of cases) {
+    const result = spawnSync('jq', ['-e', '--arg', 'entrypoint', ep, filter], {input: JSON.stringify(body), encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected, result.stderr + JSON.stringify(body))
+  }
+})
+
+test('legacy Alto refuses the authenticated profile before loading any secrets', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const preflight = source.split('      - name: Validate infrastructure and Alto runtime configuration')[1]
+  const refusal = preflight.match(/^([ \t]+)if jq -e --arg alto "\$ALTO_CONTAINER" '\n\s+any\(\.containerDefinitions[\s\S]*?^\1fi$/m)?.[0]
+  assert.ok(refusal, 'execute the actual authenticated task refusal')
+  assert.ok(preflight.indexOf(refusal) < preflight.indexOf('aws ssm get-parameter'))
+  const directory = mkdtempSync(join(tmpdir(), 'plether-alto-auth-preflight-'))
+  try {
+    for (const useAuth of [false, true]) {
+      const secrets = [{name: 'ALTO_RPC_URL', valueFrom: 'synthetic-primary'}]
+      if (useAuth) secrets.push({name: 'PLETHER_ALTO_RPC_AUTH_TOKEN', valueFrom: 'synthetic-token-reference'})
+      const task = {containerDefinitions: [{name: 'plether-alto', secrets}]}
+      const script = ['task_definition_file="$RUNNER_TEMP/task.json"', 'cat > "$task_definition_file"', refusal].join('\n')
+      const result = spawnSync('bash', ['-euc', script], {
+        input: JSON.stringify(task),
+        encoding: 'utf8',
+        env: {...process.env, RUNNER_TEMP: directory, ALTO_CONTAINER: 'plether-alto'},
+      })
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, !useAuth, result.stdout + result.stderr)
+      assert.doesNotMatch(result.stdout + result.stderr, /synthetic-token-reference/)
+    }
+  } finally {
+    rmSync(directory, {recursive: true, force: true})
+  }
+})
+
 test('backend public AA gate loads policy without cleaning generated task files', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
   const deploy = source.split('\n  deploy:\n')[1]
@@ -80,34 +163,161 @@ test('backend public AA gate loads policy without cleaning generated task files'
   assert.match(deploy.slice(gate), /jq -e -f deployment-policy\/\.github\/scripts\/validate-aa-public-alto\.jq public-alto-task.json/)
 })
 
-test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
+test('backend consumer preflight requires the independent RPC reference for Kernel API tasks', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
+  const inspect = source.match(/^([ \t]+)inspect_consumer\(\) \{\n[\s\S]*?^\1\}$/m)?.[0]
+  assert.ok(inspect, 'execute the actual workflow consumer inspection')
+  const directory = mkdtempSync(join(tmpdir(), 'plether-kernel-rpc-consumer-'))
+  try {
+    const script = [
+      'aws() { [ "$1 $2" = "ecs describe-task-definition" ] && printf "%s\\n" "$TASK_FIXTURE"; }',
+      'parameter_refs=(); execution_roles=(); rpc_modes=()',
+      inspect,
+      'inspect_consumer plether-sepolia plether-api false',
+    ].join('\n')
+    for (const [profileSource, verification, accepted] of [
+      [null, null, true],
+      ['environment', 'AA_SECURITY_RPC_URL', true],
+      ['environment', null, false],
+      ['environment', 'AA_RECONCILER_SECONDARY_RPC_URL', false],
+      ['secrets', 'AA_RECONCILER_SECONDARY_RPC_URL', false],
+    ]) {
+      const container = {
+        name: 'plether-api',
+        environment: [{name: 'PERPS_CHAIN_ID', value: '421614'}, {name: 'AA_RPC_MODE', value: 'dual-independent'}],
+        secrets: [{name: 'PERPS_RPC_URL', valueFrom: 'synthetic-primary'}],
+      }
+      if (profileSource) container[profileSource].push({name: 'AA_KERNEL_PROFILE_JSON', value: '{}', valueFrom: 'synthetic-profile'})
+      if (verification) container.secrets.push({name: verification, valueFrom: 'synthetic-independent'})
+      const fixture = {family: 'plether-sepolia', status: 'ACTIVE', executionRoleArn: 'synthetic-role', containerDefinitions: [container]}
+      const result = spawnSync('bash', ['-euc', script], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {...process.env, RUNNER_TEMP: directory, TASK_FIXTURE: JSON.stringify(fixture)},
+      })
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, accepted, JSON.stringify([profileSource, verification, result.stdout, result.stderr]))
+    }
+  } finally {
+    rmSync(directory, {recursive: true, force: true})
+  }
+})
+
+test('backend reconciler topology enforces the attested Kernel profile and runtime limits', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
+  const policy = source.split('name: Validate AA reconciler task topology')[1]?.match(/^\s+(def container\(\$name\):[\s\S]*?)^\s+\.family == \$family$/m)?.[1]
+  assert.ok(policy, 'execute the actual workflow topology functions')
+  const {profile, safeHeadLagSeconds: {minimum, maximum}} = JSON.parse(
+    readFileSync(new URL('apps/backend/test/fixtures/kernel-deployment.json', root), 'utf8'),
+  )
+  const {maxLogRangeBlocks} = JSON.parse(readFileSync(new URL('config/rpc-log-range-policy.json', root), 'utf8'))
+  for (const [batch, lag, policyMax, profileOverrides, accepted] of [
+    ['2000', maximum, maxLogRangeBlocks, {}, true],
+    ['2000', minimum, maxLogRangeBlocks, {}, true],
+    ['2001', maximum, maxLogRangeBlocks, {}, false],
+    ['1800', maximum, 1000, {}, false],
+    ['2000', maximum + 1, maxLogRangeBlocks, {}, false],
+    ['2000', minimum - 1, maxLogRangeBlocks, {}, false],
+    ['2000', maximum, maxLogRangeBlocks, {factory: undefined}, false],
+    ['2000', maximum, maxLogRangeBlocks, {staker: profile.factory}, false],
+    ['2000', maximum, maxLogRangeBlocks, {staker: profile.factory, stakerCodeHash: profile.factoryCodeHash}, false],
+    ['2000', maximum, maxLogRangeBlocks, {factoryCodeHash: '0x' + '0'.repeat(64)}, false],
+  ]) {
+    const fixture = {
+      environment: Object.entries({
+        HOME: '/tmp', TMPDIR: '/tmp', PERPS_CHAIN_ID: '421614', AA_RPC_MODE: 'dual-independent',
+        AA_KERNEL_PROFILE_JSON: JSON.stringify({...profile, ...profileOverrides}), AA_KERNEL_SPONSORSHIP_JSON: '',
+        AA_KERNEL_MAX_SAFE_LAG_SECONDS: String(lag), AA_KERNEL_RECONCILER_POLL_SECONDS: '10',
+        AA_KERNEL_RECONCILER_BATCH_BLOCKS: batch, AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS: '60',
+      }).map(([name, value]) => ({name, value})),
+      secrets: ['AA_SECURITY_RPC_URL', 'DATABASE_URL', 'PERPS_RPC_URL'].map(name => ({name})),
+    }
+    const result = spawnSync('jq', ['-e', '--arg', 'desired_count', '0', '--argjson', 'max_log_range', String(policyMax),
+      policy + ' kernel_configuration(.; envmap(.))'], {input: JSON.stringify(fixture), encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, accepted, JSON.stringify([batch, lag, policyMax, profileOverrides, result.stderr]))
+  }
+})
+
+test('Kernel Alto mirrors the pinned upstream ARM64 image and scans the exact ECR digest', () => {
+  const source = readFileSync(new URL('.github/workflows/build-kernel-alto.yml', root), 'utf8')
+  const {alto} = JSON.parse(readFileSync(new URL('scripts/kernel-qualification/pins.json', root), 'utf8'))
+  assert.equal(source.match(/^  UPSTREAM_ALTO_IMAGE: (.+)$/m)?.[1], alto.image)
+  assert.equal(source.match(/^  UPSTREAM_COMMIT: (.+)$/m)?.[1], alto.commit)
+  assert.match(alto.image, /^ghcr\.io\/pimlicolabs\/alto:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/u)
+  assert.match(source, /skopeo manifest-digest/)
+  assert.match(source, /skopeo copy --preserve-digests/)
+  assert.match(source, /\[ "\$digest" = "\$expected_digest" \]/)
+  const scan = source.split('name: Require a complete scan without critical findings')[1]
+  const filter = scan?.match(/'(\.repositoryName[\s\S]*?)' \\\n\s+"\$RUNNER_TEMP\/alto-image-scan\.json"/)?.[1]
+  assert.ok(filter, 'execute the exact mirrored-image scan policy')
+  const repository = 'plether-kernel-alto-sepolia'
+  const account = '932542905614'
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const findings = {repositoryName: repository, registryId: account, imageId: {imageDigest: digest},
+    imageScanStatus: {status: 'COMPLETE'}, imageScanFindings: {findingSeverityCounts: {CRITICAL: 0}}}
+  for (const [overrides, expected] of [
+    [{}, true],
+    [{imageScanFindings: {findingSeverityCounts: {CRITICAL: 1}}}, false],
+    [{imageScanFindings: null}, false],
+    [{imageScanStatus: {status: 'IN_PROGRESS'}}, false],
+    [{imageId: {imageDigest: 'sha256:' + 'b'.repeat(64)}}, false],
+    [{registryId: '111111111111'}, false],
+  ]) {
+    const result = spawnSync('jq', ['-e', '--arg', 'digest', digest, '--arg', 'repository', repository,
+      '--arg', 'account', account, filter], {input: JSON.stringify({...findings, ...overrides}), encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected, result.stderr)
+  }
+})
+
+test('active Kernel Pages requires the direct deployment, ETH readiness and the pinned homepage sponsor', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-kernel-canary-frontend.yml', root), 'utf8')
+  const filter = source.match(/KERNEL_ACTIVE_MANIFEST_FILTER: >-\n((?: {8}[^\n]+\n)+)/)?.[1]
+  assert.ok(filter, 'execute the shared pre- and post-publication manifest check')
+  const {profile} = JSON.parse(readFileSync(new URL('apps/backend/test/fixtures/kernel-deployment.json', root), 'utf8'))
+  const manifest = {version: 1, profile, readiness: {eth: true, sponsored: false}}
+  const sponsored = {...manifest, readiness: {eth: true, sponsored: true}}
+  const paymaster = '0x9ff288e30489c4e29b13d6ba960612b5d6db8d50'
+  for (const [result, expected] of [
+    [manifest, true],
+    [{...sponsored, paymaster}, true],
+    [sponsored, false],
+    [{...sponsored, paymaster: profile.factory}, false],
+    [{...manifest, profile: {...profile, deployment: 'kernel-sepolia-canary-20261121'}}, false],
+    [{...manifest, profile: {...profile, staker: profile.factory, stakerCodeHash: profile.factoryCodeHash}}, false],
+    [{...manifest, readiness: {eth: false, sponsored: false}}, false],
+  ]) {
+    const outcome = spawnSync('jq', ['-e', '--arg', 'deployment', profile.deployment, '--arg', 'phase', 'sepolia_homepage', filter], {
+      input: JSON.stringify({jsonrpc: '2.0', id: 1, result}), encoding: 'utf8',
+    })
+    assert.ifError(outcome.error)
+    assert.equal(outcome.status === 0, expected, outcome.stderr)
+  }
+})
+
+test('Alto image scans fail closed on critical findings and incomplete or mismatched evidence', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
-  const section = source.split('scan_policy=$(jq -ce')[1]
+  const section = source.split('scan_findings=$(aws ecr describe-image-scan-findings')[1]
   const filter = section?.match(/'([\s\S]*?)' <<< "\$scan_findings"/)?.[1]
   assert.ok(filter, 'execute the actual workflow scan policy')
-  assert.match(section, /::warning title=Approved Sepolia image exception/)
-  assert.match(section, /GITHUB_STEP_SUMMARY/)
+  assert.doesNotMatch(section, /Approved Sepolia image exception/, 'expired Sepolia CVE exception must not be re-introduced')
   assert.match(source, /aws ecr wait image-scan-complete/)
   const args = {
-    environment: 'sepolia', region: 'ap-southeast-1', account: '932542905614', repository: 'plether-alto-sepolia',
+    account: '932542905614', repository: 'plether-alto-sepolia',
     digest: 'sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a',
-    upstream: 'sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d', now: 1791357469,
   }
-  const fixture = () => ({registryId: args.account, repositoryName: args.repository,
+  const fixture = () => ({
+    registryId: args.account, repositoryName: args.repository,
     imageId: {imageDigest: args.digest}, imageScanStatus: {status: 'COMPLETE'},
-    imageScanFindings: {findingSeverityCounts: {CRITICAL: 1}, findings: [{name: 'CVE-2024-5535', severity: 'CRITICAL',
-      attributes: [{key: 'package_name', value: 'openssl'}, {key: 'package_version', value: '3.1.4-r5'}]}]},
+    imageScanFindings: {findingSeverityCounts: {}, findings: []},
   })
+  const criticalFinding = {name: 'CVE-2024-5535', severity: 'CRITICAL',
+    attributes: [{key: 'package_name', value: 'openssl'}, {key: 'package_version', value: '3.1.4-r5'}]}
   const cases = [
-    ['approved exact finding', () => {}, true, 1],
-    ['clean completed scan', v => {v.imageScanFindings = {findingSeverityCounts: {}, findings: []}}, true, 0],
-    ['other critical', v => {v.imageScanFindings.findings[0].name = 'CVE-OTHER'}, false],
-    ['another critical alongside accepted one', v => {v.imageScanFindings.findings.push({name: 'CVE-OTHER', severity: 'CRITICAL'}); v.imageScanFindings.findingSeverityCounts.CRITICAL = 2}, false],
-    ['duplicate accepted finding', v => {v.imageScanFindings.findings.push(structuredClone(v.imageScanFindings.findings[0])); v.imageScanFindings.findingSeverityCounts.CRITICAL = 2}, false],
-    ['different package', v => {v.imageScanFindings.findings[0].attributes[0].value = 'libssl'}, false],
-    ['different package version', v => {v.imageScanFindings.findings[0].attributes[1].value = '3.1.5-r0'}, false],
-    ['missing package evidence', v => {delete v.imageScanFindings.findings[0].attributes}, false],
-    ['duplicate package evidence', v => {v.imageScanFindings.findings[0].attributes.push({key: 'package_name', value: 'openssl'})}, false],
+    ['clean completed scan', () => {}, true],
+    ['noncritical finding', v => {v.imageScanFindings.findings.push({name: 'CVE-LOW', severity: 'LOW'})}, true],
+    ['former exception is rejected', v => {v.imageScanFindings = {findingSeverityCounts: {CRITICAL: 1}, findings: [criticalFinding]}}, false],
     ['missing scan', v => {delete v.imageScanFindings}, false],
     ['missing status', v => {delete v.imageScanStatus}, false],
     ['in-progress scan', v => {v.imageScanStatus.status = 'IN_PROGRESS'}, false],
@@ -115,30 +325,22 @@ test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
     ['pagination incomplete', v => {v.nextToken = 'more'}, false],
     ['missing details', v => {delete v.imageScanFindings.findings}, false],
     ['missing counts', v => {delete v.imageScanFindings.findingSeverityCounts}, false],
-    ['missing critical count but critical detail', v => {v.imageScanFindings.findingSeverityCounts = {}}, false],
-    ['summary conceals critical', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = 0}, false],
-    ['details omit critical', v => {v.imageScanFindings.findings = []}, false],
+    ['summary omits critical', v => {v.imageScanFindings.findings.push(criticalFinding)}, false],
+    ['details omit critical', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = 1}, false],
     ['malformed critical count', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = '1'}, false],
     ['null critical count', v => {v.imageScanFindings.findingSeverityCounts.CRITICAL = null}, false],
-    ['unknown severity', v => {v.imageScanFindings.findings[0].severity = 'critical'}, false],
+    ['unknown severity', v => {v.imageScanFindings.findings.push({name: 'CVE-BAD', severity: 'critical'})}, false],
     ['wrong scan image', v => {v.imageId.imageDigest = 'sha256:' + 'a'.repeat(64)}, false],
     ['wrong scan account', v => {v.registryId = '111111111111'}, false],
     ['wrong scan repository', v => {v.repositoryName = 'other'}, false],
-    ...Object.entries({environment: 'mainnet', region: 'us-east-1', account: '111111111111', repository: 'other', digest: 'sha256:' + 'b'.repeat(64), upstream: 'sha256:' + 'c'.repeat(64), now: 1791936000}).map(([key, value]) => [
-      `exception rejects ${key}`, (v, a) => {a[key] = value; if(key === 'account') v.registryId = value; if(key === 'repository') v.repositoryName = value; if(key === 'digest') v.imageId.imageDigest = value}, false,
-    ]),
-    ['last second before expiry', (_, a) => {a.now = 1791935999}, true, 1],
-    ['before approval date', (_, a) => {a.now = 1791331199}, false],
-    ['expired original exception', (_, a) => {a.now = 1789776000}, false],
-    ['first second of renewed approval', (_, a) => {a.now = 1791331200}, true, 1],
-    ['missing clock value', (_, a) => {a.now = null}, false],
   ]
-  for (const [label, mutate, passed, accepted] of cases) {
-    const value = fixture(), current = {...args}; mutate(value, current)
-    const result = spawnSync('jq', ['-ce', ...Object.entries(current).flatMap(([key, value]) => key === 'now' ? ['--argjson', key, JSON.stringify(value)] : ['--arg', key, value]), filter], {input: JSON.stringify(value), encoding: 'utf8'})
+  for (const [label, mutate, passed] of cases) {
+    const value = fixture()
+    mutate(value)
+    const result = spawnSync('jq', ['-e', ...Object.entries(args).flatMap(([key, value]) => ['--arg', key, value]), filter],
+      {input: JSON.stringify(value), encoding: 'utf8'})
     assert.ifError(result.error)
-    assert.equal(result.status === 0, passed, `${label}: ${result.stderr}`)
-    if (passed) assert.equal(JSON.parse(result.stdout).acceptedCriticalCount, accepted, label)
+    assert.equal(result.status === 0, passed, label + ': ' + result.stderr)
   }
 })
 

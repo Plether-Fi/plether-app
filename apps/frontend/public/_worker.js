@@ -8,7 +8,9 @@ const AA_PROXY_PATHS = new Set([
   '/api/perps/v1/aa/pimlico',
   '/api/perps/v1/aa/rpc',
   '/api/perps/v1/rpc',
+  '/api/perps/v1/aa/kernel/rpc',
 ]);
+const KERNEL_AA_PROXY_PATH = '/api/perps/v1/aa/kernel/rpc';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
 const MARGIN_FUNDING_PROXY_PATH = '/api/perps/v1/testnet/margin-funding';
@@ -19,12 +21,49 @@ function isFaucetProxyPath(pathname) {
 const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
 const PERPS_AA_MANIFEST_PATH = '/perps-aa-manifest.json';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
+const PUBLIC_BASKET_HISTORY_PATH = '/api/perps/v1/perps/basket/history';
+const BASKET_LATEST_PATH = '/api/perps/v1/perps/basket/latest';
+const MARKET_STATS_PATH = '/api/perps/v1/perps/market/stats';
 const VAULT_HISTORY_PATH = '/api/perps/v1/perps/vaults/history';
+const VAULT_ACTIVITY_PATH = '/api/perps/v1/perps/vaults/activity';
 const CANDLE_PAGE_SIZE = 500;
+const PUBLIC_HISTORY_RANGES = new Set(['24h', '7d', '30d', '1y']);
+const CANONICAL_POSITIVE_INT_PATTERN = /^[1-9]\d{0,19}$/;
 const EDGE_CACHE_STORED_AT_HEADER = 'X-Plether-Edge-Cached-At';
 const EDGE_CACHE_STATUS_HEADER = 'X-Plether-Edge-Cache';
 const EDGE_ORIGIN_TIMING_METRIC = 'plether_edge_origin';
 const EDGE_CACHE_TIMING_METRIC = 'plether_edge_cache';
+const ORIGIN_READ_TIMEOUT_MS = 4_000;
+const READINESS_TIMEOUT_MS = 1_800;
+const CANDLE_PROBE_TIMEOUT_MS = 2_500;
+const PUBLIC_RPC_READ_TIMEOUT_MS = 4_000;
+const MAX_ORIGIN_READ_ATTEMPTS = 2;
+const MAX_RETRYABLE_PUBLIC_RPC_BODY_BYTES = 65_536;
+const PUBLIC_RPC_PROXY_PATH = '/api/perps/v1/rpc';
+const READINESS_PROXY_PATH = '/api/perps/v1/readiness';
+const ORDER_WAIT_PATH_PATTERN = /^\/api\/perps\/v1\/perps\/orders\/[^/]+\/wait$/;
+const RETRYABLE_EDGE_ORIGIN_STATUSES = new Set([520, 522, 524, 525]);
+const READ_ONLY_PUBLIC_RPC_METHODS = new Set([
+  'eth_chainId',
+  'net_version',
+  'web3_clientVersion',
+  'eth_syncing',
+  'eth_blockNumber',
+  'eth_getBlockByNumber',
+  'eth_getBlockByHash',
+  'eth_getTransactionByHash',
+  'eth_getTransactionReceipt',
+  'eth_getTransactionCount',
+  'eth_getBalance',
+  'eth_getCode',
+  'eth_getStorageAt',
+  'eth_call',
+  'eth_estimateGas',
+  'eth_gasPrice',
+  'eth_feeHistory',
+  'eth_maxPriorityFeePerGas',
+  'eth_getLogs',
+]);
 const CACHE_SERVED_STATUSES = new Set([
   'HIT',
   'REVALIDATED',
@@ -110,6 +149,230 @@ const PUBLIC_HISTORY_VARIANTS = new Set([
   // Component-rich snapshots are only needed for the 24-hour comparison rail.
   '24h:3600:true',
 ]);
+
+function isLongPollRequest(pathname) {
+  return ORDER_WAIT_PATH_PATTERN.test(pathname);
+}
+
+function isRetryablePublicRpcBody(bodyBytes) {
+  if (bodyBytes.byteLength === 0 || bodyBytes.byteLength > MAX_RETRYABLE_PUBLIC_RPC_BODY_BYTES) {
+    return false;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bodyBytes));
+  } catch {
+    return false;
+  }
+
+  const calls = Array.isArray(parsed) ? parsed : [parsed];
+  if (calls.length === 0 || calls.length > 20) return false;
+  return calls.every(
+    (call) =>
+      call !== null &&
+      typeof call === 'object' &&
+      !Array.isArray(call) &&
+      typeof call.method === 'string' &&
+      READ_ONLY_PUBLIC_RPC_METHODS.has(call.method),
+  );
+}
+
+function createOriginTimeoutError(timeoutMs) {
+  const error = new Error(`Origin request timed out after ${timeoutMs}ms`);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+async function readBoundedPublicRpcBody(request, maxBytes) {
+  const contentLengthHeader = request.headers.get('Content-Length');
+  if (contentLengthHeader !== null) {
+    const trimmed = contentLengthHeader.trim();
+    if (/^\d+$/.test(trimmed) && Number(trimmed) > maxBytes) {
+      return { body: request.body, retryable: false };
+    }
+  }
+
+  const reader = request.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      reader.releaseLock();
+      const buffer = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return {
+        body: buffer,
+        retryable: isRetryablePublicRpcBody(buffer),
+      };
+    }
+
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    chunks.push(chunk);
+    totalBytes += chunk.byteLength;
+    if (totalBytes > maxBytes) {
+      let bufferedIndex = 0;
+      const passthrough = new ReadableStream({
+        async pull(controller) {
+          if (bufferedIndex < chunks.length) {
+            controller.enqueue(chunks[bufferedIndex]);
+            bufferedIndex += 1;
+            return;
+          }
+          const next = await reader.read();
+          if (next.done) {
+            reader.releaseLock();
+            controller.close();
+          } else {
+            controller.enqueue(next.value);
+          }
+        },
+        cancel(reason) {
+          return reader.cancel(reason);
+        },
+      });
+      return { body: passthrough, retryable: false };
+    }
+  }
+}
+
+export async function readJsonWithTimeout(response, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || !response.body) {
+    return response.json();
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void reader.cancel(createOriginTimeoutError(timeoutMs)).catch(() => undefined);
+  }, timeoutMs);
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (timedOut) {
+        throw createOriginTimeoutError(timeoutMs);
+      }
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } finally {
+    clearTimeout(timer);
+    reader.releaseLock();
+  }
+
+  const buffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(buffer));
+}
+
+async function fetchWithBoundedTimeout(url, options, timeoutMs, callerSignal) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetch(url, options);
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort(callerSignal.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort(callerSignal.reason);
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createOriginTimeoutError(timeoutMs));
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw createOriginTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) {
+      callerSignal.removeEventListener('abort', onCallerAbort);
+    }
+  }
+}
+
+export async function fetchOriginWithResilience(
+  url,
+  options,
+  { timeoutMs, maxAttempts = 1, callerSignal } = {},
+) {
+  const attempts = Math.max(1, maxAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithBoundedTimeout(
+        url,
+        options,
+        timeoutMs,
+        callerSignal,
+      );
+      if (
+        attempt < attempts &&
+        RETRYABLE_EDGE_ORIGIN_STATUSES.has(response.status) &&
+        !callerSignal?.aborted
+      ) {
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (attempt >= attempts || callerSignal?.aborted) {
+        throw error;
+      }
+    }
+  }
+}
+
+function getOriginReadResilience(method, pathname, retryableRpcBody) {
+  if (method === 'GET' || method === 'HEAD') {
+    if (isLongPollRequest(pathname)) {
+      return { timeoutMs: undefined, maxAttempts: 1 };
+    }
+    return {
+      timeoutMs: pathname === READINESS_PROXY_PATH
+        ? READINESS_TIMEOUT_MS
+        : ORIGIN_READ_TIMEOUT_MS,
+      maxAttempts: MAX_ORIGIN_READ_ATTEMPTS,
+    };
+  }
+
+  if (method === 'POST' && pathname === PUBLIC_RPC_PROXY_PATH && retryableRpcBody) {
+    return {
+      timeoutMs: PUBLIC_RPC_READ_TIMEOUT_MS,
+      maxAttempts: MAX_ORIGIN_READ_ATTEMPTS,
+    };
+  }
+
+  return { timeoutMs: undefined, maxAttempts: 1 };
+}
 
 function withEdgeFetchTiming(response, durationMs) {
   const measuredDuration = Number.isFinite(durationMs)
@@ -201,6 +464,138 @@ function getCandleCachePolicy(url) {
   return cursor <= currentBucketStart
     ? CANDLE_CLOSED_PAGE_CACHE_POLICY
     : CANDLE_ACTIVE_PAGE_CACHE_POLICY;
+}
+
+function edgeJsonErrorResponse(status, code, message) {
+  return Response.json(
+    {
+      error: {
+        code,
+        message,
+      },
+    },
+    {
+      status,
+      headers: {
+        'Cache-Control': 'no-store',
+      },
+    },
+  );
+}
+
+function hasValidBackendHistoryQuery(url) {
+  for (const key of url.searchParams.keys()) {
+    if (!PUBLIC_HISTORY_QUERY_KEYS.has(key)) return false;
+    if (url.searchParams.getAll(key).length !== 1) return false;
+  }
+
+  const range = url.searchParams.get('range');
+  const interval = url.searchParams.get('interval');
+  const includeComponents = url.searchParams.get('includeComponents');
+
+  if (range === null || interval === null) return false;
+  if (!PUBLIC_HISTORY_RANGES.has(range)) return false;
+  if (!CANONICAL_POSITIVE_INT_PATTERN.test(interval)) return false;
+  if (includeComponents !== null && includeComponents !== 'true' && includeComponents !== 'false') {
+    return false;
+  }
+  if (includeComponents === 'true' && (range !== '24h' || interval !== '3600')) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Reject malformed, extra-parameter, or trailing-slash queries on strict
+ * public API routes at the Cloudflare edge so cache-busting floods cannot
+ * bypass the edge cache and overwhelm the origin.
+ */
+export function validatePublicPerpsEdgeRequest(request, url = new URL(request.url)) {
+  if (url.pathname.endsWith('/')) {
+    return edgeJsonErrorResponse(404, 'NOT_FOUND', 'Route not found.');
+  }
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') return undefined;
+
+  if (url.pathname === CURRENT_CANDLE_PATH) {
+    if (!hasExactQuery(url, ['interval'])) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: exactly one interval query parameter is required',
+      );
+    }
+    if (!CANDLE_INTERVALS.has(url.searchParams.get('interval'))) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: interval must be one of 60, 180, 300, 900, 1800, 3600, or 86400',
+      );
+    }
+    return undefined;
+  }
+
+  if (url.pathname === CANDLES_PATH) {
+    if (!hasExactQuery(url, ['interval', 'cursor'])) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: exactly one interval and one cursor query parameter are required',
+      );
+    }
+    if (getCandleCachePolicy(url) === undefined) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: interval and cursor must match a bounded canonical candle page',
+      );
+    }
+    return undefined;
+  }
+
+  if (url.pathname === PUBLIC_BASKET_HISTORY_PATH) {
+    if (!hasValidBackendHistoryQuery(url)) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: invalid basket history query parameters',
+      );
+    }
+    return undefined;
+  }
+
+  if (url.pathname === VAULT_HISTORY_PATH) {
+    if (
+      !hasExactQuery(url, ['range', 'interval']) ||
+      !['7d', '30d'].includes(url.searchParams.get('range')) ||
+      url.searchParams.get('interval') !== '3600'
+    ) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: vault history is restricted to range=7d or range=30d and interval=3600',
+      );
+    }
+    return undefined;
+  }
+
+  if (
+    url.pathname === BASKET_LATEST_PATH ||
+    url.pathname === MARKET_STATS_PATH ||
+    url.pathname === VAULT_ACTIVITY_PATH
+  ) {
+    if (url.search !== '') {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: this endpoint does not accept query parameters',
+      );
+    }
+    return undefined;
+  }
+
+  return undefined;
 }
 
 /**
@@ -409,7 +804,7 @@ async function probeCandleDatasetIdentity(variant) {
       return undefined;
     }
 
-    const payload = await response.json();
+    const payload = await readJsonWithTimeout(response, CANDLE_PROBE_TIMEOUT_MS);
     return parseCandleDatasetIdentity(payload, variant.intervalSeconds);
   } catch {
     return undefined;
@@ -570,16 +965,13 @@ async function fetchPublicResponse(
         candleVariant.pricePageState,
       );
   }
-  if (/\bno-store\b/i.test(requestCacheControl)) {
+  if (url.pathname === CURRENT_CANDLE_PATH && /\bno-store\b/i.test(requestCacheControl)) {
     return candleVariant === undefined
       ? fetchBackend()
       : fetchUncachedCandlePage();
   }
   const cacheKey = new Request(cacheKeyUrl, { method: 'GET' });
-  const shouldRevalidate =
-    /\bno-cache\b/i.test(requestCacheControl) ||
-    /(?:^|,)\s*max-age\s*=\s*0\b/i.test(requestCacheControl);
-  const cached = shouldRevalidate ? undefined : await cache.match(cacheKey);
+  const cached = await cache.match(cacheKey);
 
   if (cached) {
     const storedAt = Number(cached.headers.get(EDGE_CACHE_STORED_AT_HEADER));
@@ -595,7 +987,7 @@ async function fetchPublicResponse(
         runInBackground(
           context,
           refreshStoredPublicResponse(
-            fetchBackend,
+            () => fetchBackend({ background: true }),
             cache,
             cacheKey,
             effectivePolicy,
@@ -634,6 +1026,9 @@ const requestHandler = {
 
     for (const [prefix, envKey] of Object.entries(ROUTES)) {
       if (url.pathname.startsWith(prefix) || url.pathname === prefix.slice(0, -1)) {
+        const edgeValidationError = validatePublicPerpsEdgeRequest(request, url);
+        if (edgeValidationError) return edgeValidationError;
+
         const origin = env.BACKEND_URL ?? env[envKey];
         if (!origin) return new Response('Backend not configured', { status: 502 });
 
@@ -644,19 +1039,26 @@ const requestHandler = {
         // Never trust or forward browser-supplied origin-auth tokens. The
         // backend may trust CF-Connecting-IP for protected endpoints only
         // after the matching Worker-to-origin credential has been verified.
+        headers.delete('X-Plether-Origin-Secret');
         headers.delete(AA_PROXY_AUTH_HEADER);
         headers.delete(FAUCET_PROXY_AUTH_HEADER);
+        if (env.ALB_ORIGIN_SECRET) {
+          headers.set('X-Plether-Origin-Secret', env.ALB_ORIGIN_SECRET);
+        }
         if (!AA_PROXY_PATHS.has(url.pathname)) {
           headers.delete('X-Plether-AA-Recovery');
           headers.delete('X-Plether-AA-Preparation-Recovery');
         }
         if (AA_PROXY_PATHS.has(url.pathname)) {
-          if (!env.AA_PROXY_ORIGIN_TOKEN) {
+          const originToken = url.pathname === KERNEL_AA_PROXY_PATH
+            ? env.KERNEL_CANARY_AA_PROXY_ORIGIN_TOKEN
+            : env.AA_PROXY_ORIGIN_TOKEN;
+          if (!originToken) {
             return new Response('AA proxy authentication not configured', {
               status: 502,
             });
           }
-          headers.set(AA_PROXY_AUTH_HEADER, env.AA_PROXY_ORIGIN_TOKEN);
+          headers.set(AA_PROXY_AUTH_HEADER, originToken);
         }
         if (isFaucetProxyPath(url.pathname)) {
           if (!env.FAUCET_PROXY_ORIGIN_TOKEN) {
@@ -687,17 +1089,44 @@ const requestHandler = {
         if (cachePolicy) {
           backendUrl.search = new URL(getPublicPerpsCacheKey(url)).search;
         }
+        let requestBody = request.body;
+        let retryablePublicRpc = false;
+        if (
+          request.method === 'POST' &&
+          url.pathname === PUBLIC_RPC_PROXY_PATH &&
+          request.body !== null
+        ) {
+          const bounded = await readBoundedPublicRpcBody(
+            request,
+            MAX_RETRYABLE_PUBLIC_RPC_BODY_BYTES,
+          );
+          requestBody = bounded.body;
+          retryablePublicRpc = bounded.retryable;
+        }
+
         const fetchOptions = {
           method: request.method,
           headers,
-          body: request.body,
+          body: requestBody,
           // The origin credential must never be replayed to a Location target.
           // Return a 3xx response to the browser instead of letting fetch follow
           // it with the authenticated request headers.
           redirect: 'manual',
         };
+        const originResilience = getOriginReadResilience(
+          request.method,
+          url.pathname,
+          retryablePublicRpc,
+        );
 
-        const fetchBackend = () => fetch(backendUrl, fetchOptions);
+        const fetchBackend = ({ background = false } = {}) => fetchOriginWithResilience(
+          backendUrl,
+          fetchOptions,
+          {
+            ...originResilience,
+            callerSignal: background ? undefined : request.signal,
+          },
+        );
         let candleVariant;
         if (url.pathname === CANDLES_PATH && cachePolicy !== undefined) {
           const intervalText = url.searchParams.get('interval');
@@ -714,21 +1143,36 @@ const requestHandler = {
             pricePageState: cachePolicy === CANDLE_CLOSED_PAGE_CACHE_POLICY
               ? 'closed'
               : 'active',
-            fetchIdentity: () => fetch(identityUrl, {
-              method: 'GET',
-              headers: identityHeaders,
-              redirect: 'manual',
-            }),
+            fetchIdentity: () => fetchOriginWithResilience(
+              identityUrl,
+              {
+                method: 'GET',
+                headers: identityHeaders,
+                redirect: 'manual',
+              },
+              {
+                timeoutMs: CANDLE_PROBE_TIMEOUT_MS,
+                maxAttempts: MAX_ORIGIN_READ_ATTEMPTS,
+                callerSignal: request.signal,
+              },
+            ),
             fetchUncachedPage: () => {
               const uncachedHeaders = new Headers(headers);
               uncachedHeaders.set('Cache-Control', 'no-store');
               uncachedHeaders.set('Pragma', 'no-cache');
               uncachedHeaders.delete('If-Modified-Since');
               uncachedHeaders.delete('If-None-Match');
-              return fetch(backendUrl, {
-                ...fetchOptions,
-                headers: uncachedHeaders,
-              });
+              return fetchOriginWithResilience(
+                backendUrl,
+                {
+                  ...fetchOptions,
+                  headers: uncachedHeaders,
+                },
+                {
+                  ...originResilience,
+                  callerSignal: request.signal,
+                },
+              );
             },
           };
         }
