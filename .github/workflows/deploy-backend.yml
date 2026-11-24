@@ -1184,19 +1184,42 @@ jobs:
             repo="${image_ref#*amazonaws.com/}"
             repo="${repo%@*}"
             digest="${image_ref#*@}"
-            echo "Waiting for ECR scan on ${repo}@${digest}..."
+            # ECR basic scanning attaches findings to the linux/arm64 child manifest
+            # rather than the top-level OCI image index produced by Docker Buildx.
+            scan_digest=$(aws ecr batch-get-image \
+              --repository-name "$repo" \
+              --image-ids "imageDigest=$digest" \
+              --accepted-media-types \
+                application/vnd.oci.image.index.v1+json \
+                application/vnd.docker.distribution.manifest.list.v2+json \
+                application/vnd.oci.image.manifest.v1+json \
+                application/vnd.docker.distribution.manifest.v2+json \
+              --query 'images[0].imageManifest' \
+              --output text \
+              --no-cli-pager \
+              | jq -er --arg fallback "$digest" '
+                if (.manifests | type) == "array" then
+                  ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")]
+                   | if length == 1 then .[0].digest else error("Expected exactly one linux/arm64 child manifest") end)
+                else
+                  $fallback
+                end
+              ')
+            echo "Waiting for ECR scan on ${repo}@${scan_digest} (release ${digest})..."
             aws ecr wait image-scan-complete \
               --repository-name "$repo" \
-              --image-id "imageDigest=$digest"
+              --image-id "imageDigest=$scan_digest" \
+              --no-cli-pager
             scan_json=$(aws ecr describe-image-scan-findings \
               --repository-name "$repo" \
-              --image-id "imageDigest=$digest" \
-              --output json)
+              --image-id "imageDigest=$scan_digest" \
+              --output json \
+              --no-cli-pager)
             status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<< "$scan_json")
             critical_count=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<< "$scan_json")
-            echo "${repo}@${digest}: scan=${status}, CRITICAL=${critical_count}"
+            echo "${repo}@${scan_digest}: scan=${status}, CRITICAL=${critical_count}"
             if [ "$status" != "COMPLETE" ] || [ "$critical_count" != "0" ]; then
-              echo "::error title=Container vulnerability gate failed::${repo}@${digest} reported status=${status}, CRITICAL=${critical_count}."
+              echo "::error title=Container vulnerability gate failed::${repo}@${scan_digest} reported status=${status}, CRITICAL=${critical_count}."
               exit 1
             fi
           done
