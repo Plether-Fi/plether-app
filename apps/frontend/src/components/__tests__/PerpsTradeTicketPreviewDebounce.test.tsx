@@ -4,6 +4,7 @@ import { relaxedProtectionCloseLimits } from '../../contracts/positionProtection
 import { prepared } from '../../test/fixtures/preparedOrder'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import { KernelObservedPendingError } from '../../perps-aa/errors'
+import { PerpsAaRuntimeContext, type KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
 import * as perpsAnalytics from '../../analytics/perps'
 
 const wagmiMocks = vi.hoisted(() => ({
@@ -428,6 +429,82 @@ describe('Perps trade preview debounce', () => {
     expect(screen.getByRole('dialog')).toHaveFocus()
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
     expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+  })
+
+  it('reuses warm background preparation after unchanged-price oraclePublishTime ticks', async () => {
+    const result = prepared()
+    result.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    result.request.sizeDelta = 100n * 10n ** 18n
+    wagmiMocks.prepareOrder.mockResolvedValue(result)
+    const props = {
+      enableLiveTrading: true,
+      initialOrderQuantity: '100',
+      oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: 1_700_000_000,
+      availableToTradeRaw: 1_000_000_000n,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+
+    view.rerender(<PerpsTradeTicket {...props} oraclePublishTime={1_700_000_002} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    view.rerender(<PerpsTradeTicket {...props} oraclePublishTime={1_700_000_004} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes warm background preparation to Kernel review so only gas quoting runs', async () => {
+    const ownerAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
+    const scope = {
+      chainId: 421614 as const,
+      deployment: 'fresh-kernel',
+      sender: ownerAddress,
+      entryPoint: '0x433709009b8330fda32311df1c2afa402ed8d009' as const,
+    }
+    const runtime: KernelPerpsAaSmartAccountRuntime = {
+      walletFamily: 'kernel',
+      walletVersion: '3.1',
+      ownerAddress,
+      signUserOperation: vi.fn(),
+      gasPayment: { scope: { ...scope, ownerAddress }, paysEthFromWallet: false, readiness: { sponsored: true, eth: true } },
+      kernel: { scope, verifyAccount: vi.fn(), quoteAction: vi.fn(), execute: vi.fn(), quoteCancellation: vi.fn(), signPrepared: vi.fn() },
+    }
+    const warm = prepared()
+    warm.account = ownerAddress
+    warm.request.sizeDelta = 100n * 10n ** 18n
+    const quoted = {
+      ...warm,
+      kernelQuote: { mode: 'sponsored' as const, maxNetworkGasWei: 15n, expiresAt: Math.floor(Date.now() / 1_000) + 60 },
+    }
+    wagmiMocks.prepareOrder.mockResolvedValueOnce(warm).mockResolvedValueOnce(quoted)
+
+    render(
+      <PerpsAaRuntimeContext value={runtime}>
+        <PerpsTradeTicket
+          enableLiveTrading
+          initialOrderQuantity="100"
+          oraclePriceRaw={100_000_000n}
+          oraclePublishTime={1_700_000_000}
+          availableToTradeRaw={1_000_000_000n}
+        />
+      </PerpsAaRuntimeContext>
+    )
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    expect(wagmiMocks.prepareOrder).toHaveBeenLastCalledWith(expect.objectContaining({ reviewGas: false }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(2)
+    expect(wagmiMocks.prepareOrder).toHaveBeenLastCalledWith(expect.objectContaining({
+      reviewGas: true,
+      existingPrepared: warm,
+    }))
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
   })
 
   it('does not repeatedly prepare while an untouched position and oracle poll, but rechecks fresh margin on review', async () => {

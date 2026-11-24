@@ -27,7 +27,7 @@ import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
 import { usePerpsOpenMargin } from '../hooks/usePerpsOpenMargin'
 import { openPreviewLeverageBps } from '../contracts/perpsOpenMargin'
 import { perpsMaxOpenMarginBudget } from '../contracts/perpsMaxOpen'
-import { usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerpsOrderPreparation'
+import { PREPARATION_REUSE_MS, usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerpsOrderPreparation'
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
@@ -3368,7 +3368,7 @@ export function PerpsTradeTicket({
   }), [effectiveOrderDirection, contractNotionalAssets, orderSizeDelta, marginAssets, oraclePriceRaw,
     slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params, isMaxOpenIntent])
   const preparationAccountContextKey = orderPreparationKey([
-    oraclePriceRaw, oraclePublishTime,
+    oraclePriceRaw,
     availableToTradeRaw,
     currentPosition && [currentPosition.exists, currentPosition.side, currentPosition.size,
       currentPosition.entryPrice, currentPosition.marginAssets, currentPosition.vpiAccrued],
@@ -3376,7 +3376,7 @@ export function PerpsTradeTicket({
     pendingOrderCount, activePositionProtectionId, protectionConfiguration, oracleFrozen, marketPhase,
   ])
   const draftPreparationKey = orderPreparationKey([
-    preparationIdentityKey, reviewGeneration, draftSnapshot, oraclePublishTime, availableToTradeRaw,
+    preparationIdentityKey, reviewGeneration, draftSnapshot, availableToTradeRaw,
     currentPosition, pendingOrders, pendingOrderCount, activePositionProtectionId,
     protectionConfiguration, marketPhase, activeAccountOperation?.id,
   ])
@@ -3398,6 +3398,14 @@ export function PerpsTradeTicket({
     ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
   const frozenPreparationKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
+  const warmPreparationKey = orderPreparationKey([frozenPreparationKey, slippageNumber])
+  const warmPreparedRef = useRef<{
+    key: string
+    identityKey: string
+    contextKey: string
+    startedAt: number
+    prepared: PreparedPerpsOrderV3
+  } | undefined>(undefined)
   const candidateKey = orderPreparationKey([frozenPreparationKey, slippageNumber, gasReview?.preference.revision, gasReview ? isReviewOpen : undefined])
   const canPrepare = enableLiveTrading && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
     (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation && !kernelOperationPending && !sponsorshipPauseMessage &&
@@ -3410,8 +3418,47 @@ export function PerpsTradeTicket({
     reviewValid: !liveValidationError && !activeAccountOperation,
     mode: !canPrepare ? 'inactive' : isReviewOpen ? 'review'
       : !liveValidationError && !isTradePreviewPending && currentTradePreview?.valid ? 'background' : 'inactive',
-    prepare: (input, signal) => prepareOrder({ ...input, signal, ...(gasReview ? { reviewGas: isReviewOpen } : {}) }),
+    prepare: (input, signal) => {
+      const warm = gasReview && isReviewOpen ? warmPreparedRef.current : undefined
+      const reusableWarmPrepared = warm?.key === warmPreparationKey &&
+        warm.identityKey === preparationIdentityKey &&
+        warm.contextKey === preparationAccountContextKey &&
+        performance.now() - warm.startedAt < PREPARATION_REUSE_MS
+        ? warm.prepared
+        : undefined
+      if (reusableWarmPrepared) warmPreparedRef.current = undefined
+      return prepareOrder({
+        ...input,
+        signal,
+        ...(gasReview
+          ? {
+              reviewGas: isReviewOpen,
+              ...(reusableWarmPrepared ? { existingPrepared: reusableWarmPrepared } : {}),
+            }
+          : {}),
+      })
+    },
   })
+  useEffect(() => {
+    if (isReviewOpen) return
+    if (preparation.status === 'ready' && preparation.result && !preparation.result.kernelQuote) {
+      warmPreparedRef.current = {
+        key: warmPreparationKey,
+        identityKey: preparationIdentityKey,
+        contextKey: preparationAccountContextKey,
+        startedAt: preparation.startedAt,
+        prepared: preparation.result,
+      }
+    }
+  }, [
+    isReviewOpen,
+    preparation.result,
+    preparation.startedAt,
+    preparation.status,
+    preparationAccountContextKey,
+    preparationIdentityKey,
+    warmPreparationKey,
+  ])
   // Initial-open stories and the account panel's close action also freeze inputs.
   useEffect(() => {
     if (canPrepare && isReviewOpen && !reviewSnapshot && !liveValidationError) {
