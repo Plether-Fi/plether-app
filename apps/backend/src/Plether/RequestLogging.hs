@@ -5,12 +5,16 @@ module Plether.RequestLogging
   , afterResponseHandoff
   , normalizeRouteSegments
   , shouldEmitForegroundSample
+  , shouldEmitForegroundCompletionLog
   , shouldEmitSlowWarning
+  , foregroundCompletionLogLimitPerSecond
+  , advanceCompletionLogWindow
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Monad (when)
 import Data.Char (isDigit)
+import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
@@ -41,8 +45,19 @@ data RequestStats = RequestStats
   , rqsMaxDurationMs :: Double
   }
 
+data CompletionLogWindow = CompletionLogWindow
+  { clwWindowStartedNs :: !Word64
+  , clwEmittedCount :: !Int
+  }
+
 requestSummaryIntervalNs :: Word64
 requestSummaryIntervalNs = 60 * 1_000_000_000
+
+completionLogWindowNs :: Word64
+completionLogWindowNs = 1_000_000_000
+
+foregroundCompletionLogLimitPerSecond :: Int
+foregroundCompletionLogLimitPerSecond = 100
 
 slowRequestThresholdMs :: Double
 slowRequestThresholdMs = 2_000
@@ -51,10 +66,11 @@ newRequestLoggingMiddleware :: IO Middleware
 newRequestLoggingMiddleware = do
   startedAt <- getMonotonicTimeNSec
   statsVar <- newMVar $ emptyStats startedAt
-  pure $ logRequests statsVar
+  logWindowRef <- newIORef $ CompletionLogWindow startedAt 0
+  pure $ logRequests statsVar logWindowRef
 
-logRequests :: MVar RequestStats -> Middleware
-logRequests statsVar application request respond = do
+logRequests :: MVar RequestStats -> IORef CompletionLogWindow -> Middleware
+logRequests statsVar logWindowRef application request respond = do
   startedAt <- getMonotonicTimeNSec
   application request $ \response -> do
     finishedAt <- getMonotonicTimeNSec
@@ -70,16 +86,18 @@ logRequests statsVar application request respond = do
           then recordRequest statsVar durationMs status
           else pure Nothing
       mapM_ emitSummary mSummary
-      when (shouldEmitForegroundSample requestClass) $
-        logInfo
-          "api_foreground_request_completed"
-          "Foreground API request completed"
-          [ field "http_method" method
-          , field "http_route" route
-          , field "http_status_code" status
-          , field "request_class" requestClassName
-          , field "duration_ms" durationMs
-          ]
+      when (shouldEmitForegroundCompletionLog requestClass status) $ do
+        allowed <- tryConsumeCompletionLogSlot logWindowRef finishedAt
+        when allowed $
+          logInfo
+            "api_foreground_request_completed"
+            "Foreground API request completed"
+            [ field "http_method" method
+            , field "http_route" route
+            , field "http_status_code" status
+            , field "request_class" requestClassName
+            , field "duration_ms" durationMs
+            ]
       when (status >= 500) $
         logErrorEvery
           10
@@ -272,6 +290,35 @@ requestClassText = \case
 
 shouldEmitForegroundSample :: RequestClass -> Bool
 shouldEmitForegroundSample = (== Foreground)
+
+-- Avoid per-request stdout logging on 4xx client errors (for example invalid
+-- query or cache-busting floods). Client errors remain counted in the periodic
+-- api_foreground_request_summary, while foreground p95 latency stays focused on
+-- valid application work and server errors.
+shouldEmitForegroundCompletionLog :: RequestClass -> Int -> Bool
+shouldEmitForegroundCompletionLog requestClass status =
+  shouldEmitForegroundSample requestClass && (status < 400 || status >= 500)
+
+tryConsumeCompletionLogSlot :: IORef CompletionLogWindow -> Word64 -> IO Bool
+tryConsumeCompletionLogSlot windowRef nowNs =
+  atomicModifyIORef' windowRef $ \CompletionLogWindow {..} ->
+    let (nextStart, nextCount, allowed) =
+          advanceCompletionLogWindow
+            foregroundCompletionLogLimitPerSecond
+            clwWindowStartedNs
+            clwEmittedCount
+            nowNs
+     in (CompletionLogWindow nextStart nextCount, allowed)
+
+advanceCompletionLogWindow :: Int -> Word64 -> Int -> Word64 -> (Word64, Int, Bool)
+advanceCompletionLogWindow limit windowStartedNs emittedCount nowNs
+  | limit <= 0 = (windowStartedNs, emittedCount, False)
+  | nowNs >= windowStartedNs && nowNs - windowStartedNs >= completionLogWindowNs =
+      (nowNs, 1, True)
+  | emittedCount < limit =
+      (windowStartedNs, emittedCount + 1, True)
+  | otherwise =
+      (windowStartedNs, emittedCount, False)
 
 shouldEmitSlowWarning :: RequestClass -> Int -> Double -> Bool
 shouldEmitSlowWarning requestClass status durationMs =

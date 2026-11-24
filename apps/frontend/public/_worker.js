@@ -21,8 +21,14 @@ function isFaucetProxyPath(pathname) {
 const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
 const PERPS_AA_MANIFEST_PATH = '/perps-aa-manifest.json';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
+const PUBLIC_BASKET_HISTORY_PATH = '/api/perps/v1/perps/basket/history';
+const BASKET_LATEST_PATH = '/api/perps/v1/perps/basket/latest';
+const MARKET_STATS_PATH = '/api/perps/v1/perps/market/stats';
 const VAULT_HISTORY_PATH = '/api/perps/v1/perps/vaults/history';
+const VAULT_ACTIVITY_PATH = '/api/perps/v1/perps/vaults/activity';
 const CANDLE_PAGE_SIZE = 500;
+const PUBLIC_HISTORY_RANGES = new Set(['24h', '7d', '30d', '1y']);
+const CANONICAL_POSITIVE_INT_PATTERN = /^[1-9]\d{0,19}$/;
 const EDGE_CACHE_STORED_AT_HEADER = 'X-Plether-Edge-Cached-At';
 const EDGE_CACHE_STATUS_HEADER = 'X-Plether-Edge-Cache';
 const EDGE_ORIGIN_TIMING_METRIC = 'plether_edge_origin';
@@ -460,6 +466,138 @@ function getCandleCachePolicy(url) {
     : CANDLE_ACTIVE_PAGE_CACHE_POLICY;
 }
 
+function edgeJsonErrorResponse(status, code, message) {
+  return Response.json(
+    {
+      error: {
+        code,
+        message,
+      },
+    },
+    {
+      status,
+      headers: {
+        'Cache-Control': 'no-store',
+      },
+    },
+  );
+}
+
+function hasValidBackendHistoryQuery(url) {
+  for (const key of url.searchParams.keys()) {
+    if (!PUBLIC_HISTORY_QUERY_KEYS.has(key)) return false;
+    if (url.searchParams.getAll(key).length !== 1) return false;
+  }
+
+  const range = url.searchParams.get('range');
+  const interval = url.searchParams.get('interval');
+  const includeComponents = url.searchParams.get('includeComponents');
+
+  if (range === null || interval === null) return false;
+  if (!PUBLIC_HISTORY_RANGES.has(range)) return false;
+  if (!CANONICAL_POSITIVE_INT_PATTERN.test(interval)) return false;
+  if (includeComponents !== null && includeComponents !== 'true' && includeComponents !== 'false') {
+    return false;
+  }
+  if (includeComponents === 'true' && (range !== '24h' || interval !== '3600')) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Reject malformed, extra-parameter, or trailing-slash queries on strict
+ * public API routes at the Cloudflare edge so cache-busting floods cannot
+ * bypass the edge cache and overwhelm the origin.
+ */
+export function validatePublicPerpsEdgeRequest(request, url = new URL(request.url)) {
+  if (url.pathname.endsWith('/')) {
+    return edgeJsonErrorResponse(404, 'NOT_FOUND', 'Route not found.');
+  }
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') return undefined;
+
+  if (url.pathname === CURRENT_CANDLE_PATH) {
+    if (!hasExactQuery(url, ['interval'])) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: exactly one interval query parameter is required',
+      );
+    }
+    if (!CANDLE_INTERVALS.has(url.searchParams.get('interval'))) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: interval must be one of 60, 180, 300, 900, 1800, 3600, or 86400',
+      );
+    }
+    return undefined;
+  }
+
+  if (url.pathname === CANDLES_PATH) {
+    if (!hasExactQuery(url, ['interval', 'cursor'])) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: exactly one interval and one cursor query parameter are required',
+      );
+    }
+    if (getCandleCachePolicy(url) === undefined) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: interval and cursor must match a bounded canonical candle page',
+      );
+    }
+    return undefined;
+  }
+
+  if (url.pathname === PUBLIC_BASKET_HISTORY_PATH) {
+    if (!hasValidBackendHistoryQuery(url)) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: invalid basket history query parameters',
+      );
+    }
+    return undefined;
+  }
+
+  if (url.pathname === VAULT_HISTORY_PATH) {
+    if (
+      !hasExactQuery(url, ['range', 'interval']) ||
+      !['7d', '30d'].includes(url.searchParams.get('range')) ||
+      url.searchParams.get('interval') !== '3600'
+    ) {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: vault history is restricted to range=7d or range=30d and interval=3600',
+      );
+    }
+    return undefined;
+  }
+
+  if (
+    url.pathname === BASKET_LATEST_PATH ||
+    url.pathname === MARKET_STATS_PATH ||
+    url.pathname === VAULT_ACTIVITY_PATH
+  ) {
+    if (url.search !== '') {
+      return edgeJsonErrorResponse(
+        400,
+        'INVALID_AMOUNT',
+        'Invalid amount: this endpoint does not accept query parameters',
+      );
+    }
+    return undefined;
+  }
+
+  return undefined;
+}
+
 /**
  * Only anonymous, idempotent Perps market-data reads are eligible for shared
  * caching. Keeping this as an exact allowlist makes new endpoints private by
@@ -888,6 +1026,9 @@ const requestHandler = {
 
     for (const [prefix, envKey] of Object.entries(ROUTES)) {
       if (url.pathname.startsWith(prefix) || url.pathname === prefix.slice(0, -1)) {
+        const edgeValidationError = validatePublicPerpsEdgeRequest(request, url);
+        if (edgeValidationError) return edgeValidationError;
+
         const origin = env.BACKEND_URL ?? env[envKey];
         if (!origin) return new Response('Backend not configured', { status: 502 });
 

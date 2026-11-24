@@ -37,6 +37,7 @@ import Control.Concurrent.STM
   )
 import Control.Exception (SomeException, mask, throwIO, try)
 import Control.Monad (void)
+import Data.Aeson (Value)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -50,7 +51,7 @@ import Plether.Database.Candles
 import Plether.Types.Api (ApiResponse)
 import Plether.Types.Error (ApiError)
 import Plether.Types.Protocol (ProtocolStatus)
-import Plether.Types.Perps (BasketCandlePage, PythUpdateResponse)
+import Plether.Types.Perps (BasketCandlePage, BasketLatest, PythUpdateResponse)
 import Plether.Passkeys.Auth (VerifierCache, newVerifierCache)
 import Plether.Types.User (UserAllowances, UserDashboard)
 
@@ -136,6 +137,10 @@ data AppCache = AppCache
       :: !(SingleFlightCache (Integer, Integer) (Either ApiError CandlePageCacheValue))
   , cacheBasketCurrentCandles
       :: !(SingleFlightCache (Integer, Text, Integer, Integer) CurrentCandleCacheValue)
+  , cacheBasketLatest
+      :: !(SingleFlightCache () (Either ApiError (ApiResponse BasketLatest)))
+  , cachePerpsMarketStats
+      :: !(SingleFlightCache () (Either ApiError (ApiResponse Value)))
   }
 
 candlePageCacheMaxEntries :: Int
@@ -155,6 +160,12 @@ currentCandleCacheMaxEntries = 32
 -- bounded margin inside the current-candle ten-second freshness budget.
 currentCandleCacheTtlNs :: Word64
 currentCandleCacheTtlNs = 850_000_000
+
+basketLatestCacheTtlNs :: Word64
+basketLatestCacheTtlNs = 2_000_000_000
+
+perpsMarketStatsCacheTtlNs :: Word64
+perpsMarketStatsCacheTtlNs = 5_000_000_000
 
 pythLatestCacheTtlNs :: Word64
 pythLatestCacheTtlNs = 2_000_000_000
@@ -176,6 +187,8 @@ newAppCache = do
     newConcurrentSingleFlightCache
       currentCandleCacheMaxEntries
       currentCandleCacheTtlNs
+  basketLatest <- newConcurrentSingleFlightCache 1 basketLatestCacheTtlNs
+  perpsMarketStats <- newConcurrentSingleFlightCache 1 perpsMarketStatsCacheTtlNs
   pythLatest <- newSingleFlightCache 1 pythLatestCacheTtlNs
   pythHistorical <- newSingleFlightCache 64 pythHistoricalCacheTtlNs
   storedPythValidations <- newSingleFlightCache 4 storedPythValidationCacheTtlNs
@@ -190,6 +203,8 @@ newAppCache = do
     <*> newTVarIO Nothing
     <*> pure candlePages
     <*> pure currentCandles
+    <*> pure basketLatest
+    <*> pure perpsMarketStats
 
 -- Current buckets for different intervals may turn over together. They still
 -- single-flight independently by key, but should not form a cross-key convoy

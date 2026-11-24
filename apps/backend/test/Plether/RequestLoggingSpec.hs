@@ -2,9 +2,12 @@ module Plether.RequestLoggingSpec (spec) where
 
 import Plether.RequestLogging
   ( RequestClass (..)
+  , advanceCompletionLogWindow
   , afterResponseHandoff
   , classifyNormalizedRoute
+  , foregroundCompletionLogLimitPerSecond
   , normalizeRouteSegments
+  , shouldEmitForegroundCompletionLog
   , shouldEmitForegroundSample
   , shouldEmitSlowWarning
   )
@@ -106,3 +109,24 @@ spec = describe "Plether.RequestLogging" $ do
 
     it "keeps server failures on the dedicated error path" $ do
       shouldEmitSlowWarning Foreground 500 60_000 `shouldBe` False
+
+    it "suppresses per-request completion logs for 4xx client errors while keeping 2xx and 5xx" $ do
+      shouldEmitForegroundCompletionLog Foreground 200 `shouldBe` True
+      shouldEmitForegroundCompletionLog Foreground 304 `shouldBe` True
+      shouldEmitForegroundCompletionLog Foreground 503 `shouldBe` True
+      shouldEmitForegroundCompletionLog Foreground 400 `shouldBe` False
+      shouldEmitForegroundCompletionLog Foreground 404 `shouldBe` False
+      shouldEmitForegroundCompletionLog Foreground 429 `shouldBe` False
+      shouldEmitForegroundCompletionLog LongPoll 200 `shouldBe` False
+      shouldEmitForegroundCompletionLog HealthCheck 200 `shouldBe` False
+
+    it "caps per-second completion log volume and resets on the next second" $ do
+      foregroundCompletionLogLimitPerSecond `shouldSatisfy` (> 0)
+      advanceCompletionLogWindow 2 1_000_000_000 0 1_100_000_000
+        `shouldBe` (1_000_000_000, 1, True)
+      advanceCompletionLogWindow 2 1_000_000_000 1 1_200_000_000
+        `shouldBe` (1_000_000_000, 2, True)
+      advanceCompletionLogWindow 2 1_000_000_000 2 1_300_000_000
+        `shouldBe` (1_000_000_000, 2, False)
+      advanceCompletionLogWindow 2 1_000_000_000 2 2_000_000_000
+        `shouldBe` (2_000_000_000, 1, True)
