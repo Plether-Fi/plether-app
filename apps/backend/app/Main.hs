@@ -40,7 +40,12 @@ import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngest
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Perps.Release (verifyPerpsV3ReleaseBindings)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
-import Plether.Server (apiServerOptions)
+import Plether.Server
+  ( apiServerOptions
+  , maxConcurrentForegroundRequests
+  , maxConcurrentLongPollRequests
+  , newConcurrencyLimitMiddleware
+  )
 import Plether.Vaults.PerformanceIndexer
   ( VaultPerformanceIndexerConfig (..)
   , startVaultPerformanceIndexer
@@ -258,6 +263,10 @@ main = do
             "Native AA startup attestation failed; affected methods remain fail-closed"
             [field "failure_class" ("startup-attestation" :: String)]
         Nothing -> pure ()
+      concurrencyLimit <-
+        newConcurrencyLimitMiddleware
+          maxConcurrentForegroundRequests
+          maxConcurrentLongPollRequests
       requestLogging <- newRequestLoggingMiddleware
       logInfo
         "api_started"
@@ -283,5 +292,6 @@ main = do
         (Nothing, Just _) -> ioError $ userError "Divisions registration requires DATABASE_URL"
         _ -> pure ()
       scottyOpts (apiServerOptions $ cfgPort cfg) $ do
+        middleware concurrencyLimit
         middleware requestLogging
         appWithKernelAa kernelAa cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig
