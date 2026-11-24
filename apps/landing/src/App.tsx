@@ -5,6 +5,7 @@ const APP_URL = 'https://app.sepolia.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const DISCORD_URL = 'https://plether.com/discord'
+const BLOG_URL = 'https://blog.plether.com/'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
 const MANIFESTO_URL = '/manifesto'
 const MEDIA_KIT_URL = '/media-kit'
@@ -27,6 +28,7 @@ const MOBILE_MENU_ITEMS = [
   { href: APP_URL, label: 'Launch Testnet', opensInNewWindow: true },
   { href: X_URL, label: 'X' },
   { href: DISCORD_URL, label: 'Discord', opensInNewWindow: true },
+  { href: BLOG_URL, label: 'Blog', opensInNewWindow: true },
   { href: DOCS_URL, label: 'Read Docs' },
   { href: CORE_REPO_URL, label: 'Github' },
   { href: MANIFESTO_URL, label: 'Manifesto' },
@@ -288,6 +290,8 @@ function SiteHeader({
             <a href={X_URL} aria-label="Plether on X" target="_blank" rel="noreferrer">X</a>
             <DividerDot />
             <a href={DISCORD_URL} target="_blank" rel="noreferrer">Discord</a>
+            <DividerDot />
+            <a href={BLOG_URL} target="_blank" rel="noreferrer">Blog</a>
             <DividerDot />
             <a href={DOCS_URL} target="_blank" rel="noreferrer">Docs</a>
             <DividerDot />
