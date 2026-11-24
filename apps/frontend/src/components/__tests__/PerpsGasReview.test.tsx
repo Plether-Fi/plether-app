@@ -46,14 +46,13 @@ afterEach(() => {
 })
 
 describe('Kernel gas review', () => {
-  it('shows the selected payer and opens account activity during a sponsorship outage', () => {
+  it('shows the selected payer during a sponsorship outage without a gas settings link', () => {
     runtime.gasPayment.readiness.sponsored = false
     render(<Review quote={ethQuote()} approved={vi.fn()} cancelled={vi.fn()} />)
     expect(screen.getByText('Sponsored by Plether')).toBeVisible()
     expect(screen.getByText('Gas sponsorship is currently unavailable.')).toBeVisible()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Gas settings' }))
-    expect(usePerpsUiStore.getState().activityRequest).toEqual({ id: 1, chainId: scope.chainId, accountAddress: scope.sender, ownerAddress })
+    expect(screen.queryByRole('button', { name: 'Gas settings' })).not.toBeInTheDocument()
   })
 
   it('displays the exact ETH maximum before allowing wallet approval', async () => {
@@ -65,6 +64,21 @@ describe('Kernel gas review', () => {
     expect(approved).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Continue to wallet' }))
     await waitFor(() => { expect(approved).toHaveBeenCalledOnce() })
+  })
+
+  it('continues directly to the wallet when autoConfirm is enabled unless blocked', async () => {
+    const sponsoredQuote = { mode: 'sponsored' as const, maxNetworkGasWei: parseEther('0.000047'), expiresAt: Math.floor(Date.now() / 1_000) + 60 }
+    const { result, rerender } = renderHook(
+      ({ blocked }) => useKernelGasApproval(usePerpsGasReview(), { autoConfirm: true, blocked }),
+      { initialProps: { blocked: false } },
+    )
+
+    expect(result.current.requiresConfirmation).toBe(false)
+    await expect(result.current.review(sponsoredQuote)).resolves.toBeUndefined()
+    expect(result.current.quote).toBeUndefined()
+
+    rerender({ blocked: true })
+    await expect(result.current.review(sponsoredQuote)).rejects.toBeInstanceOf(KernelGasReviewCancelled)
   })
 
   it('continues directly to the wallet for a current wallet-paid quote', async () => {

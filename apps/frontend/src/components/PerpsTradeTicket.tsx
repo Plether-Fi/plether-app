@@ -31,7 +31,7 @@ import { usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerps
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
-import { KernelGasApprovalButtons, PerpsGasReview } from './PerpsGasReview'
+import { PerpsGasReview } from './PerpsGasReview'
 import { KernelGasReviewCancelled, kernelQuoteIsFresh, useKernelGasApproval, usePerpsGasReview } from '../hooks/usePerpsGasReview'
 import { useKernelAttempts } from '../perps-aa/useKernelAttempts'
 import { kernelAttemptBlocksFollowUp } from '../perps-aa/kernelOperationJournal'
@@ -1846,7 +1846,6 @@ export function PerpsTradeTicket({
       ? 'The last Trading Account action was included. Settlement is still in progress.'
       : 'The Trading Account transaction was included and is awaiting confirmation.'
     : 'A Trading Account action is pending.'
-  const marginGasApproval = useKernelGasApproval(gasReview)
   const kernelPaymentMode = gasReview?.preference.mode
   const payingFromWallet = kernelPaymentMode === 'eth' && gasReview?.paysEthFromWallet
   const tradingReadiness = useTradingReadiness(enableLiveTrading && isSponsoredAccountConfigured)
@@ -1857,6 +1856,10 @@ export function PerpsTradeTicket({
     : gasReview && !gasReview.available
       ? kernelPaymentMode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.'
       : undefined
+  const marginGasApproval = useKernelGasApproval(gasReview, {
+    autoConfirm: true,
+    blocked: Boolean(sponsorshipPauseMessage) || kernelOperationPending,
+  })
   const chainId = useChainId()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const {
@@ -5788,14 +5791,7 @@ export function PerpsTradeTicket({
         analyticsProperties={commonAnalyticsProperties}
         footer={
           <div className="space-y-3">
-            {marginGasApproval.quote ? (
-              <KernelGasApprovalButtons
-                confirm={marginGasApproval.confirm}
-                cancel={marginGasApproval.cancel}
-                disabled={isMarginActionInvalid || kernelOperationPending || Boolean(sponsorshipPauseMessage) || !marginGasApproval.canConfirm}
-              />
-            ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
                 type="button"
                 variant="secondary"
@@ -5821,10 +5817,9 @@ export function PerpsTradeTicket({
                   void handleMarginActionSubmit()
                 }}
               >
-                {marginGasApproval.requiresConfirmation && !depositsFromOwnerWallet && !isMarginActionPending && !isConnectWalletCta && !isSwitchNetworkCta && !requiresOwnerWalletTransfer ? 'Review network gas' : marginActionCtaLabel}
+                {marginActionCtaLabel}
               </Button>
-              </div>
-            )}
+            </div>
             {enableLiveTrading && isConnected && !isCorrectChain && networkSwitchError ? (
               <div className="text-xs leading-4 text-[#FFAB96]">
                 {networkSwitchError}
@@ -5884,7 +5879,7 @@ export function PerpsTradeTicket({
                 Transfer <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(ownerWalletTransferAmountRaw)} /> from Owner Wallet
               </p>
               <p className="mt-1 text-content-secondary">
-                This first confirmation is a regular Arbitrum Sepolia {PERPS_SETTLEMENT_TOKEN_LABEL} transfer to your Trading Account and requires ETH for network gas. {gasReview ? 'You will review the Margin Account deposit gas separately.' : 'The following Margin Account deposit is gas-sponsored.'}
+                This first confirmation is a regular Arbitrum Sepolia {PERPS_SETTLEMENT_TOKEN_LABEL} transfer to your Trading Account and requires ETH for network gas. {gasReview && kernelPaymentMode === 'eth' ? 'The following Margin Account deposit uses your selected ETH gas payment.' : 'The following Margin Account deposit is gas-sponsored.'}
               </p>
             </div>
           ) : null}
@@ -5999,7 +5994,7 @@ export function PerpsTradeTicket({
             </div>
           </div>
 
-          <PerpsGasReview gas={gasReview} quote={marginGasApproval.quote} error={marginActionError?.cause} showSettings={!isMarginActionPending} onOpenSettings={() => {
+          <PerpsGasReview gas={gasReview} error={marginActionError?.cause} showSettings={!isMarginActionPending} onOpenSettings={() => {
             setMarginAction(null)
             gasReview?.openActivity()
           }} />
