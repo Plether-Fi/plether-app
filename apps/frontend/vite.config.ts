@@ -137,18 +137,17 @@ export default defineConfig(({ mode }) => {
     'import.meta.env.VITE_BUILD_COMMIT': JSON.stringify(buildCommit(env)),
     'import.meta.env.VITE_DEV_API_PROXY_TARGET': JSON.stringify(env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET),
   },
-  plugins: [
-    react(),
-    ...(env.ANALYZE === '1'
+  plugins:
+    env.ANALYZE === '1'
       ? [
+          react(),
           visualizer({
             filename: 'bundle-stats.html',
             gzipSize: true,
             brotliSize: true,
           }),
         ]
-      : []),
-  ],
+      : [react()],
   server: {
     // Playwright traces contain HTML snapshots. Treating those generated files
     // as app pages reloads other open tabs in the middle of authentication.

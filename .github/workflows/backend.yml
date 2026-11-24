@@ -201,7 +201,7 @@ jobs:
       - name: Build backend and test binaries
         run: |
           cabal build --enable-tests all
-          mkdir -p .ci-bin
+          mkdir -p ci-bin
           for target in \
             test:plether-api-test \
             test:plether-api-integration-test \
@@ -209,14 +209,15 @@ jobs:
             exe:plether-candle-admin \
             exe:plether-candle-admin-fixture; do
             bin="$(cabal list-bin --enable-tests "$target")"
-            cp "$bin" ".ci-bin/$(basename "$bin")"
+            cp "$bin" "ci-bin/$(basename "$bin")"
           done
 
       - name: Upload compiled test binaries
         uses: actions/upload-artifact@v4
         with:
           name: backend-test-binaries
-          path: apps/backend/.ci-bin/
+          path: apps/backend/ci-bin/
+          if-no-files-found: error
           retention-days: 1
 
   test:
@@ -251,12 +252,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend-test-binaries
-          path: apps/backend/.ci-bin
+          path: apps/backend/ci-bin
 
       - name: Run tests
         run: |
-          chmod +x .ci-bin/plether-api-test
-          ./.ci-bin/plether-api-test
+          chmod +x ci-bin/plether-api-test
+          ./ci-bin/plether-api-test
         env:
           PASSKEY_NAMES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/passkey_names_test
 
@@ -301,7 +302,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend-test-binaries
-          path: apps/backend/.ci-bin
+          path: apps/backend/ci-bin
 
       - name: Verify PostgreSQL prerequisite
         run: |
@@ -311,8 +312,8 @@ jobs:
       - name: Run deterministic Perps critical path integration tests
         run: |
           set -euo pipefail
-          chmod +x .ci-bin/*
-          export PATH="$PWD/.ci-bin:$PATH"
+          chmod +x ci-bin/*
+          export PATH="$PWD/ci-bin:$PATH"
 
           psql "$PERPS_CRITICAL_PATH_DATABASE_URL" --set ON_ERROR_STOP=1 \
             --command "CREATE DATABASE plether_critical_path_1;" \
@@ -324,20 +325,20 @@ jobs:
           shard3_log="$RUNNER_TEMP/perps-integration-shard3.log"
 
           PERPS_CRITICAL_PATH_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path_1" \
-            ./.ci-bin/plether-api-integration-test \
+            ./ci-bin/plether-api-integration-test \
             --match "liquidation worker DB/RPC orchestration" \
             > "$shard1_log" 2>&1 &
           pid1=$!
 
           PERPS_CRITICAL_PATH_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path_2" \
-            ./.ci-bin/plether-api-integration-test \
+            ./ci-bin/plether-api-integration-test \
             --match "Perps candle rollup storage" \
             --match "Plether Insights PostgreSQL lifecycle" \
             > "$shard2_log" 2>&1 &
           pid2=$!
 
           PERPS_CRITICAL_PATH_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path_3" \
-            ./.ci-bin/plether-api-integration-test \
+            ./ci-bin/plether-api-integration-test \
             --skip "liquidation worker DB/RPC orchestration" \
             --skip "Perps candle rollup storage" \
             --skip "Plether Insights PostgreSQL lifecycle" \
@@ -398,7 +399,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend-test-binaries
-          path: apps/backend/.ci-bin
+          path: apps/backend/ci-bin
 
       - name: Verify PostgreSQL prerequisite
         run: |
@@ -407,5 +408,5 @@ jobs:
 
       - name: Run native AA integration tests
         run: |
-          chmod +x .ci-bin/plether-aa-integration-test
-          ./.ci-bin/plether-aa-integration-test
+          chmod +x ci-bin/plether-aa-integration-test
+          ./ci-bin/plether-aa-integration-test
