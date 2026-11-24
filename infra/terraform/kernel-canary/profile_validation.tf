@@ -75,6 +75,7 @@ locals {
       can(regex("^0x[0-9A-Fa-f]{64}$", local.kernel_canary_sponsor[key]))
       && lower(local.kernel_canary_sponsor[key]) != local.kernel_zero_hash
     ])
+    && lower(local.kernel_canary_sponsor.paymasterCodeHash) != local.kernel_empty_hash
     && alltrue([for key, bounds in local.kernel_sponsor_bounds :
       can(regex("^[1-9][0-9]*$", jsonencode(local.kernel_canary_sponsor[key])))
       && local.kernel_canary_sponsor[key] >= bounds[0] && local.kernel_canary_sponsor[key] <= bounds[1]

@@ -1462,7 +1462,7 @@ jobs:
                         elif $desired_count == "0" or $desired_count == "1" then
                           ($environment.AA_KERNEL_SPONSORSHIP_JSON | fromjson) as $sponsorship
                           | ($sponsorship.paymaster | canonical_nonzero_address)
-                            and ($sponsorship.paymasterCodeHash | canonical_nonzero_hash)
+                            and ($sponsorship.paymasterCodeHash | kernel_code_hash)
                             and ($sponsorship.deploymentBlock | tostring | canonical_positive_decimal)
                             and ($sponsorship.deploymentBlockHash | canonical_nonzero_hash)
                           else false

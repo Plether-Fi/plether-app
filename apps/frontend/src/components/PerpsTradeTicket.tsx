@@ -1840,11 +1840,11 @@ export function PerpsTradeTicket({
   const kernelInclusionObserved = pendingKernelOperation?.observedReceipt
   const showKernelInclusion = import.meta.env.VITE_PERPS_KERNEL_HOMEPAGE_OPT_IN === 'true'
   const kernelPendingMessage = kernelInclusionObserved
-    ? showKernelInclusion
+    ? !kernelInclusionObserved.success
+      ? 'The Trading Account action reverted and is awaiting confirmation.'
+      : showKernelInclusion
       ? 'The last Trading Account action was included. Settlement is still in progress.'
-      : kernelInclusionObserved.success
-      ? 'The Trading Account transaction was included and is awaiting confirmation.'
-      : 'The Trading Account action reverted and is awaiting confirmation.'
+      : 'The Trading Account transaction was included and is awaiting confirmation.'
     : 'A Trading Account action is pending.'
   const marginGasApproval = useKernelGasApproval(gasReview)
   const kernelPaymentMode = gasReview?.preference.mode
@@ -2044,7 +2044,11 @@ export function PerpsTradeTicket({
       : commitExecutionStatus === 'submitting'
         ? payingFromWallet ? 'Confirm gas payment in your wallet' : gasReview ? 'Submitting Trading Account transaction' : 'Submitting sponsored transaction'
         : commitExecutionStatus === 'confirming'
-          ? kernelInclusionObserved ? showKernelInclusion ? 'Transaction included' : 'Included, awaiting confirmation' : 'Waiting for on-chain confirmation'
+          ? kernelInclusionObserved
+            ? !kernelInclusionObserved.success
+              ? 'Execution reverted, awaiting confirmation'
+              : showKernelInclusion ? 'Transaction included' : 'Included, awaiting confirmation'
+            : 'Waiting for on-chain confirmation'
           : commitExecutionStatus === 'confirmed'
             ? 'Transaction confirmed'
             : 'Waiting for wallet confirmation'
@@ -3924,7 +3928,7 @@ export function PerpsTradeTicket({
       trackPerpsMarginLifecycle(`${marginAction}_submitted`, commonAnalyticsProperties)
       setMarginActionError(undefined)
       if (depositsFromOwnerWallet) {
-        setMarginActionStatus('depositing')
+        setMarginActionStatus('pending')
         await depositMarginFromOwnerWallet(marginActionAmountRaw, setMarginActionStatus)
       } else if (marginAction === 'deposit') {
         if (requiresOwnerWalletTransfer) {

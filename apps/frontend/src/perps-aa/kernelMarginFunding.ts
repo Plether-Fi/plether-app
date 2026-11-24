@@ -1,12 +1,12 @@
 import { buildDepositForCalls, marginClearinghouseFundingAbi as fundingAbi } from '@plether-fi/perps-aa-client'
 import { createStore, del, get, set } from 'idb-keyval'
-import { isAddressEqual, keccak256, parseEventLogs, zeroAddress, type PublicClient, type WalletClient } from 'viem'
+import { isAddressEqual, keccak256, parseEventLogs, zeroAddress, type Address, type PublicClient, type WalletClient } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import { ERC20_ABI } from '../contracts/abis'
 import { PERPS_RELEASE } from '../contracts/perpsAddresses'
 import { isTransactionFeeCapRejected } from '../utils/transactionFailure'
 import { estimateKernelOwnerTransactionFees } from './kernelEthFunding'
-import { kernelAttemptScopeKey, withKernelOperationLane } from './kernelOperationJournal'
+import { kernelAttemptScopeKey, withKernelOperationLane, type KernelAttemptScope } from './kernelOperationJournal'
 import { findKernelOwnerTransaction, type KernelWalletSubmission } from './kernelWalletPayment'
 import { isExplicitSignatureRejection } from './preparedOperation'
 import type { KernelPerpsAaSmartAccountRuntime } from './runtimeContext'
@@ -14,6 +14,16 @@ import type { KernelPerpsAaSmartAccountRuntime } from './runtimeContext'
 const journal = createStore('plether-perps-owner-deposits', 'pending')
 type PendingDeposit = KernelWalletSubmission & { amount: bigint }
 type DepositStage = 'approving' | 'depositing'
+
+function pendingDepositKey(scope: KernelAttemptScope, ownerAddress: Address, clearinghouse: Address) {
+  return `${kernelAttemptScopeKey(scope)}:${ownerAddress.toLowerCase()}:${clearinghouse.toLowerCase()}`
+}
+
+export async function hasPendingKernelOwnerDeposit(scope: KernelAttemptScope, ownerAddress: Address): Promise<boolean> {
+  const clearinghouse = PERPS_RELEASE.contracts.marginClearinghouse.address
+  if (!clearinghouse || typeof indexedDB === 'undefined') return false
+  return (await get<PendingDeposit>(pendingDepositKey(scope, ownerAddress, clearinghouse), journal)) !== undefined
+}
 
 export async function depositKernelMarginFromOwner({ client, wallet, runtime, amount, requireCurrent, onStage }: {
   client: PublicClient
@@ -38,7 +48,7 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
   const calls = (depositAmount: bigint) => buildDepositForCalls({
     settlementToken, clearinghouse, beneficiary: scope.sender, amount: depositAmount,
   })
-  const key = `${kernelAttemptScopeKey(scope)}:${ownerAddress.toLowerCase()}:${clearinghouse.toLowerCase()}`
+  const key = pendingDepositKey(scope, ownerAddress, clearinghouse)
   const assertOwner = async () => {
     const [addresses, chainId] = await Promise.all([wallet.getAddresses(), wallet.getChainId()])
     const selected = addresses.at(0)
@@ -47,8 +57,9 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
       throw new Error('Reconnect the Owner Wallet on Arbitrum Sepolia before depositing.')
     }
   }
-  const readAllowance = () => client.readContract({
+  const readAllowance = (blockNumber?: bigint) => client.readContract({
     address: settlementToken, abi: ERC20_ABI, functionName: 'allowance', args: [ownerAddress, clearinghouse],
+    ...(blockNumber === undefined ? {} : { blockNumber }),
   })
 
   const settle = async (pending: PendingDeposit) => {
@@ -69,7 +80,7 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
     }
     if (!transaction.to || !isAddressEqual(transaction.to, clearinghouse) ||
         transaction.input.toLowerCase() !== expected.data.toLowerCase() || transaction.value !== 0n) {
-      if (pending.transactionHash && transaction.nonce === pending.nonce) {
+      if (transaction.nonce === pending.nonce) {
         await del(key, journal)
         throw new Error('The deposit was replaced in your Owner Wallet. Review a fresh deposit.')
       }
@@ -112,6 +123,7 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
     }
     if (balance < amount) throw new Error('The Owner Wallet has insufficient USDG for this deposit.')
 
+    let approvalBlock: bigint | undefined
     if (await readAllowance() < amount) {
       await assertOwner()
       const fees = await estimateKernelOwnerTransactionFees(client)
@@ -119,16 +131,21 @@ export async function depositKernelMarginFromOwner({ client, wallet, runtime, am
       onStage?.('approving')
       const hash = await wallet.sendTransaction({ account: ownerAddress, chain: arbitrumSepolia, ...approval, ...fees })
       const receipt = await client.waitForTransactionReceipt({ hash, timeout: 60_000 })
-      if (receipt.status !== 'success' || await readAllowance() < amount) {
+      if (receipt.status !== 'success' || await readAllowance(receipt.blockNumber) < amount) {
         throw new Error('The USDG approval did not confirm for this deposit.')
       }
+      approvalBlock = receipt.blockNumber
     }
     await client.simulateContract({ address: clearinghouse, abi: fundingAbi, functionName: 'depositFor',
-      args: [scope.sender, amount], account: ownerAddress })
-    const [fromBlock, nonce] = await Promise.all([
+      args: [scope.sender, amount], account: ownerAddress,
+      ...(approvalBlock === undefined ? {} : { blockNumber: approvalBlock }) })
+    const [latestBlock, pendingNonce, confirmedNonce] = await Promise.all([
       client.getBlockNumber({ cacheTime: 0 }),
       client.getTransactionCount({ address: ownerAddress, blockTag: 'pending' }),
+      approvalBlock === undefined ? Promise.resolve(0) : client.getTransactionCount({ address: ownerAddress, blockNumber: approvalBlock }),
     ])
+    const fromBlock = approvalBlock !== undefined && latestBlock < approvalBlock ? approvalBlock : latestBlock
+    const nonce = Math.max(pendingNonce, confirmedNonce)
     await assertOwner()
     const fees = await estimateKernelOwnerTransactionFees(client)
     requireCurrent()

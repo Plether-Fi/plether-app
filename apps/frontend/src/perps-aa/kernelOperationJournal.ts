@@ -505,7 +505,10 @@ export async function reconcileKernelAttempt(attempt: KernelOperationAttempt, is
   const locator = reconcileLocator(current)
   const status = await getKernelOperationStatus(locator)
   if (status.state === 'pending' || status.state === 'observed') {
-    const next = status.state === 'observed' ? status.receipt : undefined
+    let next = status.state === 'observed' ? status.receipt : undefined
+    if (next && readBundledInclusion && isObservationReorged && await isObservationReorged(next).catch(() => true)) {
+      next = undefined
+    }
     const observed = current.observedReceipt
     const changed = next
       ? !sameObservation(observed, next)

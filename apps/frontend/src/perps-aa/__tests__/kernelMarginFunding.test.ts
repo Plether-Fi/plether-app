@@ -118,12 +118,37 @@ describe('Owner Wallet margin deposit', () => {
     expect(f.sendTransaction).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps an ambiguous outdated-transaction response in recovery', async () => {
+  it('keeps an ambiguous outdated-transaction response in recovery and clears it once the owner nonce is replaced', async () => {
     const f = fixture()
     f.sendTransaction.mockRejectedValueOnce(Object.assign(new Error('transaction is outdated'), { name: 'FeeCapTooLowError' }))
     await expect(f.execute()).rejects.toThrow('deposit could not be verified')
     expect(records.size).toBe(1)
     await expect(f.execute()).rejects.toThrow('deposit is still unverified')
     expect(f.sendTransaction).toHaveBeenCalledTimes(1)
+
+    // Once the Owner Wallet replaces that nonce with another transaction, clear recovery even without transactionHash.
+    const replacedTx = { ...transaction, to: owner, input: '0x' as Hex }
+    const replacedBlock = { ...block, transactions: [replacedTx] }
+    const client = { chain: arbitrumSepolia,
+      readContract: async ({ functionName }: { functionName: string }) =>
+        functionName === 'balanceOf' ? amount : functionName === 'allowance' ? amount : settlementToken,
+      getBytecode: async () => '0x01',
+      getBlock: async () => replacedBlock,
+      getBlockNumber: async () => block.number,
+      estimateFeesPerGas: async () => ({ maxFeePerGas: 25n, maxPriorityFeePerGas: 0n }),
+      getTransactionCount: async ({ blockNumber }: { blockNumber?: bigint }) => blockNumber !== undefined && blockNumber < block.number ? 2 : 3,
+      getTransaction: async () => replacedTx,
+      getTransactionReceipt: async () => receipt,
+      waitForTransactionReceipt: f.waitForTransactionReceipt,
+      simulateContract: f.simulateContract,
+    } as unknown as PublicClient
+    const wallet = { account: { address: owner }, getAddresses: f.getAddresses, getChainId: async () => arbitrumSepolia.id, sendTransaction: f.sendTransaction } as unknown as WalletClient
+    const runtime = { ownerAddress: owner, gasPayment: { paysEthFromWallet: true },
+      kernel: { scope: { sender, chainId: arbitrumSepolia.id },
+        verifyAccount: async () => ({ address: sender, ownerAddress: owner, deployed: false, blockNumber: block.number, blockHash }) },
+    } as unknown as KernelPerpsAaSmartAccountRuntime
+    await expect(depositKernelMarginFromOwner({ client, wallet, runtime, amount, requireCurrent: () => undefined }))
+      .rejects.toThrow('replaced in your Owner Wallet')
+    expect(records.size).toBe(0)
   })
 })

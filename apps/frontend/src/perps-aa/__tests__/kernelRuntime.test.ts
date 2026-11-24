@@ -30,6 +30,7 @@ vi.mock('../kernelRpc', async importOriginal => {
   return { ...actual, prepareKernelOperation: fetchQuote, fetchKernelManifest: fetchManifest, assertKernelPreparedOperation: vi.fn() }
 })
 vi.mock('../kernelOperationJournal', () => ({
+  kernelAttemptScopeKey: () => 'test-scope',
   getActiveKernelAttempt: activeAttempt,
   withKernelOperationLane: <T,>(_scope: unknown, work: () => Promise<T>) => work(),
   saveKernelSignedAttempt: save,

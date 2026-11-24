@@ -13,7 +13,9 @@ module Plether.AA.Kernel
   , kernelUserOperationHash
   , attestKernelStackAtBlock
   , verifyKernelAccountAtBlock
+  , verifyKernelAccountForReplayAtBlock
   , verifyKernelAccountWithRpcAtBlock
+  , verifyKernelAccountWithRpcForReplayAtBlock
   , resolveOwnedKernelAccountAtBlock
   , resolveOwnedKernelAccountWithRpcAtBlock
   , verifyKernelSignature
@@ -323,9 +325,23 @@ verifyKernelAccountAtBlock
   :: KernelProfile -> EthClient -> Integer -> Text -> Maybe Text -> IO (Either ProxyFailure Text)
 verifyKernelAccountAtBlock profile client = verifyKernelAccountWithRpcAtBlock profile (rpcCall client)
 
+verifyKernelAccountForReplayAtBlock
+  :: KernelProfile -> EthClient -> Integer -> Text -> Maybe Text -> IO (Either ProxyFailure Text)
+verifyKernelAccountForReplayAtBlock profile client = verifyKernelAccountWithRpcForReplayAtBlock profile (rpcCall client)
+
 verifyKernelAccountWithRpcAtBlock
   :: KernelProfile -> KernelRpc -> Integer -> Text -> Maybe Text -> IO (Either ProxyFailure Text)
-verifyKernelAccountWithRpcAtBlock profile rpc block rawSender factoryOwner = runExceptT $ do
+verifyKernelAccountWithRpcAtBlock = verifyKernelAccountWithRpcAtBlockWithReplay False
+
+-- An idempotent retry of an already-accepted counterfactual operation may run
+-- after the account has already been deployed at the latest block.
+verifyKernelAccountWithRpcForReplayAtBlock
+  :: KernelProfile -> KernelRpc -> Integer -> Text -> Maybe Text -> IO (Either ProxyFailure Text)
+verifyKernelAccountWithRpcForReplayAtBlock = verifyKernelAccountWithRpcAtBlockWithReplay True
+
+verifyKernelAccountWithRpcAtBlockWithReplay
+  :: Bool -> KernelProfile -> KernelRpc -> Integer -> Text -> Maybe Text -> IO (Either ProxyFailure Text)
+verifyKernelAccountWithRpcAtBlockWithReplay allowDeployedFactory profile rpc block rawSender factoryOwner = runExceptT $ do
   when (block < 0) $ throwE $ invalidParams "Kernel attestation requires an explicit block number"
   sender <- maybe (throwE $ invalidParams "Kernel sender is invalid") pure $ normalizeAddress rawSender
   (stack, code) <- liftIO $ concurrently (attestKernelStack profile rpc block) (readCode rpc block sender)
@@ -333,8 +349,14 @@ verifyKernelAccountWithRpcAtBlock profile rpc block rawSender factoryOwner = run
   bytecode <- ExceptT $ pure code
   owner <- case factoryOwner of
     Just rawOwner -> do
-      unless (BS.null bytecode) $ throwE $ policyDenied "Kernel factory data may be used only for an undeployed account"
-      maybe (throwE $ invalidParams "Kernel root owner is invalid") pure $ normalizeAddress rawOwner
+      expectedOwner <- maybe (throwE $ invalidParams "Kernel root owner is invalid") pure $ normalizeAddress rawOwner
+      if BS.null bytecode then pure expectedOwner
+      else if allowDeployedFactory then do
+        liveOwner <- verifyLiveKernel profile rpc block sender bytecode
+        unless (liveOwner == expectedOwner) $
+          throwE $ policyDenied "Kernel deployed owner does not match the accepted factory owner"
+        pure liveOwner
+      else throwE $ policyDenied "Kernel factory data may be used only for an undeployed account"
     Nothing -> verifyLiveKernel profile rpc block sender bytecode
   ownerCode <- ExceptT $ readCode rpc block owner
   unless (BS.null ownerCode) $

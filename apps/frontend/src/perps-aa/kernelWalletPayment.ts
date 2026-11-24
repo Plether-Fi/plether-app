@@ -4,7 +4,7 @@ import {
   type Address, type Hex, type PublicClient, type TransactionReceipt,
 } from 'viem'
 import { entryPoint09Abi, toPackedUserOperation, type UserOperation, type UserOperationReceipt } from 'viem/account-abstraction'
-import { deadlineNow } from './deadlineClock'
+import { deadlineNow, refreshDeadlineClock } from './deadlineClock'
 import { estimateKernelOwnerTransactionFees } from './kernelEthFunding'
 import type { KernelOperationAttempt } from './kernelOperationJournal'
 import { assertKernelPreparedOperation, getKernelOperationHash, type KernelActionPreparation, type KernelPreparationIntent, type KernelWalletPreparation } from './kernelRpc'
@@ -77,6 +77,7 @@ export async function quoteKernelWalletPayment(
     // An existing account can simulate the exact atomic batch as EntryPoint
     // before the wallet signs. A counterfactual account is validated in the signed bundle.
     factory === undefined ? client.call({ account: profile.entryPoint, to: sender, data: callData, gas: callGasLimit }) : undefined,
+    refreshDeadlineClock().catch(() => undefined),
   ])
   // Cover both signed gas limits, the EIP-150 forwarding margin, EntryPoint
   // overhead and a change in the L1 posting estimate between the two prompts.
@@ -99,6 +100,11 @@ export async function estimateSignedKernelWalletPayment(
   const [fees, balance] = await Promise.all([
     estimateKernelOwnerTransactionFees(client),
     client.getBalance({ address: ownerAddress }),
+    // Re-simulate deployed inner calls before Prompt 2 because handleOps
+    // catches inner reverts and would otherwise estimateGas cleanly.
+    prepared.operation.factory === undefined
+      ? client.call({ account: prepared.entryPoint, to: prepared.operation.sender, data: prepared.operation.callData, gas: prepared.operation.callGasLimit })
+      : undefined,
   ])
   const estimate = await client.estimateGas({ ...tx, ...fees })
   const gas = estimate + (estimate / 10n > 30_000n ? estimate / 10n : 30_000n)
@@ -135,12 +141,28 @@ async function readReceipt(client: PublicClient, hash: Hex) {
 }
 
 export async function findKernelOwnerTransaction(client: PublicClient, ownerAddress: Address, submission: KernelWalletSubmission, head: bigint) {
+  if (head < submission.fromBlock) return undefined
   const readNonce = (blockNumber: bigint) => client.getTransactionCount({ address: ownerAddress, blockNumber })
   if (await readNonce(head) <= submission.nonce) return undefined
   // Locate the first block where the nonce was used without scanning every
-  // recently mined Arbitrum block after a wallet disconnect.
+  // recently mined Arbitrum block after a wallet disconnect. If the nonce was
+  // already consumed before fromBlock (e.g. due to RPC lag), bracket backward.
   let start = submission.fromBlock
   let end = head
+  if (start > 0n && await readNonce(start - 1n) > submission.nonce) {
+    end = start - 1n
+    let step = 16n
+    while (start > 0n) {
+      const candidate = start > step ? start - step : 0n
+      if (await readNonce(candidate) <= submission.nonce) {
+        start = candidate
+        break
+      }
+      start = candidate
+      if (step >= 4_096n) break
+      step *= 2n
+    }
+  }
   while (start < end) {
     const middle = start + (end - start) / 2n
     if (await readNonce(middle) > submission.nonce) end = middle
@@ -149,6 +171,37 @@ export async function findKernelOwnerTransaction(client: PublicClient, ownerAddr
   const block = await client.getBlock({ blockNumber: start, includeTransactions: true })
   const transaction = block.transactions.find(tx => isAddressEqual(tx.from, ownerAddress) && tx.nonce === submission.nonce)
   return transaction ? await readReceipt(client, transaction.hash) : undefined
+}
+
+async function findEntryPointWalletReceipt(
+  client: PublicClient,
+  entryPoint: Address,
+  userOperationHash: Hex,
+  sender: Address,
+  nonce: bigint,
+  fromBlock: bigint,
+  headNumber: bigint,
+) {
+  const liveNonce = await client.readContract({
+    address: entryPoint, abi: entryPoint09Abi, functionName: 'getNonce',
+    args: [sender, 0n], blockNumber: headNumber,
+  })
+  if (liveNonce <= nonce) return { receipt: undefined, liveNonce }
+  const horizon = headNumber - fromBlock < 4_000n ? fromBlock : headNumber - 3_999n
+  for (let end = headNumber; end >= horizon;) {
+    const start = end - horizon < 999n ? horizon : end - 999n
+    const events = await client.getLogs({
+      address: entryPoint, event: operationEvent,
+      args: { userOpHash: userOperationHash, sender, paymaster: zeroAddress },
+      fromBlock: start, toBlock: end, strict: true,
+    })
+    const event = events.find(log => log.args.nonce === nonce)
+    if (event) {
+      return { receipt: await readReceipt(client, event.transactionHash), liveNonce }
+    }
+    end = start - 1n
+  }
+  return { receipt: undefined, liveNonce }
 }
 
 export async function readKernelWalletOutcome(client: PublicClient, attempt: KernelOperationAttempt): Promise<KernelWalletOutcome> {
@@ -163,42 +216,45 @@ export async function readKernelWalletOutcome(client: PublicClient, attempt: Ker
   receipt ??= await findKernelOwnerTransaction(client, ownerAddress, walletSubmission, head.number)
   if (!receipt) {
     // This also recovers a speed-up or a wallet response lost after broadcast.
-    const liveNonce = await client.readContract({ address: entryPoint, abi: entryPoint09Abi, functionName: 'getNonce',
-      args: [sender, 0n], blockNumber: head.number })
-    const horizon = head.number - walletSubmission.fromBlock < 4_000n ? walletSubmission.fromBlock : head.number - 3_999n
-    for (let end = head.number; liveNonce > nonce && end >= horizon;) {
-      const start = end - horizon < 999n ? horizon : end - 999n
-      const events = await client.getLogs({ address: entryPoint, event: operationEvent, args: { userOpHash: userOperationHash, sender, paymaster: zeroAddress },
-        fromBlock: start, toBlock: end, strict: true })
-      const event = events.find(log => log.args.nonce === nonce)
-      if (event) {
-        receipt = await readReceipt(client, event.transactionHash)
-        if (!receipt) return { state: 'pending' }
-        break
-      }
-      end = start - 1n
-    }
-    if (!receipt && liveNonce > nonce && horizon === walletSubmission.fromBlock) {
+    const found = await findEntryPointWalletReceipt(client, entryPoint, userOperationHash, sender, nonce, walletSubmission.fromBlock, head.number)
+    receipt = found.receipt
+    if (!receipt && found.liveNonce > nonce) {
       const canonical = await client.getBlock({ blockNumber: head.number })
       return canonical.hash === head.hash ? { state: 'nonce_consumed' } : { state: 'pending' }
     }
     if (!receipt) return { state: 'pending' }
   }
-  const [transaction, block] = await Promise.all([
-    client.getTransaction({ hash: receipt.transactionHash }).catch((error: unknown) => {
-      if (error instanceof TransactionNotFoundError) return undefined
-      throw error
-    }),
-    client.getBlock({ blockNumber: receipt.blockNumber }),
-  ])
-  if (!transaction || block.number !== receipt.blockNumber || block.hash !== receipt.blockHash ||
-      transaction.hash !== receipt.transactionHash || transaction.blockNumber !== receipt.blockNumber ||
-      transaction.blockHash !== receipt.blockHash) return { state: 'pending' }
-  if (!transaction.to || !isAddressEqual(transaction.from, ownerAddress) || !isAddressEqual(transaction.to, entryPoint) ||
-      transaction.value !== 0n || transaction.input.toLowerCase() !== encodeKernelWalletTransaction(prepared.operation, ownerAddress, signature).toLowerCase()) {
-    if (transaction.nonce === walletSubmission.nonce && isAddressEqual(transaction.from, ownerAddress) &&
-        walletSubmission.transactionHash !== undefined) return { state: 'wallet_replaced' }
-    return { state: 'pending' }
+  const verifyMatchingTransaction = async (candidate: TransactionReceipt): Promise<'matched' | 'mismatched' | 'pending'> => {
+    const [transaction, block] = await Promise.all([
+      client.getTransaction({ hash: candidate.transactionHash }).catch((error: unknown) => {
+        if (error instanceof TransactionNotFoundError) return undefined
+        throw error
+      }),
+      client.getBlock({ blockNumber: candidate.blockNumber }),
+    ])
+    if (!transaction || block.number !== candidate.blockNumber || block.hash !== candidate.blockHash ||
+        transaction.hash !== candidate.transactionHash || transaction.blockNumber !== candidate.blockNumber ||
+        transaction.blockHash !== candidate.blockHash) return 'pending'
+    if (!transaction.to || !isAddressEqual(transaction.from, ownerAddress) || !isAddressEqual(transaction.to, entryPoint) ||
+        transaction.value !== 0n || transaction.input.toLowerCase() !== encodeKernelWalletTransaction(prepared.operation, ownerAddress, signature).toLowerCase()) {
+      return transaction.nonce === walletSubmission.nonce && isAddressEqual(transaction.from, ownerAddress) ? 'mismatched' : 'pending'
+    }
+    return 'matched'
+  }
+  const matchState = await verifyMatchingTransaction(receipt)
+  if (matchState === 'pending') return { state: 'pending' }
+  if (matchState === 'mismatched') {
+    // Before reporting wallet_replaced, verify whether the UserOperation still
+    // executed under a wallet-overridden nonce.
+    const fallback = await findEntryPointWalletReceipt(client, entryPoint, userOperationHash, sender, nonce, walletSubmission.fromBlock, head.number)
+    if (fallback.receipt && await verifyMatchingTransaction(fallback.receipt) === 'matched') {
+      receipt = fallback.receipt
+    } else if (fallback.liveNonce > nonce) {
+      const canonical = await client.getBlock({ blockNumber: head.number })
+      return canonical.hash === head.hash ? { state: 'nonce_consumed' } : { state: 'pending' }
+    } else {
+      return { state: 'wallet_replaced' }
+    }
   }
   if (receipt.status !== 'success') return { state: 'wallet_failed', outerReceipt: receipt }
   const matches = parseEventLogs({ abi: [operationEvent], logs: receipt.logs }).filter(log =>

@@ -102,7 +102,7 @@ jobs:
         working-directory: infra/terraform/kernel-canary
         run: |
           terraform init -backend=false -input=false -lockfile=readonly
-          terraform test -filter=tests/services.tftest.hcl -no-color
+          terraform test -no-color
 
       - name: Test retained artifacts, immutable releases and protected recovery
         working-directory: .

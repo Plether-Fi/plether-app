@@ -42,6 +42,8 @@ export function recoverOperationFromBundle({ transactions, receipt, entryPoint, 
   assert.equal(transactions.length, 2, 'Require two independent bundle transaction reads')
   assert.match(receipt.transactionHash, /^0x[0-9a-f]{64}$/iu, 'Invalid bundle receipt hash')
   assert.match(receipt.blockHash, /^0x[0-9a-f]{64}$/iu, 'Invalid bundle block hash')
+  assert.match(operationHash, /^0x[0-9a-f]{64}$/iu, 'Invalid UserOperation hash')
+  const expectedOperationHash = operationHash.toLowerCase()
   for (const transaction of transactions) {
     assert.equal(transaction.hash?.toLowerCase(), receipt.transactionHash.toLowerCase(), 'Recovered transaction hash differs from receipt')
     assert.equal(transaction.blockHash?.toLowerCase(), receipt.blockHash.toLowerCase(), 'Recovered transaction block hash differs from receipt')
@@ -66,7 +68,7 @@ export function recoverOperationFromBundle({ transactions, receipt, entryPoint, 
       (payerData ? payerData.test(packed.paymasterAndData) : packed.paymasterAndData === '0x'))
     .map(packed => ({ packed, operation: unpackOperation(packed) }))
     .filter(({ operation }) => getUserOperationHash({ userOperation: operation, chainId, entryPointAddress: entryPoint,
-      entryPointVersion: '0.9' }).toLowerCase() === operationHash)
+      entryPointVersion: '0.9' }).toLowerCase() === expectedOperationHash)
   assert.equal(matching.length, 1, `Expected exactly one matching ${paymaster ? 'sponsored' : 'ETH'} operation in the canonical bundle`)
   const [{ packed, operation }] = matching
   assert.deepEqual(toPackedUserOperation(operation), packed, 'Recovered operation does not round-trip')

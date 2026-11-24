@@ -547,6 +547,10 @@ export function usePerpsTrading() {
     }
     const { mode } = readGasPaymentPreference(current.gasPayment.scope)
     if (quote.mode !== mode) throw new Error('The gas setting changed. Review a fresh quote to continue.')
+    const expectWalletPayer = mode === 'eth' && current.gasPayment.paysEthFromWallet === true
+    if ((quote.payer === 'wallet') !== expectWalletPayer) {
+      throw new Error('The gas setting changed. Review a fresh quote to continue.')
+    }
     if (!current.gasPayment.readiness[quote.mode]) {
       throw new Error(mode === 'sponsored' ? 'Gas sponsorship is currently unavailable.' : 'Paying gas with ETH is currently unavailable.')
     }
@@ -690,7 +694,10 @@ export function usePerpsTrading() {
   ])
 
   const depositMarginFromOwnerWallet = useCallback(async (amount: bigint, onStage?: (stage: 'approving' | 'depositing') => void) => {
-    let stage: 'preparing' | 'approving' | 'depositing' = 'preparing'
+    const progress: { stage: 'preparing' | 'approving' | 'depositing'; approved: boolean } = {
+      stage: 'preparing',
+      approved: false,
+    }
     try {
       const { runtime } = requireTradingExecution()
       if (!runtime.kernel || !runtime.gasPayment.paysEthFromWallet || !walletClient) {
@@ -702,7 +709,11 @@ export function usePerpsTrading() {
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       return await depositKernelMarginFromOwner({
         client: requireClient(publicClient), wallet: walletClient, runtime, amount,
-        onStage: next => { stage = next; onStage?.(next) },
+        onStage: next => {
+          if (progress.stage === 'approving' && next === 'depositing') progress.approved = true
+          progress.stage = next
+          onStage?.(next)
+        },
         requireCurrent: () => {
           const current = requireCurrentKernelRuntime(runtime)
           const preference = readGasPaymentPreference(current.gasPayment.scope)
@@ -713,7 +724,11 @@ export function usePerpsTrading() {
         },
       })
     } catch (error) {
-      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'deposit'), { surface: 'perps', action: 'deposit', stage })
+      const baseMessage = getPerpsErrorMessage(error, 'deposit')
+      const message = progress.approved
+        ? `USDG approval succeeded, but the Margin Account deposit did not complete. Retry to deposit without approving again. ${baseMessage}`
+        : baseMessage
+      throw reportedTransactionError(error, message, { surface: 'perps', action: 'deposit', stage: progress.stage })
     } finally {
       invalidatePerpsReads()
     }
