@@ -14,6 +14,7 @@ import { LiquidityOpsPage } from './pages/LiquidityOpsPage'
 import { MethodologyPage } from './pages/MethodologyPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { ProtocolPage } from './pages/ProtocolPage'
+import { TransactionPage } from './pages/TransactionPage'
 import { WalletPage } from './pages/WalletPage'
 import { WeeklyResultsPage } from './pages/WeeklyResultsPage'
 
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />
           <Route path="/wallets/:address" element={<AccountPage />} />
+          <Route path="/tx/:txHash" element={<TransactionPage />} />
           <Route path="/divisions" element={<LeaderboardPage />} />
           <Route path="/divisions/wallets/:address" element={<DivisionsWalletPage />} />
           <Route path="/results" element={<WeeklyResultsPage />} />

@@ -67,4 +67,14 @@ describe('position breakdown', () => {
     expect(screen.queryByText('Fully closed')).not.toBeInTheDocument()
     expect(screen.queryByText('0.000000 USDG')).not.toBeInTheDocument()
   })
+
+  it('closes when clicking outside the modal content on the backdrop', () => {
+    render(<PositionBreakdown item={item()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'View breakdown' }))
+    const dialog = screen.getByRole('dialog', { name: 'Position breakdown' })
+    fireEvent.click(within(dialog).getByText('Position breakdown'))
+    expect(screen.getByRole('dialog', { name: 'Position breakdown' })).toBeInTheDocument()
+    fireEvent.click(dialog)
+    expect(screen.queryByRole('dialog', { name: 'Position breakdown' })).not.toBeInTheDocument()
+  })
 })

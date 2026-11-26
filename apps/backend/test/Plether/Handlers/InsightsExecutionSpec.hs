@@ -1,6 +1,7 @@
 module Plether.Handlers.InsightsExecutionSpec (spec) where
 
 import Data.Aeson (object, (.=))
+import qualified Data.Text as T
 import Plether.Handlers.InsightsExecution
   ( DetectedKeeperEvent (..)
   , KeeperAggregate (..)
@@ -9,6 +10,7 @@ import Plether.Handlers.InsightsExecution
   , aggregateKeepers
   , computeLatencyPercentiles
   , extractTxFrom
+  , isValidTxHash
   , mergeLpSettlementTxs
   , parseHexInteger
   , rateBps
@@ -86,3 +88,10 @@ spec = describe "Plether.Handlers.InsightsExecution" $ do
     parseHexInteger "0x0" `shouldBe` Just 0
     parseHexInteger "not-hex" `shouldBe` Nothing
     parseHexInteger "" `shouldBe` Nothing
+
+  it "validates 32-byte 0x-prefixed transaction hashes" $ do
+    isValidTxHash (T.pack ("0x" <> replicate 64 'a')) `shouldBe` True
+    isValidTxHash (T.pack ("0x" <> replicate 64 'F')) `shouldBe` True
+    isValidTxHash (T.pack ("0x" <> replicate 63 'a')) `shouldBe` False
+    isValidTxHash (T.pack ("0x" <> replicate 64 'g')) `shouldBe` False
+    isValidTxHash "not-a-hash" `shouldBe` False

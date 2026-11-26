@@ -1025,6 +1025,19 @@ jobs:
           node scripts/runtime-release.mjs lookup --repository "${APPLICATION_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --prefix application --output "$GITHUB_OUTPUT"
           node scripts/runtime-release.mjs lookup --repository "${ROUTER_REPOSITORY%:*}" --revision "$RELEASE_SHA" --source "$RELEASE_SOURCE" --prefix router --output "$GITHUB_OUTPUT"
 
+      - name: Restore incremental Haskell Docker build cache
+        if: steps.release_lookup.outputs.application_exists != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/plether-dist-cache
+          key: plether-backend-docker-dist-arm64-v1-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-${{ github.sha }}
+          restore-keys: |
+            plether-backend-docker-dist-arm64-v1-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-
+
+      - name: Prepare incremental Docker build cache directory
+        if: steps.release_lookup.outputs.application_exists != 'true'
+        run: mkdir -p "${RUNNER_TEMP}/plether-dist-cache"
+
       - name: Build and push application image
         id: application_build
         if: steps.release_lookup.outputs.application_exists != 'true'
@@ -1035,6 +1048,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ${{ steps.images.outputs.image }}
+          build-contexts: |
+            distcache=${{ runner.temp }}/plether-dist-cache
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -1042,6 +1057,29 @@ jobs:
             io.plether.build.attempt=${{ github.run_attempt }}
           cache-from: type=gha,scope=plether-backend-linux-arm64
           cache-to: type=gha,mode=max,scope=plether-backend-linux-arm64,ignore-error=true
+
+      - name: Export incremental Haskell Docker build cache
+        if: steps.release_lookup.outputs.application_exists != 'true'
+        continue-on-error: true
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          platforms: linux/arm64
+          target: distcache-export
+          build-contexts: |
+            distcache=${{ runner.temp }}/plether-dist-cache
+          outputs: type=local,dest=${{ runner.temp }}/plether-dist-cache-out
+
+      - name: Stage updated incremental Haskell Docker build cache
+        if: steps.release_lookup.outputs.application_exists != 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [ -d "${RUNNER_TEMP}/plether-dist-cache-out/dist-newstyle" ]; then
+            rm -rf "${RUNNER_TEMP}/plether-dist-cache"
+            mv "${RUNNER_TEMP}/plether-dist-cache-out" "${RUNNER_TEMP}/plether-dist-cache"
+          fi
 
       - name: Build and push log router image
         id: router_build

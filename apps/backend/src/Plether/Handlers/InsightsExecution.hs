@@ -6,6 +6,7 @@ module Plether.Handlers.InsightsExecution
   , RecentTradeRow (..)
   , getExecutionQualityResponse
   , getExecutionTradesResponse
+  , getTransactionResponse
   , getKeepersStatusResponse
   , getKeepersActivityResponse
   , ensureTxSenderCacheTable
@@ -13,6 +14,8 @@ module Plether.Handlers.InsightsExecution
   , fetchOrderLatencies24h
   , fetchProtectionQuality
   , fetchRecentTrades
+  , fetchTransactionTrades
+  , isValidTxHash
   , computeLatencyPercentiles
   , rateBps
   , aggregateKeepers
@@ -30,6 +33,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BS8
+import Data.Char (isHexDigit)
 import Data.Int (Int64)
 import Data.List (nub, sort, sortOn)
 import qualified Data.Map.Strict as Map
@@ -40,7 +44,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, In (..), Only (..), SqlError (sqlState), execute, execute_, query, query_)
+import Database.PostgreSQL.Simple (Connection, In (..), Only (..), Query, SqlError (sqlState), execute, execute_, query, query_)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.Transaction
@@ -59,6 +63,7 @@ import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Keeper.Reliability (OrderReliability (..), readOrderReliability)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
 import Text.Read (readMaybe)
 
@@ -229,6 +234,60 @@ getExecutionTradesResponse pool cfg requestedLimit = do
           [ "network" .= networkMetaJson cfg
           , "trades" .= map recentTradeToJson rows
           ]
+
+isValidTxHash :: Text -> Bool
+isValidTxHash raw =
+  let normalized = T.toLower (T.strip raw)
+   in T.length normalized == 66
+        && "0x" `T.isPrefixOf` normalized
+        && T.all isHexDigit (T.drop 2 normalized)
+
+getTransactionResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+getTransactionResponse pool client cfg rawTxHash = do
+  let txHash = T.toLower (T.strip rawTxHash)
+  if not (isValidTxHash txHash)
+    then pure $ Left $ E.invalidAmount "txHash must be a 0x-prefixed 32-byte hex string"
+    else do
+      let chainId = cfgPerpsChainId cfg
+          router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      (rows, cachedSender) <- withDb pool $ \conn -> do
+        ensureTxSenderCacheTable conn
+        withReadSnapshot conn $ do
+          txRows <- fetchTransactionTrades conn chainId router txHash
+          senders <- fetchCachedTxSenders conn chainId [txHash]
+          pure (txRows, Map.lookup txHash senders)
+      case rows of
+        [] ->
+          pure $ Left $ E.notFound ("No indexed Plether Perps activity found for transaction " <> txHash)
+        firstRow : _ -> do
+          executorAddr <- case cachedSender of
+            Just addr -> pure (Just addr)
+            Nothing -> do
+              (_, mResolved) <- resolveTxSenderRpc client txHash
+              case mResolved of
+                Just resolved ->
+                  withDb pool (\conn -> upsertCachedTxSenders conn chainId [(txHash, resolved)])
+                    `catch` (\(_ :: SqlError) -> pure ())
+                Nothing -> pure ()
+              pure mResolved
+          let blockNum = rtrBlockNumber firstRow
+              occurredAt = isoTimestamp (rtrTimestamp firstRow)
+          pure $
+            Right $
+              mkResponse blockNum chainId $
+                object
+                  [ "network" .= networkMetaJson cfg
+                  , "txHash" .= txHash
+                  , "blockNumber" .= show blockNum
+                  , "occurredAt" .= occurredAt
+                  , "executorAddress" .= executorAddr
+                  , "events" .= map recentTradeToJson rows
+                  ]
 
 getKeepersStatusResponse
   :: DbPool
@@ -685,70 +744,87 @@ fetchLiquidationQuality conn chainId engine router sinceUnix = do
       bounties = fromMaybe 0 $ readMaybe bountyStr
   pure (blockNum, updatedAt, candidates, liqCount, bounties)
 
+recentTradeSelectSql :: Query
+recentTradeSelectSql =
+  "SELECT a.activity_type, a.account, a.order_id, a.side, a.price, a.size_delta, \
+  \a.amount_assets, a.pnl_assets, o.execution_vpi_assets, o.execution_frozen_close_spread_assets, \
+  \o.execution_oracle_frozen, \
+  \CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
+  \  THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END, \
+  \CASE WHEN a.data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (a.data->>'keeperBountyAssets')::NUMERIC ELSE NULL END, \
+  \a.tx_hash, a.block_number, a.log_index, a.timestamp, execution.payload \
+  \FROM perps_account_activity a \
+  \LEFT JOIN perps_orders o \
+  \  ON o.chain_id = a.chain_id AND o.order_router = a.release_router AND o.order_id = a.order_id \
+  \LEFT JOIN LATERAL (\
+  \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload \
+  \  FROM (\
+  \    SELECT jsonb_build_object(\
+  \      'orderId', o2.order_id::text, 'protocolVersion', 'v1.2.3', \
+  \      'status', CASE WHEN o2.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END, \
+  \      'receipt', o2.receipt_economics, \
+  \      'settlements', COALESCE((\
+  \        SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index) \
+  \        FROM perps_events e \
+  \        WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router \
+  \          AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number \
+  \          AND e.account = a.account AND e.order_id = o2.order_id \
+  \          AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
+  \      ), '[]'::jsonb)\
+  \    ) AS payload \
+  \    FROM perps_events terminal \
+  \    JOIN perps_orders o2 ON o2.chain_id = terminal.chain_id AND o2.order_router = terminal.release_router \
+  \      AND o2.order_id = terminal.order_id AND o2.terminal_status = 'Executed' \
+  \      AND o2.account = a.account AND o2.terminal_tx_hash = a.tx_hash AND o2.terminal_block_number = a.block_number \
+  \      AND o2.receipt_economics IS NOT NULL AND o2.receipt_hash = terminal.data->>'receiptHash' \
+  \    WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router \
+  \      AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number \
+  \      AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized' \
+  \      AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed' \
+  \      AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close') \
+  \      AND NOT EXISTS (\
+  \        SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+  \          AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+  \          AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
+  \      ) \
+  \      AND 1 = (\
+  \        SELECT COUNT(*) FROM perps_account_activity sibling \
+  \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
+  \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
+  \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
+  \          AND sibling.log_index > COALESCE((\
+  \            SELECT MAX(prior.log_index) FROM perps_events prior \
+  \            WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+  \              AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+  \              AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
+  \          ), -1)\
+  \      )\
+  \  ) candidate\
+  \) execution ON TRUE "
+
 fetchRecentTrades :: Connection -> Integer -> Text -> Int -> IO [RecentTradeRow]
 fetchRecentTrades conn chainId router limit =
   query
     conn
-    "SELECT a.activity_type, a.account, a.order_id, a.side, a.price, a.size_delta, \
-    \a.amount_assets, a.pnl_assets, o.execution_vpi_assets, o.execution_frozen_close_spread_assets, \
-    \o.execution_oracle_frozen, \
-    \CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
-    \  THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END, \
-    \CASE WHEN a.data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (a.data->>'keeperBountyAssets')::NUMERIC ELSE NULL END, \
-    \a.tx_hash, a.block_number, a.log_index, a.timestamp, execution.payload \
-    \FROM perps_account_activity a \
-    \LEFT JOIN perps_orders o \
-    \  ON o.chain_id = a.chain_id AND o.order_router = a.release_router AND o.order_id = a.order_id \
-    \LEFT JOIN LATERAL (\
-    \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload \
-    \  FROM (\
-    \    SELECT jsonb_build_object(\
-    \      'orderId', o2.order_id::text, 'protocolVersion', 'v1.2.3', \
-    \      'status', CASE WHEN o2.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END, \
-    \      'receipt', o2.receipt_economics, \
-    \      'settlements', COALESCE((\
-    \        SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index) \
-    \        FROM perps_events e \
-    \        WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router \
-    \          AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number \
-    \          AND e.account = a.account AND e.order_id = o2.order_id \
-    \          AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
-    \      ), '[]'::jsonb)\
-    \    ) AS payload \
-    \    FROM perps_events terminal \
-    \    JOIN perps_orders o2 ON o2.chain_id = terminal.chain_id AND o2.order_router = terminal.release_router \
-    \      AND o2.order_id = terminal.order_id AND o2.terminal_status = 'Executed' \
-    \      AND o2.account = a.account AND o2.terminal_tx_hash = a.tx_hash AND o2.terminal_block_number = a.block_number \
-    \      AND o2.receipt_economics IS NOT NULL AND o2.receipt_hash = terminal.data->>'receiptHash' \
-    \    WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router \
-    \      AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number \
-    \      AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized' \
-    \      AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed' \
-    \      AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close') \
-    \      AND NOT EXISTS (\
-    \        SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
-    \          AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
-    \          AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
-    \      ) \
-    \      AND 1 = (\
-    \        SELECT COUNT(*) FROM perps_account_activity sibling \
-    \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
-    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
-    \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
-    \          AND sibling.log_index > COALESCE((\
-    \            SELECT MAX(prior.log_index) FROM perps_events prior \
-    \            WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
-    \              AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
-    \              AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
-    \          ), -1)\
-    \      )\
-    \  ) candidate\
-    \) execution ON TRUE \
-    \WHERE a.chain_id = ? AND a.release_router = ? \
-    \  AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
-    \ORDER BY a.block_number DESC, a.log_index DESC \
-    \LIMIT ?"
+    ( recentTradeSelectSql
+        <> "WHERE a.chain_id = ? AND a.release_router = ? \
+           \  AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
+           \ORDER BY a.block_number DESC, a.log_index DESC \
+           \LIMIT ?"
+    )
     (chainId, router, limit)
+
+fetchTransactionTrades :: Connection -> Integer -> Text -> Text -> IO [RecentTradeRow]
+fetchTransactionTrades conn chainId router txHash =
+  query
+    conn
+    ( recentTradeSelectSql
+        <> "WHERE a.chain_id = ? AND a.release_router = ? \
+           \  AND LOWER(a.tx_hash) = LOWER(?) \
+           \ORDER BY a.log_index ASC \
+           \LIMIT 100"
+    )
+    (chainId, router, txHash)
 
 networkMetaJson :: Config -> Value
 networkMetaJson cfg =

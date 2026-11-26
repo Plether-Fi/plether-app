@@ -1,3 +1,7 @@
+# syntax=docker/dockerfile:1
+
+FROM scratch AS distcache
+
 FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,8 +37,13 @@ ARG PLETHER_PERPS_RELEASE_MANIFEST=config/perps/arbitrum-sepolia-v2.0.0.json
 ENV PLETHER_PERPS_RELEASE_MANIFEST=${PLETHER_PERPS_RELEASE_MANIFEST}
 COPY config/perps/ config/perps/
 COPY config/rpc-log-range-policy.json config/rpc-log-range-policy.json
-COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
+COPY apps/backend/test/fixtures/ test/fixtures/
+RUN --mount=type=cache,id=plether-backend-dist-newstyle,target=/build/dist-newstyle,sharing=locked \
+    --mount=type=bind,from=distcache,source=/,target=/tmp/distcache-in \
+    if [ ! -d /build/dist-newstyle/build ] && [ -d /tmp/distcache-in/dist-newstyle ]; then \
+      cp -a /tmp/distcache-in/dist-newstyle/. /build/dist-newstyle/; \
+    fi && \
+    cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
     cp "$(cabal list-bin plether-aa-reconciler)" /build/plether-aa-reconciler-bin && \
     cp "$(cabal list-bin plether-aa-admin)" /build/plether-aa-admin-bin && \
@@ -46,6 +55,17 @@ RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin e
     cp "$(cabal list-bin plether-insights-worker)" /build/plether-insights-worker-bin && \
     cp "$(cabal list-bin plether-insights-admin)" /build/plether-insights-admin-bin && \
     cp "$(cabal list-bin plether-candle-admin)" /build/plether-candle-admin-bin
+
+FROM builder AS distcache-export-prep
+RUN --mount=type=cache,id=plether-backend-dist-newstyle,target=/build/dist-newstyle,sharing=locked \
+    mkdir -p /export/dist-newstyle && \
+    if [ -d /build/dist-newstyle/build ]; then \
+      cp -a /build/dist-newstyle/. /export/dist-newstyle/ && \
+      rm -rf /export/dist-newstyle/build/*/*/plether-api-*/x; \
+    fi
+
+FROM scratch AS distcache-export
+COPY --from=distcache-export-prep /export/dist-newstyle /dist-newstyle
 
 FROM node:22-bookworm-slim AS oracle-worker
 

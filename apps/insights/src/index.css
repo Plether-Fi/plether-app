@@ -41,10 +41,27 @@ html {
 body {
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
-  background:
-    radial-gradient(circle at 75% -10%, rgb(255 87 45 / 0.12), transparent 32rem),
-    #250917;
+  background-color: #250917;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #19040f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ffab96;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #ffc0b0;
 }
 
 button:not(:disabled),

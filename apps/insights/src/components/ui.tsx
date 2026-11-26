@@ -6,7 +6,7 @@ import { formatSignedAssets, shortAddress, xProfileUrl } from '../utils/format'
 import { eligibilityPresentation } from '../utils/eligibility'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <section className={`border border-brand-border/25 bg-surface-panel ${className}`}>{children}</section>
+  return <section className={`border border-brand-border/30 bg-surface-panel ${className}`}>{children}</section>
 }
 
 export function StatusBadge({ eligible, label, neutral = false, title }: { eligible: boolean; label?: string; neutral?: boolean; title?: string }) {

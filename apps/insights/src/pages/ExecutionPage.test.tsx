@@ -165,12 +165,11 @@ describe('ExecutionPage (Stage 2)', () => {
     )
     expect(within(tape).getByText('Liquidated')).toBeInTheDocument()
 
-    // Trade with receipt exposes the PositionBreakdown dialog trigger
-    const breakdownBtn = within(tape).getByRole('button', { name: 'View breakdown' })
-    fireEvent.click(breakdownBtn)
-    expect(screen.getByText('Position breakdown')).toBeInTheDocument()
-    expect(screen.getByText('Protocol fee assessed')).toBeInTheDocument()
-    expect(screen.getByText('Gross VPI charge')).toBeInTheDocument()
+    // Trade with receipt links directly to the dedicated Transaction breakdown page
+    const breakdownLink = within(tape).getByRole('link', { name: 'View breakdown' })
+    expect(breakdownLink).toHaveAttribute('href', `/tx/0x${'a'.repeat(64)}?log=0`)
+    const detailsLink = within(tape).getByRole('link', { name: 'View details' })
+    expect(detailsLink).toHaveAttribute('href', `/tx/0x${'b'.repeat(64)}?log=0`)
 
     fireEvent.click(screen.getByRole('button', { name: 'Liquidations' }))
     expect(within(tape).queryByText('Open')).not.toBeInTheDocument()

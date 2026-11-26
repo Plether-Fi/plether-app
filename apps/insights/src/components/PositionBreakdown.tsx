@@ -67,7 +67,9 @@ export function PositionBreakdown({
     }>
       View breakdown
     </button>
-    {createPortal(<dialog ref={dialog} aria-labelledby={titleId} onClose={() => { setIsOpen(false) }}
+    {createPortal(<dialog ref={dialog} aria-labelledby={titleId} onClick={(event) => {
+      if (event.target === event.currentTarget) dialog.current?.close()
+    }} onClose={() => { setIsOpen(false) }}
       className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto overscroll-contain border border-brand-border/40 bg-surface-panel p-0 text-content-primary shadow-2xl backdrop:bg-black/70">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-brand-border/25 bg-surface-panel px-4 py-4 sm:px-6">
         <h2 id={titleId} className="text-lg font-semibold">Position breakdown</h2>

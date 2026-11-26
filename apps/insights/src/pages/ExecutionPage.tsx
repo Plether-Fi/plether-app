@@ -3,13 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   InsightsApiError,
   formatRateBps,
-  tradeToWalletActivity,
+  transactionPath,
   useExecutionQuality,
   useExecutionTrades,
   type ProtocolTradeRecord,
+  type TransactionRouteState,
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { PositionBreakdown } from '../components/PositionBreakdown'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -417,21 +417,21 @@ export function ExecutionPage() {
                           {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}
                         </td>
                         <td className="px-4 py-3.5">
-                          {hasReceipt ? (
-                            <PositionBreakdown
-                              item={tradeToWalletActivity(trade)}
-                              chainId={chainId}
-                              compact
-                              shareContext={{
-                                traderLabel: shortAddress(trade.account),
-                                account: trade.account,
-                                networkName: chain.name,
+                          <Link
+                            to={transactionPath(trade.txHash, trade.id)}
+                            state={
+                              {
+                                trade,
+                                chainId,
                                 releaseVersion,
-                              }}
-                            />
-                          ) : (
-                            <span className="font-mono text-xs text-content-tertiary">—</span>
-                          )}
+                                from: '/execution',
+                                fromLabel: 'Back to Execution',
+                              } satisfies TransactionRouteState
+                            }
+                            className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+                          >
+                            {hasReceipt ? 'View breakdown' : 'View details'}
+                          </Link>
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
                           <a

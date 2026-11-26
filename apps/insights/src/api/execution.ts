@@ -82,6 +82,24 @@ export interface ExecutionTradesResponse {
   trades: ProtocolTradeRecord[]
 }
 
+export interface TransactionDetailsResponse {
+  network: LiquidityNetworkMeta
+  txHash: string
+  blockNumber: string
+  occurredAt: string
+  executorAddress?: string | null
+  events: ProtocolTradeRecord[]
+}
+
+export interface TransactionRouteState {
+  trade?: ProtocolTradeRecord
+  chainId?: number | null
+  releaseVersion?: string | null
+  traderLabel?: string | null
+  from?: string | null
+  fromLabel?: string | null
+}
+
 export type KeeperRoleId =
   | 'order_execution'
   | 'lp_settlement'
@@ -184,6 +202,65 @@ export function useExecutionTrades(limit = 30) {
     refetchIntervalInBackground: false,
     retry: shouldRetryEndpoint,
   })
+}
+
+async function fetchTransactionWithFallback(
+  txHash: string,
+  signal?: AbortSignal,
+): Promise<TransactionDetailsResponse> {
+  const normalized = txHash.toLowerCase()
+  try {
+    return await fetchExecutionJson<TransactionDetailsResponse>(`/tx/${normalized}`, signal)
+  } catch (error) {
+    // If the dedicated /tx/:txHash route is not yet deployed on the backend
+    // (plain 404 without a structured NOT_FOUND API error), fall back to
+    // checking recent protocol trades so direct refreshes of recent fills work.
+    if (error instanceof InsightsApiError && error.status === 404 && !error.code) {
+      const recent = await fetchExecutionJson<ExecutionTradesResponse>(
+        '/execution/trades?limit=100',
+        signal,
+      )
+      const matching = recent.trades.filter((row) => row.txHash.toLowerCase() === normalized)
+      if (matching.length > 0) {
+        const first = matching[0]
+        return {
+          network: recent.network,
+          txHash: normalized,
+          blockNumber: first.blockNumber,
+          occurredAt: first.occurredAt,
+          executorAddress: null,
+          events: matching,
+        }
+      }
+    }
+    throw error
+  }
+}
+
+export function useTransaction(txHash: string | undefined) {
+  const normalized = txHash?.trim().toLowerCase() ?? ''
+  const valid = /^0x[0-9a-f]{64}$/.test(normalized)
+  return useQuery({
+    queryKey: ['insights', 'tx', normalized] as const,
+    queryFn: ({ signal }) => fetchTransactionWithFallback(normalized, signal),
+    enabled: valid,
+    staleTime: 60_000,
+    retry: shouldRetryEndpoint,
+  })
+}
+
+export function extractLogIndex(eventId: string | null | undefined): string | null {
+  if (!eventId) return null
+  const colonIdx = eventId.lastIndexOf(':')
+  if (colonIdx < 0) return null
+  const suffix = eventId.slice(colonIdx + 1)
+  return /^\d+$/.test(suffix) ? suffix : null
+}
+
+export function transactionPath(txHash: string, eventId?: string | null): string {
+  const logIndex = extractLogIndex(eventId)
+  const base = `/tx/${txHash.toLowerCase()}`
+  return logIndex ? `${base}?log=${logIndex}` : base
 }
 
 export function useKeepersStatus() {

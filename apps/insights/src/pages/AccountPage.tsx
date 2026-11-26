@@ -2,15 +2,16 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   InsightsApiError,
-  accountActivityToWalletActivity,
+  accountActivityToProtocolTrade,
   formatPlDxyQuantity,
   formatVaultShares,
+  transactionPath,
   useWalletSummary,
   type AccountActivityRecord,
   type AccountProtectionSnapshot,
+  type TransactionRouteState,
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { PositionBreakdown } from '../components/PositionBreakdown'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -746,17 +747,22 @@ function TradingAccountInspector({ address }: { address: string }) {
                           <td className="px-4 py-3.5">
                             <div className="flex flex-wrap items-center gap-1.5">
                               {hasReceipt ? (
-                                <PositionBreakdown
-                                  item={accountActivityToWalletActivity(row)}
-                                  chainId={chainId}
-                                  compact
-                                  shareContext={{
-                                    traderLabel,
-                                    account: address,
-                                    networkName: chain.name,
-                                    releaseVersion,
-                                  }}
-                                />
+                                <Link
+                                  to={transactionPath(row.txHash, row.id)}
+                                  state={
+                                    {
+                                      trade: accountActivityToProtocolTrade(row, address),
+                                      chainId,
+                                      releaseVersion,
+                                      traderLabel,
+                                      from: `/wallets/${address}`,
+                                      fromLabel: `Back to ${traderLabel}`,
+                                    } satisfies TransactionRouteState
+                                  }
+                                  className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+                                >
+                                  View breakdown
+                                </Link>
                               ) : null}
                               {row.activityType === 'Close' && row.pnlAssets != null ? (
                                 <ShareCardModal

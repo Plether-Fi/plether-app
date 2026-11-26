@@ -1,4 +1,35 @@
+import {
+  buildDefaultOgSvg,
+  buildOgCardSvg,
+  selectDivisionOgCardData,
+  selectWalletOgCardData,
+} from '../src/og/ogCardSvg.js';
+import {
+  isValidTradeIdParam,
+  parseOgImageRoute,
+  resolveRouteOgMeta,
+  rewriteHtmlOgTags,
+} from '../src/og/ogMeta.js';
+
 const API_PREFIX = '/api/insights/v1';
+const OG_CACHE_TTL_SECONDS = 60;
+const OG_ORIGIN_TIMEOUT_MS = 3_000;
+const OG_FONT_ASSET_PATHS = [
+  '/og/uncut-sans-500.ttf',
+  '/og/uncut-sans-700.ttf',
+  '/og/jetbrains-mono-700.ttf',
+];
+
+let svgToPngRenderer = null;
+let cachedFontBuffersPromise = null;
+
+export function setSvgToPngRenderer(renderer) {
+  svgToPngRenderer = typeof renderer === 'function' ? renderer : null;
+}
+
+export function resetOgFontCache() {
+  cachedFontBuffersPromise = null;
+}
 const REGISTRATION_PATH_PATTERN =
   /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations|divisions\/registrations)(?:\/|$)/;
 const REGISTRATION_CALLBACK_PATH_PATTERN =
@@ -62,6 +93,10 @@ function resolvePublicApiCacheTtl(method, pathname) {
 
   if (/^\/wallets\/0x[0-9a-fA-F]{40}\/summary$/.test(apiPath)) {
     return API_CACHE_TTLS.wallet;
+  }
+
+  if (/^\/tx\/0x[0-9a-fA-F]{64}$/.test(apiPath)) {
+    return API_CACHE_TTLS.manifest;
   }
 
   if (apiPath === '/divisions/stats' || apiPath === '/divisions/traders' || apiPath === '/divisions/live' || apiPath === '/divisions/current' || apiPath === '/divisions/history') {
@@ -274,6 +309,10 @@ function applyResponseHeaders(response, pathname) {
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (pathname === '/favicon.svg') {
     headers.set('Cache-Control', 'public, max-age=86400');
+  } else if (pathname === '/og/default.png') {
+    headers.set('Cache-Control', 'public, max-age=3600');
+  } else if (pathname.startsWith('/og/') && pathname.endsWith('.png')) {
+    headers.set('Cache-Control', `public, max-age=${String(OG_CACHE_TTL_SECONDS)}, s-maxage=${String(OG_CACHE_TTL_SECONDS)}`);
   } else if (pathname === '/divisions/current.json' || pathname === `${API_PREFIX}/competitions/current`) {
     headers.set('Cache-Control', 'no-store');
   } else if (isRegistrationPath(pathname)) {
@@ -373,9 +412,199 @@ function resolveBackendOrigin(configuredOrigin) {
   }
 }
 
+async function loadOgFontBuffers(env, originUrl) {
+  if (!cachedFontBuffersPromise) {
+    cachedFontBuffersPromise = Promise.all(
+      OG_FONT_ASSET_PATHS.map(async (assetPath) => {
+        try {
+          const res = await env.ASSETS.fetch(new URL(assetPath, originUrl));
+          if (!res.ok) return null;
+          return new Uint8Array(await res.arrayBuffer());
+        } catch {
+          return null;
+        }
+      }),
+    )
+      .then((buffers) => buffers.filter((buf) => buf !== null && buf.byteLength > 0))
+      .catch(() => []);
+  }
+  const buffers = await cachedFontBuffersPromise;
+  if (buffers.length === 0) {
+    cachedFontBuffersPromise = null;
+  }
+  return buffers;
+}
+
+async function fetchBackendJsonForOg(env, backendOrigin, apiPath) {
+  const backendUrl = new URL(apiPath, backendOrigin);
+  const headers = new Headers({
+    Accept: 'application/json',
+    Host: backendUrl.hostname,
+  });
+  if (env.ALB_ORIGIN_SECRET) {
+    headers.set('X-Plether-Origin-Secret', env.ALB_ORIGIN_SECRET);
+  }
+  try {
+    const res = await fetchOriginWithResilience(
+      backendUrl,
+      {
+        method: 'GET',
+        headers,
+        redirect: 'manual',
+        cf: {
+          cacheEverything: true,
+          cacheTtlByStatus: {
+            '200-299': OG_CACHE_TTL_SECONDS,
+            '300-599': -1,
+          },
+        },
+      },
+      { timeoutMs: OG_ORIGIN_TIMEOUT_MS, maxAttempts: 1 },
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function serveDefaultOgImage(env, requestUrl, pathname, method) {
+  try {
+    const fallback = await env.ASSETS.fetch(new URL('/og/default.png', requestUrl));
+    if (fallback.ok && fallback.headers.get('Content-Type')?.toLowerCase().includes('image/png')) {
+      const headers = new Headers(fallback.headers);
+      headers.set('Content-Type', 'image/png');
+      return applyResponseHeaders(
+        new Response(method === 'HEAD' ? null : fallback.body, {
+          status: 200,
+          headers,
+        }),
+        pathname,
+      );
+    }
+  } catch {
+    // Fall through to SVG-rendered fallback below if renderer is registered.
+  }
+
+  if (svgToPngRenderer) {
+    try {
+      const fontBuffers = await loadOgFontBuffers(env, requestUrl);
+      const pngBytes = await svgToPngRenderer(buildDefaultOgSvg(), fontBuffers);
+      return applyResponseHeaders(
+        new Response(method === 'HEAD' ? null : pngBytes, {
+          status: 200,
+          headers: { 'Content-Type': 'image/png' },
+        }),
+        pathname,
+      );
+    } catch {
+      // Fall through to 404.
+    }
+  }
+
+  return applyResponseHeaders(new Response(null, { status: 404 }), pathname);
+}
+
+async function handleOgImageRequest(request, env, ctx, url, ogRoute) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return applyResponseHeaders(new Response(null, { status: 405 }), url.pathname);
+  }
+
+  const cache = typeof caches !== 'undefined' ? caches?.default ?? null : null;
+  const cacheKeyUrl = new URL(url.pathname, url.origin);
+  const tradeParam = url.searchParams.get('trade');
+  const cardParam = url.searchParams.get('card');
+  if (ogRoute.kind === 'wallet') {
+    if (isValidTradeIdParam(tradeParam)) {
+      cacheKeyUrl.searchParams.set('trade', tradeParam);
+    } else if (cardParam === 'position') {
+      cacheKeyUrl.searchParams.set('card', 'position');
+    }
+  }
+  const cacheKey = new Request(cacheKeyUrl.toString(), { method: 'GET' });
+
+  if (cache) {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      return request.method === 'HEAD'
+        ? new Response(null, { status: cached.status, headers: cached.headers })
+        : cached;
+    }
+  }
+
+  const configuredOrigin = env.INSIGHTS_BACKEND_URL ?? env.BACKEND_URL;
+  const backendOrigin = resolveBackendOrigin(configuredOrigin);
+  if (!backendOrigin || !svgToPngRenderer) {
+    return serveDefaultOgImage(env, request.url, url.pathname, request.method);
+  }
+
+  let cardData = null;
+  if (ogRoute.kind === 'wallet') {
+    const summaryPayload = await fetchBackendJsonForOg(
+      env,
+      backendOrigin,
+      `${API_PREFIX}/wallets/${ogRoute.account}/summary?limit=30`,
+    );
+    cardData = selectWalletOgCardData(summaryPayload, {
+      tradeId: isValidTradeIdParam(tradeParam) ? tradeParam : null,
+      cardMode: cardParam === 'position' ? 'position' : null,
+    });
+  } else if (ogRoute.kind === 'divisions') {
+    const [livePayload, summaryPayload] = await Promise.all([
+      fetchBackendJsonForOg(env, backendOrigin, `${API_PREFIX}/divisions/live`),
+      fetchBackendJsonForOg(env, backendOrigin, `${API_PREFIX}/wallets/${ogRoute.account}/summary?limit=5`),
+    ]);
+    let publishedPayload = null;
+    try {
+      const pubRes = await env.ASSETS.fetch(new URL('/divisions/current.json', request.url));
+      if (pubRes.ok && !pubRes.headers.get('Content-Type')?.toLowerCase().includes('text/html')) {
+        publishedPayload = await pubRes.json();
+      }
+    } catch {
+      publishedPayload = null;
+    }
+    cardData = selectDivisionOgCardData(ogRoute.account, livePayload, publishedPayload, summaryPayload);
+  }
+
+  if (!cardData) {
+    return serveDefaultOgImage(env, request.url, url.pathname, request.method);
+  }
+
+  try {
+    const fontBuffers = await loadOgFontBuffers(env, request.url);
+    const svg = buildOgCardSvg(cardData);
+    const pngBytes = await svgToPngRenderer(svg, fontBuffers);
+    const response = applyResponseHeaders(
+      new Response(pngBytes, {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }),
+      url.pathname,
+    );
+    if (cache) {
+      const putPromise = cache.put(cacheKey, response.clone()).catch(() => undefined);
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(putPromise);
+      } else {
+        await putPromise;
+      }
+    }
+    return request.method === 'HEAD'
+      ? new Response(null, { status: 200, headers: response.headers })
+      : response;
+  } catch {
+    return serveDefaultOgImage(env, request.url, url.pathname, request.method);
+  }
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    const ogRoute = parseOgImageRoute(url.pathname);
+    if (ogRoute) {
+      return handleOgImageRequest(request, env, ctx, url, ogRoute);
+    }
 
     if (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`)) {
       const configuredOrigin = env.INSIGHTS_BACKEND_URL ?? env.BACKEND_URL;
@@ -526,6 +755,21 @@ export default {
     }
     if (response.status === 404 && !url.pathname.includes('.')) {
       response = await env.ASSETS.fetch(new URL('/', request.url));
+    }
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      response.ok &&
+      response.headers.get('Content-Type')?.toLowerCase().includes('text/html')
+    ) {
+      const html = await response.text();
+      const rewritten = rewriteHtmlOgTags(html, resolveRouteOgMeta(url));
+      const headers = new Headers(response.headers);
+      headers.delete('Content-Length');
+      response = new Response(request.method === 'HEAD' ? null : rewritten, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
     }
     return applyResponseHeaders(response, url.pathname);
   },

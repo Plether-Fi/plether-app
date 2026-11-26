@@ -124,8 +124,10 @@ import Plether.Handlers.Insights
 import Plether.Handlers.InsightsExecution
   ( getExecutionQualityResponse
   , getExecutionTradesResponse
+  , getTransactionResponse
   , getKeepersActivityResponse
   , getKeepersStatusResponse
+  , isValidTxHash
   )
 import Plether.Handlers.InsightsLiquidity
   ( getLiquidityForensicsResponse
@@ -603,6 +605,14 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
         case mPool of
           Just pool -> liftIO (getExecutionTradesResponse pool cfg (maybe 30 id parsedLimit)) >>= handleResult
           Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/tx/:txHash" $ do
+    txHash <- pathParam "txHash"
+    if not (isValidTxHash txHash)
+      then handleError $ E.invalidAmount "txHash must be a 0x-prefixed 32-byte hex string"
+      else case mPool of
+        Just pool -> liftIO (getTransactionResponse pool perpsClient cfg txHash) >>= handleResult
+        Nothing -> insightsUnavailable
 
   get "/api/insights/v1/keepers/status" $
     case mPool of
