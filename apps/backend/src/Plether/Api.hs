@@ -121,7 +121,23 @@ import Plether.Handlers.Insights
   , getDivisionsLiveResponse
   , getDivisionsStatsResponse
   )
-import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes, verifyOwnedTradingAccountForDeployment)
+import Plether.Handlers.InsightsExecution
+  ( getExecutionQualityResponse
+  , getExecutionTradesResponse
+  , getKeepersActivityResponse
+  , getKeepersStatusResponse
+  )
+import Plether.Handlers.InsightsLiquidity
+  ( getLiquidityForensicsResponse
+  , getLiquiditySettlementsResponse
+  )
+import Plether.Handlers.InsightsWallets
+  ( getWalletSummaryResponse
+  )
+import Plether.Handlers.InsightsRegistration
+  ( registerInsightsRegistrationRoutes
+  , verifyOwnedTradingAccountForDeployment
+  )
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Handlers.PasskeyNames (registerPasskeyNameRoutes)
 import Plether.Database (DbPool)
@@ -563,6 +579,58 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
     case mPool of
       Just pool -> liftIO (getDivisionsLiveResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/liquidity/settlements" $
+    case mPool of
+      Just pool -> liftIO (getLiquiditySettlementsResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/liquidity/forensics" $
+    case mPool of
+      Just pool -> liftIO (getLiquidityForensicsResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/execution/quality" $
+    case mPool of
+      Just pool -> liftIO (getExecutionQualityResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/execution/trades" $ do
+    mLimit <- queryParamMaybe "limit"
+    case traverse parseNonNegativeInt mLimit of
+      Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool -> liftIO (getExecutionTradesResponse pool cfg (maybe 30 id parsedLimit)) >>= handleResult
+          Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/keepers/status" $
+    case mPool of
+      Just pool -> liftIO (getKeepersStatusResponse pool perpsClient cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/keepers/activity" $ do
+    mLimit <- queryParamMaybe "limit"
+    case traverse parseNonNegativeInt mLimit of
+      Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool -> liftIO (getKeepersActivityResponse pool perpsClient cfg (maybe 50 id parsedLimit)) >>= handleResult
+          Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/wallets/:address/summary" $ do
+    addr <- pathParam "address"
+    mLimit <- queryParamMaybe "limit"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else case traverse parseNonNegativeInt mLimit of
+        Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+        Just parsedLimit ->
+          case mPool of
+            Just pool ->
+              liftIO (getWalletSummaryResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
+                >>= handleResult
+            Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do

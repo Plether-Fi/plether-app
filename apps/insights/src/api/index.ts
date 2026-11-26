@@ -1,3 +1,6 @@
 export * from './client'
+export * from './execution'
+export * from './liquidity'
 export * from './queries'
+export * from './wallets'
 export type * from './types'

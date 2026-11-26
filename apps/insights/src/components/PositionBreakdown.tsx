@@ -1,8 +1,10 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WalletActivity } from '../api/types'
+import { explorerTxUrl } from '../utils/chain'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
 import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
+import { ShareCardModal } from './ShareCardModal'
 import { TradeBreakdownDetails } from './TradeBreakdown'
 
 function unsigned(value: string | null | undefined): bigint | null {
@@ -24,7 +26,24 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   </div>
 }
 
-export function PositionBreakdown({ item }: { item: WalletActivity }) {
+export interface PositionShareContext {
+  traderLabel: string
+  account: string
+  networkName: string
+  releaseVersion?: string | null
+}
+
+export function PositionBreakdown({
+  item,
+  chainId,
+  compact = false,
+  shareContext,
+}: {
+  item: WalletActivity
+  chainId?: number | null
+  compact?: boolean
+  shareContext?: PositionShareContext
+}) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const [isOpen, setIsOpen] = useState(false)
@@ -42,15 +61,47 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
     <button type="button" aria-haspopup="dialog" onClick={() => {
       setIsOpen(true)
       dialog.current?.showModal()
-    }} className="min-h-10 cursor-pointer border border-brand-border/40 px-3 py-2 text-sm font-semibold text-brand-peach hover:bg-brand-peach/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">
+    }} className={compact
+      ? 'cursor-pointer border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach hover:bg-brand-peach/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
+      : 'min-h-10 cursor-pointer border border-brand-border/40 px-3 py-2 text-sm font-semibold text-brand-peach hover:bg-brand-peach/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4'
+    }>
       View breakdown
     </button>
     {createPortal(<dialog ref={dialog} aria-labelledby={titleId} onClose={() => { setIsOpen(false) }}
       className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto overscroll-contain border border-brand-border/40 bg-surface-panel p-0 text-content-primary shadow-2xl backdrop:bg-black/70">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-brand-border/25 bg-surface-panel px-4 py-4 sm:px-6">
         <h2 id={titleId} className="text-lg font-semibold">Position breakdown</h2>
-        <button type="button" onClick={() => { dialog.current?.close() }} aria-label="Close position breakdown"
-          className="min-h-10 cursor-pointer px-3 text-brand-peach focus-visible:outline focus-visible:outline-2">Close</button>
+        <div className="flex items-center gap-2">
+          {isClose && item.pnl && shareContext ? (
+            <ShareCardModal
+              compact
+              triggerLabel="Share PnL"
+              cards={[
+                {
+                  id: `trade-${item.id}`,
+                  label: 'Closed Position PnL',
+                  data: {
+                    kind: 'trade',
+                    traderLabel: shareContext.traderLabel,
+                    account: shareContext.account,
+                    networkName: shareContext.networkName,
+                    releaseVersion: shareContext.releaseVersion,
+                    market: item.market ?? 'plDXY-PERP',
+                    side: item.side,
+                    realizedPnlAssets: item.pnl,
+                    price: item.price,
+                    sizeDelta: item.sizeDelta,
+                    notionalAssets: receipt?.executionNotionalAssets ?? item.size,
+                    occurredAt: item.occurredAt,
+                    txHash: item.txHash,
+                  },
+                },
+              ]}
+            />
+          ) : null}
+          <button type="button" onClick={() => { dialog.current?.close() }} aria-label="Close position breakdown"
+            className="min-h-10 cursor-pointer px-3 text-brand-peach focus-visible:outline focus-visible:outline-2">Close</button>
+        </div>
       </header>
       {isOpen && <div className="space-y-5 px-4 py-5 sm:px-6">
         <p className="text-xs leading-5 text-content-secondary">This breakdown covers one execution. Other opens, increases, and closes are shown on their own activity rows.</p>
@@ -65,7 +116,7 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
             <Detail label="Final plDXY price">{formatPrice(item.price)}</Detail>
             <Detail label={isClose ? 'Quantity closed' : 'Quantity added'}>{quantity(unsigned(item.sizeDelta))}</Detail>
             <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeAssets(notional, false, true)}</Detail>
-            <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
+            <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={explorerTxUrl(item.txHash, chainId)} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
           </dl>
         </section>
         <section className="border border-brand-border/20 bg-app-bg/45 p-4">

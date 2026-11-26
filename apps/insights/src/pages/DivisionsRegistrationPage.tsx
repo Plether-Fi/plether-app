@@ -176,7 +176,7 @@ export function DivisionsRegistrationPage() {
         </div> : completed === 4 ? <div><p className="text-xs font-semibold uppercase tracking-widest text-positive">Link complete</p>
           <h2 className="mt-2 text-2xl font-semibold">Discord and wallet linked</h2>
           <p className="mt-3 text-sm leading-6 text-content-secondary">Your Discord account <strong className="text-content-primary">{session.identity?.username}</strong> is linked to owner wallet <span className="font-mono text-content-primary">{session.wallet && shortAddress(session.wallet.ownerAddress)}</span>. Your Discord handle appears beside your Trading Account on the leaderboard. This link does not change ranking eligibility. Discord roles will become available separately.</p>
-          <div className="mt-5 flex flex-wrap gap-3"><Link to="/" className={PRIMARY_BUTTON}>View Divisions</Link><a href="https://plether.com/discord" target="_blank" rel="noreferrer" className={SECONDARY_BUTTON}>Join Discord ↗</a></div>
+          <div className="mt-5 flex flex-wrap gap-3"><Link to="/divisions" className={PRIMARY_BUTTON}>View Divisions</Link><a href="https://plether.com/discord" target="_blank" rel="noreferrer" className={SECONDARY_BUTTON}>Join Discord ↗</a></div>
         </div> : completed === 1 ? <div><p className="text-xs font-semibold uppercase tracking-widest text-brand-peach">Step 2 of 4</p>
           <h2 className="mt-2 text-2xl font-semibold">Sign in with Discord</h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">Discord will share your account ID and username. We use the ID to keep each account linked to one wallet. We do not request your email or permission to post.</p>
