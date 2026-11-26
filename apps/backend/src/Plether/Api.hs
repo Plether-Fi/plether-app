@@ -116,6 +116,10 @@ import Plether.Handlers.Insights
   , getDivisionsLiveResponse
   , getDivisionsStatsResponse
   )
+import Plether.Handlers.InsightsLiquidity
+  ( getLiquidityForensicsResponse
+  , getLiquiditySettlementsResponse
+  )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Handlers.PasskeyNames (registerPasskeyNameRoutes)
@@ -540,6 +544,16 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
   get "/api/insights/v1/divisions/live" $
     case mPool of
       Just pool -> liftIO (getDivisionsLiveResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/liquidity/settlements" $
+    case mPool of
+      Just pool -> liftIO (getLiquiditySettlementsResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/liquidity/forensics" $
+    case mPool of
+      Just pool -> liftIO (getLiquidityForensicsResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
   case mPool of

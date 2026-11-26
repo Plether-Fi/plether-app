@@ -19,6 +19,9 @@ const API_CACHE_TTLS = {
   status: 30,
   leaderboard: 15,
   wallet: 15,
+  pulse: 15,
+  liquidity: 30,
+  manifest: 60,
 };
 
 function resolvePublicApiCacheTtl(method, pathname) {
@@ -30,6 +33,32 @@ function resolvePublicApiCacheTtl(method, pathname) {
 
   if (apiPath === '/status') {
     return API_CACHE_TTLS.status;
+  }
+
+  if (
+    apiPath === '/overview' ||
+    apiPath === '/execution/quality' ||
+    apiPath === '/execution/trades' ||
+    apiPath === '/keepers/status' ||
+    apiPath === '/keepers/activity' ||
+    apiPath === '/infra/status'
+  ) {
+    return API_CACHE_TTLS.pulse;
+  }
+
+  if (
+    apiPath === '/liquidity/settlements' ||
+    apiPath === '/liquidity/forensics'
+  ) {
+    return API_CACHE_TTLS.liquidity;
+  }
+
+  if (apiPath === '/protocol/manifest') {
+    return API_CACHE_TTLS.manifest;
+  }
+
+  if (/^\/wallets\/0x[0-9a-fA-F]{40}\/summary$/.test(apiPath)) {
+    return API_CACHE_TTLS.wallet;
   }
 
   if (apiPath === '/divisions/stats' || apiPath === '/divisions/traders' || apiPath === '/divisions/live' || apiPath === '/divisions/current' || apiPath === '/divisions/history') {

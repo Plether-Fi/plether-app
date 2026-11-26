@@ -17,7 +17,10 @@ function TraderDetails({ address }: { address: string }) {
   const notFound = live && !current && !awarded && !liveQuery.isError && !publicationQuery.isLoading && !publicationQuery.isError
 
   return <div className="space-y-6">
-    <Link to="/" className="text-sm text-brand-peach hover:underline">← Back to leaderboard</Link>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <Link to="/divisions" className="text-sm text-brand-peach hover:underline">← Back to leaderboard</Link>
+      <Link to={`/wallets/${address}`} className="text-sm text-content-secondary hover:text-brand-peach">Open full Trading Account view →</Link>
+    </div>
     <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">Plether Divisions · Trader</p>

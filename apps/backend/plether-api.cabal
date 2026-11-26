@@ -170,6 +170,7 @@ library
         Plether.Handlers.TestnetMarginFunding
         Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
+        Plether.Handlers.InsightsLiquidity
         Plether.Handlers.InsightsRegistration
         Plether.Handlers.DivisionsRegistration
     build-depends:
@@ -456,6 +457,7 @@ test-suite plether-api-test
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
         Plether.Handlers.InsightsRegistrationSpec
+        Plether.Handlers.InsightsLiquiditySpec
         Plether.Handlers.PerpsSpec
         Plether.Handlers.VaultActivitySpec
         Plether.Handlers.VaultPerformanceSpec

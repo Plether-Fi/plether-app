@@ -113,6 +113,16 @@ describe('Cloudflare Pages Worker', () => {
 
   it.each([
     ['/api/insights/v1/status', 30],
+    ['/api/insights/v1/overview', 15],
+    ['/api/insights/v1/execution/quality', 15],
+    ['/api/insights/v1/execution/trades?limit=25', 15],
+    ['/api/insights/v1/keepers/status', 15],
+    ['/api/insights/v1/keepers/activity?limit=25', 15],
+    ['/api/insights/v1/liquidity/settlements', 30],
+    ['/api/insights/v1/liquidity/forensics', 30],
+    ['/api/insights/v1/protocol/manifest', 60],
+    ['/api/insights/v1/infra/status', 15],
+    [`/api/insights/v1/wallets/0x${'a'.repeat(40)}/summary`, 15],
     ['/api/insights/v1/divisions/stats', 15],
     ['/api/insights/v1/divisions/traders', 15],
     ['/api/insights/v1/divisions/live', 15],
@@ -173,6 +183,8 @@ describe('Cloudflare Pages Worker', () => {
 
   it.each([
     ['POST', '/api/insights/v1/status'],
+    ['POST', '/api/insights/v1/overview'],
+    ['GET', '/api/insights/v1/wallets/not-an-address/summary'],
     ['GET', '/api/insights/v1/competitions/summer-2026/activity'],
   ])('does not enable edge caching for %s %s', async (method, path) => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))

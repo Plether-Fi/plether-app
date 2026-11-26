@@ -20,7 +20,7 @@ export function WeeklyResultsPage() {
   if (params.has('releaseRouter')) return <Navigate to={pageLink(week)} replace />
 
   return <div className="space-y-6">
-    <Link to="/" className="text-sm text-brand-peach hover:underline">← Live leaderboard</Link>
+    <Link to="/divisions" className="text-sm text-brand-peach hover:underline">← Live leaderboard</Link>
     <div>
       <h1 className="text-3xl font-semibold sm:text-4xl">{week === null ? 'Last week’s results' : 'Past weekly results'}</h1>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-content-secondary">Final weekly rankings and awarded badges. Browse earlier weeks to see their results, promotions, and Traders of the Week.</p>

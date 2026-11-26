@@ -24,7 +24,7 @@ beforeEach(() => {
 
 function show(path = `/divisions/wallets/${address}`) {
   render(<MemoryRouter initialEntries={[path]}><Routes>
-    <Route path="/" element={<LeaderboardPage />} />
+    <Route path="/divisions" element={<LeaderboardPage />} />
     <Route path="/results" element={<WeeklyResultsPage />} />
     <Route path="/divisions/wallets/:address" element={<DivisionsWalletPage />} />
   </Routes></MemoryRouter>)
@@ -43,7 +43,7 @@ describe('Divisions trader navigation', () => {
   })
 
   it('places badges before wallets and opens the current trader view from either leaderboard', () => {
-    show('/')
+    show('/divisions')
     const liveTable = screen.getByRole('table', { name: /Provisional weekly ranks/ })
     expect(within(liveTable).getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
       'Rank', 'Current badge', 'Wallet', 'Discord handle', 'Weekly return', 'Active days',
