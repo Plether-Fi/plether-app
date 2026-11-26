@@ -1,8 +1,22 @@
 module Plether.Handlers.InsightsWallets
-  ( DivisionsWeekRecord (..)
+  ( AccountReleaseStats (..)
+  , AccountActivityRow (..)
+  , AccountVaultBalanceRow (..)
+  , AccountVaultRequestStateRow (..)
+  , AccountVaultRequestEventRow (..)
+  , DivisionsWeekRecord (..)
   , BalanceEventRow (..)
   , BalanceHistoryPoint (..)
   , getWalletSummaryResponse
+  , fetchDiscordHandle
+  , fetchAccountReleaseStats
+  , fetchAccountActivity
+  , fetchAccountBalanceEvents
+  , fetchProtectionIndexedBlock
+  , fetchAccountDivisionsHistory
+  , fetchAccountVaultBalances
+  , fetchAccountVaultRequestStates
+  , fetchAccountVaultRequestEvents
   , extractDivisionsHistory
   , buildBalanceHistory
   , classifyVaultTranche
@@ -569,13 +583,13 @@ fetchAccountBalanceEvents conn chainId router account =
     \  a.activity_type, \
     \  a.amount_assets, \
     \  a.pnl_assets, \
-    \  CASE WHEN o.receipt_economics->>'preSettlementBalanceAssets' ~ '^-?[0-9]+$' \
+    \  CASE WHEN o.receipt_economics->>'preSettlementBalanceAssets' ~ '^-{0,1}[0-9]+$' \
     \    THEN (o.receipt_economics->>'preSettlementBalanceAssets')::NUMERIC ELSE NULL END, \
-    \  CASE WHEN o.receipt_economics->>'postSettlementBalanceAssets' ~ '^-?[0-9]+$' \
+    \  CASE WHEN o.receipt_economics->>'postSettlementBalanceAssets' ~ '^-{0,1}[0-9]+$' \
     \    THEN (o.receipt_economics->>'postSettlementBalanceAssets')::NUMERIC ELSE NULL END, \
-    \  CASE WHEN o.receipt_economics->>'preTraderClaimBalanceAssets' ~ '^-?[0-9]+$' \
+    \  CASE WHEN o.receipt_economics->>'preTraderClaimBalanceAssets' ~ '^-{0,1}[0-9]+$' \
     \    THEN (o.receipt_economics->>'preTraderClaimBalanceAssets')::NUMERIC ELSE NULL END, \
-    \  CASE WHEN o.receipt_economics->>'postTraderClaimBalanceAssets' ~ '^-?[0-9]+$' \
+    \  CASE WHEN o.receipt_economics->>'postTraderClaimBalanceAssets' ~ '^-{0,1}[0-9]+$' \
     \    THEN (o.receipt_economics->>'postTraderClaimBalanceAssets')::NUMERIC ELSE NULL END, \
     \  a.block_number, \
     \  a.log_index, \

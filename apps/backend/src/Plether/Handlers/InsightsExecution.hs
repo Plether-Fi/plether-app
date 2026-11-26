@@ -3,10 +3,16 @@ module Plether.Handlers.InsightsExecution
   , DetectedKeeperEvent (..)
   , KeeperAggregate (..)
   , RawKeeperTx (..)
+  , RecentTradeRow (..)
   , getExecutionQualityResponse
   , getExecutionTradesResponse
   , getKeepersStatusResponse
   , getKeepersActivityResponse
+  , ensureTxSenderCacheTable
+  , fetchLiquidationQuality
+  , fetchOrderLatencies24h
+  , fetchProtectionQuality
+  , fetchRecentTrades
   , computeLatencyPercentiles
   , rateBps
   , aggregateKeepers
@@ -17,6 +23,8 @@ module Plether.Handlers.InsightsExecution
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (mapConcurrently)
+import Control.Exception (catch, throwIO)
+import Control.Monad (unless)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -32,7 +40,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, In (..), Only (..), execute, execute_, query)
+import Database.PostgreSQL.Simple (Connection, In (..), Only (..), SqlError (sqlState), execute, execute_, query, query_)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.Transaction
@@ -426,17 +434,31 @@ fetchKeeperEthBalance client addr = do
 
 ensureTxSenderCacheTable :: Connection -> IO ()
 ensureTxSenderCacheTable conn = do
-  _ <-
-    execute_
+  existing <-
+    query_
       conn
-      "CREATE TABLE IF NOT EXISTS insights_tx_senders (\
-      \  chain_id BIGINT NOT NULL,\
-      \  tx_hash VARCHAR(66) NOT NULL,\
-      \  sender_address VARCHAR(42) NOT NULL,\
-      \  resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-      \  PRIMARY KEY (chain_id, tx_hash)\
-      \)"
-  pure ()
+      "SELECT to_regclass(format('%I.insights_tx_senders', current_schema())) IS NOT NULL"
+      :: IO [Only Bool]
+  unless (existing == [Only True]) $
+    catch
+      ( do
+          _ <-
+            execute_
+              conn
+              "CREATE TABLE IF NOT EXISTS insights_tx_senders (\
+              \  chain_id BIGINT NOT NULL,\
+              \  tx_hash VARCHAR(66) NOT NULL,\
+              \  sender_address VARCHAR(42) NOT NULL,\
+              \  resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+              \  PRIMARY KEY (chain_id, tx_hash)\
+              \)"
+          pure ()
+      )
+      ( \(err :: SqlError) ->
+          if sqlState err `elem` ["23505", "42P07"]
+            then pure ()
+            else throwIO err
+      )
 
 fetchCachedTxSenders :: Connection -> Integer -> [Text] -> IO (Map.Map Text Text)
 fetchCachedTxSenders _ _ [] = pure Map.empty
@@ -642,7 +664,7 @@ fetchLiquidationQuality conn chainId engine router sinceUnix = do
   stateRows <-
     query
       conn
-      "SELECT last_indexed_block, updated_at FROM perps_liquidation_state \
+      "SELECT last_indexed_block, updated_at AT TIME ZONE 'UTC' FROM perps_liquidation_state \
       \WHERE chain_id = ? AND lower(cfd_engine) = ? LIMIT 1"
       (chainId, engine) :: IO [(Integer, Maybe UTCTime)]
   candRows <-

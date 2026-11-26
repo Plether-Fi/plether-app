@@ -4,6 +4,7 @@ module Plether.Insights.DatabaseSpec
 
 import Control.Exception (SomeException, bracket, finally, try, throwIO, fromException)
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.Async (mapConcurrently_)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import qualified Plether.Insights.RegistrationDatabaseSpec as RegistrationBenchmark
 import Control.Monad (void, forM_, forM, when, unless)
@@ -11,6 +12,8 @@ import Data.Aeson (Value (..), encode, object, toJSON, (.=), eitherDecodeFileStr
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
+import Data.Unique (hashUnique, newUnique)
 import Database.PostgreSQL.Simple.Types (Query (..))
 import GHC.Clock (getMonotonicTimeNSec)
 import System.Environment (lookupEnv)
@@ -35,7 +38,32 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, query, query_, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, execute, execute_, query, query_, withTransaction)
+import Plether.Handlers.InsightsExecution
+  ( ensureTxSenderCacheTable
+  , fetchLiquidationQuality
+  , fetchOrderLatencies24h
+  , fetchProtectionQuality
+  , fetchRecentTrades
+  )
+import Plether.Handlers.InsightsLiquidity
+  ( ReturnReportAuditRow (..)
+  , fetchRecentReturnReports
+  )
+import Plether.Handlers.InsightsWallets
+  ( AccountReleaseStats (..)
+  , BalanceEventRow (..)
+  , DivisionsWeekRecord (..)
+  , fetchAccountActivity
+  , fetchAccountBalanceEvents
+  , fetchAccountDivisionsHistory
+  , fetchAccountReleaseStats
+  , fetchAccountVaultBalances
+  , fetchAccountVaultRequestEvents
+  , fetchAccountVaultRequestStates
+  , fetchDiscordHandle
+  , fetchProtectionIndexedBlock
+  )
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.CloseAssistance
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
@@ -999,6 +1027,141 @@ insightsDatabaseSpec databaseUrl =
         void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
         void $ execute conn "DELETE FROM aa_sponsorship_authorizations WHERE digest=?" (Only digest)
 
+    it "executes Insights v1 execution, wallet, keeper, and liquidity SQL queries against schema.sql" $
+      withIsolatedStaticSchema databaseUrl $ \schema conn -> do
+        let engine = crmCfdEngine fixtureManifest
+            book = "0xd500000000000000000000000000000000000005" :: Text
+            housePool = "0xd600000000000000000000000000000000000006" :: Text
+            seniorVault = "0xd700000000000000000000000000000000000007" :: Text
+            juniorVault = "0xd800000000000000000000000000000000000008" :: Text
+            deployBlock = 1 :: Integer
+            ts = 1_790_000_000 :: Integer
+            receiptJson =
+              object
+                [ "preSettlementBalanceAssets" .= ("1000000000" :: Text)
+                , "postSettlementBalanceAssets" .= ("1150000000" :: Text)
+                , "preTraderClaimBalanceAssets" .= ("0" :: Text)
+                , "postTraderClaimBalanceAssets" .= ("-50000" :: Text)
+                ]
+        -- 1. Execution quality: TIMESTAMP updated_at column decodes cleanly as UTCTime.
+        void $ execute conn
+          "INSERT INTO perps_liquidation_state (chain_id, cfd_engine, last_indexed_block, updated_at) \
+          \VALUES (?, ?, ?, '2026-11-26 13:44:00'::timestamp)"
+          (fixtureChain, engine, 332_899_000 :: Integer)
+        void $ execute conn
+          "INSERT INTO perps_liquidation_candidates (chain_id, cfd_engine, account, first_seen_block, last_seen_block) \
+          \VALUES (?, ?, ?, ?, ?)"
+          (fixtureChain, engine, walletA, 332_898_900 :: Integer, 332_899_000 :: Integer)
+        void $ execute conn
+          "INSERT INTO perps_protection_checkpoints (chain_id, book, block_number, block_hash) VALUES (?, ?, ?, ?)"
+          (fixtureChain, book, 332_899_100 :: Integer, hashText "prot-cp")
+        void $ execute conn
+          "INSERT INTO perps_orders (chain_id, order_router, order_id, account, side, commit_tx_hash, commit_block_number, commit_timestamp, terminal_tx_hash, terminal_block_number, terminal_timestamp, terminal_status, receipt_economics) \
+          \VALUES (?, ?, 7, ?, 0, ?, 100, ?, ?, 102, ?, 'Executed', ?)"
+          (fixtureChain, fixtureRouter, walletA, hashText "c7", ts, hashText "t7", ts + 5, receiptJson)
+        void $ execute conn
+          "INSERT INTO perps_account_activity (chain_id, release_router, event_key, account, activity_type, order_id, side, price, size_delta, amount_assets, pnl_assets, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
+          \VALUES (?, ?, 'dep-1', ?, 'Deposit', NULL, NULL, NULL, NULL, 1000000000, NULL, ?, 99, ?, 0, 1, ?, '{}'::jsonb)"
+          (fixtureChain, fixtureRouter, walletA, hashText "dep1", hashText "b99", ts - 60)
+        void $ execute conn
+          "INSERT INTO perps_account_activity (chain_id, release_router, event_key, account, activity_type, order_id, side, price, size_delta, amount_assets, pnl_assets, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
+          \VALUES (?, ?, 'close-7', ?, 'Close', 7, 0, 100000000000000000000, 1000000000000000000, 100000000, 150000000, ?, 102, ?, 0, 2, ?, '{}'::jsonb)"
+          (fixtureChain, fixtureRouter, walletA, hashText "t7", hashText "b102", ts + 5)
+        void $ execute conn
+          "INSERT INTO perps_account_activity (chain_id, release_router, event_key, account, activity_type, order_id, side, price, size_delta, amount_assets, pnl_assets, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
+          \VALUES (?, ?, 'liq-8', ?, 'Liquidated', NULL, 0, 99000000000000000000, 1000000000000000000, 50000000, -50000000, ?, 103, ?, 0, 3, ?, ?)"
+          (fixtureChain, fixtureRouter, walletA, hashText "liq8", hashText "b103", ts + 10, object ["keeperBountyAssets" .= ("250000" :: Text)])
+        (liqBlk, mLiqUpdated, candCount, liqCount, liqBounties) <-
+          fetchLiquidationQuality conn fixtureChain engine fixtureRouter (ts - 100)
+        liqBlk `shouldBe` 332_899_000
+        isJust mLiqUpdated `shouldBe` True
+        candCount `shouldBe` 1
+        liqCount `shouldBe` 1
+        liqBounties `shouldBe` 250_000
+        (secs, blks) <- fetchOrderLatencies24h conn fixtureChain fixtureRouter (ts - 100)
+        secs `shouldBe` [5]
+        blks `shouldBe` [2]
+        (protBlk, _, _, _, _, _) <- fetchProtectionQuality conn fixtureChain book (ts - 100)
+        protBlk `shouldBe` 332_899_100
+        recentTrades <- fetchRecentTrades conn fixtureChain fixtureRouter 10
+        length recentTrades `shouldBe` 2
+
+        -- 2. Wallet summary queries: regex without '?' placeholder conflict, LP & Divisions tables.
+        void $ execute conn
+          "INSERT INTO insights_divisions_links (discord_id, discord_username, owner_wallet, trading_account, rules_version, privacy_version) \
+          \VALUES ('123456789012345678', 'stan_trader', ?, ?, 'v1', 'v1')"
+          (walletB, walletA)
+        void $ execute conn
+          "INSERT INTO divisions_publications (chain_id, release_router, week_start, closing_block, publication) \
+          \VALUES (?, ?, ?, 105, ?)"
+          ( fixtureChain
+          , fixtureRouter
+          , ts
+          , object
+              [ "publishedAt" .= ("2026-11-26T00:05:00Z" :: Text)
+              , "standings" .= [object ["address" .= walletA, "rank" .= (1 :: Int), "tier" .= ("gold" :: Text)]]
+              ]
+          )
+        void $ execute conn
+          "INSERT INTO vault_attributed_holder_balances (chain_id, house_pool_address, deployment_block, vault_address, holder_address, share_balance, unclaimed_deposit_shares, withdrawal_escrow_shares, total_attributed_shares, observed_block, observed_block_hash) \
+          \VALUES (?, ?, ?, ?, ?, 1000, 0, 0, 1000, 300, ?)"
+          (fixtureChain, housePool, deployBlock, juniorVault, walletA, hashText "obs")
+        void $ execute conn
+          "INSERT INTO vault_deposit_request_states (chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id, pending_deposit_assets, claimable_deposit_assets, claimable_deposit_shares, refundable_deposit_assets, pending_redeem_shares, refundable_redeem_shares, redeem_refund_pending, is_active, observed_block, observed_block_hash) \
+          \VALUES (?, ?, ?, ?, ?, 1, 500, 0, 0, 0, 0, 0, FALSE, TRUE, 300, ?)"
+          (fixtureChain, housePool, deployBlock, juniorVault, walletA, hashText "obs")
+        void $ execute conn
+          "INSERT INTO vault_request_events (chain_id, house_pool_address, deployment_block, vault_address, event_name, controller_address, owner_address, request_id, raw_amount, tx_hash, block_number, block_hash, tx_index, log_index, block_timestamp) \
+          \VALUES (?, ?, ?, ?, 'DepositRequest', ?, ?, 1, 500, ?, 300, ?, 0, 1, ?)"
+          (fixtureChain, housePool, deployBlock, juniorVault, walletA, walletA, hashText "vre", hashText "obs", ts + 20)
+        fetchDiscordHandle conn walletA `shouldReturn` Just "stan_trader"
+        stats <- fetchAccountReleaseStats conn fixtureChain fixtureRouter walletA
+        arsTotalTrades stats `shouldBe` 2
+        activityRows <- fetchAccountActivity conn fixtureChain fixtureRouter walletA 10
+        length activityRows `shouldBe` 3
+        balEvents <- fetchAccountBalanceEvents conn fixtureChain fixtureRouter walletA
+        length balEvents `shouldBe` 3
+        case balEvents of
+          [_, closeRow, _] -> do
+            berPreSettlementAssets closeRow `shouldBe` Just 1_000_000_000
+            berPostSettlementAssets closeRow `shouldBe` Just 1_150_000_000
+            berPreClaimAssets closeRow `shouldBe` Just 0
+            berPostClaimAssets closeRow `shouldBe` Just (-50_000)
+          _ -> expectationFailure "Expected 3 balance events"
+        fetchProtectionIndexedBlock conn fixtureChain book `shouldReturn` 332_899_100
+        divRows <- fetchAccountDivisionsHistory conn fixtureChain fixtureRouter walletA
+        map dwrRank divRows `shouldBe` [Just 1]
+        lpBals <- fetchAccountVaultBalances conn fixtureChain housePool deployBlock walletA
+        length lpBals `shouldBe` 1
+        lpReqs <- fetchAccountVaultRequestStates conn fixtureChain housePool deployBlock walletA
+        length lpReqs `shouldBe` 1
+        lpEvs <- fetchAccountVaultRequestEvents conn fixtureChain housePool deployBlock walletA
+        length lpEvs `shouldBe` 1
+
+        -- 3. Liquidity forensics: reads schema_version = 3 reports and ignores v2.
+        void $ execute conn
+          "INSERT INTO vault_return_reports (chain_id, house_pool_address, senior_vault_address, junior_vault_address, start_block_number, end_block_number, start_block_hash, end_block_hash, start_share_price, end_share_price, schema_version, source_commit, attribution) \
+          \VALUES (?, ?, ?, ?, 100, 200, ?, ?, 1000000000000000000, 1010000000000000000, 2, 'v2commit', '{}'::jsonb)"
+          (fixtureChain, housePool, seniorVault, juniorVault, hashText "s2", hashText "e2")
+        void $ execute conn
+          "INSERT INTO vault_return_reports (chain_id, house_pool_address, senior_vault_address, junior_vault_address, start_block_number, end_block_number, start_block_hash, end_block_hash, start_share_price, end_share_price, schema_version, source_commit, attribution) \
+          \VALUES (?, ?, ?, ?, 200, 300, ?, ?, 1010000000000000000, 1020000000000000000, 3, 'v3commit', '{}'::jsonb)"
+          (fixtureChain, housePool, seniorVault, juniorVault, hashText "s3", hashText "e3")
+        reports <- fetchRecentReturnReports conn fixtureChain housePool seniorVault juniorVault 10
+        map (\r -> (rrarEndBlock r, rrarSchemaVersion r)) reports `shouldBe` [(300, 3)]
+
+        -- 4. Keepers tx sender cache: present in schema.sql and safe under concurrent creation.
+        ensureTxSenderCacheTable conn
+        void $ execute_ conn "DROP TABLE insights_tx_senders"
+        mapConcurrently_
+          ( \_ ->
+              bracket (connectPostgreSQL $ TextEncoding.encodeUtf8 databaseUrl) close $ \c -> do
+                void $ execute_ c $ Query $ TextEncoding.encodeUtf8 $ "SET search_path TO " <> schema <> ", public"
+                ensureTxSenderCacheTable c
+          )
+          ([1 .. 4] :: [Int])
+        ensureTxSenderCacheTable conn
+
 -- Install the old cutoff directly so this regression remains runnable even
 -- after the real event's registration window has closed.
 prepareSeptemberRegistrationExtension :: Connection -> IO ()
@@ -1051,6 +1214,26 @@ withInsightsDatabase databaseUrl action =
     assertDedicatedDatabase pool
     prepareDatabase pool
     action pool `finally` cleanupDatabase pool
+
+withIsolatedStaticSchema :: Text -> (Text -> Connection -> IO a) -> IO a
+withIsolatedStaticSchema databaseUrl action =
+  bracket (connectPostgreSQL $ TextEncoding.encodeUtf8 databaseUrl) close $ \conn -> do
+    unique <- hashUnique <$> newUnique
+    timestamp <- getMonotonicTimeNSec
+    let schema = "insights_v1_sql_" <> T.pack (show timestamp) <> "_" <> T.pack (show $ abs unique)
+        sql = Query . TextEncoding.encodeUtf8
+    void $ execute_ conn $ sql $ "CREATE SCHEMA " <> schema
+    ( do
+        void $ execute_ conn $ sql $ "SET search_path TO " <> schema <> ", public"
+        rawSchema <- BS8.readFile "schema.sql"
+        let cleanSql = BS8.unlines $ filter (not . BS8.isPrefixOf "\\") $ BS8.lines rawSchema
+        void $ execute_ conn $ Query cleanSql
+        ensurePerpsHistorySchema conn
+        action schema conn
+      )
+      `finally` do
+        void $ execute_ conn "SET search_path TO public"
+        void $ execute_ conn $ sql $ "DROP SCHEMA " <> schema <> " CASCADE"
 
 assertDedicatedDatabase :: DbPool -> IO ()
 assertDedicatedDatabase pool = withDb pool $ \conn -> do

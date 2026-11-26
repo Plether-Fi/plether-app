@@ -3513,3 +3513,12 @@ CREATE TABLE IF NOT EXISTS passkey_names (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (privy_user_id, credential_id)
 );
+
+-- Cache of canonical tx.from keeper senders resolved for Insights permissionless keeper views.
+CREATE TABLE IF NOT EXISTS insights_tx_senders (
+    chain_id BIGINT NOT NULL,
+    tx_hash VARCHAR(66) NOT NULL,
+    sender_address VARCHAR(42) NOT NULL,
+    resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, tx_hash)
+);
