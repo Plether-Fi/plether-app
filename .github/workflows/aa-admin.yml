@@ -692,9 +692,21 @@ jobs:
             --arg container "$LOG_ROUTER_CONTAINER" \
             '.taskDefinition.containerDefinitions[] | select(.name == $container) | .image' \
             "$source_file")
-          if [[ "$source_app_reference" != "$registry/$APP_REPOSITORY:"* ]] \
+          is_valid_ecr_reference() {
+            local reference=$1
+            local repository=$2
+            local base="$registry/$repository"
+            if [[ "$reference" == "$base@"* ]]; then
+              [[ "${reference#"$base@"}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            elif [[ "$reference" == "$base:"* ]]; then
+              [[ "${reference#"$base:"}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+            else
+              return 1
+            fi
+          }
+          if ! is_valid_ecr_reference "$source_app_reference" "$APP_REPOSITORY" \
               || [ "$source_tmp_reference" != "$source_app_reference" ] \
-              || [[ "$source_router_reference" != "$registry/$LOG_ROUTER_REPOSITORY:"* ]]; then
+              || ! is_valid_ecr_reference "$source_router_reference" "$LOG_ROUTER_REPOSITORY"; then
             echo "::error title=Unexpected source repositories::The Terraform-owned task must use only the reviewed application and log-router ECR repositories."
             exit 1
           fi

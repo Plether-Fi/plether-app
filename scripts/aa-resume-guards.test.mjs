@@ -74,3 +74,30 @@ test('operator fingerprint instructions match the exact pre-approval workflow pa
   const changed=runJq(workflowFilter,{...args,expected_pause_event_id:'9007199254740994'})
   assert.notEqual(changed.stdout,workflow.stdout,'a later incident must change approved inputs')
 })
+
+test('source task-definition repository gate accepts both tagged and digest-pinned ECR references', () => {
+  const fnMatch = source.match(/(is_valid_ecr_reference\(\) \{[\s\S]*?\n\s+\})/)
+  assert.ok(fnMatch, 'extract actual is_valid_ecr_reference helper')
+  const fnBody = fnMatch[1]
+  const registry = '932542905614.dkr.ecr.ap-southeast-1.amazonaws.com'
+  const repo = 'plether-api-sepolia'
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const cases = [
+    ['digest-pinned image', `${registry}/${repo}@${digest}`, true],
+    ['tag-pinned image', `${registry}/${repo}:latest`, true],
+    ['sha-tagged image', `${registry}/${repo}:v1.2.3-arm64`, true],
+    ['wrong repository', `${registry}/other-repo@${digest}`, false],
+    ['prefix-spoofed repository', `${registry}/${repo}-evil@${digest}`, false],
+    ['wrong registry', `111111111111.dkr.ecr.ap-southeast-1.amazonaws.com/${repo}@${digest}`, false],
+    ['short digest', `${registry}/${repo}@sha256:deadbeef`, false],
+    ['uppercase digest', `${registry}/${repo}@sha256:${'A'.repeat(64)}`, false],
+    ['empty tag', `${registry}/${repo}:`, false],
+    ['tag plus digest suffix', `${registry}/${repo}:latest@${digest}`, false],
+  ]
+  for (const [label, reference, expected] of cases) {
+    const script = `registry=${JSON.stringify(registry)}\n${fnBody}\nis_valid_ecr_reference ${JSON.stringify(reference)} ${JSON.stringify(repo)}\n`
+    const result = spawnSync('bash', ['-c', script], {encoding: 'utf8'})
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected, `${label}: ${result.stderr}`)
+  }
+})
