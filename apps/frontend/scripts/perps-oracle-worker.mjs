@@ -7,11 +7,27 @@ import { arbitrum, arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 const ARBITRUM_ONE_CHAIN_ID = 42161
-// Mined-block replays passed at this limit and reverted at the original limits.
-const MARK_REFRESH_GAS_LIMIT = 1_200_000n
+// Mined-block replays passed at this floor and reverted at tighter L2 estimates,
+// while Arbitrum L1 calldata poster fees can push total intrinsic gas well above 1.2M.
+const MARK_REFRESH_MIN_GAS_LIMIT = 1_200_000n
+// Bounded by the oracle worker funding monitor's reviewed gas reserve (40M).
+const MARK_REFRESH_MAX_GAS_LIMIT = 40_000_000n
+const MARK_REFRESH_GAS_BUFFER_BPS = 2_500n
 const ORACLE_WAKE_PORT = 3017
 const ORACLE_WAKE_PACKET = Buffer.from('plether-oracle-wake-v1')
 const MIN_WAKE_INTERVAL_MS = 1000
+
+export function resolveMarkRefreshGasLimit(estimatedGas) {
+  if (typeof estimatedGas !== 'bigint' || estimatedGas <= 0n) {
+    throw new Error(`Invalid mark-refresh gas estimate: ${String(estimatedGas)}`)
+  }
+  if (estimatedGas > MARK_REFRESH_MAX_GAS_LIMIT) {
+    throw new Error(`Estimated mark-refresh gas ${estimatedGas} exceeds safety limit ${MARK_REFRESH_MAX_GAS_LIMIT}`)
+  }
+  const buffered = estimatedGas + (estimatedGas * MARK_REFRESH_GAS_BUFFER_BPS + 9_999n) / 10_000n
+  if (buffered > MARK_REFRESH_MAX_GAS_LIMIT) return MARK_REFRESH_MAX_GAS_LIMIT
+  return buffered > MARK_REFRESH_MIN_GAS_LIMIT ? buffered : MARK_REFRESH_MIN_GAS_LIMIT
+}
 
 const DEFAULT_SEPOLIA_ADDRESSES = {
   orderRouter: '0x918663d6da8cb33b325a04c4a5e8c51d42f3b444',
@@ -543,10 +559,16 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       repair = !before.valid
       const markTime = before.status.lastMarkTime
       let request
+      let gasLimit
       try {
+        const estimatedGas = await publicClient.estimateContractGas({
+          account, address: ADDRESSES.orderRouter, abi: ORDER_ROUTER_ABI,
+          functionName: 'updateMarkPrice', args: [payload.updateData], value: fee,
+        })
+        gasLimit = resolveMarkRefreshGasLimit(estimatedGas)
         const simulation = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
           abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee,
-          gas: MARK_REFRESH_GAS_LIMIT })
+          gas: gasLimit })
         request = simulation.request
       } catch (error) {
         const reverted = decodedContractError(error)
@@ -561,11 +583,11 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         })
         return { status: 'confidence_too_wide' }
       }
-      const hash = await walletClient.writeContract({ ...request, gas: MARK_REFRESH_GAS_LIMIT })
+      const hash = await walletClient.writeContract({ ...request, gas: gasLimit })
       nextRefreshAt = now() + pollSeconds * 1000
       failures = 0
       retryAt = 0
-      pending = { hash, fee, repair, lag: before.lag, markTime, gasLimit: MARK_REFRESH_GAS_LIMIT }
+      pending = { hash, fee, repair, lag: before.lag, markTime, gasLimit }
       return await reconcile()
     } catch (error) {
       if (!pending) deferRetry()

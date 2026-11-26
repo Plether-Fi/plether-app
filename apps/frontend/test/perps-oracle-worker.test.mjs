@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { ContractFunctionExecutionError, ContractFunctionRevertedError, createPublicClient, createWalletClient, custom, encodeErrorResult, parseAbi, parseTransaction, toHex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
-import { createOracleWakeupReceiver, createOracleWorker, loadOracleFeeds, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
+import { createOracleWakeupReceiver, createOracleWorker, loadOracleFeeds, resolveMarkRefreshGasLimit, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
 
 const release = JSON.parse(readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
 const feeds = { pyth: `0x${'11'.repeat(20)}`, feedIds: Array.from({ length: 6 }, (_, i) => `0x${String(i + 1).padStart(64, '0')}`) }
@@ -27,7 +27,8 @@ function fixture() {
   const state = { now: 1_000_000, mark: 990n, stored: 980n, publishes: Array(6).fill(990), writes: 0,
     accepted: 980n, acceptedTimes: Array(6).fill(980n), hasAccepted: true, frozen: false, timestamp: 1000n,
     markPrice: 100_000_000n, acceptedPrice: 100_000_000n, healthError: undefined,
-    reads: [], logs: [], freshFetches: 0, waitError: undefined, simulationError: undefined, reverted: false, pendingWait: undefined }
+    reads: [], logs: [], freshFetches: 0, waitError: undefined, simulationError: undefined, estimateError: undefined,
+    estimatedGas: 500_000n, reverted: false, pendingWait: undefined }
   const publicClient = {
     getBlock: async () => ({ number: 42n, timestamp: 1000n }),
     readContract: async input => {
@@ -58,6 +59,10 @@ function fixture() {
       throw new Error(`Unexpected read ${input.functionName}`)
     },
     getBalance: async () => 1000n,
+    estimateContractGas: async () => {
+      if (state.estimateError) throw state.estimateError
+      return state.estimatedGas
+    },
     simulateContract: async input => {
       if (state.simulationError) throw state.simulationError
       return { request: input }
@@ -322,16 +327,23 @@ test('simulation failure sends nothing and a concurrent mark advancement is re-e
 test('scheduled refresh and repair preflight and sign at the same gas limit', async () => {
   const f = fixture()
   const account = privateKeyToAccount(`0x${'1'.padStart(64, '0')}`)
+  const estimates = [466_000n, 3_782_012n]
+  const expectedGasLimits = [1_200_000n, 4_727_515n]
   const simulations = []
   const transactions = []
+  let estimateCalls = 0
   const transport = custom({ async request({ method, params }) {
+    if (method === 'eth_estimateGas') {
+      return toHex(estimates[estimateCalls++])
+    }
     if (method === 'eth_call') {
       simulations.push(params[0])
       return '0x'
     }
     if (method === 'eth_fillTransaction') {
       const request = params[0]
-      return { tx: { ...request, input: request.data, gas: toHex(466_000), nonce: toHex(transactions.length),
+      const filledGas = request.gas === undefined ? estimates[estimateCalls++] : 466_000n
+      return { tx: { ...request, input: request.data, gas: toHex(filledGas), nonce: toHex(transactions.length),
         type: '0x2', chainId: toHex(arbitrumSepolia.id), maxPriorityFeePerGas: '0x1', maxFeePerGas: '0x2' } }
     }
     if (method === 'eth_sendRawTransaction') {
@@ -341,24 +353,63 @@ test('scheduled refresh and repair preflight and sign at the same gas limit', as
     throw new Error(`Unexpected mock RPC ${method}`)
   } }, { retryCount: 0 })
   const clientOptions = { chain: arbitrumSepolia, transport }
-  f.publicClient.simulateContract = createPublicClient(clientOptions).simulateContract
+  const viemPublicClient = createPublicClient(clientOptions)
+  f.publicClient.estimateContractGas = viemPublicClient.estimateContractGas
+  f.publicClient.simulateContract = viemPublicClient.simulateContract
   const iterate = createOracleWorker({ ...f.options, account, walletClient: createWalletClient(clientOptions) })
 
   assert.equal((await iterate()).status, 'synchronized')
   f.state.now += 30_000
   f.state.publishes.fill(995)
   assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(estimateCalls, 2)
   assert.equal(simulations.length, 2)
   assert.equal(transactions.length, 2)
   for (const [index, tx] of transactions.entries()) {
     const simulation = simulations[index]
-    assert.equal(BigInt(simulation.gas), 1_200_000n)
-    assert.equal(tx.gas, 1_200_000n)
+    assert.equal(BigInt(simulation.gas), expectedGasLimits[index])
+    assert.equal(tx.gas, expectedGasLimits[index])
     assert.equal(tx.to.toLowerCase(), simulation.to.toLowerCase())
     assert.equal(tx.data, simulation.data)
     assert.equal(tx.value, BigInt(simulation.value))
   }
-  assert.deepEqual(f.state.logs.filter(args => args[1] === 'oracle_update_mined').map(args => args[3].repair), [true, false])
+  const minedLogs = f.state.logs.filter(args => args[1] === 'oracle_update_mined').map(args => args[3])
+  assert.deepEqual(minedLogs.map(log => log.repair), [true, false])
+  assert.deepEqual(minedLogs.map(log => log.gas_limit), expectedGasLimits)
+})
+
+test('resolveMarkRefreshGasLimit applies floor, 25% buffer and 40M safety cap', () => {
+  assert.equal(resolveMarkRefreshGasLimit(466_000n), 1_200_000n)
+  assert.equal(resolveMarkRefreshGasLimit(960_000n), 1_200_000n)
+  assert.equal(resolveMarkRefreshGasLimit(3_782_012n), 4_727_515n)
+  assert.equal(resolveMarkRefreshGasLimit(3_782_013n), 4_727_517n)
+  assert.equal(resolveMarkRefreshGasLimit(35_000_000n), 40_000_000n)
+  assert.equal(resolveMarkRefreshGasLimit(40_000_000n), 40_000_000n)
+  assert.throws(() => resolveMarkRefreshGasLimit(40_000_001n), /exceeds safety limit/)
+  assert.throws(() => resolveMarkRefreshGasLimit(0n), /Invalid mark-refresh gas estimate/)
+  assert.throws(() => resolveMarkRefreshGasLimit(-1n), /Invalid mark-refresh gas estimate/)
+})
+
+test('gas estimate above the safety cap aborts before simulation and backs off', async () => {
+  const f = fixture()
+  f.state.estimatedGas = 40_000_001n
+  let simulations = 0
+  f.publicClient.simulateContract = async () => { simulations++; throw new Error('must not simulate') }
+  await assert.rejects(f.iterate(), /exceeds safety limit/)
+  assert.equal(simulations, 0)
+  assert.equal(f.state.writes, 0)
+  f.state.now += 4999
+  assert.equal((await f.iterate()).status, 'backoff')
+})
+
+test('wide confidence during gas estimation waits without simulating or submitting', async () => {
+  const f = fixture()
+  f.state.estimateError = confidenceRevert()
+  let simulations = 0
+  f.publicClient.simulateContract = async () => { simulations++; throw new Error('must not simulate') }
+  assert.equal((await f.iterate()).status, 'confidence_too_wide')
+  assert.equal(simulations, 0)
+  assert.equal(f.state.writes, 0)
 })
 
 test('simulation that exhausts the gas limit sends nothing and honors backoff', async () => {
