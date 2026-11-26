@@ -1,6 +1,17 @@
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject, type ReactNode } from 'react'
-import syntheticSplitterSource from './solidity/SyntheticSplitter.sol?raw'
+import {
+  Suspense,
+  lazy,
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from 'react'
 
+const SolidityCodeBlock = lazy(() => import('./SolidityCodeBlock'))
+
+const SITE_ORIGIN = 'https://plether.com'
 const APP_URL = 'https://app.sepolia.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
@@ -23,44 +34,118 @@ const EXPOSURE_REPLAY_TRANSITION_MS = 2880
 const EXPOSURE_REPLAY_REVERSE_PAUSE_MS = 1000
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
 const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
+
 type HeaderTheme = 'orange' | 'dark' | 'light'
+
+export interface RouteMeta {
+  title: string
+  description: string
+  canonicalUrl: string
+  noindex?: boolean
+}
+
+export function normalizePathname(pathname: string): string {
+  const withoutQuery = pathname.split(/[?#]/, 1)[0] || '/'
+  if (withoutQuery === '/' || withoutQuery === '/index.html') {
+    return '/'
+  }
+  const trimmed = withoutQuery.replace(/\/+$/, '')
+  return trimmed === '' ? '/' : trimmed
+}
+
+export function getRouteMeta(pathname: string): RouteMeta {
+  const normalized = normalizePathname(pathname)
+
+  if (normalized === '/manifesto') {
+    return {
+      title: 'Manifesto — Plether',
+      description:
+        'Why we are building the permissionless, self-custodial, open-source onchain FX layer above dollar stablecoins.',
+      canonicalUrl: `${SITE_ORIGIN}/manifesto`,
+    }
+  }
+
+  if (normalized === '/media-kit') {
+    return {
+      title: 'Media Kit — Plether',
+      description: 'Official Plether logos, logomarks, and brand colors.',
+      canonicalUrl: `${SITE_ORIGIN}/media-kit`,
+    }
+  }
+
+  if (normalized !== '/') {
+    return {
+      title: 'Page Not Found — Plether',
+      description: 'The requested page could not be found on Plether.',
+      canonicalUrl: `${SITE_ORIGIN}/`,
+      noindex: true,
+    }
+  }
+
+  return {
+    title: 'Plether.com - Trade & hedge dollar index perpetuals. Onchain.',
+    description:
+      'Trade and hedge dollar index perpetuals onchain with Plether. Immutable contracts, no ADL, MEV-resistant, settled in USDG.',
+    canonicalUrl: `${SITE_ORIGIN}/`,
+  }
+}
+
 const MOBILE_MENU_ITEMS = [
   { href: APP_URL, label: 'Launch Testnet', opensInNewWindow: true },
-  { href: X_URL, label: 'X' },
+  { href: X_URL, label: 'X', opensInNewWindow: true },
   { href: DISCORD_URL, label: 'Discord', opensInNewWindow: true },
   { href: BLOG_URL, label: 'Blog', opensInNewWindow: true },
-  { href: DOCS_URL, label: 'Read Docs' },
-  { href: CORE_REPO_URL, label: 'Github' },
+  { href: DOCS_URL, label: 'Read Docs', opensInNewWindow: true },
+  { href: CORE_REPO_URL, label: 'GitHub', opensInNewWindow: true },
   { href: MANIFESTO_URL, label: 'Manifesto' },
-  { href: AUDITS_URL, label: 'Audit Reports' },
+  { href: AUDITS_URL, label: 'Audit Reports', opensInNewWindow: true },
 ]
+
 const TRUST_ITEMS = [
   {
     title: 'Open Source',
-    description: 'All Plether code—contracts, front-end, infrastructure—is open source under the AGPL license. Audit it, fork it, run your own interface.',
+    description:
+      'All Plether code—contracts, front-end, infrastructure—is open source under the AGPL license. Audit it, fork it, run your own interface.',
   },
   {
     title: 'No VC Funding',
-    description: 'Self-funded. No outside investors, no board seats, no insider token allocations waiting to unlock.',
+    description:
+      'Self-funded. No outside investors, no board seats, no insider token allocations waiting to unlock.',
   },
   {
     title: 'Immutable Contracts',
-    description: 'No upgradeable proxies. The deployed code cannot be modified by anyone. What you verify is what runs, permanently.',
+    description:
+      'No upgradeable proxies. The deployed code cannot be modified by anyone. What you verify is what runs, permanently.',
   },
   {
     title: 'Passes Walkaway Test',
-    description: 'No off-chain dependencies, no maintenance. The protocol runs without the team, indefinitely.',
+    description:
+      'No off-chain dependencies, no maintenance. The protocol runs without the team, indefinitely.',
   },
   {
     title: 'No allowlist, no KYC',
-    description: 'No identity checks, no approvals, no geofencing at the contract level. Anyone with a wallet can enter and nothing can block your exit.',
+    description:
+      'No identity checks, no approvals, no geofencing at the contract level. Anyone with a wallet can enter and nothing can block your exit.',
   },
 ]
 
 const MEDIA_ASSETS = [
-  { label: 'Logotype', variant: 'logotype' },
-  { label: 'Logo Lockup', variant: 'lockup' },
-  { label: 'Logomark', variant: 'logomark' },
+  {
+    label: 'Logotype',
+    variant: 'logotype',
+    downloadHref: '/logotype.svg',
+    downloadName: 'plether-logotype.svg',
+  },
+  {
+    label: 'Logo Lockup',
+    variant: 'lockup',
+  },
+  {
+    label: 'Logomark',
+    variant: 'logomark',
+    downloadHref: '/logomark.svg',
+    downloadName: 'plether-logomark.svg',
+  },
 ] as const
 
 const MEDIA_COLORS = [
@@ -86,56 +171,20 @@ const MEDIA_COLORS = [
     ],
   },
 ] as const
-const SOLIDITY_KEYWORDS = new Set([
-  'address',
-  'bool',
-  'break',
-  'bytes',
-  'constant',
-  'constructor',
-  'contract',
-  'delete',
-  'else',
-  'emit',
-  'enum',
-  'event',
-  'external',
-  'false',
-  'for',
-  'function',
-  'if',
-  'immutable',
-  'import',
-  'internal',
-  'is',
-  'library',
-  'mapping',
-  'memory',
-  'modifier',
-  'override',
-  'private',
-  'public',
-  'pure',
-  'require',
-  'return',
-  'returns',
-  'solidity',
-  'storage',
-  'struct',
-  'true',
-  'uint256',
-  'uint64',
-  'uint8',
-  'using',
-  'view',
-])
-const SOLIDITY_TOKEN_PATTERN = /(\/\/.*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+(?:_\d+)*\b)/g
+
+function SkipLink() {
+  return (
+    <a className="skip-link" href="#main-content">
+      Skip to main content
+    </a>
+  )
+}
 
 function Brand() {
   return (
     <a className="brand" href="/" aria-label="Plether home">
-      <img className="brand__mark" src="/logomark.svg" alt="" />
-      <img className="brand__type" src="/logotype.svg" alt="plether" />
+      <img className="brand__mark" src="/logomark.svg" alt="" width={211} height={211} decoding="async" />
+      <img className="brand__type" src="/logotype.svg" alt="plether" width={297} height={77} decoding="async" />
     </a>
   )
 }
@@ -147,6 +196,8 @@ function AnimatedFooterLogomark() {
       className="footer__mark footer-logomark"
       fill="none"
       viewBox="0 0 211 211"
+      width="211"
+      height="211"
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
@@ -178,7 +229,7 @@ function AnimatedFooterLogomark() {
   )
 }
 
-function FooterBrand() {
+const FooterBrand = memo(function FooterBrand() {
   const brandRef = useRef<HTMLDivElement | null>(null)
   const [hasEnteredViewport, setHasEnteredViewport] = useState(false)
 
@@ -216,16 +267,24 @@ function FooterBrand() {
   return (
     <div aria-hidden="true" className={`footer__brand${hasEnteredViewport ? ' footer__brand--visible' : ''}`} ref={brandRef}>
       <AnimatedFooterLogomark />
-      <img className="footer__type" src="/logotype.svg" alt="" />
+      <img
+        className="footer__type"
+        src="/logotype.svg"
+        alt=""
+        width={297}
+        height={77}
+        loading="lazy"
+        decoding="async"
+      />
     </div>
   )
-}
+})
 
 function DividerDot() {
   return <span className="nav-dot" aria-hidden="true" />
 }
 
-function SiteFooter({ footerRef }: { footerRef?: RefObject<HTMLElement | null> }) {
+const SiteFooter = memo(function SiteFooter({ footerRef }: { footerRef?: RefObject<HTMLElement | null> }) {
   return (
     <footer ref={footerRef} className="footer">
       <div className="footer__inner">
@@ -233,25 +292,25 @@ function SiteFooter({ footerRef }: { footerRef?: RefObject<HTMLElement | null> }
         <div className="footer__bottom">
           <p>© Plether 2026</p>
           <nav className="footer__nav" aria-label="Footer navigation">
-            <a href={X_URL}>X</a>
+            <a href={X_URL} target="_blank" rel="noopener noreferrer">X</a>
             <DividerDot />
-            <a href={CORE_REPO_URL}>GitHub</a>
+            <a href={CORE_REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
             <DividerDot />
-            <a href={DOCS_URL}>Docs</a>
+            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer">Docs</a>
             <DividerDot />
             <a href={MANIFESTO_URL}>Manifesto</a>
             <DividerDot />
             <a href={MEDIA_KIT_URL}>Media Kit</a>
             <DividerDot />
-            <a href={AUDITS_URL}>Audit Reports</a>
+            <a href={AUDITS_URL} target="_blank" rel="noopener noreferrer">Audit Reports</a>
           </nav>
         </div>
       </div>
     </footer>
   )
-}
+})
 
-function SiteHeader({
+const SiteHeader = memo(function SiteHeader({
   theme,
   headerRef,
 }: {
@@ -259,6 +318,9 @@ function SiteHeader({
   headerRef: RefObject<HTMLElement | null>
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const toggleButtonRef = useRef<HTMLButtonElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!isMenuOpen) {
@@ -266,18 +328,45 @@ function SiteHeader({
     }
 
     const previousOverflow = document.body.style.overflow
-    const closeOnEscape = (event: KeyboardEvent) => {
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+
+    const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsMenuOpen(false)
+        return
+      }
+
+      if (event.key !== 'Tab' || !dialogRef.current) {
+        return
+      }
+
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+
+      if (focusable.length === 0) {
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
       }
     }
 
-    document.body.style.overflow = 'hidden'
-    window.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('keydown', handleKeyDown)
 
     return () => {
       document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('keydown', handleKeyDown)
+      toggleButtonRef.current?.focus()
     }
   }, [isMenuOpen])
 
@@ -287,19 +376,20 @@ function SiteHeader({
         <div className="site-header__inner">
           <Brand />
           <nav className="site-nav" aria-label="Primary navigation">
-            <a href={X_URL} aria-label="Plether on X" target="_blank" rel="noreferrer">X</a>
+            <a href={X_URL} aria-label="Plether on X" target="_blank" rel="noopener noreferrer">X</a>
             <DividerDot />
-            <a href={DISCORD_URL} target="_blank" rel="noreferrer">Discord</a>
+            <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer">Discord</a>
             <DividerDot />
-            <a href={BLOG_URL} target="_blank" rel="noreferrer">Blog</a>
+            <a href={BLOG_URL} target="_blank" rel="noopener noreferrer">Blog</a>
             <DividerDot />
-            <a href={DOCS_URL} target="_blank" rel="noreferrer">Docs</a>
+            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer">Docs</a>
             <DividerDot />
-            <a className="launch-button launch-button--nav" href={APP_URL} target="_blank" rel="noreferrer">
+            <a className="launch-button launch-button--nav" href={APP_URL} target="_blank" rel="noopener noreferrer">
               <span className="button-label">Launch Testnet</span>
             </a>
           </nav>
           <button
+            ref={toggleButtonRef}
             className="mobile-menu-toggle"
             type="button"
             aria-label="Open menu"
@@ -315,10 +405,23 @@ function SiteHeader({
       </header>
 
       {isMenuOpen ? (
-        <div className="mobile-menu" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile navigation">
+        <div
+          ref={dialogRef}
+          className="mobile-menu"
+          id="mobile-menu"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mobile navigation"
+        >
           <div className="mobile-menu__header">
             <Brand />
-            <button className="mobile-menu__close" type="button" aria-label="Close menu" onClick={() => setIsMenuOpen(false)}>
+            <button
+              ref={closeButtonRef}
+              className="mobile-menu__close"
+              type="button"
+              aria-label="Close menu"
+              onClick={() => setIsMenuOpen(false)}
+            >
               <span />
               <span />
             </button>
@@ -330,7 +433,7 @@ function SiteHeader({
                 key={item.label}
                 onClick={() => setIsMenuOpen(false)}
                 target={item.opensInNewWindow ? '_blank' : undefined}
-                rel={item.opensInNewWindow ? 'noreferrer' : undefined}
+                rel={item.opensInNewWindow ? 'noopener noreferrer' : undefined}
               >
                 {item.label}
               </a>
@@ -344,7 +447,7 @@ function SiteHeader({
       ) : null}
     </>
   )
-}
+})
 
 function SplitIllustration() {
   return (
@@ -382,71 +485,6 @@ function SolvencyIllustration() {
   )
 }
 
-function highlightSolidityLine(line: string, lineIndex: number) {
-  const nodes: ReactNode[] = []
-  let cursor = 0
-  let match: RegExpExecArray | null
-
-  SOLIDITY_TOKEN_PATTERN.lastIndex = 0
-
-  while ((match = SOLIDITY_TOKEN_PATTERN.exec(line)) !== null) {
-    const [token] = match
-
-    if (match.index > cursor) {
-      nodes.push(line.slice(cursor, match.index))
-    }
-
-    let tokenClass = ''
-
-    if (token.startsWith('//')) {
-      tokenClass = 'token-comment'
-    } else if (token.startsWith('"') || token.startsWith("'")) {
-      tokenClass = 'token-string'
-    } else if (/^\d/.test(token)) {
-      tokenClass = 'token-number'
-    } else if (SOLIDITY_KEYWORDS.has(token)) {
-      tokenClass = 'token-keyword'
-    }
-
-    nodes.push(
-      tokenClass ? (
-        <span className={tokenClass} key={`${lineIndex}-${match.index}`}>
-          {token}
-        </span>
-      ) : (
-        token
-      ),
-    )
-
-    cursor = match.index + token.length
-
-    if (token.startsWith('//')) {
-      break
-    }
-  }
-
-  if (cursor < line.length) {
-    nodes.push(line.slice(cursor))
-  }
-
-  return nodes
-}
-
-function SolidityCodeBlock({ code }: { code: string }) {
-  return (
-    <pre className="source-code" aria-label="SyntheticSplitter Solidity source">
-      <code>
-        {code.split('\n').map((line, index) => (
-          <Fragment key={index}>
-            {highlightSolidityLine(line, index)}
-            {'\n'}
-          </Fragment>
-        ))}
-      </code>
-    </pre>
-  )
-}
-
 function CardBreak() {
   return (
     <>
@@ -456,36 +494,25 @@ function CardBreak() {
   )
 }
 
-function LandingPage() {
-  const headerRef = useRef<HTMLElement | null>(null)
-  const primitiveSectionRef = useRef<HTMLElement | null>(null)
-  const exposureSectionRef = useRef<HTMLElement | null>(null)
-  const builtSectionRef = useRef<HTMLElement | null>(null)
-  const trustSectionRef = useRef<HTMLElement | null>(null)
-  const sourceSectionRef = useRef<HTMLElement | null>(null)
-  const ctaSectionRef = useRef<HTMLElement | null>(null)
-  const footerRef = useRef<HTMLElement | null>(null)
-  const primitiveMarkProgressRef = useRef(0)
-  const activeTrustSlideIndexRef = useRef(0)
-  const isTrustSlideInitializedRef = useRef(false)
-  const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
-  const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
-  const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
-  const [isExposureAnimationReversed, setIsExposureAnimationReversed] = useState(false)
-  const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
-  const [activeTrustSlideIndex, setActiveTrustSlideIndex] = useState(0)
-  const [trustMarkerSpinStep, setTrustMarkerSpinStep] = useState(0)
+const ExposureSection = memo(function ExposureSection({
+  sectionRef,
+  isActive,
+}: {
+  sectionRef: RefObject<HTMLElement | null>
+  isActive: boolean
+}) {
+  const [isReversed, setIsReversed] = useState(false)
 
   useEffect(() => {
-    if (!isExposureAnimationActive) {
-      setIsExposureAnimationReversed(false)
+    if (!isActive) {
+      setIsReversed(false)
       return
     }
 
     const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA)
 
     if (reducedMotionQuery.matches) {
-      setIsExposureAnimationReversed(false)
+      setIsReversed(false)
       return
     }
 
@@ -501,7 +528,7 @@ function LandingPage() {
           return
         }
 
-        setIsExposureAnimationReversed(true)
+        setIsReversed(true)
 
         reverseTimer = window.setTimeout(() => {
           if (isDisposed) {
@@ -513,7 +540,7 @@ function LandingPage() {
               return
             }
 
-            setIsExposureAnimationReversed(false)
+            setIsReversed(false)
 
             forwardTimer = window.setTimeout(() => {
               if (!isDisposed) {
@@ -525,7 +552,7 @@ function LandingPage() {
       }, delayMs)
     }
 
-    setIsExposureAnimationReversed(false)
+    setIsReversed(false)
     queueReplay(EXPOSURE_REPLAY_TRANSITION_MS + EXPOSURE_REPLAY_IDLE_MS)
 
     return () => {
@@ -535,30 +562,156 @@ function LandingPage() {
       window.clearTimeout(reversePauseTimer)
       window.clearTimeout(forwardTimer)
     }
-  }, [isExposureAnimationActive])
+  }, [isActive])
+
+  return (
+    <section
+      ref={sectionRef}
+      className={`landing-section landing-section--exposure${isActive && !isReversed ? ' landing-section--exposure-active' : ''}`}
+      aria-labelledby="exposure-title"
+    >
+      <div className="exposure">
+        <h2 id="exposure-title">Macro exposure that fits your DeFi stack.</h2>
+        <div className="feature-grid">
+          <article className="feature-card">
+            <div className="macro-illustration" aria-hidden="true">
+              <img
+                src="/illustration-grid.svg"
+                alt=""
+                width={360}
+                height={360}
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+            <h3>Macro exposure<CardBreak />without leaving DeFi</h3>
+            <p>Settles in USDG. Self-custodial.<CardBreak />No KYC, no offchain backend.</p>
+          </article>
+
+          <article className="feature-card">
+            <SplitIllustration />
+            <h3>The dollar index,<CardBreak />tradeable onchain</h3>
+            <p>Perp DEX for the dollar index.<CardBreak />Trade or hedge the dollar,<CardBreak />onchain.</p>
+          </article>
+
+          <article className="feature-card">
+            <SolvencyIllustration />
+            <h3>Built around solvency,<CardBreak />not extraction.</h3>
+            <p>No ADL. No cascading<CardBreak />liquidations. MEV-resistant.<CardBreak />Predictable fees.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  )
+})
+
+const SourceCodePlaceholder = (
+  <pre className="source-code" aria-label="OrderRouter Solidity source">
+    <code>Loading contract source…</code>
+  </pre>
+)
+
+const SourceSection = memo(function SourceSection({
+  sectionRef,
+}: {
+  sectionRef: RefObject<HTMLElement | null>
+}) {
+  const [shouldLoadSource, setShouldLoadSource] = useState(false)
 
   useEffect(() => {
-    let reducedMotionQuery: MediaQueryList | null = null
-    let mobileQuery: MediaQueryList | null = null
+    if (shouldLoadSource) {
+      return
+    }
+
+    const section = sectionRef.current
+
+    if (!section || !('IntersectionObserver' in window)) {
+      setShouldLoadSource(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoadSource(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '600px 0px' },
+    )
+
+    observer.observe(section)
+
+    return () => observer.disconnect()
+  }, [sectionRef, shouldLoadSource])
+
+  return (
+    <section
+      ref={sectionRef}
+      className="landing-section landing-section--source"
+      aria-labelledby="source-title"
+    >
+      <div className="source">
+        <h2 id="source-title">See for yourself.</h2>
+        <p>
+          Every Plether contract is{' '}
+          <a className="text-link" href={CORE_REPO_URL} target="_blank" rel="noopener noreferrer">
+            open source
+          </a>
+          . Read it line by line.
+        </p>
+        <div className="source__card">
+          {shouldLoadSource ? (
+            <Suspense fallback={SourceCodePlaceholder}>
+              <SolidityCodeBlock />
+            </Suspense>
+          ) : (
+            SourceCodePlaceholder
+          )}
+        </div>
+      </div>
+    </section>
+  )
+})
+
+function LandingPage() {
+  const headerRef = useRef<HTMLElement | null>(null)
+  const primitiveSectionRef = useRef<HTMLElement | null>(null)
+  const primitiveMarkRef = useRef<HTMLDivElement | null>(null)
+  const exposureSectionRef = useRef<HTMLElement | null>(null)
+  const builtSectionRef = useRef<HTMLElement | null>(null)
+  const trustSectionRef = useRef<HTMLElement | null>(null)
+  const sourceSectionRef = useRef<HTMLElement | null>(null)
+  const ctaSectionRef = useRef<HTMLElement | null>(null)
+  const footerRef = useRef<HTMLElement | null>(null)
+
+  const headerThemeRef = useRef<HeaderTheme>('orange')
+  const isExposureActiveRef = useRef(false)
+  const isBuiltActiveRef = useRef(false)
+  const primitiveMarkProgressRef = useRef(0)
+  const activeTrustSlideIndexRef = useRef(0)
+  const isTrustSlideInitializedRef = useRef(false)
+
+  const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
+  const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
+  const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
+  const [activeTrustSlideIndex, setActiveTrustSlideIndex] = useState(0)
+  const [trustMarkerSpinStep, setTrustMarkerSpinStep] = useState(0)
+
+  useEffect(() => {
+    const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA)
+    const mobileQuery = window.matchMedia(PRIMITIVE_MOBILE_MEDIA)
+
+    let headerHeight = 0
+    let scrubDistance = PRIMITIVE_SCRUB_DISTANCE
+    let trustScrollDistance = 1
+    let primitiveTriggerY = 0
+    let trustStart = 0
+    let rafId = 0
 
     const clampProgress = (value: number) => Math.min(1, Math.max(0, value))
-    const getHeaderHeight = () => headerRef.current?.offsetHeight ?? 0
-    const getPrimitiveTriggerY = () => {
-      const primitiveSection = primitiveSectionRef.current
+    const shouldReduceMotion = () => reducedMotionQuery.matches
 
-      if (!primitiveSection) {
-        return 0
-      }
-
-      return primitiveSection.offsetTop - getHeaderHeight()
-    }
-    const getScrubDistance = () => mobileQuery?.matches ? PRIMITIVE_MOBILE_SCRUB_DISTANCE : PRIMITIVE_SCRUB_DISTANCE
-    const getTrustSlideStep = () => {
-      const visibleViewportHeight = window.innerHeight - getHeaderHeight()
-      return Math.min(TRUST_SLIDE_STEP_MAX, Math.max(TRUST_SLIDE_STEP_MIN, visibleViewportHeight * TRUST_SLIDE_STEP_RATIO))
-    }
-    const getTrustScrollDistance = () => (TRUST_ITEMS.length - 1) * getTrustSlideStep()
-    const shouldReduceMotion = () => reducedMotionQuery?.matches ?? false
     const setTrustSlide = (nextIndex: number) => {
       const clampedIndex = Math.min(TRUST_ITEMS.length - 1, Math.max(0, nextIndex))
 
@@ -576,6 +729,7 @@ function LandingPage() {
         isTrustSlideInitializedRef.current = true
       }
     }
+
     const setPrimitiveProgress = (nextProgress: number) => {
       const clampedProgress = clampProgress(nextProgress)
 
@@ -584,25 +738,47 @@ function LandingPage() {
       }
 
       primitiveMarkProgressRef.current = clampedProgress
-      setPrimitiveMarkProgress(clampedProgress)
+      primitiveMarkRef.current?.style.setProperty('--primitive-mark-progress', clampedProgress.toFixed(4))
     }
-    const updatePrimitiveLayoutVars = () => {
-      document.documentElement.style.setProperty('--site-header-height', `${getHeaderHeight()}px`)
-      document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${getScrubDistance()}px`)
-      document.documentElement.style.setProperty('--trust-scroll-space', shouldReduceMotion() ? '0px' : `${getTrustScrollDistance()}px`)
-    }
-    const updatePrimitiveProgress = () => {
-      const triggerY = getPrimitiveTriggerY()
 
-      if (shouldReduceMotion()) {
-        setPrimitiveProgress(window.scrollY >= triggerY ? 1 : 0)
+    // Only mutate :root layout custom properties on mount/resize/media changes (never on scroll).
+    const updateLayoutMetrics = () => {
+      headerHeight = headerRef.current?.offsetHeight ?? 0
+      scrubDistance = mobileQuery.matches ? PRIMITIVE_MOBILE_SCRUB_DISTANCE : PRIMITIVE_SCRUB_DISTANCE
+
+      const visibleViewportHeight = window.innerHeight - headerHeight
+      const trustSlideStep = Math.min(
+        TRUST_SLIDE_STEP_MAX,
+        Math.max(TRUST_SLIDE_STEP_MIN, visibleViewportHeight * TRUST_SLIDE_STEP_RATIO),
+      )
+      trustScrollDistance = shouldReduceMotion() ? 1 : (TRUST_ITEMS.length - 1) * trustSlideStep
+
+      document.documentElement.style.setProperty('--site-header-height', `${headerHeight}px`)
+      document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${scrubDistance}px`)
+      document.documentElement.style.setProperty(
+        '--trust-scroll-space',
+        shouldReduceMotion() ? '0px' : `${(TRUST_ITEMS.length - 1) * trustSlideStep}px`,
+      )
+
+      primitiveTriggerY = (primitiveSectionRef.current?.offsetTop ?? 0) - headerHeight
+      trustStart = (trustSectionRef.current?.offsetTop ?? 0) - headerHeight
+    }
+
+    const updateScrollState = () => {
+      rafId = 0
+
+      if (!headerRef.current) {
         return
       }
 
-      setPrimitiveProgress((window.scrollY - triggerY) / getScrubDistance())
-    }
-    const updateHeaderTheme = () => {
-      const header = headerRef.current
+      const scrollY = window.scrollY
+
+      if (shouldReduceMotion()) {
+        setPrimitiveProgress(scrollY >= primitiveTriggerY ? 1 : 0)
+      } else {
+        setPrimitiveProgress((scrollY - primitiveTriggerY) / scrubDistance)
+      }
+
       const sections = [
         { ref: primitiveSectionRef, theme: 'dark' as const },
         { ref: exposureSectionRef, theme: 'light' as const },
@@ -613,27 +789,39 @@ function LandingPage() {
         { ref: footerRef, theme: 'orange' as const },
       ]
 
-      if (!header) {
-        return
-      }
-
-      updatePrimitiveLayoutVars()
-      updatePrimitiveProgress()
-
-      let activeSection: (typeof sections)[number] | undefined
+      let nextTheme: HeaderTheme = 'orange'
 
       for (let index = sections.length - 1; index >= 0; index -= 1) {
         const section = sections[index]
 
-        if (section.ref.current && section.ref.current.getBoundingClientRect().top <= header.offsetHeight + 1) {
-          activeSection = section
+        if (section.ref.current && section.ref.current.getBoundingClientRect().top <= headerHeight + 1) {
+          nextTheme = section.theme
           break
         }
       }
 
-      setHeaderTheme(activeSection?.theme ?? 'orange')
-      setIsExposureAnimationActive((exposureSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
-      setIsBuiltAnimationActive((builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      if (headerThemeRef.current !== nextTheme) {
+        headerThemeRef.current = nextTheme
+        setHeaderTheme(nextTheme)
+      }
+
+      const exposureRect = exposureSectionRef.current?.getBoundingClientRect()
+      const nextExposureActive = Boolean(
+        exposureRect && exposureRect.top <= headerHeight + 1 && exposureRect.bottom > headerHeight,
+      )
+
+      if (isExposureActiveRef.current !== nextExposureActive) {
+        isExposureActiveRef.current = nextExposureActive
+        setIsExposureAnimationActive(nextExposureActive)
+      }
+
+      const nextBuiltActive =
+        (builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= headerHeight + 1
+
+      if (isBuiltActiveRef.current !== nextBuiltActive) {
+        isBuiltActiveRef.current = nextBuiltActive
+        setIsBuiltAnimationActive(nextBuiltActive)
+      }
 
       const trustSection = trustSectionRef.current
 
@@ -643,42 +831,51 @@ function LandingPage() {
       }
 
       const trustRect = trustSection.getBoundingClientRect()
-      const trustStart = trustSection.offsetTop - header.offsetHeight
-      const trustScrollDistance = shouldReduceMotion() ? 1 : getTrustScrollDistance()
       const trustEnd = trustStart + trustScrollDistance
 
-      if (window.scrollY < trustStart) {
+      if (scrollY < trustStart) {
         setTrustSlide(0)
         return
       }
 
-      if (trustRect.bottom <= header.offsetHeight) {
+      if (trustRect.bottom <= headerHeight) {
         setTrustSlide(TRUST_ITEMS.length - 1)
         return
       }
 
-      const trustProgress = clampProgress((window.scrollY - trustStart) / Math.max(1, trustEnd - trustStart))
-      const activeTrustIndex = Math.round((trustProgress * (TRUST_ITEMS.length - 1)) + TRUST_SLIDE_ACTIVATION_BIAS)
+      const trustProgress = clampProgress((scrollY - trustStart) / Math.max(1, trustEnd - trustStart))
+      const activeTrustIndex = Math.round(trustProgress * (TRUST_ITEMS.length - 1) + TRUST_SLIDE_ACTIVATION_BIAS)
       setTrustSlide(activeTrustIndex)
     }
-    const handleReducedMotionChange = () => {
-      updateHeaderTheme()
+
+    const scheduleScrollUpdate = () => {
+      if (rafId !== 0) {
+        return
+      }
+      rafId = window.requestAnimationFrame(updateScrollState)
     }
 
-    reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA)
-    mobileQuery = window.matchMedia(PRIMITIVE_MOBILE_MEDIA)
+    const handleResizeOrMediaChange = () => {
+      updateLayoutMetrics()
+      scheduleScrollUpdate()
+    }
 
-    updateHeaderTheme()
-    window.addEventListener('scroll', updateHeaderTheme, { passive: true })
-    window.addEventListener('resize', updateHeaderTheme)
-    reducedMotionQuery.addEventListener('change', handleReducedMotionChange)
-    mobileQuery.addEventListener('change', updateHeaderTheme)
+    updateLayoutMetrics()
+    updateScrollState()
+
+    window.addEventListener('scroll', scheduleScrollUpdate, { passive: true })
+    window.addEventListener('resize', handleResizeOrMediaChange, { passive: true })
+    reducedMotionQuery.addEventListener('change', handleResizeOrMediaChange)
+    mobileQuery.addEventListener('change', handleResizeOrMediaChange)
 
     return () => {
-      window.removeEventListener('scroll', updateHeaderTheme)
-      window.removeEventListener('resize', updateHeaderTheme)
-      reducedMotionQuery?.removeEventListener('change', handleReducedMotionChange)
-      mobileQuery?.removeEventListener('change', updateHeaderTheme)
+      if (rafId !== 0) {
+        window.cancelAnimationFrame(rafId)
+      }
+      window.removeEventListener('scroll', scheduleScrollUpdate)
+      window.removeEventListener('resize', handleResizeOrMediaChange)
+      reducedMotionQuery.removeEventListener('change', handleResizeOrMediaChange)
+      mobileQuery.removeEventListener('change', handleResizeOrMediaChange)
       document.documentElement.style.removeProperty('--site-header-height')
       document.documentElement.style.removeProperty('--primitive-scroll-space')
       document.documentElement.style.removeProperty('--trust-scroll-space')
@@ -686,204 +883,157 @@ function LandingPage() {
   }, [])
 
   return (
-    <main className="landing-page">
+    <>
+      <SkipLink />
       <SiteHeader theme={headerTheme} headerRef={headerRef} />
-
-      <section className="landing-section landing-section--hero">
-        <div className="hero" aria-labelledby="hero-title">
-          <div className="hero__copy">
-            <h1 id="hero-title">Trade &amp; hedge<br />dollar index<br className="mobile-only-break" /> perpetuals.</h1>
-          </div>
-
-          <div className="hero__bottom">
-            <div className="hero__actions">
-              <p>Immutable contracts.<br />No ADL. MEV-resistant.<br />Settled in USDC.</p>
-              <div className="button-row">
-                <a className="launch-button" href={APP_URL} target="_blank" rel="noreferrer">
-                  <span className="button-label">Launch Testnet</span>
-                </a>
-                <a className="docs-button" href={DOCS_URL} target="_blank" rel="noreferrer">
-                  <span className="button-label">Read Docs</span>
-                </a>
-              </div>
+      <main id="main-content" className="landing-page">
+        <section className="landing-section landing-section--hero">
+          <div className="hero" aria-labelledby="hero-title">
+            <div className="hero__copy">
+              <h1 id="hero-title">Trade &amp; hedge<br />dollar index<br className="mobile-only-break" /> perpetuals.</h1>
             </div>
 
-            <p className="onchain-word">Onchain.</p>
-          </div>
-        </div>
-      </section>
-
-      <section
-        ref={primitiveSectionRef}
-        className="landing-section landing-section--primitive"
-        aria-labelledby="primitive-title"
-      >
-        <div className="primitive">
-          <div
-            className="primitive__mark"
-            style={{ '--primitive-mark-progress': primitiveMarkProgress } as CSSProperties}
-            aria-hidden="true"
-          >
-            <span />
-          </div>
-          <h2 id="primitive-title">The dollar&apos;s missing primitive.</h2>
-          <p>
-            The dollar is the most-used asset in DeFi and the most-traded asset in global macro, but it has no onchain primitive for taking a position on it. Traders can&apos;t trade it. Holders can&apos;t hedge it. Now you can.
-          </p>
-        </div>
-      </section>
-
-      <section
-        ref={exposureSectionRef}
-        className={`landing-section landing-section--exposure${isExposureAnimationActive && !isExposureAnimationReversed ? ' landing-section--exposure-active' : ''}`}
-        aria-labelledby="exposure-title"
-      >
-        <div className="exposure">
-          <h2 id="exposure-title">Macro exposure that fits your DeFi stack.</h2>
-          <div className="feature-grid">
-            <article className="feature-card">
-              <div className="macro-illustration" aria-hidden="true">
-                <img src="/illustration-grid.svg" alt="" />
-              </div>
-              <h3>Macro exposure<CardBreak />without leaving DeFi</h3>
-              <p>Settles in USDC. Self-custodial.<CardBreak />No KYC, no offchain backend.</p>
-            </article>
-
-            <article className="feature-card">
-              <SplitIllustration />
-              <h3>The dollar index,<CardBreak />tradeable onchain</h3>
-              <p>Perp DEX for the dollar index.<CardBreak />Trade or hedge the dollar,<CardBreak />onchain.</p>
-            </article>
-
-            <article className="feature-card">
-              <SolvencyIllustration />
-              <h3>Built around solvency,<CardBreak />not extraction.</h3>
-              <p>No ADL. No cascading<CardBreak />liquidations. MEV-resistant.<CardBreak />Predictable fees.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section
-        ref={builtSectionRef}
-        className={`landing-section landing-section--built${isBuiltAnimationActive ? ' landing-section--built-active' : ''}`}
-        aria-labelledby="built-title"
-      >
-        <div className="built">
-          <h2 id="built-title">Plether is built different</h2>
-          <div className="principle-grid">
-            <article className="principle-card">
-              <span className="principle-card__dot" aria-hidden="true"><span /></span>
-              <h3>Tailor made for macro markets.</h3>
-              <p>The dollar index oracle updates Monday to Friday during FX market hours. No stale prices, no weekend gap risk.</p>
-            </article>
-
-            <article className="principle-card">
-              <span className="principle-card__dot" aria-hidden="true"><span /></span>
-              <h3>Your winning trades stay yours.</h3>
-              <p>Maximum payouts are guaranteed at entry. No Auto-Deleverage. No socialized losses.</p>
-            </article>
-
-            <article className="principle-card">
-              <span className="principle-card__dot" aria-hidden="true"><span /></span>
-              <h3>No front-running. Ever.</h3>
-              <p>Orders commit without a price. A keeper reveals them at the oracle. Passive value extraction is impossible by design.</p>
-            </article>
-
-            <article className="principle-card">
-              <span className="principle-card__dot" aria-hidden="true"><span /></span>
-              <h3>Hold positions without bleeding fees.</h3>
-              <p>Carry fee proportional to leverage, not a variable funding rate. Predictable cost, no surprises.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section
-        ref={trustSectionRef}
-        className="landing-section landing-section--trust"
-        aria-labelledby="trust-title"
-      >
-        <div className="trust">
-          <span className={`trust__marker${trustMarkerSpinStep === 0 ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
-            <span key={`trust-marker-top-${trustMarkerSpinStep}`} />
-          </span>
-          <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
-          <div className="trust-slide-stage" role="list">
-            {TRUST_ITEMS.map((item, index) => {
-              const titleId = `trust-title-${index}`
-              const slideOffset = index - activeTrustSlideIndex
-              const isActive = activeTrustSlideIndex === index
-              const slideState = slideOffset < 0 ? 'previous' : slideOffset > 0 ? 'next' : 'active'
-
-              return (
-                <div
-                  className={`trust-slide trust-slide--${slideState}`}
-                  role="listitem"
-                  key={item.title}
-                  aria-hidden={!isActive}
-                  style={{ '--trust-slide-offset': slideOffset } as CSSProperties}
-                >
-                  <h3
-                    className="trust-slide__title"
-                    id={titleId}
-                  >
-                    {item.title}
-                  </h3>
-                  <p className="trust-slide__description" aria-labelledby={titleId}>{item.description}</p>
+            <div className="hero__bottom">
+              <div className="hero__actions">
+                <p>Immutable contracts.<br />No ADL. MEV-resistant.<br />Settled in USDG.</p>
+                <div className="button-row">
+                  <a className="launch-button" href={APP_URL} target="_blank" rel="noopener noreferrer">
+                    <span className="button-label">Launch Testnet</span>
+                  </a>
+                  <a className="docs-button" href={DOCS_URL} target="_blank" rel="noopener noreferrer">
+                    <span className="button-label">Read Docs</span>
+                  </a>
                 </div>
-              )
-            })}
+              </div>
+
+              <p className="onchain-word">Onchain.</p>
+            </div>
           </div>
-          <span
-            className={`trust__marker trust__marker--bottom${trustMarkerSpinStep === 0 ? '' : ' trust__marker--value-step'}`}
-            aria-hidden="true"
-          >
-            <span key={`trust-marker-bottom-${trustMarkerSpinStep}`} />
-          </span>
-        </div>
-      </section>
+        </section>
 
-      <section
-        ref={sourceSectionRef}
-        className="landing-section landing-section--source"
-        aria-labelledby="source-title"
-      >
-        <div className="source">
-          <h2 id="source-title">See for yourself.</h2>
-          <p>
-            Every Plether contract is{' '}
-            <a className="text-link" href={CORE_REPO_URL}>
-              open source
-            </a>
-            . Read it line by line.
-          </p>
-          <div className="source__card">
-            <SolidityCodeBlock code={syntheticSplitterSource} />
+        <section
+          ref={primitiveSectionRef}
+          className="landing-section landing-section--primitive"
+          aria-labelledby="primitive-title"
+        >
+          <div className="primitive">
+            <div
+              ref={primitiveMarkRef}
+              className="primitive__mark"
+              style={{ '--primitive-mark-progress': 0 } as CSSProperties}
+              aria-hidden="true"
+            >
+              <span />
+            </div>
+            <h2 id="primitive-title">The dollar&apos;s missing primitive.</h2>
+            <p>
+              The dollar is the most-used asset in DeFi and the most-traded asset in global macro, but it has no onchain primitive for taking a position on it. Traders can&apos;t trade it. Holders can&apos;t hedge it. Now you can.
+            </p>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section
-        ref={ctaSectionRef}
-        className="landing-section landing-section--cta"
-        aria-labelledby="cta-title"
-      >
-        <div className="cta">
-          <h2 id="cta-title">
-            Onchain macro starts{' '}
-            <a className="cta__title-link" href={MANIFESTO_URL}>
-              here.
+        <ExposureSection sectionRef={exposureSectionRef} isActive={isExposureAnimationActive} />
+
+        <section
+          ref={builtSectionRef}
+          className={`landing-section landing-section--built${isBuiltAnimationActive ? ' landing-section--built-active' : ''}`}
+          aria-labelledby="built-title"
+        >
+          <div className="built">
+            <h2 id="built-title">Plether is built different</h2>
+            <div className="principle-grid">
+              <article className="principle-card">
+                <span className="principle-card__dot" aria-hidden="true"><span /></span>
+                <h3>Tailor made for FX markets.</h3>
+                <p>The dollar index oracle updates Monday to Friday during FX market hours. No stale prices, no weekend gap risk.</p>
+              </article>
+
+              <article className="principle-card">
+                <span className="principle-card__dot" aria-hidden="true"><span /></span>
+                <h3>Your winning trades stay yours.</h3>
+                <p>Maximum payouts are guaranteed at entry. No Auto-Deleverage. No socialized losses.</p>
+              </article>
+
+              <article className="principle-card">
+                <span className="principle-card__dot" aria-hidden="true"><span /></span>
+                <h3>No front-running. Ever.</h3>
+                <p>Orders commit without a price. A keeper reveals them at the oracle. Passive value extraction is impossible by design.</p>
+              </article>
+
+              <article className="principle-card">
+                <span className="principle-card__dot" aria-hidden="true"><span /></span>
+                <h3>Hold positions without bleeding fees.</h3>
+                <p>Carry fee proportional to leverage, not a variable funding rate. Predictable cost, no surprises.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section
+          ref={trustSectionRef}
+          className="landing-section landing-section--trust"
+          aria-labelledby="trust-title"
+        >
+          <div className="trust">
+            <span className={`trust__marker${trustMarkerSpinStep === 0 ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
+              <span key={`trust-marker-top-${trustMarkerSpinStep}`} />
+            </span>
+            <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
+            <div className="trust-slide-stage" role="list">
+              {TRUST_ITEMS.map((item, index) => {
+                const titleId = `trust-title-${index}`
+                const slideOffset = index - activeTrustSlideIndex
+                const isActive = activeTrustSlideIndex === index
+                const slideState = slideOffset < 0 ? 'previous' : slideOffset > 0 ? 'next' : 'active'
+
+                return (
+                  <div
+                    className={`trust-slide trust-slide--${slideState}`}
+                    role="listitem"
+                    key={item.title}
+                    aria-hidden={!isActive}
+                    style={{ '--trust-slide-offset': slideOffset } as CSSProperties}
+                  >
+                    <h3 className="trust-slide__title" id={titleId}>
+                      {item.title}
+                    </h3>
+                    <p className="trust-slide__description" aria-labelledby={titleId}>{item.description}</p>
+                  </div>
+                )
+              })}
+            </div>
+            <span
+              className={`trust__marker trust__marker--bottom${trustMarkerSpinStep === 0 ? '' : ' trust__marker--value-step'}`}
+              aria-hidden="true"
+            >
+              <span key={`trust-marker-bottom-${trustMarkerSpinStep}`} />
+            </span>
+          </div>
+        </section>
+
+        <SourceSection sectionRef={sourceSectionRef} />
+
+        <section
+          ref={ctaSectionRef}
+          className="landing-section landing-section--cta"
+          aria-labelledby="cta-title"
+        >
+          <div className="cta">
+            <h2 id="cta-title">
+              Onchain FX starts{' '}
+              <a className="cta__title-link" href={MANIFESTO_URL}>
+                here.
+              </a>
+            </h2>
+            <a className="launch-button cta__button" href={APP_URL} target="_blank" rel="noopener noreferrer">
+              <span className="button-label">Launch Testnet</span>
             </a>
-          </h2>
-          <a className="launch-button cta__button" href={APP_URL} target="_blank" rel="noreferrer">
-            <span className="button-label">Launch Testnet</span>
-          </a>
-        </div>
+          </div>
 
-        <SiteFooter footerRef={footerRef} />
-      </section>
-    </main>
+          <SiteFooter footerRef={footerRef} />
+        </section>
+      </main>
+    </>
   )
 }
 
@@ -892,24 +1042,25 @@ function ManifestoPage() {
 
   return (
     <div className="manifesto-shell">
+      <SkipLink />
       <SiteHeader theme="light" headerRef={headerRef} />
-      <main className="manifesto-page" aria-labelledby="manifesto-title">
+      <main id="main-content" className="manifesto-page" aria-labelledby="manifesto-title">
         <article className="manifesto">
           <h1 id="manifesto-title">Manifesto</h1>
           <div className="manifesto__copy">
             <p>
               We believe USD stablecoins already won.{' '}
               While{' '}
-              <a href={STABLECOINS_URL}>99% of stablecoins are already denominated in dollars</a>
+              <a href={STABLECOINS_URL} target="_blank" rel="noopener noreferrer">99% of stablecoins are already denominated in dollars</a>
               , Christine Lagarde from the European Central Bank has called them{' '}
-              <a href={ECB_STABLECOIN_URL}>&quot;not an efficient way to strengthen the international role of the euro.&quot;</a>{' '}
+              <a href={ECB_STABLECOIN_URL} target="_blank" rel="noopener noreferrer">&quot;not an efficient way to strengthen the international role of the euro.&quot;</a>{' '}
               Stablecoins became the working balance sheet of onchain finance. That balance sheet is denominated in dollars.
             </p>
             <p>That doesn&apos;t make the dollar fair. It makes it dominant.</p>
             <p>We&apos;ve watched what happens when you treat dominant money as safe money. Japanese dollar holders lost half their yen purchasing power after the 1985 Plaza Accord. European dollar holders lost 45% of their euro purchasing power during the 2002-2008 DXY collapse. We lived outside the US in 2025, when the dollar index fell 10% and our USDC stayed flat while our rent went up.</p>
             <p>This isn&apos;t a case against the dollar. The point is that holding any currency you don&apos;t spend is a position, whether you opted in or not.</p>
             <p>We want to give people the tools to hold the dollar without being silently long it. No investors. No roadmap to extract value from users we haven&apos;t earned.</p>
-            <p>The permissionless, self-custodial, and open-source layer above dollar stablecoins does not yet exist onchain. We are building it. The first instrument is a dollar index. One position to hedge or trade the dollar, powered by the largest stablecoin liquidity. Onchain macro starts here.</p>
+            <p>The permissionless, self-custodial, and open-source layer above dollar stablecoins does not yet exist onchain. We are building it. The first instrument is a dollar index. One position to hedge or trade the dollar, powered by the largest stablecoin liquidity. Onchain FX starts here.</p>
           </div>
         </article>
       </main>
@@ -918,23 +1069,39 @@ function ManifestoPage() {
   )
 }
 
-function MediaAssetPreview({ variant }: { variant: (typeof MEDIA_ASSETS)[number]['variant'] }) {
-  return (
+function MediaAssetPreview({ asset }: { asset: (typeof MEDIA_ASSETS)[number] }) {
+  const preview = (
     <div className="media-kit-preview media-kit-preview--brand">
-      {variant === 'logotype' ? (
-        <img className="media-kit-preview__logotype" src="/logotype.svg" alt="" />
+      {asset.variant === 'logotype' ? (
+        <img className="media-kit-preview__logotype" src="/logotype.svg" alt="Plether logotype" width={297} height={77} decoding="async" />
       ) : null}
-      {variant === 'lockup' ? (
+      {asset.variant === 'lockup' ? (
         <span className="media-kit-preview__lockup">
-          <img className="media-kit-preview__logomark" src="/logomark.svg" alt="" />
-          <img className="media-kit-preview__lockup-type" src="/logotype.svg" alt="" />
+          <img className="media-kit-preview__logomark" src="/logomark.svg" alt="" width={211} height={211} decoding="async" />
+          <img className="media-kit-preview__lockup-type" src="/logotype.svg" alt="Plether logo lockup" width={297} height={77} decoding="async" />
         </span>
       ) : null}
-      {variant === 'logomark' ? (
-        <img className="media-kit-preview__mark-only" src="/logomark.svg" alt="" />
+      {asset.variant === 'logomark' ? (
+        <img className="media-kit-preview__mark-only" src="/logomark.svg" alt="Plether logomark" width={211} height={211} decoding="async" />
       ) : null}
     </div>
   )
+
+  if ('downloadHref' in asset) {
+    return (
+      <a
+        className="media-kit-preview-link"
+        href={asset.downloadHref}
+        download={asset.downloadName}
+        aria-label={`Download ${asset.label} SVG`}
+        title={`Download ${asset.label} SVG`}
+      >
+        {preview}
+      </a>
+    )
+  }
+
+  return preview
 }
 
 function MediaKitPage() {
@@ -942,15 +1109,16 @@ function MediaKitPage() {
 
   return (
     <div className="media-kit-shell">
+      <SkipLink />
       <SiteHeader theme="light" headerRef={headerRef} />
-      <main className="media-kit-page" aria-labelledby="media-kit-title">
+      <main id="main-content" className="media-kit-page" aria-labelledby="media-kit-title">
         <section className="media-kit">
           <h1 id="media-kit-title">Media kit</h1>
 
           <div className="media-kit__asset-grid">
             {MEDIA_ASSETS.map((asset) => (
               <article className={`media-kit-item media-kit-item--${asset.variant}`} key={asset.label}>
-                <MediaAssetPreview variant={asset.variant} />
+                <MediaAssetPreview asset={asset} />
                 <h2>{asset.label}</h2>
               </article>
             ))}
@@ -964,10 +1132,15 @@ function MediaKitPage() {
                 <div
                   className="media-kit-preview media-kit-preview--color"
                   style={{ background: colorGroup.colors[1].value } as CSSProperties}
-                  aria-hidden="true"
                 >
                   {colorGroup.colors.map((color) => (
-                    <span className="media-kit-color-swatch" style={{ background: color.value }} key={color.code}>
+                    <span
+                      className="media-kit-color-swatch"
+                      style={{ background: color.value }}
+                      key={color.code}
+                      tabIndex={0}
+                      aria-label={`${colorGroup.label} ${color.code}`}
+                    >
                       <span className="media-kit-color-code">{color.code}</span>
                     </span>
                   ))}
@@ -983,14 +1156,44 @@ function MediaKitPage() {
   )
 }
 
-export function App() {
-  if (window.location.pathname === '/manifesto') {
+function NotFoundPage() {
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  return (
+    <div className="manifesto-shell">
+      <SkipLink />
+      <SiteHeader theme="light" headerRef={headerRef} />
+      <main id="main-content" className="not-found-page" aria-labelledby="not-found-title">
+        <section className="not-found">
+          <p className="not-found__code">404</p>
+          <h1 id="not-found-title">Page not found.</h1>
+          <p className="not-found__copy">The page you are looking for does not exist or has moved.</p>
+          <a className="launch-button cta__button" href="/">
+            <span className="button-label">Back to Home</span>
+          </a>
+        </section>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
+export function App({ pathname }: { pathname?: string }) {
+  const resolvedPathname = normalizePathname(
+    pathname ?? (typeof window !== 'undefined' ? window.location.pathname : '/'),
+  )
+
+  if (resolvedPathname === '/') {
+    return <LandingPage />
+  }
+
+  if (resolvedPathname === '/manifesto') {
     return <ManifestoPage />
   }
 
-  if (window.location.pathname === '/media-kit') {
+  if (resolvedPathname === '/media-kit') {
     return <MediaKitPage />
   }
 
-  return <LandingPage />
+  return <NotFoundPage />
 }
