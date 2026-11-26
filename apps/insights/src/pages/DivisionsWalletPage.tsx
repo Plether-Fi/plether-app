@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
+import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { WalletMetric as Metric } from '../components/WalletMetric'
 import { CurrentBadge } from '../divisions/CurrentBadge'
@@ -14,7 +15,48 @@ function TraderDetails({ address }: { address: string }) {
   const current = live?.standings?.find((row) => row.address.toLowerCase() === address.toLowerCase())
   const awarded = publication?.standings.find((row) => row.address.toLowerCase() === address.toLowerCase())
   const handle = current?.discordUsername ?? awarded?.displayName
+  const traderLabel = handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)
   const notFound = live && !current && !awarded && !liveQuery.isError && !publicationQuery.isLoading && !publicationQuery.isError
+
+  const shareCards: ShareCardOption[] = []
+  if (current && live) {
+    shareCards.push({
+      id: 'division-live',
+      label: 'Live Divisions Rank',
+      data: {
+        kind: 'division',
+        traderLabel,
+        account: address,
+        networkName: 'Arbitrum Sepolia',
+        tier: awarded?.tier ?? null,
+        rank: current.rank,
+        weeklyReturnLabel: formatRoi(current.weeklyReturnBps),
+        activeDays: current.activeDays,
+        weekLabel: `Week of ${formatUtc(live.weekStartsAt).slice(0, 11)}`,
+        provisional: true,
+      },
+    })
+  }
+  if (awarded && publication) {
+    shareCards.push({
+      id: 'division-awarded',
+      label: 'Published Divisions Badge',
+      data: {
+        kind: 'division',
+        traderLabel,
+        account: address,
+        networkName: 'Arbitrum Sepolia',
+        tier: awarded.tier,
+        rank: awarded.rank,
+        weeklyReturnLabel: formatReturn(awarded.weeklyPnlAssets, awarded.adjustedEquityAssets),
+        weeklyPnlAssets: awarded.weeklyPnlAssets,
+        activeDays: awarded.activeDays,
+        movement: awarded.movement,
+        weekLabel: `Ended ${formatUtc(publication.week.closesAt).slice(0, 11)}`,
+        provisional: false,
+      },
+    })
+  }
 
   return <div className="space-y-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -24,13 +66,16 @@ function TraderDetails({ address }: { address: string }) {
     <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">Plether Divisions · Trader</p>
-        <h1 className="mt-2 break-all text-3xl font-semibold sm:text-4xl">{handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}</h1>
+        <h1 className="mt-2 break-all text-3xl font-semibold sm:text-4xl">{traderLabel}</h1>
         <p className="mt-2 break-all font-mono text-xs text-content-secondary sm:text-sm">{address}</p>
         <a href={`https://sepolia.arbiscan.io/address/${address}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-brand-peach hover:underline">View on Arbiscan ↗</a>
       </div>
-      <div className="space-y-2 sm:text-right">
-        <p className="text-xs text-content-tertiary">Current badge</p>
-        <CurrentBadge tier={awarded?.tier} loading={publicationQuery.isLoading} unavailable={publicationQuery.isError && !publication} />
+      <div className="flex flex-col items-start gap-2.5 sm:items-end">
+        <div className="space-y-1 sm:text-right">
+          <p className="text-xs text-content-tertiary">Current badge</p>
+          <CurrentBadge tier={awarded?.tier} loading={publicationQuery.isLoading} unavailable={publicationQuery.isError && !publication} />
+        </div>
+        {shareCards.length > 0 ? <ShareCardModal cards={shareCards} triggerLabel="Share Divisions card" /> : null}
       </div>
     </div>
     <p className="text-sm text-content-secondary">Badges are awarded on Monday after the trading week ends. Live returns do not change your current badge.</p>

@@ -422,6 +422,12 @@ export function ExecutionPage() {
                               item={tradeToWalletActivity(trade)}
                               chainId={chainId}
                               compact
+                              shareContext={{
+                                traderLabel: shortAddress(trade.account),
+                                account: trade.account,
+                                networkName: chain.name,
+                                releaseVersion,
+                              }}
                             />
                           ) : (
                             <span className="font-mono text-xs text-content-tertiary">—</span>

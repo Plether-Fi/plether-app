@@ -126,6 +126,9 @@ import Plether.Handlers.InsightsLiquidity
   ( getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
   )
+import Plether.Handlers.InsightsWallets
+  ( getWalletSummaryResponse
+  )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Handlers.PasskeyNames (registerPasskeyNameRoutes)
@@ -589,6 +592,20 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
         case mPool of
           Just pool -> liftIO (getKeepersActivityResponse pool perpsClient cfg (maybe 50 id parsedLimit)) >>= handleResult
           Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/wallets/:address/summary" $ do
+    addr <- pathParam "address"
+    mLimit <- queryParamMaybe "limit"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else case traverse parseNonNegativeInt mLimit of
+        Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+        Just parsedLimit ->
+          case mPool of
+            Just pool ->
+              liftIO (getWalletSummaryResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
+                >>= handleResult
+            Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do

@@ -4,6 +4,7 @@ import type { WalletActivity } from '../api/types'
 import { explorerTxUrl } from '../utils/chain'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
 import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
+import { ShareCardModal } from './ShareCardModal'
 import { TradeBreakdownDetails } from './TradeBreakdown'
 
 function unsigned(value: string | null | undefined): bigint | null {
@@ -25,14 +26,23 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   </div>
 }
 
+export interface PositionShareContext {
+  traderLabel: string
+  account: string
+  networkName: string
+  releaseVersion?: string | null
+}
+
 export function PositionBreakdown({
   item,
   chainId,
   compact = false,
+  shareContext,
 }: {
   item: WalletActivity
   chainId?: number | null
   compact?: boolean
+  shareContext?: PositionShareContext
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -61,8 +71,37 @@ export function PositionBreakdown({
       className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto overscroll-contain border border-brand-border/40 bg-surface-panel p-0 text-content-primary shadow-2xl backdrop:bg-black/70">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-brand-border/25 bg-surface-panel px-4 py-4 sm:px-6">
         <h2 id={titleId} className="text-lg font-semibold">Position breakdown</h2>
-        <button type="button" onClick={() => { dialog.current?.close() }} aria-label="Close position breakdown"
-          className="min-h-10 cursor-pointer px-3 text-brand-peach focus-visible:outline focus-visible:outline-2">Close</button>
+        <div className="flex items-center gap-2">
+          {isClose && item.pnl && shareContext ? (
+            <ShareCardModal
+              compact
+              triggerLabel="Share PnL"
+              cards={[
+                {
+                  id: `trade-${item.id}`,
+                  label: 'Closed Position PnL',
+                  data: {
+                    kind: 'trade',
+                    traderLabel: shareContext.traderLabel,
+                    account: shareContext.account,
+                    networkName: shareContext.networkName,
+                    releaseVersion: shareContext.releaseVersion,
+                    market: item.market ?? 'plDXY-PERP',
+                    side: item.side,
+                    realizedPnlAssets: item.pnl,
+                    price: item.price,
+                    sizeDelta: item.sizeDelta,
+                    notionalAssets: receipt?.executionNotionalAssets ?? item.size,
+                    occurredAt: item.occurredAt,
+                    txHash: item.txHash,
+                  },
+                },
+              ]}
+            />
+          ) : null}
+          <button type="button" onClick={() => { dialog.current?.close() }} aria-label="Close position breakdown"
+            className="min-h-10 cursor-pointer px-3 text-brand-peach focus-visible:outline focus-visible:outline-2">Close</button>
+        </div>
       </header>
       {isOpen && <div className="space-y-5 px-4 py-5 sm:px-6">
         <p className="text-xs leading-5 text-content-secondary">This breakdown covers one execution. Other opens, increases, and closes are shown on their own activity rows.</p>

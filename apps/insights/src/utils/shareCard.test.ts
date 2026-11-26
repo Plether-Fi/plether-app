@@ -1,0 +1,120 @@
+import { describe, expect, it } from 'vitest'
+import {
+  SHARE_CARD_HEIGHT,
+  SHARE_CARD_WIDTH,
+  buildShareCardSvg,
+  buildShareTweetUrl,
+  escapeXml,
+  shareCardFilename,
+} from './shareCard'
+
+const account = `0x${'a'.repeat(40)}`
+
+describe('shareCard SVG & social helpers', () => {
+  it('renders a 1200x630 closed-position PnL card with USDG formatting and no dollar sign', () => {
+    const svg = buildShareCardSvg({
+      kind: 'trade',
+      traderLabel: '@alice_fx',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      releaseVersion: 'v2.0.0',
+      market: 'plDXY-PERP',
+      side: 'long',
+      realizedPnlAssets: '420500000',
+      price: '104500000000000000000',
+      sizeDelta: '500000000000000000000',
+      notionalAssets: '5000000000',
+      occurredAt: '2026-11-26T12:00:00Z',
+      txHash: `0x${'1'.repeat(64)}`,
+    })
+    expect(svg).toContain(`width="${String(SHARE_CARD_WIDTH)}"`)
+    expect(svg).toContain(`height="${String(SHARE_CARD_HEIGHT)}"`)
+    expect(svg).toContain('+420.50 USDG')
+    expect(svg).not.toContain('$')
+    expect(svg).toContain('CLOSED LONG')
+    expect(svg).toContain('@alice_fx')
+    expect(svg).toContain('Arbitrum Sepolia · v2.0.0')
+  })
+
+  it('renders a Divisions badge card with tier crest, rank, and weekly return', () => {
+    const svg = buildShareCardSvg({
+      kind: 'division',
+      traderLabel: '@pavilion6018',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      tier: 'Gold',
+      rank: 1,
+      weeklyReturnLabel: '+29.67%',
+      weeklyPnlAssets: '1250000000',
+      activeDays: 4,
+      movement: 'promoted',
+      weekLabel: 'Week of 23 Nov 2026',
+      provisional: false,
+    })
+    expect(svg).toContain('RANK #1')
+    expect(svg).toContain('GOLD DIVISION')
+    expect(svg).toContain('M82.9025 32.979L95.932 51.4464') // official gold.svg sunburst path
+    expect(svg).toContain('+29.67% weekly return')
+    expect(svg.match(/\+29\.67%/g)).toHaveLength(1) // never duplicate weekly return
+    expect(svg).toContain('PROMOTED')
+    expect(svg).toContain('4 / 5')
+
+    const unrankedSvg = buildShareCardSvg({
+      kind: 'division',
+      traderLabel: '@pavilion6018',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      tier: null,
+      rank: 1,
+      weeklyReturnLabel: '+28.35%',
+      activeDays: 2,
+      weekLabel: 'Week of 22 Nov 2026',
+      provisional: true,
+    })
+    expect(unrankedSvg).not.toContain('BADGE PENDING')
+    expect(unrankedSvg).not.toContain('LIVE DIVISION')
+    expect(unrankedSvg).not.toContain('stroke-dasharray')
+  })
+
+  it('renders an Open Position flex card with ROE and escapes XML characters in trader labels', () => {
+    const svg = buildShareCardSvg({
+      kind: 'position',
+      traderLabel: '<alpha & beta>',
+      account,
+      networkName: 'Arbitrum One',
+      releaseVersion: 'v2.0.0',
+      market: 'plDXY-PERP',
+      side: 'short',
+      size: '250000000000000000000',
+      entryPrice: '103250000000000000000',
+      marginAssets: '200000000',
+      unrealizedPnlAssets: '50000000',
+      liquidatable: false,
+    })
+    expect(svg).toContain('OPEN SHORT')
+    expect(svg).toContain('+50.00 USDG')
+    expect(svg).toContain('+25.00% ROE')
+    expect(svg).toContain('&lt;alpha &amp; beta&gt;')
+    expect(escapeXml('"test"')).toBe('&quot;test&quot;')
+  })
+
+  it('builds valid filenames and X share intent URLs', () => {
+    const data = {
+      kind: 'division' as const,
+      traderLabel: '@alice_fx',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      tier: 'Diamond' as const,
+      rank: 2,
+      weeklyReturnLabel: '+18.40%',
+      activeDays: 5,
+      weekLabel: 'Live Week',
+      provisional: true,
+    }
+    expect(shareCardFilename(data)).toBe('plether-division-alice_fx.png')
+    const url = buildShareTweetUrl(data, `https://insights.plether.com/wallets/${account}`)
+    expect(url).toContain('https://x.com/intent/tweet?')
+    expect(url).toContain('Rank+%232')
+    expect(url).toContain('Diamond+Division')
+  })
+})
