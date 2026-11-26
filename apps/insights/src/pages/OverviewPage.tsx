@@ -185,7 +185,7 @@ export function OverviewPage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
                   For Traders
                 </p>
-                <StatusPill tone="unknown" label="Stage 2 API pending" />
+                <StatusPill tone="ready" label="Stage 2 wired" />
               </div>
               <h3 className="mt-3 text-xl font-semibold">Execution Quality &amp; Trade Tape</h3>
               <p className="mt-2 text-sm leading-6 text-content-secondary">

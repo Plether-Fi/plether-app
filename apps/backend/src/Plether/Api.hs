@@ -116,6 +116,12 @@ import Plether.Handlers.Insights
   , getDivisionsLiveResponse
   , getDivisionsStatsResponse
   )
+import Plether.Handlers.InsightsExecution
+  ( getExecutionQualityResponse
+  , getExecutionTradesResponse
+  , getKeepersActivityResponse
+  , getKeepersStatusResponse
+  )
 import Plether.Handlers.InsightsLiquidity
   ( getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
@@ -555,6 +561,34 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
     case mPool of
       Just pool -> liftIO (getLiquidityForensicsResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/execution/quality" $
+    case mPool of
+      Just pool -> liftIO (getExecutionQualityResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/execution/trades" $ do
+    mLimit <- queryParamMaybe "limit"
+    case traverse parseNonNegativeInt mLimit of
+      Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool -> liftIO (getExecutionTradesResponse pool cfg (maybe 30 id parsedLimit)) >>= handleResult
+          Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/keepers/status" $
+    case mPool of
+      Just pool -> liftIO (getKeepersStatusResponse pool perpsClient cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/keepers/activity" $ do
+    mLimit <- queryParamMaybe "limit"
+    case traverse parseNonNegativeInt mLimit of
+      Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool -> liftIO (getKeepersActivityResponse pool perpsClient cfg (maybe 50 id parsedLimit)) >>= handleResult
+          Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do
