@@ -605,4 +605,90 @@ describe('Cloudflare Pages Worker', () => {
     expect(csp).not.toContain('wasm-unsafe-eval')
     expect(csp.match(/https:\/\/\*\.[^; ]+/g)).toEqual(['https://*.rpc.privy.systems'])
   })
+
+  it.each([520, 522, 524, 525])('retries an idempotent GET once on Cloudflare origin status %i', async (originStatus) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('origin error', { status: originStatus }))
+      .mockResolvedValueOnce(Response.json({ healthy: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(apiRequest(), {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: assets,
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ healthy: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries an idempotent GET once on transport failure and recovers', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('socket hang up'))
+      .mockResolvedValueOnce(Response.json({ healthy: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(apiRequest(), {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: assets,
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ healthy: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns a controlled 503 with security headers when both origin attempts fail', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchMock = vi.fn().mockRejectedValue(new Error('origin timeout'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(apiRequest(), {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: assets,
+    })
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('retry-after')).toBe('1')
+    expect(response.headers.get('x-frame-options')).toBe('DENY')
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'edge_proxy_unavailable',
+        message: 'The edge proxy is temporarily unavailable.',
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('never retries OAuth callbacks or POST mutations', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchMock = vi.fn().mockRejectedValue(new Error('origin reset'))
+    vi.stubGlobal('fetch', fetchMock)
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      INSIGHTS_REGISTRATION_PUBLIC_ORIGIN: 'https://insights.plether.com',
+      INSIGHTS_REGISTRATION_ORIGIN_TOKEN: 'trusted-pages-secret',
+      ASSETS: assets,
+    }
+
+    const callbackResponse = await worker.fetch(
+      new Request(
+        'https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback?code=provider-code&state=opaque',
+        { headers: { 'Sec-Fetch-Site': 'cross-site' } },
+      ),
+      env,
+    )
+    const postResponse = await worker.fetch(
+      new Request(
+        'https://insights.plether.com/api/insights/v1/divisions/registrations/session',
+        { method: 'POST', headers: { Origin: 'https://insights.plether.com' } },
+      ),
+      env,
+    )
+
+    expect(callbackResponse.status).toBe(503)
+    expect(postResponse.status).toBe(503)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })

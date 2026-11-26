@@ -1,175 +1,125 @@
 # Keepers and permissionless execution
 
-Keepers are independent actors who submit transactions that move Plether from one valid onchain state to the next.
+Keepers are independent operators that submit permissionless transactions advancing Plether from one valid onchain state to the next. There is no allowlist, registration process or privileged onchain keeper role — any funded address submitting a valid call acts as keeper for that transaction.
 
-A keeper may be a person running a script, a professional automation operator or a trader finalizing an eligible action. There is no keeper allowlist, registration process or special onchain role. If an action is permissionless and an address submits a transaction that satisfies the protocol's rules, that address acts as the keeper for that transaction.
+Keepers never custody trader or LP[^lp] funds and cannot choose arbitrary fills. Smart contracts independently verify every call against queue order, Pyth[^pyth] proofs, price limits and solvency checks.
 
-Keepers do not custody trader or LP[^lp] funds. They also do not decide whether a transaction should be accepted. Plether's smart contracts independently verify every submitted action and revert or record a terminal failure when its requirements are not met.
+## What keepers do across Plether
 
-### What keepers do
+Plether separates liveness responsibilities into dedicated, unprivileged services (all reference operators in `Plether-Fi/plether-app`):
 
-Plether uses delayed execution. Committing an order records a binding instruction, but it does not immediately create, change or close a position. A later transaction must finalize that order.
+| Worker | Implementation | Responsibility |
+| --- | --- | --- |
+| **Order keeper** (`plether-keeper`) | Haskell (`apps/backend/app/Keeper.hs`) | Processes the global FIFO[^fifo] order queue (`executeOrder` / `executeOrderBatch`) with historical Pyth proofs and cleans up expired queue heads (`expireOrder`) |
+| **LP settlement keeper** *(embedded in `plether-keeper`)* | Haskell (`LP_SETTLEMENT_MODE`) | Settles matured hourly LP vault epochs in strict 4-phase order: **1. Senior withdraw → 2. Junior withdraw → 3. Junior deposit → 4. Senior deposit** |
+| **Liquidation worker** (`plether-liquidation-worker`) | Haskell (`apps/backend/app/LiquidationWorker.hs`) | Indexes `PositionOpened`, verifies account health onchain, simulates liquidations with fresh Pyth payloads and submits valid full liquidations |
+| **TP/SL protection worker** (`plether-position-protection-worker`) | Node.js (`apps/backend/protection-worker/main.mjs`) | Indexes `PositionProtectionBook`, triggers armed TP/SL exits (queuing a full close into FIFO) and retries latched `Expired` close attempts |
+| **Basket cache worker** (`plether-basket-worker`) | Haskell (`apps/backend`) | Polls Hermes every `5s` for batched 6-feed Pyth updates and caches signed payloads in PostgreSQL |
+| **Oracle mark updater** (`perps-oracle-worker.mjs`) | Node.js ([`apps/frontend/scripts/perps-oracle-worker.mjs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/frontend/scripts/perps-oracle-worker.mjs)) | Optional updater that polls every `5s` and refreshes `PletherOracle`'s accepted live basket onchain every `30s` (`50s` max payload age) |
 
-For normal order execution, a keeper:
+## What a keeper can and cannot control
 
-1. Watches for committed orders.
-2. Starts with the head of the global FIFO[^fifo] queue.
-3. Waits until the post-commit and oracle conditions are satisfied.
-4. Supplies the eligible Pyth[^pyth] update data and pays the required oracle update fee.
-5. Calls the order router to execute one order or a consecutive batch.
-6. Clears an expired queue head when it can no longer execute.
+Keepers provide **liveness**, not pricing discretion. Contracts enforce:
 
-Keepers can also perform other permissionless protocol actions. The most important protective example is liquidation: when an account is at or below the applicable maintenance requirement, any address may submit a valid liquidation with the required oracle data.
+* **Strict FIFO:** Keepers must start at `nextExecuteId` and cannot skip an eligible head.
+* **Post-commit historical pricing:** Live/FAD execution requires the first eligible Pyth observation strictly after commitment inside the settlement window.
+* **Market-state rules, acceptable prices & risk checks:** Keepers cannot override `oracleFrozen`, trader execution limits, margin rules or pool solvency.
 
-The current Plether order keeper automates the perps order queue. It indexes order events, re-reads pending orders from the contracts, selects eligible historical Pyth payloads, batches consecutive executable orders and clears expired queue heads.
+The web app routes execution and expiry cleanup to Plether's keepers so traders never pay ETH; direct permissionless callers can always invoke the same contracts with their own tooling.
 
-Liquidation is automated by a separate `plether-liquidation-worker`. It discovers accounts from `PositionOpened` events, verifies their current position state onchain, uses the latest cached Pyth payload and simulates the canonical liquidation call before submitting it. Onchain mark updates can also be automated by the separate, optional `plether-oracle-worker`. These programs are reference operators, not privileged protocol roles.
+## Keeper incentives and operating costs (Core v2.0.0)
 
-### The TP/SL protection worker
+| Action | Keeper reward | Operator costs |
+| --- | --- | --- |
+| **Execute or clean up an open / increase** | `1 bp` of commit notional, clamped **`0.01–0.20 USDG`**[^usdg] (credited to caller's Margin Account) | Network gas + Pyth update fee (for priced execution) |
+| **Execute or clean up a reduction / close** | **`0 USDG`** (including TP/SL closes) | Network gas + Pyth update fee |
+| **Trigger an armed TP/SL protection** | **`0.20 USDG`** | Network gas + Pyth update fee |
+| **Liquidate an unhealthy account** | **`50%`** of collected `0.10%` liquidation charge (min **`0.50 USDG`**; remaining `50%` goes to LPs, `0%` to protocol) | Network gas + Pyth update fee |
+| **Settle hourly LP epoch** | No direct USDG bounty (protocol liveness maintenance) | Network gas + Pyth update fee (when fresh mark needed) |
 
-TP/SL monitoring is handled by a separate `plether-position-protection-worker`. It indexes protection events, reads current contract state and submits eligible trigger transactions. The resulting full-position close enters the order router's queue, where the order keeper handles execution.
+Rewards are never guaranteed profit — gas spikes, reverts or keeper races can exceed rewards.
 
-The protection worker also considers retries for latched close attempts that expired, checks pending orders and queue capacity, and can clear an eligible expired queue entry before retrying. Other failure reasons require operator review. A retry does not require another crossing of the original trigger: a latched exit remains binding.
+### Hermes data access vs onchain Pyth update fees
 
-These are separate services with separate responsibilities, not privileged contract roles. The protection worker needs a funded dedicated signer to submit transactions; monitoring-only mode does not execute triggers or retries. Its status notice is advisory, not proof that a close executed. Read [Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md) for states, reserves and limitations.
+* **Hermes API access** is an offchain dependency (`PYTH_HERMES_URL`, optionally `PYTH_API_KEY`) that fetches signed 6-feed Pyth payloads. Contracts verify Pyth's cryptographic signatures regardless of which Hermes-compatible server supplied the bytes (you may point `PYTH_HERMES_URL` at Pyth's hosted endpoint, a third-party provider or a self-hosted Hermes instance).
+* **Onchain Pyth update fees** are paid in native ETH inside the transaction alongside network gas. Review Pyth's [Hermes guidance](https://docs.pyth.network/price-feeds/core/how-pyth-works/hermes) and [current onchain fees](https://docs.pyth.network/price-feeds/core/current-fees).
 
-The reference implementation is in [`apps/backend/protection-worker`](https://github.com/Plether-Fi/plether-app/tree/master/apps/backend/protection-worker). It is a Node.js service, separate from the Haskell order-keeper commands below.
+## Running the Core v2.0.0 reference workers
 
-### Why keepers matter
+### Single-source manifest verification (30 contracts)
 
-Keepers provide **liveness**. Smart contracts validate transactions, but they do not wake up and submit transactions by themselves. Without a finalizer, a committed order remains pending until someone executes or clears it.
+In Core v2.0.0, `plether-keeper`, `plether-liquidation-worker` and `protection-worker` no longer rely on ad-hoc per-contract address environment variables. Instead, the checked-in **schema-4 release manifest** (`config/perps/arbitrum-sepolia-v2.0.0.json`, pinning all **30 contract addresses and runtime bytecode hashes** plus `deploymentBlock: 323658447`) is embedded at compile time (Haskell `Plether.Perps.Manifest`) or loaded directly (Node.js workers), and startup audits RPC chain ID (`421614`), bytecode hashes and contract bindings fail-closed. See [Deployments & live parameters](../reference/deployments-and-parameters.md).
 
-Permissionless keeper participation is important because it:
+### 1. Shared configuration (Haskell workers)
 
-* avoids making one operator the protocol's only execution path;
-* allows another operator or the trader to act when the usual automation is unavailable;
-* creates an open incentive to process orders and liquidations;
-* helps remove expired orders that would otherwise block the FIFO queue; and
-* enables timely liquidation of unsafe accounts before losses can grow.
-
-Keeper availability is still an operational dependency. Network congestion, RPC failures, unavailable oracle data or all active keepers going offline can delay execution. Permissionless access reduces reliance on a designated operator, but it does not guarantee that a profitable keeper will always be available.
-
-### What a keeper can and cannot choose
-
-Being permissionless does not give keepers discretion over protocol outcomes.
-
-For queued orders, the contracts enforce:
-
-* **FIFO ordering:** a keeper cannot skip a valid queue head to execute a later order;
-* **post-commit pricing:** live execution uses the first eligible Pyth observation after commitment;
-* **the settlement window:** the submitted observation must belong to the order's permitted time window;
-* **market-state policy:** live, protective and frozen-market execution follow their respective rules;
-* **the trader's execution limit:** an order fails rather than executing beyond its accepted boundary; and
-* **account, margin and solvency checks:** a keeper cannot bypass protocol risk controls.
-
-A keeper can choose when to submit a valid transaction and what gas fee to offer. It cannot choose an arbitrary execution price, reorder valid orders or force the contracts to accept invalid data. This separation preserves open participation without trusting keepers to price trades.
-
-Read [How orders execute](how-orders-execute.md) for the complete pricing and queue rules.
-
-The current Plether interface leaves order finalization and expired-order cleanup to the keeper service. This is an interface policy, not a contract restriction: direct callers may still use the permissionless contract entrypoints with their own transaction tooling.
-
-### Keeper incentives and costs
-
-An open or increase reserves an execution reward in USDG[^usdg] when it is committed. When that order executes, or when its terminal failure or expiry is processed, the reward is credited to the caller's Plether Margin Account. Reductions and full closes, including TP/SL close orders, reserve and pay no execution reward. TP/SL triggering has a separate configured reward. A successful liquidator receives the applicable liquidation bounty instead.
-
-The operator pays the transaction costs required to attempt the action, including network gas and, where applicable, the Pyth update fee. Processing a reduction or close does not earn an order-execution reward. Where a reward applies, it is not guaranteed profit: costs can exceed it, and transactions can revert or lose a race to another keeper. Operators should model fees, failure rates, competition and infrastructure costs before running a live service.
-
-#### Hermes access is a separate operating cost
-
-The reference keeper does not calculate the six FX prices itself. Its basket worker retrieves signed Pyth update payloads from a Hermes-compatible API and caches them for order execution.
-
-Hermes data access and the onchain Pyth update fee are different costs:
-
-* **Hermes access** is an offchain API dependency. It may require an API key and paid data plan. Pricing, request quotas and feed coverage are set by Pyth or the selected provider and may change.
-* **The Pyth update fee** is paid in the network's native token when the keeper submits update data onchain. It is paid in addition to transaction gas.
-
-The Plether basket worker defaults to one batched six-feed Hermes request every five seconds and backs off after a rate-limit response. Hermes availability or an insufficient API quota can therefore delay finalization. Check Pyth's current [Hermes access guidance](https://docs.pyth.network/price-feeds/core/how-pyth-works/hermes), [data-plan information](https://docs.pyth.network/price-feeds/core/upgrade/preparing) and [onchain update fees](https://docs.pyth.network/price-feeds/core/current-fees) when estimating keeper costs.
-
-#### Is the public Hermes endpoint mandatory?
-
-No. Plether's contracts require a valid Pyth-signed update payload; they do not trust or identify the HTTP server from which the keeper obtained it. The reference implementation currently consumes the Hermes API format, but `PYTH_HERMES_URL` can point to Pyth's hosted service or another compatible Hermes provider. Pyth also publishes Hermes as open-source software.
-
-This means the current reference keeper requires **Hermes-compatible delivery**, not one specific hosted endpoint. It cannot replace the Pyth payload with data from an unrelated FX API or another oracle network. That would require a protocol-level oracle change. Running another Hermes instance or choosing another provider may improve infrastructure independence, but it does not necessarily remove Pyth data-access terms or costs.
-
-### How to become a keeper
-
-At the protocol level, no enrollment is required. You need:
-
-* a wallet dedicated to keeper operations;
-* the network's native token for gas and Pyth update fees;
-* a reliable RPC connection;
-* software that identifies eligible actions and constructs valid calls; and
-* monitoring for failed, reverted, delayed or replaced transactions.
-
-You may build your own keeper against the public contracts or run Plether's open-source reference implementation:
-
-* [`apps/backend/app/Keeper.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/app/Keeper.hs) is the executable entry point.
-* [`apps/backend/src/Plether/Keeper.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/src/Plether/Keeper.hs) contains the queue, payload-selection, batching and transaction-submission logic.
-* [`apps/backend/app/LiquidationWorker.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/app/LiquidationWorker.hs) is the separate liquidation executable entry point.
-* [`apps/backend/src/Plether/LiquidationWorker.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/src/Plether/LiquidationWorker.hs) contains liquidation discovery, simulation and submission logic.
-
-The reference service requires GHC 9.4+, Cabal 3.0+, PostgreSQL and an RPC endpoint. It also depends on the Plether basket worker to cache the Pyth payloads used for execution.
-
-From `apps/backend`, configure the shared deployment, order-keeper and basket-worker values. Add `PYTH_API_KEY` only if the selected Hermes provider requires one:
+Requires GHC 9.4+, Cabal 3.0+, PostgreSQL and an Arbitrum Sepolia RPC endpoint. Use **separate dedicated funded EOAs** for every worker (never reuse keys across order, liquidation, LP settlement, protection or oracle workers):
 
 ```bash
 export DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE
-export PERPS_RPC_URL=https://YOUR_RPC_ENDPOINT
-export KEEPER_PRIVATE_KEY=0xYOUR_DEDICATED_KEEPER_PRIVATE_KEY
-export CHAIN_ID=YOUR_CHAIN_ID
-export PERPS_CHAIN_ID=YOUR_CHAIN_ID
-export PERPS_ORDER_ROUTER=0xYOUR_ORDER_ROUTER
-export PERPS_PLETHER_ORACLE=0xYOUR_PLETHER_ORACLE
-export PERPS_CFD_ENGINE=0xYOUR_CFD_ENGINE
-export PERPS_INDEXER_START_BLOCK=YOUR_DEPLOYMENT_START_BLOCK
-export PYTH_HERMES_URL=https://YOUR_HERMES_ENDPOINT
-# export PYTH_API_KEY=YOUR_SERVER_SIDE_API_KEY
+export PERPS_RPC_URL=https://YOUR_ARBITRUM_SEPOLIA_RPC
+export CHAIN_ID=421614
+export PERPS_CHAIN_ID=421614
+export PYTH_HERMES_URL=https://hermes.pyth.network
+# export PYTH_API_KEY=YOUR_SERVER_SIDE_API_KEY   # if required by provider
+export KEEPER_PRIVATE_KEY=0xYOUR_ORDER_KEEPER_KEY
 ```
 
-Use the current deployment addresses for the network you intend to serve. Never assume that example or testnet addresses are valid for another deployment.
+### 2. Run the basket cache & order keeper
 
-Keep the Pyth cache populated in a separate process:
+Keep the Pyth payload cache running in its own process:
 
 ```bash
-RPC_URL=https://YOUR_RPC_ENDPOINT \
-CHAIN_ID=YOUR_CHAIN_ID \
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE \
+RPC_URL=$PERPS_RPC_URL \
 cabal run plether-basket-worker -- --latest-loop
 ```
 
-Then validate the keeper without submitting transactions:
+Dry-run, then start the continuous order keeper:
 
 ```bash
 cabal run plether-keeper -- --once --dry-run
-```
-
-After checking the selected network, contract addresses, wallet and logs, start the continuous keeper:
-
-```bash
 cabal run plether-keeper
 ```
 
-To operate liquidations, fund and configure a separate signer so it does not contend with the order keeper's nonce sequence. Test the dedicated worker before starting its continuous loop:
+### 3. Enable the embedded LP settlement keeper (Arbitrum Sepolia)
+
+The LP epoch settlement worker runs on its own thread, database connection, advisory lock and signer inside `plether-keeper`. It supports three modes via `LP_SETTLEMENT_MODE`:
+
+* **`off`** — disabled (default; required on non-Sepolia networks)
+* **`observe`** — audits invariants, builds and simulates exact settlement transactions without signing or broadcasting
+* **`execute`** — persists signed intents in PostgreSQL before broadcast and recovers/replaces at the same nonce across restarts
+
+Active modes (`observe` / `execute`) require `LP_SETTLEMENT_POLL_SECONDS=15` and a dedicated funded `LP_SETTLEMENT_PRIVATE_KEY`. Always pass the read-only preflight gate first:
 
 ```bash
-LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
-cabal run plether-liquidation-worker -- --once --dry-run
+export LP_SETTLEMENT_MODE=observe
+export LP_SETTLEMENT_POLL_SECONDS=15
+export LP_SETTLEMENT_PRIVATE_KEY=0xYOUR_DEDICATED_LP_SETTLEMENT_KEY
+
+cabal run plether-keeper -- --lp-settlement-preflight
 ```
 
-After reviewing the dry-run output, start its continuous loop:
+Require exit code `0` (`lp_settlement_preflight_succeeded`) before switching to `LP_SETTLEMENT_MODE=execute`.
+
+### 4. Run the liquidation worker
 
 ```bash
-LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_DEDICATED_LIQUIDATION_KEY \
+cabal run plether-liquidation-worker -- --once --dry-run
+
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_DEDICATED_LIQUIDATION_KEY \
 cabal run plether-liquidation-worker
 ```
 
-Use separately funded dedicated keys with only the funds needed for each worker, protect them as production infrastructure and monitor their native-token balances. Multiple operators may compete to execute the same action; the first valid transaction included onchain wins the execution opportunity.
+### 5. Run the TP/SL protection worker (Node.js)
 
-### Keepers are executors, not administrators
+[`apps/backend/protection-worker/main.mjs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/protection-worker/main.mjs) runs independently of the Haskell workers using the same `DATABASE_URL`, `PERPS_RPC_URL` and Core v2.0.0 manifest:
 
-A keeper's authority begins and ends with submitting calls that anyone may submit. Keepers cannot change risk parameters, move user funds arbitrarily or override the oracle and queue rules.
+* **Observe-only by default:** `PROTECTION_WORKER_EXECUTION_ENABLED=false` (never signs transactions unless explicitly enabled with a dedicated funded `PROTECTION_WORKER_PRIVATE_KEY`).
+* **Operational behavior:** Indexes `PositionProtectionBook` events **12 confirmations behind head** (with reorg rollback/replay), evaluates up to 50 candidates every **`5 seconds`**, requires fresh cached Pyth payloads (max `15s` old), submits one simulated transaction per action (no fee-bumping), and automatically retries **only** latched `Expired` close attempts (other failure reasons require operator review).
 
-That is the core design: **open execution, constrained by onchain verification.**
+## Keepers are executors, not administrators
+
+A keeper's authority begins and ends with submitting permissionless calls anyone can submit. Keepers cannot alter parameters, bypass FIFO or oracle validation, or move user funds — **open execution, enforced entirely onchain.**
 
 [^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.

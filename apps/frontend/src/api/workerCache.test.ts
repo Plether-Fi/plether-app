@@ -486,7 +486,7 @@ describe('Perps public edge caching', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const response = await worker.fetch(
-      new Request('https://app.example/api/perps/v1/perps/basket/latest?secret=hidden'),
+      new Request('https://app.example/api/perps/v1/perps/accounts/0x1111111111111111111111111111111111111111/orders?secret=hidden'),
       workerEnv(),
       executionContext()
     )
@@ -503,8 +503,52 @@ describe('Perps public edge caching', () => {
     expect(consoleError).toHaveBeenCalledOnce()
     const logEntry = String(consoleError.mock.calls[0]?.[0])
     expect(logEntry).toContain('origin unavailable')
-    expect(logEntry).toContain('/api/perps/v1/perps/basket/latest')
+    expect(logEntry).toContain('/api/perps/v1/perps/accounts/0x1111111111111111111111111111111111111111/orders')
     expect(logEntry).not.toContain('secret=hidden')
+  })
+
+  it('rejects cache-busting query and trailing-slash vectors at the edge without calling origin', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_100_000)
+    const fetchMock = vi.fn(async () => jsonResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const invalidQueryUrls = [
+      'https://app.example/api/perps/v1/perps/basket/candles/current?interval=900&rand=12345',
+      'https://app.example/api/perps/v1/perps/basket/candles/current?rand12345',
+      'https://app.example/api/perps/v1/perps/basket/candles/current?interval=900&interval=900',
+      'https://app.example/api/perps/v1/perps/basket/candles/current?interval=61',
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800000000&rand=1',
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1',
+      'https://app.example/api/perps/v1/perps/basket/latest?rand=1',
+      'https://app.example/api/perps/v1/perps/market/stats?rand=1',
+      'https://app.example/api/perps/v1/perps/vaults/activity?rand=1',
+      'https://app.example/api/perps/v1/perps/vaults/history?range=7d&interval=3600&rand=1',
+      'https://app.example/api/perps/v1/perps/basket/history?range=7d&interval=300&rand=1',
+      'https://app.example/api/perps/v1/perps/basket/history?range=7d&interval=300&includeComponents=true',
+    ]
+
+    for (const url of invalidQueryUrls) {
+      const response = await worker.fetch(new Request(url), workerEnv(), executionContext())
+      expect(response.status).toBe(400)
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'INVALID_AMOUNT' },
+      })
+    }
+
+    const trailingSlashUrls = [
+      'https://app.example/api/perps/v1/perps/basket/candles/current/?rand12345',
+      'https://app.example/api/perps/v1/perps/basket/latest/?rand12345',
+      'https://app.example/api/perps/v1/?rand12345',
+    ]
+
+    for (const url of trailingSlashUrls) {
+      const response = await worker.fetch(new Request(url), workerEnv(), executionContext())
+      expect(response.status).toBe(404)
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('never serves current-candle cache entries beyond the freshness budget', async () => {

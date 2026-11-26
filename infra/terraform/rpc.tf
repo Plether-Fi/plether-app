@@ -5,8 +5,12 @@ locals {
     ami_id               = "", nitro_image = "", snapshot_url = "", snapshot_metadata_sha256 = "",
     hostname             = "", certificate_arn = "", parent_parameter = "", gateway_token_parameter = "",
     backup_url_parameter = "", backup_token_parameter = "", reference_url_parameter = "", reference_token_parameter = "", kms_key_arns = [],
-    state_history_blocks = 345600, staging_volume_gib = 4096, gateway_image = ""
+    state_history_blocks = 345600, staging_volume_gib = 4096, gateway_image = "", instance_type = "i4i.4xlarge"
   } : var.sepolia_rpc
+  rpc_chain_id_int     = var.environment == "mainnet" ? 42161 : 421614
+  rpc_chain_id_hex     = var.environment == "mainnet" ? "0xa4b1" : "0x66eee"
+  rpc_chain_name       = var.environment == "mainnet" ? "arb1" : "sepolia-rollup"
+  rpc_parent_chain_id  = var.environment == "mainnet" ? 1 : 11155111
   rpc_gateway_count    = local.rpc_enabled && local.rpc.gateway_image != "" ? 1 : 0
   rpc_config_parameter = "/plether/${local.deployment_name}/rpc-node/config"
   rpc_user_data = templatefile("${path.module}/../rpc/node/user-data.sh.tftpl", {
@@ -29,16 +33,23 @@ resource "terraform_data" "rpc_guard" {
   count = local.rpc_count
   lifecycle {
     precondition {
-      condition     = var.environment == "sepolia" && var.aws_region == "ap-southeast-1" && var.perps_chain_id == "421614" && var.sepolia_rpc != null
-      error_message = "The RPC pilot requires explicit configuration and Singapore Arbitrum Sepolia chain 421614."
+      condition = (
+        var.aws_region == "ap-southeast-1"
+        && var.sepolia_rpc != null
+        && (
+          (var.environment == "sepolia" && var.perps_chain_id == "421614" && startswith(local.rpc.snapshot_url, "https://snapshot.arbitrum.foundation/sepolia-rollup/"))
+          || (var.environment == "mainnet" && var.perps_chain_id == "42161" && startswith(local.rpc.snapshot_url, "https://snapshot.arbitrum.foundation/arb1/"))
+        )
+      )
+      error_message = "Self-hosted RPC requires explicit Singapore configuration with matching environment, chain ID (421614 for sepolia, 42161 for mainnet), and official snapshot directory."
     }
     precondition {
-      condition     = local.rpc.gateway_image == "" || startswith(local.rpc.gateway_image, "${data.aws_caller_identity.current.account_id}.dkr.ecr.")
-      error_message = "The gateway image must belong to the selected AWS account."
+      condition     = local.rpc.gateway_image == "" || startswith(local.rpc.gateway_image, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/plether-rpc-gateway-${local.deployment_name}@sha256:")
+      error_message = "The gateway image must belong to the selected AWS account and environment repository."
     }
     precondition {
       condition     = can(regex("^arn:aws:sns:ap-southeast-1:[0-9]{12}:[A-Za-z0-9_-]+$", var.operations_alarm_sns_topic_arn))
-      error_message = "The RPC pilot requires an operations SNS topic before starting a stateful node."
+      error_message = "Self-hosted RPC requires an operations SNS topic before starting a stateful node."
     }
   }
 }
@@ -67,7 +78,7 @@ data "aws_ami" "rpc" {
 
 resource "aws_security_group" "rpc_node" {
   count       = local.rpc_count
-  name_prefix = "plether-sepolia-rpc-node-"
+  name_prefix = "plether-${local.deployment_name}-rpc-node-"
   description = "Nitro RPC only from the private gateway; no public RPC or SSH."
   vpc_id      = local.rpc_vpc_id
   egress {
@@ -80,7 +91,7 @@ resource "aws_security_group" "rpc_node" {
 
 resource "aws_security_group" "rpc_gateway" {
   count       = local.rpc_count
-  name_prefix = "plether-sepolia-rpc-gateway-"
+  name_prefix = "plether-${local.deployment_name}-rpc-gateway-"
   vpc_id      = local.rpc_vpc_id
 }
 
@@ -97,7 +108,7 @@ resource "aws_vpc_security_group_egress_rule" "rpc_gateway_https" {
 
 resource "aws_security_group" "rpc_alb" {
   count       = local.rpc_count
-  name_prefix = "plether-sepolia-rpc-alb-"
+  name_prefix = "plether-${local.deployment_name}-rpc-alb-"
   vpc_id      = local.rpc_vpc_id
 }
 
@@ -148,7 +159,7 @@ resource "aws_vpc_security_group_ingress_rule" "rpc_alb_from_ecs" {
 
 resource "aws_iam_role" "rpc_node" {
   count = local.rpc_count
-  name  = "plether-sepolia-rpc-node"
+  name  = "plether-${local.deployment_name}-rpc-node"
   assume_role_policy = jsonencode({
     Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ec2.amazonaws.com" } }]
   })
@@ -161,7 +172,7 @@ resource "aws_iam_role_policy" "rpc_node" {
     Version = "2012-10-17", Statement = [
       { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = ["${local.rpc_parameter_prefix}${local.rpc.parent_parameter}", "${local.rpc_parameter_prefix}${local.rpc_config_parameter}"] },
       { Effect = "Allow", Action = ["ssm:UpdateInstanceInformation", "ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel", "ec2messages:AcknowledgeMessage", "ec2messages:DeleteMessage", "ec2messages:FailMessage", "ec2messages:GetEndpoint", "ec2messages:GetMessages", "ec2messages:SendReply"], Resource = "*" },
-      { Effect = "Allow", Action = ["ssm:GetDocument", "ssm:DescribeDocument"], Resource = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/plether-sepolia-rpc-node-admin", "arn:aws:ssm:${var.aws_region}:*:document/SSM-SessionManagerRunShell"] },
+      { Effect = "Allow", Action = ["ssm:GetDocument", "ssm:DescribeDocument"], Resource = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/plether-${local.deployment_name}-rpc-node-admin", "arn:aws:ssm:${var.aws_region}:*:document/SSM-SessionManagerRunShell"] },
       { Effect = "Allow", Action = ["kms:Decrypt"], Resource = concat([data.aws_kms_key.rpc_ssm[0].arn], local.rpc.kms_key_arns), Condition = { StringEquals = { "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com" } } },
       { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.rpc_node[0].arn}:*" },
       { Effect = "Allow", Action = ["cloudwatch:PutMetricData"], Resource = "*", Condition = { StringEquals = { "cloudwatch:namespace" = "Plether/RPC" } } },
@@ -172,7 +183,7 @@ resource "aws_iam_role_policy" "rpc_node" {
 
 resource "aws_iam_instance_profile" "rpc_node" {
   count = local.rpc_count
-  name  = "plether-sepolia-rpc-node"
+  name  = "plether-${local.deployment_name}-rpc-node"
   role  = aws_iam_role.rpc_node[0].name
 }
 
@@ -183,7 +194,7 @@ resource "aws_ebs_volume" "rpc_staging" {
   size              = local.rpc.staging_volume_gib
   throughput        = 500 # Multi-terabyte parts, concatenation and extraction.
   encrypted         = true
-  tags              = { Name = "plether-sepolia-rpc-import-staging" }
+  tags              = { Name = "plether-${local.deployment_name}-rpc-import-staging" }
 }
 
 resource "aws_ssm_parameter" "rpc_config" {
@@ -192,6 +203,9 @@ resource "aws_ssm_parameter" "rpc_config" {
   type  = "String"
   value = jsonencode({
     image                    = local.rpc.nitro_image
+    chain_id                 = local.rpc_chain_id_int
+    chain_name               = local.rpc_chain_name
+    parent_chain_id          = local.rpc_parent_chain_id
     snapshot_url             = local.rpc.snapshot_url
     snapshot_metadata_sha256 = local.rpc.snapshot_metadata_sha256
     state_history_blocks     = local.rpc.state_history_blocks
@@ -204,7 +218,7 @@ resource "aws_ssm_parameter" "rpc_config" {
 resource "aws_instance" "rpc_node" {
   count                       = local.rpc_count
   ami                         = data.aws_ami.rpc[0].id
-  instance_type               = "i4i.4xlarge"
+  instance_type               = local.rpc.instance_type
   subnet_id                   = local.rpc_public_subnets[0].id
   associate_public_ip_address = true # Egress without NAT; inbound restricted by SG.
   vpc_security_group_ids      = [aws_security_group.rpc_node[0].id]
@@ -222,7 +236,7 @@ resource "aws_instance" "rpc_node" {
     volume_type = "gp3"
     volume_size = 100
   }
-  tags       = { Name = "plether-sepolia-rpc-node", Role = "arbitrum-rpc" }
+  tags       = { Name = "plether-${local.deployment_name}-rpc-node", Role = "arbitrum-rpc" }
   depends_on = [terraform_data.rpc_guard, aws_ssm_parameter.rpc_config, aws_iam_role_policy.rpc_node]
   lifecycle {
     # Stop/start or replacement loses instance-store state. An operator must
@@ -247,36 +261,37 @@ resource "aws_volume_attachment" "rpc_staging" {
 
 resource "aws_cloudwatch_log_group" "rpc_node" {
   count             = local.rpc_count
-  name              = "/plether/sepolia/rpc-node"
-  retention_in_days = 14
+  name              = "/plether/${local.deployment_name}/rpc-node"
+  retention_in_days = var.environment == "mainnet" ? 30 : 14
 }
 
 resource "aws_cloudwatch_log_group" "rpc_gateway" {
   count             = local.rpc_count
-  name              = "/plether/sepolia/rpc-gateway"
-  retention_in_days = 14
+  name              = "/plether/${local.deployment_name}/rpc-gateway"
+  retention_in_days = var.environment == "mainnet" ? 30 : 14
 }
 
 resource "aws_ecr_repository" "rpc_gateway" {
   count                = local.rpc_count
-  name                 = "plether-rpc-gateway-sepolia"
+  name                 = "plether-rpc-gateway-${local.deployment_name}"
   image_tag_mutability = "IMMUTABLE"
   image_scanning_configuration { scan_on_push = true }
 }
 
 resource "aws_lb" "rpc" {
-  count              = local.rpc_count
-  name               = "plether-sepolia-rpc"
-  internal           = true
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.rpc_alb[0].id]
-  subnets            = local.rpc_public_subnets[*].id
-  idle_timeout       = 20
+  count                      = local.rpc_count
+  name                       = "plether-${local.deployment_name}-rpc"
+  internal                   = true
+  load_balancer_type         = "application"
+  drop_invalid_header_fields = true
+  security_groups            = [aws_security_group.rpc_alb[0].id]
+  subnets                    = local.rpc_public_subnets[*].id
+  idle_timeout               = 20
 }
 
 resource "aws_lb_target_group" "rpc" {
   count       = local.rpc_count
-  name        = "plether-sepolia-rpc"
+  name        = "plether-${local.deployment_name}-rpc"
   port        = 3000
   protocol    = "HTTP"
   vpc_id      = local.rpc_vpc_id
@@ -323,7 +338,7 @@ resource "aws_route53_record" "rpc" {
 
 resource "aws_iam_role" "rpc_gateway_execution" {
   count = local.rpc_count
-  name  = "plether-sepolia-rpc-gateway-execution"
+  name  = "plether-${local.deployment_name}-rpc-gateway-execution"
   assume_role_policy = jsonencode({
     Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
   })
@@ -345,7 +360,7 @@ resource "aws_iam_role_policy" "rpc_gateway_execution" {
 
 resource "aws_ecs_task_definition" "rpc_gateway" {
   count                    = local.rpc_gateway_count
-  family                   = "plether-sepolia-rpc-gateway"
+  family                   = "plether-${local.deployment_name}-rpc-gateway"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "512"
@@ -359,8 +374,12 @@ resource "aws_ecs_task_definition" "rpc_gateway" {
     name                   = "rpc-gateway", image = local.rpc.gateway_image, essential = true,
     readonlyRootFilesystem = true,
     portMappings           = [{ containerPort = 3000, protocol = "tcp" }],
-    environment            = [{ name = "RPC_PRIMARY_URL", value = "http://${aws_instance.rpc_node[0].private_ip}:8547" }],
-    secrets                = [for name, parameter in local.rpc_gateway_secrets : { name = name, valueFrom = "${local.rpc_parameter_prefix}${parameter}" }],
+    environment = [
+      { name = "RPC_PRIMARY_URL", value = "http://${aws_instance.rpc_node[0].private_ip}:8547" },
+      { name = "RPC_CHAIN_ID", value = local.rpc_chain_id_hex },
+      { name = "RPC_STATE_HISTORY_BLOCKS", value = tostring(local.rpc.state_history_blocks) },
+    ],
+    secrets = [for name, parameter in local.rpc_gateway_secrets : { name = name, valueFrom = "${local.rpc_parameter_prefix}${parameter}" }],
     logConfiguration = {
       logDriver = "awslogs", options = {
         awslogs-group = aws_cloudwatch_log_group.rpc_gateway[0].name, awslogs-region = var.aws_region, awslogs-stream-prefix = "gateway"
@@ -371,7 +390,7 @@ resource "aws_ecs_task_definition" "rpc_gateway" {
 
 resource "aws_ecs_service" "rpc_gateway" {
   count                              = local.rpc_gateway_count
-  name                               = "plether-sepolia-rpc-gateway"
+  name                               = "plether-${local.deployment_name}-rpc-gateway"
   cluster                            = local.rpc_ecs_cluster_id
   task_definition                    = aws_ecs_task_definition.rpc_gateway[0].arn
   desired_count                      = 2
@@ -399,7 +418,7 @@ resource "aws_ecs_service" "rpc_gateway" {
 
 resource "aws_cloudwatch_metric_alarm" "rpc_node_status" {
   count               = local.rpc_count
-  alarm_name          = "plether-sepolia-rpc-node-status"
+  alarm_name          = "plether-${local.deployment_name}-rpc-node-status"
   namespace           = "AWS/EC2"
   metric_name         = "StatusCheckFailed"
   comparison_operator = "GreaterThanThreshold"
@@ -410,11 +429,12 @@ resource "aws_cloudwatch_metric_alarm" "rpc_node_status" {
   dimensions          = { InstanceId = aws_instance.rpc_node[0].id }
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = compact([var.operations_alarm_sns_topic_arn])
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_node_memory" {
   count               = local.rpc_count
-  alarm_name          = "plether-sepolia-rpc-node-memory"
+  alarm_name          = "plether-${local.deployment_name}-rpc-node-memory"
   namespace           = "Plether/RPC"
   metric_name         = "mem_used_percent"
   comparison_operator = "GreaterThanThreshold"
@@ -425,21 +445,23 @@ resource "aws_cloudwatch_metric_alarm" "rpc_node_memory" {
   dimensions          = { InstanceId = aws_instance.rpc_node[0].id }
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = compact([var.operations_alarm_sns_topic_arn])
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_node_disk" {
   count               = local.rpc_count
-  alarm_name          = "plether-sepolia-rpc-node-disk"
+  alarm_name          = "plether-${local.deployment_name}-rpc-node-disk"
   namespace           = "Plether/RPC"
   metric_name         = "disk_used_percent"
   comparison_operator = "GreaterThanThreshold"
-  threshold           = 70
+  threshold           = var.environment == "mainnet" ? 85 : 70
   evaluation_periods  = 3
   period              = 60
   statistic           = "Maximum"
   dimensions          = { InstanceId = aws_instance.rpc_node[0].id, path = "/srv/nitro", fstype = "xfs" }
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = compact([var.operations_alarm_sns_topic_arn])
 }
 
 output "sepolia_rpc_pilot" {

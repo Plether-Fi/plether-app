@@ -36,8 +36,9 @@ try {
       // Execute the entire actual target guard, with only its AA activation
       // context stubbed inactive. Nonempty canonical bindings activate it.
       for (const file of ['variables.tf', 'deployment_target.tf']) copyFileSync(join(source, file), join(module, file))
-      writeFileSync(join(module, 'context.tf'), 'locals { native_aa_backend_configured = false }\n')
+      writeFileSync(join(module, 'context.tf'), 'locals {\n  native_aa_backend_configured = false\n  kernel_aa_backend_configured = false\n}\n')
       writeFileSync(join(module, 'tests/deployed-bindings.tftest.hcl'), suite.slice(suite.indexOf('variables {'))
+        .split('\n# Kernel infrastructure uses the full module')[0]
         .replace(/^  (?:api_image_digest|log_router_image_digest)\s*=.*\n/gm, '')
         .replace(', terraform_data.perps_candle_rollout_guard', '')
         .replace(', terraform_data.lp_settlement_keeper_guard', ''))
@@ -52,6 +53,9 @@ try {
       for (const file of ['node.py', 'user-data.sh.tftpl']) {
         copyFileSync(join(root, 'infra/rpc/node', file), join(rpcNode, file))
       }
+      const backendFixtures = join(tree, 'apps/backend/test/fixtures')
+      mkdirSync(backendFixtures, { recursive: true })
+      copyFileSync(join(root, 'apps/backend/test/fixtures/kernel-deployment.json'), join(backendFixtures, 'kernel-deployment.json'))
       writeFileSync(join(module, 'tests/deployed-bindings.tftest.hcl'), suite)
     }
     console.log(`Verifying deployed bindings: ${scope}`)

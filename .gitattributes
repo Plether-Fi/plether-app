@@ -1,3 +1,5 @@
 
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
+# Unified diffs require a space prefix on unchanged blank context lines.
+scripts/alto-kernel-patch/*.patch -whitespace

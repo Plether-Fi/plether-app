@@ -25,6 +25,12 @@ spec =
       directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com/primary" `shouldBe` "https://rpc-internal.sepolia.plether.com/primary"
       directSecurityRpcEndpoint "https://other.invalid/" `shouldBe` "https://other.invalid/"
       directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com.evil.invalid/" `shouldBe` "https://rpc-internal.sepolia.plether.com.evil.invalid/"
+    it "pins equivalent gateway origins regardless of DNS case, port spelling or path" $ do
+      let primary = "https://rpc-internal.sepolia.plether.com/primary"
+      directSecurityRpcEndpoint "https://RPC-Internal.sepolia.plether.com:443/" `shouldBe` primary
+      directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com.:443/" `shouldBe` primary
+      directSecurityRpcEndpoint "https://rpc-internal.sepolia.plether.com/primary/" `shouldBe` primary
+      directSecurityRpcEndpoint "https://rpc-internal%2esepolia.plether.com/" `shouldBe` primary
     it "accepts exactly one result with version 2.0 and the expected id" $
       decodeRpcResponseEnvelope 7 "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x1\"}"
         `shouldBe` Right (String "0x1")

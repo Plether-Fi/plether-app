@@ -32,8 +32,11 @@ module Plether.LiquidationWorker
   , liquidationSnapshotCalls
   , decodeLiquidationSnapshotResults
   , selectLiquidationSimulationCandidates
+  , decodeLiquidationOracleOrderingError
   , liquidationFuturePublishRetryDelaySeconds
+  , newLiquidationOrderingRetryBudget
   , retryLiquidationRiskInputs
+  , retryLiquidationRiskInputsWithOrdering
   , processLiquidationBatches
   , runLiquidationSweep
   , BatchOutcome (..)
@@ -59,13 +62,16 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Char (isHexDigit)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (nub, sortOn)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Word (Word64)
 import Database.PostgreSQL.Simple (Connection, withTransaction)
+import GHC.Clock (getMonotonicTimeNSec)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
@@ -134,6 +140,7 @@ import Plether.Logging
   , logWarnEvery
   )
 import System.Environment (lookupEnv)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 data LiquidationWorkerMode
@@ -321,6 +328,7 @@ data LiquidationFuturePublishTime = LiquidationFuturePublishTime
 data LiquidationRiskInputError
   = LiquidationRiskInputUnavailable Text
   | LiquidationRiskInputFuturePublishTime LiquidationFuturePublishTime
+  | LiquidationRiskInputPriceOutOfOrder Integer Integer
   deriving stock (Show, Eq)
 
 liquidationSnapshotCalls :: Text -> [Text] -> [Multicall.Call]
@@ -500,10 +508,12 @@ loadLiquidationOracleQuote cfg client workerAddress blockNumber policy cachedPay
         Right result -> pure $ Right result
         Left signedError -> quote [] >>= \case
           Right result -> pure $ Right result
+          Left acceptedError@LiquidationRiskInputPriceOutOfOrder {} -> pure $ Left acceptedError
           Left acceptedError -> pure $ Left $ case signedError of
             LiquidationRiskInputFuturePublishTime {} -> signedError
-            LiquidationRiskInputUnavailable reason -> LiquidationRiskInputUnavailable $
-              "Signed payload: " <> reason <> ". Accepted basket: " <> liquidationRiskInputErrorText acceptedError
+            _ -> LiquidationRiskInputUnavailable $
+              "Signed payload: " <> liquidationRiskInputErrorText signedError
+                <> ". Accepted basket: " <> liquidationRiskInputErrorText acceptedError
   where
     oracle = lwcPletherOracle cfg
     maximumAge = liquidationPayloadMaximumAge (lwcPythLatestMaxAgeSeconds cfg) policy
@@ -528,6 +538,10 @@ loadLiquidationOracleQuote cfg client workerAddress blockNumber policy cachedPay
           let params = CallParams oracle $ Perps.updateLiquidationBatchPriceCall workerAddress updateData
           result <- ethCallWithTransactionGasAtBlock client params (lwcOrderRouter cfg) value gasLimit blockNumber
           case result of
+            Left err
+              | null updateData && not (lepFrozen policy)
+              , Just orderingError <- decodeLiquidationOracleOrderingError err ->
+                  pure $ Left orderingError
             Left err -> pure $ Left $ oracleQuoteError "Oracle liquidation price quote" err
             Right bytes ->
               case decodeLiquidationOracleQuote (lepTimestamp policy) updateData value bytes of
@@ -548,6 +562,22 @@ loadLiquidationOracleQuote cfg client workerAddress blockNumber policy cachedPay
             safeSelector = fmap (T.take 8) selector >>= \value ->
               if T.length value == 8 && T.all isHexDigit value then Just (" (0x" <> value <> ")") else Nothing
         in " failed with RPC code " <> tshow code <> fromMaybe "" safeSelector
+
+decodeLiquidationOracleOrderingError :: RpcError -> Maybe LiquidationRiskInputError
+decodeLiquidationOracleOrderingError (RpcNodeError _ _ (Just revertData)) = do
+  raw <- T.stripPrefix "0x" $ T.toLower revertData
+  bytes <- either (const Nothing) Just $ B16.decode $ TE.encodeUtf8 raw
+  let orderingSelector = encodeCall "PletherOracle__PriceOutOfOrder(uint64,uint64)" []
+      arguments = BS.drop 4 bytes
+      publishTime = abiWord 0 arguments
+      markTime = abiWord 1 arguments
+  if BS.length bytes == 4 + 2 * 32
+      && BS.take 4 bytes == orderingSelector
+      && publishTime < markTime
+      && markTime <= toInteger (maxBound :: Word64)
+    then Just $ LiquidationRiskInputPriceOutOfOrder publishTime markTime
+    else Nothing
+decodeLiquidationOracleOrderingError _ = Nothing
 
 validateAcceptedLiquidationAge
   :: Integer -> Integer -> Integer -> ByteString -> Either LiquidationRiskInputError ()
@@ -592,6 +622,8 @@ liquidationRiskInputErrorText = \case
   LiquidationRiskInputUnavailable err -> err
   LiquidationRiskInputFuturePublishTime _ ->
     "Executable Pyth payload contained a future publish time"
+  LiquidationRiskInputPriceOutOfOrder {} ->
+    "Accepted oracle basket predated the engine mark"
 
 liquidationRiskInputErrorLogFields :: LiquidationRiskInputError -> [LogField]
 liquidationRiskInputErrorLogFields = \case
@@ -604,18 +636,47 @@ liquidationRiskInputErrorLogFields = \case
     , field "maximum_publish_time" lfptMaximumPublishTime
     , field "future_skew_seconds" lfptFutureSkewSeconds
     ]
+  LiquidationRiskInputPriceOutOfOrder publishTime markTime ->
+    [ field "failure_reason" ("oracle_price_out_of_order" :: Text)
+    , field "accepted_publish_time" publishTime
+    , field "engine_mark_time" markTime
+    ]
 
 liquidationFuturePublishRetryDelaySeconds
   :: Int
   -> LiquidationRiskInputError
   -> Maybe Int
 liquidationFuturePublishRetryDelaySeconds maximumDelay = \case
-  LiquidationRiskInputUnavailable _ -> Nothing
   LiquidationRiskInputFuturePublishTime LiquidationFuturePublishTime {..} ->
     Just . fromInteger $
       min
         (toInteger $ max 1 maximumDelay)
         (max 1 $ lfptFutureSkewSeconds + 1)
+  _ -> Nothing
+
+-- Open a single recovery window on the first ordering failure. Later pages
+-- share its remaining time and attempts so oracle lag cannot stall each page.
+newLiquidationOrderingRetryBudget :: IO Word64 -> IO (IO (Maybe Int), IO Int)
+newLiquidationOrderingRetryBudget clock = do
+  window <- newIORef Nothing
+  let reserve = do
+        now <- clock
+        atomicModifyIORef' window $ \state ->
+          let (openedAt, delays) = fromMaybe (now, [2, 4, 5]) state
+              remaining = remainingNanos openedAt now `div` second
+          in case delays of
+               delay : rest | remaining > 0 ->
+                 (Just (openedAt, rest), Just $ min delay (fromIntegral remaining))
+               _ -> (state, Nothing)
+      remainingMicros = do
+        now <- clock
+        maybe 0 (\(openedAt, _) -> fromIntegral (remainingNanos openedAt now `div` 1_000))
+          <$> readIORef window
+  pure (reserve, remainingMicros)
+  where
+    second = 1_000_000_000
+    duration = 12 * second
+    remainingNanos openedAt now = duration - min duration (now - openedAt)
 
 retryLiquidationRiskInputs
   :: Int
@@ -626,31 +687,79 @@ retryLiquidationRiskInputs
   -> (Integer -> IO (Either LiquidationRiskInputError value))
   -> Integer
   -> IO (Integer, Int, Either LiquidationRiskInputError value)
-retryLiquidationRiskInputs maximumRetries maximumDelay onRetry sleepSeconds getNextBlock loadAtBlock =
-  go 0
-  where
-    retryLimit = max 0 maximumRetries
+retryLiquidationRiskInputs maximumRetries maximumDelay onRetry sleepSeconds getNextBlock loadAtBlock initialBlock = do
+  (block, retryCount, _, result) <-
+    retryLiquidationRiskInputsWithOrdering maximumRetries maximumDelay (pure Nothing) (pure 0)
+      onRetry sleepSeconds getNextBlock (pure . loadAtBlock) initialBlock
+  pure (block, retryCount, result)
 
-    go retriesUsed blockNumber = do
-      result <- loadAtBlock blockNumber
-      case result of
-        Left err
-          | retriesUsed < retryLimit
-          , Just delaySeconds <- liquidationFuturePublishRetryDelaySeconds maximumDelay err -> do
-              let nextRetry = retriesUsed + 1
-              onRetry blockNumber nextRetry delaySeconds err
-              sleepSeconds delaySeconds
-              nextBlockResult <- getNextBlock
-              case nextBlockResult of
-                Left blockError ->
-                  pure
-                    ( blockNumber
-                    , nextRetry
-                    , Left . LiquidationRiskInputUnavailable $
-                        "Future-publish retry could not resolve a newer block: " <> blockError
-                    )
-                Right nextBlock -> go nextRetry nextBlock
-        _ -> pure (blockNumber, retriesUsed, result)
+retryLiquidationRiskInputsWithOrdering
+  :: Int
+  -> Int
+  -> IO (Maybe Int)
+  -> IO Int
+  -> (Integer -> Int -> Int -> LiquidationRiskInputError -> IO ())
+  -> (Int -> IO ())
+  -> IO (Either Text Integer)
+  -> (Integer -> IO (IO (Either LiquidationRiskInputError value)))
+  -> Integer
+  -> IO (Integer, Int, Maybe LiquidationRiskInputError, Either LiquidationRiskInputError value)
+retryLiquidationRiskInputsWithOrdering maximumRetries maximumDelay reserveOrderingRetry remainingOrderingMicros
+    onRetry sleepSeconds getNextBlock prepareQuote initialBlock = do
+  initialQuote <- prepareQuote initialBlock
+  initialResult <- initialQuote
+  check 0 0 Nothing initialBlock initialResult
+  where
+    check futureRetries retriesUsed lastError blockNumber result = case result of
+      Right _ -> pure (blockNumber, retriesUsed, lastError, result)
+      Left err -> do
+        (nextFutureRetries, delay) <- case err of
+          LiquidationRiskInputPriceOutOfOrder {} -> do
+            reserved <- reserveOrderingRetry
+            pure (futureRetries, reserved)
+          _
+            | futureRetries < maximumRetries
+            , Just seconds <- liquidationFuturePublishRetryDelaySeconds maximumDelay err ->
+                pure (futureRetries + 1, Just seconds)
+            | otherwise -> pure (futureRetries, Nothing)
+        case delay of
+          Nothing -> pure (blockNumber, retriesUsed, lastError, result)
+          Just delaySeconds -> do
+            let nextRetry = retriesUsed + 1
+                retryReason = Just err
+                expired = pure (blockNumber, nextRetry, retryReason, result)
+            onRetry blockNumber nextRetry delaySeconds err
+            sleepSeconds delaySeconds
+            retryRead err getNextBlock >>= \case
+              Nothing -> expired
+              Just (Left blockError) ->
+                pure
+                  ( blockNumber
+                  , nextRetry
+                  , retryReason
+                  , Left . LiquidationRiskInputUnavailable $
+                      "Liquidation risk-input retry could not resolve a newer block: " <> blockError
+                  )
+              Just (Right nextBlock)
+                | nextBlock > blockNumber -> do
+                    -- Let the reusable database connection finish reading
+                    -- the cache before applying the deadline to the RPCs.
+                    nextQuote <- prepareQuote nextBlock
+                    retryRead err nextQuote >>= \case
+                      Nothing -> expired
+                      Just nextResult -> check nextFutureRetries nextRetry retryReason nextBlock nextResult
+                | otherwise -> check nextFutureRetries nextRetry retryReason blockNumber result
+
+    retryRead :: LiquidationRiskInputError -> IO a -> IO (Maybe a)
+    retryRead LiquidationRiskInputPriceOutOfOrder {} action = do
+      remaining <- remainingOrderingMicros
+      if remaining <= 0
+        then pure Nothing
+        else do
+          result <- timeout remaining action
+          stillRemaining <- remainingOrderingMicros
+          pure $ if stillRemaining > 0 then result else Nothing
+    retryRead _ action = Just <$> action
 
 whenEither :: Bool -> Text -> Either Text ()
 whenEither condition err
@@ -948,15 +1057,17 @@ processCandidates cfg conn client workerAddress dryRun = do
       -- the next sweep; retries cannot monopolize page one. No database lock is
       -- held while calling RPC or waiting for receipts.
       candidates <- getPerpsLiquidationCandidates conn (lwcChainId cfg) (lwcCfdEngine cfg) 2_147_483_647
+      (reserveOrderingRetry, remainingOrderingMicros) <- newLiquidationOrderingRetryBudget getMonotonicTimeNSec
       started <- getPOSIXTime
-      completed <- runLiquidationSweep (lwcScanBatchSize cfg) candidates processPage
+      completed <- runLiquidationSweep (lwcScanBatchSize cfg) candidates $
+        processPage reserveOrderingRetry remainingOrderingMicros
       finished <- getPOSIXTime
       logInfo "liquidation_sweep_finished" "Liquidation discovery sweep finished" $
         workerLogFields cfg <> [field "completed" completed, field "candidate_count" (length candidates), field "duration_seconds" (realToFrac (finished - started) :: Double)]
       when (finished - started > 60) $
         logWarn "liquidation_sweep_slow" "Liquidation sweep exceeded 60 seconds" (workerLogFields cfg)
 
-    processPage candidates = do
+    processPage reserveOrderingRetry remainingOrderingMicros candidates = do
       pending <- getPendingPerpsLiquidationCandidates conn (lwcChainId cfg) (lwcCfdEngine cfg)
         (lwcPendingReplacementSeconds cfg) pendingBroadcastRetrySeconds
       -- A timeout or reconciliation failure must never permit a second nonce.
@@ -971,33 +1082,36 @@ processCandidates cfg conn client workerAddress dryRun = do
                   workerLogFields cfg <> [field "error" (rpcErrorText err)]
               pure False
             Right snapshotBlock -> do
-              processCandidatesAtBlock snapshotBlock candidates
+              processCandidatesAtBlock reserveOrderingRetry remainingOrderingMicros snapshotBlock candidates
               pure True
 
-    processCandidatesAtBlock initialBlock candidates = do
-      cachedPayload <- getLatestPythUpdatePayload conn
-      (snapshotBlock, retryCount, riskResult) <-
-        retryLiquidationRiskInputs
+    processCandidatesAtBlock reserveOrderingRetry remainingOrderingMicros initialBlock candidates = do
+      (snapshotBlock, retryCount, retryReason, riskResult) <-
+        retryLiquidationRiskInputsWithOrdering
           (lwcFuturePublishMaxRetries cfg)
           (lwcFuturePublishRetryMaxSeconds cfg)
-          logFuturePublishRetry
+          reserveOrderingRetry
+          remainingOrderingMicros
+          logRiskInputRetry
           (\seconds -> threadDelay $ seconds * 1_000_000)
           fetchRetryBlock
-          (\blockNumber -> loadFreshLiquidationRiskInputs cfg client workerAddress blockNumber cachedPayload)
+          (\blockNumber -> do
+            cachedPayload <- getLatestPythUpdatePayload conn
+            pure $ loadFreshLiquidationRiskInputs cfg client workerAddress blockNumber cachedPayload)
           initialBlock
-      case riskResult of
-        Right _
-          | retryCount > 0 ->
-              logInfo
-                "liquidation_risk_inputs_future_retry_recovered"
-                "Liquidation risk inputs became valid at a newer exact block"
-                ( workerLogFields cfg
-                    <> [ field "candidate_count" $ length candidates
-                       , field "initial_snapshot_block" initialBlock
-                       , field "snapshot_block" snapshotBlock
-                       , field "risk_retry_count" retryCount
-                       ]
-                )
+      case (riskResult, retryReason) of
+        (Right _, Just reason) ->
+          logInfo
+            (retryEvent reason <> "_recovered")
+            "Liquidation risk inputs became valid at a newer exact block"
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "initial_snapshot_block" initialBlock
+                   , field "snapshot_block" snapshotBlock
+                   , field "risk_retry_count" retryCount
+                   ]
+                <> liquidationRiskInputErrorLogFields reason
+            )
         _ -> pure ()
       (snapshots, flatCandidates) <-
         loadAndReconcileSnapshots snapshotBlock candidates
@@ -1009,10 +1123,13 @@ processCandidates cfg conn client workerAddress dryRun = do
             Left err -> Left $ rpcErrorText err
             Right blockNumber -> Right blockNumber
 
-        logFuturePublishRetry blockNumber retryNumber delaySeconds err =
+        retryEvent LiquidationRiskInputPriceOutOfOrder {} = "liquidation_risk_inputs_ordering_retry"
+        retryEvent _ = "liquidation_risk_inputs_future_retry"
+
+        logRiskInputRetry blockNumber retryNumber delaySeconds err =
           logWarn
-            "liquidation_risk_inputs_future_retry"
-            "Liquidation risk inputs were ahead of the selected block; retrying at a newer exact block"
+            (retryEvent err)
+            "Retrying liquidation risk inputs at a newer exact block"
             ( workerLogFields cfg
                 <> [ field "candidate_count" $ length candidates
                    , field "snapshot_block" blockNumber

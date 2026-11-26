@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { relaxedProtectionCloseLimits } from '../../contracts/positionProtection'
 import { prepared } from '../../test/fixtures/preparedOrder'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
+import { KernelObservedPendingError } from '../../perps-aa/errors'
+import { PerpsAaRuntimeContext, type KernelPerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
+import * as perpsAnalytics from '../../analytics/perps'
 
 const wagmiMocks = vi.hoisted(() => ({
   useReadContracts: vi.fn(),
@@ -185,7 +188,9 @@ describe('Perps trade preview debounce', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(600) })
       const quantity = size === 'manual' ? 100n : (1_000n * BigInt(size.slice(0, -1)) / 100n / 100n) * 100n
       const margin = quantity * 100_000n + 10_500_000n
-      expect(latestReadOptions().contracts[0]?.args?.[3]).toBe(margin)
+      // Reuse openMarginQuote.preview directly instead of making a redundant previewOpen call.
+      expect(latestReadOptions()).toMatchObject({ contracts: [], query: { enabled: false } })
+      expect(screen.getByText('Liquidation price').closest('div')).not.toHaveTextContent('Loading')
       expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
       fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
       expect(wagmiMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
@@ -426,6 +431,82 @@ describe('Perps trade preview debounce', () => {
     expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
   })
 
+  it('reuses warm background preparation after unchanged-price oraclePublishTime ticks', async () => {
+    const result = prepared()
+    result.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    result.request.sizeDelta = 100n * 10n ** 18n
+    wagmiMocks.prepareOrder.mockResolvedValue(result)
+    const props = {
+      enableLiveTrading: true,
+      initialOrderQuantity: '100',
+      oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: 1_700_000_000,
+      availableToTradeRaw: 1_000_000_000n,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+
+    view.rerender(<PerpsTradeTicket {...props} oraclePublishTime={1_700_000_002} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    view.rerender(<PerpsTradeTicket {...props} oraclePublishTime={1_700_000_004} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes warm background preparation to Kernel review so only gas quoting runs', async () => {
+    const ownerAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
+    const scope = {
+      chainId: 421614 as const,
+      deployment: 'fresh-kernel',
+      sender: ownerAddress,
+      entryPoint: '0x433709009b8330fda32311df1c2afa402ed8d009' as const,
+    }
+    const runtime: KernelPerpsAaSmartAccountRuntime = {
+      walletFamily: 'kernel',
+      walletVersion: '3.1',
+      ownerAddress,
+      signUserOperation: vi.fn(),
+      gasPayment: { scope: { ...scope, ownerAddress }, paysEthFromWallet: false, readiness: { sponsored: true, eth: true } },
+      kernel: { scope, verifyAccount: vi.fn(), quoteAction: vi.fn(), execute: vi.fn(), quoteCancellation: vi.fn(), signPrepared: vi.fn() },
+    }
+    const warm = prepared()
+    warm.account = ownerAddress
+    warm.request.sizeDelta = 100n * 10n ** 18n
+    const quoted = {
+      ...warm,
+      kernelQuote: { mode: 'sponsored' as const, maxNetworkGasWei: 15n, expiresAt: Math.floor(Date.now() / 1_000) + 60 },
+    }
+    wagmiMocks.prepareOrder.mockResolvedValueOnce(warm).mockResolvedValueOnce(quoted)
+
+    render(
+      <PerpsAaRuntimeContext value={runtime}>
+        <PerpsTradeTicket
+          enableLiveTrading
+          initialOrderQuantity="100"
+          oraclePriceRaw={100_000_000n}
+          oraclePublishTime={1_700_000_000}
+          availableToTradeRaw={1_000_000_000n}
+        />
+      </PerpsAaRuntimeContext>
+    )
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    expect(wagmiMocks.prepareOrder).toHaveBeenLastCalledWith(expect.objectContaining({ reviewGas: false }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(2)
+    expect(wagmiMocks.prepareOrder).toHaveBeenLastCalledWith(expect.objectContaining({
+      reviewGas: true,
+      existingPrepared: warm,
+    }))
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+  })
+
   it('does not repeatedly prepare while an untouched position and oracle poll, but rechecks fresh margin on review', async () => {
     const warm = prepared()
     warm.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
@@ -473,6 +554,29 @@ describe('Perps trade preview debounce', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(wagmiMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: first }))
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands a provisionally included commit off without reporting a failed or confirmed order', async () => {
+    const analytics = vi.spyOn(perpsAnalytics, 'trackPerpsOrderLifecycle')
+    const order = prepared()
+    order.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    order.request.sizeDelta = 100n * 10n ** 18n
+    wagmiMocks.prepareOrder.mockResolvedValue(order)
+    wagmiMocks.commitOrder.mockRejectedValueOnce(new KernelObservedPendingError())
+    try {
+      render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="100" initialReviewOpen oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      const confirm = screen.getByRole('button', { name: 'Confirm Commit' })
+      expect(confirm).toBeEnabled()
+      await act(async () => { fireEvent.click(confirm) })
+      expect(wagmiMocks.commitOrder).toHaveBeenCalledOnce()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(analytics).not.toHaveBeenCalledWith('commit_failed', expect.anything())
+      expect(analytics).not.toHaveBeenCalledWith('commit_succeeded', expect.anything())
+    } finally {
+      analytics.mockRestore()
+    }
   })
 
   it('closes a review after an account switch and ignores its late response', async () => {
@@ -644,6 +748,123 @@ describe('Perps trade preview debounce', () => {
     expect(within(previewPanel!).queryByText('Position VPI balance')).not.toBeInTheDocument()
     expect(within(previewPanel!).getByLabelText('Pay 25.0 USDG')).toBeInTheDocument()
     expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
+  })
+
+  it('keeps the preview and Review button enabled across 2-second oracle price and timestamp polls', async () => {
+    const quotedOpenPreview = {
+      ...openPreviewResult,
+      marginDeltaAssets: 20_500_000n,
+      executionPrice: 100_000_000n,
+      postSize: 100n * 10n ** 18n,
+      postEquityAssets: 20_000_000n,
+    }
+    wagmiMocks.openMargin.mockReturnValue({
+      preview: quotedOpenPreview,
+      displayPreview: quotedOpenPreview,
+      error: undefined,
+      isPending: false,
+      isFetching: false,
+    })
+    const props = {
+      enableLiveTrading: true,
+      initialDirection: 'short' as const,
+      initialOrderQuantity: '100',
+      oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: 1_700_000_000,
+      availableToTradeRaw: 1_000_000_000n,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    const previewPanel = screen.getByText('Preview').parentElement!
+
+    expect(screen.getByRole('button', { name: 'Review Short' })).toBeEnabled()
+    expect(within(previewPanel).queryByText('Loading')).toBeNull()
+
+    // Simulate 2-second market ticks (both publishTime and oraclePrice changing)
+    for (let tick = 1; tick <= 4; tick++) {
+      view.rerender(
+        <PerpsTradeTicket
+          {...props}
+          oraclePriceRaw={100_000_000n + BigInt(tick) * 5_000n}
+          oraclePublishTime={1_700_000_000 + tick * 2}
+        />
+      )
+      // Immediately after the tick (without waiting for debounce), the preview
+      // must NOT flash to Loading and the Review button must stay enabled.
+      expect(screen.getByRole('button', { name: 'Review Short' })).toBeEnabled()
+      expect(within(previewPanel).queryByText('Loading')).toBeNull()
+      // Open-margin quote inputs keep the settled price until the 10s cadence.
+      expect(wagmiMocks.openMargin).toHaveBeenLastCalledWith(
+        expect.objectContaining({ oraclePrice: 100_000_000n, enabled: true })
+      )
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    }
+
+    // While a background refresh is in flight with displayPreview retained,
+    // keep the preview visible and the Review button enabled.
+    wagmiMocks.openMargin.mockReturnValue({
+      preview: undefined,
+      displayPreview: quotedOpenPreview,
+      error: undefined,
+      isPending: true,
+      isFetching: true,
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(wagmiMocks.openMargin).toHaveBeenLastCalledWith(
+      expect.objectContaining({ oraclePrice: 100_020_000n, enabled: true })
+    )
+    expect(screen.getByRole('button', { name: 'Review Short' })).toBeEnabled()
+    expect(within(previewPanel).queryByText('Loading')).toBeNull()
+
+    // A user edit still immediately snaps to the latest oraclePrice and debounces.
+    view.rerender(
+      <PerpsTradeTicket
+        {...props}
+        oraclePriceRaw={100_050_000n}
+        oraclePublishTime={1_700_000_012}
+      />
+    )
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '200' } })
+    expect(wagmiMocks.openMargin).toHaveBeenLastCalledWith(
+      expect.objectContaining({ oraclePrice: 100_050_000n, enabled: false })
+    )
+  })
+
+  it('does not abandon an in-flight open-margin quote when oraclePrice ticks after 2 seconds', async () => {
+    wagmiMocks.openMargin.mockReturnValue({
+      preview: undefined,
+      displayPreview: undefined,
+      error: undefined,
+      isPending: true,
+      isFetching: true,
+    })
+    const props = {
+      enableLiveTrading: true,
+      initialDirection: 'short' as const,
+      initialOrderQuantity: '100',
+      oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: 1_700_000_000,
+      availableToTradeRaw: 1_000_000_000n,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    expect(wagmiMocks.openMargin).toHaveBeenLastCalledWith(
+      expect.objectContaining({ oraclePrice: 100_000_000n, enabled: true })
+    )
+
+    // Advance past the 10s interval while the initial quote is still in-flight:
+    // oraclePrice passed to usePerpsOpenMargin must remain pinned so the RPC is not aborted.
+    for (let tick = 1; tick <= 6; tick++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+      view.rerender(
+        <PerpsTradeTicket
+          {...props}
+          oraclePriceRaw={100_000_000n + BigInt(tick) * 1_000n}
+          oraclePublishTime={1_700_000_000 + tick * 2}
+        />
+      )
+      expect(wagmiMocks.openMargin).toHaveBeenLastCalledWith(
+        expect.objectContaining({ oraclePrice: 100_000_000n, enabled: true })
+      )
+    }
   })
 
   it('keeps the order quantity input while deriving its order exposure', () => {

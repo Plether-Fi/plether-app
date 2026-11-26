@@ -26,6 +26,7 @@ contract MockMaxOpenLens is IPerpsMaxOpenLens {
     int256 public equity = 100e6;
     uint256 public feePerLot;
     uint256 public invalidSize;
+    uint256 public minimumSize;
     uint256 public expectedPrice;
     bool public protocolInvalid;
     bool public dependencyFailure;
@@ -42,6 +43,10 @@ contract MockMaxOpenLens is IPerpsMaxOpenLens {
 
     function setInvalidSize(uint256 size) external {
         invalidSize = size;
+    }
+
+    function setMinimumSize(uint256 size) external {
+        minimumSize = size;
     }
 
     function setProtocolInvalid() external {
@@ -88,8 +93,8 @@ contract MockMaxOpenLens is IPerpsMaxOpenLens {
 
     function _preview(uint256 size, uint256 margin, uint256 price) private view returns (OpenPreview memory preview) {
         if (expectedPrice != 0) require(price == expectedPrice, "Original oracle input must be preserved");
-        preview.valid = size != invalidSize;
-        preview.invalidReason = preview.valid ? 0 : 6;
+        preview.invalidReason = size < minimumSize ? 3 : size == invalidSize ? 6 : 0;
+        preview.valid = preview.invalidReason == 0;
         preview.sizeDelta = size;
         preview.postSize = fixedPostSize ? postSizeOverride : size + existingSize;
         preview.marginDeltaAssets = margin;
@@ -173,6 +178,19 @@ contract PerpsMaxOpenQuoterTest {
         IPerpsMaxOpenLens.MaxOpenQuote memory result = quote(1);
         require(result.maxSizeDelta == 0 && result.preview.valid, "Zero leverage capacity");
         require(result.preview.sizeDelta == 100 * Q, "Original protocol diagnostic is retained");
+    }
+
+    function test_SearchContinuesAboveMinimumPositionSize() public {
+        lens.setMinimumSize(57 * Q);
+        IPerpsMaxOpenLens.MaxOpenQuote memory result = quote(600_000);
+        require(result.maxSizeDelta == 75 * Q, "75 lots is the highest executable size within leverage");
+        require(result.preview.valid && result.preview.sizeDelta == 75 * Q, "Retain the executable preview");
+    }
+
+    function test_LeverageBelowMinimumPositionSizeReturnsZeroCapacity() public {
+        lens.setMinimumSize(57 * Q);
+        IPerpsMaxOpenLens.MaxOpenQuote memory result = quote(100_000);
+        require(result.maxSizeDelta == 0 && result.preview.valid, "Minimum position exceeds allowed leverage");
     }
 
     function test_ReserveOpenAndProtectionRewards() public view {

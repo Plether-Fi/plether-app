@@ -1,6 +1,7 @@
 module Plether.Api
   ( app
   , appWithReleaseState
+  , appWithKernelAa
   , perpsReleaseMiddleware
   , handleBasketCurrentCandleAt
   ) where
@@ -35,9 +36,13 @@ import Network.Wai.Middleware.Cors
   , cors
   , simpleCorsResourcePolicy
   )
-import Plether.Cache (AppCache (cachePrivyVerifier))
+import Plether.Cache
+  ( AppCache (cacheBasketLatest, cachePerpsMarketStats, cachePrivyVerifier)
+  , runSingleFlightCache
+  )
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness, closeAssistanceStatus)
+import Plether.AA.KernelGateway (KernelGatewayConfig (kgcOriginToken), handleKernelAaRpc)
 import qualified Plether.AA.Pimlico as AaProxy
 import qualified Plether.AA.Diagnostics as AaDiagnostics
 import Plether.AA.ClientKey (pseudonymousClientKey)
@@ -129,7 +134,10 @@ import Plether.Handlers.InsightsLiquidity
 import Plether.Handlers.InsightsWallets
   ( getWalletSummaryResponse
   )
-import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
+import Plether.Handlers.InsightsRegistration
+  ( registerInsightsRegistrationRoutes
+  , verifyOwnedTradingAccountForDeployment
+  )
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Handlers.PasskeyNames (registerPasskeyNameRoutes)
 import Plether.Database (DbPool)
@@ -226,10 +234,16 @@ app = appWithReleaseState Manifest.releaseIsDeployed
 -- Deployment state is fixed by the production manifest. Historical scripted
 -- deployments can exercise the same routes with their own explicit state.
 appWithReleaseState :: Bool -> AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
-appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
+appWithReleaseState deployed = appWithReleaseAndKernelAa deployed Nothing
+
+appWithKernelAa :: Maybe KernelGatewayConfig -> AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
+appWithKernelAa = appWithReleaseAndKernelAa Manifest.releaseIsDeployed
+
+appWithReleaseAndKernelAa :: Bool -> Maybe KernelGatewayConfig -> AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
+appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
   middleware $ perpsReleaseMiddleware deployed
   post "/api/rpc" $ handlePublicRpc (cfgPerpsChainId cfg)
-    ((naaProxyOriginToken <$> cfgNativeAaConfig cfg) <|> (aaProxyOriginToken <$> cfgAaConfig cfg))
+    ((naaProxyOriginToken <$> cfgNativeAaConfig cfg) <|> (aaProxyOriginToken <$> cfgAaConfig cfg) <|> (kgcOriginToken <$> kernelAa))
     perpsClient pimlicoProxyState
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
@@ -271,8 +285,9 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
   case if deployed then mPool else Nothing of
     Just pool -> do
       registerPasskeyNameRoutes (cachePrivyVerifier cache) pool manager
-      registerInsightsRegistrationRoutes pool perpsClient cfg manager
-      registerDivisionsRegistrationRoutes pool perpsClient cfg manager discordConfig
+      let verifyTradingAccount = verifyOwnedTradingAccountForDeployment kernelAa cfg perpsClient
+      registerInsightsRegistrationRoutes pool verifyTradingAccount cfg manager
+      registerDivisionsRegistrationRoutes pool verifyTradingAccount cfg manager discordConfig
     Nothing -> pure ()
 
   get "/api/health" $ do
@@ -329,7 +344,7 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
           T.toLower address == "0x0000000000000000000000000000000000000000"
         then handleError $ E.invalidAddress "A nonzero owner and Trading Account are required."
         else case mPool of
-          Just pool -> liftIO (MarginFunding.claimMarginFunding pool perpsClient cfg owner address) >>= handleResult
+          Just pool -> liftIO (MarginFunding.claimMarginFunding pool perpsClient cfg kernelAa owner address) >>= handleResult
           Nothing -> handleServiceUnavailable $ E.networkError "Test funding is unavailable."
 
   get "/api/testnet/margin-funding/:id" $ do
@@ -338,49 +353,59 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
     when accepted $ do
       identifier <- pathParam "id"
       case mPool of
-        Just pool -> liftIO (MarginFunding.marginFundingStatus pool cfg identifier) >>= handleResult
+        Just pool -> liftIO (MarginFunding.marginFundingStatus pool cfg kernelAa identifier) >>= handleResult
         Nothing -> handleServiceUnavailable $ E.networkError "Test funding is unavailable."
 
-  post "/api/testnet/faucet" $ do
-    suppliedToken <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
-    suppliedClientIp <- fmap LT.toStrict <$> header "CF-Connecting-IP"
-    case
-        authenticateFaucetRequest
-          (cfgFaucetGuardConfig cfg)
-          suppliedToken
-          suppliedClientIp
-      of
-      Left failure -> handleFaucetGuardFailure failure
-      Right (guardConfig, clientId) -> do
-        TestnetFaucetRequest maybeAddress acceptsAsync <- jsonData
-        guardResult <-
-          liftIO $
-            checkFaucetRequest
-              faucetGuardState
-              guardConfig
-              clientId
-              acceptsAsync
-        case guardResult of
-          Left failure -> handleFaucetGuardFailure failure
-          Right () -> do
-            liftIO $ logFaucetGuardAccepted clientId
-            case maybeAddress of
-              Just addr
-                | isValidAddress addr ->
-                    case mPool of
-                      Just pool ->
-                        liftIO (claimTestnetFaucet pool perpsClient cfg addr) >>= handleResult
-                      Nothing ->
-                        handleServiceUnavailable $
-                          E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
-              Just addr -> handleError $ E.invalidAddress addr
-              Nothing -> handleError $ E.invalidAddress "address is required"
+  post "/api/testnet/faucet" $ case kernelAa of
+    Just _ -> do
+      setHeader "Cache-Control" "no-store"
+      handleError $ E.upgradeRequired "Use Trading Account welcome funding on this deployment."
+    Nothing -> do
+      suppliedToken <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
+      suppliedClientIp <- fmap LT.toStrict <$> header "CF-Connecting-IP"
+      case
+          authenticateFaucetRequest
+            (cfgFaucetGuardConfig cfg)
+            suppliedToken
+            suppliedClientIp
+        of
+        Left failure -> handleFaucetGuardFailure failure
+        Right (guardConfig, clientId) -> do
+          TestnetFaucetRequest maybeAddress acceptsAsync <- jsonData
+          guardResult <-
+            liftIO $
+              checkFaucetRequest
+                faucetGuardState
+                guardConfig
+                clientId
+                acceptsAsync
+          case guardResult of
+            Left failure -> handleFaucetGuardFailure failure
+            Right () -> do
+              liftIO $ logFaucetGuardAccepted clientId
+              case maybeAddress of
+                Just addr
+                  | isValidAddress addr ->
+                      case mPool of
+                        Just pool ->
+                          liftIO (claimTestnetFaucet pool perpsClient cfg addr) >>= handleResult
+                        Nothing ->
+                          handleServiceUnavailable $
+                            E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
+                Just addr -> handleError $ E.invalidAddress addr
+                Nothing -> handleError $ E.invalidAddress "address is required"
 
   post "/api/aa/pimlico" $
     handlePimlicoProxy pimlicoProxyState cfg perpsClient manager mPool
 
   post "/api/aa/rpc" $
     handleNativeAaRpc nativeGatewayState cfg mPool perpsClient manager
+
+  post "/api/aa/kernel/rpc" $ do
+    setHeader "Cache-Control" "no-store"
+    case kernelAa of
+      Just kernel -> handleKernelAaRpc kernel cfg mPool perpsClient manager
+      Nothing -> status status503 >> json (Aeson.object ["error" .= ("Kernel AA is unavailable" :: Text)])
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool
@@ -730,13 +755,22 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
     Nothing -> pure ()
 
   get "/api/perps/market/stats" $ do
-    case mPool of
-      Just pool -> do
-        result <- liftIO $ getPerpsMarketStatsResponse pool cfg
-        handleResult result
-      Nothing ->
-        handleServiceUnavailable $
-          E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
+    queryKeys <- currentQueryKeys
+    if not $ null queryKeys
+      then handleError $ E.invalidAmount "market stats does not accept query parameters"
+      else case mPool of
+        Just pool -> do
+          (_, result) <-
+            liftIO $
+              runSingleFlightCache
+                (cachePerpsMarketStats cache)
+                ()
+                isRight
+                (getPerpsMarketStatsResponse pool cfg)
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
 
   get "/api/perps/vaults/history" $ do
     queryKeys <- currentQueryKeys
@@ -891,13 +925,22 @@ appWithReleaseState deployed cache client perpsClient cfg mPool manager pimlicoP
     handleBasketCurrentCandleAt cache cfg mPool validatedAt
 
   get "/api/perps/basket/latest" $ do
-    case mPool of
-      Just pool -> do
-        result <- liftIO $ getBasketLatest pool cfg
-        handleResult result
-      Nothing ->
-        handleServiceUnavailable $
-          E.internalError "DATABASE_URL is not configured; perps basket latest is unavailable"
+    queryKeys <- currentQueryKeys
+    if not $ null queryKeys
+      then handleError $ E.invalidAmount "basket latest does not accept query parameters"
+      else case mPool of
+        Just pool -> do
+          (_, result) <-
+            liftIO $
+              runSingleFlightCache
+                (cacheBasketLatest cache)
+                ()
+                isRight
+                (getBasketLatest pool cfg)
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; perps basket latest is unavailable"
 
   get "/api/perps/orders/:orderId/reveal-payload" $ do
     rawOrderId <- pathParam "orderId"

@@ -1,41 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="923" viewBox="0 0 640 923" role="img" aria-labelledby="quickstart-sponsored-operation-lifecycle-title quickstart-sponsored-operation-lifecycle-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="853" viewBox="0 0 640 853" role="img" aria-labelledby="quickstart-sponsored-operation-lifecycle-title quickstart-sponsored-operation-lifecycle-desc" focusable="false">
 <title id="quickstart-sponsored-operation-lifecycle-title">From preparation to confirmation</title>
-<desc id="quickstart-sponsored-operation-lifecycle-desc">Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution. For an order, confirmed means committed — not filled. Errors or an unknown outcome require receipt reconciliation.</desc>
-<style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="923" rx="16" fill="#FFF5F9"/>
-<text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / SPONSORED TRANSACTIONS</text>
-<text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">From preparation to</text>
-<text x="32" y="155" font-size="36" font-weight="700" fill="#250917" data-max-width="576">confirmation</text>
-<path d="M32 188 L608 188" stroke="#9A8890" stroke-width="2" fill="none"/>
-<path d="M32 188 h64" stroke="#FF512F" stroke-width="4" fill="none"/>
-<circle cx="47" cy="233" r="14" fill="#9A8890"/>
-<circle cx="47" cy="233" r="5" fill="#250917"/>
-<text x="80" y="242" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Prepare</text>
-<text x="80" y="279" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Build the operation, estimate gas and obtain</text>
-<text x="80" y="311" font-size="24" font-weight="400" fill="#250917" data-max-width="528">sponsorship.</text>
-<path d="M47 254 V335 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="364" r="14" fill="#FF512F"/>
-<circle cx="47" cy="364" r="5" fill="#250917"/>
-<text x="80" y="373" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Confirm in wallet</text>
-<text x="80" y="410" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Sign the exact prepared operation.</text>
-<path d="M47 385 V434 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="463" r="14" fill="#9A8890"/>
-<circle cx="47" cy="463" r="5" fill="#250917"/>
-<text x="80" y="472" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Submit</text>
-<text x="80" y="509" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Send the signed operation to the bundler.</text>
-<path d="M47 484 V533 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="562" r="14" fill="#F7D977"/>
-<circle cx="47" cy="562" r="5" fill="#250917"/>
-<text x="80" y="571" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Pending onchain</text>
-<text x="80" y="608" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Wait for an inclusion receipt.</text>
-<path d="M47 583 V632 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="661" r="14" fill="#00FF99"/>
-<circle cx="47" cy="661" r="5" fill="#250917"/>
-<text x="80" y="670" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Confirmed</text>
-<text x="80" y="707" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Verify that the operation succeeded</text>
-<text x="80" y="739" font-size="24" font-weight="400" fill="#250917" data-max-width="528">onchain.</text>
-<rect x="32" y="763" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="801" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">For an order, confirmed means committed —</text>
-<text x="50" y="833" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">not filled. Errors or an unknown outcome</text>
-<text x="50" y="865" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">require receipt reconciliation.</text>
+<desc id="quickstart-sponsored-operation-lifecycle-desc">Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution. First-time Trading Account deployment waits for an Arbitrum Sepolia safe block (up to 30 min). Subsequent sponsored operations confirm normally.</desc>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="853" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · SPONSORED TRANSACTIONS</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">From preparation to</text>
+<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">confirmation</text>
+<path d="M32 180 L608 180" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 180 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="221" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="221" r="5" fill="#9A8890"/>
+<text x="78" y="230" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Prepare</text>
+<text x="78" y="263" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Build the operation, estimate gas and obtain</text>
+<text x="78" y="293" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">sponsorship.</text>
+<path d="M47 240 V317 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="340" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
+<circle cx="47" cy="340" r="5" fill="#FFAB96"/>
+<text x="78" y="349" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Confirm in wallet</text>
+<text x="78" y="382" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sign the exact prepared operation.</text>
+<path d="M47 359 V406 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="429" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="429" r="5" fill="#9A8890"/>
+<text x="78" y="438" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Submit</text>
+<text x="78" y="471" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Send the signed operation to the bundler.</text>
+<path d="M47 448 V495 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="518" r="13" fill="#3B212D" stroke="#F7D977" stroke-width="2.5"/>
+<circle cx="47" cy="518" r="5" fill="#F7D977"/>
+<text x="78" y="527" font-size="24" font-weight="700" fill="#F7D977" data-max-width="530">Pending onchain</text>
+<text x="78" y="560" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Wait for an inclusion receipt.</text>
+<path d="M47 537 V584 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="607" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
+<circle cx="47" cy="607" r="5" fill="#00FF99"/>
+<text x="78" y="616" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">Confirmed</text>
+<text x="78" y="649" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Verify that the operation succeeded onchain.</text>
+<rect x="32" y="673" width="576" height="148" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="683" width="5" height="128" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="707" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">First-time Trading Account deployment waits</text>
+<text x="56" y="737" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">for an Arbitrum Sepolia safe block (up to 30</text>
+<text x="56" y="767" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">min). Subsequent sponsored operations confirm</text>
+<text x="56" y="797" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">normally.</text>
 </svg>

@@ -27,7 +27,7 @@ ensureCloseAssistanceSchema conn = do
   void $ execute_ conn
     "CREATE TABLE IF NOT EXISTS aa_close_assistance (\
     \digest VARCHAR(66) PRIMARY KEY REFERENCES aa_sponsorship_authorizations(digest),\
-    \chain_id BIGINT NOT NULL DEFAULT 421614 CHECK(chain_id=421614),\
+    \chain_id BIGINT NOT NULL DEFAULT 421614 CHECK(chain_id IN (421614, 42161)),\
     \router VARCHAR(42) NOT NULL, account VARCHAR(42) NOT NULL, client_order_id VARCHAR(66) NOT NULL,\
     \request_hash VARCHAR(66) NOT NULL, lens VARCHAR(42) NOT NULL,\
     \amount_assets BIGINT NOT NULL CHECK(amount_assets BETWEEN 1 AND 200000),\

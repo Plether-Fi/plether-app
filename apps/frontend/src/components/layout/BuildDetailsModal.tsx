@@ -154,10 +154,9 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
           <DetailTable rows={{ Chain: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, ...PERPS_ARBITRUM_SEPOLIA }} />
         </Section>
 
-        <Section title="Perps Gas Sponsorship">
+        <Section title="Perps Gas Payment">
           <DetailTable
             rows={{
-              Required: true,
               Configured: perpsIdentity.manifest !== null,
               Status: perpsIdentity.status,
               Enabled: perpsIdentity.sponsorshipEnabled,
@@ -172,7 +171,13 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
               'Trading Account': perpsIdentity.accountAddress,
               EntryPoint: perpsIdentity.manifest?.entryPoint,
               Factory: perpsIdentity.manifest?.smartAccountFactory,
-              ...(perpsIdentity.manifest &&
+              ...(perpsIdentity.manifest?.smartAccountMode === 'kernel'
+                ? {
+                    'ETH payments enabled': perpsIdentity.manifest.kernel.readiness.eth,
+                    'Gas sponsorship enabled': perpsIdentity.manifest.kernel.readiness.sponsored,
+                    Paymaster: perpsIdentity.manifest.kernel.paymaster,
+                  }
+                : perpsIdentity.manifest &&
                 isPerpsAaManifestV2(perpsIdentity.manifest)
                 ? {
                     'Bundler proxy':

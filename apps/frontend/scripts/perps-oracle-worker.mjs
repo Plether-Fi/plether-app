@@ -1,15 +1,64 @@
+import { createSocket } from 'node:dgram'
+import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { arbitrumSepolia } from 'viem/chains'
+import { arbitrum, arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
+const ARBITRUM_ONE_CHAIN_ID = 42161
+// Mined-block replays passed at this floor and reverted at tighter L2 estimates,
+// while Arbitrum L1 calldata poster fees can push total intrinsic gas well above 1.2M.
+const MARK_REFRESH_MIN_GAS_LIMIT = 1_200_000n
+// Bounded by the oracle worker funding monitor's reviewed gas reserve (40M).
+const MARK_REFRESH_MAX_GAS_LIMIT = 40_000_000n
+const MARK_REFRESH_GAS_BUFFER_BPS = 2_500n
+const ORACLE_WAKE_PORT = 3017
+const ORACLE_WAKE_PACKET = Buffer.from('plether-oracle-wake-v1')
+const MIN_WAKE_INTERVAL_MS = 1000
 
-const ADDRESSES = {
+export function resolveMarkRefreshGasLimit(estimatedGas) {
+  if (typeof estimatedGas !== 'bigint' || estimatedGas <= 0n) {
+    throw new Error(`Invalid mark-refresh gas estimate: ${String(estimatedGas)}`)
+  }
+  if (estimatedGas > MARK_REFRESH_MAX_GAS_LIMIT) {
+    throw new Error(`Estimated mark-refresh gas ${estimatedGas} exceeds safety limit ${MARK_REFRESH_MAX_GAS_LIMIT}`)
+  }
+  const buffered = estimatedGas + (estimatedGas * MARK_REFRESH_GAS_BUFFER_BPS + 9_999n) / 10_000n
+  if (buffered > MARK_REFRESH_MAX_GAS_LIMIT) return MARK_REFRESH_MAX_GAS_LIMIT
+  return buffered > MARK_REFRESH_MIN_GAS_LIMIT ? buffered : MARK_REFRESH_MIN_GAS_LIMIT
+}
+
+const DEFAULT_SEPOLIA_ADDRESSES = {
   orderRouter: '0x918663d6da8cb33b325a04c4a5e8c51d42f3b444',
   pletherOracle: '0x4f2c62a0e03657f52c633c19c11f88d8f0897bb2',
   perpsPublicLens: '0xe1c9c8d3c068c49d933396c9591a55126f29d10e',
 }
+
+function resolveRuntimeTarget() {
+  const manifestPath = process.env.PERPS_RELEASE_MANIFEST
+  let manifest
+  if (manifestPath && fs.existsSync(manifestPath)) {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  }
+  const chainId = Number(process.env.PERPS_CHAIN_ID ?? manifest?.network?.chainId ?? ARBITRUM_SEPOLIA_CHAIN_ID)
+  if (![ARBITRUM_SEPOLIA_CHAIN_ID, ARBITRUM_ONE_CHAIN_ID].includes(chainId)) {
+    throw new Error(`Unsupported PERPS_CHAIN_ID: ${chainId}`)
+  }
+  const addresses = {
+    orderRouter: process.env.PERPS_ORDER_ROUTER || manifest?.contracts?.orderRouter?.address || (chainId === ARBITRUM_SEPOLIA_CHAIN_ID ? DEFAULT_SEPOLIA_ADDRESSES.orderRouter : ''),
+    pletherOracle: process.env.PERPS_PLETHER_ORACLE || manifest?.contracts?.pletherOracle?.address || (chainId === ARBITRUM_SEPOLIA_CHAIN_ID ? DEFAULT_SEPOLIA_ADDRESSES.pletherOracle : ''),
+    perpsPublicLens: process.env.PERPS_PUBLIC_LENS || manifest?.contracts?.perpsPublicLens?.address || (chainId === ARBITRUM_SEPOLIA_CHAIN_ID ? DEFAULT_SEPOLIA_ADDRESSES.perpsPublicLens : ''),
+  }
+  return {
+    chainId,
+    chain: chainId === ARBITRUM_ONE_CHAIN_ID ? arbitrum : arbitrumSepolia,
+    addresses,
+  }
+}
+
+const TARGET = resolveRuntimeTarget()
+const ADDRESSES = TARGET.addresses
 
 const PERPS_PUBLIC_LENS_ABI = [
   {
@@ -173,6 +222,62 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+/** A keeper hint only shortens idle time between serial health checks. */
+export function createOracleWakeupReceiver({
+  port = ORACLE_WAKE_PORT, socket = createSocket('udp4'), logEvery = emitLogEvery,
+} = {}) {
+  let pending = false
+  let lastWakeAt = -Infinity
+  let checkWaiter
+  let closed = false
+
+  function close() {
+    if (closed) return
+    closed = true
+    pending = false
+    checkWaiter?.()
+    socket.close()
+  }
+
+  socket.on('message', (message, peer) => {
+    if (closed || pending || peer.address !== '127.0.0.1' || !message.equals(ORACLE_WAKE_PACKET)) return
+    pending = true
+    checkWaiter?.()
+  })
+  socket.on('error', () => {
+    if (closed) return
+    close()
+    logEvery(60, 'WARN', 'oracle_wakeup_unavailable', 'Local keeper wake-up unavailable; ordinary polling continues')
+  })
+  socket.bind(port, '127.0.0.1')
+  socket.unref()
+
+  function wait(pollMs) {
+    const deadline = performance.now() + pollMs
+    return new Promise(resolve => {
+      let timer
+      checkWaiter = () => {
+        clearTimeout(timer)
+        const now = performance.now()
+        const wakeAt = lastWakeAt + MIN_WAKE_INTERVAL_MS
+        const woken = pending && now < deadline && now >= wakeAt
+        if (woken || now >= deadline) {
+          if (woken) lastWakeAt = now
+          // An ordinary poll also addresses any queued hint.
+          pending = false
+          checkWaiter = undefined
+          resolve(woken)
+          return
+        }
+        timer = setTimeout(checkWaiter, Math.min(deadline, pending ? wakeAt : deadline) - now)
+      }
+      checkWaiter()
+    })
+  }
+
+  return { wait, close }
 }
 
 const logRateState = new Map()
@@ -363,17 +468,27 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     // A timeout/RPC error retains the hash. Never send another transaction until resolved.
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: tx.hash, timeout: 10_000,
-      onReplaced: ({ transaction }) => { tx.hash = transaction.hash },
+      onReplaced: ({ transaction }) => {
+        tx.hash = transaction.hash
+        tx.gasLimit = transaction.gas
+      },
     })
     pending = undefined
-    if (receipt.status !== 'success') throw new Error(`updateMarkPrice tx failed: ${tx.hash}`)
+    const receiptFields = {
+      transaction_hash: tx.hash, block_number: receipt.blockNumber,
+      gas_limit: tx.gasLimit, gas_used: receipt.gasUsed, repair: tx.repair,
+    }
+    if (receipt.status !== 'success') {
+      logEvery(60, 'WARN', 'oracle_update_reverted', 'Oracle mark-price update reverted', receiptFields)
+      throw new Error(`updateMarkPrice tx failed: ${tx.hash}`)
+    }
     const after = await readHealth(publicClient)
     const recovered = after.valid
     log('INFO', 'oracle_update_mined', 'Oracle mark-price update was mined', {
-      transaction_hash: tx.hash, block_number: receipt.blockNumber, update_fee_wei: tx.fee,
+      ...receiptFields, update_fee_wei: tx.fee,
       previous_mark_time: tx.markTime, mark_time: after.status.lastMarkTime,
       mark_price: after.status.lastMarkPrice, oracle_frozen: after.status.oracleFrozen,
-      trading_active: after.status.tradingActive, repair: tx.repair,
+      trading_active: after.status.tradingActive,
       previous_lag_seconds: Number(tx.lag), lag_seconds: Number(after.lag), synchronized: recovered,
     })
     if (!recovered) logEvery(60, 'WARN', 'oracle_sync_pending', 'Accepted oracle basket still fails mark-refresh validation', {
@@ -444,9 +559,16 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       repair = !before.valid
       const markTime = before.status.lastMarkTime
       let request
+      let gasLimit
       try {
+        const estimatedGas = await publicClient.estimateContractGas({
+          account, address: ADDRESSES.orderRouter, abi: ORDER_ROUTER_ABI,
+          functionName: 'updateMarkPrice', args: [payload.updateData], value: fee,
+        })
+        gasLimit = resolveMarkRefreshGasLimit(estimatedGas)
         const simulation = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
-          abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+          abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee,
+          gas: gasLimit })
         request = simulation.request
       } catch (error) {
         const reverted = decodedContractError(error)
@@ -461,11 +583,11 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         })
         return { status: 'confidence_too_wide' }
       }
-      const hash = await walletClient.writeContract(request)
+      const hash = await walletClient.writeContract({ ...request, gas: gasLimit })
       nextRefreshAt = now() + pollSeconds * 1000
       failures = 0
       retryAt = 0
-      pending = { hash, fee, repair, lag: before.lag, markTime }
+      pending = { hash, fee, repair, lag: before.lag, markTime, gasLimit }
       return await reconcile()
     } catch (error) {
       if (!pending) deferRetry()
@@ -478,7 +600,7 @@ async function main() {
   const args = new Set(process.argv.slice(2))
   const loop = args.has('--loop')
   const dryRun = process.env.DRY_RUN === 'true' || args.has('--dry-run')
-  const rpcUrl = requiredEnv('ARBITRUM_SEPOLIA_RPC_URL', 'RPC_URL')
+  const rpcUrl = requiredEnv('PERPS_RPC_URL', 'ARBITRUM_SEPOLIA_RPC_URL', 'RPC_URL')
   const backendUrl = process.env.PERPS_ORACLE_UPDATER_BACKEND_URL ?? 'http://127.0.0.1:3001'
   const pollSeconds = positiveInteger(
     readFlag('--poll-seconds', process.env.PERPS_ORACLE_UPDATER_POLL_SECONDS ?? '30'),
@@ -499,19 +621,19 @@ async function main() {
   }
 
   const publicClient = createPublicClient({
-    chain: arbitrumSepolia,
+    chain: TARGET.chain,
     transport: rpcTransport(rpcUrl),
   })
   const chainId = await publicClient.getChainId()
-  if (chainId !== ARBITRUM_SEPOLIA_CHAIN_ID) {
-    throw new Error(`Wrong RPC chain id: expected ${ARBITRUM_SEPOLIA_CHAIN_ID}, got ${chainId}`)
+  if (chainId !== TARGET.chainId) {
+    throw new Error(`Wrong RPC chain id: expected ${TARGET.chainId}, got ${chainId}`)
   }
 
   const account = privateKey ? privateKeyToAccount(privateKey) : undefined
   const walletClient = account
     ? createWalletClient({
       account,
-      chain: arbitrumSepolia,
+      chain: TARGET.chain,
       transport: rpcTransport(rpcUrl),
     })
     : undefined
@@ -534,13 +656,16 @@ async function main() {
     updater_address: account?.address,
     backend_origin: new URL(backendUrl).origin,
   })
+  const wakeup = createOracleWakeupReceiver()
   while (true) {
     try {
       await run()
     } catch (error) {
       emitLogEvery(60, 'ERROR', 'oracle_worker_iteration_failed', 'Oracle updater iteration failed', errorAttributes(error))
     }
-    await sleep(Math.min(pollSeconds, healthPollSeconds) * 1000)
+    if (await wakeup.wait(Math.min(pollSeconds, healthPollSeconds) * 1000)) {
+      emitLogEvery(60, 'INFO', 'oracle_keeper_wakeup_received', 'Keeper receipt woke the oracle updater')
+    }
   }
 }
 

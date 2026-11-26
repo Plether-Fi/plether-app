@@ -1,11 +1,15 @@
 import { render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SponsoredOperation } from '../../perps-aa/operationStore'
 import type { PerpsOrderHistoryRow } from '../../hooks/usePerpsHistory'
 import { RecoveredOrderStatus } from '../RecoveredOrderStatus'
+import { PERPS_LIFECYCLE_STATUS } from '../../contracts/perpsOrderV3'
 
 const history = vi.hoisted(() => ({ orderHistory: [] as PerpsOrderHistoryRow[], refetch: vi.fn() }))
+const readOrderLifecycleOutcome = vi.hoisted(() => vi.fn())
 vi.mock('../../hooks/usePerpsHistory', () => ({ usePerpsHistory: () => history }))
+vi.mock('../../hooks/usePerpsTrading', () => ({ usePerpsTrading: () => ({ readOrderLifecycleOutcome }) }))
 const operation = {
   accountAddress: '0x1111111111111111111111111111111111111111',
   transactionHash: `0x${'a'.repeat(64)}`, transactionHashVerified: true,
@@ -25,6 +29,23 @@ describe('recovered order execution', () => {
     history.orderHistory = [{ ...row, status: 'Failed: Slippage' }]
     render(<RecoveredOrderStatus operation={operation} />)
     expect(screen.getByText('Failed: Slippage')).toBeVisible()
+  })
+  it('shows a matching live fill while indexed history still says the order is committed', async () => {
+    history.orderHistory = [row]
+    const client = new QueryClient()
+    readOrderLifecycleOutcome.mockResolvedValueOnce({
+      account: row.account, clientOrderId: row.clientOrderId, status: PERPS_LIFECYCLE_STATUS.EXECUTED,
+    })
+    render(<QueryClientProvider client={client}>
+      <RecoveredOrderStatus accountAddress={row.account} transactionHash={operation.transactionHash!}
+        clientOrderId={row.clientOrderId} liveOrderId={row.orderId} />
+    </QueryClientProvider>)
+    expect(await screen.findByText('Executed')).toBeVisible()
+    expect(readOrderLifecycleOutcome).toHaveBeenCalledWith(row.orderId)
+    // A subsequent refetch after the 1,000-block log window slides past must not regress Executed to Awaiting execution.
+    readOrderLifecycleOutcome.mockResolvedValueOnce(undefined)
+    await client.refetchQueries({ queryKey: ['perps', 'live-order-outcome'] })
+    expect(screen.getByText('Executed')).toBeVisible()
   })
   it('does not assign another account’s order or an ambiguous batch outcome to this attempt', () => {
     history.orderHistory = [{ ...row, account: '0x2222222222222222222222222222222222222222' }]

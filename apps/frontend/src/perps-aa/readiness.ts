@@ -63,15 +63,17 @@ export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action:
     ? [{ component: 'readiness', status: 'unknown', reason: 'READINESS_UNAVAILABLE' }]
     : snapshot.actions[action]
 }
-export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = readinessNow(snapshot)): ReadinessCheck | undefined {
-  // Confirmed sponsorship/reconciliation outages are authoritative while broader
-  // worker readiness remains observation-only. Unknown/stale observations never block.
-  return readinessChecks(snapshot, action, now).find(c => c.status === 'blocked' && (
-    snapshot?.enforcementEnabled === true ||
-    (c.component === 'reconciliation' && normalizeTransactionFailureCode(c.reason) === 'RECONCILIATION_STALE') ||
-    ((c.component === 'sponsorship' || c.component === 'paymaster') &&
-      (c.reason === 'PAYMASTER_PAUSED' || c.reason === 'SPONSORSHIP_DISABLED'))
-  ))
+export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = readinessNow(snapshot), kernel = false): ReadinessCheck | undefined {
+  // Confirmed sponsorship and reconciliation outages remain authoritative for
+  // the native stack. Kernel payment readiness is checked per selected mode.
+  return readinessChecks(snapshot, action, now).find(c => {
+    const sponsor = c.component === 'sponsorship' || c.component === 'paymaster'
+    return c.status === 'blocked' && (!kernel || !sponsor) && (
+      snapshot?.enforcementEnabled === true ||
+      (c.component === 'reconciliation' && normalizeTransactionFailureCode(c.reason) === 'RECONCILIATION_STALE') ||
+      (sponsor && (c.reason === 'PAYMASTER_PAUSED' || c.reason === 'SPONSORSHIP_DISABLED'))
+    )
+  })
 }
 export function readinessWorkers(snapshot: ReadinessSnapshot | undefined, now = readinessNow(snapshot)): ReadinessCheck[] {
   return !snapshot || snapshot.expiresAt <= now || snapshot.observedAt > now+5_000 ? [] : snapshot.workers ?? []

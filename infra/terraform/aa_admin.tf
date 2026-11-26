@@ -133,7 +133,7 @@ resource "aws_iam_role_policy" "aa_admin_kms_attest_execution_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["ssm:GetParameters", "ssm:GetParameter"]
-      Resource = [aws_ssm_parameter.posthog_otlp_authorization_header.arn]
+      Resource = [local.posthog_otlp_authorization_header_parameter_arn]
     }]
   })
 }
@@ -230,8 +230,8 @@ resource "aws_iam_role_policy" "aa_admin_resume_issuance_execution_secrets" {
         "ssm:GetParameter",
       ]
       Resource = [
-        aws_ssm_parameter.database_url.arn,
-        aws_ssm_parameter.posthog_otlp_authorization_header.arn,
+        local.database_url_parameter_arn,
+        local.posthog_otlp_authorization_header_parameter_arn,
       ]
     }]
   })
@@ -412,7 +412,7 @@ resource "aws_ecs_task_definition" "aa_admin_resume_issuance" {
       logConfiguration = local.posthog_log_configuration
       secrets = [{
         name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
+        valueFrom = local.database_url_parameter_arn
       }]
       environment = [
         { name = "HOME", value = "/tmp" },

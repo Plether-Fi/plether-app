@@ -21,6 +21,7 @@ extra-source-files: schema.sql
                     test/fixtures/token-neutral-close-rebate.json
                     test/fixtures/candle-admin-deployed-release.json
                     test/fixtures/commitment-hint-sdk-v040.json
+                    test/fixtures/kernel-deployment.json
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -34,12 +35,16 @@ library
         Plether.AA.Pimlico
         Plether.AA.ClientKey
         Plether.AA.Gateway
+        Plether.AA.Kernel
+        Plether.AA.KernelGateway
+        Plether.AA.KernelReconciler
         Plether.AA.RecoveryCapability
         Plether.AA.Timing
         Plether.AA.Readiness
         Plether.AA.OracleReadiness
         Plether.Keeper.Broadcast
         Plether.Keeper.Funding
+        Plether.Keeper.OracleWakeup
         Plether.Keeper.Submission
         Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
@@ -58,6 +63,7 @@ library
         Plether.AA.Paymaster
         Plether.AA.Reconciler
         Plether.Api
+        Plether.Api.BackgroundWorkers
         Plether.Passkeys.Auth
         Plether.Passkeys.Names
         Plether.Handlers.PasskeyNames
@@ -115,6 +121,7 @@ library
         Plether.Database.AaSponsorship
         Plether.Database.AaPreparation
         Plether.Database.AaPreparationRecovery
+        Plether.Database.KernelOperation
         Plether.AA.PreparationRecovery
         Plether.Database.CandleHistory
         Plether.Database.Candles
@@ -191,6 +198,7 @@ library
         base64-bytestring >= 1.2,
         crypton >= 0.34,
         memory >= 0.18,
+        network >= 3.1,
         network-uri >= 2.6,
         scientific >= 0.3,
         mtl >= 2.3,
@@ -424,6 +432,9 @@ test-suite plether-api-test
         Plether.AA.PimlicoSpec
         Plether.AA.CloseAssistanceEvidenceSpec
         Plether.AA.GatewaySpec
+        Plether.AA.KernelSpec
+        Plether.AA.KernelGatewaySpec
+        Plether.AA.KernelDeploymentFixture
         Plether.AA.RecoveryCapabilitySpec
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec
@@ -434,6 +445,7 @@ test-suite plether-api-test
         Plether.Keeper.FundingSpec
         Plether.Keeper.SubmissionSpec
         Plether.Keeper.WakeupSpec
+        Plether.Keeper.OracleWakeupSpec
         Plether.Keeper.CommitmentHintsSpec
         Plether.Database.ExecutionProgressSpec
         Plether.AA.OrderDiagnosticsSpec
@@ -442,6 +454,7 @@ test-suite plether-api-test
         Plether.AA.ReconcilerSpec
         Plether.AA.RecoveryReceiptSpec
         Plether.CacheSpec
+        Plether.Api.BackgroundWorkersSpec
         Plether.ConfigSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
@@ -603,6 +616,7 @@ test-suite plether-aa-integration-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
+    other-modules:    KernelOperationSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,

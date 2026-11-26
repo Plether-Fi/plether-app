@@ -1,57 +1,48 @@
 # GitBook diagram review
 
-Reviewed on 2026-09-07. Covers all 30 current diagram assets and their article references, including the previously unreferenced LP quickstart waterfall. Historical, unused images outside `assets/diagrams` and application screenshots are not redesigned.
+Reviewed against **Plether Core v2.0.0** (`config/perps/arbitrum-sepolia-v2.0.0.json`, commit `1209ca8a5b94a4fb6323c7c4585846ed93db3932`, active Arbitrum Sepolia MockUSDG deployment). Covers all **33** diagram assets and their synchronized article references.
 
-The 2026-10-29 terminology refresh changes currency labels to USDG and rerenders the catalog with the existing exported `renderDiagram` function. It preserves the original semantic-review pin and source evidence. It does not certify the older economic explanations against the prepared USDG release.
+## Full Core v2.0.0 review & expansion — 2026-11-20
 
-## Scoped USDG semantic corrections — 2026-10-30
-
-Ten diagrams were corrected against immutable Core commit `e35cf0e0e9b880e07812e36321dee98bd299dcbd`, the source of the vendored SDK 0.4.0. The correction covers carry collection from active position margin before eligible free USDG; price equity after that projection; safely released margin as a later close-action funding source; and zero execution rewards for reductions and closes, distinct from opening execution rewards and TP/SL trigger rewards.
-
-Primary evidence is `MarginClearinghouseAccountingLib.planCarryLossConsumption` and `projectCarryLoss`, `CfdEnginePlanLib._applyPendingCarryRealizationToSnapshot`, `planClose` and `_planCloseCashSources`, `CfdEngine.reserveCloseOrderExecutionBounty`, and `PositionProtectionBook.createPositionProtection` at that exact commit. The manifest's `scopedSemanticReviews` record lists the affected diagram IDs and immutable source links. Related carry, liquidation and worked-example prose was corrected alongside the diagrams.
-
-Only those catalog entries were rendered through the exported `renderDiagram` function, with article alt text and manifest evidence synchronized. The original `reviewedRelease` below remains intact; this scoped correction does not certify the remaining diagram semantics against the new release. The existing full-regeneration guard remains unchanged.
+* **Pinned contract release updated:** Migrated `generate-diagrams.mjs` from archived `config/perps/arbitrum-sepolia-v3.json` (v1.2.2/v1.3.1) to active `config/perps/arbitrum-sepolia-v2.0.0.json` (`1209ca8a5b94a4fb6323c7c4585846ed93db3932`, 30 contracts, schema version 4, MockUSDG).
+* **Account-abstraction client updated:** Evidence references updated to `@plether-fi/perps-aa-client@0.4.0` (`e35cf0e0e9b880e07812e36321dee98bd299dcbd`) and self-hosted native AA v2 (`PletherVerifyingPaymaster` + private Alto bundler + first-time Trading Account `safe`-block confirmation wait).
+* **Added 3 onboarding diagrams (30 → 33 total):**
+  * `plether-system-overview.svg` (`README.md`) — 3-layer map of Pyth FX oracle, gas-sponsored traders and Senior/Junior LP vaults.
+  * `dollar-index-bounded-payoff.svg` (`welcome/how-plether-works-in-5-minutes.md`) — inverse raw basket to `plDXY = 2.00 − B` display transform and bounded LONG/SHORT max payouts.
+  * `lp-hourly-epoch-timeline.svg` (`liquidity-provider-quickstart.md`) — hourly 5-minute cutoff, strict 4-phase settlement order (`Senior withdraw → Junior withdraw → Junior deposit → Senior deposit`), `Shares ready` / `Withdrawal ready` states and 1-hour cooldown rules.
+* **Terminology & semantic updates across existing diagrams:**
+  * Removed internal `V2` and `HousePool` user-facing labels from diagram categories, notes and descriptions.
+  * Updated `usdg-account-flow.svg` for direct-to-Margin-Account testnet faucet funding (`Get 100,000 USDG`) and owner-wallet shortfall `Transfer & Deposit`.
+  * Updated `authorization-and-gas-sponsorship.svg` for native paymaster preparation and first-time Trading Account `safe`-block wait.
+  * Updated `trader-claim-lifecycle.svg` and `claim-to-owner-wallet.svg` to reflect onchain aggregate claim coverage checks.
 
 ## Source of truth
 
-Contract semantics were checked against **Plether Core v1.2.2**, commit `d704122c779d4d681d0fa2be517707b7f7df3902`, the deployment pin at the time of that review. The source was read at that exact commit, not from a possibly newer working tree. This is a release-source review, not a claim that mutable live parameters were freshly queried.
+* **Core Perps contracts:** `Plether-Fi/plether-core`, release **v2.0.0**, commit `1209ca8a5b94a4fb6323c7c4585846ed93db3932` (`config/perps/arbitrum-sepolia-v2.0.0.json`, deployment block `323658447`).
+* **AA client & web integration:** `@plether-fi/perps-aa-client@0.4.0` (`e35cf0e0e9b880e07812e36321dee98bd299dcbd`), `apps/frontend/src/utils/sponsoredOperation.ts`, `apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx`, `apps/frontend/src/pages/Vaults.tsx`.
 
-The app now pins v1.2.3. The 2026-09-10 AA package migration updates only client-source references in the catalog and manifest; it does not certify all 30 diagrams against v1.2.3 or change their SVGs. Full regeneration remains blocked by the existing contract-review guard until a separate semantic review updates this record and the generator's reviewed commit.
+Each of the 33 records in [the manifest](.gitbook/assets/diagrams/diagram-manifest.json) lists its article, SVG, accessible description and reviewed source functions. `diagram-catalog.mjs` is the editable content source. Regeneration fails whenever the pinned contract commit changes so a visual rebuild cannot silently masquerade as a new semantic review.
 
-Account-abstraction ordering was checked against [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts), the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. Package provenance is recorded in `config/perps-aa-client-release-v0.1.0.json`.
+## Core semantic invariants preserved
 
-Each of the 30 records in [the manifest](.gitbook/assets/diagrams/diagram-manifest.json) lists its article, SVG, accessible description and reviewed source functions. `diagram-catalog.mjs` is the editable content source. Regeneration fails when the pinned contract commit changes so that a visual rebuild cannot silently masquerade as a new semantic review.
-
-## Correctness changes
-
-| Area | Correction | Primary release source |
+| Area | Verified invariant | Primary release source |
 | --- | --- | --- |
-| Weekly calendar | Replace fixed UTC hours and the three-hour runway with New York time, US DST, a 30-minute Friday lead and 15-minute Sunday lag. Label the timeline as not to scale and retain override/data-availability qualifications. | `MarketCalendarLib.marketStatus`, `newYorkMarketBoundary` |
-| Order lifecycle | Separate successful submission from execution. Pending and terminal failure do not imply the requested position update. | `OrderRouterV2ExecutionSidecar.executeOrder`, `OrderV2Types` |
-| Order failures | Distinguish V2 pending reasons from terminal reasons; unexpected engine/receipt failures are not automatically terminal. Executed and Failed are alternatives, never consecutive steps. | `OrderV2Types.PendingReason`, `TerminalReason`; sidecar rollback boundary |
-| Sponsorship | Obtain final paymaster data before the wallet signs. Do not equate a transaction’s inclusion with successful execution of the inner operation. | Released client `orchestrator.ts`; frontend receipt recovery |
-| Price risk | Use PnL pledge + nettable own claim + price PnL for V2 price-risk equity. Keep action charges separate. | `PositionRiskAccountingLib.buildExactPriceRiskState` |
-| Close funding | Replace the obsolete shared fee → base obligation → spread queue. Price losses net the same account’s claim before collectible pledge. Charges have separate eligible funds; partial closes cannot waive them. | `CfdEnginePlanLib._planIsolatedCloseSettlement`, `_planCloseActionSettlement` |
-| Frozen spread | Show recovery attribution after fee, carry and positive VPI, not an all-purpose collateral queue. Note net negative-VPI offsets and waiver. | `CfdEngineSettlementSidecar._recoveredFrozenSpreadUsdc` |
-| Payouts and claims | Residual price payouts are all-or-nothing after existing claims. A live-position credit is PnL pledge; a flat-account credit is free USDG. Unpaid action rebates are waived, not turned into claims. | `CfdEngine._payOrRecordTraderClaim`, `_settleTraderClaimBalance`; planner |
-| Margin release | Do not promise release of all pro-rata pledge on a partial loss. Preserve the remaining terminal collectible cap. | `CfdEnginePlanLib._maxPricePledgeUnlockPreservingTerminalCap` |
-| Carry | Explain the maximum-profit-minus-pledge borrow base, zero floor and constant-other-conditions assumption. Free USDG alone does not lower the assigned borrow base. | `PositionRiskAccountingLib.computeBorrowBaseUsdc`, `computeIndexedCarryUsdc` |
-| LP waterfall | Preserve Junior-first loss absorption and Senior high-water-mark restoration. Add that the separate coupon is capped by Junior principal, not guaranteed yield. | `HousePoolWaterfallAccountingLib.absorbLoss`, `distributeRevenue`, `paySeniorCoupon` |
-| Account flow | Distinguish wallet custody, free USDG, pledge and reserves. Remove the false implication that a deposit must pass through trading before withdrawal. | `MarginClearinghouse`; AA action builders |
-
-The directly related schedule, claim, collection and troubleshooting explanations were corrected alongside the graphs. This is not an independent audit of every older worked example, parameter or screenshot elsewhere in GitBook.
+| Weekly calendar | America/New_York DST-aware schedule: Fri 16:30–17:00 live close-only (30m), Fri 17:00–Sun 17:00 frozen, Sun 17:00–17:15 live close-only (15m). Non-scaled timeline. | `MarketCalendarLib.marketStatus`, `newYorkMarketBoundary` |
+| Order lifecycle & failures | Sponsored commit confirmation ≠ execution. Unexpected engine/receipt rollbacks stay pending; only terminal reasons fail an order. Executed and Failed are alternatives. | `OrderV2Types.PendingReason`, `TerminalReason`; `OrderRouterV2ExecutionSidecar` |
+| Sponsorship & AA v2 | Native paymaster data is prepared before owner signing; first-time Trading Account deployment waits for Arbitrum Sepolia `safe` confirmation. | `@plether-fi/perps-aa-client@0.4.0`, `SponsoredOperationRecovery.tsx` |
+| Close accounting & carry | Carry collects from active position margin first, then eligible free USDG. Price losses net same-account claims before collectible pledge; action charges use separate sources (full close only waives uncollectible charges). | `MarginClearinghouseAccountingLib`, `CfdEnginePlanLib`, `CfdEngineSettlementSidecar` |
+| Close execution reward | Reductions and full closes (including TP/SL closes) reserve and pay `0 USDG` execution reward; opens reserve `0.01–0.20 USDG`; TP/SL reserves `0.20 USDG` trigger reward. | `CfdEngine.reserveCloseOrderExecutionBounty`, `PositionProtectionBook` |
+| Payouts & claims | Residual price payouts are all-or-nothing after existing claims; funded payouts credit PnL pledge if open or free USDG if flat; unpaid action rebates are waived. | `CfdEngine._payOrRecordTraderClaim`, `_settleTraderClaimBalance` |
+| LP waterfall & epochs | Junior absorbs first loss; gains restore Senior high-water mark first; target coupon capped by Junior principal. Hourly settlement runs Senior withdraw → Junior withdraw → Junior deposit → Senior deposit. | `HousePoolWaterfallAccountingLib`, `docs/runbooks/lp-settlement-keeper.md` |
 
 ## Visual system
 
-- Self-contained SVGs: no Graphviz runtime, external fonts, raster labels or `foreignObject`.
-- Exact [Plether media-kit](https://plether.com/media-kit) swatches, verified against the published page: orange `#FF512F`, peach `#FFAB96`, yellow `#F7D977`, pale yellow `#F7E4B2`, dark plum `#250917`, and gray `#9A8890`. The cream surface `#FFF5F9` matches the media-kit page background.
-- Positive green `#00FF99` matches the frontend's `--color-positive` token in `apps/frontend/src/index.css`. It marks successful/positive steps and accents cream outcome cards; pending/warning states retain yellow markers and pale-yellow panels.
-- Dark-plum type, orange brand accents, peach/yellow comparison panels, and inverse cream-on-plum notes. Bright colors, including green, are not used as low-contrast small text on cream. Clear reading rails and explicit outcome labels preserve meaning without relying on color alone.
-- Consistent 640px artboards. Body text is 24px; the smallest category label is 22px. At 320px, these are 12px and 11px respectively.
-- Meaning is present in text, not color alone. Each asset has a title, description and matching article alt text.
-- Automatic browser checks measure real text bounds, pairwise overlaps, 4.5:1 text contrast, and minimum rendered font size at 640px, 360px and 320px.
-- Palette regression tests reject off-palette SVG colors, check the swatches against the landing page and frontend sources, and keep positive green out of text labels.
-- All 30 renders were visually inspected in contact sheets. Desktop/mobile PNG proofs and the machine-readable report can be recreated with the command below.
+* Self-contained SVGs: no Graphviz runtime, external fonts, raster labels or `foreignObject`.
+* **Dark-plum product alignment:** Matches the live Plether frontend and Storybook UI tokens in `apps/frontend/src/index.css` (`--color-app-bg: #250917`, `--color-surface-panel: #3B212D`, `--color-content-primary: #FFF5F9`, `--color-content-secondary: #D8CBD0`, `--color-positive: #00FF99`) combined with [Plether media-kit](https://plether.com/media-kit) swatches (`#FF512F`, `#FFAB96`, `#F7D977`, `#F7E4B2`, `#9A8890`). Low-contrast orange `#FF512F` is reserved strictly for strokes, accent bars and graphics — never small text labels.
+* **Bespoke visual primitives for flagship diagrams:** Architecture node-and-arrow flow (`plether-system-overview`), horizontal `0.00–1.00–2.00` inverse payoff axis (`dollar-index-bounded-payoff`), color-coded weekly FX phase strip (`weekly-market-state-schedule`), stacked Senior/Junior loss & HWM recovery bars (`liquidity-pool-tranche-waterfall`, `senior-junior-waterfall-rules`), before/after borrow-base carry bars (`margin-reduces-future-carry`), and 2×2 4-phase LP epoch settlement grid (`lp-hourly-epoch-timeline`).
+* Distinct semantic borders and top accent bars (`#00FF99` success, `#F7D977` warning, `#FF512F` danger, `#FFAB96` accent) plus centered lane connectors across all 33 diagrams.
+* Consistent 640px artboards (minimum font size 22px; ≥11px at 320px).
+* Automated Playwright checks (`verify-diagrams.mjs`) verify real text bounds, pairwise overlaps, ≥4.5:1 contrast and minimum font sizes at 640px, 360px and 320px.
 
 ## Rebuild and verify
 
@@ -61,10 +52,8 @@ From the repository root:
 node apps/gitbook/scripts/generate-diagrams.mjs
 node apps/gitbook/scripts/generate-diagrams.mjs --check
 node --test apps/gitbook/scripts/diagrams.test.mjs
-node apps/gitbook/scripts/verify-diagrams.mjs --output=/private/tmp/plether-diagram-review
+node apps/gitbook/scripts/verify-diagrams.mjs
 ```
-
-The browser verifier uses Playwright from `apps/frontend`; install that package’s normal dependencies and Chromium first if unavailable. Without `--output`, verification creates no screenshot artifacts. Output directories are not committed or published.
 
 When an article edit shifts screenshot locations, synchronize the separate screenshot inventory without recapturing application images:
 

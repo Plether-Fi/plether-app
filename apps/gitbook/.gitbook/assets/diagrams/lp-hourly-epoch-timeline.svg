@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1269" viewBox="0 0 640 1269" role="img" aria-labelledby="lp-hourly-epoch-timeline-title lp-hourly-epoch-timeline-desc" focusable="false">
+<title id="lp-hourly-epoch-timeline-title">Hourly epochs and 4-phase settlement</title>
+<desc id="lp-hourly-epoch-timeline-desc">Owner-wallet LP requests queue before the five-minute hourly cutoff, settle in strict four-phase order (Senior withdraw, Junior withdraw, Junior deposit, Senior deposit), and age a one-hour cooldown. Trader reserves and Senior backlog always settle ahead of Junior withdrawals. Positive NAV does not guarantee instant cash.</desc>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="1269" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · HOURLY LP EPOCHS</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Hourly epochs and 4-phase</text>
+<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">settlement</text>
+<path d="M32 180 L608 180" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 180 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="47" cy="221" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="221" r="5" fill="#9A8890"/>
+<text x="78" y="230" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Queue request (owner wallet)</text>
+<text x="78" y="263" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Requires Arbitrum Sepolia ETH. Inclusion within</text>
+<text x="78" y="293" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">5 minutes of the hour rolls to the next hour.</text>
+<text x="78" y="323" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Cancellable before boundary.</text>
+<text x="32" y="373" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="576">Strict 4-phase hourly settlement order</text>
+<rect x="32" y="385" width="280" height="118" rx="10" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="42" y="388" width="260" height="4" rx="2" fill="#00FF99" stroke="none"/>
+<text x="48" y="423" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="248">1. Senior withdraw</text>
+<text x="48" y="455" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">Funded first from</text>
+<text x="48" y="485" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">free cash</text>
+<rect x="328" y="385" width="280" height="118" rx="10" fill="#3B212D" stroke="#F7D977" stroke-width="1.5"/>
+<rect x="338" y="388" width="260" height="4" rx="2" fill="#F7D977" stroke="none"/>
+<text x="344" y="423" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="248">2. Junior withdraw</text>
+<text x="344" y="455" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">After Senior &amp; 80%</text>
+<text x="344" y="485" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">cap</text>
+<rect x="32" y="519" width="280" height="118" rx="10" fill="#3B212D" stroke="#FFAB96" stroke-width="1.5"/>
+<rect x="42" y="522" width="260" height="4" rx="2" fill="#FFAB96" stroke="none"/>
+<text x="48" y="557" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="248">3. Junior deposit</text>
+<text x="48" y="589" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">Activates at batch</text>
+<text x="48" y="619" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">NAV</text>
+<rect x="328" y="519" width="280" height="118" rx="10" fill="#3B212D" stroke="#FFAB96" stroke-width="1.5"/>
+<rect x="338" y="522" width="260" height="4" rx="2" fill="#FFAB96" stroke="none"/>
+<text x="344" y="557" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="248">4. Senior deposit</text>
+<text x="344" y="589" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">Subject to Senior</text>
+<text x="344" y="619" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="248">limits</text>
+<rect x="32" y="659" width="278" height="438" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="44" y="662" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="48" y="701" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">Deposit outcome</text>
+<path d="M48 718 L294 718" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="744" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Shares ready (1h)</text>
+<text x="48" y="780" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Active shares in</text>
+<text x="48" y="810" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">custody; Move shares</text>
+<text x="48" y="840" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">preserves cooldown.</text>
+<path d="M171 856 V876 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="48" y="912" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Withdrawal ready</text>
+<text x="48" y="948" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Cooldown elapsed;</text>
+<text x="48" y="978" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Queue direct</text>
+<text x="48" y="1008" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">withdrawal unlocks.</text>
+<rect x="330" y="659" width="278" height="438" rx="12" fill="#3B212D" stroke="#F7D977" stroke-width="1.5"/>
+<rect x="342" y="662" width="254" height="5" rx="3" fill="#F7D977" stroke="none"/>
+<text x="346" y="701" font-size="24" font-weight="700" fill="#F7D977" data-max-width="246">Withdrawal outcome</text>
+<path d="M346 718 L592 718" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="744" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">USDG ready</text>
+<text x="346" y="780" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Funded proceeds wait</text>
+<text x="346" y="810" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">for Move USDG to</text>
+<text x="346" y="840" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">wallet.</text>
+<path d="M469 856 V876 m-6 -6 6 6 6 -6" stroke="#F7D977" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="346" y="912" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Cancel or share</text>
+<text x="346" y="942" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">return</text>
+<text x="346" y="978" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Restarts 1h cooldown</text>
+<text x="346" y="1008" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">for your whole</text>
+<text x="346" y="1038" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">tranche wallet</text>
+<text x="346" y="1068" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">balance.</text>
+<rect x="32" y="1119" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="1129" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="1153" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Trader reserves and Senior backlog always</text>
+<text x="56" y="1183" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">settle ahead of Junior withdrawals. Positive</text>
+<text x="56" y="1213" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">NAV does not guarantee instant cash.</text>
+</svg>

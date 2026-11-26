@@ -32,7 +32,7 @@ import { SponsoredOperationLockedError } from './operationLockError'
 import { reconcileUserOperation } from './operationReconciler'
 import { resolveProtocolOperation } from './protocolOperationResolution'
 import {
-  type PerpsAaSmartAccountRuntime,
+  type SimplePerpsAaSmartAccountRuntime,
   usePerpsAaRuntime,
 } from './runtimeContext'
 
@@ -91,7 +91,7 @@ function clearAuthorizationBeforeIncludedRelease(
 
 function operationMatchesRuntime(
   operation: SponsoredOperation,
-  runtime: PerpsAaSmartAccountRuntime,
+  runtime: SimplePerpsAaSmartAccountRuntime,
   accountAddress: `0x${string}`
 ): boolean {
   return operation.chainId === runtime.chainId &&
@@ -111,7 +111,7 @@ function operationMatchesRuntime(
 
 async function observedInclusionIsReorged(
   operation: SponsoredOperation,
-  runtime: PerpsAaSmartAccountRuntime
+  runtime: SimplePerpsAaSmartAccountRuntime
 ): Promise<boolean> {
   if (
     operation.includedTransactionHash === undefined ||
@@ -133,7 +133,8 @@ async function observedInclusionIsReorged(
 }
 
 export function SponsoredOperationRecovery() {
-  const runtime = usePerpsAaRuntime()
+  const connectedRuntime = usePerpsAaRuntime()
+  const runtime = connectedRuntime?.kernel ? undefined : connectedRuntime
   const accountAddress = runtime?.smartAccount.accountAddress
 
   useEffect(() => {
