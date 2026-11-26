@@ -18,17 +18,30 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 25
+          node-version: 25.2.1
           cache: npm
           cache-dependency-path: apps/landing/package-lock.json
 
       - name: Install dependencies
         working-directory: apps/landing
-        run: npm install
+        run: npm ci
 
       - name: Build
         working-directory: apps/landing
         run: npm run build
+
+      - name: Verify build outputs
+        working-directory: apps/landing
+        run: |
+          test -s dist/index.html
+          test -s dist/manifesto/index.html
+          test -s dist/media-kit/index.html
+          test -s dist/404.html
+          test -s dist/_headers
+          test -s dist/_redirects
+          test -s dist/og-image.png
+          grep -q 'rel="preload" as="font"' dist/index.html
+          grep -q 'Settled in USDG.' dist/index.html
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
