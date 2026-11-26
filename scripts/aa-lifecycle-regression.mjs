@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,29 +21,57 @@ const sdkCompatibility = JSON.parse(readFileSync(new URL('../config/perps/eviden
 assert.equal(sdkCompatibility.artifactSourceCommit, packageRelease.sourceCommit)
 assert.equal(sdkCompatibility.protocolSourceCommit, source)
 assert.equal(git('rev-parse', `${source}:${sdkCompatibility.runtimeSourcePath}`).toString().trim(), sdkCompatibility.runtimeSourceTree)
-const directory = mkdtempSync(join(tmpdir(), 'plether-aa-lifecycle-'))
-execFileSync('tar', ['-x', '-C', directory], { input: git('archive', source) })
-for (const name of ['forge-std', 'openzeppelin-contracts']) {
-  const entry = git('ls-tree', source, `lib/${name}`).toString()
-  const match = /^160000 commit ([0-9a-f]{40})\t/.exec(entry)
-  assert.ok(match, `Missing pinned ${name} submodule`)
-  const archive = execFileSync('git', ['-C', join(resolve(core), 'lib', name), 'archive', match[1]], { maxBuffer: 100 * 1024 * 1024 })
-  execFileSync('tar', ['-x', '-C', join(directory, 'lib', name)], { input: archive })
+const cacheDir = process.env.PLETHER_AA_LIFECYCLE_CACHE_DIR ? resolve(process.env.PLETHER_AA_LIFECYCLE_CACHE_DIR) : null
+const directory = cacheDir
+  ? join(tmpdir(), 'plether-aa-lifecycle-cached')
+  : mkdtempSync(join(tmpdir(), 'plether-aa-lifecycle-'))
+if (cacheDir) {
+  rmSync(directory, { recursive: true, force: true })
+  mkdirSync(directory, { recursive: true })
 }
-const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url))
-const cwd = join(directory, 'packages/perps')
-// Preserve historical EntryPoint/account/paymaster bytecode as test infrastructure;
-// the lifecycle fixture deploys the current canonical Core contracts locally.
-copyFileSync(join(fixtures, 'aa-deposit-gas-20260912.json'), join(cwd, 'aa-fixture.json'))
-copyFileSync(join(fixtures, 'NativeAALifecycle.t.sol'), join(cwd, 'test/perps/NativeAALifecycle.t.sol'))
-copyFileSync(join(fixtures, 'aa-lifecycle-foundry.toml'), join(cwd, 'foundry.toml'))
-console.log(`Core ${source}; isolated evidence directory: ${directory}`)
-const result = spawnSync('forge', ['test', '--offline', '--match-path', 'test/perps/NativeAALifecycle.t.sol', '--match-test', 'test_NativeAA', '-vvv'], {
-  cwd, stdio: 'inherit',
-  // Do not inherit a caller's fork/FFI/config override into this offline check.
-  env: Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !/^(FOUNDRY_|DAPP_|ETH_RPC_URL$|RPC_URL$)/.test(key))),
-})
-if (result.error) throw result.error
-assert.equal(result.signal, null, `Forge terminated: ${result.signal}`)
-process.exitCode = result.status ?? 1
+try {
+  execFileSync('tar', ['-x', '-C', directory], { input: git('archive', source) })
+  for (const name of ['forge-std', 'openzeppelin-contracts']) {
+    const entry = git('ls-tree', source, `lib/${name}`).toString()
+    const match = /^160000 commit ([0-9a-f]{40})\t/.exec(entry)
+    assert.ok(match, `Missing pinned ${name} submodule`)
+    const archive = execFileSync('git', ['-C', join(resolve(core), 'lib', name), 'archive', match[1]], { maxBuffer: 100 * 1024 * 1024 })
+    execFileSync('tar', ['-x', '-C', join(directory, 'lib', name)], { input: archive })
+  }
+  const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url))
+  const cwd = join(directory, 'packages/perps')
+  // Preserve historical EntryPoint/account/paymaster bytecode as test infrastructure;
+  // the lifecycle fixture deploys the current canonical Core contracts locally.
+  copyFileSync(join(fixtures, 'aa-deposit-gas-20260912.json'), join(cwd, 'aa-fixture.json'))
+  copyFileSync(join(fixtures, 'NativeAALifecycle.t.sol'), join(cwd, 'test/perps/NativeAALifecycle.t.sol'))
+  copyFileSync(join(fixtures, 'aa-lifecycle-foundry.toml'), join(cwd, 'foundry.toml'))
+  if (cacheDir) {
+    for (const sub of ['cache', 'out']) {
+      const cached = join(cacheDir, sub)
+      if (existsSync(cached)) cpSync(cached, join(cwd, sub), { recursive: true })
+    }
+  }
+  console.log(`Core ${source}; isolated evidence directory: ${directory}`)
+  const result = spawnSync('forge', ['test', '--offline', '--match-path', 'test/perps/NativeAALifecycle.t.sol', '--match-test', 'test_NativeAA', '-vvv'], {
+    cwd, stdio: 'inherit',
+    // Do not inherit a caller's fork/FFI/config override into this offline check.
+    env: Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !/^(FOUNDRY_|DAPP_|ETH_RPC_URL$|RPC_URL$|PLETHER_AA_LIFECYCLE_CACHE_DIR$)/.test(key))),
+  })
+  if (result.error) throw result.error
+  assert.equal(result.signal, null, `Forge terminated: ${result.signal}`)
+  if (cacheDir && result.status === 0) {
+    mkdirSync(cacheDir, { recursive: true })
+    for (const sub of ['cache', 'out']) {
+      const built = join(cwd, sub)
+      if (existsSync(built)) {
+        const dest = join(cacheDir, sub)
+        rmSync(dest, { recursive: true, force: true })
+        cpSync(built, dest, { recursive: true })
+      }
+    }
+  }
+  process.exitCode = result.status ?? 1
+} finally {
+  if (cacheDir) rmSync(directory, { recursive: true, force: true })
+}

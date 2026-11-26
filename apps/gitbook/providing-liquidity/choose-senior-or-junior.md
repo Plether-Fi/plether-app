@@ -1,128 +1,77 @@
 # Choose Senior or Junior
 
-> **Both vaults underwrite the same trader liabilities. Senior changes the order of loss and withdrawal priority; it does not remove risk.**
+> **Both vaults underwrite the same trader liabilities. Senior changes loss and withdrawal priority relative to Junior; it does not eliminate risk.**
 
-Plether LPs[^lp] supply USDG[^usdg] through one of two ERC-4626[^erc4626] tranche[^tranche] vaults:
+Plether LPs[^lp] supply USDG[^usdg] through one of two ERC-4626[^erc4626] tranche[^tranche] vaults (both issuing 9-decimal vault shares):
 
-* The **Senior Vault**, represented by `psLP` shares
-* The **Junior Vault**, represented by `pjLP` shares
+* **Senior Vault (`psLP`):** Last-loss LP tranche with a target return funded from Junior principal and priority over Junior withdrawals.
+* **Junior Vault (`pjLP`):** First-loss LP tranche that funds the Senior target return in exchange for residual trading revenue.
 
-The vaults are different claims on the same liquidity pool. They are not separate strategies or separate pools of market risk.
+Both vaults are claims on the **same liquidity pool**, not separate strategies. All LP actions happen on the **Vaults** page from your connected owner wallet (not through the Perps **Deposit** button, which funds a trader Margin Account).
 
-> **Use the Vaults page for LP actions**
->
-> The current `Vaults` interface exposes the **Senior Vault** and **Junior Vault**, their available accounting and performance data, and their queued deposit and withdrawal controls. The existing `Deposit` control on the Perps page instead funds a trader's **Margin Account**; it does not deposit into either LP vault.
+## Compare the two vaults
 
-### Compare the two vaults
-
-|                              | Senior Vault                                             | Junior Vault                                                       |
-| ---------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------ |
-| **Vault-card label**        | More protected option                                    | Higher-risk option                                                  |
-| **Return model**             | Targeted return funded by Junior                         | Variable return from trading activity                               |
-| **Loss order**               | Absorbs losses after Junior is exhausted                 | Absorbs losses first                                               |
-| **Revenue after impairment** | Restored toward its high-water mark first                | Receives residual revenue after Senior is restored                 |
-| **Withdrawal priority**      | Matured requests are funded before Junior                | Funded after matured Senior demand, then constrained by the protected Senior-share ratio |
-| **Primary trade-off**        | Gives up residual upside for relative priority           | Takes subordination in exchange for variable residual upside       |
-| **Annual maintenance fee**   | None                                                     | Live rate shown in the interface; paid by issuing new shares        |
-| **Can principal decline?**   | Yes                                                      | Yes                                                                |
-| **Can the tranche be wiped?** | Yes                                                     | Yes, before Senior is impaired                                     |
-| **Is return guaranteed?**    | No                                                       | No                                                                 |
-
-“More protected” compares Senior with Junior inside Plether's LP capital structure. It does not mean low risk in absolute terms.
-
-### What choosing Senior means
-
-Senior is the last-loss LP tranche. Junior principal absorbs pool losses first. If a loss is larger than the remaining Junior principal, Senior principal also falls.
-
-Senior receives a configured target coupon. That coupon is:
-
-* transferred from available Junior principal;
-* limited by the amount Junior can fund;
-* not a guaranteed APY[^apy];
-* not external yield or new pool revenue;
-* not converted into an accumulating debt claim when it goes unpaid.
-
-When paid, coupon becomes part of Senior principal. While Senior is unimpaired, it also raises Senior's protected high-water mark. If Senior later falls below that mark, future reconciled LP-owned value restores Senior toward it before Junior receives more residual value.
-
-Senior therefore prioritizes relative capital protection and a targeted return allocation over residual upside. It can still receive less than the target, become temporarily illiquid, lose principal or be completely wiped out.
-
-### What choosing Junior means
-
-Junior is the first-loss and residual-return tranche.
-
-Junior principal:
-
-* funds the Senior target coupon;
-* absorbs reconciled pool losses before Senior;
-* receives ordinary residual LP-owned value once any Senior impairment has been restored;
-* is funded only after matured Senior withdrawal demand is cleared, subject to free cash, Junior principal and the governed Senior-share ratio.
-
-This creates more variable economics. Junior may benefit more from residual trading revenue, but coupon transfers, the annual vault fee and losses can reduce its share value even while Senior remains unimpaired. The interface displays the live annual fee and accrued fee shares; issuing those fee shares dilutes existing Junior holders.
-
-A sufficiently large loss can reduce Junior accounting value to zero while Senior still retains value. Ordinary deposits cannot silently revive a wiped tranche; recovery requires reconciled LP-owned value allocated through the waterfall or explicit recapitalization that preserves existing ownership rights. A positive marked receivable can affect NAV but is not withdrawal cash until collected.
-
-### Decide by the outcome you must be able to accept
-
-| If this happens | Senior outcome | Junior outcome |
+| Dimension | Senior Vault (`psLP`) | Junior Vault (`pjLP`) |
 | --- | --- | --- |
-| Junior cannot fund the complete target coupon | Receives only the available amount; the unpaid portion does not accrue as debt | Can be reduced to zero by the coupon transfer |
-| Reconciliation applies a loss smaller than Junior principal | Remains ahead of the loss | Absorbs the loss |
-| The loss exhausts Junior | Begins absorbing the remaining loss | Is wiped before Senior is impaired |
-| Later reconciled LP-owned value is available while Senior is impaired | Is restored toward its high-water mark first | Waits for Senior restoration before receiving residual value |
-| Free LP liquidity is below dormant Senior principal, with no matured Senior request | May withdraw within the available Senior cap | May still withdraw if the governed Senior-share ratio remains protected |
-| Trader liabilities reserve the available cash | Cannot use the reserved cash | Cannot use the reserved cash |
+| **Vault-card label** | More protected option | Higher-risk option |
+| **Return model** | Target nominal APR funded from available Junior principal | Variable residual return from trading activity |
+| **Loss order** | Absorbs losses only after Junior reaches zero | Absorbs pool losses first |
+| **Recovery order** | Restored to its protected high-water mark first | Receives residual revenue only after Senior is restored |
+| **Withdrawal priority** | Matured Senior requests funded first | Funded after matured Senior demand, subject to the `80%` max Senior-share cap |
+| **Annual maintenance fee** | None (**Zero fees**) | Live rate shown in UI (`0%` on the active v2.0.0 deployment; configurable with a `72-hour` timelock; paid by share issuance when nonzero) |
+| **Can principal fall or be wiped?** | Yes (after Junior is exhausted) | Yes (before Senior is impaired) |
+| **Is return guaranteed?** | No | No |
 
-Senior may be the closer fit only if you accept that its coupon and principal are not guaranteed and that withdrawals can still be constrained.
+"More protected" compares Senior to Junior inside the LP stack — it does not mean risk-free or principal-protected.
 
-Junior may be the closer fit only if you accept first-loss exposure, Senior coupon funding, subordinated withdrawals and the possibility of an earlier complete wipeout.
+## What choosing Senior means
 
-If you require guaranteed principal, a fixed return or access to all of your capital on demand, neither tranche provides that outcome.
+Senior sits behind Junior for losses and ahead of Junior for withdrawals and recovery:
 
-### Trader obligations come before both tranches
+* Its target coupon transfers available Junior principal into Senior principal. It is **not** external yield, **not** guaranteed, and any unpaid amount does **not** accrue as debt.
+* Paid coupon increases Senior's protected high-water mark while unimpaired. If a loss ever impairs Senior, future reconciled LP-owned value restores Senior toward that mark before Junior receives new residual revenue.
+* Senior deposits are bounded by two governed caps visible in **Senior deposit limits** (`40,000,000 USDG` absolute limit and `80%` max Senior share of protected tranche capital).
 
-“Senior” describes priority relative to Junior. It does not place Senior ahead of traders.
+## What choosing Junior means
 
-Before LP cash can leave, Plether reserves pool assets for bounded live-position liability, existing trader claims and other protected amounts. Trader claims rank ahead of both vaults.
+Junior takes first loss and subordinated withdrawals in exchange for variable residual upside:
 
-The remaining free LP liquidity is then allocated by tranche priority:
+* Junior receives residual LP-owned revenue (collectible trader losses, carry, net positive VPI, paid frozen-close spread and the `50%` LP share of liquidation charges) after any Senior impairment is restored and the Senior target coupon is funded.
+* Junior can decline — or be wiped to zero — even while Senior remains unimpaired.
+* If governance sets a nonzero **Annual vault fee** (after a `72-hour` timelock), accrued fee shares dilute existing `pjLP` holders rather than withdrawing USDG from the pool.
 
-1. Matured Senior requests are funded first, up to their demand, Senior principal and available free cash.
-2. If no matured Senior backlog remains, Junior funding is capped independently by remaining free cash, Junior principal and the governed maximum Senior share of protected tranche capital. Dormant Senior principal is not fully reserved against Junior withdrawals.
+## Decide by the outcome you can accept
 
-Positive NAV[^nav] is therefore not a promise of immediate redemption. A Junior position can retain positive value while its current withdrawal capacity is zero. Senior can also have less withdrawable USDG than accounting value.
+| Scenario | Senior outcome | Junior outcome |
+| --- | --- | --- |
+| **Junior cannot cover full Senior target coupon** | Receives only what Junior can fund; shortfall does not become debt | Can be drawn down to zero by the coupon transfer |
+| **Loss smaller than Junior principal** | Protected ahead of Junior | Absorbs the entire loss |
+| **Loss exceeds Junior principal** | Absorbs the remainder; becomes impaired | Wiped to zero first |
+| **Later pool profit while Senior is impaired** | Restored toward high-water mark first | Waits until Senior is restored |
+| **Trader liabilities lock pool cash** | Cannot withdraw reserved trader cash | Cannot withdraw reserved trader cash |
 
-See [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md) for the trader-priority rules and [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) for the complete withdrawal firewall.
+If you require guaranteed principal, a fixed yield or instant on-demand liquidity, neither tranche offers that.
 
-### Review the live state before deciding
+## Trader obligations rank ahead of both vaults
 
-On the main `Vaults` page, compare **Vault value**, **7d APY** when shown, **Share price**, **Loss order**, **Return**, **Withdrawals** and **Fee** on both cards. Also review the shared **Total pool funds**, **Reserved funds**, **Available liquidity** and **Next processing time in**.
+"Senior" means priority over Junior, **not** priority over traders. Before any LP withdrawal is funded, Plether reserves physical pool USDG for maximum bounded trader liabilities, the `0.25%` settlement buffer and all outstanding trader claims. Remaining free liquidity then settles strictly in four phases each hour: **1. Senior withdrawals → 2. Junior withdrawals → 3. Junior deposits → 4. Senior deposits**.
 
-After opening a vault, use the live sections rather than the headline return alone:
+Positive NAV[^nav] is therefore not immediate cash: Junior can hold positive share value while its current withdrawal liquidity is zero, and Senior can also wait when pool cash is reserved for traders.
 
-* **Vault header:** **Current vault value**, **Share price**, **Estimated withdrawal liquidity** and **How returns work**
-* **Overview:** the connected wallet's position summary, **How this vault works**, shared pool status, the Senior protection or Junior loss buffer, delayed settings changes and the five-minute submission deadline
-* **Performance:** the **Seven-day share price** chart, **7d realized APY**, **7d return**, **Start share price** and **Current share price**; this section appears only when complete deployment-matched history is available
-* **Your position:** **Current value**, **Shares available to withdraw**, **USDG ready for wallet**, and pending deposit or withdrawal claims
-* **Activity:** holder distribution and recent vault activity for the selected tranche
-* **Action panel:** **Deposit status**, the current share estimate and processing state; the overview also shows the selected tranche's withdrawal-only **Temporary pricing fee**, and a withdrawal's **Expected processing** appears in its preview
+## Review live state before deciding
 
-Every deposit and withdrawal is queued for hourly processing. The contract uses the request transaction's block-inclusion timestamp; inclusion at or after the five-minute cutoff before an hour targets the following hour, even if the transaction was signed or sent earlier. Treat the confirmed request record as authoritative. The displayed processing time is not a promise: LP-worker availability, pricing, protocol health and withdrawal liquidity can delay completion.
+On the **Vaults** overview and individual vault page, compare **Vault value**, **Share price**, **7d realized APY** (historical only — omitted if complete 7-day data is unavailable), **Total pool funds**, **Reserved funds**, **Available liquidity**, **Estimated withdrawal liquidity**, **Senior deposit limits** (Senior) and **Market exposure** / **Return breakdown** (Junior).
 
-Treat **7d realized APY**, **7d return** and the share-price chart as historical context only. They are calculated from the displayed complete deployment-matched series, can be negative, and do not guarantee the next period's result.
+Avoid common shortcuts:
 
-### Avoid these shortcuts
+* **Lower share price ≠ cheaper:** Senior and Junior have independent supplies and principals.
+* **Available liquidity ≠ your personal payout:** Trader reserves, Senior priority, cooldowns and hourly batch settlement all apply.
+* **Splitting 50/50 does not diversify protocol risk:** Both tranches share the same pool, contracts, oracle and USDG.
 
-* **“Senior is safe.”** Senior is protected by priority, not by a principal guarantee.
-* **“Junior has the higher displayed APY, so it is better.”** Return must be read alongside first-loss and withdrawal subordination.
-* **“A lower share price is cheaper.”** Senior and Junior have separate share supplies and accounting principals; their prices are not directly comparable.
-* **“Available liquidity is what I can withdraw.”** Pool-level liquidity is only one input to **Estimated withdrawal liquidity** and your holder-specific **Shares available to withdraw**.
-* **“Splitting between both vaults removes protocol risk.”** Both claims depend on the same liquidity pool, contracts, oracle and USDG.
-
-Before depositing, continue to [**Understand LP returns and share value**](understand-lp-returns-and-share-value.md) and [**LP risks and safeguards**](lp-risks-and-safeguards.md). For the full accounting mechanics, use [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) as the canonical reference.
+Continue to [Understand LP returns and share value](understand-lp-returns-and-share-value.md) and [LP risks and safeguards](lp-risks-and-safeguards.md), or read the canonical accounting rules in [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
 
 [^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^apy]: Annual percentage yield, an annualized return measure that includes compounding.
 [^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.

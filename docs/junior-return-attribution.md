@@ -52,7 +52,7 @@ PostgreSQL stores canonical logs, validated evidence, the indexing checkpoint
 and the report. A session advisory lock elects one worker across API replicas.
 Reorg detection clears orphaned derived evidence before rebuilding the release
 prefix. The API attaches a report only when deployment, boundary block numbers,
-hashes, prices, timestamps and report schema version 2 exactly match the returned
+hashes, prices, timestamps and report schema version 3 exactly match the returned
 history. A report from the previous hour is never attached to a new window.
 
 ## Reconciliation limitations
@@ -82,9 +82,21 @@ valuation using the pre-deposit share supply.
 
 The same period now reconciles exactly to 18,395.305533 USDG, with only about
 1.4e-16 pp floating-point noise and no residual bar. The observed share-price
-return and cash-flow treatment are unchanged. Cache schema version 2 prevents
-previously calculated reports from being reused. These are historical validation
-results, not production constants or an independent accounting audit.
+return and cash-flow treatment are unchanged. Cache schema version 2 prevented
+previously calculated reports from being reused.
+
+On November 23, 2026, a Sepolia seven-day window (`2026-11-16T09:00Z` to
+`2026-11-23T09:00Z`) showed an explicit `+0.00001236 pp` / `+12.697344 USDG`
+residual. Investigation traced the entire difference to a single negative-VPI
+open in block 329855884 ([order #9717](https://sepolia.arbiscan.io/tx/0xe678be206719bc3435c40d5a3106b2e14346e5bb0df617c9f79bbf2b658cc069))
+executed near 100% pool utilization. On a negative-VPI open, `HousePool` pays
+`poolRebatePayoutAssets` to the trader plus a fail-soft protocol execution fee
+top-up bounded by available free pool cash; in order #9717 the top-up paid
+7.300688 USDG of the 19.998032 USDG execution fee, leaving 12.697344 USDG in
+`HousePool`. Schema version 3 binds negative-VPI open attribution to the actual
+`HousePool.payOut` call trace and `USDG` `Transfer` receipt outflows instead of
+assuming the full gross `posVpiAccruedDelta` left the pool. These are historical
+validation results, not production constants or an independent accounting audit.
 
 ## API contract
 

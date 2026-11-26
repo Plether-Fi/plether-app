@@ -3,7 +3,7 @@ import { requireDeployedRelease } from './release.mjs'
 import { setTimeout } from 'node:timers/promises'
 import pg from 'pg'
 import { createPublicClient, createWalletClient, http } from 'viem'
-import { arbitrumSepolia } from 'viem/chains'
+import { arbitrum, arbitrumSepolia } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 import { ProtectionWorker } from './worker.mjs'
 import { json } from './policy.mjs'
@@ -29,9 +29,10 @@ async function main() {
   const privateKey = process.env.PROTECTION_WORKER_PRIVATE_KEY
   if (executionEnabled && !privateKey) throw new Error('PROTECTION_WORKER_PRIVATE_KEY is required for execution')
   const account = privateKey ? privateKeyToAccount(privateKey) : { address: release.release.owner, type: 'json-rpc' }
+  const chain = release.network.chainId === 42161 ? arbitrum : arbitrumSepolia
   const transport = http(process.env.PERPS_RPC_URL, { timeout: 15_000, retryCount: 2, fetchOptions: process.env.PERPS_RPC_AUTH_TOKEN ? { headers: { Authorization: `Bearer ${process.env.PERPS_RPC_AUTH_TOKEN}` } } : undefined })
-  const publicClient = createPublicClient({ chain: arbitrumSepolia, transport })
-  const walletClient = privateKey ? createWalletClient({ account, chain: arbitrumSepolia, transport }) : undefined
+  const publicClient = createPublicClient({ chain, transport })
+  const walletClient = privateKey ? createWalletClient({ account, chain, transport }) : undefined
   // DATABASE_URL follows pg/libpq syntax. Production requires certificate-verified TLS.
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1, connectionTimeoutMillis: 10_000 })
   let db
@@ -44,7 +45,7 @@ async function main() {
     const protectionDdl = schema.split('-- v1.2.1 Book event history and independent trigger/retry worker checkpoints.')[1]?.split('-- Cached six-feed Pyth update payloads used by reveal payload APIs and keeper execution')[0]
     if (!protectionDdl) throw new Error('Protection migration is missing')
     await db.query(protectionDdl)
-    const lock = await db.query('SELECT pg_try_advisory_lock($1,$2) AS acquired', [421614, 121])
+    const lock = await db.query('SELECT pg_try_advisory_lock($1,$2) AS acquired', [release.network.chainId, 121])
     if (!lock.rows[0].acquired) throw new Error('Another protection worker holds the signer/index lease')
     const worker = new ProtectionWorker({ db, publicClient, walletClient, account, release, executionEnabled, log,
       batchBlocks: BigInt(positive('PROTECTION_WORKER_INDEX_BATCH_BLOCKS', 2000)),

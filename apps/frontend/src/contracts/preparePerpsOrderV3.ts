@@ -180,16 +180,31 @@ function validateInput(input: PreparePerpsOrderV3Input): void {
 async function loadPerpsOrderReviewContext(
   client: PublicClient,
   manifest: PerpsAaDeploymentManifest,
-  account: Address
-): Promise<PerpsOrderReviewContext> {
-  await refreshDeadlineClock()
+  input: PreparePerpsOrderV3Input
+): Promise<{
+  context: PerpsOrderReviewContext
+  position?: { exists: boolean; side: number }
+  protectionTriggerBountyAssets?: bigint
+}> {
+  const account = input.account
   const orderLifecycleBook = manifest.orderLifecycleBook
   const policyEvaluator = manifest.policyEvaluator
-  const verified = await withPreparationStep('deployment_verification', undefined, () => verifyPerpsV3DeploymentBindings(client, manifest))
+  // Run server clock refresh in parallel with immutable deployment verification
+  // so the HTTP readiness round-trip adds zero latency to review startup.
+  const [clockResult, verifiedResult] = await Promise.allSettled([
+    refreshDeadlineClock(input.signal),
+    withPreparationStep('deployment_verification', undefined, () => verifyPerpsV3DeploymentBindings(client, manifest)),
+  ])
+  if (verifiedResult.status === 'rejected') throw verifiedResult.reason
+  if (clockResult.status === 'rejected') throw clockResult.reason
+  const verified = verifiedResult.value
   // Reuse the exact block already fetched for deployment verification.
   const { blockNumber, block } = verified
   if (block.number > 0xffff_ffff_ffff_ffffn) {
     throw new Error('The reviewed block number cannot fit the V3 order format')
+  }
+  if (input.positionProtection && input.isClose) {
+    throw new Error('Protection can only be attached to a fresh open')
   }
 
   const [
@@ -207,6 +222,10 @@ async function loadPerpsOrderReviewContext(
     pendingOrders,
     maxPendingOrders,
     freeBuyingPowerAssets,
+    position,
+    closePreviewAddress,
+    ,
+    protectionTriggerBountyAssets,
   ] = await Promise.all([
     withPreparationStep('context_read', 'maxExecutionWindowSeconds', () => client.readContract({
       address: manifest.orderRouter,
@@ -292,6 +311,31 @@ async function loadPerpsOrderReviewContext(
       args: [account],
       blockNumber,
     })),
+    !input.isClose
+      ? withPreparationStep('context_read', 'getPosition', () => client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+          abi: PERPS_PUBLIC_LENS_ABI,
+          functionName: 'getPosition',
+          args: [account],
+          blockNumber,
+        }))
+      : Promise.resolve(undefined),
+    input.isClose
+      ? input.closeAssistance
+        ? verifyCloseAssistanceLens(client, input.closeAssistance, blockNumber).then(() => input.closeAssistance?.lens)
+        : withPreparationStep('deployment_verification', undefined, () => verifyClosePreviewDeployment(client, manifest, blockNumber))
+      : Promise.resolve(undefined),
+    input.positionProtection
+      ? withPreparationStep('deployment_verification', undefined, () => verifyProtectionDeployment(client, manifest, blockNumber))
+      : Promise.resolve(undefined),
+    input.positionProtection
+      ? withPreparationStep('context_read', 'positionProtectionTriggerBountyAssets', () => client.readContract({
+          address: manifest.orderRouter,
+          abi: PROTECTION_CONFIG_ABI,
+          functionName: 'positionProtectionTriggerBountyAssets',
+          blockNumber,
+        }))
+      : Promise.resolve(undefined),
   ])
 
   if (expectedConfigHash.toLowerCase() === ZERO_HASH) {
@@ -310,24 +354,29 @@ async function loadPerpsOrderReviewContext(
   if (currentPrice <= 0n) throw new Error('The current plDXY price is unavailable')
 
   return {
-    client,
-    manifest,
-    orderLifecycleBook,
-    policyEvaluator,
-    blockNumber,
-    blockHash: block.hash,
-    blockTimestamp: block.timestamp,
-    maxExecutionWindowSeconds,
-    expectedConfigHash,
-    openBountyBps,
-    minimumOpenBounty,
-    maximumOpenBounty,
-    closeBounty,
-    lastMarkPrice,
-    capPrice,
-    poolDepthAssets,
-    currentPrice,
-    freeBuyingPowerAssets,
+    context: {
+      closePreviewAddress,
+      client,
+      manifest,
+      orderLifecycleBook,
+      policyEvaluator,
+      blockNumber,
+      blockHash: block.hash,
+      blockTimestamp: block.timestamp,
+      maxExecutionWindowSeconds,
+      expectedConfigHash,
+      openBountyBps,
+      minimumOpenBounty,
+      maximumOpenBounty,
+      closeBounty,
+      lastMarkPrice,
+      capPrice,
+      poolDepthAssets,
+      currentPrice,
+      freeBuyingPowerAssets,
+    },
+    position,
+    protectionTriggerBountyAssets,
   }
 }
 
@@ -540,34 +589,28 @@ export async function reviewPerpsOrderV3(
 ): Promise<ReviewedPerpsOrderV3> {
   input.signal?.throwIfAborted()
   validateInput(input)
-  const context = await withPreparationStep('context_read', undefined, () => loadPerpsOrderReviewContext(client, manifest, input.account))
-  if (!input.isClose) {
-    // UI position data may lag a fill or a trade made in another tab. Check at
-    // the same verified block as the review; never silently turn an open into
-    // a close or ask the sponsor to estimate a predictably invalid operation.
-    const position = await withPreparationStep('context_read', 'getPosition', () => client.readContract({
-      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI,
-      functionName: 'getPosition', args: [input.account], blockNumber: context.blockNumber,
-    }))
-    input.signal?.throwIfAborted()
+  const { context, position, protectionTriggerBountyAssets } = await withPreparationStep(
+    'context_read',
+    undefined,
+    () => loadPerpsOrderReviewContext(client, manifest, input)
+  )
+  input.signal?.throwIfAborted()
+  if (!input.isClose && position) {
     if (position.exists && input.positionProtection) throw new Error('Protected opens require an account with no position')
     if (position.exists && position.side !== input.side) {
       throw preparationFailure(new PerpsOrderPositionConflictError(), 'preflight', 'getPosition')
     }
   }
-  if (input.isClose) {
-    context.closePreviewAddress = input.closeAssistance
-      ? (await verifyCloseAssistanceLens(client, input.closeAssistance, context.blockNumber), input.closeAssistance.lens)
-      : await withPreparationStep('deployment_verification', undefined, () => verifyClosePreviewDeployment(client, manifest, context.blockNumber))
-    input.signal?.throwIfAborted()
-  }
   let protection: PreparedPerpsOrderV3['positionProtection']
   if (input.positionProtection) {
-    await withPreparationStep('deployment_verification', undefined, () => verifyProtectionDeployment(client, manifest, context.blockNumber))
     if (input.isClose) throw new Error('Protection can only be attached to a fresh open')
     validateProtectionParams(input.positionProtection, input.direction, context.lastMarkPrice, context.capPrice)
-    const triggerBountyAssets = await withPreparationStep('context_read', 'positionProtectionTriggerBountyAssets', () => client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyAssets', blockNumber: context.blockNumber }))
-    protection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyAssets, executionBountyAssets: context.closeBounty }
+    protection = {
+      book: manifest.positionProtectionBook,
+      params: { ...input.positionProtection },
+      triggerBountyAssets: protectionTriggerBountyAssets ?? 0n,
+      executionBountyAssets: context.closeBounty,
+    }
   }
   const review = async (candidate: PreparePerpsOrderV3Input) => {
     input.signal?.throwIfAborted()

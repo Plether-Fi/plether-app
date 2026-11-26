@@ -11,7 +11,19 @@ def secretvalues($name): [(.secrets // [])[] | select(.name == $name) | .valueFr
 | ($modes | length <= 1 | checked) as $unique
 | ($modes[0] // "dual-independent") as $mode
 | secretvalues("PERPS_RPC_URL") as $primary
-| secretvalues("AA_RECONCILER_SECONDARY_RPC_URL") as $verification
+| envvalues("AA_KERNEL_PROFILE_JSON") as $kernel_profiles
+| secretvalues("AA_RECONCILER_SECONDARY_RPC_URL") as $legacy_verification
+| secretvalues("AA_SECURITY_RPC_URL") as $kernel_verification
+| (if ($kernel_profiles | length) == 0 then
+     (($kernel_verification | length) == 0 | checked) as $legacy_only
+     | $legacy_verification
+   else
+     (($kernel_profiles | length) == 1
+      and ((envvalues("PERPS_CHAIN_ID")) == ["421614"])
+      and ($legacy_verification | length) == 0
+      and $mode == "dual-independent" | checked) as $kernel_only
+     | $kernel_verification
+   end) as $verification
 | (($primary | length) == 1 and ($verification | length) == 1 | checked) as $secrets
 | if $mode == "single-provider-sepolia" then
     envvalues("AA_NATIVE_CANARY_OWNERS") as $owners

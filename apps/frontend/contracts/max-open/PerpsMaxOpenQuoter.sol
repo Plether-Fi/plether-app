@@ -60,14 +60,16 @@ interface IPerpsMaxOpenRouter {
 
 /// @notice A deployless read helper that applies selected leverage using the
 ///         deployed canonical planner. It never signs or submits a transaction.
-/// @dev All constituent reads share the same eth_call state. Planner validity
-///      may have disconnected ranges: an invalid intermediate preview reverts,
-///      rather than being treated as an upper bound. Router admission, oracle
-///      freshness, adverse-price review and submission checks remain with the
-///      existing frontend preparation flow.
+/// @dev All constituent reads share the same eth_call state. A preview below
+///      the minimum position size raises the search floor. Other intermediate
+///      planner failures still revert because validity may have disconnected
+///      ranges. Router admission, oracle freshness, adverse-price review and
+///      submission checks remain with the existing frontend preparation flow.
 contract PerpsMaxOpenQuoter {
     uint256 internal constant SIZE_QUANTUM = 100e18;
     uint256 internal constant SIZE_TO_ASSETS_SCALE = 1e20;
+    // CfdEnginePlanTypes.OpenRevertCode.POSITION_TOO_SMALL on the pinned lens.
+    uint8 internal constant POSITION_TOO_SMALL = 3;
 
     error PerpsMaxOpenQuoter__InvalidMaxLeverage();
     error PerpsMaxOpenQuoter__InvalidPreview(uint8 reason);
@@ -139,6 +141,12 @@ contract PerpsMaxOpenQuoter {
             uint256 sizeDelta = midpoint * SIZE_QUANTUM;
             IPerpsMaxOpenLens.OpenPreview memory preview =
                 lens.previewOpen(account, side, sizeDelta, marginDelta, oraclePrice);
+            if (!preview.valid && preview.invalidReason == POSITION_TOO_SMALL) {
+                // Post-trade notional increases with size for this side and price.
+                // This candidate bounds the search without becoming a quote.
+                lower = midpoint;
+                continue;
+            }
             if (_withinLeverage(preview, price, maxLeverageBps)) {
                 lower = midpoint;
                 bestSize = sizeDelta;

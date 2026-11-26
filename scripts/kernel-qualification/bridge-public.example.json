@@ -1,0 +1,9 @@
+{
+  "deployment": "kernel-sepolia-canary-20261121",
+  "deployer": "0xF4b32B03f0F357aEa01DfaB5FcEe0c8637A492Cb",
+  "amountWei": "2480000000000000000",
+  "l1PrimaryRpc": "https://sepolia.gateway.tenderly.co",
+  "l1SecondaryRpc": "https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public",
+  "l2PrimaryRpc": "https://sepolia-rollup.arbitrum.io/rpc",
+  "l2SecondaryRpc": "https://arbitrum-sepolia.gateway.tenderly.co"
+}

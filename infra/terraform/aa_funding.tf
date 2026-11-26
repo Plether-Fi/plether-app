@@ -45,10 +45,11 @@ locals {
     volumesFrom      = []
     environment = [
       { name = "AA_FUNDING_MONITORS", value = jsonencode(var.aa_funding_monitors) },
-      { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/arbitrum-sepolia-v2.0.0.json" },
+      { name = "PERPS_RELEASE_MANIFEST", value = local.runtime_perps_release_manifest_path },
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
     ]
     secrets = concat([
-      { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+      { name = "DATABASE_URL", valueFrom = local.database_url_parameter_arn },
       { name = "PERPS_RPC_URL", valueFrom = local.application_rpc_url_parameter_arn },
     ], local.perps_rpc_auth_token_secret)
   }]
@@ -59,10 +60,10 @@ resource "terraform_data" "aa_funding_inventory_guard" {
   lifecycle {
     precondition {
       condition = length(var.aa_funding_monitors) == 0 || (
-        var.environment == "sepolia" && var.aws_region == "ap-southeast-1" && var.consolidate_workers && local.native_aa_backend_configured &&
+        contains(["sepolia", "mainnet"], var.environment) && var.aws_region == "ap-southeast-1" && var.consolidate_workers && local.native_aa_backend_configured &&
         var.aa_funding_monitor_image != "" && length(local.aa_funding_components) == 6
       )
-      error_message = "Funding monitoring requires the complete six-role inventory, a tested image, and the consolidated Singapore Sepolia native-AA deployment. No other deployment is authorized."
+      error_message = "Funding monitoring requires the complete six-role inventory, a tested image, and a consolidated Singapore native-AA deployment."
     }
   }
 }

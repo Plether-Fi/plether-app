@@ -1,7 +1,10 @@
 module Plether.ConfigSpec (spec) where
 
 import Control.Exception (bracket)
+import Data.Aeson (encode)
+import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.Text as T
+import Plether.AA.KernelDeploymentFixture (fixtureProfile, loadKernelDeploymentFixture)
 import Plether.Config
   ( Config (..)
   , FaucetGuardConfig (..)
@@ -9,6 +12,8 @@ import Plether.Config
   , NativeAaSafetyInput (..)
   , AaRpcMode (..)
   , resolveAaSecurityRpc
+  , loadKernelSecurityRpc
+  , resolveKernelSecurityRpc
   , validateAaSafeLag
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
@@ -622,6 +627,8 @@ spec = do
     it "normalizes only HTTPS/default-443 external security RPC endpoints" $ do
       normalizeExternalSecurityRpcUrl "https://RPC.Example.com/tenant"
         `shouldBe` Just "https://rpc.example.com/tenant"
+      normalizeExternalSecurityRpcUrl "https://RPC.Example.com/tenant//"
+        `shouldBe` Just "https://rpc.example.com/tenant"
       normalizeExternalSecurityRpcUrl "https://rpc.example.com:443/"
         `shouldBe` Just "https://rpc.example.com"
       normalizeExternalSecurityRpcUrl "http://rpc.example.com" `shouldBe` Nothing
@@ -677,6 +684,63 @@ spec = do
     it "retains HTTPS and URL hygiene in single-provider mode" $ do
       mapM_ (\url -> resolveAaSecurityRpc "single-provider-sepolia" 421614 "false" owner url url `shouldSatisfy` isLeft)
         ["http://rpc.example", "https://user@rpc.example", "https://rpc.example:8443", "https://rpc.example/?key=secret"]
+
+  describe "Kernel security RPC configuration" $ do
+    let primary = "https://primary.example/rpc"
+        preferred = "https://secondary.example/tenant"
+        legacy = "https://legacy.example/rpc"
+        resolve = resolveKernelSecurityRpc (Just primary)
+    it "normalizes both authorities and preserves transport paths with preferred precedence" $
+      withEnvironmentVariables
+        [ ("PERPS_RPC_URL", Just "https://PRIMARY.Example:443/rpc/")
+        , ("AA_SECURITY_RPC_URL", Just "https://SECONDARY.Example:443/tenant//")
+        , ("AA_RECONCILER_SECONDARY_RPC_URL", Just "https://legacy.example/rpc")
+        ] $ loadKernelSecurityRpc `shouldReturn` Right (primary <> "/", preferred <> "//")
+    it "uses the legacy secondary only when the preferred variable is unset" $ do
+      resolve Nothing (Just legacy) `shouldBe` Right (primary, legacy)
+      resolve (Just preferred) (Just "invalid legacy URL") `shouldBe` Right (primary, preferred)
+      resolve Nothing Nothing `shouldSatisfy` isLeft
+      mapM_ (\raw -> resolve (Just raw) (Just legacy) `shouldSatisfy` isLeft) ["", " ", "\t"]
+    it "lets the Kernel API use the legacy alias without activating native AA" $ do
+      profileJson <- LBS.unpack . encode . fixtureProfile <$> loadKernelDeploymentFixture
+      withEnvironmentVariables
+        [ ("RPC_URL", Just "http://127.0.0.1:1")
+        , ("PERPS_RPC_URL", Just "https://primary.example/rpc")
+        , ("LP_SETTLEMENT_MODE", Just "off")
+        , ("AA_KERNEL_PROFILE_JSON", Just profileJson)
+        , ("AA_SECURITY_RPC_URL", Nothing)
+        , ("AA_RECONCILER_SECONDARY_RPC_URL", Just "https://legacy.example/rpc")
+        ] $ do
+        configuration <- loadConfig
+        case configuration of
+          Left failure -> expectationFailure failure
+          Right cfg -> fmap (const ()) (cfgNativeAaConfig cfg) `shouldBe` Nothing
+        loadKernelSecurityRpc `shouldReturn` Right (primary, legacy)
+    it "rejects a stray native secondary when the Kernel profile is empty" $
+      withEnvironmentVariables
+        [ ("RPC_URL", Just "http://127.0.0.1:1")
+        , ("PERPS_RPC_URL", Just "https://primary.example/rpc")
+        , ("LP_SETTLEMENT_MODE", Just "off")
+        , ("AA_KERNEL_PROFILE_JSON", Just "")
+        , ("AA_SECURITY_RPC_URL", Nothing)
+        , ("AA_RECONCILER_SECONDARY_RPC_URL", Just "https://legacy.example/rpc")
+        ] $ do
+          configuration <- loadConfig
+          case configuration of
+            Left failure -> T.pack failure `shouldSatisfy` T.isPrefixOf "Native AA configuration is partial"
+            Right _ -> expectationFailure "an empty Kernel profile masked partial native AA configuration"
+    it "rejects aliases of the primary host even with different paths" $ do
+      let alias = "https://PRIMARY.Example:443/different-tenant/"
+      resolve (Just alias) (Just legacy) `shouldSatisfy` isLeft
+      resolve Nothing (Just alias) `shouldSatisfy` isLeft
+    it "rejects malformed input without echoing the supplied URL" $ do
+      mapM_ (\url -> resolve (Just url) (Just legacy)
+        `shouldBe` Left "AA_SECURITY_RPC_URL must be a normalized HTTPS/default-443 provider URL")
+        [ "http://secondary.example", "https://user@secondary.example", "https://secondary.example:8443"
+        , "https://secondary.example/rpc?key=fixture", "https://secondary.example/#secret", " https://secondary.example"
+        ]
+      resolveKernelSecurityRpc (Just $ primary <> " ") (Just preferred) Nothing `shouldSatisfy` isLeft
+      resolveKernelSecurityRpc Nothing (Just preferred) Nothing `shouldSatisfy` isLeft
 
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True

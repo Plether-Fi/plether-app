@@ -2,6 +2,7 @@ import type { OrderRequestV3, OrderReceiptV5, closePreviewV3Abi } from '@plether
 import { bytesToHex, type Address, type Hex, type ContractFunctionReturnType } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
 import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
+import type { KernelActionQuote } from '../perps-aa/kernelRuntime'
 
 export const PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX =
   '0x504c455448455221' as const
@@ -159,6 +160,7 @@ export interface PerpsLifecycleOutcomeSnapshot {
 
 export interface PreparedPerpsOrderV3 {
   sponsoredClose?: SponsoredCloseFunding
+  kernelQuote?: KernelActionQuote
   account: Address
   manifestVersion: string
   orderRouter: Address

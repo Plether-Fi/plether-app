@@ -25,7 +25,7 @@ export class ReturnAttributionWorker {
     const lock = await this.db.query('SELECT pg_try_advisory_lock($1,$2) AS acquired', [this.release.network.chainId, 1759])
     if (!lock.rows[0].acquired) return false
     if (await this.client.getChainId() !== this.release.network.chainId) throw new AttributionError('Wrong attribution chain')
-    for (const name of ['housePool', 'cfdEngine', 'cfdEngineSettlementSidecar', 'juniorVault', 'seniorVault', 'orderRouter', 'pletherOracle']) {
+    for (const name of ['housePool', 'cfdEngine', 'cfdEngineSettlementSidecar', 'marginClearinghouse', 'settlementToken', 'juniorVault', 'seniorVault', 'orderRouter', 'pletherOracle']) {
       const code = await this.client.getCode({ address: this.address[name] })
       if (!code || keccak256(code) !== this.release.contracts[name].runtimeCodeHash) throw new AttributionError('Attribution runtime binding mismatch')
     }
@@ -177,7 +177,7 @@ export class ReturnAttributionWorker {
         number, hash: payload.blockHash, timestamp: BigInt(payload.timestamp),
       })
     }
-    const existing = await this.db.query('SELECT 1 FROM vault_return_reports WHERE chain_id=$1 AND house_pool_address=$2 AND start_block_hash=$3 AND end_block_hash=$4 AND start_share_price=$5 AND end_share_price=$6 AND schema_version=2 AND senior_vault_address=$7 AND junior_vault_address=$8 AND source_commit=$9', [this.release.network.chainId, this.address.housePool, first.block_hash, last.block_hash, first.junior_share_price_wad, last.junior_share_price_wad, this.address.seniorVault, this.address.juniorVault, SOURCE_COMMIT])
+    const existing = await this.db.query('SELECT 1 FROM vault_return_reports WHERE chain_id=$1 AND house_pool_address=$2 AND start_block_hash=$3 AND end_block_hash=$4 AND start_share_price=$5 AND end_share_price=$6 AND schema_version=3 AND senior_vault_address=$7 AND junior_vault_address=$8 AND source_commit=$9', [this.release.network.chainId, this.address.housePool, first.block_hash, last.block_hash, first.junior_share_price_wad, last.junior_share_price_wad, this.address.seniorVault, this.address.juniorVault, SOURCE_COMMIT])
     if (existing.rows.length) return { ready: true, cached: true }
     const logs = (await this.db.query('SELECT payload FROM vault_return_logs WHERE deployment_key=$1 AND block_number <= $2 ORDER BY block_number,log_index', [this.key, endNumber.toString()])).rows.map(row => row.payload)
     const ledger = new EntryLedger()
@@ -240,11 +240,11 @@ export class ReturnAttributionWorker {
     report.sourceBlockCount = transitions.length + 1
     if ((await this.block(startNumber, true)).hash !== first.block_hash || (await this.block(endNumber, true)).hash !== last.block_hash) throw new AttributionError('Attribution reorged before publication')
     await this.db.query(`INSERT INTO vault_return_reports(chain_id,house_pool_address,senior_vault_address,junior_vault_address,start_block_number,end_block_number,start_block_hash,end_block_hash,start_share_price,end_share_price,source_commit,attribution,schema_version)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,2)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,3)
       ON CONFLICT(chain_id,house_pool_address,senior_vault_address,junior_vault_address,end_block_number) DO UPDATE SET
       start_block_number=EXCLUDED.start_block_number,start_block_hash=EXCLUDED.start_block_hash,end_block_hash=EXCLUDED.end_block_hash,
       start_share_price=EXCLUDED.start_share_price,end_share_price=EXCLUDED.end_share_price,source_commit=EXCLUDED.source_commit,
-      schema_version=2,attribution=EXCLUDED.attribution,updated_at=NOW()`,
+      schema_version=3,attribution=EXCLUDED.attribution,updated_at=NOW()`,
     [this.release.network.chainId, this.address.housePool, this.address.seniorVault, this.address.juniorVault, startNumber.toString(), endNumber.toString(), first.block_hash, last.block_hash, start.sharePrice.toString(), end.sharePrice.toString(), SOURCE_COMMIT, json(report)])
     return { ready: true, cached: false, sourceBlockCount: transitions.length + 1, notes: report.notes }
   }

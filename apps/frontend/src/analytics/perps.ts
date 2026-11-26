@@ -55,6 +55,28 @@ export type PerpsSponsoredOperationStatus =
 
 export type PerpsAnalyticsProperties = AnalyticsProperties
 
+export function trackPerpsKernelOutcome(input: {
+  mode: 'eth' | 'sponsored'
+  outcome: 'quote_ready' | 'quote_failed' | 'submission_unknown' | 'included' | 'execution_reverted'
+    | 'nonce_consumed' | 'sponsorship_expired' | 'cancelled'
+  maximum?: bigint
+  actual?: bigint
+  error?: unknown
+}): void {
+  const reason = input.error instanceof Error && 'reason' in input.error ? input.error.reason : undefined
+  const reasons = ['INSUFFICIENT_GAS_ETH', 'PAYMENT_MODE_UNAVAILABLE', 'SPONSORSHIP_INELIGIBLE',
+    'SPONSORSHIP_BUDGET_UNAVAILABLE', 'SPONSORSHIP_RECONCILIATION_UNAVAILABLE', 'PAYMASTER_UNDERFUNDED',
+    'PAYMASTER_PAUSED', 'BUNDLER_UNAVAILABLE', 'RATE_LIMITED', 'SIMULATION_FAILED']
+  const category = typeof reason === 'string' && reasons.includes(reason) ? reason : undefined
+  const { actual, maximum } = input
+  const usage = actual === undefined || maximum === undefined || maximum <= 0n ? undefined
+    : actual > maximum ? 'above_maximum' : actual * 2n < maximum ? 'below_half' : 'half_to_maximum'
+  captureAnalyticsEvent('perps kernel operation', compactProperties({
+    surface: 'perps', account_mode: 'kernel', gas_payment_mode: input.mode,
+    lifecycle_state: input.outcome, reason_code: category, gas_estimate_usage: usage,
+  }))
+}
+
 function compactProperties(properties: PerpsAnalyticsProperties = {}): PerpsAnalyticsProperties {
   return Object.fromEntries(
     Object.entries(properties).filter(([, value]) => value !== undefined && value !== null)

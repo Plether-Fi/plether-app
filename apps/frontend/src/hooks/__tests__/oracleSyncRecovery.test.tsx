@@ -31,6 +31,7 @@ it.each([true, false])('recovers a review after the worker refreshes the accepte
       throw new Error(`Unexpected ${functionName}`)
     }),
     getBalance: vi.fn(async () => 1000n),
+    estimateContractGas: vi.fn(async () => 500_000n),
     simulateContract: vi.fn(async () => ({ request: {} })),
     waitForTransactionReceipt: vi.fn(async () => {
       acceptedTime = tick; blockNumber++

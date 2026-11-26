@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1028" viewBox="0 0 640 1028" role="img" aria-labelledby="plether-system-overview-title plether-system-overview-desc" focusable="false">
+<title id="plether-system-overview-title">How Plether Perps fits together</title>
+<desc id="plether-system-overview-desc">Pyth FX feeds set the bounded plDXY price. Traders commit LONG USD or SHORT USD orders via gas-sponsored Trading Accounts, while Senior and Junior LP vaults underwrite bounded payouts. The oracle sets the price. VPI, carry and bounded solvency limits price pool risk without peer-to-peer matching.</desc>
+<style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
+<rect width="640" height="1028" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
+<text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · OVERVIEW</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">How Plether Perps fits together</text>
+<path d="M32 136 L608 136" stroke="#3B212D" stroke-width="2" fill="none"/>
+<path d="M32 136 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
+<rect x="32" y="162" width="576" height="114" rx="12" fill="#3B212D" stroke="#FFAB96" stroke-width="1.5"/>
+<rect x="44" y="165" width="552" height="5" rx="3" fill="#FFAB96" stroke="none"/>
+<text x="52" y="204" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="536">Pyth FX Oracle (6 currencies)</text>
+<text x="52" y="236" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="536">Produces the bounded 0.00 to 2.00 plDXY mark</text>
+<text x="52" y="266" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="536">— no order book or AMM.</text>
+<path d="M320 282 V312 m-6 -6 6 6 6 -6" stroke="#FFAB96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="32" y="320" width="576" height="82" rx="12" fill="#3B212D" stroke="#FF512F" stroke-width="2"/>
+<text x="320" y="358" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="544" text-anchor="middle">Plether Perps Engine</text>
+<text x="320" y="388" font-size="22" font-weight="400" fill="#FFAB96" data-max-width="544" text-anchor="middle">Delayed FIFO · Solvency · VPI &amp; carry</text>
+<path d="M320 404 L320 420" stroke="#9A8890" stroke-width="2" fill="none"/>
+<path d="M171 420 L469 420" stroke="#9A8890" stroke-width="2" fill="none"/>
+<path d="M171 420 V440 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<path d="M469 420 V440 m-6 -6 6 6 6 -6" stroke="#F7D977" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="32" y="448" width="278" height="408" rx="12" fill="#3B212D" stroke="#00FF99" stroke-width="1.5"/>
+<rect x="44" y="451" width="254" height="5" rx="3" fill="#00FF99" stroke="none"/>
+<text x="48" y="490" font-size="24" font-weight="700" fill="#00FF99" data-max-width="246">Traders</text>
+<path d="M48 507 L294 507" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="48" y="533" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">LONG or SHORT USD</text>
+<text x="48" y="569" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Gas-sponsored</text>
+<text x="48" y="599" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Trading Account</text>
+<text x="48" y="629" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">posts USDG margin.</text>
+<path d="M171 645 V665 m-6 -6 6 6 6 -6" stroke="#00FF99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="48" y="701" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Delayed global FIFO</text>
+<text x="48" y="737" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Commit first; fill on</text>
+<text x="48" y="767" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">the next eligible Pyth</text>
+<text x="48" y="797" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">tick.</text>
+<rect x="330" y="448" width="278" height="408" rx="12" fill="#3B212D" stroke="#F7D977" stroke-width="1.5"/>
+<rect x="342" y="451" width="254" height="5" rx="3" fill="#F7D977" stroke="none"/>
+<text x="346" y="490" font-size="24" font-weight="700" fill="#F7D977" data-max-width="246">Liquidity pool</text>
+<path d="M346 507 L592 507" stroke="#9A8890" stroke-width="1" fill="none"/>
+<text x="346" y="533" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Senior &amp; Junior</text>
+<text x="346" y="563" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">vaults</text>
+<text x="346" y="599" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Owner-wallet USDG</text>
+<text x="346" y="629" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">deposits underwrite</text>
+<text x="346" y="659" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">bounded payouts.</text>
+<path d="M469 675 V695 m-6 -6 6 6 6 -6" stroke="#F7D977" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="346" y="731" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="246">Waterfall &amp; firewall</text>
+<text x="346" y="767" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">Junior takes first</text>
+<text x="346" y="797" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">loss; trader reserves</text>
+<text x="346" y="827" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="246">come first.</text>
+<rect x="32" y="878" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="888" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="912" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">The oracle sets the price. VPI, carry and</text>
+<text x="56" y="942" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">bounded solvency limits price pool risk without</text>
+<text x="56" y="972" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">peer-to-peer matching.</text>
+</svg>

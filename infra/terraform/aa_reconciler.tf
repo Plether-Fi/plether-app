@@ -1,6 +1,19 @@
 locals {
   aa_reconciler_secondary_rpc_url_parameter_arn = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name)}"
 
+  kernel_aa_reconciler_environment = [
+    { name = "HOME", value = "/tmp" },
+    { name = "TMPDIR", value = "/tmp" },
+    { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+    { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
+    { name = "AA_KERNEL_PROFILE_JSON", value = var.aa_kernel_profile_json },
+    { name = "AA_KERNEL_SPONSORSHIP_JSON", value = var.aa_kernel_sponsorship_json },
+    { name = "AA_KERNEL_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },
+    { name = "AA_KERNEL_RECONCILER_POLL_SECONDS", value = var.aa_reconciler_poll_seconds },
+    { name = "AA_KERNEL_RECONCILER_BATCH_BLOCKS", value = var.aa_reconciler_batch_blocks },
+    { name = "AA_KERNEL_RECONCILER_FAILURE_PAUSE_SECONDS", value = "60" },
+  ]
+
   aa_reconciler_log_router_container = merge(local.otel_log_router_container, {
     environment = [
       { name = "AWS_REGION", value = var.aws_region },
@@ -81,10 +94,10 @@ resource "aws_iam_role_policy" "aa_reconciler_execution_secrets" {
         "ssm:GetParameter"
       ]
       Resource = compact([
-        aws_ssm_parameter.database_url.arn,
+        local.database_url_parameter_arn,
         local.application_rpc_url_parameter_arn,
         local.aa_reconciler_secondary_rpc_url_parameter_arn,
-        aws_ssm_parameter.posthog_otlp_authorization_header.arn,
+        local.posthog_otlp_authorization_header_parameter_arn,
         local.perps_rpc_auth_token_parameter_arn,
       ])
     }]
@@ -213,19 +226,19 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
       secrets = concat([
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_ssm_parameter.database_url.arn
+          valueFrom = local.database_url_parameter_arn
         },
         {
           name      = "PERPS_RPC_URL"
           valueFrom = local.application_rpc_url_parameter_arn
         },
         {
-          name      = "AA_RECONCILER_SECONDARY_RPC_URL"
+          name      = var.alto_entrypoint_version == "0.9" ? "AA_SECURITY_RPC_URL" : "AA_RECONCILER_SECONDARY_RPC_URL"
           valueFrom = local.aa_reconciler_secondary_rpc_url_parameter_arn
         },
       ], local.perps_rpc_auth_token_secret)
 
-      environment = [
+      environment = var.alto_entrypoint_version == "0.9" ? local.kernel_aa_reconciler_environment : [
         { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
         { name = "AA_NATIVE_CANARY_OWNERS", value = var.aa_native_canary_owners },
         { name = "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED", value = tostring(var.aa_native_global_rollout_enabled) },

@@ -29,7 +29,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--overview.png",
       "storyId": "documentation-vaults--overview",
       "dimensions": {
-        "height": 1562,
+        "height": 1515,
         "width": 1440
       },
       "storyPath": "/?path=/story/documentation-vaults--overview"
@@ -56,7 +56,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--senior-overview-section.png",
       "storyId": "documentation-vaults--senior-overview-section",
       "dimensions": {
-        "height": 1875,
+        "height": 1938,
         "width": 1440
       },
       "storyPath": "/?path=/story/documentation-vaults--senior-overview-section"
@@ -92,7 +92,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png",
       "storyId": "perps-market-state-panel--open-then-close-only",
       "dimensions": {
-        "height": 94,
+        "height": 114,
         "width": 496
       },
       "storyPath": "/?path=/story/perps-market-state-panel--open-then-close-only"
@@ -137,7 +137,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--add-take-profit-stop-loss.png",
       "storyId": "perps-trade-ticket--add-take-profit-stop-loss",
       "dimensions": {
-        "height": 819,
+        "height": 831,
         "width": 448
       },
       "storyPath": "/?path=/story/perps-trade-ticket--add-take-profit-stop-loss"
@@ -146,7 +146,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--deposit-margin.png",
       "storyId": "perps-trade-ticket--deposit-margin",
       "dimensions": {
-        "height": 502,
+        "height": 736,
         "width": 496
       },
       "storyPath": "/?path=/story/perps-trade-ticket--deposit-margin"
@@ -155,7 +155,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--executed.png",
       "storyId": "perps-trade-ticket--executed",
       "dimensions": {
-        "height": 863,
+        "height": 1400,
         "width": 560
       },
       "storyPath": "/?path=/story/perps-trade-ticket--executed"
@@ -164,7 +164,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png",
       "storyId": "perps-trade-ticket--margin-account-summary",
       "dimensions": {
-        "height": 1274,
+        "height": 1286,
         "width": 496
       },
       "storyPath": "/?path=/story/perps-trade-ticket--margin-account-summary"
@@ -173,7 +173,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--quickstart-order.png",
       "storyId": "perps-trade-ticket--quickstart-order",
       "dimensions": {
-        "height": 1214,
+        "height": 1258,
         "width": 496
       },
       "storyPath": "/?path=/story/perps-trade-ticket--quickstart-order"

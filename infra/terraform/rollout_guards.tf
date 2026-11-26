@@ -209,13 +209,13 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     }
 
     precondition {
-      condition     = var.lp_settlement_mode == "off" || var.environment == "sepolia"
-      error_message = "LP settlement observe/execute modes are Sepolia-only until a reviewed production vault release is configured."
+      condition     = var.lp_settlement_mode == "off" || contains(["sepolia", "mainnet"], var.environment)
+      error_message = "LP settlement observe/execute modes require a supported sepolia or mainnet deployment."
     }
 
     precondition {
       condition = var.lp_settlement_mode == "off" || (
-        var.perps_chain_id == "421614"
+        var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
         && alltrue([
           for address in [
             var.perps_house_pool,
@@ -241,7 +241,7 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
           lower(var.perps_plether_oracle),
         ])) == 7
       )
-      error_message = "Active LP settlement requires the Arbitrum Sepolia chain, pairwise-distinct execution contracts, and operational HousePool/Senior/Junior addresses matching the vault-history release."
+      error_message = "Active LP settlement requires the matching Arbitrum chain, pairwise-distinct execution contracts, and operational HousePool/Senior/Junior addresses matching the vault-history release."
     }
 
     precondition {
@@ -253,8 +253,8 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     }
 
     precondition {
-      condition     = var.lp_settlement_mode == "off" || trimspace(var.lp_settlement_private_key) != ""
-      error_message = "LP settlement observe/execute modes require a dedicated lp_settlement_private_key."
+      condition     = var.lp_settlement_mode == "off" || local.lp_settlement_private_key_configured
+      error_message = "LP settlement observe/execute modes require a dedicated lp_settlement_private_key (or lp_settlement_private_key_ssm_parameter_name)."
     }
 
     precondition {
@@ -282,6 +282,11 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
   }
 }
 
+locals {
+  kernel_aa_profile_object     = try(jsondecode(var.aa_kernel_profile_json), null)
+  kernel_aa_sponsorship_object = try(jsondecode(var.aa_kernel_sponsorship_json), null)
+}
+
 resource "terraform_data" "self_hosted_aa_guard" {
   input = {
     environment                                 = var.environment
@@ -303,7 +308,12 @@ resource "terraform_data" "self_hosted_aa_guard" {
     alto_upstream_image                         = var.alto_upstream_image
     alto_rpc_auth_enabled                       = local.alto_rpc_auth_enabled
     alto_rpc_auth_image                         = var.alto_rpc_auth_image
+    alto_entrypoint_version                     = var.alto_entrypoint_version
     alto_entrypoint_address                     = var.alto_entrypoint_address
+    configure_kernel_aa_backend                 = local.kernel_aa_backend_configured
+    enable_kernel_aa_eth                        = var.enable_kernel_aa_eth
+    enable_kernel_aa_sponsorship                = var.enable_kernel_aa_sponsorship
+    enable_kernel_aa_protection_commits         = var.enable_kernel_aa_protection_commits
     aa_paymaster_address                        = var.aa_paymaster_address
     aa_paymaster_signer_address                 = var.aa_paymaster_signer_address
     aa_paymaster_policy_id                      = var.aa_paymaster_policy_id
@@ -315,17 +325,17 @@ resource "terraform_data" "self_hosted_aa_guard" {
     precondition {
       condition = !local.alto_rpc_auth_enabled ? var.alto_rpc_auth_image == "" : (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
-        && var.perps_chain_id == "421614"
+        && contains(["sepolia", "mainnet"], var.environment)
+        && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
         && var.aws_region == "ap-southeast-1"
-        && var.expected_aws_account_id == "932542905614"
-        && data.aws_caller_identity.current.account_id == "932542905614"
-        && var.alto_rpc_url_ssm_parameter_name == "/plether/sepolia/app-rpc-url"
-        && var.alto_rpc_auth_token_ssm_parameter_name == "/plether/sepolia/rpc-gateway-token"
+        && data.aws_caller_identity.current.account_id == var.expected_aws_account_id
+        && var.alto_rpc_url_ssm_parameter_name == "/plether/${local.deployment_name}/app-rpc-url"
+        && var.alto_rpc_auth_token_ssm_parameter_name == "/plether/${local.deployment_name}/rpc-gateway-token"
         && var.alto_send_transaction_rpc_url_ssm_parameter_name == ""
         && var.alto_rpc_auth_image != ""
+        && startswith(var.alto_rpc_auth_image, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/plether-alto-${local.deployment_name}@sha256:")
       )
-      error_message = "Authenticated Alto RPC requires the reviewed immutable preload image, exact Singapore Arbitrum Sepolia gateway URL/token parameters and no separate send RPC; omit its image when authentication is disabled."
+      error_message = "Authenticated Alto RPC requires the reviewed immutable preload image in the current account/environment, exact Singapore gateway URL/token parameters and no separate send RPC; omit its image when authentication is disabled."
     }
 
     precondition {
@@ -353,36 +363,36 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
     precondition {
       condition = !var.provision_self_hosted_aa || (
-        var.environment == "sepolia"
-        && var.perps_chain_id == "421614"
+        contains(["sepolia", "mainnet"], var.environment)
+        && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
       )
-      error_message = "The self-hosted AA stack is provisioned only for Arbitrum Sepolia (environment=sepolia, perps_chain_id=421614)."
+      error_message = "The self-hosted AA stack requires environment=sepolia with perps_chain_id=421614, or environment=mainnet with perps_chain_id=42161."
     }
 
     precondition {
       condition = var.alto_desired_count == 0 || (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
+        && contains(["sepolia", "mainnet"], var.environment)
       )
-      error_message = "alto_desired_count can be nonzero only for the provisioned Sepolia self-hosted AA stack."
+      error_message = "alto_desired_count can be nonzero only for a provisioned self-hosted AA stack."
     }
 
     precondition {
       condition = var.aa_reconciler_desired_count == 0 || (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
+        && contains(["sepolia", "mainnet"], var.environment)
       )
-      error_message = "aa_reconciler_desired_count can be nonzero only for the provisioned Sepolia self-hosted AA stack."
+      error_message = "aa_reconciler_desired_count can be nonzero only for a provisioned self-hosted AA stack."
     }
 
     precondition {
       condition = !var.configure_native_aa_backend || (
         var.provision_self_hosted_aa
-        && var.environment == "sepolia"
+        && contains(["sepolia", "mainnet"], var.environment)
         && var.alto_desired_count == 1
         && var.aa_reconciler_desired_count == 1
       )
-      error_message = "configure_native_aa_backend=true requires the Sepolia self-hosted stack with both Alto and the AA reconciler running at desired_count=1."
+      error_message = "configure_native_aa_backend=true requires the provisioned self-hosted stack with both Alto and the AA reconciler running at desired_count=1."
     }
 
     precondition {
@@ -406,8 +416,8 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition     = !var.aa_native_global_rollout_enabled || (var.environment == "sepolia" && var.perps_chain_id == "421614" && var.aws_region == "ap-southeast-1" && var.expected_aws_account_id == "932542905614" && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
-      error_message = "Public native AA requires the approved Singapore Arbitrum Sepolia configuration and complete six-role funding monitoring."
+      condition     = !var.aa_native_global_rollout_enabled || (contains(["sepolia", "mainnet"], var.environment) && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614") && var.aws_region == "ap-southeast-1" && data.aws_caller_identity.current.account_id == var.expected_aws_account_id && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
+      error_message = "Public native AA requires the approved Singapore configuration matching the environment chain ID and complete six-role funding monitoring."
     }
 
     precondition {
@@ -425,17 +435,113 @@ resource "terraform_data" "self_hosted_aa_guard" {
     precondition {
       condition = !var.provision_self_hosted_aa || (
         var.alto_upstream_image == "ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
-        && lower(var.alto_entrypoint_address) == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+        && lower(var.alto_entrypoint_address) == local.alto_entrypoint_addresses[var.alto_entrypoint_version]
       )
-      error_message = "Self-hosted AA must use the reviewed Alto v1.2.7 ARM64 digest and ERC-4337 EntryPoint v0.8 address."
+      error_message = "Self-hosted AA must use the reviewed Alto v1.2.7 ARM64 digest and the canonical address for the selected EntryPoint version."
+    }
+
+    precondition {
+      condition = var.alto_entrypoint_version != "0.9" || (
+        var.provision_self_hosted_aa && var.environment == "sepolia" && var.perps_chain_id == "421614"
+        && !var.alto_sepolia_safe_mode_exception && !var.configure_native_aa_backend
+        && !var.provision_aa_proxy && var.aa_rpc_mode == "dual-independent"
+        && var.alto_entrypoint_simulation_contract_v8 == ""
+      )
+      error_message = "Alto EntryPoint v0.9 requires the fresh Arbitrum Sepolia self-hosted service in safe mode with independent RPCs and without the v0.8 native backend, v0.8 simulator, or Pimlico proxy."
+    }
+
+    precondition {
+      condition     = var.alto_entrypoint_version == "0.9" || var.alto_entrypoint_simulation_contract_v9 == ""
+      error_message = "The v0.9 simulation binding requires alto_entrypoint_version = \"0.9\"."
+    }
+
+    precondition {
+      condition = var.alto_entrypoint_version != "0.9" || (
+        var.alto_desired_count == 0 && var.aa_reconciler_desired_count == 0
+      )
+      error_message = "Core Terraform supports only dormant v0.9 definitions. Use the isolated Kernel canary with the reviewed patched Alto image. A full deployment requires a separately qualified v0.9 image and launcher."
+    }
+
+    precondition {
+      condition = var.aa_kernel_profile_json == "" || (
+        local.kernel_aa_backend_configured && try(
+          toset(keys(local.kernel_aa_profile_object)) == toset([
+            "deployment", "chainId", "entryPoint", "entryPointVersion", "entryPointCodeHash",
+            "accountVersion", "accountIndex", "accountCodeHash", "factory", "factoryCodeHash",
+            "implementation", "implementationCodeHash", "validator", "validatorCodeHash",
+          ])
+          && startswith(jsonencode(local.kernel_aa_profile_object.deployment), "\"")
+          && can(regex("^[a-z0-9._-]{1,96}$", local.kernel_aa_profile_object.deployment))
+          && local.kernel_aa_profile_object.chainId == 421614
+          && local.kernel_aa_profile_object.entryPointVersion == "0.9"
+          && lower(local.kernel_aa_profile_object.entryPoint) == local.alto_entrypoint_addresses["0.9"]
+          && local.kernel_aa_profile_object.accountVersion == "kernel-v4-uups"
+          && local.kernel_aa_profile_object.accountIndex == 0
+          && alltrue([for field in ["factory", "implementation", "validator"] :
+            can(regex("^0x[0-9A-Fa-f]{40}$", local.kernel_aa_profile_object[field]))
+            && lower(local.kernel_aa_profile_object[field]) != "0x0000000000000000000000000000000000000000"
+          ])
+          && alltrue([for field in ["entryPointCodeHash", "factoryCodeHash", "implementationCodeHash", "validatorCodeHash", "accountCodeHash"] :
+            can(regex("^0x[0-9A-Fa-f]{64}$", local.kernel_aa_profile_object[field])) && !contains([
+              "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            ], lower(local.kernel_aa_profile_object[field]))
+          ])
+          && can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
+          && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
+          && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 1800,
+          false
+        )
+      )
+      error_message = "Kernel requires the exact public direct-factory profile and valid contract bindings for Kernel v4 on EntryPoint v0.9 and Arbitrum Sepolia, and max safe-head lag in 60..1800 seconds."
+    }
+
+    precondition {
+      condition = alltrue([
+        local.kernel_aa_backend_configured || (!var.aa_kernel_public_admission && length(var.aa_kernel_canary_owners) == 0),
+        !var.aa_kernel_public_admission || length(var.aa_kernel_canary_owners) == 0,
+        !(var.enable_kernel_aa_eth || var.enable_kernel_aa_sponsorship) || var.aa_kernel_public_admission || length(var.aa_kernel_canary_owners) > 0,
+      ])
+      error_message = "Kernel admission requires a Kernel execution profile. Enabled payment requires either a nonempty owner allowlist or explicit public admission, and those settings cannot be combined."
+    }
+
+    precondition {
+      condition = var.aa_kernel_sponsorship_json == "" || (
+        local.kernel_aa_sponsorship_configured && try(
+          toset(keys(local.kernel_aa_sponsorship_object)) == toset([
+            "paymaster", "paymasterCodeHash", "policyId", "signerAddress", "deploymentBlock", "deploymentBlockHash",
+            "minDepositWei", "verificationGasLimit", "validitySeconds", "budget", "canaryOwners",
+          ])
+          && toset(keys(local.kernel_aa_sponsorship_object.budget)) == toset([
+            "maxCostWei", "accountOutstandingWei", "clientOutstandingWei", "globalOutstandingWei",
+            "accountHourlyWei", "globalHourlyWei", "globalDailyWei",
+          ])
+          && tonumber(local.kernel_aa_sponsorship_object.minDepositWei) >= tonumber(local.kernel_aa_sponsorship_object.budget.globalOutstandingWei)
+          && length(local.kernel_aa_sponsorship_object.canaryOwners) > 0,
+          false
+        )
+      )
+      error_message = "Kernel sponsorship requires its execution profile, exact public sponsorship fields, a bounded owner cohort, and an EntryPoint deposit floor covering maximum outstanding liability."
+    }
+
+    precondition {
+      condition = (!var.enable_kernel_aa_eth || (local.kernel_aa_backend_configured && var.alto_desired_count == 1)) && (
+        !var.enable_kernel_aa_sponsorship || (local.kernel_aa_sponsorship_configured && var.alto_desired_count == 1 && var.aa_reconciler_desired_count == 1)
+      )
+      error_message = "Kernel ETH operations require running v0.9 Alto and an execution profile. Kernel sponsorship additionally requires a paymaster profile and the running reconciler."
+    }
+
+    precondition {
+      condition     = !var.enable_kernel_aa_protection_commits || (local.kernel_aa_backend_configured && (var.enable_kernel_aa_eth || local.kernel_aa_sponsorship_enabled))
+      error_message = "Kernel protection commits require the execution profile and at least one enabled gas payment mode."
     }
 
     precondition {
       condition = var.alto_desired_count == 0 || (
-        var.alto_entrypoint_simulation_contract_v8 == trimspace(var.alto_entrypoint_simulation_contract_v8)
+        local.alto_entrypoint_simulation_environment.value == trimspace(local.alto_entrypoint_simulation_environment.value)
         && var.alto_pimlico_simulation_contract == trimspace(var.alto_pimlico_simulation_contract)
-        && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.alto_entrypoint_simulation_contract_v8)))
-        && lower(trimspace(var.alto_entrypoint_simulation_contract_v8)) != "0x0000000000000000000000000000000000000000"
+        && can(regex("^0x[0-9A-Fa-f]{40}$", local.alto_entrypoint_simulation_environment.value))
+        && lower(local.alto_entrypoint_simulation_environment.value) != "0x0000000000000000000000000000000000000000"
         && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.alto_pimlico_simulation_contract)))
         && lower(trimspace(var.alto_pimlico_simulation_contract)) != "0x0000000000000000000000000000000000000000"
       )
@@ -523,7 +629,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition = var.aa_reconciler_desired_count == 0 || try(
+      condition = var.aa_reconciler_desired_count == 0 || var.alto_entrypoint_version == "0.9" || try(
         can(regex("^[1-9][0-9]*$", var.aa_reconciler_start_block))
         && var.aa_reconciler_start_block_hash == trimspace(var.aa_reconciler_start_block_hash)
         && can(regex("^0x[0-9a-f]{64}$", var.aa_reconciler_start_block_hash))
@@ -547,6 +653,20 @@ resource "terraform_data" "self_hosted_aa_guard" {
         false
       )
       error_message = "Running the AA reconciler requires a positive start block, its canonical lowercase nonzero block hash, the canonical lowercase nonzero deployed-paymaster runtime hash, a minimum EntryPoint deposit at least as large as the native global outstanding-liability cap, poll seconds in 1..60, batch blocks in 1..10000, max safe-head lag in 60..1800 seconds, and a nonzero paymaster address."
+    }
+
+    precondition {
+      condition = var.aa_reconciler_desired_count == 0 || var.alto_entrypoint_version != "0.9" || (
+        local.kernel_aa_sponsorship_configured && try(
+          can(regex("^[1-9][0-9]*$", tostring(local.kernel_aa_sponsorship_object.deploymentBlock)))
+          && can(regex("^0x[0-9a-f]{64}$", local.kernel_aa_sponsorship_object.deploymentBlockHash))
+          && local.kernel_aa_sponsorship_object.deploymentBlockHash != "0x0000000000000000000000000000000000000000000000000000000000000000"
+          && can(regex("^[1-9][0-9]*$", var.aa_reconciler_poll_seconds)) && tonumber(var.aa_reconciler_poll_seconds) <= 60
+          && can(regex("^[1-9][0-9]*$", var.aa_reconciler_batch_blocks)) && tonumber(var.aa_reconciler_batch_blocks) <= min(2000, local.rpc_log_range_policy.maxLogRangeBlocks),
+          false
+        )
+      )
+      error_message = "Running the Kernel reconciler requires a reviewed paymaster deployment block and hash, poll seconds in 1..60, and batch blocks no larger than 2000 or the shared RPC limit."
     }
 
     precondition {
@@ -604,14 +724,14 @@ resource "terraform_data" "close_assistance_guard" {
   lifecycle {
     precondition {
       condition = !var.perps_close_assistance_enabled || (
-        var.environment == "sepolia" && var.perps_chain_id == "421614"
+        contains(["sepolia", "mainnet"], var.environment) && var.perps_chain_id == (var.environment == "mainnet" ? "42161" : "421614")
         && var.configure_native_aa_backend && var.enable_native_aa_sponsorship && var.enable_native_aa_submission
         && var.aa_rpc_mode == "dual-independent"
         && can(regex("^0x[0-9a-fA-F]{40}$", var.perps_close_assistance_lens))
         && lower(var.perps_close_assistance_lens) != "0x0000000000000000000000000000000000000000"
         && can(regex("^0x[0-9a-fA-F]{64}$", var.perps_close_assistance_lens_code_hash))
       )
-      error_message = "Close assistance requires the pinned Sepolia deployment, independent verification RPCs, enabled native submission and sponsorship, and reviewed lens bindings."
+      error_message = "Close assistance requires a canonical sepolia/mainnet deployment, independent verification RPCs, enabled native submission and sponsorship, and reviewed lens bindings."
     }
   }
 }

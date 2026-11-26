@@ -235,7 +235,7 @@ const documentationMarketArgs = {
   oraclePriceRaw: ORACLE_PRICE,
   oraclePriceDisplay: '1.0170',
   latestBasket,
-  adverseConfidenceMultiplierBps: '2000',
+  adverseConfidenceMultiplierBps: '2500',
   oracleFreshness: 'fresh' as const,
   oracleFreshnessTooltip: 'validated oracle basket updated 18s ago',
   availableToTradeRaw: 18_420n * ASSETS,
@@ -256,13 +256,13 @@ const executedFrozenCloseReceipt = {
   carryAssets: (6n * ASSETS).toString(),
   executionFeeAssets: (4n * ASSETS).toString(),
   frozenSpreadAssets: (24n * ASSETS).toString(),
-  actionChargeAssessedAssets: (42n * ASSETS).toString(),
-  actionChargeCollectedAssets: (36n * ASSETS).toString(),
-  grossAccountDebitAssets: (40n * ASSETS).toString(),
+  actionChargeAssessedAssets: (46n * ASSETS).toString(),
+  actionChargeCollectedAssets: '0',
+  grossAccountDebitAssets: '0',
   preSettlementBalanceAssets: (2_450n * ASSETS).toString(),
   postSettlementBalanceAssets: (2_450n * ASSETS).toString(),
   preTraderClaimBalanceAssets: '0',
-  postTraderClaimBalanceAssets: (350n * ASSETS).toString(),
+  postTraderClaimBalanceAssets: (344n * ASSETS).toString(),
   postPositionSize: '0',
   postPositionMarginAssets: '0',
   postPositionEquityAssets: '0',
@@ -356,6 +356,8 @@ export const QuickstartOrder: Story = {
     availableToTradeAmount: '100 000',
     settlementBalanceAssetsRaw: 100_000n * ASSETS,
     withdrawableAssetsRaw: 100_000n * ASSETS,
+    protectionCapPrice: 200_000_000n,
+    protectionConfiguration: { enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n },
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
       notionalAssets: 1_966n * ASSETS,
@@ -786,9 +788,9 @@ export const ExecutedWithVpiCharge: Story = {
     initialFinalReceiptEconomics: {
       ...executedFrozenCloseReceipt,
       vpiAssets: '4250000',
-      actionChargeAssessedAssets: '34250000',
-      actionChargeCollectedAssets: '28250000',
-      postTraderClaimBalanceAssets: '357750000',
+      actionChargeAssessedAssets: '38250000',
+      actionChargeCollectedAssets: '0',
+      postTraderClaimBalanceAssets: '351750000',
     },
   },
   render: (args) => <TicketFrame {...args} />,
@@ -824,11 +826,17 @@ export const DepositMargin: Story = {
   args: {
     initialMarginAction: 'deposit',
     initialMarginActionAmount: '10 000',
+    ownerWalletAssetsRaw: 0n,
+    tradingAccountAssetsRaw: 100_000_000_000n,
     walletAssetsRaw: 100_000_000_000n,
     settlementBalanceAssetsRaw: 5_000_000_000n,
     withdrawableAssetsRaw: 5_000_000_000n,
   },
-  render: (args) => <TicketFrame {...args} />,
+  render: (args) => (
+    <PerpsIdentityContext.Provider value={SPONSORED_STORY_IDENTITY}>
+      <TicketFrame {...args} />
+    </PerpsIdentityContext.Provider>
+  ),
 }
 
 export const OwnerWalletTransferDeposit: Story = {
@@ -888,12 +896,21 @@ export const MarginCallSimulatorConfirmation: Story = {
 
 export const MarginAccountSummary: Story = {
   args: {
+    ...documentationMarketArgs,
     initialDirection: 'long',
     initialOrderQuantity: '2 000',
     settlementBalanceAssetsRaw: 1_248_250_000n,
     withdrawableAssetsRaw: 648_250_000n,
     availableToTradeRaw: 848_250_000n,
     availableToTradeAmount: '848.25',
+    positionEquityAssetsRaw: 447_000_000n,
+    openPreviewFixture: openPreviewFixture({
+      size: 2_000n * 10n ** 18n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 393_200_000n,
+      postSize: 4_000n * 10n ** 18n,
+      postMarginAssets: 793_200_000n,
+    }),
     currentPosition: {
       exists: true,
       side: 0,

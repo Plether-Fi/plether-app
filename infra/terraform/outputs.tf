@@ -48,7 +48,7 @@ output "alto_external_ssm_parameter_names" {
 }
 
 output "aa_proxy_origin_token_ssm_parameter_name" {
-  value = local.aa_gateway_enabled ? aws_ssm_parameter.aa_proxy_origin_token[0].name : null
+  value = local.aa_proxy_origin_token_parameter_name
 }
 
 output "aa_paymaster_kms_key_arn" {

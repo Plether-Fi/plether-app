@@ -73,6 +73,40 @@ liquidationWorkerSpec databaseUrl = describe "liquidation worker DB/RPC orchestr
       assertSignedIntents fixture
       remaining conn `shouldReturn` 0
 
+  it "recovers an out-of-order page at a newer block using the refreshed admitted payload" $
+    withFixture databaseUrl 1 RetryOracleOrdering $ \conn fixture client -> do
+      runWorker cfg conn client
+      readIORef (fSnapshots fixture) `shouldReturn` accounts 1
+      readIORef (fOraclePreviews fixture) `shouldReturn`
+        [ (quantityText 110, [BS.singleton 0x01], 7)
+        , (quantityText 110, [], 0)
+        , (quantityText 112, [BS.singleton 0xaa], 11)
+        , (quantityText 112, [BS.singleton 0xaa], 11)
+        ]
+      readIORef (fBatchSimulations fixture) `shouldReturn`
+        [(quantityText 112, Perps.executeLiquidationBatchCall (accounts 1) [BS.singleton 0xaa])]
+      (length <$> readIORef (fSent fixture)) `shouldReturn` 1
+      assertSignedIntents fixture
+      remaining conn `shouldReturn` 0
+
+  it "keeps an exhausted page unknown and continues to the next page" $
+    withFixture databaseUrl 2 ExhaustOracleOrdering $ \conn fixture client -> do
+      runWorker (cfg {lwcScanBatchSize=1}) conn client
+      readIORef (fSnapshots fixture) `shouldReturn` accounts 2
+      readIORef (fOraclePreviews fixture) `shouldReturn`
+        [ (quantityText 110, [BS.singleton 0x01], 7)
+        , (quantityText 110, [], 0)
+        , (quantityText 112, [BS.singleton 0xaa], 11)
+        , (quantityText 112, [BS.singleton 0xaa], 11)
+        ]
+      readIORef (fBatchSimulations fixture) `shouldReturn`
+        [(quantityText 112, Perps.executeLiquidationBatchCall [account 2] [BS.singleton 0xaa])]
+      first <- query_ conn "SELECT account,risk_checked_at IS NULL,last_error FROM perps_liquidation_candidates"
+        :: IO [(Text,Bool,Maybe Text)]
+      first `shouldBe` [(account 1,True,Just "Fresh liquidation risk inputs were unavailable")]
+      assertSignedIntents fixture
+      pendingRows conn `shouldReturn` []
+
   it "withholds liquidation screening when the accepted basket exceeds the local age limit" $
     withFixture databaseUrl 1 ReplayStaleBasket $ \conn fixture client -> do
       runWorker cfg conn client
@@ -153,7 +187,11 @@ accounts :: Int -> [Text]
 accounts count = map account [1..count]
 
 -- Test-only external effects and captured requests, never a risk/selection loop.
-data FixtureScenario = SignedPayload | RefreshPayload | ReplayAcceptedBasket | ReplayStaleBasket deriving (Eq)
+data FixtureScenario = SignedPayload | RefreshPayload | ReplayAcceptedBasket | ReplayStaleBasket
+  | RetryOracleOrdering | ExhaustOracleOrdering
+  deriving (Eq)
+
+data FixtureRpcFailure = RpcUnavailable Text | RpcRevert BS.ByteString
 
 data Fixture = Fixture
   { fClock :: IORef Integer, fScenario :: FixtureScenario, fCount :: Int,
@@ -219,19 +257,21 @@ rpcApplication fixture request respond = do
           params = case KM.lookup "params" fields of Just (Array xs) -> toList xs; _ -> []
       result <- dispatch fixture method params
       let reply = case result of
-            Left message -> ["error" .= object ["code" .= (-32000::Int),"message" .= message]]
+            Left (RpcUnavailable message) -> ["error" .= object ["code" .= (-32000::Int),"message" .= message]]
+            Left (RpcRevert revertData) ->
+              ["error" .= object ["code" .= (3::Int),"message" .= ("execution reverted"::Text),"data" .= hex revertData]]
             Right value -> ["result" .= value]
       respond $ responseLBS status200 [] $ encode $ object
         (["jsonrpc" .= ("2.0"::Text),"id" .= KM.lookup "id" fields] <> reply)
     _ -> expectationFailure "invalid RPC JSON" >> respond (responseLBS status200 [] "{}")
 
-dispatch :: Fixture -> Text -> [Value] -> IO (Either Text Value)
+dispatch :: Fixture -> Text -> [Value] -> IO (Either FixtureRpcFailure Value)
 dispatch fixture method params = do
   clock <- readIORef $ fClock fixture
   sent <- readIORef $ fSent fixture
   failConfirmation <- readIORef $ fFailConfirmation fixture
   case (method,params) of
-    ("eth_blockNumber",_) | failConfirmation && not (null sent) -> pure $ Left "confirmation RPC unavailable"
+    ("eth_blockNumber",_) | failConfirmation && not (null sent) -> pure $ Left $ RpcUnavailable "confirmation RPC unavailable"
                           | otherwise -> pure $ Right $ quantity clock
     ("eth_getTransactionCount",_) -> pure $ Right $ quantity $ fromIntegral $ length sent
     ("eth_gasPrice",_) -> pure $ Right $ quantity 100
@@ -247,7 +287,7 @@ dispatch fixture method params = do
           pure $ Right $ String $ hex $ words' [32, 2, oldest, 110]
         else if BS.take 4 bytes == BS.take 4 (encodeCall "aggregate3((address,bool,bytes)[])" [])
           then do
-            values <- traverse (subcall fixture) $ aggregateCalls bytes
+            values <- traverse (subcall fixture block) $ aggregateCalls bytes
             pure $ Right $ String $ hex $ encodeResults values
           else if BS.take 4 bytes == BS.take 4 (Perps.executeLiquidationBatchCall [] [])
             then do
@@ -275,6 +315,8 @@ dispatch fixture method params = do
             ReplayStaleBasket -> []
             SignedPayload -> [BS.singleton 0x01]
             RefreshPayload -> [BS.singleton $ if clock <= 112 then 0xaa else 0xbb]
+            RetryOracleOrdering -> [BS.singleton 0xaa]
+            ExhaustOracleOrdering -> [BS.singleton 0xaa]
           fee = sum $ map feeFor updates
       textAt "value" call `shouldBe` quantityText fee
       bytes `shouldBe` Perps.executeLiquidationBatchCall batch updates
@@ -303,9 +345,10 @@ dispatch fixture method params = do
       pure $ Right $ maybe Null id $ lookup hash receipts
     _ -> unexpected method params
  where
-  unexpected method' params' = expectationFailure ("unexpected RPC: " <> show (method',params')) >> pure (Left "unexpected RPC")
+  unexpected method' params' =
+    expectationFailure ("unexpected RPC: " <> show (method',params')) >> pure (Left $ RpcUnavailable "unexpected RPC")
 
-previewOracle :: Fixture -> KM.KeyMap Value -> Text -> [BS.ByteString] -> IO (Either Text Value)
+previewOracle :: Fixture -> KM.KeyMap Value -> Text -> [BS.ByteString] -> IO (Either FixtureRpcFailure Value)
 previewOracle fixture call block updates = do
   let fee = sum $ map feeFor updates
   textAt "to" call `shouldBe` oracle
@@ -313,25 +356,42 @@ previewOracle fixture call block updates = do
   textAt "value" call `shouldBe` quantityText fee
   modifyIORef' (fOraclePreviews fixture) (<> [(block, updates, fee)])
   case fScenario fixture of
-    RefreshPayload | block == quantityText 100 -> pure $ Left "accepted oracle basket unavailable"
+    RefreshPayload | block == quantityText 100 -> pure $ Left $ RpcUnavailable "accepted oracle basket unavailable"
+    RetryOracleOrdering | block == quantityText 110 -> do
+      when (null updates) $ do
+        seedPayload (fDb fixture) 112 0xaa
+        writeIORef (fClock fixture) 112
+      pure $ Left $ RpcRevert outOfOrder
+    ExhaustOracleOrdering | block == quantityText 110 -> pure $ Left $ RpcRevert outOfOrder
     scenario | scenario `elem` [ReplayAcceptedBasket, ReplayStaleBasket] ->
       if null updates
         then pure $ Right $ String $ hex $ words' [110000000, 90000000, 100000000, 110, 0]
-        else pure $ Left "execution reverted"
+        else pure $ Left $ RpcRevert outOfOrder
     _ -> do
       let publishTime = case updates of
             [update] | update == BS.singleton 0xaa -> 112
                      | update == BS.singleton 0xbb -> 124
             _ -> 102
       pure $ Right $ String $ hex $ words' [100000000, 100000000, 100000000, publishTime, fee]
+  where
+    outOfOrder = encodeCall "PletherOracle__PriceOutOfOrder(uint64,uint64)" [encodeUint256 102, encodeUint256 109]
 
-subcall :: Fixture -> (Text,BS.ByteString) -> IO BS.ByteString
-subcall fixture (_,bytes)
+subcall :: Fixture -> Text -> (Text,BS.ByteString) -> IO BS.ByteString
+subcall fixture block (_,bytes)
   | starts "getAccountLedgerSnapshot(address)" = do
       let who = hex $ BS.drop 12 $ BS.take 32 $ BS.drop 4 bytes
           n = decodeUint256 $ BS.drop 4 bytes
           risky = fScenario fixture `notElem` [ReplayAcceptedBasket, ReplayStaleBasket]
             && (fCount fixture <= 2 || (n::Integer) `mod` 32 == 0)
+      when (fScenario fixture == RetryOracleOrdering) $
+        block `shouldBe` quantityText 112
+      when (fScenario fixture == ExhaustOracleOrdering) $
+        if who == account 1
+          then do
+            block `shouldBe` quantityText 110
+            seedPayload (fDb fixture) 112 0xaa
+            writeIORef (fClock fixture) 112
+          else block `shouldBe` quantityText 112
       modifyIORef' (fSnapshots fixture) (<> [who])
       when (fScenario fixture == RefreshPayload) $ do
         seedPayload (fDb fixture) 112 0xaa

@@ -4,6 +4,9 @@ const REGISTRATION_PATH_PATTERN =
 const REGISTRATION_CALLBACK_PATH_PATTERN =
   /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations\/x|divisions\/registrations\/discord)\/callback$/;
 const REGISTRATION_ORIGIN_HEADER = 'X-Plether-Registration-Origin';
+const ORIGIN_READ_TIMEOUT_MS = 4_000;
+const MAX_ORIGIN_READ_ATTEMPTS = 2;
+const RETRYABLE_EDGE_ORIGIN_STATUSES = new Set([520, 522, 524, 525]);
 
 const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
@@ -12,7 +15,7 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://auth.privy.io https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://sepolia-rollup.arbitrum.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org; img-src 'self' data: blob: https://auth.privy.io https://explorer-api.walletconnect.com; font-src 'self' data:; child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; frame-src 'self' blob: https://challenges.cloudflare.com https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://auth.privy.io https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://arb1.arbitrum.io https://sepolia-rollup.arbitrum.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org; img-src 'self' data: blob: https://auth.privy.io https://explorer-api.walletconnect.com; font-src 'self' data:; child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; frame-src 'self' blob: https://challenges.cloudflare.com https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 };
 
 const API_CACHE_TTLS = {
@@ -103,6 +106,108 @@ function registrationBrowserOriginAllowed(request, pathname, publicOrigin) {
     request.method === 'GET' &&
     (request.headers.get('Sec-Fetch-Site') === 'same-origin' ||
       hasSameOriginReferer(request.headers, publicOrigin))
+  );
+}
+
+function createOriginTimeoutError(timeoutMs) {
+  const error = new Error(`Origin request timed out after ${timeoutMs}ms`);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+async function fetchWithBoundedTimeout(url, options, timeoutMs, callerSignal) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetch(url, options);
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort(callerSignal.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort(callerSignal.reason);
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createOriginTimeoutError(timeoutMs));
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw createOriginTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) {
+      callerSignal.removeEventListener('abort', onCallerAbort);
+    }
+  }
+}
+
+export async function fetchOriginWithResilience(
+  url,
+  options,
+  { timeoutMs, maxAttempts = 1, callerSignal } = {},
+) {
+  const attempts = Math.max(1, maxAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithBoundedTimeout(
+        url,
+        options,
+        timeoutMs,
+        callerSignal,
+      );
+      if (
+        attempt < attempts &&
+        RETRYABLE_EDGE_ORIGIN_STATUSES.has(response.status) &&
+        !callerSignal?.aborted
+      ) {
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (attempt >= attempts || callerSignal?.aborted) {
+        throw error;
+      }
+    }
+  }
+}
+
+function isRetryableInsightsRead(method, pathname) {
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  return !isRegistrationCallback(method, pathname);
+}
+
+function backendUnavailableError(pathname) {
+  return applyResponseHeaders(
+    Response.json(
+      {
+        error: {
+          code: 'edge_proxy_unavailable',
+          message: 'The edge proxy is temporarily unavailable.',
+        },
+      },
+      {
+        status: 503,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Retry-After': '1',
+        },
+      },
+    ),
+    pathname,
   );
 }
 
@@ -269,7 +374,11 @@ export default {
       // A browser must never be able to choose the credential trusted by the
       // backend. Strip it on every API request and add the Pages secret only
       // for the tightly scoped registration namespace.
+      headers.delete('X-Plether-Origin-Secret');
       headers.delete(REGISTRATION_ORIGIN_HEADER);
+      if (env.ALB_ORIGIN_SECRET) {
+        headers.set('X-Plether-Origin-Secret', env.ALB_ORIGIN_SECRET);
+      }
       if (registrationRequest) {
         const registrationOrigin = resolveBackendOrigin(
           env.INSIGHTS_REGISTRATION_PUBLIC_ORIGIN,
@@ -339,10 +448,27 @@ export default {
         headers.set('Pragma', 'no-cache');
       }
 
-      const response = await fetch(
-        backendUrl,
-        apiFetchOptions(request, headers, cacheTtl, forceNoStore),
-      );
+      const retryableRead = isRetryableInsightsRead(request.method, url.pathname);
+      let response;
+      try {
+        response = await fetchOriginWithResilience(
+          backendUrl,
+          apiFetchOptions(request, headers, cacheTtl, forceNoStore),
+          {
+            timeoutMs: retryableRead ? ORIGIN_READ_TIMEOUT_MS : undefined,
+            maxAttempts: retryableRead ? MAX_ORIGIN_READ_ATTEMPTS : 1,
+            callerSignal: request.signal,
+          },
+        );
+      } catch (error) {
+        console.error(JSON.stringify({
+          message: 'Insights Cloudflare Worker origin fetch failed',
+          method: request.method,
+          path: url.pathname,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }));
+        return backendUnavailableError(url.pathname);
+      }
 
       if (
         registrationRequest &&

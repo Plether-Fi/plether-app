@@ -3,6 +3,7 @@
 module Plether.Keeper.Broadcast
   ( saveBroadcast, saveOrderBroadcast, markBroadcastSubmitted
   , clearBroadcast, reconcileBroadcast
+  , reconcileBroadcastWithReceiptHook
   ) where
 
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
@@ -56,7 +57,14 @@ clearBroadcast conn router hash = void $ execute conn
 -- alone never release a journal. A canonical safe-block nonce can prove that
 -- another transaction consumed this signed transaction's nonce.
 reconcileBroadcast :: Connection -> Text -> EthClient -> (TxReceipt -> IO ()) -> IO Bool
-reconcileBroadcast conn router client applyReceipt = do
+reconcileBroadcast conn router client applyReceipt =
+  reconcileBroadcastWithReceiptHook conn router client applyReceipt (const $ pure ())
+
+-- The optional hook observes a validated receipt after its database
+-- transaction has committed and released the journal.
+reconcileBroadcastWithReceiptHook
+  :: Connection -> Text -> EthClient -> (TxReceipt -> IO ()) -> (TxReceipt -> IO ()) -> IO Bool
+reconcileBroadcastWithReceiptHook conn router client applyReceipt afterReceipt = do
   rows <- query conn "SELECT tx_hash,raw_tx FROM perps_keeper_broadcasts WHERE order_router=?"
     (Only $ T.toLower router) :: IO [(Text, ByteString)]
   case rows of
@@ -66,6 +74,13 @@ reconcileBroadcast conn router client applyReceipt = do
       case receipt of
         Right (Just mined) -> do
           withTransaction conn $ applyReceipt mined >> clearBroadcast conn router hash
+          observed <- try $ afterReceipt mined
+          case observed of
+            Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
+              Just _ -> throwIO err
+              Nothing -> logWarnEvery 60 "keeper_receipt_hook_unavailable"
+                "Optional keeper receipt hook failed after journal reconciliation" []
+            Right () -> pure ()
           pure True
         Right Nothing -> do
           decoded <- decodeSignedTransaction raw

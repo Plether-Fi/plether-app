@@ -89,13 +89,13 @@ resource "terraform_data" "existing_context_guard" {
   lifecycle {
     precondition {
       condition = (
-        data.aws_vpc.existing.tags["Name"] == "plether-sepolia" &&
+        data.aws_vpc.existing.tags["Name"] == "plether-${local.deployment_name}" &&
         alltrue([for subnet in data.aws_subnet.existing : subnet.vpc_id == local.rpc_vpc_id && subnet.map_public_ip_on_launch]) &&
         length(distinct(data.aws_subnet.existing[*].availability_zone)) == 2 &&
         data.aws_security_group.existing_ecs.vpc_id == local.rpc_vpc_id &&
-        data.aws_ecs_cluster.existing.cluster_name == "plether-sepolia"
+        data.aws_ecs_cluster.existing.cluster_name == "plether-${local.deployment_name}"
       )
-      error_message = "RPC must reuse the existing Sepolia VPC, two public AZs, application security group and cluster."
+      error_message = "RPC must reuse the existing environment VPC, two public AZs, application security group and cluster."
     }
   }
 }

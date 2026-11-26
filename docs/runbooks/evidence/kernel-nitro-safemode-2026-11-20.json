@@ -1,0 +1,74 @@
+{
+  "date": "2026-11-20",
+  "scope": "disposable local Nitro dev chain; no public Sepolia transactions",
+  "nitro": {
+    "chainId": 412346,
+    "version": "v3.12.2+5f02f3f-20261014T220458Z",
+    "image": "offchainlabs/nitro-node:v3.12.2-5f02f3f-stripped",
+    "imageDigest": "sha256:0dca9a35a54e7549f0e84f5868492354759ab00574185ae034cb3f9132ddd52b"
+  },
+  "alto": {
+    "image": "plether-alto-kernel-safemode:local",
+    "imageId": "sha256:8397e4091316abf5857f63560576804144ffc09212235df2e8e1e23a983b0a6c",
+    "safeMode": true,
+    "chainType": "arbitrum",
+    "skipUserOperationValidation": false,
+    "temporaryRuntimeOverride": "Recognized the locally deployed EntryPoint address as v0.9; the production canonical address already matches Alto's v0.9 prefix check."
+  },
+  "localContracts": {
+    "entryPointV09": "0x1294b86822ff4976bfe136cb06cf43ec7fcf2574",
+    "entryPointCodeHash": "0x004532348e778d036284accae13edbdb6e9c0d6133cb6ad5b8497a11f99f2108",
+    "kernelProxyCodeHash": "0xaaa52c8cc8a0e3fd27ce756cc6b4e70c51423e9b597b11f32d3e49f8b1fc890d",
+    "ecdsaValidatorCodeHash": "0x9ceb47b953e8d105f632c46394c66b9a4498cbea889fd45feab855feed4608fe",
+    "account": "0x6505c9E44924Ad7925dA0C47d0882fEaE0632633",
+    "paymaster": "0x7696e37e86b993ac1ce27feed48fa154cb8b2eda"
+  },
+  "operations": [
+    {
+      "payer": "account ETH",
+      "kind": "first deployment through staked Staker",
+      "userOperationHash": "0x58a74a05141dd114537fd6641028e17e94480cdfd155f57646a8b2fbf28197ad",
+      "transactionHash": "0x8182363a4240391c94845cf5d8aab800ce378f29fe8721357f789ceb8dc65520",
+      "blockNumber": 77,
+      "success": true,
+      "actualGasCostWei": "605064434200000",
+      "estimatedGas": {
+        "preVerification": "5721747",
+        "verification": "354471",
+        "call": "30971"
+      }
+    },
+    {
+      "payer": "staked paymaster",
+      "kind": "subsequent call on the same account",
+      "userOperationHash": "0x5fef6c255f06943d9778164c83d915dde3c96ace305fb5192d4b3e983f39caae",
+      "transactionHash": "0x1387f07dcfb6174db5f23f18482a38e134b8cf3ede2a64c75ce62649ec36965b",
+      "blockNumber": 78,
+      "success": true,
+      "actualGasCostWei": "598542335000000",
+      "estimatedGas": {
+        "preVerification": "5861566",
+        "verification": "59304",
+        "call": "16323",
+        "paymasterVerification": "40262"
+      }
+    }
+  ],
+  "safeModeTrace": {
+    "rpcMethod": "debug_traceCall",
+    "customTracerLength": 10492,
+    "successfulCallsInRecordedRun": 5
+  },
+  "negativeValidation": {
+    "case": "65-byte zero owner signature on the next nonce",
+    "bundlerError": "AA24 signature error",
+    "code": -32507,
+    "nonceUnchanged": true
+  },
+  "limitations": [
+    "EntryPoint, Kernel implementation and factory, and simulation contracts used local addresses; this did not attest their public Sepolia deployments.",
+    "The local Core paymaster build changed only its chain-ID constant from 421614 to 412346.",
+    "The simulator contracts were deployed directly because Alto's built-in deterministic deployer transaction contains an invalid hex placeholder when that deployer is absent.",
+    "No real external or Privy wallet flow or public Sepolia gas estimate was exercised."
+  ]
+}

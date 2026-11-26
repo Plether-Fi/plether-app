@@ -1,22 +1,34 @@
 name: Deploy Landing
 
 on:
-  push:
-    branches: [master]
-    paths: [apps/landing/**]
   workflow_dispatch:
+
+concurrency:
+  group: plether-landing-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: landing-admin-mainnet
     permissions:
       contents: read
       deployments: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Enforce master-only production deployment
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::Landing production deployments must be dispatched from master."
+            exit 1
+          fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 25.2.1
           cache: npm
@@ -44,8 +56,9 @@ jobs:
           grep -q 'Settled in USDG.' dist/index.html
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/landing/dist --project-name=plether-landing --branch=${{ github.ref_name }}
+          wranglerVersion: '4.103.0'
+          command: pages deploy apps/landing/dist --project-name=plether-landing --branch=master
