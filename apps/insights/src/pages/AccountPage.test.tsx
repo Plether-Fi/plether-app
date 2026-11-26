@@ -252,6 +252,8 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     expect(screen.getByText('Live account telemetry')).toBeInTheDocument()
     expect(screen.getByText('LONG · 500.00 plDXY')).toBeInTheDocument()
     expect(screen.getByText('Wallet balance history')).toBeInTheDocument()
+    expect(screen.getByLabelText('Collateral allocation')).toBeInTheDocument()
+    expect(screen.getByText('20.0% locked')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '7D' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '30D' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '90D' })).toBeInTheDocument()

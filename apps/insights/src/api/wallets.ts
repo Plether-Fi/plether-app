@@ -143,6 +143,27 @@ export interface BalanceHistoryPoint {
   source: string
 }
 
+export interface CumulativePnlPoint {
+  id: string
+  occurredAt: string
+  timestamp: number
+  blockNumber: string
+  activityType: string
+  side: string | null
+  tradePnlAssets: string
+  cumulativePnlAssets: string
+}
+
+export interface CumulativePnlSeries {
+  points: CumulativePnlPoint[]
+  totalPnlAssets: string
+  wins: number
+  losses: number
+  breakeven: number
+  bestPnlAssets: string | null
+  worstPnlAssets: string | null
+}
+
 export interface WalletSummaryResponse {
   network: LiquidityNetworkMeta
   account: string
@@ -393,4 +414,88 @@ export function sliceBalanceHistory(
   }
 
   return result
+}
+
+export function buildCumulativePnlSeries(
+  activity: AccountActivityRecord[],
+  timeframe: BalanceTimeframe,
+  nowUnix?: number,
+): CumulativePnlSeries {
+  const closed = activity
+    .filter(
+      (row) =>
+        (row.activityType === 'Close' || row.activityType === 'Liquidated') &&
+        row.pnlAssets != null &&
+        /^-?\d+$/.test(row.pnlAssets),
+    )
+    .map((row) => {
+      const tsMs = Date.parse(row.occurredAt)
+      return {
+        row,
+        timestamp: Number.isFinite(tsMs) ? Math.floor(tsMs / 1000) : 0,
+      }
+    })
+    .filter((entry) => entry.timestamp > 0)
+    .sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp
+      const blockDiff = Number(a.row.blockNumber) - Number(b.row.blockNumber)
+      return Number.isFinite(blockDiff) ? blockDiff : 0
+    })
+
+  if (closed.length === 0) {
+    return {
+      points: [],
+      totalPnlAssets: '0',
+      wins: 0,
+      losses: 0,
+      breakeven: 0,
+      bestPnlAssets: null,
+      worstPnlAssets: null,
+    }
+  }
+
+  const latestTs = nowUnix ?? closed[closed.length - 1].timestamp
+  const inWindow =
+    timeframe === 'all'
+      ? closed
+      : closed.filter((entry) => entry.timestamp >= latestTs - BALANCE_TIMEFRAME_DAYS[timeframe] * 86_400)
+
+  let running = 0n
+  let wins = 0
+  let losses = 0
+  let breakeven = 0
+  let best: bigint | null = null
+  let worst: bigint | null = null
+  const points: CumulativePnlPoint[] = []
+
+  for (const { row, timestamp } of inWindow) {
+    const tradePnl = BigInt(row.pnlAssets ?? '0')
+    running += tradePnl
+    if (tradePnl > 0n) wins += 1
+    else if (tradePnl < 0n) losses += 1
+    else breakeven += 1
+    if (best === null || tradePnl > best) best = tradePnl
+    if (worst === null || tradePnl < worst) worst = tradePnl
+
+    points.push({
+      id: row.id,
+      occurredAt: row.occurredAt,
+      timestamp,
+      blockNumber: row.blockNumber,
+      activityType: row.activityType,
+      side: row.side ?? null,
+      tradePnlAssets: tradePnl.toString(),
+      cumulativePnlAssets: running.toString(),
+    })
+  }
+
+  return {
+    points,
+    totalPnlAssets: running.toString(),
+    wins,
+    losses,
+    breakeven,
+    bestPnlAssets: best !== null ? best.toString() : null,
+    worstPnlAssets: worst !== null ? worst.toString() : null,
+  }
 }

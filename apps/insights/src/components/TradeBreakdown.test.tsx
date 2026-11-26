@@ -17,6 +17,8 @@ describe('trade breakdown details', () => {
     expect(feeRow).toHaveTextContent('−866.453105 USDG')
     expect(container.textContent).toContain('+5,474.976305 USDG')
     expect(container.textContent).toContain('Net rebate paid: 889.031888 USDG')
+    expect(screen.getByLabelText('Execution reconciliation waterfall')).toBeInTheDocument()
+    expect(screen.getByText('Account change bridge')).toBeInTheDocument()
   })
   it('shows a confirmed fee waiver and effective fee without double counting', () => {
     const { container } = render(<TradeBreakdownDetails item={item(waiver.execution as TradeExecution)} />)

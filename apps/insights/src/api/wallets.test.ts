@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accountActivityToWalletActivity,
+  buildCumulativePnlSeries,
   enrichBalanceHistory,
   formatPlDxyQuantity,
   formatVaultShares,
@@ -125,5 +126,48 @@ describe('wallets API helpers', () => {
     expect(merged).toHaveLength(2)
     expect(merged[1].source).toBe('receipt')
     expect(merged[1].balanceAssets).toBe('132499767272')
+  })
+
+  it('builds cumulative realized PnL series from Close/Liquidated fills while excluding cashflows', () => {
+    const now = 1_800_000_000
+    const res = buildCumulativePnlSeries(
+      [
+        {
+          id: '0x1:1',
+          activityType: 'Deposit',
+          amountAssets: '1000000000',
+          txHash: `0x${'a'.repeat(64)}`,
+          blockNumber: '100',
+          occurredAt: new Date((now - 5 * 86_400) * 1000).toISOString(),
+        },
+        {
+          id: '0x1:2',
+          activityType: 'Close',
+          side: 'long',
+          pnlAssets: '250000000',
+          txHash: `0x${'b'.repeat(64)}`,
+          blockNumber: '200',
+          occurredAt: new Date((now - 4 * 86_400) * 1000).toISOString(),
+        },
+        {
+          id: '0x1:3',
+          activityType: 'Close',
+          side: 'short',
+          pnlAssets: '-50000000',
+          txHash: `0x${'c'.repeat(64)}`,
+          blockNumber: '300',
+          occurredAt: new Date((now - 2 * 86_400) * 1000).toISOString(),
+        },
+      ],
+      '7d',
+      now,
+    )
+    expect(res.points).toHaveLength(2)
+    expect(res.totalPnlAssets).toBe('200000000')
+    expect(res.wins).toBe(1)
+    expect(res.losses).toBe(1)
+    expect(res.bestPnlAssets).toBe('250000000')
+    expect(res.worstPnlAssets).toBe('-50000000')
+    expect(res.points[1].cumulativePnlAssets).toBe('200000000')
   })
 })

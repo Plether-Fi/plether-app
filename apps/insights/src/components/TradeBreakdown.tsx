@@ -1,5 +1,136 @@
 import type { WalletActivity } from '../api/types'
-import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
+import { deriveTradeBreakdown, formatTradeAssets, type TradeBreakdown } from '../utils/tradeBreakdown'
+
+function shortWaterfallLabel(label: string): string {
+  if (label === 'Directional realized P&L') return 'Directional PnL'
+  if (label === 'Protocol fee assessed') return 'Protocol fee'
+  if (label === 'Gross VPI rebate') return 'VPI rebate'
+  if (label === 'Gross VPI charge') return 'VPI charge'
+  if (label === 'Frozen-close spread assessed') return 'Frozen spread'
+  if (label === 'Execution reward') return 'Keeper reward'
+  if (label === 'Fee waived') return 'Waived fee'
+  if (label === 'Other settlement adjustment') return 'Adjustment'
+  return label
+}
+
+function BreakdownWaterfall({ breakdown }: { breakdown: TradeBreakdown }) {
+  const nonZeroLines = breakdown.lines.filter((line) => line.value !== 0n)
+  if (nonZeroLines.length === 0 && breakdown.actual === 0n) return null
+
+  const steps: {
+    label: string
+    value: bigint
+    from: number
+    to: number
+    isTotal: boolean
+  }[] = []
+
+  let running = 0
+  for (const line of nonZeroLines) {
+    const delta = Number(line.value) / 1_000_000
+    const next = running + delta
+    steps.push({
+      label: shortWaterfallLabel(line.label),
+      value: line.value,
+      from: running,
+      to: next,
+      isTotal: false,
+    })
+    running = next
+  }
+
+  const actualNum = Number(breakdown.actual) / 1_000_000
+  steps.push({
+    label: 'Actual change',
+    value: breakdown.actual,
+    from: 0,
+    to: actualNum,
+    isTotal: true,
+  })
+
+  let minVal = 0
+  let maxVal = 0
+  for (const step of steps) {
+    minVal = Math.min(minVal, step.from, step.to)
+    maxVal = Math.max(maxVal, step.from, step.to)
+  }
+  const span = Math.max(maxVal - minVal, 1e-6)
+  const toPct = (v: number) => ((v - minVal) / span) * 100
+  const zeroPct = toPct(0)
+
+  return (
+    <div
+      aria-label="Execution reconciliation waterfall"
+      className="mb-5 border border-brand-border/20 bg-app-bg/55 p-4"
+    >
+      <div className="mb-3 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-content-tertiary">
+        <span>Account change bridge</span>
+        <span className="font-mono font-normal normal-case tracking-normal">0 baseline → net</span>
+      </div>
+      <div className="space-y-2">
+        {steps.map((step) => {
+          const left = Math.min(toPct(step.from), toPct(step.to))
+          const rawWidth = Math.abs(toPct(step.to) - toPct(step.from))
+          const width = Math.max(rawWidth, 0.9)
+          const positive = step.value > 0n
+          const negative = step.value < 0n
+          const barClass = step.isTotal
+            ? positive
+              ? 'bg-positive'
+              : negative
+                ? 'bg-brand-orange'
+                : 'bg-content-tertiary'
+            : positive
+              ? 'bg-positive/75'
+              : 'bg-brand-orange/75'
+          return (
+            <div
+              key={`${step.label}-${step.isTotal ? 'total' : 'step'}`}
+              className={`grid grid-cols-[minmax(0,118px)_1fr_minmax(0,98px)] items-center gap-3 text-xs ${
+                step.isTotal ? 'border-t border-brand-border/25 pt-2 font-semibold' : ''
+              }`}
+            >
+              <span
+                className={`truncate ${
+                  step.isTotal ? 'text-content-primary' : 'text-content-secondary'
+                }`}
+                title={step.label}
+              >
+                {step.label}
+              </span>
+              <div className="relative h-3.5 bg-surface-panel/70">
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 w-px bg-brand-peach/35"
+                  style={{ left: `${zeroPct.toFixed(2)}%` }}
+                />
+                <span
+                  aria-hidden="true"
+                  className={`absolute top-0.5 bottom-0.5 ${barClass}`}
+                  style={{
+                    left: `${Math.min(left, 99.1).toFixed(2)}%`,
+                    width: `${Math.min(width, 100 - Math.min(left, 99.1)).toFixed(2)}%`,
+                  }}
+                />
+              </div>
+              <span
+                className={`text-right font-mono tabular-nums ${
+                  positive
+                    ? 'text-positive'
+                    : negative
+                      ? 'text-brand-orange'
+                      : 'text-content-secondary'
+                }`}
+              >
+                {formatTradeAssets(step.value, true, false).replace(/ USDG$/, '')}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function splitExactUsdg(value: bigint, signed: boolean): {
   primary: string
@@ -87,6 +218,7 @@ export function TradeBreakdownDetails({ item }: { item: WalletActivity }) {
   }
   return (
     <div className="text-sm">
+      <BreakdownWaterfall breakdown={breakdown} />
       <dl className="divide-y divide-brand-border/15">
         {breakdown.lines.map((line) => (
           <div key={line.label} className="flex items-baseline justify-between gap-6 py-2.5">

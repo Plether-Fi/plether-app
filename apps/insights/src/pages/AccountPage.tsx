@@ -468,6 +468,7 @@ function TradingAccountInspector({ address }: { address: string }) {
         <div role="tabpanel" className="space-y-8">
           <WalletBalanceChart
             points={enrichedBalanceHistory}
+            activity={summary?.activity ?? []}
             observedAt={summary?.observedAt ?? protocol.observedAt}
             releaseVersion={releaseVersion}
             loading={summaryQuery.isLoading}
@@ -500,6 +501,15 @@ function TradingAccountInspector({ address }: { address: string }) {
                   <div className="border-b border-brand-border/15 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-content-tertiary">
                     Collateral &amp; margin buckets
                   </div>
+                  <CollateralAllocationBar
+                    freeAssets={ledger.freeSettlementAssets}
+                    positionMarginAssets={ledger.activePositionMarginAssets}
+                    committedOrderAssets={ledger.committedMarginAssets}
+                    otherLockedAssets={
+                      parseUnsignedBigInt(ledger.executionBountyReserveAssets) +
+                      parseUnsignedBigInt(ledger.otherLockedMarginAssets)
+                    }
+                  />
                   <dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 sm:divide-y-0">
                     <Metric label="Settlement balance">
                       {formatAssets(ledger.settlementBalanceAssets)}
@@ -1138,6 +1148,81 @@ function TradingAccountInspector({ address }: { address: string }) {
             </Panel>
           )}
         </section>
+      ) : null}
+    </div>
+  )
+}
+
+function parseUnsignedBigInt(raw: string | null | undefined): bigint {
+  return raw != null && /^\d+$/.test(raw) ? BigInt(raw) : 0n
+}
+
+function CollateralAllocationBar({
+  freeAssets,
+  positionMarginAssets,
+  committedOrderAssets,
+  otherLockedAssets,
+}: {
+  freeAssets: string
+  positionMarginAssets: string
+  committedOrderAssets: string
+  otherLockedAssets: bigint
+}) {
+  const free = parseUnsignedBigInt(freeAssets)
+  const posMargin = parseUnsignedBigInt(positionMarginAssets)
+  const orderMargin = parseUnsignedBigInt(committedOrderAssets)
+  const other = otherLockedAssets > 0n ? otherLockedAssets : 0n
+  const total = free + posMargin + orderMargin + other
+
+  const buckets = [
+    { id: 'free', label: 'Free collateral', value: free, color: 'bg-positive' },
+    { id: 'position', label: 'Position margin', value: posMargin, color: 'bg-brand-orange' },
+    { id: 'orders', label: 'Committed orders', value: orderMargin, color: 'bg-brand-yellow' },
+    { id: 'locked', label: 'Bounty & locked', value: other, color: 'bg-brand-peach' },
+  ].filter((b) => b.value > 0n)
+
+  const usedPct =
+    total > 0n ? ((Number(posMargin + orderMargin + other) / Number(total)) * 100).toFixed(1) : null
+
+  return (
+    <div
+      aria-label="Collateral allocation"
+      className="border-b border-brand-border/15 bg-app-bg/45 px-5 py-3.5"
+    >
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-content-secondary">Collateral utilization</span>
+        <span className="font-mono text-content-primary">
+          {usedPct !== null ? `${usedPct}% locked` : 'No collateral'}
+        </span>
+      </div>
+      <div className="mt-2 flex h-2 w-full overflow-hidden bg-surface-raised">
+        {total > 0n
+          ? buckets.map((bucket) => {
+              const pct = (Number(bucket.value) / Number(total)) * 100
+              return (
+                <div
+                  key={bucket.id}
+                  title={`${bucket.label}: ${formatAssets(bucket.value.toString())} (${pct.toFixed(1)}%)`}
+                  className={`h-full ${bucket.color}`}
+                  style={{ width: `${Math.max(pct, 1).toFixed(2)}%` }}
+                />
+              )
+            })
+          : null}
+      </div>
+      {buckets.length > 0 ? (
+        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-content-secondary">
+          {buckets.map((bucket) => {
+            const pct = total > 0n ? ((Number(bucket.value) / Number(total)) * 100).toFixed(1) : '0.0'
+            return (
+              <span key={bucket.id} className="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" className={`inline-block h-2 w-2 ${bucket.color}`} />
+                <span>{bucket.label}</span>
+                <span className="font-mono text-content-tertiary">{pct}%</span>
+              </span>
+            )
+          })}
+        </div>
       ) : null}
     </div>
   )
