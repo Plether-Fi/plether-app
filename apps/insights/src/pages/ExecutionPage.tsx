@@ -9,6 +9,7 @@ import {
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -395,8 +396,9 @@ export function ExecutionPage() {
                           <Link
                             to={`/wallets/${trade.account}`}
                             title={trade.account}
-                            className="text-brand-peach hover:underline"
+                            className="inline-flex items-center gap-2 text-brand-peach hover:underline"
                           >
+                            <AddressAvatar address={trade.account} size={16} />
                             {shortAddress(trade.account)}
                           </Link>
                         </td>

@@ -875,7 +875,8 @@ describe('OpenGraph thumbnails and HTML meta rewriting', () => {
     expect(acctPng.status).toBe(200)
     expect(acctPng.headers.get('content-type')).toBe('image/png')
     expect(acctPng.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60')
-    expect(renderedSvgs[0]).toContain('RELEASE REALIZED PNL')
+    expect(renderedSvgs[0]).toContain('ALL-TIME REALIZED PNL')
+    expect(renderedSvgs[0]).toContain('LIFE-LONG BALANCE')
     expect(renderedSvgs[0]).toContain('+420.50 USDG')
     expect(renderedSvgs[0]).not.toContain('$')
 

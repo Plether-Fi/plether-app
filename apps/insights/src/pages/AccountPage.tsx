@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   InsightsApiError,
   accountActivityToProtocolTrade,
+  enrichBalanceHistory,
   formatPlDxyQuantity,
   formatVaultShares,
   transactionPath,
@@ -11,6 +12,7 @@ import {
   type AccountProtectionSnapshot,
   type TransactionRouteState,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
@@ -109,41 +111,43 @@ function TradingAccountInspector({ address }: { address: string }) {
     (row) => row.activityType === 'Close' && row.pnlAssets != null,
   )
 
+  const enrichedBalanceHistory = enrichBalanceHistory(
+    summary?.balanceHistory ?? [],
+    summary?.activity ?? [],
+  )
+
   const shareCards: ShareCardOption[] = []
-  if (current && live) {
+  if (summary) {
+    const balanceHistory = enrichedBalanceHistory
+    const latestHistoryBalance = balanceHistory[balanceHistory.length - 1]?.balanceAssets ?? null
+    const accountBalanceAssets =
+      ledger?.settlementBalanceAssets ??
+      (ledger?.netEquityAssets && ledger.netEquityAssets !== '0' ? ledger.netEquityAssets : null) ??
+      latestHistoryBalance
     shareCards.push({
-      id: 'division-live',
-      label: 'Divisions Rank',
+      id: 'account-summary',
+      label: 'Account Overview',
       data: {
-        kind: 'division',
+        kind: 'account',
         traderLabel,
         account: address,
         networkName: chain.name,
+        releaseVersion,
+        netEquityAssets: ledger?.netEquityAssets ?? null,
+        accountBalanceAssets,
+        realizedPnlAssets: perf?.realizedPnlAssets ?? null,
+        volumeAssets: perf?.volumeAssets ?? null,
+        totalTrades: perf?.totalTrades ?? null,
+        activeDays: perf?.activeDays ?? null,
+        firstActivityAt: perf?.firstActivityAt ?? null,
         tier: awarded?.tier ?? null,
-        rank: current.rank,
-        weeklyReturnLabel: formatRoi(current.weeklyReturnBps),
-        activeDays: current.activeDays,
-        weekLabel: `Week of ${formatUtc(live.weekStartsAt).slice(0, 11)}`,
-        provisional: true,
-      },
-    })
-  } else if (awarded && publication) {
-    shareCards.push({
-      id: 'division-awarded',
-      label: 'Divisions Badge',
-      data: {
-        kind: 'division',
-        traderLabel,
-        account: address,
-        networkName: chain.name,
-        tier: awarded.tier,
-        rank: awarded.rank,
-        weeklyReturnLabel: formatReturn(awarded.weeklyPnlAssets, awarded.adjustedEquityAssets),
-        weeklyPnlAssets: awarded.weeklyPnlAssets,
-        activeDays: awarded.activeDays,
-        movement: awarded.movement,
-        weekLabel: `Ended ${formatUtc(publication.week.closesAt).slice(0, 11)}`,
-        provisional: false,
+        balancePoints: balanceHistory.map((pt) => ({
+          timestamp: pt.timestamp,
+          balanceAssets: pt.balanceAssets,
+        })),
+        sparklineValues: balanceHistory
+          .map((pt) => Number(pt.balanceAssets) / 1_000_000)
+          .filter((v) => Number.isFinite(v)),
       },
     })
   }
@@ -188,28 +192,6 @@ function TradingAccountInspector({ address }: { address: string }) {
         notionalAssets: latestClosedTrade.amountAssets,
         occurredAt: latestClosedTrade.occurredAt,
         txHash: latestClosedTrade.txHash,
-      },
-    })
-  }
-  if (summary) {
-    shareCards.push({
-      id: 'account-summary',
-      label: 'Account Overview',
-      data: {
-        kind: 'account',
-        traderLabel,
-        account: address,
-        networkName: chain.name,
-        releaseVersion,
-        netEquityAssets: ledger?.netEquityAssets ?? null,
-        realizedPnlAssets: perf?.realizedPnlAssets ?? null,
-        volumeAssets: perf?.volumeAssets ?? null,
-        totalTrades: perf?.totalTrades ?? null,
-        activeDays: perf?.activeDays ?? null,
-        tier: awarded?.tier ?? null,
-        sparklineValues: (summary.balanceHistory ?? [])
-          .map((pt) => Number(pt.balanceAssets) / 1_000_000)
-          .filter((v) => Number.isFinite(v)),
       },
     })
   }
@@ -311,9 +293,12 @@ function TradingAccountInspector({ address }: { address: string }) {
               <StatusPill tone="live" label="Discord linked" />
             ) : null}
           </div>
-          <h1 className="mt-3 break-all text-3xl font-semibold sm:text-4xl">
-            {handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}
-          </h1>
+          <div className="mt-3 flex items-center gap-3.5">
+            <AddressAvatar address={address} size={44} />
+            <h1 className="break-all text-3xl font-semibold sm:text-4xl">
+              {handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}
+            </h1>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="break-all font-mono text-xs text-content-secondary sm:text-sm">
               {address}
@@ -482,7 +467,7 @@ function TradingAccountInspector({ address }: { address: string }) {
       {activeTab === 'overview' ? (
         <div role="tabpanel" className="space-y-8">
           <WalletBalanceChart
-            points={summary?.balanceHistory ?? []}
+            points={enrichedBalanceHistory}
             observedAt={summary?.observedAt ?? protocol.observedAt}
             releaseVersion={releaseVersion}
             loading={summaryQuery.isLoading}

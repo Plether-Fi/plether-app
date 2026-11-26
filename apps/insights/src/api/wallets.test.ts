@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accountActivityToWalletActivity,
+  enrichBalanceHistory,
   formatPlDxyQuantity,
   formatVaultShares,
   sliceBalanceHistory,
@@ -72,5 +73,57 @@ describe('wallets API helpers', () => {
     expect(slice30d).toHaveLength(2)
     expect(slice30d[0].balanceAssets).toBe('500000000')
     expect(slice30d[1].balanceAssets).toBe('750000000')
+
+    const sliceAll = sliceBalanceHistory(points, 'all', now)
+    expect(sliceAll).toHaveLength(2)
+    expect(sliceAll[0].timestamp).toBe(now - 50 * 86_400)
+  })
+
+  it('enriches balanceHistory with canonical execution receipt post-balances from activity', () => {
+    const merged = enrichBalanceHistory(
+      [
+        {
+          occurredAt: '2026-11-09T14:23:53Z',
+          timestamp: Math.floor(Date.parse('2026-11-09T14:23:53Z') / 1000),
+          blockNumber: '100',
+          balanceAssets: '100000000000',
+          eventType: 'Deposit',
+          source: 'transfer',
+        },
+      ],
+      [
+        {
+          id: '0x1:5',
+          activityType: 'Close',
+          txHash: `0x${'a'.repeat(64)}`,
+          blockNumber: '200',
+          occurredAt: '2026-11-16T18:16:35Z',
+          execution: {
+            orderId: '42',
+            protocolVersion: 'v1.2.3',
+            status: 'complete',
+            receipt: {
+              realizedPnlAssets: '5000000000',
+              executionFeeAssets: '1000000',
+              vpiAssets: '0',
+              carryAssets: '0',
+              frozenSpreadAssets: '0',
+              executionBountyAssets: '0',
+              preSettlementBalanceAssets: '100000000000',
+              postSettlementBalanceAssets: '132498767272',
+              preTraderClaimBalanceAssets: '0',
+              postTraderClaimBalanceAssets: '1000000',
+              executionNotionalAssets: '50000000000',
+              postPositionSize: '0',
+              postPositionMarginAssets: '0',
+            },
+            settlements: [],
+          },
+        },
+      ],
+    )
+    expect(merged).toHaveLength(2)
+    expect(merged[1].source).toBe('receipt')
+    expect(merged[1].balanceAssets).toBe('132499767272')
   })
 })

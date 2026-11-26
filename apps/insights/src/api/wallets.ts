@@ -131,7 +131,7 @@ export interface AccountDivisionsWeek {
   qualifying: boolean | null
 }
 
-export type BalanceTimeframe = '7d' | '30d' | '90d'
+export type BalanceTimeframe = '7d' | '30d' | '90d' | 'all'
 
 export interface BalanceHistoryPoint {
   occurredAt: string
@@ -281,14 +281,71 @@ export function accountActivityToProtocolTrade(
   }
 }
 
-export const BALANCE_TIMEFRAME_DAYS: Record<BalanceTimeframe, number> = {
+export const BALANCE_TIMEFRAME_DAYS: Record<Exclude<BalanceTimeframe, 'all'>, number> = {
   '7d': 7,
   '30d': 30,
   '90d': 90,
 }
 
 /**
- * Slices a chronological 90d balance history to the requested window (7d/30d/90d),
+ * Merges canonical receipt post-balances from account activity into balanceHistory
+ * so every executed Open/Close contributes exact balance definition even if the
+ * backend response only included transfer anchors.
+ */
+export function enrichBalanceHistory(
+  balanceHistory: BalanceHistoryPoint[],
+  activity: AccountActivityRecord[],
+): BalanceHistoryPoint[] {
+  const existingReceiptKeys = new Set(
+    balanceHistory
+      .filter((pt) => pt.source === 'receipt')
+      .map((pt) => `${pt.blockNumber}:${String(pt.timestamp)}:${pt.eventType}`),
+  )
+
+  const extra: BalanceHistoryPoint[] = []
+  for (const row of activity) {
+    const receipt = row.execution?.receipt
+    if (!receipt?.postSettlementBalanceAssets || !/^-?\d+$/.test(receipt.postSettlementBalanceAssets)) {
+      continue
+    }
+    const tsMs = Date.parse(row.occurredAt)
+    if (!Number.isFinite(tsMs)) continue
+    const timestamp = Math.floor(tsMs / 1000)
+    const key = `${row.blockNumber}:${String(timestamp)}:${row.activityType}`
+    if (existingReceiptKeys.has(key)) continue
+    existingReceiptKeys.add(key)
+
+    const settle = BigInt(receipt.postSettlementBalanceAssets)
+    const claim =
+      receipt.postTraderClaimBalanceAssets && /^-?\d+$/.test(receipt.postTraderClaimBalanceAssets)
+        ? BigInt(receipt.postTraderClaimBalanceAssets)
+        : 0n
+    const total = settle + claim < 0n ? 0n : settle + claim
+    extra.push({
+      occurredAt: row.occurredAt,
+      timestamp,
+      blockNumber: row.blockNumber,
+      balanceAssets: total.toString(),
+      netEquityAssets: null,
+      eventType: row.activityType,
+      source: 'receipt',
+    })
+  }
+
+  if (extra.length === 0) return balanceHistory
+
+  return [...balanceHistory, ...extra].sort((a, b) => {
+    if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp
+    const blockDiff = Number(a.blockNumber) - Number(b.blockNumber)
+    if (Number.isFinite(blockDiff) && blockDiff !== 0) return blockDiff
+    if (a.source === 'ledger') return 1
+    if (b.source === 'ledger') return -1
+    return 0
+  })
+}
+
+/**
+ * Slices a chronological life-long balance history to the requested window (7d/30d/90d/all),
  * carrying forward the latest canonical point at or before the window boundary so
  * accounts with quiet periods still display an accurate baseline rather than a zero.
  */
@@ -299,6 +356,7 @@ export function sliceBalanceHistory(
 ): BalanceHistoryPoint[] {
   if (points.length === 0) return []
   const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp)
+  if (timeframe === 'all') return sorted
   const latestTs = nowUnix ?? sorted[sorted.length - 1].timestamp
   const windowStart = latestTs - BALANCE_TIMEFRAME_DAYS[timeframe] * 86_400
 

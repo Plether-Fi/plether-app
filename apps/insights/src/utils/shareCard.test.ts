@@ -117,4 +117,34 @@ describe('shareCard SVG & social helpers', () => {
     expect(url).toContain('Rank+%232')
     expect(url).toContain('Diamond+Division')
   })
+
+  it('renders a Trading Account overview card with life-long balance chart distinct from Divisions cards', () => {
+    const svg = buildShareCardSvg({
+      kind: 'account',
+      traderLabel: '@mnitarik',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      releaseVersion: 'v2.0.0',
+      accountBalanceAssets: '146935680000',
+      realizedPnlAssets: '71572430000',
+      volumeAssets: '731020000000',
+      totalTrades: 17,
+      activeDays: 3,
+      firstActivityAt: '2026-11-18T10:00:00Z',
+      tier: 'Silver',
+      balancePoints: [
+        { timestamp: 1794996000, balanceAssets: '100000000000' },
+        { timestamp: 1795200000, balanceAssets: '122000000000' },
+        { timestamp: 1795690000, balanceAssets: '146935680000' },
+      ],
+    })
+    expect(svg).toContain('ALL-TIME REALIZED PNL')
+    expect(svg).toContain('LIFE-LONG BALANCE')
+    expect(svg).toContain('+71,572.43 USDG')
+    expect(svg).toContain('+46.94%')
+    expect(svg).toContain('100.00K → 146.94K USDG')
+    expect(svg).toContain('146.94K USDG')
+    expect(svg).not.toContain('SILVER DIVISION')
+    expect(svg).not.toContain('$')
+  })
 })

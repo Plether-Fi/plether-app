@@ -256,12 +256,12 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     expect(screen.getByRole('button', { name: '30D' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '90D' })).toBeInTheDocument()
 
-    // Open share card studio from header and inspect generated card options
+    // Open share card studio from header — Account Overview (with life-long balance chart) is primary, never duplicating Divisions Rank
     fireEvent.click(screen.getByRole('button', { name: 'Share card' }))
     expect(screen.getByText('Shareable social card')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Divisions Rank' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Account Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Open Position' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Account Overview' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Divisions Rank' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close share card modal' }))
 
     // Switch to Trades & Receipts tab and verify receipt breakdown page link

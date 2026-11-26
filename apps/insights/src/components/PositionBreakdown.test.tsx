@@ -26,7 +26,7 @@ describe('position breakdown', () => {
     expect(within(dialog).getByText('Quantity added')).toBeInTheDocument()
     expect(within(dialog).getByText('10.000000 plDXY')).toBeInTheDocument()
     expect(within(dialog).getByText('50.000000 USDG')).toBeInTheDocument()
-    expect(within(dialog).getByText('−3.200000 USDG')).toBeInTheDocument()
+    expect(dialog.textContent).toContain('−3.200000 USDG')
     expect(within(dialog).queryByText('Directional realized P&L')).not.toBeInTheDocument()
     expect(within(dialog).queryByText('Quantity closed')).not.toBeInTheDocument()
     expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument()
@@ -40,8 +40,8 @@ describe('position breakdown', () => {
     expect(within(dialog).getByText('Fully closed')).toBeInTheDocument()
     expect(within(dialog).getByText('2,194,400.000000 plDXY')).toBeInTheDocument()
     expect(within(dialog).getByText('2,166,132.764800 USDG')).toBeInTheDocument()
-    expect(within(dialog).getByText('−866.453105 USDG')).toBeInTheDocument()
-    expect(within(dialog).getByText('+5,474.976305 USDG')).toBeInTheDocument()
+    expect(dialog.textContent).toContain('−866.453105 USDG')
+    expect(dialog.textContent).toContain('+5,474.976305 USDG')
     expect(within(dialog).getByRole('link')).toHaveAttribute('href', `https://sepolia.arbiscan.io/tx/${rebate.receipt.transactionHash}`)
     expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close position breakdown' }))
@@ -57,7 +57,7 @@ describe('position breakdown', () => {
     expect(screen.getByText('Partially closed')).toBeInTheDocument()
     expect(screen.getByText('100.000000 plDXY')).toBeInTheDocument()
     expect(screen.getByText('123.456789 USDG')).toBeInTheDocument()
-    expect(screen.getByText('+5,474.976305 USDG')).toBeInTheDocument()
+    expect(screen.getByRole('dialog').textContent).toContain('+5,474.976305 USDG')
   })
 
   it('does not mistake missing evidence for a fully closed position or zero costs', () => {

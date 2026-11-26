@@ -243,23 +243,237 @@ function renderTierBadge(tier, cx, cy) {
   </g>`;
 }
 
-function renderMiniSparkline(values, x, y, w, h, stroke) {
-  if (!Array.isArray(values) || values.length < 2) return '';
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = Math.max(max - min, 1);
-  const coords = values.map((v, idx) => {
-    const px = x + (idx / (values.length - 1)) * w;
-    const py = y + h - ((v - min) / range) * h;
-    return `${px.toFixed(1)},${py.toFixed(1)}`;
+function formatCompactUsdValue(dollars) {
+  if (!Number.isFinite(dollars)) return '—';
+  const abs = Math.abs(dollars);
+  const sign = dollars < 0 ? '-' : '';
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(2)}K`;
+  return `${sign}${abs.toFixed(2)}`;
+}
+
+function formatMonthDayYear(isoOrUnix) {
+  if (isoOrUnix == null) return null;
+  const date = typeof isoOrUnix === 'number' ? new Date(isoOrUnix * 1000) : new Date(isoOrUnix);
+  if (Number.isNaN(date.getTime())) return null;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${String(date.getUTCDate())} ${months[date.getUTCMonth()]} ${String(date.getUTCFullYear())}`;
+}
+
+function renderLifetimeBalanceChart(balancePoints, fallbackValues) {
+  const boxX = 532;
+  const boxY = 132;
+  const boxW = 608;
+  const boxH = 252;
+  const plotX = boxX + 22;
+  const plotY = boxY + 52;
+  const plotW = boxW - 44;
+  const plotH = 146;
+
+  const normalized =
+    Array.isArray(balancePoints) && balancePoints.length > 0
+      ? [...balancePoints]
+          .map((pt) => ({ ts: Number(pt?.timestamp), val: Number(pt?.balanceAssets) / 1_000_000 }))
+          .filter((pt) => Number.isFinite(pt.ts) && Number.isFinite(pt.val))
+          .sort((a, b) => a.ts - b.ts)
+      : (Array.isArray(fallbackValues) ? fallbackValues : [])
+          .filter((v) => Number.isFinite(v))
+          .map((val, idx) => ({ ts: idx, val }));
+
+  if (normalized.length < 2) {
+    const emptySvg = `<g>
+      <rect x="${String(boxX)}" y="${String(boxY)}" width="${String(boxW)}" height="${String(boxH)}" fill="#3b212d" fill-opacity="0.52" stroke="#ffab96" stroke-opacity="0.26" stroke-width="1" />
+      <text x="${String(plotX)}" y="${String(boxY + 30)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="13" font-weight="700" letter-spacing="1.3">LIFE-LONG BALANCE</text>
+      <text x="${String(Math.round(boxX + boxW / 2))}" y="${String(Math.round(boxY + boxH / 2 + 10))}" text-anchor="middle" fill="#aa98a0" font-family="${SANS_FONT}" font-size="15" font-weight="500">Awaiting life-long balance history</text>
+    </g>`;
+    return { svg: emptySvg, accent: '#ffab96', startLabel: null };
+  }
+
+  const start = normalized[0];
+  const end = normalized[normalized.length - 1];
+  const stroke = end.val < start.val ? '#ff572d' : '#00ff99';
+  const vals = normalized.map((pt) => pt.val);
+  const rawMin = Math.min(...vals);
+  const rawMax = Math.max(...vals);
+  const span = rawMax - rawMin;
+  const pad = span === 0 ? Math.max(rawMax * 0.08, 10) : span * 0.14;
+  const minVal = Math.max(0, rawMin - pad);
+  const maxVal = rawMax + pad;
+  const rangeVal = Math.max(maxVal - minVal, 1);
+
+  const minTs = start.ts;
+  const maxTs = end.ts;
+  const tsSpan = Math.max(maxTs - minTs, 1);
+  const useTimestamps = Array.isArray(balancePoints) && balancePoints.length >= 2 && maxTs > minTs;
+
+  const coords = normalized.map((pt, idx) => {
+    const xRatio = useTimestamps ? (pt.ts - minTs) / tsSpan : idx / (normalized.length - 1);
+    const x = plotX + xRatio * plotW;
+    const y = plotY + (1 - (pt.val - minVal) / rangeVal) * plotH;
+    return { x, y };
   });
-  const line = `M${coords.join(' L')}`;
-  const area = `${line} L${String(x + w)},${String(y + h)} L${String(x)},${String(y + h)} Z`;
-  return `<g>
-    <rect x="${String(x - 16)}" y="${String(y - 16)}" width="${String(w + 32)}" height="${String(h + 32)}" fill="#3b212d" fill-opacity="0.45" stroke="#ffab96" stroke-opacity="0.22" stroke-width="1" />
-    <path d="${area}" fill="${stroke}" fill-opacity="0.16" />
-    <path d="${line}" fill="none" stroke="${stroke}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+
+  const linePath = coords
+    .map((pt, idx) =>
+      idx === 0
+        ? `M${pt.x.toFixed(1)},${pt.y.toFixed(1)}`
+        : `H${pt.x.toFixed(1)} V${pt.y.toFixed(1)}`,
+    )
+    .join(' ');
+  const areaPath = `${linePath} L${coords[coords.length - 1].x.toFixed(1)},${String(plotY + plotH)} L${coords[0].x.toFixed(1)},${String(plotY + plotH)} Z`;
+  const baselineY = plotY + (1 - (start.val - minVal) / rangeVal) * plotH;
+  const lastPt = coords[coords.length - 1];
+  const pointDots =
+    coords.length <= 45
+      ? coords
+          .slice(0, -1)
+          .map(
+            (pt) =>
+              `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="2.6" fill="#ffab96" fill-opacity="0.8" stroke="#250917" stroke-width="1" />`,
+          )
+          .join('')
+      : '';
+
+  const delta = end.val - start.val;
+  const pctStr =
+    start.val > 0
+      ? `${delta >= 0 ? '+' : ''}${((delta / start.val) * 100).toFixed(2)}%`
+      : null;
+  const rangeHeader = `${formatCompactUsdValue(start.val)} → ${formatCompactUsdValue(end.val)} USDG`;
+  const headerRight = pctStr ? `${pctStr} · ${rangeHeader}` : rangeHeader;
+
+  const startDate = useTimestamps ? formatMonthDayYear(start.ts) : null;
+  const endDate = useTimestamps ? formatMonthDayYear(end.ts) : null;
+
+  const svg = `<g>
+    <defs>
+      <linearGradient id="acct-bal-area" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${stroke}" stop-opacity="0.28" />
+        <stop offset="100%" stop-color="${stroke}" stop-opacity="0.02" />
+      </linearGradient>
+    </defs>
+    <rect x="${String(boxX)}" y="${String(boxY)}" width="${String(boxW)}" height="${String(boxH)}" fill="#3b212d" fill-opacity="0.52" stroke="#ffab96" stroke-opacity="0.26" stroke-width="1" />
+    <text x="${String(plotX)}" y="${String(boxY + 30)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="13" font-weight="700" letter-spacing="1.3">LIFE-LONG BALANCE</text>
+    <text x="${String(plotX + plotW)}" y="${String(boxY + 30)}" text-anchor="end" fill="${stroke}" font-family="${MONO_FONT}" font-size="13" font-weight="700">${escapeXml(headerRight)}</text>
+    <line x1="${String(plotX)}" y1="${String(plotY)}" x2="${String(plotX + plotW)}" y2="${String(plotY)}" stroke="#ffab96" stroke-opacity="0.1" stroke-width="1" />
+    <line x1="${String(plotX)}" y1="${String(Math.round(plotY + plotH / 2))}" x2="${String(plotX + plotW)}" y2="${String(Math.round(plotY + plotH / 2))}" stroke="#ffab96" stroke-opacity="0.1" stroke-width="1" />
+    <line x1="${String(plotX)}" y1="${String(plotY + plotH)}" x2="${String(plotX + plotW)}" y2="${String(plotY + plotH)}" stroke="#ffab96" stroke-opacity="0.16" stroke-width="1" />
+    <line x1="${String(plotX)}" y1="${baselineY.toFixed(1)}" x2="${String(plotX + plotW)}" y2="${baselineY.toFixed(1)}" stroke="#aa98a0" stroke-opacity="0.38" stroke-width="1" stroke-dasharray="4 4" />
+    <path d="${areaPath}" fill="url(#acct-bal-area)" />
+    <path d="${linePath}" fill="none" stroke="${stroke}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" />
+    ${pointDots}
+    <circle cx="${lastPt.x.toFixed(1)}" cy="${lastPt.y.toFixed(1)}" r="9" fill="${stroke}" fill-opacity="0.22" />
+    <circle cx="${lastPt.x.toFixed(1)}" cy="${lastPt.y.toFixed(1)}" r="4.5" fill="${stroke}" />
+    <text x="${String(plotX)}" y="${String(plotY + 14)}" fill="#aa98a0" font-family="${MONO_FONT}" font-size="11">High ${escapeXml(formatCompactUsdValue(rawMax))}</text>
+    <text x="${String(plotX)}" y="${String(plotY + plotH - 6)}" fill="#aa98a0" font-family="${MONO_FONT}" font-size="11">Low ${escapeXml(formatCompactUsdValue(rawMin))}</text>
+    <text x="${String(plotX)}" y="${String(boxY + boxH - 18)}" fill="#aa98a0" font-family="${MONO_FONT}" font-size="12">${escapeXml(startDate ?? 'Start')}</text>
+    <text x="${String(plotX + plotW)}" y="${String(boxY + boxH - 18)}" text-anchor="end" fill="#aa98a0" font-family="${MONO_FONT}" font-size="12">${escapeXml(endDate ? `${endDate} · Live` : 'Live')}</text>
   </g>`;
+
+  return { svg, accent: stroke, startLabel: startDate };
+}
+
+function hashAvatarSeed(input, salt) {
+  let h = (0x811c9dc5 ^ salt) >>> 0;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+function nextAvatarPrng(state) {
+  state.s = (state.s + 0x6d2b79f5) >>> 0;
+  let t = state.s;
+  t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+  t ^= (t + Math.imul(t ^ (t >>> 7), t | 61)) >>> 0;
+  return (t ^ (t >>> 14)) >>> 0;
+}
+
+function mirrorAvatarRotation(kind, rotation) {
+  const r = ((rotation % 4) + 4) % 4;
+  if (kind === 'quarter' || kind === 'triangle') {
+    return r === 0 ? 1 : r === 1 ? 0 : r === 2 ? 3 : 2;
+  }
+  if (kind === 'half') {
+    return r === 1 ? 3 : r === 3 ? 1 : r;
+  }
+  return r;
+}
+
+function renderBauhausAvatar(address) {
+  if (!address || typeof address !== 'string') return '';
+  const palette = ['#FF572D', '#FFAB96', '#F2CF71', '#34D399', '#F472B6', '#FFF5F9'];
+  const kinds = ['square', 'quarter', 'quarter', 'circle', 'half', 'triangle', 'empty', 'empty'];
+  const normalized = address.trim().toLowerCase();
+  const rng = { s: (hashAvatarSeed(normalized, 0x517cc1b7) ^ (hashAvatarSeed(normalized, 0x9e3779b9) >>> 1)) >>> 0 };
+  const pIdx = nextAvatarPrng(rng) % palette.length;
+  const sIdx = (pIdx + 1 + (nextAvatarPrng(rng) % (palette.length - 1))) % palette.length;
+  const primary = palette[pIdx];
+  const secondary = palette[sIdx];
+  const colors = [primary, primary, secondary, secondary, '#4E2538'];
+  const cells = [];
+  let filled = 0;
+
+  for (let row = 0; row < 3; row += 1) {
+    const lk = kinds[nextAvatarPrng(rng) % kinds.length];
+    const lr = nextAvatarPrng(rng) % 4;
+    const lc = colors[nextAvatarPrng(rng) % colors.length];
+    const ck = kinds[nextAvatarPrng(rng) % kinds.length];
+    const cr = (nextAvatarPrng(rng) % 2) * 2;
+    const cc = colors[nextAvatarPrng(rng) % colors.length];
+    if (lk !== 'empty') filled += 2;
+    if (ck !== 'empty') filled += 1;
+    cells.push({ row, col: 0, kind: lk, rotation: lr, color: lc });
+    cells.push({ row, col: 1, kind: ck, rotation: cr, color: cc });
+    cells.push({ row, col: 2, kind: lk, rotation: mirrorAvatarRotation(lk, lr), color: lc });
+  }
+  if (filled < 4) {
+    cells[4].kind = 'circle';
+    cells[4].color = primary;
+    if (cells[0].kind === 'empty') {
+      cells[0].kind = 'quarter';
+      cells[0].rotation = 0;
+      cells[0].color = secondary;
+      cells[2].kind = 'quarter';
+      cells[2].rotation = 1;
+      cells[2].color = secondary;
+    }
+  }
+  const shapes = cells
+    .map((c) => {
+      if (c.kind === 'empty') return '';
+      const x = c.col * 8;
+      const y = c.row * 8;
+      const r = c.rotation % 4;
+      if (c.kind === 'square') return `<rect x="${String(x)}" y="${String(y)}" width="8" height="8" fill="${c.color}" />`;
+      if (c.kind === 'circle') return `<circle cx="${String(x + 4)}" cy="${String(y + 4)}" r="3.2" fill="${c.color}" />`;
+      if (c.kind === 'half') {
+        if (r === 0) return `<rect x="${String(x)}" y="${String(y)}" width="8" height="4" fill="${c.color}" />`;
+        if (r === 1) return `<rect x="${String(x + 4)}" y="${String(y)}" width="4" height="8" fill="${c.color}" />`;
+        if (r === 2) return `<rect x="${String(x)}" y="${String(y + 4)}" width="8" height="4" fill="${c.color}" />`;
+        return `<rect x="${String(x)}" y="${String(y)}" width="4" height="8" fill="${c.color}" />`;
+      }
+      if (c.kind === 'quarter') {
+        if (r === 0) return `<path d="M${String(x)},${String(y)} H${String(x + 8)} A8,8 0 0 1 ${String(x)},${String(y + 8)} Z" fill="${c.color}" />`;
+        if (r === 1) return `<path d="M${String(x + 8)},${String(y)} V${String(y + 8)} A8,8 0 0 1 ${String(x)},${String(y)} Z" fill="${c.color}" />`;
+        if (r === 2) return `<path d="M${String(x + 8)},${String(y + 8)} H${String(x)} A8,8 0 0 1 ${String(x + 8)},${String(y)} Z" fill="${c.color}" />`;
+        return `<path d="M${String(x)},${String(y + 8)} V${String(y)} A8,8 0 0 1 ${String(x + 8)},${String(y + 8)} Z" fill="${c.color}" />`;
+      }
+      if (r === 0) return `<polygon points="${String(x)},${String(y)} ${String(x + 8)},${String(y)} ${String(x)},${String(y + 8)}" fill="${c.color}" />`;
+      if (r === 1) return `<polygon points="${String(x)},${String(y)} ${String(x + 8)},${String(y)} ${String(x + 8)},${String(y + 8)}" fill="${c.color}" />`;
+      if (r === 2) return `<polygon points="${String(x + 8)},${String(y)} ${String(x + 8)},${String(y + 8)} ${String(x)},${String(y + 8)}" fill="${c.color}" />`;
+      return `<polygon points="${String(x)},${String(y)} ${String(x + 8)},${String(y + 8)} ${String(x)},${String(y + 8)}" fill="${c.color}" />`;
+    })
+    .filter(Boolean)
+    .join('');
+  return `<g transform="translate(60, 558)"><rect width="24" height="24" fill="#1B0711" />${shapes}<rect x="0.5" y="0.5" width="23" height="23" fill="none" stroke="#FFAB96" stroke-opacity="0.28" stroke-width="1" /></g>`;
 }
 
 function renderFrame({
@@ -268,10 +482,13 @@ function renderFrame({
   networkTag,
   footerLeftPrimary,
   footerLeftSecondary,
+  footerAvatarAddress,
   footerRight,
   bodySvg,
 }) {
-  const secondaryX = 60 + Math.min(420, String(footerLeftPrimary).length * 11 + 26);
+  const hasAvatar = Boolean(footerAvatarAddress);
+  const leftTextX = hasAvatar ? 96 : 60;
+  const secondaryX = leftTextX + Math.min(400, String(footerLeftPrimary).length * 11 + 26);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(OG_CARD_WIDTH)}" height="${String(OG_CARD_HEIGHT)}" viewBox="0 0 ${String(OG_CARD_WIDTH)} ${String(OG_CARD_HEIGHT)}">
   <defs>
     <linearGradient id="bg-grad" x1="0" y1="0" x2="1" y2="1">
@@ -301,7 +518,8 @@ function renderFrame({
   ${bodySvg}
 
   <line x1="60" y1="538" x2="1140" y2="538" stroke="#ffab96" stroke-opacity="0.24" stroke-width="1" />
-  <text x="60" y="576" fill="#fff5f9" font-family="${SANS_FONT}" font-size="18" font-weight="700">${escapeXml(footerLeftPrimary)}</text>
+  ${hasAvatar ? renderBauhausAvatar(footerAvatarAddress) : ''}
+  <text x="${String(leftTextX)}" y="576" fill="#fff5f9" font-family="${SANS_FONT}" font-size="18" font-weight="700">${escapeXml(footerLeftPrimary)}</text>
   ${footerLeftSecondary ? `<text x="${String(secondaryX)}" y="576" fill="#aa98a0" font-family="${MONO_FONT}" font-size="15" font-weight="700">${escapeXml(footerLeftSecondary)}</text>` : ''}
   <text x="1140" y="576" text-anchor="end" fill="#ffab96" font-family="${MONO_FONT}" font-size="15" font-weight="700">${escapeXml(footerRight)}</text>
 </svg>`;
@@ -370,6 +588,7 @@ export function buildOgCardSvg(data) {
       networkTag,
       footerLeftPrimary: data.traderLabel,
       footerLeftSecondary: shortAddress(data.account),
+      footerAvatarAddress: data.account,
       footerRight,
       bodySvg: body,
     });
@@ -401,6 +620,7 @@ export function buildOgCardSvg(data) {
       networkTag,
       footerLeftPrimary: data.traderLabel,
       footerLeftSecondary: shortAddress(data.account),
+      footerAvatarAddress: data.account,
       footerRight: 'CfdEngineAccountLens · insights.plether.com',
       bodySvg: body,
     });
@@ -443,44 +663,54 @@ export function buildOgCardSvg(data) {
       networkTag: data.networkName,
       footerLeftPrimary: data.traderLabel,
       footerLeftSecondary: shortAddress(data.account),
+      footerAvatarAddress: data.account,
       footerRight: 'insights.plether.com/divisions',
       bodySvg: body,
     });
   }
 
-  // Trading account overview card
+  // Trading account overview card (distinct from Divisions card — centers life-long balance curve)
   const pnl = data.realizedPnlAssets
     ? formatSignedUsdg(data.realizedPnlAssets)
     : { text: 'Unavailable', tone: 'neutral' };
-  const accent = toneHex(pnl.tone);
-  const spark = Array.isArray(data.sparklineValues) && data.sparklineValues.length >= 2
-    ? renderMiniSparkline(data.sparklineValues, 760, 175, 360, 160, accent)
-    : data.tier
-      ? renderTierBadge(data.tier, 990, 244)
-      : '';
+  const pnlColor = toneHex(pnl.tone);
+  const chart = renderLifetimeBalanceChart(data.balancePoints, data.sparklineValues);
+  const glowAccent = pnl.tone !== 'neutral' ? pnlColor : chart.accent;
+  const effectiveBalance =
+    data.accountBalanceAssets ??
+    (data.netEquityAssets && data.netEquityAssets !== '0' ? data.netEquityAssets : null) ??
+    (Array.isArray(data.balancePoints) && data.balancePoints.length > 0
+      ? data.balancePoints[data.balancePoints.length - 1]?.balanceAssets
+      : null) ??
+    data.netEquityAssets ??
+    null;
   const stats = [
-    { label: 'Net equity', value: data.netEquityAssets ? formatCompactUsdg(data.netEquityAssets) : 'Unavailable' },
+    { label: 'Balance', value: effectiveBalance ? formatCompactUsdg(effectiveBalance) : 'Unavailable' },
     { label: 'Volume', value: data.volumeAssets ? formatCompactUsdg(data.volumeAssets) : 'Unavailable' },
     { label: 'Executed fills', value: data.totalTrades != null ? Number(data.totalTrades).toLocaleString('en-US') : 'Unavailable' },
     { label: 'Active days', value: data.activeDays != null ? String(data.activeDays) : 'Unavailable' },
   ];
   const accountTierPalette = resolveTierPalette(data.tier);
+  const pnlFontSize = pnl.text.length <= 13 ? 46 : pnl.text.length <= 16 ? 40 : 34;
+  const sinceText = formatMonthDayYear(data.firstActivityAt) ?? chart.startLabel;
   const body = `
-    ${renderPill(60, 134, 'TRADING ACCOUNT', '#3b212d', '#ffab9666', '#fff5f9')}
-    ${data.tier ? renderPill(264, 134, `${String(data.tier).toUpperCase()} TIER`, `${accountTierPalette.primary}22`, `${accountTierPalette.primary}88`, accountTierPalette.primary) : ''}
-    <text x="60" y="224" fill="#aa98a0" font-family="${SANS_FONT}" font-size="16" font-weight="700" letter-spacing="1.4">RELEASE REALIZED PNL</text>
-    <text x="60" y="308" fill="${accent}" font-family="${MONO_FONT}" font-size="64" font-weight="700">${escapeXml(pnl.text)}</text>
-    <text x="60" y="354" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="19" font-weight="500">Verified on-chain perps performance</text>
-    ${spark}
-    ${renderStatBoxes(stats, 408)}
+    ${renderPill(60, 132, 'TRADING ACCOUNT', '#3b212d', '#ffab9666', '#fff5f9')}
+    ${data.tier ? renderPill(264, 132, `${String(data.tier).toUpperCase()} TIER`, `${accountTierPalette.primary}22`, `${accountTierPalette.primary}88`, accountTierPalette.primary) : ''}
+    <text x="60" y="216" fill="#aa98a0" font-family="${SANS_FONT}" font-size="15" font-weight="700" letter-spacing="1.4">ALL-TIME REALIZED PNL</text>
+    <text x="60" y="282" fill="${pnlColor}" font-family="${MONO_FONT}" font-size="${String(pnlFontSize)}" font-weight="700">${escapeXml(pnl.text)}</text>
+    <text x="60" y="328" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="17" font-weight="500">${escapeXml(sinceText ? `Life-long history since ${sinceText}` : 'Life-long on-chain perps performance')}</text>
+    ${effectiveBalance ? `<text x="60" y="362" fill="#aa98a0" font-family="${MONO_FONT}" font-size="14" font-weight="700">Current balance · ${escapeXml(formatCompactUsdg(effectiveBalance))}</text>` : ''}
+    ${chart.svg}
+    ${renderStatBoxes(stats, 412)}
   `;
   return renderFrame({
-    accentGlow: accent,
+    accentGlow: glowAccent,
     eyebrow: 'Trading Account Summary',
     networkTag,
     footerLeftPrimary: data.traderLabel,
     footerLeftSecondary: shortAddress(data.account),
-    footerRight: 'insights.plether.com',
+    footerAvatarAddress: data.account,
+    footerRight: 'insights.plether.com/wallets',
     bodySvg: body,
   });
 }
@@ -538,11 +768,56 @@ export function selectWalletOgCardData(summaryPayload, { tradeId = null, cardMod
   }
 
   const latestDiv = Array.isArray(data.divisionsHistory) ? data.divisionsHistory[0] : null;
-  const sparklineValues = Array.isArray(data.balanceHistory)
-    ? data.balanceHistory
-        .map((pt) => Number(pt?.balanceAssets))
-        .filter((n) => Number.isFinite(n))
-    : [];
+  const seenKeys = new Set();
+  const balancePoints = [];
+  if (Array.isArray(data.balanceHistory)) {
+    for (const pt of data.balanceHistory) {
+      if (!pt || !Number.isFinite(Number(pt.timestamp)) || pt.balanceAssets == null) continue;
+      const ts = Number(pt.timestamp);
+      if (pt.source === 'receipt') {
+        seenKeys.add(`${String(pt.blockNumber ?? '')}:${String(ts)}:${String(pt.eventType ?? '')}`);
+      }
+      balancePoints.push({
+        timestamp: ts,
+        balanceAssets: String(pt.balanceAssets),
+      });
+    }
+  }
+  if (Array.isArray(data.activity)) {
+    for (const row of data.activity) {
+      const receipt = row?.execution?.receipt;
+      if (!receipt?.postSettlementBalanceAssets || !/^-?\d+$/.test(String(receipt.postSettlementBalanceAssets))) {
+        continue;
+      }
+      const tsMs = Date.parse(row.occurredAt ?? '');
+      if (!Number.isFinite(tsMs)) continue;
+      const ts = Math.floor(tsMs / 1000);
+      const key = `${String(row.blockNumber ?? '')}:${String(ts)}:${String(row.activityType ?? '')}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      const settle = BigInt(receipt.postSettlementBalanceAssets);
+      const claim =
+        receipt.postTraderClaimBalanceAssets && /^-?\d+$/.test(String(receipt.postTraderClaimBalanceAssets))
+          ? BigInt(receipt.postTraderClaimBalanceAssets)
+          : 0n;
+      const total = settle + claim < 0n ? 0n : settle + claim;
+      balancePoints.push({
+        timestamp: ts,
+        balanceAssets: total.toString(),
+      });
+    }
+  }
+  balancePoints.sort((a, b) => a.timestamp - b.timestamp);
+  const sparklineValues = balancePoints
+    .map((pt) => Number(pt.balanceAssets) / 1_000_000)
+    .filter((n) => Number.isFinite(n));
+  const latestHistoryBalance = balancePoints[balancePoints.length - 1]?.balanceAssets ?? null;
+  const accountBalanceAssets =
+    data.ledger?.settlementBalanceAssets ??
+    (data.ledger?.netEquityAssets && data.ledger.netEquityAssets !== '0'
+      ? data.ledger.netEquityAssets
+      : null) ??
+    latestHistoryBalance;
 
   return {
     kind: 'account',
@@ -551,11 +826,14 @@ export function selectWalletOgCardData(summaryPayload, { tradeId = null, cardMod
     networkName,
     releaseVersion,
     netEquityAssets: data.ledger?.netEquityAssets ?? null,
+    accountBalanceAssets,
     realizedPnlAssets: data.performance?.realizedPnlAssets ?? null,
     volumeAssets: data.performance?.volumeAssets ?? null,
     totalTrades: data.performance?.totalTrades ?? null,
     activeDays: data.performance?.activeDays ?? null,
+    firstActivityAt: data.performance?.firstActivityAt ?? null,
     tier: latestDiv?.tier ?? null,
+    balancePoints,
     sparklineValues,
   };
 }

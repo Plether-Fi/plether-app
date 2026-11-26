@@ -9,6 +9,7 @@ import {
   useKeepersStatus,
   type KeeperRoleId,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -330,8 +331,9 @@ export function KeepersPage() {
                               target="_blank"
                               rel="noreferrer"
                               title={keeper.address}
-                              className="text-brand-peach hover:underline"
+                              className="inline-flex items-center gap-2 text-brand-peach hover:underline"
                             >
+                              <AddressAvatar address={keeper.address} size={18} />
                               {shortAddress(keeper.address)} ↗
                             </a>
                           </td>
@@ -496,8 +498,9 @@ export function KeepersPage() {
                           href={explorerAddressUrl(item.keeperAddress, chainId)}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-brand-peach hover:underline"
+                          className="inline-flex items-center gap-2 text-brand-peach hover:underline"
                         >
+                          <AddressAvatar address={item.keeperAddress} size={16} />
                           {shortAddress(item.keeperAddress)} ↗
                         </a>
                       </td>

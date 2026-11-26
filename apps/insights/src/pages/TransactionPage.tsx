@@ -3,20 +3,23 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import {
   InsightsApiError,
   extractLogIndex,
+  formatPlDxyQuantity,
   tradeToWalletActivity,
   useTransaction,
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { ShareCardModal } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
-import { TradeBreakdownDetails } from '../components/TradeBreakdown'
+import { ExactUsdgAmount, TradeBreakdownDetails } from '../components/TradeBreakdown'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
 import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
 import {
+  formatAssets,
   formatCompactAssets,
   formatPrice,
   formatSignedAssets,
@@ -24,17 +27,26 @@ import {
   isTxHash,
   shortAddress,
 } from '../utils/format'
-import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
+import { deriveTradeBreakdown } from '../utils/tradeBreakdown'
 
 function unsigned(value: string | null | undefined): bigint | null {
   return value != null && /^\d+$/.test(value) ? BigInt(value) : null
 }
 
-function formatPlDxyExact(value: bigint | null): string {
-  if (value === null) return 'Unavailable'
+function ExactPlDxy({ value }: { value: bigint | null }) {
+  if (value === null) return <>Unavailable</>
   const scale = 10n ** 18n
-  const fraction = (value % scale).toString().padStart(18, '0').replace(/0{1,12}$/, '')
-  return `${new Intl.NumberFormat('en-US').format(value / scale)}.${fraction} plDXY`
+  const whole = new Intl.NumberFormat('en-US').format(value / scale)
+  const frac = (value % scale).toString().padStart(18, '0').replace(/0{1,12}$/, '')
+  const head = frac.slice(0, 2)
+  const tail = frac.slice(2)
+  return (
+    <span className="whitespace-nowrap font-mono tabular-nums text-content-primary">
+      <span>{whole}.{head}</span>
+      {tail ? <span className="text-[11px] opacity-40">{tail}</span> : null}
+      <span className="text-xs font-normal text-content-tertiary"> plDXY</span>
+    </span>
+  )
 }
 
 function activityTone(activityType: string): StatusTone {
@@ -364,8 +376,9 @@ export function TransactionPage() {
             <div className="mt-1 font-mono text-sm">
               <Link
                 to={`/wallets/${selectedEvent.account}`}
-                className="text-brand-peach hover:underline"
+                className="inline-flex items-center gap-2 text-brand-peach hover:underline"
               >
+                <AddressAvatar address={selectedEvent.account} size={18} />
                 {shortAddress(selectedEvent.account)}
               </Link>
             </div>
@@ -390,8 +403,9 @@ export function TransactionPage() {
                   href={explorerAddressUrl(executorAddress, chainId)}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-brand-peach hover:underline"
+                  className="inline-flex items-center gap-2 text-brand-peach hover:underline"
                 >
+                  <AddressAvatar address={executorAddress} size={18} />
                   {shortAddress(executorAddress)} ↗
                 </a>
               ) : (
@@ -449,7 +463,7 @@ export function TransactionPage() {
         />
         <StatCard
           label={isClose ? 'Quantity closed' : isOpen ? 'Quantity added' : 'Quantity'}
-          value={quantityDelta !== null ? formatPlDxyExact(quantityDelta) : undefined}
+          value={quantityDelta !== null ? formatPlDxyQuantity(selectedEvent.sizeDelta) : undefined}
           unavailable={quantityDelta === null}
           detail={selectedEvent.side ? `${selectedEvent.side.toUpperCase()} exposure` : 'Position size delta'}
         />
@@ -457,7 +471,7 @@ export function TransactionPage() {
           label="Executed exposure"
           value={
             notional !== null
-              ? formatTradeAssets(notional, false, true)
+              ? formatAssets(notional.toString())
               : selectedEvent.amountAssets
                 ? formatCompactAssets(selectedEvent.amountAssets)
                 : undefined
@@ -493,7 +507,7 @@ export function TransactionPage() {
             tone={positionStatus === 'Open' ? 'positive' : 'neutral'}
             detail={
               margin !== null
-                ? `Margin: ${formatTradeAssets(margin, false, true)}`
+                ? `Margin: ${formatAssets(margin.toString())}`
                 : 'Post-execution position state'
             }
           />
@@ -549,12 +563,14 @@ export function TransactionPage() {
                   {selectedEvent.orderId ?? (validReceipt ? walletActivity.execution?.orderId : 'Unavailable')}
                 </span>
               </DetailRow>
-              <DetailRow label="Final plDXY price">{formatPrice(selectedEvent.price)}</DetailRow>
+              <DetailRow label="Final plDXY price">
+                <span className="font-mono">{formatPrice(selectedEvent.price)}</span>
+              </DetailRow>
               <DetailRow label={isClose ? 'Quantity closed' : 'Quantity added'}>
-                {formatPlDxyExact(quantityDelta)}
+                <ExactPlDxy value={quantityDelta} />
               </DetailRow>
               <DetailRow label="Executed exposure">
-                {notional === null ? 'Unavailable' : formatTradeAssets(notional, false, true)}
+                {notional === null ? 'Unavailable' : <ExactUsdgAmount value={notional} />}
               </DetailRow>
               {selectedEvent.latencySeconds != null ? (
                 <DetailRow label="Execution latency">
@@ -582,9 +598,11 @@ export function TransactionPage() {
               <DetailRow label="Status">{positionStatus}</DetailRow>
               {remaining !== null && remaining > 0n ? (
                 <>
-                  <DetailRow label="Position quantity">{formatPlDxyExact(remaining)}</DetailRow>
+                  <DetailRow label="Position quantity">
+                    <ExactPlDxy value={remaining} />
+                  </DetailRow>
                   <DetailRow label="Position margin">
-                    {margin === null ? 'Unavailable' : formatTradeAssets(margin, false, true)}
+                    {margin === null ? 'Unavailable' : <ExactUsdgAmount value={margin} />}
                   </DetailRow>
                 </>
               ) : null}

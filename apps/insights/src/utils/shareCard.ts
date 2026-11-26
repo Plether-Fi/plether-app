@@ -1,6 +1,7 @@
 import { getOfficialBadgePaths } from '../divisions/badgeArtwork'
 import type { Tier } from '../divisions/rules'
 import { formatPlDxyQuantity } from '../api/wallets'
+import { buildAddressAvatarInnerSvg } from './addressAvatar'
 import { formatAssets, formatCompactAssets, formatPrice, formatUtc, shortAddress } from './format'
 
 export const SHARE_CARD_WIDTH = 1200
@@ -52,6 +53,11 @@ export interface DivisionShareCardData {
   provisional: boolean
 }
 
+export interface AccountBalancePoint {
+  timestamp: number
+  balanceAssets: string
+}
+
 export interface AccountShareCardData {
   kind: 'account'
   traderLabel: string
@@ -59,11 +65,14 @@ export interface AccountShareCardData {
   networkName: string
   releaseVersion?: string | null
   netEquityAssets?: string | null
+  accountBalanceAssets?: string | null
   realizedPnlAssets?: string | null
   volumeAssets?: string | null
   totalTrades?: number | null
   activeDays?: number | null
+  firstActivityAt?: string | null
   tier?: Tier | null
+  balancePoints?: AccountBalancePoint[]
   sparklineValues?: number[]
 }
 
@@ -189,23 +198,138 @@ function renderTierBadge(tier: Tier | null | undefined, cx: number, cy: number):
   </g>`
 }
 
-function renderMiniSparkline(values: number[], x: number, y: number, w: number, h: number, stroke: string): string {
-  if (values.length < 2) return ''
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  const range = Math.max(max - min, 1)
-  const coords = values.map((v, idx) => {
-    const px = x + (idx / (values.length - 1)) * w
-    const py = y + h - ((v - min) / range) * h
-    return `${px.toFixed(1)},${py.toFixed(1)}`
+function formatCompactUsdValue(dollars: number): string {
+  if (!Number.isFinite(dollars)) return '—'
+  const abs = Math.abs(dollars)
+  const sign = dollars < 0 ? '-' : ''
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2)}B`
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}M`
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(2)}K`
+  return `${sign}${abs.toFixed(2)}`
+}
+
+function formatMonthDayYear(isoOrUnix: string | number | null | undefined): string | null {
+  if (isoOrUnix == null) return null
+  const date = typeof isoOrUnix === 'number' ? new Date(isoOrUnix * 1000) : new Date(isoOrUnix)
+  if (Number.isNaN(date.getTime())) return null
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${String(date.getUTCDate())} ${months[date.getUTCMonth()]} ${String(date.getUTCFullYear())}`
+}
+
+function renderLifetimeBalanceChart(
+  balancePoints: AccountBalancePoint[] | undefined,
+  fallbackValues: number[] | undefined,
+): { svg: string; accent: string; startLabel: string | null } {
+  const boxX = 532
+  const boxY = 132
+  const boxW = 608
+  const boxH = 252
+  const plotX = boxX + 22
+  const plotY = boxY + 52
+  const plotW = boxW - 44
+  const plotH = 146
+
+  const normalized: { ts: number; val: number }[] =
+    balancePoints && balancePoints.length > 0
+      ? [...balancePoints]
+          .map((pt) => ({ ts: pt.timestamp, val: Number(pt.balanceAssets) / 1_000_000 }))
+          .filter((pt) => Number.isFinite(pt.ts) && Number.isFinite(pt.val))
+          .sort((a, b) => a.ts - b.ts)
+      : (fallbackValues ?? [])
+          .filter((v) => Number.isFinite(v))
+          .map((val, idx) => ({ ts: idx, val }))
+
+  if (normalized.length < 2) {
+    const emptySvg = `<g>
+      <rect x="${String(boxX)}" y="${String(boxY)}" width="${String(boxW)}" height="${String(boxH)}" fill="#3b212d" fill-opacity="0.52" stroke="#ffab96" stroke-opacity="0.26" stroke-width="1" />
+      <text x="${String(plotX)}" y="${String(boxY + 30)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" letter-spacing="1.3">LIFE-LONG BALANCE</text>
+      <text x="${String(Math.round(boxX + boxW / 2))}" y="${String(Math.round(boxY + boxH / 2 + 10))}" text-anchor="middle" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="500">Awaiting life-long balance history</text>
+    </g>`
+    return { svg: emptySvg, accent: '#ffab96', startLabel: null }
+  }
+
+  const start = normalized[0]
+  const end = normalized[normalized.length - 1]
+  const stroke = end.val < start.val ? '#ff572d' : '#00ff99'
+  const vals = normalized.map((pt) => pt.val)
+  const rawMin = Math.min(...vals)
+  const rawMax = Math.max(...vals)
+  const span = rawMax - rawMin
+  const pad = span === 0 ? Math.max(rawMax * 0.08, 10) : span * 0.14
+  const minVal = Math.max(0, rawMin - pad)
+  const maxVal = rawMax + pad
+  const rangeVal = Math.max(maxVal - minVal, 1)
+
+  const minTs = start.ts
+  const maxTs = end.ts
+  const tsSpan = Math.max(maxTs - minTs, 1)
+  const useTimestamps = balancePoints != null && balancePoints.length >= 2 && maxTs > minTs
+
+  const coords = normalized.map((pt, idx) => {
+    const xRatio = useTimestamps ? (pt.ts - minTs) / tsSpan : idx / (normalized.length - 1)
+    const x = plotX + xRatio * plotW
+    const y = plotY + (1 - (pt.val - minVal) / rangeVal) * plotH
+    return { x, y }
   })
-  const line = `M${coords.join(' L')}`
-  const area = `${line} L${String(x + w)},${String(y + h)} L${String(x)},${String(y + h)} Z`
-  return `<g>
-    <rect x="${String(x - 16)}" y="${String(y - 16)}" width="${String(w + 32)}" height="${String(h + 32)}" fill="#3b212d" fill-opacity="0.45" stroke="#ffab96" stroke-opacity="0.22" stroke-width="1" />
-    <path d="${area}" fill="${stroke}" fill-opacity="0.16" />
-    <path d="${line}" fill="none" stroke="${stroke}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+
+  const linePath = coords
+    .map((pt, idx) =>
+      idx === 0
+        ? `M${pt.x.toFixed(1)},${pt.y.toFixed(1)}`
+        : `H${pt.x.toFixed(1)} V${pt.y.toFixed(1)}`,
+    )
+    .join(' ')
+  const areaPath = `${linePath} L${coords[coords.length - 1].x.toFixed(1)},${String(plotY + plotH)} L${coords[0].x.toFixed(1)},${String(plotY + plotH)} Z`
+  const baselineY = plotY + (1 - (start.val - minVal) / rangeVal) * plotH
+  const lastPt = coords[coords.length - 1]
+  const pointDots =
+    coords.length <= 45
+      ? coords
+          .slice(0, -1)
+          .map(
+            (pt) =>
+              `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="2.6" fill="#ffab96" fill-opacity="0.8" stroke="#250917" stroke-width="1" />`,
+          )
+          .join('')
+      : ''
+
+  const delta = end.val - start.val
+  const pctStr =
+    start.val > 0
+      ? `${delta >= 0 ? '+' : ''}${((delta / start.val) * 100).toFixed(2)}%`
+      : null
+  const rangeHeader = `${formatCompactUsdValue(start.val)} → ${formatCompactUsdValue(end.val)} USDG`
+  const headerRight = pctStr ? `${pctStr} · ${rangeHeader}` : rangeHeader
+
+  const startDate = useTimestamps ? formatMonthDayYear(start.ts) : null
+  const endDate = useTimestamps ? formatMonthDayYear(end.ts) : null
+
+  const svg = `<g>
+    <defs>
+      <linearGradient id="acct-bal-area" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${stroke}" stop-opacity="0.28" />
+        <stop offset="100%" stop-color="${stroke}" stop-opacity="0.02" />
+      </linearGradient>
+    </defs>
+    <rect x="${String(boxX)}" y="${String(boxY)}" width="${String(boxW)}" height="${String(boxH)}" fill="#3b212d" fill-opacity="0.52" stroke="#ffab96" stroke-opacity="0.26" stroke-width="1" />
+    <text x="${String(plotX)}" y="${String(boxY + 30)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" letter-spacing="1.3">LIFE-LONG BALANCE</text>
+    <text x="${String(plotX + plotW)}" y="${String(boxY + 30)}" text-anchor="end" fill="${stroke}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" font-weight="700">${escapeXml(headerRight)}</text>
+    <line x1="${String(plotX)}" y1="${String(plotY)}" x2="${String(plotX + plotW)}" y2="${String(plotY)}" stroke="#ffab96" stroke-opacity="0.1" stroke-width="1" />
+    <line x1="${String(plotX)}" y1="${String(Math.round(plotY + plotH / 2))}" x2="${String(plotX + plotW)}" y2="${String(Math.round(plotY + plotH / 2))}" stroke="#ffab96" stroke-opacity="0.1" stroke-width="1" />
+    <line x1="${String(plotX)}" y1="${String(plotY + plotH)}" x2="${String(plotX + plotW)}" y2="${String(plotY + plotH)}" stroke="#ffab96" stroke-opacity="0.16" stroke-width="1" />
+    <line x1="${String(plotX)}" y1="${baselineY.toFixed(1)}" x2="${String(plotX + plotW)}" y2="${baselineY.toFixed(1)}" stroke="#aa98a0" stroke-opacity="0.38" stroke-width="1" stroke-dasharray="4 4" />
+    <path d="${areaPath}" fill="url(#acct-bal-area)" />
+    <path d="${linePath}" fill="none" stroke="${stroke}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" />
+    ${pointDots}
+    <circle cx="${lastPt.x.toFixed(1)}" cy="${lastPt.y.toFixed(1)}" r="9" fill="${stroke}" fill-opacity="0.22" />
+    <circle cx="${lastPt.x.toFixed(1)}" cy="${lastPt.y.toFixed(1)}" r="4.5" fill="${stroke}" />
+    <text x="${String(plotX)}" y="${String(plotY + 14)}" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">High ${escapeXml(formatCompactUsdValue(rawMax))}</text>
+    <text x="${String(plotX)}" y="${String(plotY + plotH - 6)}" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">Low ${escapeXml(formatCompactUsdValue(rawMin))}</text>
+    <text x="${String(plotX)}" y="${String(boxY + boxH - 18)}" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">${escapeXml(startDate ?? 'Start')}</text>
+    <text x="${String(plotX + plotW)}" y="${String(boxY + boxH - 18)}" text-anchor="end" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">${escapeXml(endDate ? `${endDate} · Live` : 'Live')}</text>
   </g>`
+
+  return { svg, accent: stroke, startLabel: startDate }
 }
 
 function renderFrame(
@@ -248,8 +372,9 @@ function renderFrame(
   ${bodySvg}
 
   <line x1="60" y1="538" x2="1140" y2="538" stroke="#ffab96" stroke-opacity="0.24" stroke-width="1" />
-  <text x="60" y="576" fill="#fff5f9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700">${escapeXml(traderLabel)}</text>
-  <text x="${String(60 + Math.min(420, traderLabel.length * 11 + 24))}" y="576" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">${escapeXml(shortAddress(account))}</text>
+  <g transform="translate(60, 558)">${buildAddressAvatarInnerSvg(account)}</g>
+  <text x="96" y="576" fill="#fff5f9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700">${escapeXml(traderLabel)}</text>
+  <text x="${String(96 + Math.min(400, traderLabel.length * 11 + 24))}" y="576" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">${escapeXml(shortAddress(account))}</text>
   <text x="1140" y="576" text-anchor="end" fill="#ffab96" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" font-weight="600">${escapeXml(footerRight)}</text>
 </svg>`
 }
@@ -337,31 +462,37 @@ export function buildShareCardSvg(data: ShareCardData): string {
     return renderFrame(tierPalette.glow, eyebrow, data.networkName, undefined, data.traderLabel, data.account, 'insights.plether.com/divisions', body)
   }
 
-  // Account overview card
+  // Account overview card (distinct from Divisions card — centers life-long balance curve)
   const pnl = data.realizedPnlAssets ? formatSignedUsdg(data.realizedPnlAssets) : { text: 'Unavailable', tone: 'neutral' as const }
-  const accent = toneHex(pnl.tone)
-  const spark = data.sparklineValues && data.sparklineValues.length >= 2
-    ? renderMiniSparkline(data.sparklineValues, 760, 175, 360, 160, accent)
-    : data.tier
-      ? renderTierBadge(data.tier, 990, 244)
-      : ''
+  const pnlColor = toneHex(pnl.tone)
+  const chart = renderLifetimeBalanceChart(data.balancePoints, data.sparklineValues)
+  const glowAccent = pnl.tone !== 'neutral' ? pnlColor : chart.accent
+  const effectiveBalance =
+    data.accountBalanceAssets ??
+    (data.netEquityAssets && data.netEquityAssets !== '0' ? data.netEquityAssets : null) ??
+    data.balancePoints?.[data.balancePoints.length - 1]?.balanceAssets ??
+    data.netEquityAssets ??
+    null
   const stats = [
-    { label: 'Net equity', value: data.netEquityAssets ? formatCompactAssets(data.netEquityAssets) : 'Unavailable' },
+    { label: 'Balance', value: effectiveBalance ? formatCompactAssets(effectiveBalance) : 'Unavailable' },
     { label: 'Volume', value: data.volumeAssets ? formatCompactAssets(data.volumeAssets) : 'Unavailable' },
     { label: 'Executed fills', value: data.totalTrades != null ? data.totalTrades.toLocaleString('en-US') : 'Unavailable' },
     { label: 'Active days', value: data.activeDays != null ? String(data.activeDays) : 'Unavailable' },
   ]
   const accountTierPalette = resolveTierPalette(data.tier)
+  const pnlFontSize = pnl.text.length <= 13 ? 48 : pnl.text.length <= 16 ? 42 : 36
+  const sinceText = formatMonthDayYear(data.firstActivityAt) ?? chart.startLabel
   const body = `
-    ${renderPill(60, 134, 'TRADING ACCOUNT', '#3b212d', '#ffab9666', '#fff5f9')}
-    ${data.tier ? renderPill(264, 134, `${data.tier.toUpperCase()} TIER`, `${accountTierPalette.primary}22`, `${accountTierPalette.primary}88`, accountTierPalette.primary) : ''}
-    <text x="60" y="224" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">RELEASE REALIZED PNL</text>
-    <text x="60" y="308" fill="${accent}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="68" font-weight="800">${escapeXml(pnl.text)}</text>
-    <text x="60" y="354" fill="#d8cbd0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="500">Verified on-chain perps performance</text>
-    ${spark}
-    ${renderStatBoxes(stats, 408)}
+    ${renderPill(60, 132, 'TRADING ACCOUNT', '#3b212d', '#ffab9666', '#fff5f9')}
+    ${data.tier ? renderPill(264, 132, `${data.tier.toUpperCase()} TIER`, `${accountTierPalette.primary}22`, `${accountTierPalette.primary}88`, accountTierPalette.primary) : ''}
+    <text x="60" y="216" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="600" letter-spacing="1.4">ALL-TIME REALIZED PNL</text>
+    <text x="60" y="282" fill="${pnlColor}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(pnlFontSize)}" font-weight="800">${escapeXml(pnl.text)}</text>
+    <text x="60" y="328" fill="#d8cbd0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" font-weight="500">${escapeXml(sinceText ? `Life-long history since ${sinceText}` : 'Life-long on-chain perps performance')}</text>
+    ${effectiveBalance ? `<text x="60" y="362" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="600">Current balance · ${escapeXml(formatCompactAssets(effectiveBalance))}</text>` : ''}
+    ${chart.svg}
+    ${renderStatBoxes(stats, 412)}
   `
-  return renderFrame(accent, 'Trading Account Summary', data.networkName, data.releaseVersion, data.traderLabel, data.account, 'insights.plether.com', body)
+  return renderFrame(glowAccent, 'Trading Account Summary', data.networkName, data.releaseVersion, data.traderLabel, data.account, 'insights.plether.com/wallets', body)
 }
 
 export function svgToDataUrl(svg: string): string {
