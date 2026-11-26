@@ -311,10 +311,10 @@ summarizeSnapshotFreshness expected rows =
 
 auditReturnReportResidual :: Value -> ReturnReportResidual
 auditReturnReportResidual (Object obj) =
-  let startPrice = lookupText "startDilutedSharePrice" obj >>= readMaybe . T.unpack
-      endPrice = lookupText "endDilutedSharePrice" obj >>= readMaybe . T.unpack
+  let startPrice = lookupText "startDilutedSharePrice" obj >>= readMaybe @Integer . T.unpack
+      endPrice = lookupText "endDilutedSharePrice" obj >>= readMaybe @Integer . T.unpack
       reportedReturnPp = case (startPrice, endPrice) of
-        (Just s, Just e) | s > (0 :: Integer) -> Just $ (fromIntegral e / fromIntegral s - 1.0) * 100.0
+        (Just s, Just e) | s > 0 -> Just $ (fromIntegral e / fromIntegral s - 1.0) * 100.0
         _ -> Nothing
       netUsdg = lookupText "netReturnUsdg" obj >>= readMaybe . T.unpack
       sourceBlocks = lookupInt "sourceBlockCount" obj

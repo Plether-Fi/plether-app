@@ -17,7 +17,7 @@ module Plether.Handlers.InsightsExecution
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (mapConcurrently)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as B16
@@ -414,7 +414,7 @@ resolvePermissionlessKeeperEvents pool client cfg sinceUnix maxTxs = do
 
 resolveTxSenderRpc :: EthClient -> Text -> IO (Text, Maybe Text)
 resolveTxSenderRpc client txHash = do
-  res <- rpcCall client "eth_getTransactionByHash" [String txHash]
+  res <- rpcCall client "eth_getTransactionByHash" (toJSON [txHash])
   pure $ case res of
     Right val -> (txHash, extractTxFrom val)
     Left _ -> (txHash, Nothing)
