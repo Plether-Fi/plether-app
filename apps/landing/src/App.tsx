@@ -382,8 +382,6 @@ const SiteHeader = memo(function SiteHeader({
             <DividerDot />
             <a href={BLOG_URL} target="_blank" rel="noopener noreferrer">Blog</a>
             <DividerDot />
-            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer">Docs</a>
-            <DividerDot />
             <a className="launch-button launch-button--nav" href={APP_URL} target="_blank" rel="noopener noreferrer">
               <span className="button-label">Launch Testnet</span>
             </a>
