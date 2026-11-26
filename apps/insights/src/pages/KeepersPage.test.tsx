@@ -119,6 +119,8 @@ describe('KeepersPage (Stage 2 Permissionless Keepers)', () => {
     expect(within(table).getByText('75.00%')).toBeInTheDocument()
     expect(within(table).getByText('25.00%')).toBeInTheDocument()
     expect(screen.queryByText('Alto Bundler')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Indexed')).toHaveLength(4)
+    expect(screen.getByText('Indexer pending')).toBeInTheDocument()
 
     const liqBtn = screen.getByRole('button', { name: 'Liquidation' })
     fireEvent.click(liqBtn)

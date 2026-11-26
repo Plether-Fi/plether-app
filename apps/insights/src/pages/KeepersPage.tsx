@@ -24,6 +24,7 @@ interface RoleSurface {
   label: string
   contract: string
   detectionRule: string
+  indexingStatus: 'indexed' | 'pending'
 }
 
 const ROLE_SURFACES: RoleSurface[] = [
@@ -32,30 +33,37 @@ const ROLE_SURFACES: RoleSurface[] = [
     label: 'Order execution',
     contract: 'OrderRouter',
     detectionRule: 'tx.from on executed V3 open/close order transactions',
+    indexingStatus: 'indexed',
   },
   {
     id: 'lp_settlement',
     label: 'LP settlement',
     contract: 'HousePool',
-    detectionRule: 'tx.from on hourly Senior/Junior epoch settlement transactions',
+    detectionRule:
+      'tx.from on canonical HousePool LpEpochSettled logs (including external permissionless callers)',
+    indexingStatus: 'indexed',
   },
   {
     id: 'protection',
     label: 'TP/SL protection',
     contract: 'PositionProtectionBook',
     detectionRule: 'tx.from on PositionProtectionTriggered executions',
+    indexingStatus: 'indexed',
   },
   {
     id: 'liquidation',
     label: 'Liquidation',
     contract: 'CfdEngine',
     detectionRule: 'tx.from on PositionLiquidated transactions + keeperBountyAssets',
+    indexingStatus: 'indexed',
   },
   {
     id: 'oracle',
     label: 'Oracle updates',
     contract: 'PletherOracle',
-    detectionRule: 'tx.from on on-chain six-feed Pyth FX basket update transactions',
+    detectionRule:
+      'Standalone on-chain PletherOracle price-push tx indexing is pending; live Pyth feed freshness is tracked on /infra.',
+    indexingStatus: 'pending',
   },
 ]
 
@@ -417,10 +425,23 @@ export function KeepersPage() {
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
           {ROLE_SURFACES.map((surface) => (
-            <Panel key={surface.id} className="p-4">
-              <p className="font-mono text-xs text-brand-peach">{surface.contract}</p>
-              <h3 className="mt-1 text-sm font-semibold">{surface.label}</h3>
-              <p className="mt-2 text-xs leading-5 text-content-secondary">
+            <Panel key={surface.id} className="flex flex-col gap-2 p-4">
+              <div>
+                <StatusPill
+                  tone={surface.indexingStatus === 'indexed' ? 'live' : 'unknown'}
+                  label={surface.indexingStatus === 'indexed' ? 'Indexed' : 'Indexer pending'}
+                />
+              </div>
+              <div className="min-w-0">
+                <p
+                  className="truncate font-mono text-xs text-brand-peach"
+                  title={surface.contract}
+                >
+                  {surface.contract}
+                </p>
+                <h3 className="mt-1 text-sm font-semibold">{surface.label}</h3>
+              </div>
+              <p className="text-xs leading-5 text-content-secondary">
                 {surface.detectionRule}
               </p>
             </Panel>

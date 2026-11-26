@@ -2,6 +2,7 @@ module Plether.Handlers.InsightsExecution
   ( LatencyStats (..)
   , DetectedKeeperEvent (..)
   , KeeperAggregate (..)
+  , RawKeeperTx (..)
   , getExecutionQualityResponse
   , getExecutionTradesResponse
   , getKeepersStatusResponse
@@ -9,13 +10,17 @@ module Plether.Handlers.InsightsExecution
   , computeLatencyPercentiles
   , rateBps
   , aggregateKeepers
+  , mergeLpSettlementTxs
+  , parseHexInteger
   , extractTxFrom
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent.Async (mapConcurrently)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BS8
 import Data.Int (Int64)
 import Data.List (nub, sort, sortOn)
@@ -24,6 +29,7 @@ import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import Data.Ord (Down (..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Database.PostgreSQL.Simple (Connection, In (..), Only (..), execute, execute_, query)
@@ -35,10 +41,12 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
+import Numeric (readHex)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getPerpsMarketVolumeSince)
 import Plether.Ethereum.Client (EthClient, rpcCall)
+import qualified Plether.Ethereum.Contracts.Perps as Perps
 import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Keeper.Reliability (OrderReliability (..), readOrderReliability)
 import qualified Plether.Perps.Manifest as Manifest
@@ -107,6 +115,7 @@ data RecentTradeRow = RecentTradeRow
   , rtrBlockNumber :: Integer
   , rtrLogIndex :: Integer
   , rtrTimestamp :: Integer
+  , rtrExecution :: Maybe Value
   }
   deriving stock (Eq, Show)
 
@@ -126,6 +135,7 @@ instance FromRow RecentTradeRow where
       <*> field
       <*> field
       <*> nullableNumericIntegerField
+      <*> field
       <*> field
       <*> field
       <*> field
@@ -317,6 +327,41 @@ aggregateKeepers events =
         map buildAgg $
           Map.toList grouped
 
+mergeLpSettlementTxs :: [RawKeeperTx] -> [RawKeeperTx] -> [RawKeeperTx]
+mergeLpSettlementTxs journalTxs canonicalLogTxs =
+  let toMap =
+        foldl
+          ( \acc tx ->
+              let key = T.toLower $ T.strip $ rktTxHash tx
+               in Map.insertWith mergeOne key (tx {rktTxHash = key}) acc
+          )
+          Map.empty
+      -- When a settlement tx exists in both the keeper journal and canonical
+      -- on-chain logs, preserve journal timing/latency while taking the max
+      -- non-zero block number and never double-counting the transaction.
+      mergeOne incoming existing =
+        existing
+          { rktBlockNumber = max (rktBlockNumber existing) (rktBlockNumber incoming)
+          , rktTimestamp =
+              if rktTimestamp existing > 0
+                then rktTimestamp existing
+                else rktTimestamp incoming
+          , rktLatencySeconds = rktLatencySeconds existing <|> rktLatencySeconds incoming
+          , rktBountyAssets = rktBountyAssets existing <|> rktBountyAssets incoming
+          }
+      merged = toMap (journalTxs <> canonicalLogTxs)
+   in sortOn (Down . rktBlockNumber) (Map.elems merged)
+
+parseHexInteger :: Text -> Maybe Integer
+parseHexInteger raw =
+  let stripped = T.strip raw
+      hexBody = fromMaybe stripped (T.stripPrefix "0x" stripped <|> T.stripPrefix "0X" stripped)
+   in if T.null hexBody
+        then Nothing
+        else case readHex (T.unpack hexBody) of
+          [(n, "")] -> Just n
+          _ -> Nothing
+
 extractTxFrom :: Value -> Maybe Text
 extractTxFrom (Object obj) =
   case KM.lookup (Key.fromText "from") obj of
@@ -334,11 +379,13 @@ resolvePermissionlessKeeperEvents
 resolvePermissionlessKeeperEvents pool client cfg sinceUnix maxTxs = do
   let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      housePool = T.toLower $ T.strip $ cfgPerpsHousePool cfg
       book = T.toLower Manifest.positionProtectionBookAddress
       monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
   rawTxs <- withDb pool $ \conn -> do
     ensureTxSenderCacheTable conn
-    withReadSnapshot conn $ fetchRecentPermissionlessTxs conn chainId router book monitor sinceUnix maxTxs
+    withReadSnapshot conn $
+      fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUnix maxTxs
   let uniqueHashes = nub $ map (T.toLower . rktTxHash) rawTxs
   cached <- withDb pool $ \conn -> fetchCachedTxSenders conn chainId uniqueHashes
   let missing = take 40 $ filter (`Map.notMember` cached) uniqueHashes
@@ -419,10 +466,12 @@ fetchRecentPermissionlessTxs
   -> Text
   -> Text
   -> Text
+  -> Text
   -> Integer
   -> Int
   -> IO [RawKeeperTx]
-fetchRecentPermissionlessTxs conn chainId router book monitor sinceUnix limit = do
+fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUnix limit = do
+  let lpTopicHex = "0x" <> T.toLower (TE.decodeUtf8 (B16.encode Perps.lpEpochSettledTopic))
   orderRows <-
     query
       conn
@@ -446,12 +495,20 @@ fetchRecentPermissionlessTxs conn chainId router book monitor sinceUnix limit = 
   protRows <-
     query
       conn
-      "SELECT transaction_hash, block_number, EXTRACT(EPOCH FROM NOW())::BIGINT \
-      \FROM perps_protection_events \
-      \WHERE chain_id = ? AND book = ? AND event_name = 'PositionProtectionTriggered' \
-      \ORDER BY block_number DESC LIMIT ?"
-      (chainId, book, min 50 limit) :: IO [(Text, Integer, Integer)]
-  lpRows <-
+      "SELECT p.transaction_hash, p.block_number, \
+      \COALESCE(\
+      \  (SELECT e.timestamp FROM perps_events e \
+      \   WHERE e.chain_id = p.chain_id AND e.tx_hash = p.transaction_hash LIMIT 1), \
+      \  (SELECT s.block_timestamp FROM vault_performance_snapshots s \
+      \   WHERE s.chain_id = p.chain_id AND s.house_pool_address = ? AND s.block_number <= p.block_number \
+      \   ORDER BY s.block_number DESC LIMIT 1), \
+      \  0\
+      \) \
+      \FROM perps_protection_events p \
+      \WHERE p.chain_id = ? AND p.book = ? AND p.event_name = 'PositionProtectionTriggered' \
+      \ORDER BY p.block_number DESC LIMIT ?"
+      (housePool, chainId, book, min 50 limit) :: IO [(Text, Integer, Integer)]
+  lpJournalRows <-
     query
       conn
       "SELECT receipt_transaction_hash, COALESCE(receipt_block_number, 0), created_at, confirmed_at \
@@ -460,6 +517,20 @@ fetchRecentPermissionlessTxs conn chainId router book monitor sinceUnix limit = 
       \  AND receipt_transaction_hash IS NOT NULL AND created_at >= NOW() - INTERVAL '24 hours' \
       \ORDER BY receipt_block_number DESC LIMIT ?"
       (chainId, monitor, min 50 limit) :: IO [(Text, Integer, UTCTime, Maybe UTCTime)]
+  -- Canonical on-chain LpEpochSettled logs capture every permissionless caller,
+  -- not only Plether-operated keeper journal entries.
+  lpCanonicalRows <-
+    query
+      conn
+      "SELECT l.transaction_hash, l.block_number::TEXT, l.payload->>'blockTimestamp', \
+      \(SELECT s.block_timestamp FROM vault_performance_snapshots s \
+      \ WHERE s.chain_id = ? AND s.house_pool_address = ? AND s.block_number <= l.block_number \
+      \ ORDER BY s.block_number DESC LIMIT 1) \
+      \FROM vault_return_logs l \
+      \WHERE LOWER(l.payload->>'address') = ? \
+      \  AND LOWER(l.payload->'topics'->>0) = ? \
+      \ORDER BY l.block_number DESC LIMIT ?"
+      (chainId, housePool, housePool, lpTopicHex, min 50 limit) :: IO [(Text, String, Maybe Text, Maybe Integer)]
   let orders =
         [ RawKeeperTx "order_execution" h blk ts lat Nothing
         | (h, blk, ts, lat) <- orderRows
@@ -471,8 +542,9 @@ fetchRecentPermissionlessTxs conn chainId router book monitor sinceUnix limit = 
       prots =
         [ RawKeeperTx "protection" h blk ts Nothing Nothing
         | (h, blk, ts) <- protRows
+        , ts >= sinceUnix
         ]
-      lps =
+      lpJournal =
         [ RawKeeperTx
             "lp_settlement"
             h
@@ -480,8 +552,16 @@ fetchRecentPermissionlessTxs conn chainId router book monitor sinceUnix limit = 
             (floor $ utcTimeToPOSIXSeconds $ fromMaybe created confirmed)
             ((\c -> max 0 $ round (diffUTCTime c created)) <$> confirmed)
             Nothing
-        | (h, blk, created, confirmed) <- lpRows
+        | (h, blk, created, confirmed) <- lpJournalRows
         ]
+      lpCanonical =
+        [ RawKeeperTx "lp_settlement" h blk ts Nothing Nothing
+        | (h, blkStr, blockTsHex, snapshotTs) <- lpCanonicalRows
+        , Just blk <- [readMaybe blkStr]
+        , let ts = fromMaybe 0 ((blockTsHex >>= parseHexInteger) <|> snapshotTs)
+        , ts >= sinceUnix
+        ]
+      lps = mergeLpSettlementTxs lpJournal lpCanonical
   pure $ take limit $ sortOn (Down . rktBlockNumber) (orders <> liqs <> prots <> lps)
 
 fetchPendingKeeperOrdersCount :: Connection -> Text -> IO Int64
@@ -593,10 +673,55 @@ fetchRecentTrades conn chainId router limit =
     \CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
     \  THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END, \
     \CASE WHEN a.data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (a.data->>'keeperBountyAssets')::NUMERIC ELSE NULL END, \
-    \a.tx_hash, a.block_number, a.log_index, a.timestamp \
+    \a.tx_hash, a.block_number, a.log_index, a.timestamp, execution.payload \
     \FROM perps_account_activity a \
     \LEFT JOIN perps_orders o \
     \  ON o.chain_id = a.chain_id AND o.order_router = a.release_router AND o.order_id = a.order_id \
+    \LEFT JOIN LATERAL (\
+    \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload \
+    \  FROM (\
+    \    SELECT jsonb_build_object(\
+    \      'orderId', o2.order_id::text, 'protocolVersion', 'v1.2.3', \
+    \      'status', CASE WHEN o2.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END, \
+    \      'receipt', o2.receipt_economics, \
+    \      'settlements', COALESCE((\
+    \        SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index) \
+    \        FROM perps_events e \
+    \        WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router \
+    \          AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number \
+    \          AND e.account = a.account AND e.order_id = o2.order_id \
+    \          AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
+    \      ), '[]'::jsonb)\
+    \    ) AS payload \
+    \    FROM perps_events terminal \
+    \    JOIN perps_orders o2 ON o2.chain_id = terminal.chain_id AND o2.order_router = terminal.release_router \
+    \      AND o2.order_id = terminal.order_id AND o2.terminal_status = 'Executed' \
+    \      AND o2.account = a.account AND o2.terminal_tx_hash = a.tx_hash AND o2.terminal_block_number = a.block_number \
+    \      AND o2.receipt_economics IS NOT NULL AND o2.receipt_hash = terminal.data->>'receiptHash' \
+    \    WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router \
+    \      AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number \
+    \      AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized' \
+    \      AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed' \
+    \      AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close') \
+    \      AND NOT EXISTS (\
+    \        SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+    \          AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+    \          AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
+    \      ) \
+    \      AND 1 = (\
+    \        SELECT COUNT(*) FROM perps_account_activity sibling \
+    \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
+    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
+    \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
+    \          AND sibling.log_index > COALESCE((\
+    \            SELECT MAX(prior.log_index) FROM perps_events prior \
+    \            WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+    \              AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+    \              AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
+    \          ), -1)\
+    \      )\
+    \  ) candidate\
+    \) execution ON TRUE \
     \WHERE a.chain_id = ? AND a.release_router = ? \
     \  AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
     \ORDER BY a.block_number DESC, a.log_index DESC \
@@ -655,6 +780,7 @@ recentTradeToJson RecentTradeRow {..} =
       , ("oracleFrozen" .=) <$> rtrOracleFrozen
       , ("latencySeconds" .=) <$> rtrLatencySeconds
       , ("keeperBountyAssets" .=) . show <$> rtrKeeperBountyAssets
+      , ("execution" .=) <$> rtrExecution
       , Just $ "txHash" .= rtrTxHash
       , Just $ "blockNumber" .= show rtrBlockNumber
       , Just $ "occurredAt" .= isoTimestamp rtrTimestamp

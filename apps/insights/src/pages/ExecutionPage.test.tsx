@@ -92,10 +92,33 @@ beforeEach(() => {
           account: `0x${'1'.repeat(40)}`,
           orderId: '101',
           side: 'long',
+          price: '104500000000000000000',
+          sizeDelta: '500000000000000000000',
           amountAssets: '50000000000',
           pnlAssets: null,
           vpiAssets: '1200000',
           latencySeconds: 3,
+          execution: {
+            orderId: '101',
+            protocolVersion: 'v1.2.3',
+            status: 'complete',
+            receipt: {
+              realizedPnlAssets: '0',
+              executionFeeAssets: '250000',
+              vpiAssets: '1200000',
+              carryAssets: '0',
+              frozenSpreadAssets: '0',
+              executionBountyAssets: '100000',
+              preSettlementBalanceAssets: '50000000000',
+              postSettlementBalanceAssets: '49998450000',
+              preTraderClaimBalanceAssets: '0',
+              postTraderClaimBalanceAssets: '0',
+              executionNotionalAssets: '50000000000',
+              postPositionSize: '500000000000000000000',
+              postPositionMarginAssets: '10000000000',
+            },
+            settlements: [],
+          },
           txHash: `0x${'a'.repeat(64)}`,
           blockNumber: '332879270',
           occurredAt: '2026-11-26T11:59:00Z',
@@ -141,6 +164,13 @@ describe('ExecutionPage (Stage 2)', () => {
       `/wallets/0x${'1'.repeat(40)}`,
     )
     expect(within(tape).getByText('Liquidated')).toBeInTheDocument()
+
+    // Trade with receipt exposes the PositionBreakdown dialog trigger
+    const breakdownBtn = within(tape).getByRole('button', { name: 'View breakdown' })
+    fireEvent.click(breakdownBtn)
+    expect(screen.getByText('Position breakdown')).toBeInTheDocument()
+    expect(screen.getByText('Protocol fee assessed')).toBeInTheDocument()
+    expect(screen.getByText('Gross VPI charge')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Liquidations' }))
     expect(within(tape).queryByText('Open')).not.toBeInTheDocument()

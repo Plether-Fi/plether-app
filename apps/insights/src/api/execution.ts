@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { InsightsApiError } from './client'
 import type { LiquidityNetworkMeta } from './liquidity'
-import type { ApiErrorBody } from './types'
+import type { ApiErrorBody, TradeExecution, WalletActivity } from './types'
 
 const API_ROOT = '/api/insights/v1'
 const LOW_ETH_WEI_THRESHOLD = 10_000_000_000_000_000n // 0.01 ETH
@@ -71,6 +71,7 @@ export interface ProtocolTradeRecord {
   oracleFrozen?: boolean | null
   latencySeconds?: number | null
   keeperBountyAssets?: string | null
+  execution?: TradeExecution | null
   txHash: string
   blockNumber: string
   occurredAt: string
@@ -226,4 +227,22 @@ export function isLowEthBalance(wei: string | null | undefined): boolean {
 export function formatRateBps(bps: number | null | undefined): string {
   if (bps == null || !Number.isFinite(bps)) return '—'
   return `${(bps / 100).toFixed(2)}%`
+}
+
+export function tradeToWalletActivity(trade: ProtocolTradeRecord): WalletActivity {
+  return {
+    id: trade.id,
+    type: trade.activityType,
+    occurredAt: trade.occurredAt,
+    market: 'plDXY-PERP',
+    side: trade.side === 'long' || trade.side === 'short' ? trade.side : null,
+    size: trade.amountAssets ?? null,
+    sizeDelta: trade.sizeDelta ?? null,
+    price: trade.price ?? null,
+    pnl: trade.pnlAssets ?? null,
+    execution: trade.execution ?? null,
+    executionFee: trade.execution?.receipt.executionFeeAssets ?? null,
+    vpi: trade.vpiAssets ?? null,
+    txHash: trade.txHash,
+  }
 }

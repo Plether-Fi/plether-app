@@ -5,9 +5,12 @@ import Plether.Handlers.InsightsExecution
   ( DetectedKeeperEvent (..)
   , KeeperAggregate (..)
   , LatencyStats (..)
+  , RawKeeperTx (..)
   , aggregateKeepers
   , computeLatencyPercentiles
   , extractTxFrom
+  , mergeLpSettlementTxs
+  , parseHexInteger
   , rateBps
   )
 import Test.Hspec
@@ -57,3 +60,29 @@ spec = describe "Plether.Handlers.InsightsExecution" $ do
       `shouldBe` Just "0xabcdef0123456789012345678901234567890123"
     extractTxFrom (object ["from" .= ("not-an-address" :: String)]) `shouldBe` Nothing
     extractTxFrom (object []) `shouldBe` Nothing
+
+  it "merges canonical LP settlement logs with keeper journal entries without double-counting" $ do
+    let journal =
+          [ RawKeeperTx "lp_settlement" "0xAAA1" 0 1700000100 (Just 4) Nothing
+          ]
+        canonical =
+          [ RawKeeperTx "lp_settlement" "0xaaa1" 500 1700000090 Nothing Nothing
+          , RawKeeperTx "lp_settlement" "0xbbb2" 520 1700000200 Nothing Nothing
+          ]
+        merged = mergeLpSettlementTxs journal canonical
+    length merged `shouldBe` 2
+    case merged of
+      [externalTx, overlapTx] -> do
+        rktTxHash externalTx `shouldBe` "0xbbb2"
+        rktBlockNumber externalTx `shouldBe` 520
+        rktTxHash overlapTx `shouldBe` "0xaaa1"
+        rktBlockNumber overlapTx `shouldBe` 500
+        rktLatencySeconds overlapTx `shouldBe` Just 4
+        rktTimestamp overlapTx `shouldBe` 1700000100
+      _ -> expectationFailure "Expected merged canonical + journal LP settlements"
+
+  it "parses hex integers from RPC log blockTimestamp fields" $ do
+    parseHexInteger "0x67000010" `shouldBe` Just 1728053264
+    parseHexInteger "0x0" `shouldBe` Just 0
+    parseHexInteger "not-hex" `shouldBe` Nothing
+    parseHexInteger "" `shouldBe` Nothing

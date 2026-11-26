@@ -1,6 +1,7 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WalletActivity } from '../api/types'
+import { explorerTxUrl } from '../utils/chain'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
 import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
 import { TradeBreakdownDetails } from './TradeBreakdown'
@@ -24,7 +25,15 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   </div>
 }
 
-export function PositionBreakdown({ item }: { item: WalletActivity }) {
+export function PositionBreakdown({
+  item,
+  chainId,
+  compact = false,
+}: {
+  item: WalletActivity
+  chainId?: number | null
+  compact?: boolean
+}) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const [isOpen, setIsOpen] = useState(false)
@@ -42,7 +51,10 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
     <button type="button" aria-haspopup="dialog" onClick={() => {
       setIsOpen(true)
       dialog.current?.showModal()
-    }} className="min-h-10 cursor-pointer border border-brand-border/40 px-3 py-2 text-sm font-semibold text-brand-peach hover:bg-brand-peach/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">
+    }} className={compact
+      ? 'cursor-pointer border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach hover:bg-brand-peach/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
+      : 'min-h-10 cursor-pointer border border-brand-border/40 px-3 py-2 text-sm font-semibold text-brand-peach hover:bg-brand-peach/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4'
+    }>
       View breakdown
     </button>
     {createPortal(<dialog ref={dialog} aria-labelledby={titleId} onClose={() => { setIsOpen(false) }}
@@ -65,7 +77,7 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
             <Detail label="Final plDXY price">{formatPrice(item.price)}</Detail>
             <Detail label={isClose ? 'Quantity closed' : 'Quantity added'}>{quantity(unsigned(item.sizeDelta))}</Detail>
             <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeAssets(notional, false, true)}</Detail>
-            <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
+            <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={explorerTxUrl(item.txHash, chainId)} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
           </dl>
         </section>
         <section className="border border-brand-border/20 bg-app-bg/45 p-4">

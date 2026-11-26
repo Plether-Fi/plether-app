@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   InsightsApiError,
   formatRateBps,
+  tradeToWalletActivity,
   useExecutionQuality,
   useExecutionTrades,
   type ProtocolTradeRecord,
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { PositionBreakdown } from '../components/PositionBreakdown'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -343,7 +345,7 @@ export function ExecutionPage() {
             />
           ) : visibleTrades.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
+              <table className="w-full min-w-[960px] text-left text-sm">
                 <caption className="sr-only">Recent protocol-wide executed trades and liquidations</caption>
                 <thead className="border-b border-brand-border/25 text-xs text-content-tertiary">
                   <tr>
@@ -355,72 +357,89 @@ export function ExecutionPage() {
                     <th scope="col" className="px-4 py-3.5">Realized PnL</th>
                     <th scope="col" className="px-4 py-3.5">VPI / Spread</th>
                     <th scope="col" className="px-4 py-3.5">Latency</th>
+                    <th scope="col" className="px-4 py-3.5">Receipt</th>
                     <th scope="col" className="px-4 py-3.5">Tx</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTrades.map((trade) => (
-                    <tr key={trade.id} className="border-b border-brand-border/15 last:border-0">
-                      <td className="px-4 py-3.5 text-xs text-content-secondary">
-                        {formatUtc(trade.occurredAt)}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <StatusPill tone={tradeTone(trade.activityType)} label={trade.activityType} />
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs uppercase">
-                        {trade.side ? (
-                          <span
-                            className={
-                              trade.side === 'long'
-                                ? 'text-positive'
-                                : trade.side === 'short'
-                                  ? 'text-brand-orange'
-                                  : 'text-content-tertiary'
-                            }
+                  {visibleTrades.map((trade) => {
+                    const hasReceipt =
+                      trade.execution != null &&
+                      (trade.activityType === 'Open' || trade.activityType === 'Close')
+                    return (
+                      <tr key={trade.id} className="border-b border-brand-border/15 last:border-0">
+                        <td className="px-4 py-3.5 text-xs text-content-secondary">
+                          {formatUtc(trade.occurredAt)}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <StatusPill tone={tradeTone(trade.activityType)} label={trade.activityType} />
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs uppercase">
+                          {trade.side ? (
+                            <span
+                              className={
+                                trade.side === 'long'
+                                  ? 'text-positive'
+                                  : trade.side === 'short'
+                                    ? 'text-brand-orange'
+                                    : 'text-content-tertiary'
+                              }
+                            >
+                              {trade.side}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs">
+                          <Link
+                            to={`/wallets/${trade.account}`}
+                            title={trade.account}
+                            className="text-brand-peach hover:underline"
                           >
-                            {trade.side}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs">
-                        <Link
-                          to={`/wallets/${trade.account}`}
-                          title={trade.account}
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(trade.account)}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
-                        {formatCompactAssets(trade.amountAssets)}
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs">
-                        {trade.pnlAssets != null ? <Pnl value={trade.pnlAssets} /> : '—'}
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
-                        {trade.vpiAssets != null
-                          ? formatCompactAssets(trade.vpiAssets)
-                          : trade.frozenCloseSpreadAssets != null
-                            ? `Spread ${formatCompactAssets(trade.frozenCloseSpreadAssets)}`
-                            : '—'}
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
-                        {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs">
-                        <a
-                          href={explorerTxUrl(trade.txHash, chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(trade.txHash)} ↗
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
+                            {shortAddress(trade.account)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
+                          {formatCompactAssets(trade.amountAssets)}
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs">
+                          {trade.pnlAssets != null ? <Pnl value={trade.pnlAssets} /> : '—'}
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
+                          {trade.vpiAssets != null
+                            ? formatCompactAssets(trade.vpiAssets)
+                            : trade.frozenCloseSpreadAssets != null
+                              ? `Spread ${formatCompactAssets(trade.frozenCloseSpreadAssets)}`
+                              : '—'}
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
+                          {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {hasReceipt ? (
+                            <PositionBreakdown
+                              item={tradeToWalletActivity(trade)}
+                              chainId={chainId}
+                              compact
+                            />
+                          ) : (
+                            <span className="font-mono text-xs text-content-tertiary">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs">
+                          <a
+                            href={explorerTxUrl(trade.txHash, chainId)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-brand-peach hover:underline"
+                          >
+                            {shortAddress(trade.txHash)} ↗
+                          </a>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
