@@ -98,19 +98,21 @@ jobs:
             exit 1
           fi
 
-  sepolia_environment_gate:
-    name: Approve protected ${{ inputs.environment }} backend mutation
+  build:
+    name: Approve, preflight, and build ${{ inputs.environment }} backend images
     needs: sepolia_environment_preflight
     if: ${{ always() && needs.sepolia_environment_preflight.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04-arm
     environment: backend-admin-${{ inputs.environment }}
     permissions:
       actions: read
       contents: read
       deployments: read
+      id-token: write
     outputs:
       expected_aws_account_id: ${{ steps.account_boundary.outputs.expected_aws_account_id }}
+      image: ${{ steps.verified_images.outputs.image }}
+      log_router_image: ${{ steps.verified_images.outputs.log_router_image }}
 
     steps:
       - name: Revalidate protected environment after approval
@@ -157,38 +159,21 @@ jobs:
           fi
           echo "expected_aws_account_id=$EXPECTED_AWS_ACCOUNT_ID" >> "$GITHUB_OUTPUT"
 
-  pyth-config-preflight:
-    needs:
-      - sepolia_environment_preflight
-      - sepolia_environment_gate
-    if: >-
-      ${{ always() &&
-          needs.sepolia_environment_preflight.result == 'success' &&
-          needs.sepolia_environment_gate.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    environment: backend-admin-${{ inputs.environment }}
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          sparse-checkout: .github/scripts
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+          allowed-account-ids: ${{ steps.account_boundary.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
       - name: Verify AWS account boundary
         env:
-          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+          EXPECTED_AWS_ACCOUNT_ID: ${{ steps.account_boundary.outputs.expected_aws_account_id }}
         run: |
           set -euo pipefail
 
@@ -803,44 +788,6 @@ jobs:
             exit 1
           fi
 
-  lp-settlement-config-preflight:
-    needs:
-      - sepolia_environment_preflight
-      - sepolia_environment_gate
-    if: >-
-      ${{ always() &&
-          needs.sepolia_environment_preflight.result == 'success' &&
-          needs.sepolia_environment_gate.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    environment: backend-admin-${{ inputs.environment }}
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
-          role-session-name: plether-${{ github.run_id }}
-
-      - name: Verify AWS account boundary
-        env:
-          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
-        run: |
-          set -euo pipefail
-
-          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-          if [ "$AWS_REGION" != "ap-southeast-1" ] \
-              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
-              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
-            exit 1
-          fi
-
       - name: Validate deployed LP settlement topology
         env:
           ALLOW_MISSING_TASK_DEFINITIONS: ${{ inputs.bootstrap && 'true' || 'false' }}
@@ -1042,52 +989,6 @@ jobs:
 
           echo "LP settlement ECS configuration is valid in ${detected_mode} mode for ${TARGET_ENV}"
 
-  build:
-    needs:
-      - sepolia_environment_preflight
-      - sepolia_environment_gate
-      - pyth-config-preflight
-      - lp-settlement-config-preflight
-    if: >-
-      ${{ always() &&
-          needs['pyth-config-preflight'].result == 'success' &&
-          needs['lp-settlement-config-preflight'].result == 'success' &&
-          needs.sepolia_environment_preflight.result == 'success' &&
-          needs.sepolia_environment_gate.result == 'success' }}
-    runs-on: ubuntu-24.04-arm
-    environment: backend-admin-${{ inputs.environment }}
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      image: ${{ steps.verified_images.outputs.image }}
-      log_router_image: ${{ steps.verified_images.outputs.log_router_image }}
-
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
-          role-session-name: plether-${{ github.run_id }}
-
-      - name: Verify AWS account boundary
-        env:
-          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
-        run: |
-          set -euo pipefail
-
-          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-          if [ "$AWS_REGION" != "ap-southeast-1" ] \
-              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
-              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
-            echo "::error title=Wrong AWS target::The configured credentials and region do not match the protected $TARGET_ENV deployment boundary."
-            exit 1
-          fi
-
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
@@ -1247,14 +1148,12 @@ jobs:
   deploy:
     needs:
       - sepolia_environment_preflight
-      - sepolia_environment_gate
       - build
     if: >-
       ${{ always() &&
           inputs.bootstrap != true &&
           needs.build.result == 'success' &&
-          needs.sepolia_environment_preflight.result == 'success' &&
-          needs.sepolia_environment_gate.result == 'success' }}
+          needs.sepolia_environment_preflight.result == 'success' }}
     runs-on: ubuntu-latest
     environment: backend-admin-${{ inputs.environment }}
     permissions:
@@ -1271,12 +1170,12 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+          allowed-account-ids: ${{ needs.build.outputs.expected_aws_account_id }}
           role-session-name: plether-${{ github.run_id }}
 
       - name: Verify AWS account boundary
         env:
-          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.build.outputs.expected_aws_account_id }}
         run: |
           set -euo pipefail
 

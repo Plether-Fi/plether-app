@@ -6,6 +6,7 @@ module Plether.Handlers.InsightsLiquidity
   , ReturnReportResidual (..)
   , getLiquiditySettlementsResponse
   , getLiquidityForensicsResponse
+  , fetchRecentReturnReports
   , executionPathLabel
   , healthStateLabel
   , decodeBitPositions
@@ -580,7 +581,7 @@ fetchRecentReturnReports conn chainId housePool seniorVault juniorVault limit =
     "SELECT start_block_number, end_block_number, source_commit, schema_version, updated_at, attribution \
     \FROM vault_return_reports \
     \WHERE chain_id = ? AND house_pool_address = ? AND senior_vault_address = ? AND junior_vault_address = ? \
-    \  AND schema_version = 2 \
+    \  AND schema_version = 3 \
     \ORDER BY end_block_number DESC \
     \LIMIT ?"
     (chainId, housePool, seniorVault, juniorVault, max 1 limit)
