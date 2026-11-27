@@ -1,9 +1,9 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WalletActivity } from '../api/types'
-import { explorerTxUrl } from '../utils/chain'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
 import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
+import { ArbiscanButton } from './ActionButtons'
 import { ShareCardModal } from './ShareCardModal'
 import { TradeBreakdownDetails } from './TradeBreakdown'
 
@@ -118,7 +118,7 @@ export function PositionBreakdown({
             <Detail label="Final plDXY price">{formatPrice(item.price)}</Detail>
             <Detail label={isClose ? 'Quantity closed' : 'Quantity added'}>{quantity(unsigned(item.sizeDelta))}</Detail>
             <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeAssets(notional, false, true)}</Detail>
-            <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={explorerTxUrl(item.txHash, chainId)} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
+            <Detail label="Execution transaction">{item.txHash ? <span className="inline-flex items-center gap-1.5 font-mono text-content-primary"><span title={item.txHash}>{shortAddress(item.txHash)}</span><ArbiscanButton kind="tx" value={item.txHash} chainId={chainId} /></span> : 'Unavailable'}</Detail>
           </dl>
         </section>
         <section className="border border-brand-border/20 bg-app-bg/45 p-4">

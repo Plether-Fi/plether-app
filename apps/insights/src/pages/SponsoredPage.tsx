@@ -16,13 +16,14 @@ import {
   type SponsoredOpStatusFilter,
   type SponsoredWindowMetrics,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard, type StatTone } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatAssets, formatUtc, shortAddress } from '../utils/format'
 
 const OP_FILTER_TABS: { id: SponsoredOpStatusFilter; label: string }[] = [
@@ -232,25 +233,30 @@ export function SponsoredPage() {
           <div className="border border-brand-border/30 bg-surface-panel px-4 py-2.5 text-xs">
             <div className="flex items-center justify-between gap-4">
               <span className="text-content-tertiary">Paymaster</span>
-              <a
-                href={explorerAddressUrl(data.paymasterAddress, chain.chainId)}
-                target="_blank"
-                rel="noreferrer"
-                className="font-mono text-brand-peach hover:underline"
-              >
-                {shortAddress(data.paymasterAddress)} ↗
-              </a>
+              <span className="inline-flex items-center gap-1.5 font-mono text-content-primary">
+                <span title={data.paymasterAddress}>{shortAddress(data.paymasterAddress)}</span>
+                <CopyButton value={data.paymasterAddress} />
+                <ArbiscanButton
+                  kind="address"
+                  value={data.paymasterAddress}
+                  chainId={chain.chainId}
+                />
+              </span>
             </div>
-            <div className="mt-1 flex items-center justify-between gap-4">
+            <div className="mt-1.5 flex items-center justify-between gap-4">
               <span className="text-content-tertiary">EntryPoint v{data.entryPointVersion ?? '0.8'}</span>
-              <a
-                href={explorerAddressUrl(data.entryPointAddress, chain.chainId)}
-                target="_blank"
-                rel="noreferrer"
-                className="font-mono text-content-secondary hover:text-brand-peach hover:underline"
-              >
-                {shortAddress(data.entryPointAddress)} ↗
-              </a>
+              <span className="inline-flex items-center gap-1.5 font-mono text-content-secondary">
+                <span title={data.entryPointAddress}>{shortAddress(data.entryPointAddress)}</span>
+                <CopyButton value={data.entryPointAddress} />
+                {arbiscanLinkKey('address', data.entryPointAddress, chain.chainId) !==
+                arbiscanLinkKey('address', data.paymasterAddress, chain.chainId) ? (
+                  <ArbiscanButton
+                    kind="address"
+                    value={data.entryPointAddress}
+                    chainId={chain.chainId}
+                  />
+                ) : null}
+              </span>
             </div>
           </div>
         ) : null}
@@ -812,11 +818,22 @@ export function SponsoredPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {operations.map((op) => (
-                        <tr
-                          key={op.userOpHash}
-                          className="border-b border-brand-border/15 transition-colors last:border-0 hover:bg-app-bg/35"
-                        >
+                      {(() => {
+                        const seenTxKeys = new Set<string>()
+                        return operations.map((op) => {
+                          let showArbiscan = false
+                          if (op.txHash) {
+                            const txKey = arbiscanLinkKey('tx', op.txHash, chain.chainId)
+                            if (!seenTxKeys.has(txKey)) {
+                              seenTxKeys.add(txKey)
+                              showArbiscan = true
+                            }
+                          }
+                          return (
+                            <tr
+                              key={op.userOpHash}
+                              className="border-b border-brand-border/15 transition-colors last:border-0 hover:bg-app-bg/35"
+                            >
                           <td className="whitespace-nowrap px-3.5 py-3 font-mono text-xs text-content-secondary">
                             {formatUtc(op.occurredAt)}
                           </td>
@@ -830,20 +847,18 @@ export function SponsoredPage() {
                             </Link>
                           </td>
                           <td className="whitespace-nowrap px-3.5 py-3 font-mono text-xs">
-                            <span className="text-content-primary" title={op.userOpHash}>
-                              {shortHash(op.userOpHash)}
-                            </span>
-                            {op.txHash ? (
-                              <a
-                                href={explorerTxUrl(op.txHash, chain.chainId)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="ml-2 text-brand-peach hover:underline"
-                                title={op.txHash}
-                              >
-                                Tx ↗
-                              </a>
-                            ) : null}
+                            <div className="inline-flex items-center gap-1.5">
+                              <span className="text-content-primary" title={op.userOpHash}>
+                                {shortHash(op.userOpHash)}
+                              </span>
+                              {op.txHash && showArbiscan ? (
+                                <ArbiscanButton
+                                  kind="tx"
+                                  value={op.txHash}
+                                  chainId={chain.chainId}
+                                />
+                              ) : null}
+                            </div>
                           </td>
                           <td className="whitespace-nowrap px-3.5 py-3">
                             <StatusPill
@@ -868,7 +883,9 @@ export function SponsoredPage() {
                               : '—'}
                           </td>
                         </tr>
-                      ))}
+                          )
+                        })
+                      })()}
                     </tbody>
                   </table>
                 </div>

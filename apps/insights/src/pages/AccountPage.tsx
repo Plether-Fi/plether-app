@@ -12,6 +12,7 @@ import {
   type AccountActivityRecord,
   type TransactionRouteState,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import {
@@ -36,7 +37,7 @@ import { CurrentBadge } from '../divisions/CurrentBadge'
 import { formatReturn } from '../divisions/engine'
 import { useDivisions, useLiveDivisions } from '../divisions/query'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
 import {
   formatAssets,
   formatCompactAssets,
@@ -88,7 +89,6 @@ function TradingAccountInspector({ address }: { address: string }) {
   const publicationQuery = useDivisions()
   const activeTab = parseTabParam(searchParams.get('tab'))
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all')
-  const [copied, setCopied] = useState(false)
 
   const summary = summaryQuery.data
   const exposure = exposureQuery.data
@@ -259,17 +259,6 @@ function TradingAccountInspector({ address }: { address: string }) {
     { id: 'divisions', label: 'Divisions History', count: divisionsHistory.length || (awarded ? 1 : 0) },
   ]
 
-  function handleCopyAddress() {
-    if ('clipboard' in navigator) {
-      void navigator.clipboard.writeText(address).then(() => {
-        setCopied(true)
-        window.setTimeout(() => {
-          setCopied(false)
-        }, 1800)
-      })
-    }
-  }
-
   return (
     <div className="space-y-8">
       <DataFreshnessBanner
@@ -316,27 +305,14 @@ function TradingAccountInspector({ address }: { address: string }) {
               {handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}
             </h1>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <p className="break-all font-mono text-xs text-content-secondary sm:text-sm">
               {address}
             </p>
-            <button
-              type="button"
-              onClick={handleCopyAddress}
-              className="border border-brand-border/35 bg-app-bg px-2 py-0.5 text-[11px] font-semibold text-content-secondary hover:border-brand-peach hover:text-brand-peach"
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </button>
+            <CopyButton value={address} />
+            <ArbiscanButton kind="address" value={address} chainId={chainId} />
           </div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs">
-            <a
-              href={explorerAddressUrl(address, chainId)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-brand-peach hover:underline"
-            >
-              View Trading Account on explorer ↗
-            </a>
             <Link
               to={`/divisions/wallets/${address}`}
               className="text-content-secondary hover:text-brand-peach"
@@ -744,11 +720,16 @@ function TradingAccountInspector({ address }: { address: string }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredActivity.map((row) => {
-                      const hasReceipt =
-                        row.execution != null &&
-                        (row.activityType === 'Open' || row.activityType === 'Close')
-                      return (
+                    {(() => {
+                      const seenTradeTxKeys = new Set<string>()
+                      return filteredActivity.map((row) => {
+                        const hasReceipt =
+                          row.execution != null &&
+                          (row.activityType === 'Open' || row.activityType === 'Close')
+                        const txKey = arbiscanLinkKey('tx', row.txHash, chainId)
+                        const showArbiscan = !seenTradeTxKeys.has(txKey)
+                        if (showArbiscan) seenTradeTxKeys.add(txKey)
+                        return (
                         <tr key={row.id} className="border-b border-brand-border/15 last:border-0">
                           <td className="px-4 py-3.5 text-xs text-content-secondary">
                             {formatUtc(row.occurredAt)}
@@ -883,18 +864,16 @@ function TradingAccountInspector({ address }: { address: string }) {
                             </div>
                           </td>
                           <td className="px-4 py-3.5 font-mono text-xs">
-                            <a
-                              href={explorerTxUrl(row.txHash, chainId)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-brand-peach hover:underline"
-                            >
-                              {shortAddress(row.txHash)} ↗
-                            </a>
+                            <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                              <span title={row.txHash}>{shortAddress(row.txHash)}</span>
+                              {showArbiscan ? (
+                                <ArbiscanButton kind="tx" value={row.txHash} chainId={chainId} />
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       )
-                    })}
+                    })})()}
                   </tbody>
                 </table>
               </div>
@@ -1143,29 +1122,35 @@ function TradingAccountInspector({ address }: { address: string }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {lpRequestEvents.map((ev) => (
-                      <tr
-                        key={`${ev.txHash}-${ev.requestId}-${ev.eventName}`}
-                        className="border-b border-brand-border/15 last:border-0"
-                      >
-                        <td className="px-4 py-3.5 text-xs text-content-secondary">
-                          {formatUtc(ev.occurredAt)}
-                        </td>
-                        <td className="px-4 py-3.5 font-semibold">{trancheLabel(ev.tranche)}</td>
-                        <td className="px-4 py-3.5 font-mono text-xs">{ev.eventName}</td>
-                        <td className="px-4 py-3.5 font-mono text-xs">#{ev.requestId}</td>
-                        <td className="px-4 py-3.5 font-mono text-xs">
-                          <a
-                            href={explorerTxUrl(ev.txHash, chainId)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-brand-peach hover:underline"
+                    {(() => {
+                      const seenLpTxKeys = new Set<string>()
+                      return lpRequestEvents.map((ev) => {
+                        const txKey = arbiscanLinkKey('tx', ev.txHash, chainId)
+                        const showArbiscan = !seenLpTxKeys.has(txKey)
+                        if (showArbiscan) seenLpTxKeys.add(txKey)
+                        return (
+                          <tr
+                            key={`${ev.txHash}-${ev.requestId}-${ev.eventName}`}
+                            className="border-b border-brand-border/15 last:border-0"
                           >
-                            {shortAddress(ev.txHash)} ↗
-                          </a>
-                        </td>
-                      </tr>
-                    ))}
+                            <td className="px-4 py-3.5 text-xs text-content-secondary">
+                              {formatUtc(ev.occurredAt)}
+                            </td>
+                            <td className="px-4 py-3.5 font-semibold">{trancheLabel(ev.tranche)}</td>
+                            <td className="px-4 py-3.5 font-mono text-xs">{ev.eventName}</td>
+                            <td className="px-4 py-3.5 font-mono text-xs">#{ev.requestId}</td>
+                            <td className="px-4 py-3.5 font-mono text-xs">
+                              <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                                <span title={ev.txHash}>{shortAddress(ev.txHash)}</span>
+                                {showArbiscan ? (
+                                  <ArbiscanButton kind="tx" value={ev.txHash} chainId={chainId} />
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    })()}
                   </tbody>
                 </table>
               </div>

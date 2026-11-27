@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import {
   InsightsApiError,
@@ -9,6 +9,7 @@ import {
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
@@ -23,7 +24,7 @@ import {
 } from '../components/TransactionBatchInspector'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import {
   formatAssets,
   formatCompactAssets,
@@ -97,8 +98,6 @@ export function TransactionPage() {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const protocol = useProtocolContext()
-  const [copiedHash, setCopiedHash] = useState(false)
-  const [copiedLink, setCopiedLink] = useState(false)
   const receiptTopRef = useRef<HTMLDivElement>(null)
 
   const normalizedHash = txHash.trim().toLowerCase()
@@ -151,28 +150,11 @@ export function TransactionPage() {
 
   const backTarget = routeState?.from ?? '/execution'
   const backLabel = routeState?.fromLabel ?? 'Back to Execution'
-
-  function handleCopyHash() {
-    if (typeof navigator === 'undefined') return
-    void navigator.clipboard.writeText(normalizedHash).then(() => {
-      setCopiedHash(true)
-      window.setTimeout(() => {
-        setCopiedHash(false)
-      }, 1500)
-    })
-  }
-
-  function handleCopyLink() {
-    if (typeof navigator === 'undefined' || typeof window === 'undefined') {
-      return
-    }
-    void navigator.clipboard.writeText(window.location.href).then(() => {
-      setCopiedLink(true)
-      window.setTimeout(() => {
-        setCopiedLink(false)
-      }, 1500)
-    })
-  }
+  const pageUrl = typeof window !== 'undefined' ? window.location.href : `/tx/${normalizedHash}`
+  const claimedExternalKeys = new Set<string>([
+    arbiscanLinkKey('tx', normalizedHash, chainId),
+    ...(executorAddress ? [arbiscanLinkKey('address', executorAddress, chainId)] : []),
+  ])
 
   if (!hasAnyProtocolData && txQuery.isLoading) {
     return (
@@ -194,14 +176,7 @@ export function TransactionPage() {
           <Link to={backTarget} className="text-sm font-semibold text-brand-peach hover:underline">
             ← {backLabel}
           </Link>
-          <a
-            href={explorerTxUrl(normalizedHash, chainId)}
-            target="_blank"
-            rel="noreferrer"
-            className="border border-brand-border/40 px-3 py-1.5 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
-          >
-            View on {chain.explorerName} ↗
-          </a>
+          <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
         </div>
         {isNotFound ? (
           <Panel className="p-6">
@@ -252,21 +227,13 @@ export function TransactionPage() {
             ← {backLabel}
           </Link>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              className="cursor-pointer border border-brand-border/40 bg-surface-raised px-3 py-1.5 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
-            >
-              {copiedLink ? 'Link copied' : 'Copy link'}
-            </button>
-            <a
-              href={explorerTxUrl(normalizedHash, chainId)}
-              target="_blank"
-              rel="noreferrer"
-              className="border border-brand-border/40 px-3 py-1.5 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
-            >
-              {chain.explorerName} ↗
-            </a>
+            <CopyButton
+              value={pageUrl}
+              hoverLabel="Copy link"
+              copiedLabel="Link copied"
+              ariaLabel="Copy link"
+            />
+            <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
           </div>
         </div>
 
@@ -286,13 +253,7 @@ export function TransactionPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
               {kindLabel}
             </p>
-            <button
-              type="button"
-              onClick={handleCopyHash}
-              className="cursor-pointer border border-brand-border/35 bg-app-bg px-2 py-0.5 font-mono text-[11px] font-semibold text-content-secondary hover:border-brand-peach hover:text-content-primary"
-            >
-              {copiedHash ? 'Copied' : 'Copy hash'}
-            </button>
+            <CopyButton value={normalizedHash} ariaLabel={`Copy ${normalizedHash}`} />
           </div>
           <h1 className="break-all font-mono text-base font-semibold text-content-primary sm:text-lg">
             {normalizedHash}
@@ -302,13 +263,16 @@ export function TransactionPage() {
               <span className="text-content-tertiary">Executor / Keeper</span>
               <div className="mt-1 font-mono text-sm">
                 {executorAddress ? (
-                  <Link
-                    to={`/keepers/${executorAddress.toLowerCase()}`}
-                    className="inline-flex items-center gap-2 text-brand-peach hover:underline"
-                  >
-                    <AddressAvatar address={executorAddress} size={18} />
-                    {shortAddress(executorAddress)}
-                  </Link>
+                  <div className="inline-flex items-center gap-2">
+                    <Link
+                      to={`/keepers/${executorAddress.toLowerCase()}`}
+                      className="inline-flex items-center gap-2 text-brand-peach hover:underline"
+                    >
+                      <AddressAvatar address={executorAddress} size={18} />
+                      {shortAddress(executorAddress)}
+                    </Link>
+                    <ArbiscanButton kind="address" value={executorAddress} chainId={chainId} />
+                  </div>
                 ) : (
                   <span className="text-content-tertiary">—</span>
                 )}
@@ -341,8 +305,13 @@ export function TransactionPage() {
           finalizedOrders={finalizedOrders}
           chainId={chainId}
           activeOrderId={null}
+          excludeExternalKeys={claimedExternalKeys}
         />
-        <ProtocolEventTracePanel protocolEvents={protocolEvents} chainId={chainId} />
+        <ProtocolEventTracePanel
+          protocolEvents={protocolEvents}
+          chainId={chainId}
+          excludeExternalKeys={claimedExternalKeys}
+        />
       </div>
     )
   }
@@ -409,13 +378,12 @@ export function TransactionPage() {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleCopyLink}
-            className="cursor-pointer border border-brand-border/40 bg-surface-raised px-3 py-1.5 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
-          >
-            {copiedLink ? 'Link copied' : 'Copy link'}
-          </button>
+          <CopyButton
+            value={pageUrl}
+            hoverLabel="Copy link"
+            copiedLabel="Link copied"
+            ariaLabel="Copy link"
+          />
           {isClose && selectedEvent.pnlAssets != null ? (
             <ShareCardModal
               compact
@@ -474,14 +442,7 @@ export function TransactionPage() {
               ]}
             />
           ) : null}
-          <a
-            href={explorerTxUrl(normalizedHash, chainId)}
-            target="_blank"
-            rel="noreferrer"
-            className="border border-brand-border/40 px-3 py-1.5 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
-          >
-            {chain.explorerName} ↗
-          </a>
+          <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
         </div>
       </div>
 
@@ -525,13 +486,7 @@ export function TransactionPage() {
               <h1 className="break-all font-mono text-base font-semibold text-content-primary sm:text-lg">
                 {normalizedHash}
               </h1>
-              <button
-                type="button"
-                onClick={handleCopyHash}
-                className="shrink-0 cursor-pointer border border-brand-border/30 px-2 py-0.5 text-[11px] font-semibold text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-brand-peach"
-              >
-                {copiedHash ? 'Copied' : 'Copy'}
-              </button>
+              <CopyButton value={normalizedHash} ariaLabel={`Copy ${normalizedHash}`} />
             </div>
           </div>
           <div className="text-left sm:text-right">
@@ -579,15 +534,7 @@ export function TransactionPage() {
                     <AddressAvatar address={executorAddress} size={18} />
                     {shortAddress(executorAddress)}
                   </Link>
-                  <a
-                    href={explorerAddressUrl(executorAddress, chainId)}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={`View ${executorAddress} on explorer`}
-                    className="text-xs text-content-tertiary hover:text-content-primary"
-                  >
-                    ↗
-                  </a>
+                  <ArbiscanButton kind="address" value={executorAddress} chainId={chainId} />
                 </div>
               ) : (
                 <span className="text-content-tertiary">—</span>
@@ -765,16 +712,6 @@ export function TransactionPage() {
                   {`${String(selectedEvent.latencySeconds)}s`}
                 </DetailRow>
               ) : null}
-              <DetailRow label="On-chain explorer">
-                <a
-                  href={explorerTxUrl(normalizedHash, chainId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono text-brand-peach hover:underline"
-                >
-                  {shortAddress(normalizedHash)} ↗
-                </a>
-              </DetailRow>
             </dl>
           </Panel>
 
@@ -814,6 +751,7 @@ export function TransactionPage() {
         finalizedOrders={finalizedOrders}
         chainId={chainId}
         activeOrderId={effectiveOrderId}
+        excludeExternalKeys={claimedExternalKeys}
         onInspectOrder={(orderId) => {
           const order = finalizedOrders.find((o) => o.orderId === orderId)
           const orderAccount = order?.account?.toLowerCase()
@@ -833,7 +771,11 @@ export function TransactionPage() {
         }}
       />
 
-      <ProtocolEventTracePanel protocolEvents={protocolEvents} chainId={chainId} />
+      <ProtocolEventTracePanel
+        protocolEvents={protocolEvents}
+        chainId={chainId}
+        excludeExternalKeys={claimedExternalKeys}
+      />
     </div>
   )
 }

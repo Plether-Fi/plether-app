@@ -9,6 +9,7 @@ import {
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
+import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import {
@@ -20,7 +21,7 @@ import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 type TradeTypeFilter = 'all' | 'Open' | 'Close' | 'Liquidated'
@@ -392,11 +393,16 @@ export function ExecutionPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTrades.map((trade) => {
-                    const hasReceipt =
-                      trade.execution != null &&
-                      (trade.activityType === 'Open' || trade.activityType === 'Close')
-                    return (
+                  {(() => {
+                    const seenTxKeys = new Set<string>()
+                    return visibleTrades.map((trade) => {
+                      const hasReceipt =
+                        trade.execution != null &&
+                        (trade.activityType === 'Open' || trade.activityType === 'Close')
+                      const txKey = arbiscanLinkKey('tx', trade.txHash, chainId)
+                      const showArbiscan = !seenTxKeys.has(txKey)
+                      if (showArbiscan) seenTxKeys.add(txKey)
+                      return (
                       <tr key={trade.id} className="border-b border-brand-border/15 last:border-0">
                         <td className="px-4 py-3.5 text-xs text-content-secondary">
                           {formatUtc(trade.occurredAt)}
@@ -481,18 +487,16 @@ export function ExecutionPage() {
                           </div>
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
-                          <a
-                            href={explorerTxUrl(trade.txHash, chainId)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-brand-peach hover:underline"
-                          >
-                            {shortAddress(trade.txHash)} ↗
-                          </a>
+                          <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                            <span title={trade.txHash}>{shortAddress(trade.txHash)}</span>
+                            {showArbiscan ? (
+                              <ArbiscanButton kind="tx" value={trade.txHash} chainId={chainId} />
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     )
-                  })}
+                  })})()}
                 </tbody>
               </table>
             </div>

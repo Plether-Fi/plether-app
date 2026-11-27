@@ -6,13 +6,14 @@ import {
   isLowEthBalance,
   useKeeperDetail,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 const ROLE_LABELS: Record<string, string> = {
@@ -31,7 +32,6 @@ export function KeeperDetailPage() {
   const protocol = useProtocolContext()
   const keeperQuery = useKeeperDetail(address, 50)
   const [roleFilter, setRoleFilter] = useState<string>('all')
-  const [copied, setCopied] = useState(false)
 
   const data = keeperQuery.data
   const keeper = data?.keeper ?? null
@@ -71,16 +71,6 @@ export function KeeperDetailPage() {
       ? `${latency.p50 != null ? `${String(latency.p50)}s` : '—'} / ${latency.p95 != null ? `${String(latency.p95)}s` : '—'}`
       : undefined
 
-  function handleCopy() {
-    if (!validAddress) return
-    void navigator.clipboard.writeText(normalized).then(() => {
-      setCopied(true)
-      window.setTimeout(() => {
-        setCopied(false)
-      }, 1500)
-    })
-  }
-
   return (
     <div className="space-y-6 sm:space-y-8">
       <DataFreshnessBanner
@@ -109,14 +99,6 @@ export function KeeperDetailPage() {
             >
               Inspect as Trading Account →
             </Link>
-            <a
-              href={explorerAddressUrl(normalized, chainId)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-brand-peach hover:underline"
-            >
-              View on {chain.shortName} explorer ↗
-            </a>
           </div>
         ) : null}
       </div>
@@ -128,18 +110,15 @@ export function KeeperDetailPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
               Permissionless Keeper Profile
             </p>
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-mono text-2xl font-semibold tracking-tight sm:text-3xl">
                 {validAddress ? shortAddress(normalized) : (address ?? 'Invalid address')}
               </h1>
               {validAddress ? (
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="border border-brand-border/35 bg-surface-panel px-2.5 py-1 font-mono text-[11px] font-semibold text-content-secondary transition-colors hover:border-brand-peach hover:text-content-primary"
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
+                <>
+                  <CopyButton value={normalized} />
+                  <ArbiscanButton kind="address" value={normalized} chainId={chainId} />
+                </>
               ) : null}
             </div>
             {validAddress ? (
@@ -342,11 +321,17 @@ export function KeeperDetailPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredActivity.map((item, index) => (
-                        <tr
-                          key={`${item.txHash}-${item.role}-${String(index)}`}
-                          className="border-b border-brand-border/15 last:border-0"
-                        >
+                      {(() => {
+                        const seenTxKeys = new Set<string>()
+                        return filteredActivity.map((item, index) => {
+                          const txKey = arbiscanLinkKey('tx', item.txHash, chainId)
+                          const showArbiscan = !seenTxKeys.has(txKey)
+                          if (showArbiscan) seenTxKeys.add(txKey)
+                          return (
+                            <tr
+                              key={`${item.txHash}-${item.role}-${String(index)}`}
+                              className="border-b border-brand-border/15 last:border-0"
+                            >
                           <td className="px-4 py-3.5 text-xs text-content-secondary">
                             {formatUtc(item.occurredAt)}
                           </td>
@@ -376,19 +361,15 @@ export function KeeperDetailPage() {
                               >
                                 {shortAddress(item.txHash)}
                               </Link>
-                              <a
-                                href={explorerTxUrl(item.txHash, chainId)}
-                                target="_blank"
-                                rel="noreferrer"
-                                aria-label={`View ${item.txHash} on explorer`}
-                                className="text-content-tertiary hover:text-content-primary"
-                              >
-                                ↗
-                              </a>
+                              {showArbiscan ? (
+                                <ArbiscanButton kind="tx" value={item.txHash} chainId={chainId} />
+                              ) : null}
                             </div>
                           </td>
                         </tr>
-                      ))}
+                          )
+                        })
+                      })()}
                     </tbody>
                   </table>
                 </div>

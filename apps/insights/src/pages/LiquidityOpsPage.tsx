@@ -7,6 +7,7 @@ import {
   type LpSettlementObservation,
   type SnapshotFreshnessWindow,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import {
   ResidualAccuracyMeter,
@@ -16,7 +17,7 @@ import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 const EXECUTION_PATH_LABELS: Record<LpSettlementObservation['executionPath'], string> = {
@@ -339,14 +340,17 @@ export function LiquidityOpsPage() {
             </p>
           </div>
           {settlements?.monitorAddress ? (
-            <a
-              href={explorerAddressUrl(settlements.monitorAddress, chainId)}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-xs text-brand-peach hover:underline"
-            >
-              Monitor {shortAddress(settlements.monitorAddress)} ↗
-            </a>
+            <div className="inline-flex items-center gap-1.5 font-mono text-xs text-content-secondary">
+              <span title={settlements.monitorAddress}>
+                Monitor {shortAddress(settlements.monitorAddress)}
+              </span>
+              <CopyButton value={settlements.monitorAddress} />
+              <ArbiscanButton
+                kind="address"
+                value={settlements.monitorAddress}
+                chainId={chainId}
+              />
+            </div>
           ) : null}
         </div>
 
@@ -478,13 +482,23 @@ export function LiquidityOpsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {settlements.recentSettlements.map((row) => {
-                    const flags: string[] = []
-                    if (row.seniorBacklog) flags.push('Senior backlog')
-                    if (row.juniorBacklog) flags.push('Junior backlog')
-                    if (row.entriesDeferred) flags.push('Entries deferred')
-                    if (row.replacementCount > 0) flags.push(`Replaced ×${String(row.replacementCount)}`)
-                    return (
+                  {(() => {
+                    const seenTxKeys = new Set<string>()
+                    return settlements.recentSettlements.map((row) => {
+                      const flags: string[] = []
+                      if (row.seniorBacklog) flags.push('Senior backlog')
+                      if (row.juniorBacklog) flags.push('Junior backlog')
+                      if (row.entriesDeferred) flags.push('Entries deferred')
+                      if (row.replacementCount > 0) flags.push(`Replaced ×${String(row.replacementCount)}`)
+                      let showArbiscan = false
+                      if (row.txHash) {
+                        const txKey = arbiscanLinkKey('tx', row.txHash, chainId)
+                        if (!seenTxKeys.has(txKey)) {
+                          seenTxKeys.add(txKey)
+                          showArbiscan = true
+                        }
+                      }
+                      return (
                       <tr
                         key={`${String(row.epoch)}-${row.txHash ?? row.createdAt}`}
                         className="border-b border-brand-border/15 last:border-0"
@@ -521,21 +535,25 @@ export function LiquidityOpsPage() {
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
                           {row.txHash ? (
-                            <a
-                              href={explorerTxUrl(row.txHash, chainId)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-brand-peach hover:underline"
-                            >
-                              {shortAddress(row.txHash)} ↗
-                            </a>
+                            <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                              <Link
+                                to={`/tx/${row.txHash}`}
+                                className="text-brand-peach hover:underline"
+                                title={row.txHash}
+                              >
+                                {shortAddress(row.txHash)}
+                              </Link>
+                              {showArbiscan ? (
+                                <ArbiscanButton kind="tx" value={row.txHash} chainId={chainId} />
+                              ) : null}
+                            </div>
                           ) : (
                             '—'
                           )}
                         </td>
                       </tr>
                     )
-                  })}
+                  })})()}
                 </tbody>
               </table>
             </div>

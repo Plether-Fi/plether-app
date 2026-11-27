@@ -139,8 +139,16 @@ describe('TransactionPage', () => {
       `/keepers/${sampleKeeper}`,
     )
     expect(
-      screen.getByRole('link', { name: `View ${sampleKeeper} on explorer` }),
+      screen.getByRole('link', { name: `View ${sampleKeeper} on Arbiscan` }),
     ).toHaveAttribute('href', `https://sepolia.arbiscan.io/address/${sampleKeeper}`)
+
+    // Verify no duplicate external Arbiscan URLs are rendered on the page
+    const arbiscanHrefs = screen
+      .getAllByRole('link')
+      .map((el) => el.getAttribute('href') ?? '')
+      .filter((href) => href.includes('arbiscan.io'))
+    expect(arbiscanHrefs.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(arbiscanHrefs.map((u) => u.toLowerCase())).size).toBe(arbiscanHrefs.length)
 
     // Switch to the first event (#1 Open · log 8)
     fireEvent.click(screen.getByRole('button', { name: /#1 Open/i }))

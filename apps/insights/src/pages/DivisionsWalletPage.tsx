@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { WalletMetric as Metric } from '../components/WalletMetric'
@@ -67,8 +68,11 @@ function TraderDetails({ address }: { address: string }) {
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">Plether Divisions · Trader</p>
         <h1 className="mt-2 break-all text-3xl font-semibold sm:text-4xl">{traderLabel}</h1>
-        <p className="mt-2 break-all font-mono text-xs text-content-secondary sm:text-sm">{address}</p>
-        <a href={`https://sepolia.arbiscan.io/address/${address}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-brand-peach hover:underline">View on Arbiscan ↗</a>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <p className="break-all font-mono text-xs text-content-secondary sm:text-sm">{address}</p>
+          <CopyButton value={address} />
+          <ArbiscanButton kind="address" value={address} />
+        </div>
       </div>
       <div className="flex flex-col items-start gap-2.5 sm:items-end">
         <div className="space-y-1 sm:text-right">

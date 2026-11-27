@@ -8,9 +8,9 @@ import { eligibilityPresentation } from '../utils/eligibility'
 import { formatCompactAssets, formatPrice, formatRoi, formatAssets, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
 import { TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
 import { PositionBreakdown } from '../components/PositionBreakdown'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
+import { arbiscanLinkKey } from '../utils/chain'
 import { calculatePnlBreakdown } from '../utils/pnl'
-
-const ARBITRUM_SEPOLIA_EXPLORER = 'https://sepolia.arbiscan.io'
 
 function PositionPanel({ position }: { position: WalletPosition | null }) {
   return (
@@ -64,23 +64,34 @@ function ActivityTable({ activity, activityStatus }: {
         <table className="w-full min-w-[980px] border-collapse text-left">
           <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">plDXY price</th><th className="px-3 py-3 text-right">Protocol fee assessed</th><th className="px-3 py-3 text-right">VPI</th><th className="px-5 py-3 text-right">Directional realized P&amp;L</th></tr></thead>
           <tbody className="divide-y divide-brand-border/15">
-            {activity.map((item) => {
-              const showTradeCosts = isTradeCostActivity(item.type)
-              return (
-                <Fragment key={item.id}><tr className="hover:bg-brand-peach/5">
-                  <td className="whitespace-nowrap px-5 py-4 text-xs text-content-secondary">{formatUtc(item.occurredAt)}</td>
-                  <td className="px-3 py-4"><div className="text-sm font-semibold">{activityLabel(item.type)}</div>{item.txHash ? <a href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer" className="font-mono text-xs text-brand-peach hover:underline">{shortAddress(item.txHash)} ↗</a> : null}</td>
-                  <td className="px-3 py-4 text-sm">{item.market ?? '—'}{item.side ? <span className={`ml-2 text-xs uppercase ${item.side === 'long' ? 'text-positive' : 'text-brand-orange'}`}>{item.side}</span> : null}</td>
-                  <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{item.size ? formatCompactAssets(item.size) : '—'}</td>
-                  <td className="px-3 py-4 text-right text-sm tabular-nums">{formatPrice(item.price)}</td>
-                  <td className="px-3 py-4 text-right text-sm tabular-nums text-brand-orange">{showTradeCosts ? <><TradeFee item={item} /><TradeNotice item={item} /></> : '—'}</td>
-                  <td className="px-3 py-4 text-right text-sm font-semibold">{showTradeCosts ? <TradeVpi item={item} /> : '—'}</td>
-                  <td className="px-5 py-4 text-right text-sm font-semibold"><Pnl value={item.pnl} /></td>
-                </tr>
-                {showTradeCosts && <tr><td colSpan={8} className="px-5 py-3"><PositionBreakdown item={item} /></td></tr>}
-                </Fragment>
-              )
-            })}
+            {(() => {
+              const seenTxKeys = new Set<string>()
+              return activity.map((item) => {
+                const showTradeCosts = isTradeCostActivity(item.type)
+                let showArbiscan = false
+                if (item.txHash) {
+                  const txKey = arbiscanLinkKey('tx', item.txHash)
+                  if (!seenTxKeys.has(txKey)) {
+                    seenTxKeys.add(txKey)
+                    showArbiscan = true
+                  }
+                }
+                return (
+                  <Fragment key={item.id}><tr className="hover:bg-brand-peach/5">
+                    <td className="whitespace-nowrap px-5 py-4 text-xs text-content-secondary">{formatUtc(item.occurredAt)}</td>
+                    <td className="px-3 py-4"><div className="text-sm font-semibold">{activityLabel(item.type)}</div>{item.txHash ? <div className="mt-1 inline-flex items-center gap-1.5 font-mono text-xs text-content-secondary"><span title={item.txHash}>{shortAddress(item.txHash)}</span>{showArbiscan ? <ArbiscanButton kind="tx" value={item.txHash} /> : null}</div> : null}</td>
+                    <td className="px-3 py-4 text-sm">{item.market ?? '—'}{item.side ? <span className={`ml-2 text-xs uppercase ${item.side === 'long' ? 'text-positive' : 'text-brand-orange'}`}>{item.side}</span> : null}</td>
+                    <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{item.size ? formatCompactAssets(item.size) : '—'}</td>
+                    <td className="px-3 py-4 text-right text-sm tabular-nums">{formatPrice(item.price)}</td>
+                    <td className="px-3 py-4 text-right text-sm tabular-nums text-brand-orange">{showTradeCosts ? <><TradeFee item={item} /><TradeNotice item={item} /></> : '—'}</td>
+                    <td className="px-3 py-4 text-right text-sm font-semibold">{showTradeCosts ? <TradeVpi item={item} /> : '—'}</td>
+                    <td className="px-5 py-4 text-right text-sm font-semibold"><Pnl value={item.pnl} /></td>
+                  </tr>
+                  {showTradeCosts && <tr><td colSpan={8} className="px-5 py-3"><PositionBreakdown item={item} /></td></tr>}
+                  </Fragment>
+                )
+              })
+            })()}
           </tbody>
         </table>
       </div>
@@ -163,7 +174,6 @@ export function WalletPage() {
   const { wallet, activity, activityStatus, competition } = query.data
   const eligibility = eligibilityPresentation(wallet, competition.status, competition.slug)
   const profileUrl = xProfileUrl(wallet.displayName)
-  const explorerUrl = `${ARBITRUM_SEPOLIA_EXPLORER}/address/${wallet.address}`
   return (
     <div className="space-y-6">
       <IntegrityNotice competition={competition} />
@@ -188,18 +198,12 @@ export function WalletPage() {
                 </a>
               ) : wallet.displayName ?? shortAddress(wallet.address)}
             </h1>
-            <p className="mt-2 font-mono text-xs text-content-secondary sm:text-sm">
-              <a
-                href={explorerUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex max-w-full items-center gap-1.5 hover:text-brand-peach hover:underline"
-              >
-                <span className="sm:hidden">{shortAddress(wallet.address)}</span>
-                <span className="hidden break-all sm:inline">{wallet.address}</span>
-                <span aria-hidden="true">↗</span>
-              </a>
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-xs text-content-secondary sm:text-sm">
+              <span className="sm:hidden">{shortAddress(wallet.address)}</span>
+              <span className="hidden break-all sm:inline">{wallet.address}</span>
+              <CopyButton value={wallet.address} />
+              <ArbiscanButton kind="address" value={wallet.address} />
+            </div>
           </div>
           <div className="max-w-sm sm:text-right">
             <EligibilityBadge standing={wallet} competitionStatus={competition.status} competitionSlug={competition.slug} />

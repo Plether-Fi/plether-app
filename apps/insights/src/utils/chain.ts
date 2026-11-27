@@ -60,6 +60,16 @@ export function explorerTxUrl(txHash: string, chainId?: number | null): string {
   return `${chain.explorerBaseUrl}/tx/${txHash}`
 }
 
+export function arbiscanLinkKey(
+  kind: 'tx' | 'address',
+  value: string,
+  chainId?: number | null,
+): string {
+  const href =
+    kind === 'tx' ? explorerTxUrl(value, chainId) : explorerAddressUrl(value, chainId)
+  return href.toLowerCase()
+}
+
 export function vaultsAppUrl(chainId?: number | null): string {
   const chain = resolvePerpsChain(chainId)
   return `${chain.tradeAppUrl}/vaults`

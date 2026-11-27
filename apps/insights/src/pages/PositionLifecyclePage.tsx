@@ -9,6 +9,7 @@ import {
   transactionPath,
   useWalletPositionDetail,
 } from '../api'
+import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
@@ -19,7 +20,7 @@ import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { ExcursionMiniBar } from '../components/WalletExposureSection'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import {
   formatAssets,
   formatCompactAssets,
@@ -491,7 +492,13 @@ export function PositionLifecyclePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.events.map((ev) => (
+                      {(() => {
+                        const seenTxKeys = new Set<string>()
+                        return data.events.map((ev) => {
+                          const txKey = arbiscanLinkKey('tx', ev.txHash, chainId)
+                          const showArbiscan = !seenTxKeys.has(txKey)
+                          if (showArbiscan) seenTxKeys.add(txKey)
+                          return (
                         <tr
                           key={ev.id}
                           className="border-b border-brand-border/15 last:border-0 hover:bg-app-bg/35"
@@ -567,19 +574,15 @@ export function PositionLifecyclePage() {
                               >
                                 Receipt
                               </Link>
-                              <a
-                                href={explorerTxUrl(ev.txHash, chainId)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-content-tertiary hover:text-brand-peach"
-                                title="Inspect transaction on explorer"
-                              >
-                                ↗
-                              </a>
+                              {showArbiscan ? (
+                                <ArbiscanButton kind="tx" value={ev.txHash} chainId={chainId} />
+                              ) : null}
                             </div>
                           </td>
                         </tr>
-                      ))}
+                          )
+                        })
+                      })()}
                     </tbody>
                   </table>
                 </div>

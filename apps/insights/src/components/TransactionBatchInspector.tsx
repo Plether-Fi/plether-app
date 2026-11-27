@@ -6,8 +6,9 @@ import type {
   TransactionBatchSummary,
   TxLpSettlementRecord,
 } from '../api'
-import { explorerAddressUrl, explorerTxUrl } from '../utils/chain'
+import { arbiscanLinkKey } from '../utils/chain'
 import { formatCompactAssets, formatPrice, formatUtc, shortAddress } from '../utils/format'
+import { ArbiscanButton } from './ActionButtons'
 import { StatusPill, type StatusTone } from './StatusPill'
 import { Panel } from './ui'
 
@@ -44,16 +45,19 @@ export function BatchFinalizationPanel({
   finalizedOrders,
   chainId,
   activeOrderId,
+  excludeExternalKeys,
   onInspectOrder,
 }: {
   batchSummary: TransactionBatchSummary | null | undefined
   finalizedOrders: FinalizedOrderRecord[]
   chainId: number | null | undefined
   activeOrderId: string | null
+  excludeExternalKeys?: ReadonlySet<string>
   onInspectOrder?: (orderId: string) => void
 }) {
   if (finalizedOrders.length === 0) return null
 
+  const seenExternalKeys = new Set(excludeExternalKeys)
   const isBatch = finalizedOrders.length > 1
   const executed =
     batchSummary?.executedOrders ??
@@ -209,17 +213,23 @@ export function BatchFinalizationPanel({
                         : ''}
                     </div>
                     {order.commitTxHash ? (
-                      <div className="mt-0.5 text-[11px] text-content-tertiary">
-                        Commit{' '}
-                        <a
-                          href={explorerTxUrl(order.commitTxHash, chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(order.commitTxHash)} ↗
-                        </a>
-                      </div>
+                      (() => {
+                        const key = arbiscanLinkKey('tx', order.commitTxHash, chainId)
+                        const showExternal = !seenExternalKeys.has(key)
+                        if (showExternal) seenExternalKeys.add(key)
+                        return (
+                          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-content-tertiary">
+                            <span>Commit {shortAddress(order.commitTxHash)}</span>
+                            {showExternal ? (
+                              <ArbiscanButton
+                                kind="tx"
+                                value={order.commitTxHash}
+                                chainId={chainId}
+                              />
+                            ) : null}
+                          </div>
+                        )
+                      })()
                     ) : null}
                   </td>
                   <td className="px-4 py-3 font-mono tabular-nums">
@@ -332,12 +342,16 @@ export function TxLpSettlementPanel({ settlement }: { settlement: TxLpSettlement
 export function ProtocolEventTracePanel({
   protocolEvents,
   chainId,
+  excludeExternalKeys,
 }: {
   protocolEvents: ProtocolEventRecord[]
   chainId: number | null | undefined
+  excludeExternalKeys?: ReadonlySet<string>
 }) {
   const [expandedLog, setExpandedLog] = useState<number | null>(null)
   if (protocolEvents.length === 0) return null
+
+  const seenExternalKeys = new Set(excludeExternalKeys)
 
   return (
     <section aria-labelledby="tx-protocol-events-title" className="space-y-3">
@@ -371,14 +385,23 @@ export function ProtocolEventTracePanel({
                     {ev.eventName}
                   </td>
                   <td className="px-4 py-3 font-mono">
-                    <a
-                      href={explorerAddressUrl(ev.contractAddress, chainId)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-brand-peach hover:underline"
-                    >
-                      {shortAddress(ev.contractAddress)} ↗
-                    </a>
+                    {(() => {
+                      const key = arbiscanLinkKey('address', ev.contractAddress, chainId)
+                      const showExternal = !seenExternalKeys.has(key)
+                      if (showExternal) seenExternalKeys.add(key)
+                      return (
+                        <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                          <span title={ev.contractAddress}>{shortAddress(ev.contractAddress)}</span>
+                          {showExternal ? (
+                            <ArbiscanButton
+                              kind="address"
+                              value={ev.contractAddress}
+                              chainId={chainId}
+                            />
+                          ) : null}
+                        </div>
+                      )
+                    })()}
                   </td>
                   <td className="px-4 py-3 font-mono">
                     {ev.account ? (
