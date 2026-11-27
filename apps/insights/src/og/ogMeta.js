@@ -165,6 +165,16 @@ export function resolveRouteOgMeta(url) {
     };
   }
 
+  if (pathname === '/treasury' || pathname.startsWith('/treasury/')) {
+    return {
+      title: 'Treasury Wallet & Protocol Profit — Plether Insights',
+      description: 'Live on-chain Plether protocol treasury holdings, execution fee revenue curves, LP maintenance fee policy, subsidy costs, and treasury cash flows.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — Treasury Wallet & Protocol Profit',
+      canonicalUrl,
+    };
+  }
+
   if (pathname === '/protocol' || pathname.startsWith('/protocol/')) {
     return {
       title: 'Protocol Contracts & Parameters — Plether Insights',

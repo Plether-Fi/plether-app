@@ -19,6 +19,7 @@ import { OverviewPage } from './pages/OverviewPage'
 import { ProtocolPage } from './pages/ProtocolPage'
 import { SponsoredPage } from './pages/SponsoredPage'
 import { TransactionPage } from './pages/TransactionPage'
+import { TreasuryPage } from './pages/TreasuryPage'
 import { WalletPage } from './pages/WalletPage'
 import { WeeklyResultsPage } from './pages/WeeklyResultsPage'
 
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/keepers" element={<KeepersPage />} />
           <Route path="/keepers/:address" element={<KeeperDetailPage />} />
           <Route path="/sponsored" element={<SponsoredPage />} />
+          <Route path="/treasury" element={<TreasuryPage />} />
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />
           <Route path="/wallets/:address" element={<AccountPage />} />
