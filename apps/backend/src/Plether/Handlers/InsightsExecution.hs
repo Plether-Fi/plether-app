@@ -40,6 +40,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BS8
 import Data.Char (isHexDigit)
+import Data.Either (isRight)
 import Data.Int (Int64)
 import Data.List (nub, sort, sortOn)
 import qualified Data.Map.Strict as Map
@@ -60,6 +61,7 @@ import Database.PostgreSQL.Simple.Transaction
   , withTransactionMode
   )
 import Numeric (readHex)
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getPerpsMarketVolumeSince)
@@ -76,6 +78,7 @@ import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Keeper.Reliability (OrderReliability (..), readOrderReliability)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
 import Text.Read (readMaybe)
@@ -494,12 +497,25 @@ classifyTxKind finalizedCount hasLpSettlement hasLiquidation
   | hasLiquidation = "liquidation"
   | otherwise = "protocol_tx"
 
+{-# NOINLINE keepersStatusCache #-}
+keepersStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+keepersStatusCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
 getKeepersStatusResponse
   :: DbPool
   -> EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getKeepersStatusResponse pool client cfg = do
+getKeepersStatusResponse pool client cfg =
+  snd <$> runSingleFlightCache keepersStatusCache () isRight (computeKeepersStatusResponse pool client cfg)
+
+computeKeepersStatusResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeKeepersStatusResponse pool client cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
   fleet <- fetchKeeperFleet24h pool client cfg (now - 86400)

@@ -35,7 +35,7 @@ const REGISTRATION_PATH_PATTERN =
 const REGISTRATION_CALLBACK_PATH_PATTERN =
   /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations\/x|divisions\/registrations\/discord)\/callback$/;
 const REGISTRATION_ORIGIN_HEADER = 'X-Plether-Registration-Origin';
-const ORIGIN_READ_TIMEOUT_MS = 4_000;
+const ORIGIN_READ_TIMEOUT_MS = 10_000;
 const MAX_ORIGIN_READ_ATTEMPTS = 2;
 const RETRYABLE_EDGE_ORIGIN_STATUSES = new Set([520, 522, 524, 525]);
 

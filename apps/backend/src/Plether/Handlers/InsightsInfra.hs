@@ -12,9 +12,10 @@ module Plether.Handlers.InsightsInfra
   ) where
 
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, readMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Either (isRight)
 import Data.IORef (newIORef)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
@@ -31,6 +32,7 @@ import Plether.AA.Kernel (KernelProfile (..))
 import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelSponsorshipConfig (..), kernelScope)
 import Plether.AA.OracleReadiness (oracleReadiness)
 import Plether.AA.Readiness (Check (..), aggregateFunding)
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..), NativeAaConfig (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.KernelOperation (KernelScope (..))
@@ -60,16 +62,19 @@ import System.Timeout (timeout)
 processStartedAtEpoch :: Integer
 processStartedAtEpoch = unsafePerformIO (floor <$> getPOSIXTime)
 
-cacheTtlNSec :: Word64
-cacheTtlNSec = 10000000000 -- 10 seconds
+cacheFreshTtlNSec :: Word64
+cacheFreshTtlNSec = 20 * 1000000000 -- 20 seconds fresh
+
+cacheStaleTtlNSec :: Word64
+cacheStaleTtlNSec = 300 * 1000000000 -- 5 minutes stale-while-revalidate
 
 {-# NOINLINE infraStatusCache #-}
-infraStatusCache :: MVar (Maybe (Word64, ApiResponse Value))
-infraStatusCache = unsafePerformIO (newMVar Nothing)
+infraStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+infraStatusCache = unsafePerformIO (newRefreshingSingleFlightCache 1 cacheFreshTtlNSec cacheStaleTtlNSec)
 
 {-# NOINLINE overviewCache #-}
-overviewCache :: MVar (Maybe (Word64, ApiResponse Value))
-overviewCache = unsafePerformIO (newMVar Nothing)
+overviewCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+overviewCache = unsafePerformIO (newRefreshingSingleFlightCache 1 cacheFreshTtlNSec cacheStaleTtlNSec)
 
 withTtlCache
   :: MVar (Maybe (Word64, a))
@@ -168,8 +173,7 @@ getInfraStatusResponse
   -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
 getInfraStatusResponse pool client manager cfg mKernel =
-  withTtlCache infraStatusCache cacheTtlNSec $
-    computeInfraStatusResponse pool client manager cfg mKernel
+  snd <$> runSingleFlightCache infraStatusCache () isRight (computeInfraStatusResponse pool client manager cfg mKernel)
 
 computeInfraStatusResponse
   :: DbPool
@@ -341,8 +345,7 @@ getOverviewResponse
   -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
 getOverviewResponse pool client manager cfg mKernel =
-  withTtlCache overviewCache cacheTtlNSec $
-    computeOverviewResponse pool client manager cfg mKernel
+  snd <$> runSingleFlightCache overviewCache () isRight (computeOverviewResponse pool client manager cfg mKernel)
 
 computeOverviewResponse
   :: DbPool
