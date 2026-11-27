@@ -7,6 +7,7 @@ import qualified Data.Text as T
 import Plether.Ethereum.Abi (encodeUint256)
 import Plether.Handlers.InsightsSponsored
   ( checkBundlerEntryPoint
+  , classifyAccountBytecode
   , classifyKernelHealth
   , classifySponsorshipGate
   , computeInclusionLatencySeconds
@@ -106,3 +107,13 @@ spec = describe "Plether.Handlers.InsightsSponsored" $ do
     classifyKernelHealth True True False True True Nothing `shouldBe` "degraded"
     classifyKernelHealth True True True False True Nothing `shouldBe` "degraded"
     classifyKernelHealth True True True True False Nothing `shouldBe` "degraded"
+
+  it "classifies Kernel smart account bytecode against pinned proxy code hash" $ do
+    classifyAccountBytecode BS.empty "0x1234" `shouldBe` (False, Nothing, Nothing)
+    let sample = BS.pack [0x60, 0x00, 0x60, 0x00]
+        (deployed, mHash, mMismatch) = classifyAccountBytecode sample "0x0000000000000000000000000000000000000000000000000000000000000000"
+    deployed `shouldBe` True
+    mMismatch `shouldBe` Just False
+    case mHash of
+      Nothing -> expectationFailure "Expected non-empty code hash for deployed bytecode"
+      Just h -> classifyAccountBytecode sample (T.toUpper h) `shouldBe` (True, Just h, Just True)

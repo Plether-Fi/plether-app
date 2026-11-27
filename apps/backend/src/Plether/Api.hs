@@ -148,6 +148,7 @@ import Plether.Handlers.InsightsSponsored
   ( getSponsoredOperationsResponse
   , getSponsoredStatusResponse
   , getTradingAccountsOverviewResponse
+  , getTradingAccountDetailResponse
   )
 import Plether.Handlers.InsightsInfra
   ( getInfraStatusResponse
@@ -681,6 +682,16 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
         liftIO (getTradingAccountsOverviewResponse pool perpsClient manager cfg kernelAa)
           >>= handleResult
       Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/trading-accounts/:address" $ do
+    addr <- pathParam "address"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else case mPool of
+        Just pool ->
+          liftIO (getTradingAccountDetailResponse pool perpsClient cfg kernelAa addr)
+            >>= handleResult
+        Nothing -> insightsUnavailable
 
   get "/api/insights/v1/sponsored/status" $
     case mPool of

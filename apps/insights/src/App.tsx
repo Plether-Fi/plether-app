@@ -19,6 +19,7 @@ import { OverviewPage } from './pages/OverviewPage'
 import { PositionLifecyclePage } from './pages/PositionLifecyclePage'
 import { ProtocolPage } from './pages/ProtocolPage'
 import { SponsoredPage } from './pages/SponsoredPage'
+import { TradingAccountDetailPage } from './pages/TradingAccountDetailPage'
 import { TradingAccountsPage } from './pages/TradingAccountsPage'
 import { TransactionPage } from './pages/TransactionPage'
 import { TreasuryPage } from './pages/TreasuryPage'
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/keepers/:address" element={<KeeperDetailPage />} />
           <Route path="/sponsored" element={<SponsoredPage />} />
           <Route path="/trading-accounts" element={<TradingAccountsPage />} />
+          <Route path="/trading-accounts/:address" element={<TradingAccountDetailPage />} />
           <Route path="/treasury" element={<TreasuryPage />} />
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />

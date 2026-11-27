@@ -313,6 +313,12 @@ function TradingAccountInspector({ address }: { address: string }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs">
             <Link
+              to={`/trading-accounts/${address}`}
+              className="text-brand-peach hover:underline"
+            >
+              Kernel v4 Smart Account →
+            </Link>
+            <Link
               to={`/divisions/wallets/${address}`}
               className="text-content-secondary hover:text-brand-peach"
             >

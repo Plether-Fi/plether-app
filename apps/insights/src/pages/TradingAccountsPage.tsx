@@ -530,6 +530,7 @@ export function TradingAccountsPage() {
                               <TraderIdentity
                                 address={acct.sender}
                                 discordUsername={acct.discordUsername}
+                                to={`/trading-accounts/${acct.sender}`}
                                 avatarSize={18}
                                 showCopy
                               />
@@ -686,7 +687,11 @@ export function TradingAccountsPage() {
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-2.5 py-2.5">
-                              <TraderIdentity address={op.sender} avatarSize={16} />
+                              <TraderIdentity
+                                address={op.sender}
+                                to={`/trading-accounts/${op.sender}`}
+                                avatarSize={16}
+                              />
                             </td>
                             <td className="whitespace-nowrap px-2.5 py-2.5">
                               <span
