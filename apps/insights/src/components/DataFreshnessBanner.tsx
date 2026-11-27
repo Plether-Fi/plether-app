@@ -26,19 +26,25 @@ export function DataFreshnessBanner({
       : null
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border border-brand-border/20 bg-app-bg-deep/60 px-4 py-3 text-xs text-content-secondary">
-      <div className="flex flex-wrap items-center gap-2.5">
+    <div className="flex flex-wrap items-center justify-between gap-3 border border-brand-border/30 bg-app-bg px-4 py-2.5 text-xs text-content-secondary">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <StatusPill tone={tone} label={statusLabel} />
-        <span className="border border-brand-border/25 bg-surface-panel px-2 py-0.5 font-mono text-content-primary">
+        <span className="font-mono font-medium text-content-primary">
           {networkName}
           {isTestnet ? ' · Testnet' : ''}
         </span>
         {releaseVersion ? (
-          <span className="border border-brand-border/25 bg-surface-panel px-2 py-0.5 font-mono text-brand-peach">
-            Core {releaseVersion}
-          </span>
+          <>
+            <span className="text-content-tertiary" aria-hidden="true">·</span>
+            <span className="font-mono text-brand-peach">Core {releaseVersion}</span>
+          </>
         ) : null}
-        {note ? <span className="text-content-secondary">{note}</span> : null}
+        {note ? (
+          <>
+            <span className="text-content-tertiary" aria-hidden="true">·</span>
+            <span className="text-content-secondary">{note}</span>
+          </>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-content-tertiary">
         {formattedBlock ? <span>Block {formattedBlock}</span> : null}

@@ -372,10 +372,7 @@ buildBalanceHistory nowUnix latestBlock mLedger events =
                       }
                    ]
         _ -> chronological
-      cutoff90d = nowUnix - 90 * 86400
-      (before90d, in90d) = span (\pt -> bhpTimestamp pt < cutoff90d) withLive
-      baseline = maybe [] pure $ listToMaybe (reverse before90d)
-   in downsamplePoints 200 (baseline <> in90d)
+   in downsamplePoints 200 withLive
   where
     step (running, acc) ev =
       case berPostSettlementAssets ev of
@@ -583,14 +580,14 @@ fetchAccountBalanceEvents conn chainId router account =
     \  a.activity_type, \
     \  a.amount_assets, \
     \  a.pnl_assets, \
-    \  CASE WHEN o.receipt_economics->>'preSettlementBalanceAssets' ~ '^-{0,1}[0-9]+$' \
-    \    THEN (o.receipt_economics->>'preSettlementBalanceAssets')::NUMERIC ELSE NULL END, \
-    \  CASE WHEN o.receipt_economics->>'postSettlementBalanceAssets' ~ '^-{0,1}[0-9]+$' \
-    \    THEN (o.receipt_economics->>'postSettlementBalanceAssets')::NUMERIC ELSE NULL END, \
-    \  CASE WHEN o.receipt_economics->>'preTraderClaimBalanceAssets' ~ '^-{0,1}[0-9]+$' \
-    \    THEN (o.receipt_economics->>'preTraderClaimBalanceAssets')::NUMERIC ELSE NULL END, \
-    \  CASE WHEN o.receipt_economics->>'postTraderClaimBalanceAssets' ~ '^-{0,1}[0-9]+$' \
-    \    THEN (o.receipt_economics->>'postTraderClaimBalanceAssets')::NUMERIC ELSE NULL END, \
+    \  CASE WHEN COALESCE(o.receipt_economics, resolved.receipt_economics)->>'preSettlementBalanceAssets' ~ '^-{0,1}[0-9]+$' \
+    \    THEN (COALESCE(o.receipt_economics, resolved.receipt_economics)->>'preSettlementBalanceAssets')::NUMERIC ELSE NULL END, \
+    \  CASE WHEN COALESCE(o.receipt_economics, resolved.receipt_economics)->>'postSettlementBalanceAssets' ~ '^-{0,1}[0-9]+$' \
+    \    THEN (COALESCE(o.receipt_economics, resolved.receipt_economics)->>'postSettlementBalanceAssets')::NUMERIC ELSE NULL END, \
+    \  CASE WHEN COALESCE(o.receipt_economics, resolved.receipt_economics)->>'preTraderClaimBalanceAssets' ~ '^-{0,1}[0-9]+$' \
+    \    THEN (COALESCE(o.receipt_economics, resolved.receipt_economics)->>'preTraderClaimBalanceAssets')::NUMERIC ELSE NULL END, \
+    \  CASE WHEN COALESCE(o.receipt_economics, resolved.receipt_economics)->>'postTraderClaimBalanceAssets' ~ '^-{0,1}[0-9]+$' \
+    \    THEN (COALESCE(o.receipt_economics, resolved.receipt_economics)->>'postTraderClaimBalanceAssets')::NUMERIC ELSE NULL END, \
     \  a.block_number, \
     \  a.log_index, \
     \  a.timestamp \
@@ -598,6 +595,39 @@ fetchAccountBalanceEvents conn chainId router account =
     \LEFT JOIN perps_orders o \
     \  ON o.chain_id = a.chain_id AND o.order_router = a.release_router \
     \  AND o.order_id = a.order_id AND o.terminal_status = 'Executed' \
+    \LEFT JOIN LATERAL (\
+    \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.receipt_economics))->0 ELSE NULL END AS receipt_economics \
+    \  FROM (\
+    \    SELECT o2.receipt_economics \
+    \    FROM perps_events terminal \
+    \    JOIN perps_orders o2 ON o2.chain_id = terminal.chain_id AND o2.order_router = terminal.release_router \
+    \      AND o2.order_id = terminal.order_id AND o2.terminal_status = 'Executed' \
+    \      AND o2.account = a.account AND o2.terminal_tx_hash = a.tx_hash AND o2.terminal_block_number = a.block_number \
+    \      AND o2.receipt_economics IS NOT NULL AND o2.receipt_hash = terminal.data->>'receiptHash' \
+    \    WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router \
+    \      AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number \
+    \      AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized' \
+    \      AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed' \
+    \      AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close') \
+    \      AND NOT EXISTS (\
+    \        SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+    \          AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+    \          AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
+    \      ) \
+    \      AND 1 = (\
+    \        SELECT COUNT(*) FROM perps_account_activity sibling \
+    \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
+    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
+    \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
+    \          AND sibling.log_index > COALESCE((\
+    \            SELECT MAX(prior.log_index) FROM perps_events prior \
+    \            WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+    \              AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+    \              AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
+    \          ), -1)\
+    \      )\
+    \  ) candidate\
+    \) resolved ON a.order_id IS NULL AND a.activity_type IN ('Open', 'Close') \
     \WHERE a.chain_id = ? AND a.release_router = ? AND a.account = ? \
     \  AND a.activity_type IN ('Deposit', 'Withdraw', 'Open', 'Close', 'Liquidated') \
     \ORDER BY a.block_number ASC, a.log_index ASC \

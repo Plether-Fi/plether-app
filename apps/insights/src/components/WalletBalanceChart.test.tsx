@@ -73,4 +73,40 @@ describe('WalletBalanceChart', () => {
     render(<WalletBalanceChart points={[]} awaitingDeploy />)
     expect(screen.getByText('Wallet balance history awaiting Stage 3 backend')).toBeInTheDocument()
   })
+
+  it('toggles cleanly between Balance and Cumulative PnL views with win rate stats', () => {
+    render(
+      <WalletBalanceChart
+        points={SAMPLE_POINTS}
+        activity={[
+          {
+            id: '0x1:1',
+            activityType: 'Close',
+            side: 'long',
+            pnlAssets: '250000000',
+            txHash: `0x${'a'.repeat(64)}`,
+            blockNumber: '331500000',
+            occurredAt: new Date((NOW - 15 * 86_400) * 1000).toISOString(),
+          },
+          {
+            id: '0x1:2',
+            activityType: 'Close',
+            side: 'short',
+            pnlAssets: '-50000000',
+            txHash: `0x${'b'.repeat(64)}`,
+            blockNumber: '332700000',
+            occurredAt: new Date((NOW - 2 * 86_400) * 1000).toISOString(),
+          },
+        ]}
+        observedAt={OBSERVED}
+        releaseVersion="v2.0.0"
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cumulative PnL' }))
+    expect(screen.getByRole('button', { name: 'Cumulative PnL' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('img', { name: 'Cumulative realized PnL chart over 30d' })).toBeInTheDocument()
+    expect(screen.getByText('+200.00 USDG')).toBeInTheDocument()
+    expect(screen.getByText(/1W \/ 1L \(50\.0%\)/)).toBeInTheDocument()
+  })
 })

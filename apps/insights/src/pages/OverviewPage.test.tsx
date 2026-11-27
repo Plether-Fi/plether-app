@@ -7,11 +7,19 @@ import { account, input } from '../test/divisions'
 import { publishWeek } from '../divisions/engine'
 
 const statusQuery = vi.hoisted(() => vi.fn())
+const overviewQuery = vi.hoisted(() => vi.fn())
 const liveQuery = vi.hoisted(() => vi.fn())
 const publicationQuery = vi.hoisted(() => vi.fn())
 const statsQuery = vi.hoisted(() => vi.fn())
 
-vi.mock('../api', () => ({ useInsightsStatus: statusQuery }))
+vi.mock('../api', async () => {
+  const actual = await vi.importActual<typeof import('../api')>('../api')
+  return {
+    ...actual,
+    useInsightsStatus: statusQuery,
+    useOverview: overviewQuery,
+  }
+})
 vi.mock('../divisions/query', () => ({
   useLiveDivisions: liveQuery,
   useDivisions: publicationQuery,
@@ -26,6 +34,11 @@ beforeEach(() => {
       latestIndexedAt: '2026-11-26T10:00:00Z',
       chainId: 421614,
     },
+    isLoading: false,
+    isError: false,
+  })
+  overviewQuery.mockReturnValue({
+    data: undefined,
     isLoading: false,
     isError: false,
   })
@@ -72,6 +85,60 @@ describe('OverviewPage (Protocol Pulse)', () => {
       'href',
       `/wallets/${account(1).address}`,
     )
+  })
+
+  it('hydrates cross-pillar metrics when /api/insights/v1/overview is available', () => {
+    overviewQuery.mockReturnValue({
+      data: {
+        network: { chainId: 421614, releaseVersion: 'v2.0.0', settlementAssetSymbol: 'USDG' },
+        observedAt: '2026-11-26T22:00:00Z',
+        headBlock: '332945120',
+        execution: {
+          orders24h: 2073,
+          executed24h: 2068,
+          fillRate24hBps: 9976,
+          latencyP50Seconds: 2,
+          latencyP95Seconds: 4,
+        },
+        liquidity: {
+          latestEpoch: 148,
+          readiness: 'healthy',
+          confirmedSettlements24h: 24,
+        },
+        sponsored: {
+          configured: true,
+          stack: 'kernel',
+          enabled: true,
+          ops24h: 842,
+          successRate24hBps: 9952,
+        },
+        protocol: {
+          releaseVersion: 'v2.0.0',
+          deploymentBlock: '320000000',
+          pinnedContracts: 30,
+        },
+        infra: {
+          overallStatus: 'healthy',
+          dbReachable: true,
+          dbPingLatencyMs: 4,
+          rpcReachable: true,
+          rpcLatencyMs: 11,
+          healthyServices: 9,
+          totalServices: 9,
+          awsControlPlaneAvailable: true,
+        },
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    show()
+    expect(screen.getByText('332,945,120')).toBeInTheDocument()
+    expect(screen.getByText('99.76% fill (24h)')).toBeInTheDocument()
+    expect(screen.getByText(/Epoch #148 · 24 confirmed \(24h\)/)).toBeInTheDocument()
+    expect(screen.getByText(/9\/9 workers healthy · DB 4 ms/)).toBeInTheDocument()
+    expect(screen.getByText(/842 UserOps \(24h\) · 99.52% success/)).toBeInTheDocument()
+    expect(screen.getByText('30 contracts')).toBeInTheDocument()
   })
 
   it('adapts network labels and trading app URL automatically for Arbitrum One', () => {

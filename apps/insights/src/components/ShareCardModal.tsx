@@ -55,11 +55,26 @@ export function ShareCardModal({
 
   if (!activeCard) return null
 
-  const resolvedShareUrl =
-    shareUrl ??
-    (typeof window !== 'undefined'
-      ? window.location.href
-      : `https://insights.plether.com/wallets/${activeCard.data.account}`)
+  const pageOrigin =
+    typeof window !== 'undefined' && window.location.origin.startsWith('http')
+      ? window.location.origin
+      : 'https://insights.plether.com'
+  const canonicalCardUrl = (() => {
+    const account = activeCard.data.account.toLowerCase()
+    if (activeCard.data.kind === 'trade' && activeCard.id.startsWith('trade-')) {
+      const tradeId = activeCard.id.slice('trade-'.length)
+      return `${pageOrigin}/wallets/${account}?trade=${encodeURIComponent(tradeId)}`
+    }
+    if (activeCard.data.kind === 'position') {
+      return `${pageOrigin}/wallets/${account}?card=position`
+    }
+    if (activeCard.data.kind === 'division') {
+      return `${pageOrigin}/divisions/wallets/${account}`
+    }
+    return `${pageOrigin}/wallets/${account}`
+  })()
+
+  const resolvedShareUrl = shareUrl ?? canonicalCardUrl
   const tweetUrl = buildShareTweetUrl(activeCard.data, resolvedShareUrl)
 
   function openModal() {
@@ -129,6 +144,11 @@ export function ShareCardModal({
             <dialog
               ref={dialogRef}
               aria-labelledby={titleId}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  dialogRef.current?.close()
+                }
+              }}
               onClose={() => {
                 setIsOpen(false)
               }}

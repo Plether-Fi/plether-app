@@ -28,14 +28,14 @@ export function StatCard({
   action?: ReactNode
 }) {
   return (
-    <div className="flex flex-col justify-between border border-brand-border/25 bg-surface-panel p-5">
+    <div className="flex flex-col justify-between border border-brand-border/30 bg-surface-panel p-5">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-content-tertiary">
+        <p className="text-xs font-medium text-content-secondary">
           {label}
         </p>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
-      <div className="mt-3">
+      <div className="mt-2.5">
         {loading ? (
           <div className="skeleton h-8 w-28" aria-label={`Loading ${label}`} />
         ) : unavailable || value === undefined || value === null ? (
@@ -46,7 +46,7 @@ export function StatCard({
           </div>
         )}
         {detail ? (
-          <div className="mt-2 text-xs leading-5 text-content-secondary">{detail}</div>
+          <div className="mt-2 text-xs leading-5 text-content-tertiary">{detail}</div>
         ) : null}
       </div>
     </div>

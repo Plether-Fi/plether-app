@@ -1,6 +1,6 @@
 import { useId, useState, type SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { isWalletAddress } from '../utils/format'
+import { isTxHash, isWalletAddress } from '../utils/format'
 
 export function WalletSearch({
   compact = false,
@@ -18,25 +18,31 @@ export function WalletSearch({
   function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmed = value.trim()
-    if (!isWalletAddress(trimmed)) {
-      setError('Enter a complete 0x Trading Account address (42 characters).')
+    if (isWalletAddress(trimmed)) {
+      setError(null)
+      setValue('')
+      void navigate(`/wallets/${trimmed}`)
       return
     }
-    setError(null)
-    setValue('')
-    void navigate(`/wallets/${trimmed}`)
+    if (isTxHash(trimmed)) {
+      setError(null)
+      setValue('')
+      void navigate(`/tx/${trimmed.toLowerCase()}`)
+      return
+    }
+    setError('Enter a complete 0x Trading Account address (42 characters) or transaction hash (66 characters).')
   }
 
   return (
     <form
       onSubmit={handleSubmit}
       role="search"
-      aria-label="Inspect Trading Account"
+      aria-label="Inspect Trading Account or transaction"
       className={className}
       noValidate
     >
       <label htmlFor={inputId} className="sr-only">
-        Inspect Trading Account address
+        Inspect Trading Account address or transaction hash
       </label>
       <div className="flex items-stretch">
         <input
@@ -47,7 +53,7 @@ export function WalletSearch({
             setValue(event.target.value)
             if (error) setError(null)
           }}
-          placeholder={compact ? 'Trading Account 0x…' : 'Inspect Trading Account (0x…)'}
+          placeholder={compact ? '0x… account / tx' : 'Inspect Trading Account or Tx (0x…)'}
           aria-invalid={error !== null}
           aria-describedby={error ? errorId : undefined}
           className={`min-w-0 flex-1 border border-brand-border/35 bg-app-bg font-mono text-content-primary placeholder:font-sans placeholder:text-content-tertiary ${

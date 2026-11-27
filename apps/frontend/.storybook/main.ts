@@ -29,8 +29,8 @@ const config: StorybookConfig = {
     return mergeConfig(viteConfig, {
     resolve: {
       // Insights stories import production components from a sibling app. Force
-      // both apps to share the same React and router contexts in Storybook.
-      dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
+      // both apps to share the same React, router, and query contexts in Storybook.
+      dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom', '@tanstack/react-query'],
     },
     server: {
       proxy: {

@@ -1,19 +1,26 @@
 module Plether.Handlers.InsightsExecution
   ( LatencyStats (..)
+  , OrderReliabilityBucket (..)
   , DetectedKeeperEvent (..)
   , KeeperAggregate (..)
   , RawKeeperTx (..)
   , RecentTradeRow (..)
   , getExecutionQualityResponse
   , getExecutionTradesResponse
+  , getTransactionResponse
   , getKeepersStatusResponse
   , getKeepersActivityResponse
+  , getKeeperDetailResponse
   , ensureTxSenderCacheTable
   , fetchLiquidationQuality
   , fetchOrderLatencies24h
   , fetchProtectionQuality
   , fetchRecentTrades
+  , fetchTransactionTrades
+  , isValidTxHash
+  , classifyTxKind
   , computeLatencyPercentiles
+  , buildTimelineBuckets
   , rateBps
   , aggregateKeepers
   , mergeLpSettlementTxs
@@ -22,7 +29,7 @@ module Plether.Handlers.InsightsExecution
   ) where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (Concurrently (..), mapConcurrently, runConcurrently)
 import Control.Exception (catch, throwIO)
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, toJSON, (.=))
@@ -30,6 +37,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BS8
+import Data.Char (isHexDigit)
 import Data.Int (Int64)
 import Data.List (nub, sort, sortOn)
 import qualified Data.Map.Strict as Map
@@ -40,7 +48,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, In (..), Only (..), SqlError (sqlState), execute, execute_, query, query_)
+import Database.PostgreSQL.Simple (Connection, In (..), Only (..), Query, SqlError (sqlState), execute, execute_, query, query_)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.Transaction
@@ -59,6 +67,7 @@ import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Keeper.Reliability (OrderReliability (..), readOrderReliability)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
 import Text.Read (readMaybe)
 
@@ -68,6 +77,17 @@ data LatencyStats = LatencyStats
   , lsP95 :: Maybe Integer
   , lsP99 :: Maybe Integer
   , lsMax :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+data OrderReliabilityBucket = OrderReliabilityBucket
+  { orbStartUnix :: Integer
+  , orbEndUnix :: Integer
+  , orbTotalOrders :: Integer
+  , orbExecutedOrders :: Integer
+  , orbExpiredOrders :: Integer
+  , orbOtherFailedOrders :: Integer
+  , orbPendingOrders :: Integer
   }
   deriving stock (Eq, Show)
 
@@ -149,6 +169,112 @@ instance FromRow RecentTradeRow where
       <*> field
       <*> field
 
+data FinalizedOrderRow = FinalizedOrderRow
+  { forOrderId :: Integer
+  , forAccount :: Maybe Text
+  , forSide :: Maybe Int
+  , forCommitTxHash :: Maybe Text
+  , forCommitBlock :: Maybe Integer
+  , forCommitTimestamp :: Maybe Integer
+  , forTerminalBlock :: Maybe Integer
+  , forTerminalTimestamp :: Maybe Integer
+  , forTerminalStatus :: Text
+  , forTerminalReason :: Maybe Text
+  , forFailureReason :: Maybe Text
+  , forFailedConstraint :: Maybe Text
+  , forExecutionMode :: Maybe Text
+  , forExecutionPrice :: Maybe Integer
+  , forOraclePrice :: Maybe Integer
+  , forOracleFrozen :: Maybe Bool
+  , forOracleMinPublishTime :: Maybe Integer
+  , forOracleMaxPublishTime :: Maybe Integer
+  , forVpiAssets :: Maybe Integer
+  , forFrozenSpreadAssets :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow FinalizedOrderRow where
+  fromRow =
+    FinalizedOrderRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+
+data ProtocolEventRow = ProtocolEventRow
+  { perLogIndex :: Integer
+  , perBlockNumber :: Integer
+  , perTimestamp :: Integer
+  , perContractAddress :: Text
+  , perEventName :: Text
+  , perAccount :: Maybe Text
+  , perOrderId :: Maybe Integer
+  , perSide :: Maybe Int
+  , perData :: Value
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow ProtocolEventRow where
+  fromRow =
+    ProtocolEventRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+data TxLpSettlementRow = TxLpSettlementRow
+  { tlsEpoch :: Integer
+  , tlsStatus :: Text
+  , tlsReceiptBlock :: Maybe Integer
+  , tlsConfirmedAt :: Maybe UTCTime
+  , tlsCreatedAt :: UTCTime
+  , tlsSeniorDepositAssets :: Maybe Integer
+  , tlsSeniorRedeemAssets :: Maybe Integer
+  , tlsJuniorDepositAssets :: Maybe Integer
+  , tlsJuniorRedeemAssets :: Maybe Integer
+  , tlsSeniorBacklog :: Maybe Bool
+  , tlsJuniorBacklog :: Maybe Bool
+  , tlsEntriesDeferred :: Maybe Bool
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow TxLpSettlementRow where
+  fromRow =
+    TxLpSettlementRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> field
+      <*> field
+      <*> field
+
 getExecutionQualityResponse
   :: DbPool
   -> Config
@@ -161,16 +287,17 @@ getExecutionQualityResponse pool cfg = do
       book = T.toLower Manifest.positionProtectionBookAddress
       cohortEnd = now - 120
       since24h = now - 86400
-  (cohorts, pendingQueue, latencySecs, latencyBlks, protSummary, liqSummary, vol24h) <-
+  (cohorts, timelineByWindow, pendingQueue, latencySecs, latencyBlks, protSummary, liqSummary, vol24h) <-
     withDb pool $ \conn ->
       withReadSnapshot conn $ do
         rel <- readOrderReliability conn router cohortEnd
+        tl <- fetchOrderReliabilityBuckets conn router cohortEnd
         pending <- fetchPendingKeeperOrdersCount conn router
         (secs, blks) <- fetchOrderLatencies24h conn chainId router since24h
         prot <- fetchProtectionQuality conn chainId book since24h
         liq <- fetchLiquidationQuality conn chainId engine router since24h
         vol <- getPerpsMarketVolumeSince conn chainId router since24h
-        pure (rel, pending, secs, blks, prot, liq, vol)
+        pure (rel, tl, pending, secs, blks, prot, liq, vol)
   let secStats = computeLatencyPercentiles latencySecs
       blkStats = computeLatencyPercentiles latencyBlks
       (protBlock, protActive, protTriggered24h, protCreated24h, protCancelled24h, protExpired24h) = protSummary
@@ -185,7 +312,10 @@ getExecutionQualityResponse pool cfg = do
           , "cohortEndAt" .= isoTimestamp cohortEnd
           , "volume24hAssets" .= show vol24h
           , "pendingOrderQueue" .= pendingQueue
-          , "orderReliability" .= map reliabilityToJson cohorts
+          , "orderReliability"
+              .= map
+                (\c -> reliabilityToJson c (Map.findWithDefault [] (windowSeconds c) timelineByWindow))
+                cohorts
           , "executionLatency"
               .= object
                 [ "seconds" .= latencyStatsToJson secStats
@@ -229,6 +359,91 @@ getExecutionTradesResponse pool cfg requestedLimit = do
           [ "network" .= networkMetaJson cfg
           , "trades" .= map recentTradeToJson rows
           ]
+
+isValidTxHash :: Text -> Bool
+isValidTxHash raw =
+  let normalized = T.toLower (T.strip raw)
+   in T.length normalized == 66
+        && "0x" `T.isPrefixOf` normalized
+        && T.all isHexDigit (T.drop 2 normalized)
+
+getTransactionResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+getTransactionResponse pool client cfg rawTxHash = do
+  let txHash = T.toLower (T.strip rawTxHash)
+  if not (isValidTxHash txHash)
+    then pure $ Left $ E.invalidAmount "txHash must be a 0x-prefixed 32-byte hex string"
+    else do
+      let chainId = cfgPerpsChainId cfg
+          router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender) <- withDb pool $ \conn -> do
+        ensureTxSenderCacheTable conn
+        withReadSnapshot conn $ do
+          txRows <- fetchTransactionTrades conn chainId router txHash
+          orders <- fetchTransactionFinalizedOrders conn chainId router txHash
+          protoEvs <- fetchTransactionProtocolEvents conn chainId router txHash
+          lpRow <- fetchTransactionLpSettlement conn chainId txHash
+          senders <- fetchCachedTxSenders conn chainId [txHash]
+          pure (txRows, orders, protoEvs, lpRow, Map.lookup txHash senders)
+      if null rows && null finalizedOrders && null protocolEvents && maybe True (const False) mLpSettlement
+        then
+          pure $ Left $ E.notFound ("No indexed Plether Perps activity found for transaction " <> txHash)
+        else do
+          executorAddr <- case cachedSender of
+            Just addr -> pure (Just addr)
+            Nothing -> do
+              (_, mResolved) <- resolveTxSenderRpc client txHash
+              case mResolved of
+                Just resolved ->
+                  withDb pool (\conn -> upsertCachedTxSenders conn chainId [(txHash, resolved)])
+                    `catch` (\(_ :: SqlError) -> pure ())
+                Nothing -> pure ()
+              pure mResolved
+          let blockNum =
+                fromMaybe 0 $
+                  (rtrBlockNumber <$> listToMaybe rows)
+                    <|> (listToMaybe finalizedOrders >>= forTerminalBlock)
+                    <|> (perBlockNumber <$> listToMaybe protocolEvents)
+                    <|> (mLpSettlement >>= tlsReceiptBlock)
+              occurredTs =
+                fromMaybe 0 $
+                  (rtrTimestamp <$> listToMaybe rows)
+                    <|> (listToMaybe finalizedOrders >>= forTerminalTimestamp)
+                    <|> (perTimestamp <$> listToMaybe protocolEvents)
+                    <|> ((\lp -> floor (utcTimeToPOSIXSeconds (fromMaybe (tlsCreatedAt lp) (tlsConfirmedAt lp)))) <$> mLpSettlement)
+              txKind = classifyTxKind (length finalizedOrders) (maybe False (const True) mLpSettlement) (any (\r -> rtrActivityType r == "Liquidated") rows)
+              mBatchSummary =
+                if null finalizedOrders
+                  then Nothing
+                  else Just (batchSummaryToJson finalizedOrders)
+          pure $
+            Right $
+              mkResponse blockNum chainId $
+                object
+                  [ "network" .= networkMetaJson cfg
+                  , "txHash" .= txHash
+                  , "txKind" .= txKind
+                  , "blockNumber" .= show blockNum
+                  , "occurredAt" .= isoTimestamp occurredTs
+                  , "executorAddress" .= executorAddr
+                  , "batchSummary" .= mBatchSummary
+                  , "finalizedOrders" .= map finalizedOrderToJson finalizedOrders
+                  , "protocolEvents" .= map protocolEventToJson protocolEvents
+                  , "lpSettlement" .= (txLpSettlementToJson <$> mLpSettlement)
+                  , "events" .= map recentTradeToJson rows
+                  ]
+
+classifyTxKind :: Int -> Bool -> Bool -> Text
+classifyTxKind finalizedCount hasLpSettlement hasLiquidation
+  | finalizedCount > 1 = "batch_finalization"
+  | finalizedCount == 1 = "order_finalization"
+  | hasLpSettlement = "lp_settlement"
+  | hasLiquidation = "liquidation"
+  | otherwise = "protocol_tx"
 
 getKeepersStatusResponse
   :: DbPool
@@ -284,6 +499,78 @@ getKeepersActivityResponse pool client cfg requestedLimit = do
           , "observedAt" .= isoTimestamp now
           , "activity" .= map keeperEventToJson visible
           ]
+
+getKeeperDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+getKeeperDetailResponse pool client cfg rawAddress requestedLimit = do
+  let addr = T.toLower (T.strip rawAddress)
+  if not (isValidAddress addr)
+    then pure $ Left $ E.invalidAddress rawAddress
+    else do
+      now <- floor <$> getPOSIXTime
+      let chainId = cfgPerpsChainId cfg
+          limit = min 100 $ max 1 requestedLimit
+      (allEvents, ethBal) <-
+        runConcurrently $
+          (,)
+            <$> Concurrently (resolvePermissionlessKeeperEvents pool client cfg (now - 86400) 250)
+            <*> Concurrently (fetchKeeperEthBalance client addr)
+      let keeperEvents =
+            sortOn (\e -> (Down (dkeBlockNumber e), Down (dkeTimestamp e))) $
+              filter (\e -> T.toLower (dkeKeeperAddress e) == addr) allEvents
+          totalFleet = fromIntegral (length allEvents) :: Integer
+          execCount = length keeperEvents
+          latencyStats = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds keeperEvents
+          bounties = sum $ mapMaybe dkeBountyAssets keeperEvents
+          roles = sort $ nub $ map dkeRole keeperEvents
+          mLastBlock = case keeperEvents of
+            [] -> Nothing
+            xs -> Just (maximum $ map dkeBlockNumber xs)
+          mLastTs = case keeperEvents of
+            [] -> Nothing
+            xs -> Just (maximum $ map dkeTimestamp xs)
+          roleBreakdown =
+            [ let rEvs = filter (\e -> dkeRole e == r) keeperEvents
+                  rLat = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds rEvs
+                  rCount = length rEvs
+                  rBounty = sum $ mapMaybe dkeBountyAssets rEvs
+               in object
+                    [ "role" .= r
+                    , "executions24h" .= rCount
+                    , "shareBps" .= rateBps (fromIntegral rCount) (fromIntegral execCount)
+                    , "latencyP50Seconds" .= lsP50 rLat
+                    , "latencyP95Seconds" .= lsP95 rLat
+                    , "bountiesEarnedAssets" .= show rBounty
+                    ]
+            | r <- roles
+            ]
+          latestBlock = fromMaybe 0 mLastBlock
+      pure $
+        Right $
+          mkResponse latestBlock chainId $
+            object
+              [ "network" .= networkMetaJson cfg
+              , "observedAt" .= isoTimestamp now
+              , "keeper"
+                  .= object
+                    [ "address" .= addr
+                    , "roles" .= roles
+                    , "executions24h" .= execCount
+                    , "shareBps" .= rateBps (fromIntegral execCount) totalFleet
+                    , "latency" .= latencyStatsToJson latencyStats
+                    , "ethBalanceWei" .= (show <$> ethBal)
+                    , "bountiesEarnedAssets" .= show bounties
+                    , "lastActiveBlock" .= (show <$> mLastBlock)
+                    , "lastActiveAt" .= (isoTimestamp <$> mLastTs)
+                    ]
+              , "roleBreakdown" .= roleBreakdown
+              , "activity" .= map keeperEventToJson (take limit keeperEvents)
+              ]
 
 computeLatencyPercentiles :: [Integer] -> LatencyStats
 computeLatencyPercentiles samples =
@@ -586,6 +873,73 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       lps = mergeLpSettlementTxs lpJournal lpCanonical
   pure $ take limit $ sortOn (Down . rktBlockNumber) (orders <> liqs <> prots <> lps)
 
+fetchOrderReliabilityBuckets
+  :: Connection
+  -> Text
+  -> Integer
+  -> IO (Map.Map Integer [OrderReliabilityBucket])
+fetchOrderReliabilityBuckets conn router cohortEnd = do
+  rows <-
+    query
+      conn
+      "WITH cohort AS MATERIALIZED (\
+      \ SELECT commit_time, status, failure_reason \
+      \ FROM perps_keeper_orders \
+      \ WHERE order_router = ? AND commit_time >= ? - 86400 AND commit_time < ?\
+      \), \
+      \specs(window_seconds, bucket_count, bucket_seconds) AS (\
+      \ VALUES (3600::bigint, 30::int, 120::bigint), \
+      \        (86400::bigint, 48::int, 1800::bigint)\
+      \) \
+      \SELECT \
+      \ s.window_seconds, \
+      \ LEAST(s.bucket_count - 1, GREATEST(0, ((c.commit_time - (? - s.window_seconds)) / s.bucket_seconds)::int)) AS bucket_idx, \
+      \ COUNT(*)::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status = 'executed')::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status = 'failed' AND c.failure_reason = 2)::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status = 'failed' AND c.failure_reason IS DISTINCT FROM 2)::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status NOT IN ('executed', 'failed'))::bigint \
+      \FROM specs s \
+      \JOIN cohort c ON c.commit_time >= ? - s.window_seconds \
+      \GROUP BY s.window_seconds, bucket_idx \
+      \ORDER BY s.window_seconds, bucket_idx"
+      (router, cohortEnd, cohortEnd, cohortEnd, cohortEnd)
+      :: IO [(Integer, Int, Integer, Integer, Integer, Integer, Integer)]
+  let rowsFor win =
+        [ (idx, tot, execC, expC, failC, pendC)
+        | (w, idx, tot, execC, expC, failC, pendC) <- rows
+        , w == win
+        ]
+  pure $
+    Map.fromList
+      [ (3600, buildTimelineBuckets cohortEnd 3600 30 (rowsFor 3600))
+      , (86400, buildTimelineBuckets cohortEnd 86400 48 (rowsFor 86400))
+      ]
+
+buildTimelineBuckets
+  :: Integer
+  -> Integer
+  -> Int
+  -> [(Int, Integer, Integer, Integer, Integer, Integer)]
+  -> [OrderReliabilityBucket]
+buildTimelineBuckets cohortEnd windowSecs bucketCount rawRows
+  | bucketCount <= 0 || windowSecs <= 0 = []
+  | otherwise =
+      let windowStart = cohortEnd - windowSecs
+          bucketWidth = windowSecs `div` fromIntegral bucketCount
+          byIdx =
+            Map.fromListWith
+              (\(t1, e1, x1, f1, p1) (t2, e2, x2, f2, p2) -> (t1 + t2, e1 + e2, x1 + x2, f1 + f2, p1 + p2))
+              [ (max 0 (min (bucketCount - 1) idx), (tot, execC, expC, failC, pendC))
+              | (idx, tot, execC, expC, failC, pendC) <- rawRows
+              ]
+          mkBucket i =
+            let startTs = windowStart + fromIntegral i * bucketWidth
+                endTs = if i == bucketCount - 1 then cohortEnd else startTs + bucketWidth
+                (tot, execC, expC, failC, pendC) = Map.findWithDefault (0, 0, 0, 0, 0) i byIdx
+             in OrderReliabilityBucket startTs endTs tot execC expC failC pendC
+       in map mkBucket [0 .. bucketCount - 1]
+
 fetchPendingKeeperOrdersCount :: Connection -> Text -> IO Int64
 fetchPendingKeeperOrdersCount conn router = do
   rows <-
@@ -685,70 +1039,218 @@ fetchLiquidationQuality conn chainId engine router sinceUnix = do
       bounties = fromMaybe 0 $ readMaybe bountyStr
   pure (blockNum, updatedAt, candidates, liqCount, bounties)
 
+recentTradeSelectSql :: Query
+recentTradeSelectSql =
+  "SELECT a.activity_type, a.account, a.order_id, a.side, a.price, a.size_delta, \
+  \a.amount_assets, a.pnl_assets, o.execution_vpi_assets, o.execution_frozen_close_spread_assets, \
+  \o.execution_oracle_frozen, \
+  \CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
+  \  THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END, \
+  \CASE WHEN a.data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (a.data->>'keeperBountyAssets')::NUMERIC ELSE NULL END, \
+  \a.tx_hash, a.block_number, a.log_index, a.timestamp, execution.payload \
+  \FROM perps_account_activity a \
+  \LEFT JOIN perps_orders o \
+  \  ON o.chain_id = a.chain_id AND o.order_router = a.release_router AND o.order_id = a.order_id \
+  \LEFT JOIN LATERAL (\
+  \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload \
+  \  FROM (\
+  \    SELECT jsonb_build_object(\
+  \      'orderId', o2.order_id::text, 'protocolVersion', 'v1.2.3', \
+  \      'status', CASE WHEN o2.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END, \
+  \      'receipt', o2.receipt_economics, \
+  \      'settlements', COALESCE((\
+  \        SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index) \
+  \        FROM perps_events e \
+  \        WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router \
+  \          AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number \
+  \          AND e.account = a.account AND e.order_id = o2.order_id \
+  \          AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
+  \      ), '[]'::jsonb)\
+  \    ) AS payload \
+  \    FROM perps_events terminal \
+  \    JOIN perps_orders o2 ON o2.chain_id = terminal.chain_id AND o2.order_router = terminal.release_router \
+  \      AND o2.order_id = terminal.order_id AND o2.terminal_status = 'Executed' \
+  \      AND o2.account = a.account AND o2.terminal_tx_hash = a.tx_hash AND o2.terminal_block_number = a.block_number \
+  \      AND o2.receipt_economics IS NOT NULL AND o2.receipt_hash = terminal.data->>'receiptHash' \
+  \    WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router \
+  \      AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number \
+  \      AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized' \
+  \      AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed' \
+  \      AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close') \
+  \      AND NOT EXISTS (\
+  \        SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+  \          AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+  \          AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
+  \      ) \
+  \      AND 1 = (\
+  \        SELECT COUNT(*) FROM perps_account_activity sibling \
+  \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
+  \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
+  \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
+  \          AND sibling.log_index > COALESCE((\
+  \            SELECT MAX(prior.log_index) FROM perps_events prior \
+  \            WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
+  \              AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
+  \              AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
+  \          ), -1)\
+  \      )\
+  \  ) candidate\
+  \) execution ON TRUE "
+
 fetchRecentTrades :: Connection -> Integer -> Text -> Int -> IO [RecentTradeRow]
 fetchRecentTrades conn chainId router limit =
   query
     conn
-    "SELECT a.activity_type, a.account, a.order_id, a.side, a.price, a.size_delta, \
-    \a.amount_assets, a.pnl_assets, o.execution_vpi_assets, o.execution_frozen_close_spread_assets, \
-    \o.execution_oracle_frozen, \
-    \CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
-    \  THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END, \
-    \CASE WHEN a.data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (a.data->>'keeperBountyAssets')::NUMERIC ELSE NULL END, \
-    \a.tx_hash, a.block_number, a.log_index, a.timestamp, execution.payload \
-    \FROM perps_account_activity a \
-    \LEFT JOIN perps_orders o \
-    \  ON o.chain_id = a.chain_id AND o.order_router = a.release_router AND o.order_id = a.order_id \
-    \LEFT JOIN LATERAL (\
-    \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload \
-    \  FROM (\
-    \    SELECT jsonb_build_object(\
-    \      'orderId', o2.order_id::text, 'protocolVersion', 'v1.2.3', \
-    \      'status', CASE WHEN o2.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END, \
-    \      'receipt', o2.receipt_economics, \
-    \      'settlements', COALESCE((\
-    \        SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index) \
-    \        FROM perps_events e \
-    \        WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router \
-    \          AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number \
-    \          AND e.account = a.account AND e.order_id = o2.order_id \
-    \          AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
-    \      ), '[]'::jsonb)\
-    \    ) AS payload \
-    \    FROM perps_events terminal \
-    \    JOIN perps_orders o2 ON o2.chain_id = terminal.chain_id AND o2.order_router = terminal.release_router \
-    \      AND o2.order_id = terminal.order_id AND o2.terminal_status = 'Executed' \
-    \      AND o2.account = a.account AND o2.terminal_tx_hash = a.tx_hash AND o2.terminal_block_number = a.block_number \
-    \      AND o2.receipt_economics IS NOT NULL AND o2.receipt_hash = terminal.data->>'receiptHash' \
-    \    WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router \
-    \      AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number \
-    \      AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized' \
-    \      AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed' \
-    \      AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close') \
-    \      AND NOT EXISTS (\
-    \        SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
-    \          AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
-    \          AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
-    \      ) \
-    \      AND 1 = (\
-    \        SELECT COUNT(*) FROM perps_account_activity sibling \
-    \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
-    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
-    \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
-    \          AND sibling.log_index > COALESCE((\
-    \            SELECT MAX(prior.log_index) FROM perps_events prior \
-    \            WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router \
-    \              AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash \
-    \              AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
-    \          ), -1)\
-    \      )\
-    \  ) candidate\
-    \) execution ON TRUE \
-    \WHERE a.chain_id = ? AND a.release_router = ? \
-    \  AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
-    \ORDER BY a.block_number DESC, a.log_index DESC \
-    \LIMIT ?"
+    ( recentTradeSelectSql
+        <> "WHERE a.chain_id = ? AND a.release_router = ? \
+           \  AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
+           \ORDER BY a.block_number DESC, a.log_index DESC \
+           \LIMIT ?"
+    )
     (chainId, router, limit)
+
+fetchTransactionTrades :: Connection -> Integer -> Text -> Text -> IO [RecentTradeRow]
+fetchTransactionTrades conn chainId router txHash =
+  query
+    conn
+    ( recentTradeSelectSql
+        <> "WHERE a.chain_id = ? AND a.release_router = ? \
+           \  AND LOWER(a.tx_hash) = LOWER(?) \
+           \ORDER BY a.log_index ASC \
+           \LIMIT 100"
+    )
+    (chainId, router, txHash)
+
+fetchTransactionFinalizedOrders :: Connection -> Integer -> Text -> Text -> IO [FinalizedOrderRow]
+fetchTransactionFinalizedOrders conn chainId router txHash =
+  query
+    conn
+    "SELECT order_id, account, side, commit_tx_hash, commit_block_number, commit_timestamp, \
+    \  terminal_block_number, terminal_timestamp, terminal_status, terminal_reason, \
+    \  failure_reason, failed_constraint, execution_mode, execution_price, execution_oracle_price, \
+    \  execution_oracle_frozen, oracle_min_publish_time, oracle_max_publish_time, \
+    \  execution_vpi_assets, execution_frozen_close_spread_assets \
+    \FROM perps_orders \
+    \WHERE chain_id = ? AND order_router = ? AND LOWER(terminal_tx_hash) = LOWER(?) \
+    \ORDER BY order_id ASC \
+    \LIMIT 200"
+    (chainId, router, txHash)
+
+fetchTransactionProtocolEvents :: Connection -> Integer -> Text -> Text -> IO [ProtocolEventRow]
+fetchTransactionProtocolEvents conn chainId router txHash =
+  query
+    conn
+    "SELECT log_index, block_number, timestamp, contract_address, event_name, \
+    \  account, order_id, side, data \
+    \FROM perps_events \
+    \WHERE chain_id = ? AND release_router = ? AND LOWER(tx_hash) = LOWER(?) \
+    \ORDER BY log_index ASC \
+    \LIMIT 200"
+    (chainId, router, txHash)
+
+fetchTransactionLpSettlement :: Connection -> Integer -> Text -> IO (Maybe TxLpSettlementRow)
+fetchTransactionLpSettlement conn chainId txHash = do
+  rows <-
+    query
+      conn
+      "SELECT epoch, status, receipt_block_number, confirmed_at, created_at, \
+      \  senior_deposit_assets, senior_redeem_assets, junior_deposit_assets, junior_redeem_assets, \
+      \  senior_backlog, junior_backlog, entries_deferred \
+      \FROM perps_lp_settlement_transactions \
+      \WHERE chain_id = ? AND LOWER(receipt_transaction_hash) = LOWER(?) \
+      \ORDER BY id DESC LIMIT 1"
+      (chainId, txHash)
+  pure (listToMaybe rows)
+
+batchSummaryToJson :: [FinalizedOrderRow] -> Value
+batchSummaryToJson orders =
+  let totalOrders = length orders
+      executedOrders = length $ filter (\o -> forTerminalStatus o == "Executed") orders
+      failedOrders = totalOrders - executedOrders
+      uniqueAccounts = length $ nub $ map T.toLower $ mapMaybe forAccount orders
+      latencies =
+        mapMaybe
+          (\o -> (\t c -> max 0 (t - c)) <$> forTerminalTimestamp o <*> forCommitTimestamp o)
+          orders
+      latStats = computeLatencyPercentiles latencies
+      minLat = case sort latencies of
+        (x : _) -> Just x
+        [] -> Nothing
+      totalVpi = sum $ mapMaybe forVpiAssets orders
+      oracleMin = case mapMaybe forOracleMinPublishTime orders of
+        [] -> Nothing
+        xs -> Just (minimum xs)
+      oracleMax = case mapMaybe forOracleMaxPublishTime orders of
+        [] -> Nothing
+        xs -> Just (maximum xs)
+      oraclePrice = listToMaybe $ mapMaybe forOraclePrice orders
+      oracleFrozen = any (== Just True) (map forOracleFrozen orders)
+   in object
+        [ "totalOrders" .= totalOrders
+        , "executedOrders" .= executedOrders
+        , "failedOrExpiredOrders" .= failedOrders
+        , "uniqueAccounts" .= uniqueAccounts
+        , "minLatencySeconds" .= minLat
+        , "medianLatencySeconds" .= lsP50 latStats
+        , "maxLatencySeconds" .= lsMax latStats
+        , "totalVpiAssets" .= show totalVpi
+        , "oracleMinPublishTime" .= (isoTimestamp <$> oracleMin)
+        , "oracleMaxPublishTime" .= (isoTimestamp <$> oracleMax)
+        , "oracleSpreadSeconds" .= ((\mx mn -> max 0 (mx - mn)) <$> oracleMax <*> oracleMin)
+        , "oraclePrice" .= (show <$> oraclePrice)
+        , "oracleFrozen" .= oracleFrozen
+        ]
+
+finalizedOrderToJson :: FinalizedOrderRow -> Value
+finalizedOrderToJson FinalizedOrderRow {..} =
+  let latencySecs = (\t c -> max 0 (t - c)) <$> forTerminalTimestamp <*> forCommitTimestamp
+      latencyBlks = (\t c -> max 0 (t - c)) <$> forTerminalBlock <*> forCommitBlock
+   in object
+        [ "orderId" .= show forOrderId
+        , "account" .= forAccount
+        , "side" .= (sideText <$> forSide)
+        , "commitTxHash" .= forCommitTxHash
+        , "commitBlock" .= (show <$> forCommitBlock)
+        , "commitAt" .= (isoTimestamp <$> forCommitTimestamp)
+        , "latencySeconds" .= latencySecs
+        , "latencyBlocks" .= latencyBlks
+        , "terminalStatus" .= forTerminalStatus
+        , "terminalReason" .= forTerminalReason
+        , "failureReason" .= forFailureReason
+        , "failedConstraint" .= forFailedConstraint
+        , "executionMode" .= forExecutionMode
+        , "executionPrice" .= (show <$> forExecutionPrice)
+        , "oraclePrice" .= (show <$> forOraclePrice)
+        , "oracleFrozen" .= forOracleFrozen
+        , "vpiAssets" .= (show <$> forVpiAssets)
+        , "frozenCloseSpreadAssets" .= (show <$> forFrozenSpreadAssets)
+        ]
+
+protocolEventToJson :: ProtocolEventRow -> Value
+protocolEventToJson ProtocolEventRow {..} =
+  object
+    [ "logIndex" .= perLogIndex
+    , "contractAddress" .= perContractAddress
+    , "eventName" .= perEventName
+    , "account" .= perAccount
+    , "orderId" .= (show <$> perOrderId)
+    , "side" .= (sideText <$> perSide)
+    , "data" .= perData
+    ]
+
+txLpSettlementToJson :: TxLpSettlementRow -> Value
+txLpSettlementToJson TxLpSettlementRow {..} =
+  object
+    [ "epoch" .= tlsEpoch
+    , "status" .= tlsStatus
+    , "seniorDepositAssets" .= (show <$> tlsSeniorDepositAssets)
+    , "seniorRedeemAssets" .= (show <$> tlsSeniorRedeemAssets)
+    , "juniorDepositAssets" .= (show <$> tlsJuniorDepositAssets)
+    , "juniorRedeemAssets" .= (show <$> tlsJuniorRedeemAssets)
+    , "seniorBacklog" .= tlsSeniorBacklog
+    , "juniorBacklog" .= tlsJuniorBacklog
+    , "entriesDeferred" .= tlsEntriesDeferred
+    ]
 
 networkMetaJson :: Config -> Value
 networkMetaJson cfg =
@@ -758,8 +1260,8 @@ networkMetaJson cfg =
     , "settlementAssetSymbol" .= ("USDG" :: Text)
     ]
 
-reliabilityToJson :: OrderReliability -> Value
-reliabilityToJson OrderReliability {..} =
+reliabilityToJson :: OrderReliability -> [OrderReliabilityBucket] -> Value
+reliabilityToJson OrderReliability {..} timeline =
   object
     [ "windowSeconds" .= windowSeconds
     , "totalOrders" .= totalOrders
@@ -772,6 +1274,19 @@ reliabilityToJson OrderReliability {..} =
     , "repeatAffectedAccounts" .= repeatAffectedAccounts
     , "fillRateBps" .= rateBps executedOrders totalOrders
     , "expiryRateBps" .= rateBps expiredOrders totalOrders
+    , "timeline" .= map bucketToJson timeline
+    ]
+
+bucketToJson :: OrderReliabilityBucket -> Value
+bucketToJson OrderReliabilityBucket {..} =
+  object
+    [ "bucketStart" .= isoTimestamp orbStartUnix
+    , "bucketEnd" .= isoTimestamp orbEndUnix
+    , "totalOrders" .= orbTotalOrders
+    , "executedOrders" .= orbExecutedOrders
+    , "expiredOrders" .= orbExpiredOrders
+    , "otherFailedOrders" .= orbOtherFailedOrders
+    , "pendingOrders" .= orbPendingOrders
     ]
 
 latencyStatsToJson :: LatencyStats -> Value

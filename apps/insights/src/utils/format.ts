@@ -1,5 +1,8 @@
 const ASSET_DECIMALS = 6
+const PERPS_PRICE_DECIMALS = 8
+const PLDXY_PRICE_CAP = 200_000_000n
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/
+const TX_HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/
 const X_USERNAME_PATTERN = /^[A-Za-z0-9_]{1,15}$/
 
 function parseUnits(value: string): bigint | null {
@@ -74,6 +77,10 @@ export function isWalletAddress(value: string): boolean {
   return ADDRESS_PATTERN.test(value.trim())
 }
 
+export function isTxHash(value: string): boolean {
+  return TX_HASH_PATTERN.test(value.trim())
+}
+
 export function xProfileUrl(value: string | null | undefined): string | null {
   if (!value) return null
   const username = value.trim().replace(/^@/, '')
@@ -109,7 +116,15 @@ export function formatCountdown(target: string, now: number): string {
 
 export function formatPrice(value: string | null | undefined): string {
   if (!value) return '—'
-  const parsed = Number(value)
+  const trimmed = value.trim()
+  if (/^\d+$/.test(trimmed)) {
+    const raw = BigInt(trimmed)
+    if (raw > 0n && raw < PLDXY_PRICE_CAP) {
+      const display = Number(PLDXY_PRICE_CAP - raw) / 10 ** PERPS_PRICE_DECIMALS
+      return display.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 5 })
+    }
+  }
+  const parsed = Number(trimmed)
   if (!Number.isFinite(parsed)) return value
   return parsed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })
 }

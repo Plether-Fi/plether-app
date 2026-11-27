@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // @ts-expect-error -- the Pages Worker is deployed as a standalone JavaScript entry point.
-import worker from '../public/_worker.js'
+import worker, { resetOgFontCache, setSvgToPngRenderer } from '../public/_worker.js'
 
 const apiRequest = () => new Request('https://insights.plether.com/api/insights/v1/status?fresh=true')
 const assets = { fetch: vi.fn().mockResolvedValue(new Response('asset')) }
@@ -23,6 +23,8 @@ function proxiedFetchOptions(fetchMock: ReturnType<typeof vi.fn>): ProxyFetchOpt
 }
 
 afterEach(() => {
+  setSvgToPngRenderer(null)
+  resetOgFontCache()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -118,8 +120,12 @@ describe('Cloudflare Pages Worker', () => {
     ['/api/insights/v1/execution/trades?limit=25', 15],
     ['/api/insights/v1/keepers/status', 15],
     ['/api/insights/v1/keepers/activity?limit=25', 15],
+    [`/api/insights/v1/keepers/0x${'b'.repeat(40)}`, 15],
+    ['/api/insights/v1/sponsored/status', 15],
+    ['/api/insights/v1/sponsored/operations?limit=50', 15],
     ['/api/insights/v1/liquidity/settlements', 30],
     ['/api/insights/v1/liquidity/forensics', 30],
+    ['/api/insights/v1/liquidity/epochs/498776', 30],
     ['/api/insights/v1/protocol/manifest', 60],
     ['/api/insights/v1/infra/status', 15],
     [`/api/insights/v1/wallets/0x${'a'.repeat(40)}/summary`, 15],
@@ -690,5 +696,305 @@ describe('Cloudflare Pages Worker', () => {
     expect(callbackResponse.status).toBe(503)
     expect(postResponse.status).toBe(503)
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('OpenGraph thumbnails and HTML meta rewriting', () => {
+  const wallet = '0xfe2c91e9d193a5de484f6b4a7cca3dc05a3533c2'
+  const txHash = `0x${'a'.repeat(64)}`
+  const tradeId = `${txHash}:12`
+  const baseHtml = `<!doctype html><html><head><meta charset="UTF-8" /><meta name="description" content="old" /><meta property="og:title" content="Plether Insights" /><meta name="twitter:card" content="summary" /><title>Old</title></head><body><div id="root"></div></body></html>`
+
+  const spaAssets = () => ({
+    fetch: vi.fn(async (input: RequestInfo | URL) => {
+      const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      const pathname = new URL(target).pathname
+      if (pathname === '/og/default.png') {
+        return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/png' },
+        })
+      }
+      if (pathname.startsWith('/og/') && pathname.endsWith('.ttf')) {
+        return new Response(new Uint8Array([0, 1, 0, 0]), { status: 200 })
+      }
+      if (pathname === '/divisions/current.json') {
+        return Response.json({
+          chainId: 421614,
+          week: { startsAt: '2026-11-16T00:00:00Z' },
+          standings: [
+            {
+              address: wallet,
+              displayName: 'stan_trader',
+              rank: 2,
+              tier: 'Gold',
+              movement: 'promoted',
+              weeklyPnlAssets: '420000000',
+              adjustedEquityAssets: '1000000000',
+              activeDays: 4,
+            },
+          ],
+        })
+      }
+      return new Response(baseHtml, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    }),
+  })
+
+  it('rewrites wallet, trade, position, and Divisions routes to dynamic og:image cards', async () => {
+    const assetEnv = { ASSETS: spaAssets() }
+
+    const walletRes = await worker.fetch(new Request(`https://insights.plether.com/wallets/${wallet}`), assetEnv)
+    const walletHtml = await walletRes.text()
+    expect(walletHtml).toContain(`property="og:image" content="https://insights.plether.com/og/wallet/${wallet}.png"`)
+    expect(walletHtml).toContain('name="twitter:card" content="summary_large_image"')
+    expect(walletHtml).not.toContain('content="summary"')
+
+    const tradeRes = await worker.fetch(
+      new Request(`https://insights.plether.com/wallets/${wallet}?trade=${encodeURIComponent(tradeId)}`),
+      assetEnv,
+    )
+    const tradeHtml = await tradeRes.text()
+    expect(tradeHtml).toContain(
+      `property="og:image" content="https://insights.plether.com/og/wallet/${wallet}.png?trade=${encodeURIComponent(tradeId)}"`,
+    )
+    expect(tradeHtml).toContain('Closed Position PnL')
+
+    const posRes = await worker.fetch(
+      new Request(`https://insights.plether.com/wallets/${wallet}?card=position`),
+      assetEnv,
+    )
+    const posHtml = await posRes.text()
+    expect(posHtml).toContain(`property="og:image" content="https://insights.plether.com/og/wallet/${wallet}.png?card=position"`)
+
+    const divRes = await worker.fetch(
+      new Request(`https://insights.plether.com/divisions/wallets/${wallet}`),
+      assetEnv,
+    )
+    const divHtml = await divRes.text()
+    expect(divHtml).toContain(`property="og:image" content="https://insights.plether.com/og/divisions/${wallet}.png"`)
+
+    // Invalid trade param must never be reflected into og:image.
+    const badTradeRes = await worker.fetch(
+      new Request(`https://insights.plether.com/wallets/${wallet}?trade=../../evil`),
+      assetEnv,
+    )
+    const badTradeHtml = await badTradeRes.text()
+    expect(badTradeHtml).toContain(`property="og:image" content="https://insights.plether.com/og/wallet/${wallet}.png"`)
+    expect(badTradeHtml).not.toContain('evil')
+
+    // Non-wallet routes get the static branded default card.
+    const execRes = await worker.fetch(new Request('https://insights.plether.com/execution'), assetEnv)
+    const execHtml = await execRes.text()
+    expect(execHtml).toContain('property="og:image" content="https://insights.plether.com/og/default.png"')
+    expect(execHtml).toContain('Execution Quality')
+  })
+
+  it('renders wallet account, closed trade, live position, and Divisions PNG thumbnails via the SVG renderer', async () => {
+    const renderedSvgs: string[] = []
+    setSvgToPngRenderer(async (svg: string) => {
+      renderedSvgs.push(svg)
+      return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const target = String(input)
+      if (target.includes(`/wallets/${wallet}/summary`)) {
+        return Response.json({
+          data: {
+            network: { chainId: 421614, releaseVersion: 'v2.0.0' },
+            account: wallet,
+            identity: { discordUsername: 'stan_trader', isDivisionsLinked: true },
+            ledgerAvailable: true,
+            ledger: {
+              netEquityAssets: '1250000000',
+              hasPosition: true,
+              position: {
+                market: 'plDXY-PERP',
+                side: 'long',
+                size: '250000000000000000000',
+                entryPrice: '104500000000000000000',
+                marginAssets: '200000000',
+                unrealizedPnlAssets: '55000000',
+                liquidatable: false,
+              },
+            },
+            performance: {
+              totalTrades: 14,
+              volumeAssets: '9500000000',
+              realizedPnlAssets: '420500000',
+              activeDays: 4,
+            },
+            balanceHistory: [
+              { balanceAssets: '1000000000' },
+              { balanceAssets: '1250000000' },
+            ],
+            activity: [
+              {
+                id: tradeId,
+                activityType: 'Close',
+                side: 'long',
+                price: '104523000000000000000',
+                sizeDelta: '250000000000000000000',
+                amountAssets: '26130750000',
+                pnlAssets: '1450250000',
+                occurredAt: '2026-11-26T14:22:00Z',
+                txHash,
+              },
+            ],
+            divisionsHistory: [{ tier: 'Gold', rank: 2 }],
+          },
+        })
+      }
+      if (target.includes('/divisions/live')) {
+        return Response.json({
+          data: {
+            chainId: 421614,
+            week: { startsAt: '2026-11-23T00:00:00Z' },
+            standings: [
+              {
+                address: wallet,
+                displayName: 'stan_trader',
+                rank: 1,
+                weeklyReturn: 0.2835,
+                weeklyPnlAssets: '420500000',
+                activeDays: 3,
+              },
+            ],
+          },
+        })
+      }
+      return new Response(null, { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: spaAssets(),
+    }
+
+    const acctPng = await worker.fetch(new Request(`https://insights.plether.com/og/wallet/${wallet}.png`), env)
+    expect(acctPng.status).toBe(200)
+    expect(acctPng.headers.get('content-type')).toBe('image/png')
+    expect(acctPng.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60')
+    expect(renderedSvgs[0]).toContain('ALL-TIME REALIZED PNL')
+    expect(renderedSvgs[0]).toContain('LIFE-LONG BALANCE')
+    expect(renderedSvgs[0]).toContain('+420.50 USDG')
+    expect(renderedSvgs[0]).not.toContain('$')
+
+    const tradePng = await worker.fetch(
+      new Request(`https://insights.plether.com/og/wallet/${wallet}.png?trade=${encodeURIComponent(tradeId)}`),
+      env,
+    )
+    expect(tradePng.status).toBe(200)
+    expect(renderedSvgs[1]).toContain('CLOSED LONG')
+    expect(renderedSvgs[1]).toContain('+1,450.25 USDG')
+
+    const posPng = await worker.fetch(
+      new Request(`https://insights.plether.com/og/wallet/${wallet}.png?card=position`),
+      env,
+    )
+    expect(posPng.status).toBe(200)
+    expect(renderedSvgs[2]).toContain('OPEN LONG')
+    expect(renderedSvgs[2]).toContain('+55.00 USDG')
+
+    const divPng = await worker.fetch(new Request(`https://insights.plether.com/og/divisions/${wallet}.png`), env)
+    expect(divPng.status).toBe(200)
+    expect(renderedSvgs[3]).toContain('RANK #1')
+    expect(renderedSvgs[3]).toContain('GOLD DIVISION')
+
+    const headRes = await worker.fetch(
+      new Request(`https://insights.plether.com/og/wallet/${wallet}.png`, { method: 'HEAD' }),
+      env,
+    )
+    expect(headRes.status).toBe(200)
+    expect(headRes.headers.get('content-type')).toBe('image/png')
+    expect(await headRes.text()).toBe('')
+  })
+
+  it('falls back cleanly to /og/default.png when backend is unavailable', async () => {
+    setSvgToPngRenderer(async () => new Uint8Array([1, 2, 3]))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 500 })))
+
+    const res = await worker.fetch(
+      new Request(`https://insights.plether.com/og/wallet/${wallet}.png`),
+      {
+        INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+        ASSETS: spaAssets(),
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/png')
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual([0x89, 0x50, 0x4e, 0x47])
+  })
+
+  it('rewrites OG metadata cleanly for /tx/:txHash routes and validates optional ?log param', async () => {
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: spaAssets(),
+    }
+
+    const res = await worker.fetch(
+      new Request(`https://insights.plether.com/tx/${txHash}?log=42`),
+      env,
+    )
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain(`Transaction 0xaaaa...aaaa — Plether Insights`)
+    expect(html).toContain(`content="https://insights.plether.com/tx/${txHash}?log=42"`)
+
+    const unsafeRes = await worker.fetch(
+      new Request(`https://insights.plether.com/tx/${txHash}?log=evil<script>`),
+      env,
+    )
+    const unsafeHtml = await unsafeRes.text()
+    expect(unsafeHtml).toContain(`content="https://insights.plether.com/tx/${txHash}"`)
+    expect(unsafeHtml).not.toContain('evil')
+  })
+
+  it('rewrites OG metadata for /protocol, /sponsored, and /infra', async () => {
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: spaAssets(),
+    }
+
+    const res = await worker.fetch(new Request('https://insights.plether.com/protocol'), env)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('Protocol Contracts &amp; Parameters — Plether Insights')
+    expect(html).toContain('content="https://insights.plether.com/protocol"')
+
+    const sponsoredRes = await worker.fetch(new Request('https://insights.plether.com/sponsored'), env)
+    expect(sponsoredRes.status).toBe(200)
+    const sponsoredHtml = await sponsoredRes.text()
+    expect(sponsoredHtml).toContain('Sponsored Transactions &amp; Paymaster Health — Plether Insights')
+    expect(sponsoredHtml).toContain('content="https://insights.plether.com/sponsored"')
+
+    const infraRes = await worker.fetch(new Request('https://insights.plether.com/infra'), env)
+    expect(infraRes.status).toBe(200)
+    const infraHtml = await infraRes.text()
+    expect(infraHtml).toContain('AWS Infrastructure &amp; Action Readiness — Plether Insights')
+    expect(infraHtml).toContain('content="https://insights.plether.com/infra"')
+
+    const epochRes = await worker.fetch(
+      new Request('https://insights.plether.com/liquidity/epochs/498776'),
+      env,
+    )
+    expect(epochRes.status).toBe(200)
+    const epochHtml = await epochRes.text()
+    expect(epochHtml).toContain('LP Epoch #498776 — Plether Insights')
+    expect(epochHtml).toContain('content="https://insights.plether.com/liquidity/epochs/498776"')
+
+    const keeperAddr = `0x5a71${'0'.repeat(32)}0d6b`
+    const keeperRes = await worker.fetch(
+      new Request(`https://insights.plether.com/keepers/${keeperAddr}`),
+      env,
+    )
+    expect(keeperRes.status).toBe(200)
+    const keeperHtml = await keeperRes.text()
+    expect(keeperHtml).toContain('Keeper 0x5a71...0d6b — Plether Insights')
+    expect(keeperHtml).toContain(`content="https://insights.plether.com/keepers/${keeperAddr}"`)
   })
 })

@@ -6,6 +6,7 @@ module Plether.Handlers.InsightsLiquidity
   , ReturnReportResidual (..)
   , getLiquiditySettlementsResponse
   , getLiquidityForensicsResponse
+  , getLiquidityEpochResponse
   , fetchRecentReturnReports
   , executionPathLabel
   , healthStateLabel
@@ -13,6 +14,7 @@ module Plether.Handlers.InsightsLiquidity
   , classifySettlementReadiness
   , summarizeSnapshotFreshness
   , auditReturnReportResidual
+  , sharePriceDeltaBps
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
@@ -21,7 +23,7 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.Bits (testBit)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Int (Int64)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing, listToMaybe)
 import Data.Scientific (toRealFloat)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -51,6 +53,7 @@ import Plether.Database.VaultPerformance
   )
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import qualified Plether.Types.Error as E
 import Text.Read (readMaybe)
 
 data LpSettlementObservationRow = LpSettlementObservationRow
@@ -205,6 +208,69 @@ getLiquiditySettlementsResponse pool cfg = do
                 ]
           , "recentSettlements" .= map settlementTxToJson txs
           ]
+
+getLiquidityEpochResponse
+  :: DbPool
+  -> Config
+  -> Integer
+  -> IO (Either ApiError (ApiResponse Value))
+getLiquidityEpochResponse pool cfg epoch = do
+  let chainId = cfgPerpsChainId cfg
+      monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
+      housePool = T.toLower $ T.strip $ cfgVaultHistoryHousePoolAddress cfg
+      seniorVault = T.toLower $ T.strip $ cfgVaultHistorySeniorVaultAddress cfg
+      juniorVault = T.toLower $ T.strip $ cfgVaultHistoryJuniorVaultAddress cfg
+      epochTs = epoch * 3600
+      prevEpochTs = (epoch - 1) * 3600
+  (observations, txs, mSnap, mPrevSnap, (mPrevEpoch, mNextEpoch), mReport) <- withDb pool $ \conn ->
+    withReadSnapshot conn $ do
+      obs <- fetchEpochObservations conn chainId monitor epoch
+      settled <- fetchEpochSettlementTxs conn chainId monitor epoch
+      snap <- fetchEpochVaultSnapshot conn chainId housePool seniorVault juniorVault epochTs
+      prevSnap <-
+        if epoch > 0
+          then fetchEpochVaultSnapshot conn chainId housePool seniorVault juniorVault prevEpochTs
+          else pure Nothing
+      adjacent <- fetchAdjacentEpochs conn chainId monitor epoch
+      let refBlock =
+            case (listToMaybe obs, listToMaybe settled >>= lstrReceiptBlock, snap) of
+              (Just o, _, _) -> Just (lsorObservedBlock o)
+              (_, Just b, _) -> Just b
+              (_, _, Just s) -> Just (vpsBlockNumber s)
+              _ -> Nothing
+      report <- case refBlock of
+        Just blk -> fetchCoveringReturnReport conn chainId housePool seniorVault juniorVault blk
+        Nothing -> pure Nothing
+      pure (obs, settled, snap, prevSnap, adjacent, report)
+  if null observations && null txs && isNothing mSnap
+    then pure $ Left $ E.notFound ("No LP epoch data found for epoch #" <> T.pack (show epoch))
+    else do
+      let latestObs = listToMaybe observations
+          responseBlock =
+            maximum $
+              0
+                : concat
+                    [ maybe [] (pure . lsorObservedBlock) latestObs
+                    , maybe [] pure (listToMaybe txs >>= lstrReceiptBlock)
+                    , maybe [] (pure . vpsBlockNumber) mSnap
+                    ]
+      pure $
+        Right $
+          mkResponse responseBlock chainId $
+            object
+              [ "network" .= networkMetaJson cfg
+              , "monitorAddress" .= monitor
+              , "epoch" .= epoch
+              , "epochTimestamp" .= epochTs
+              , "epochUtc" .= isoTimestamp epochTs
+              , "previousEpoch" .= mPrevEpoch
+              , "nextEpoch" .= mNextEpoch
+              , "latestObservation" .= (observationToJson <$> latestObs)
+              , "observations" .= map observationToJson observations
+              , "settlements" .= map settlementTxToJson txs
+              , "vaultSnapshot" .= ((\s -> vaultSnapshotToJson s mPrevSnap) <$> mSnap)
+              , "coveringReport" .= (reportAuditToJson <$> mReport)
+              ]
 
 getLiquidityForensicsResponse
   :: DbPool
@@ -566,6 +632,154 @@ fetchSettlement24hSummary conn chainId monitor = do
         [row] -> row
         _ -> (0, 0, 0, 0, 0)
   pure (obsEpochs, confirmed, failed, replaced, deferred, backlog)
+
+sharePriceDeltaBps :: Integer -> Integer -> Maybe Int
+sharePriceDeltaBps currentWad prevWad
+  | prevWad <= 0 = Nothing
+  | otherwise = Just $ fromInteger (((currentWad - prevWad) * 10000) `div` prevWad)
+
+vaultSnapshotToJson :: VaultPerformanceSnapshotRow -> Maybe VaultPerformanceSnapshotRow -> Value
+vaultSnapshotToJson cur mPrev =
+  object
+    [ "epochTimestamp" .= vpsEpochTimestamp cur
+    , "blockNumber" .= show (vpsBlockNumber cur)
+    , "blockTimestamp" .= vpsBlockTimestamp cur
+    , "blockUtc" .= isoTimestamp (vpsBlockTimestamp cur)
+    , "markFresh" .= vpsMarkFresh cur
+    , "senior"
+        .= object
+          [ "totalAssets" .= show (vpsSeniorTotalAssets cur)
+          , "lockedAssets" .= (show <$> vpsSeniorLockedAssets cur)
+          , "totalSupply" .= show (vpsSeniorTotalSupply cur)
+          , "sharePriceWad" .= show (vpsSeniorSharePriceWad cur)
+          , "sharePriceDeltaBps" .= (mPrev >>= sharePriceDeltaBps (vpsSeniorSharePriceWad cur) . vpsSeniorSharePriceWad)
+          ]
+    , "junior"
+        .= object
+          [ "totalAssets" .= show (vpsJuniorTotalAssets cur)
+          , "lockedAssets" .= (show <$> vpsJuniorLockedAssets cur)
+          , "totalSupply" .= show (vpsJuniorTotalSupply cur)
+          , "sharePriceWad" .= show (vpsJuniorSharePriceWad cur)
+          , "sharePriceDeltaBps" .= (mPrev >>= sharePriceDeltaBps (vpsJuniorSharePriceWad cur) . vpsJuniorSharePriceWad)
+          ]
+    ]
+
+fetchEpochObservations
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> IO [LpSettlementObservationRow]
+fetchEpochObservations conn chainId monitor epoch =
+  query
+    conn
+    "SELECT epoch, observed_block, execution_path, \
+    \operational_blocker_mask, warning_mask, dependency_failure_mask, critical_fault_mask, \
+    \health_state, observation_complete, has_matured_work, lp_epoch_settlement_paused, last_observed_at \
+    \FROM perps_lp_settlement_observations \
+    \WHERE chain_id = ? AND monitor_address = ? AND epoch = ? \
+    \ORDER BY observed_block DESC, last_observed_at DESC \
+    \LIMIT 20"
+    (chainId, monitor, epoch)
+
+fetchEpochSettlementTxs
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> IO [LpSettlementTxRow]
+fetchEpochSettlementTxs conn chainId monitor epoch =
+  query
+    conn
+    "SELECT tx.epoch, tx.cutoff_epoch, tx.status, obs.execution_path, \
+    \tx.receipt_transaction_hash, tx.receipt_block_number, tx.created_at, tx.confirmed_at, \
+    \tx.replacement_count, tx.senior_deposit_assets, tx.senior_redeem_assets, \
+    \tx.junior_deposit_assets, tx.junior_redeem_assets, \
+    \tx.senior_backlog, tx.junior_backlog, tx.entries_deferred \
+    \FROM perps_lp_settlement_transactions tx \
+    \JOIN perps_lp_settlement_observations obs \
+    \  ON obs.chain_id = tx.chain_id \
+    \ AND obs.monitor_address = tx.monitor_address \
+    \ AND obs.observation_digest = tx.observation_digest \
+    \ AND obs.epoch = tx.epoch \
+    \WHERE tx.chain_id = ? AND tx.monitor_address = ? AND tx.epoch = ? \
+    \ORDER BY tx.created_at DESC, tx.id DESC \
+    \LIMIT 20"
+    (chainId, monitor, epoch)
+
+fetchEpochVaultSnapshot
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> IO (Maybe VaultPerformanceSnapshotRow)
+fetchEpochVaultSnapshot conn chainId housePool seniorVault juniorVault epochTs = do
+  rows <-
+    query
+      conn
+      "SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address, \
+      \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh, \
+      \senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad, \
+      \junior_total_assets, junior_total_supply, junior_share_price_wad \
+      \FROM vault_performance_snapshots \
+      \WHERE chain_id = ? AND house_pool_address = ? AND senior_vault_address = ? \
+      \  AND junior_vault_address = ? AND epoch_timestamp = ? \
+      \LIMIT 1"
+      (chainId, housePool, seniorVault, juniorVault, epochTs)
+  pure (listToMaybe rows)
+
+fetchAdjacentEpochs
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> IO (Maybe Integer, Maybe Integer)
+fetchAdjacentEpochs conn chainId monitor epoch = do
+  prevRows <-
+    query
+      conn
+      "SELECT MAX(epoch) FROM perps_lp_settlement_observations \
+      \WHERE chain_id = ? AND monitor_address = ? AND epoch < ?"
+      (chainId, monitor, epoch)
+      :: IO [Only (Maybe Integer)]
+  nextRows <-
+    query
+      conn
+      "SELECT MIN(epoch) FROM perps_lp_settlement_observations \
+      \WHERE chain_id = ? AND monitor_address = ? AND epoch > ?"
+      (chainId, monitor, epoch)
+      :: IO [Only (Maybe Integer)]
+  let mPrev = case prevRows of
+        [Only p] -> p
+        _ -> Nothing
+      mNext = case nextRows of
+        [Only n] -> n
+        _ -> Nothing
+  pure (mPrev, mNext)
+
+fetchCoveringReturnReport
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> IO (Maybe ReturnReportAuditRow)
+fetchCoveringReturnReport conn chainId housePool seniorVault juniorVault blk = do
+  rows <-
+    query
+      conn
+      "SELECT start_block_number, end_block_number, source_commit, schema_version, updated_at, attribution \
+      \FROM vault_return_reports \
+      \WHERE chain_id = ? AND house_pool_address = ? AND senior_vault_address = ? AND junior_vault_address = ? \
+      \  AND schema_version = 3 \
+      \  AND start_block_number <= ? AND end_block_number >= ? \
+      \ORDER BY end_block_number DESC \
+      \LIMIT 1"
+      (chainId, housePool, seniorVault, juniorVault, blk, blk)
+  pure (listToMaybe rows)
 
 fetchRecentReturnReports
   :: Connection

@@ -178,10 +178,14 @@ library
         Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
         Plether.Handlers.InsightsExecution
+        Plether.Handlers.InsightsInfra
         Plether.Handlers.InsightsLiquidity
+        Plether.Handlers.InsightsProtocol
+        Plether.Handlers.InsightsSponsored
         Plether.Handlers.InsightsWallets
         Plether.Handlers.InsightsRegistration
         Plether.Handlers.DivisionsRegistration
+        Plether.Infra.AwsHealth
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -473,8 +477,12 @@ test-suite plether-api-test
         Plether.Indexer.EventsSpec
         Plether.Handlers.InsightsRegistrationSpec
         Plether.Handlers.InsightsExecutionSpec
+        Plether.Handlers.InsightsInfraSpec
         Plether.Handlers.InsightsLiquiditySpec
+        Plether.Handlers.InsightsProtocolSpec
+        Plether.Handlers.InsightsSponsoredSpec
         Plether.Handlers.InsightsWalletsSpec
+        Plether.Infra.AwsHealthSpec
         Plether.Handlers.PerpsSpec
         Plether.Handlers.VaultActivitySpec
         Plether.Handlers.VaultPerformanceSpec

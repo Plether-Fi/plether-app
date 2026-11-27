@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompactAssets, formatCountdown, formatRoi, formatSignedAssets, formatAssets, isWalletAddress, xProfileUrl } from './format'
+import { formatCompactAssets, formatCountdown, formatPrice, formatRoi, formatSignedAssets, formatAssets, isTxHash, isWalletAddress, xProfileUrl } from './format'
 
 describe('assets formatting', () => {
   it('keeps six-decimal integer units lossless and rounds for display', () => {
@@ -44,5 +44,12 @@ describe('other public value formatting', () => {
     expect(xProfileUrl('@plether')).toBe('https://x.com/plether')
     expect(xProfileUrl('Plether_Fi')).toBe('https://x.com/Plether_Fi')
     expect(xProfileUrl('not a username')).toBeNull()
+  })
+
+  it('normalizes raw 1e8 oracle prices into display plDXY prices and validates tx hashes', () => {
+    expect(formatPrice('94743619')).toBe('1.05256')
+    expect(formatPrice('1.05256')).toBe('1.05256')
+    expect(isTxHash(`0x${'a'.repeat(64)}`)).toBe(true)
+    expect(isTxHash(`0x${'a'.repeat(40)}`)).toBe(false)
   })
 })

@@ -165,7 +165,9 @@ describe('LiquidityOpsPage (Stage 1 LP Ops)', () => {
 
     const auditTable = screen.getByRole('table', { name: /Junior vault return attribution residual/ })
     expect(within(auditTable).getByText('Exact (0.00)')).toBeInTheDocument()
+    expect(within(auditTable).getByText('100.00%')).toBeInTheDocument()
     expect(within(auditTable).getByText('+0.2997%')).toBeInTheDocument()
+    expect(screen.getByText('Epoch settlement continuity')).toBeInTheDocument()
   })
 
   it('highlights active blocker/fault bitmasks and unexplained residuals', () => {

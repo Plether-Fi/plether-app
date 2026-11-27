@@ -2,15 +2,18 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   InsightsApiError,
-  accountActivityToWalletActivity,
+  accountActivityToProtocolTrade,
+  enrichBalanceHistory,
   formatPlDxyQuantity,
   formatVaultShares,
+  transactionPath,
   useWalletSummary,
   type AccountActivityRecord,
   type AccountProtectionSnapshot,
+  type TransactionRouteState,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { PositionBreakdown } from '../components/PositionBreakdown'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -108,41 +111,43 @@ function TradingAccountInspector({ address }: { address: string }) {
     (row) => row.activityType === 'Close' && row.pnlAssets != null,
   )
 
+  const enrichedBalanceHistory = enrichBalanceHistory(
+    summary?.balanceHistory ?? [],
+    summary?.activity ?? [],
+  )
+
   const shareCards: ShareCardOption[] = []
-  if (current && live) {
+  if (summary) {
+    const balanceHistory = enrichedBalanceHistory
+    const latestHistoryBalance = balanceHistory[balanceHistory.length - 1]?.balanceAssets ?? null
+    const accountBalanceAssets =
+      ledger?.settlementBalanceAssets ??
+      (ledger?.netEquityAssets && ledger.netEquityAssets !== '0' ? ledger.netEquityAssets : null) ??
+      latestHistoryBalance
     shareCards.push({
-      id: 'division-live',
-      label: 'Divisions Rank',
+      id: 'account-summary',
+      label: 'Account Overview',
       data: {
-        kind: 'division',
+        kind: 'account',
         traderLabel,
         account: address,
         networkName: chain.name,
+        releaseVersion,
+        netEquityAssets: ledger?.netEquityAssets ?? null,
+        accountBalanceAssets,
+        realizedPnlAssets: perf?.realizedPnlAssets ?? null,
+        volumeAssets: perf?.volumeAssets ?? null,
+        totalTrades: perf?.totalTrades ?? null,
+        activeDays: perf?.activeDays ?? null,
+        firstActivityAt: perf?.firstActivityAt ?? null,
         tier: awarded?.tier ?? null,
-        rank: current.rank,
-        weeklyReturnLabel: formatRoi(current.weeklyReturnBps),
-        activeDays: current.activeDays,
-        weekLabel: `Week of ${formatUtc(live.weekStartsAt).slice(0, 11)}`,
-        provisional: true,
-      },
-    })
-  } else if (awarded && publication) {
-    shareCards.push({
-      id: 'division-awarded',
-      label: 'Divisions Badge',
-      data: {
-        kind: 'division',
-        traderLabel,
-        account: address,
-        networkName: chain.name,
-        tier: awarded.tier,
-        rank: awarded.rank,
-        weeklyReturnLabel: formatReturn(awarded.weeklyPnlAssets, awarded.adjustedEquityAssets),
-        weeklyPnlAssets: awarded.weeklyPnlAssets,
-        activeDays: awarded.activeDays,
-        movement: awarded.movement,
-        weekLabel: `Ended ${formatUtc(publication.week.closesAt).slice(0, 11)}`,
-        provisional: false,
+        balancePoints: balanceHistory.map((pt) => ({
+          timestamp: pt.timestamp,
+          balanceAssets: pt.balanceAssets,
+        })),
+        sparklineValues: balanceHistory
+          .map((pt) => Number(pt.balanceAssets) / 1_000_000)
+          .filter((v) => Number.isFinite(v)),
       },
     })
   }
@@ -187,28 +192,6 @@ function TradingAccountInspector({ address }: { address: string }) {
         notionalAssets: latestClosedTrade.amountAssets,
         occurredAt: latestClosedTrade.occurredAt,
         txHash: latestClosedTrade.txHash,
-      },
-    })
-  }
-  if (summary) {
-    shareCards.push({
-      id: 'account-summary',
-      label: 'Account Overview',
-      data: {
-        kind: 'account',
-        traderLabel,
-        account: address,
-        networkName: chain.name,
-        releaseVersion,
-        netEquityAssets: ledger?.netEquityAssets ?? null,
-        realizedPnlAssets: perf?.realizedPnlAssets ?? null,
-        volumeAssets: perf?.volumeAssets ?? null,
-        totalTrades: perf?.totalTrades ?? null,
-        activeDays: perf?.activeDays ?? null,
-        tier: awarded?.tier ?? null,
-        sparklineValues: (summary.balanceHistory ?? [])
-          .map((pt) => Number(pt.balanceAssets) / 1_000_000)
-          .filter((v) => Number.isFinite(v)),
       },
     })
   }
@@ -310,9 +293,12 @@ function TradingAccountInspector({ address }: { address: string }) {
               <StatusPill tone="live" label="Discord linked" />
             ) : null}
           </div>
-          <h1 className="mt-3 break-all text-3xl font-semibold sm:text-4xl">
-            {handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}
-          </h1>
+          <div className="mt-3 flex items-center gap-3.5">
+            <AddressAvatar address={address} size={44} />
+            <h1 className="break-all text-3xl font-semibold sm:text-4xl">
+              {handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}
+            </h1>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="break-all font-mono text-xs text-content-secondary sm:text-sm">
               {address}
@@ -481,7 +467,8 @@ function TradingAccountInspector({ address }: { address: string }) {
       {activeTab === 'overview' ? (
         <div role="tabpanel" className="space-y-8">
           <WalletBalanceChart
-            points={summary?.balanceHistory ?? []}
+            points={enrichedBalanceHistory}
+            activity={summary?.activity ?? []}
             observedAt={summary?.observedAt ?? protocol.observedAt}
             releaseVersion={releaseVersion}
             loading={summaryQuery.isLoading}
@@ -514,6 +501,15 @@ function TradingAccountInspector({ address }: { address: string }) {
                   <div className="border-b border-brand-border/15 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-content-tertiary">
                     Collateral &amp; margin buckets
                   </div>
+                  <CollateralAllocationBar
+                    freeAssets={ledger.freeSettlementAssets}
+                    positionMarginAssets={ledger.activePositionMarginAssets}
+                    committedOrderAssets={ledger.committedMarginAssets}
+                    otherLockedAssets={
+                      parseUnsignedBigInt(ledger.executionBountyReserveAssets) +
+                      parseUnsignedBigInt(ledger.otherLockedMarginAssets)
+                    }
+                  />
                   <dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 sm:divide-y-0">
                     <Metric label="Settlement balance">
                       {formatAssets(ledger.settlementBalanceAssets)}
@@ -746,17 +742,22 @@ function TradingAccountInspector({ address }: { address: string }) {
                           <td className="px-4 py-3.5">
                             <div className="flex flex-wrap items-center gap-1.5">
                               {hasReceipt ? (
-                                <PositionBreakdown
-                                  item={accountActivityToWalletActivity(row)}
-                                  chainId={chainId}
-                                  compact
-                                  shareContext={{
-                                    traderLabel,
-                                    account: address,
-                                    networkName: chain.name,
-                                    releaseVersion,
-                                  }}
-                                />
+                                <Link
+                                  to={transactionPath(row.txHash, row.id)}
+                                  state={
+                                    {
+                                      trade: accountActivityToProtocolTrade(row, address),
+                                      chainId,
+                                      releaseVersion,
+                                      traderLabel,
+                                      from: `/wallets/${address}`,
+                                      fromLabel: `Back to ${traderLabel}`,
+                                    } satisfies TransactionRouteState
+                                  }
+                                  className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+                                >
+                                  View breakdown
+                                </Link>
                               ) : null}
                               {row.activityType === 'Close' && row.pnlAssets != null ? (
                                 <ShareCardModal
@@ -788,7 +789,38 @@ function TradingAccountInspector({ address }: { address: string }) {
                                   ]}
                                 />
                               ) : null}
-                              {!hasReceipt && !(row.activityType === 'Close' && row.pnlAssets != null) ? (
+                              {row.activityType === 'Open' ? (
+                                <ShareCardModal
+                                  compact
+                                  triggerLabel="Share Open"
+                                  cards={[
+                                    {
+                                      id: `open-${row.id}`,
+                                      label: 'Opened Position Receipt',
+                                      data: {
+                                        kind: 'open_trade',
+                                        traderLabel,
+                                        account: address,
+                                        networkName: chain.name,
+                                        releaseVersion,
+                                        market: 'plDXY-PERP',
+                                        side:
+                                          row.side === 'long' || row.side === 'short'
+                                            ? row.side
+                                            : null,
+                                        price: row.price,
+                                        sizeDelta: row.sizeDelta,
+                                        notionalAssets: row.amountAssets,
+                                        occurredAt: row.occurredAt,
+                                        txHash: row.txHash,
+                                      },
+                                    },
+                                  ]}
+                                />
+                              ) : null}
+                              {!hasReceipt &&
+                              !(row.activityType === 'Close' && row.pnlAssets != null) &&
+                              row.activityType !== 'Open' ? (
                                 <span className="font-mono text-xs text-content-tertiary">—</span>
                               ) : null}
                             </div>
@@ -1147,6 +1179,81 @@ function TradingAccountInspector({ address }: { address: string }) {
             </Panel>
           )}
         </section>
+      ) : null}
+    </div>
+  )
+}
+
+function parseUnsignedBigInt(raw: string | null | undefined): bigint {
+  return raw != null && /^\d+$/.test(raw) ? BigInt(raw) : 0n
+}
+
+function CollateralAllocationBar({
+  freeAssets,
+  positionMarginAssets,
+  committedOrderAssets,
+  otherLockedAssets,
+}: {
+  freeAssets: string
+  positionMarginAssets: string
+  committedOrderAssets: string
+  otherLockedAssets: bigint
+}) {
+  const free = parseUnsignedBigInt(freeAssets)
+  const posMargin = parseUnsignedBigInt(positionMarginAssets)
+  const orderMargin = parseUnsignedBigInt(committedOrderAssets)
+  const other = otherLockedAssets > 0n ? otherLockedAssets : 0n
+  const total = free + posMargin + orderMargin + other
+
+  const buckets = [
+    { id: 'free', label: 'Free collateral', value: free, color: 'bg-positive' },
+    { id: 'position', label: 'Position margin', value: posMargin, color: 'bg-brand-orange' },
+    { id: 'orders', label: 'Committed orders', value: orderMargin, color: 'bg-brand-yellow' },
+    { id: 'locked', label: 'Bounty & locked', value: other, color: 'bg-brand-peach' },
+  ].filter((b) => b.value > 0n)
+
+  const usedPct =
+    total > 0n ? ((Number(posMargin + orderMargin + other) / Number(total)) * 100).toFixed(1) : null
+
+  return (
+    <div
+      aria-label="Collateral allocation"
+      className="border-b border-brand-border/15 bg-app-bg/45 px-5 py-3.5"
+    >
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-content-secondary">Collateral utilization</span>
+        <span className="font-mono text-content-primary">
+          {usedPct !== null ? `${usedPct}% locked` : 'No collateral'}
+        </span>
+      </div>
+      <div className="mt-2 flex h-2 w-full overflow-hidden bg-surface-raised">
+        {total > 0n
+          ? buckets.map((bucket) => {
+              const pct = (Number(bucket.value) / Number(total)) * 100
+              return (
+                <div
+                  key={bucket.id}
+                  title={`${bucket.label}: ${formatAssets(bucket.value.toString())} (${pct.toFixed(1)}%)`}
+                  className={`h-full ${bucket.color}`}
+                  style={{ width: `${Math.max(pct, 1).toFixed(2)}%` }}
+                />
+              )
+            })
+          : null}
+      </div>
+      {buckets.length > 0 ? (
+        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-content-secondary">
+          {buckets.map((bucket) => {
+            const pct = total > 0n ? ((Number(bucket.value) / Number(total)) * 100).toFixed(1) : '0.0'
+            return (
+              <span key={bucket.id} className="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" className={`inline-block h-2 w-2 ${bucket.color}`} />
+                <span>{bucket.label}</span>
+                <span className="font-mono text-content-tertiary">{pct}%</span>
+              </span>
+            )
+          })}
+        </div>
       ) : null}
     </div>
   )

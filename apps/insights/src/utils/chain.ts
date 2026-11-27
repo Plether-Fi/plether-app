@@ -3,6 +3,7 @@ export interface PerpsChainConfig {
   name: string
   shortName: string
   isTestnet: boolean
+  explorerName: string
   explorerBaseUrl: string
   tradeAppUrl: string
   defaultAssetSymbol: string
@@ -17,6 +18,7 @@ const CHAINS: Record<number, PerpsChainConfig> = {
     name: 'Arbitrum One',
     shortName: 'Arbitrum',
     isTestnet: false,
+    explorerName: 'Arbiscan',
     explorerBaseUrl: 'https://arbiscan.io',
     tradeAppUrl: 'https://app.plether.com',
     defaultAssetSymbol: 'USDG',
@@ -26,6 +28,7 @@ const CHAINS: Record<number, PerpsChainConfig> = {
     name: 'Arbitrum Sepolia',
     shortName: 'Arb Sepolia',
     isTestnet: true,
+    explorerName: 'Arbiscan',
     explorerBaseUrl: 'https://sepolia.arbiscan.io',
     tradeAppUrl: 'https://app.sepolia.plether.com',
     defaultAssetSymbol: 'USDG',

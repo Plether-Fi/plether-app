@@ -8,12 +8,18 @@ function ResolvedWallet() {
   return <div data-testid="resolved-wallet">{address}</div>
 }
 
+function ResolvedTx() {
+  const { txHash } = useParams()
+  return <div data-testid="resolved-tx">{txHash}</div>
+}
+
 function renderSearch() {
   render(
     <MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route path="/" element={<WalletSearch />} />
         <Route path="/wallets/:address" element={<ResolvedWallet />} />
+        <Route path="/tx/:txHash" element={<ResolvedTx />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -34,5 +40,13 @@ describe('WalletSearch', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: `  ${address}  ` } })
     fireEvent.click(screen.getByRole('button', { name: 'Inspect' }))
     expect(screen.getByTestId('resolved-wallet')).toHaveTextContent(address)
+  })
+
+  it('navigates directly to the Transaction page for a valid 66-character tx hash', () => {
+    const txHash = `0x${'B'.repeat(64)}`
+    renderSearch()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: `  ${txHash}  ` } })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect' }))
+    expect(screen.getByTestId('resolved-tx')).toHaveTextContent(`0x${'b'.repeat(64)}`)
   })
 })

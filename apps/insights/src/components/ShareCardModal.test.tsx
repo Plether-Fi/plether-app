@@ -52,10 +52,20 @@ describe('ShareCardModal', () => {
     expect(screen.getByRole('button', { name: 'Copy image' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Post on X ↗' })).toHaveAttribute(
       'href',
-      expect.stringContaining('https://x.com/intent/tweet?'),
+      expect.stringContaining(encodeURIComponent(`/divisions/wallets/${account}`)),
     )
 
     fireEvent.click(screen.getByRole('tab', { name: 'Open Position' }))
     expect(screen.getByAltText('Preview of Open Position share card')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Post on X ↗' })).toHaveAttribute(
+      'href',
+      expect.stringContaining(encodeURIComponent(`/wallets/${account}?card=position`)),
+    )
+
+    // Clicking inside modal content keeps it open; clicking the backdrop closes it
+    fireEvent.click(screen.getByText('Shareable social card'))
+    expect(screen.getByRole('dialog', { name: 'Shareable social card' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('dialog', { name: 'Shareable social card' }))
+    expect(screen.queryByRole('dialog', { name: 'Shareable social card' })).not.toBeInTheDocument()
   })
 })

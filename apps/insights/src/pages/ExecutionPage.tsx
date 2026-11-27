@@ -3,13 +3,18 @@ import { Link } from 'react-router-dom'
 import {
   InsightsApiError,
   formatRateBps,
-  tradeToWalletActivity,
+  transactionPath,
   useExecutionQuality,
   useExecutionTrades,
   type ProtocolTradeRecord,
+  type TransactionRouteState,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { PositionBreakdown } from '../components/PositionBreakdown'
+import {
+  ExecutionLatencyWhisker,
+  OrderOutcomeProportionCard,
+} from '../components/ExecutionVisuals'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -215,7 +220,7 @@ export function ExecutionPage() {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <h2 id="cohorts-title" className="text-xl font-semibold">
-              Canonical order reliability cohorts
+              Canonical order reliability &amp; latency
             </h2>
             <p className="mt-1 text-xs text-content-tertiary">
               Half-open commitment windows shifted 120s before observation · Expirations count
@@ -228,6 +233,29 @@ export function ExecutionPage() {
             </span>
           ) : null}
         </div>
+
+        {quality && quality.orderReliability.length > 0 ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel className="space-y-3 p-5">
+              <div>
+                <h3 className="text-base font-semibold">Order outcome breakdown</h3>
+                <p className="mt-0.5 text-xs text-content-tertiary">
+                  Executed vs. expired (r=2) and failed orders across 1h &amp; 24h cohorts
+                </p>
+              </div>
+              <div className="space-y-3">
+                {quality.orderReliability.map((cohort) => (
+                  <OrderOutcomeProportionCard key={cohort.windowSeconds} cohort={cohort} />
+                ))}
+              </div>
+            </Panel>
+
+            <ExecutionLatencyWhisker
+              seconds={quality.executionLatency.seconds}
+              blocks={quality.executionLatency.blocks}
+            />
+          </div>
+        ) : null}
 
         <Panel>
           {qualityQuery.isLoading ? (
@@ -395,8 +423,9 @@ export function ExecutionPage() {
                           <Link
                             to={`/wallets/${trade.account}`}
                             title={trade.account}
-                            className="text-brand-peach hover:underline"
+                            className="inline-flex items-center gap-2 text-brand-peach hover:underline"
                           >
+                            <AddressAvatar address={trade.account} size={16} />
                             {shortAddress(trade.account)}
                           </Link>
                         </td>
@@ -417,21 +446,21 @@ export function ExecutionPage() {
                           {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}
                         </td>
                         <td className="px-4 py-3.5">
-                          {hasReceipt ? (
-                            <PositionBreakdown
-                              item={tradeToWalletActivity(trade)}
-                              chainId={chainId}
-                              compact
-                              shareContext={{
-                                traderLabel: shortAddress(trade.account),
-                                account: trade.account,
-                                networkName: chain.name,
+                          <Link
+                            to={transactionPath(trade.txHash, trade.id)}
+                            state={
+                              {
+                                trade,
+                                chainId,
                                 releaseVersion,
-                              }}
-                            />
-                          ) : (
-                            <span className="font-mono text-xs text-content-tertiary">—</span>
-                          )}
+                                from: '/execution',
+                                fromLabel: 'Back to Execution',
+                              } satisfies TransactionRouteState
+                            }
+                            className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+                          >
+                            {hasReceipt ? 'View breakdown' : 'View details'}
+                          </Link>
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
                           <a

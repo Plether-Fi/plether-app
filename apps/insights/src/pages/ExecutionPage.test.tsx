@@ -156,6 +156,16 @@ describe('ExecutionPage (Stage 2)', () => {
     expect(screen.getByText('Execution pipeline healthy')).toBeInTheDocument()
     expect(screen.getAllByText('98.50%').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText('3s / 8s')).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', {
+        name: /24 hours order outcomes: 985 executed, 10 expired, 5 failed/i,
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', {
+        name: /Execution latency whisker \(seconds\): p50 3s, p95 8s, p99 14s, max 22s/i,
+      }),
+    ).toBeInTheDocument()
     expect(screen.getByText('42')).toBeInTheDocument()
 
     const tape = screen.getByRole('table', { name: /Recent protocol-wide executed trades/ })
@@ -165,12 +175,11 @@ describe('ExecutionPage (Stage 2)', () => {
     )
     expect(within(tape).getByText('Liquidated')).toBeInTheDocument()
 
-    // Trade with receipt exposes the PositionBreakdown dialog trigger
-    const breakdownBtn = within(tape).getByRole('button', { name: 'View breakdown' })
-    fireEvent.click(breakdownBtn)
-    expect(screen.getByText('Position breakdown')).toBeInTheDocument()
-    expect(screen.getByText('Protocol fee assessed')).toBeInTheDocument()
-    expect(screen.getByText('Gross VPI charge')).toBeInTheDocument()
+    // Trade with receipt links directly to the dedicated Transaction breakdown page
+    const breakdownLink = within(tape).getByRole('link', { name: 'View breakdown' })
+    expect(breakdownLink).toHaveAttribute('href', `/tx/0x${'a'.repeat(64)}?log=0`)
+    const detailsLink = within(tape).getByRole('link', { name: 'View details' })
+    expect(detailsLink).toHaveAttribute('href', `/tx/0x${'b'.repeat(64)}?log=0`)
 
     fireEvent.click(screen.getByRole('button', { name: 'Liquidations' }))
     expect(within(tape).queryByText('Open')).not.toBeInTheDocument()

@@ -9,6 +9,7 @@ import {
   useKeepersStatus,
   type KeeperRoleId,
 } from '../api'
+import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -325,15 +326,25 @@ export function KeepersPage() {
                           className="border-b border-brand-border/15 last:border-0"
                         >
                           <td className="px-4 py-3.5 font-mono text-xs">
-                            <a
-                              href={explorerAddressUrl(keeper.address, chainId)}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={keeper.address}
-                              className="text-brand-peach hover:underline"
-                            >
-                              {shortAddress(keeper.address)} ↗
-                            </a>
+                            <div className="flex items-center gap-2">
+                              <Link
+                                to={`/keepers/${keeper.address.toLowerCase()}`}
+                                title={keeper.address}
+                                className="inline-flex items-center gap-2 text-brand-peach hover:underline"
+                              >
+                                <AddressAvatar address={keeper.address} size={18} />
+                                {shortAddress(keeper.address)}
+                              </Link>
+                              <a
+                                href={explorerAddressUrl(keeper.address, chainId)}
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label={`View ${keeper.address} on explorer`}
+                                className="text-content-tertiary hover:text-content-primary"
+                              >
+                                ↗
+                              </a>
+                            </div>
                           </td>
                           <td className="px-4 py-3.5">
                             <div className="flex flex-wrap gap-1">
@@ -478,9 +489,9 @@ export function KeepersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredActivity.map((item) => (
+                  {filteredActivity.map((item, index) => (
                     <tr
-                      key={`${item.txHash}-${item.role}`}
+                      key={`${item.txHash}-${item.role}-${String(index)}`}
                       className="border-b border-brand-border/15 last:border-0"
                     >
                       <td className="px-4 py-3.5 text-xs text-content-secondary">
@@ -492,14 +503,14 @@ export function KeepersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3.5 font-mono text-xs">
-                        <a
-                          href={explorerAddressUrl(item.keeperAddress, chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brand-peach hover:underline"
+                        <Link
+                          to={`/keepers/${item.keeperAddress.toLowerCase()}`}
+                          title={item.keeperAddress}
+                          className="inline-flex items-center gap-2 text-brand-peach hover:underline"
                         >
-                          {shortAddress(item.keeperAddress)} ↗
-                        </a>
+                          <AddressAvatar address={item.keeperAddress} size={16} />
+                          {shortAddress(item.keeperAddress)}
+                        </Link>
                       </td>
                       <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
                         {item.latencySeconds !== null ? `${String(item.latencySeconds)}s` : '—'}
@@ -511,14 +522,27 @@ export function KeepersPage() {
                         {Number(item.blockNumber).toLocaleString('en-US')}
                       </td>
                       <td className="px-4 py-3.5 font-mono text-xs">
-                        <a
-                          href={explorerTxUrl(item.txHash, chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(item.txHash)} ↗
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/tx/${item.txHash.toLowerCase()}`}
+                            state={{
+                              from: '/keepers',
+                              fromLabel: 'Back to Keepers',
+                            }}
+                            className="text-brand-peach hover:underline"
+                          >
+                            {shortAddress(item.txHash)}
+                          </Link>
+                          <a
+                            href={explorerTxUrl(item.txHash, chainId)}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`View ${item.txHash} on explorer`}
+                            className="text-content-tertiary hover:text-content-primary"
+                          >
+                            ↗
+                          </a>
+                        </div>
                       </td>
                     </tr>
                   ))}

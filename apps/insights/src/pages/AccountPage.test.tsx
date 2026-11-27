@@ -252,24 +252,25 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     expect(screen.getByText('Live account telemetry')).toBeInTheDocument()
     expect(screen.getByText('LONG · 500.00 plDXY')).toBeInTheDocument()
     expect(screen.getByText('Wallet balance history')).toBeInTheDocument()
+    expect(screen.getByLabelText('Collateral allocation')).toBeInTheDocument()
+    expect(screen.getByText('20.0% locked')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '7D' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '30D' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '90D' })).toBeInTheDocument()
 
-    // Open share card studio from header and inspect generated card options
+    // Open share card studio from header — Account Overview (with life-long balance chart) is primary, never duplicating Divisions Rank
     fireEvent.click(screen.getByRole('button', { name: 'Share card' }))
     expect(screen.getByText('Shareable social card')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Divisions Rank' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Account Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Open Position' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Account Overview' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Divisions Rank' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close share card modal' }))
 
-    // Switch to Trades & Receipts tab and open receipt modal
+    // Switch to Trades & Receipts tab and verify receipt breakdown page link
     fireEvent.click(screen.getByRole('tab', { name: /Trades & Receipts/i }))
     const tradeTable = screen.getByRole('table', { name: /Trading Account activity/i })
-    fireEvent.click(within(tradeTable).getByRole('button', { name: 'View breakdown' }))
-    expect(screen.getByText('Position breakdown')).toBeInTheDocument()
-    expect(screen.getByText('Protocol fee assessed')).toBeInTheDocument()
+    const breakdownLink = within(tradeTable).getByRole('link', { name: 'View breakdown' })
+    expect(breakdownLink).toHaveAttribute('href', `/tx/0x${'1'.repeat(64)}?log=0`)
 
     // Switch to TP/SL Protections tab
     fireEvent.click(screen.getByRole('tab', { name: /TP\/SL Protections/i }))
