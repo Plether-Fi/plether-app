@@ -15,6 +15,11 @@ import { ShareCardModal } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { ExactUsdgAmount, TradeBreakdownDetails } from '../components/TradeBreakdown'
+import {
+  BatchFinalizationPanel,
+  ProtocolEventTracePanel,
+  TxLpSettlementPanel,
+} from '../components/TransactionBatchInspector'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
 import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
@@ -120,6 +125,12 @@ export function TransactionPage() {
     : routeState?.trade
       ? [routeState.trade]
       : []
+  const finalizedOrders = txData?.finalizedOrders ?? []
+  const protocolEvents = txData?.protocolEvents ?? []
+  const batchSummary = txData?.batchSummary ?? null
+  const lpSettlement = txData?.lpSettlement ?? null
+  const hasAnyProtocolData =
+    events.length > 0 || finalizedOrders.length > 0 || protocolEvents.length > 0 || lpSettlement != null
 
   const selectedEvent = pickInitialEvent(events, logParam)
 
@@ -157,7 +168,7 @@ export function TransactionPage() {
     })
   }
 
-  if (events.length === 0 && txQuery.isLoading) {
+  if (!hasAnyProtocolData && txQuery.isLoading) {
     return (
       <div className="space-y-4">
         <Link to={backTarget} className="text-sm font-semibold text-brand-peach hover:underline">
@@ -168,7 +179,7 @@ export function TransactionPage() {
     )
   }
 
-  if (events.length === 0 && txQuery.isError) {
+  if (!hasAnyProtocolData && txQuery.isError) {
     const isNotFound =
       txQuery.error instanceof InsightsApiError && txQuery.error.status === 404
     return (
@@ -204,15 +215,121 @@ export function TransactionPage() {
   }
 
   if (!selectedEvent) {
+    if (!hasAnyProtocolData) {
+      return (
+        <div className="space-y-4">
+          <Link to={backTarget} className="text-sm font-semibold text-brand-peach hover:underline">
+            ← {backLabel}
+          </Link>
+          <EmptyState
+            title="No execution events"
+            message="This transaction does not contain any decoded Perps trade events."
+          />
+        </div>
+      )
+    }
+
+    const kindLabel =
+      txData?.txKind === 'batch_finalization'
+        ? `Batch Finalization (${String(finalizedOrders.length)} orders)`
+        : txData?.txKind === 'order_finalization'
+          ? 'Order Finalization'
+          : txData?.txKind === 'lp_settlement'
+            ? 'LP Epoch Settlement'
+            : 'Protocol Transaction'
+
     return (
-      <div className="space-y-4">
-        <Link to={backTarget} className="text-sm font-semibold text-brand-peach hover:underline">
-          ← {backLabel}
-        </Link>
-        <EmptyState
-          title="No execution events"
-          message="This transaction does not contain any decoded Perps trade events."
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link to={backTarget} className="text-sm font-semibold text-brand-peach hover:underline">
+            ← {backLabel}
+          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="cursor-pointer border border-brand-border/40 bg-surface-raised px-3 py-1.5 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
+            >
+              {copiedLink ? 'Link copied' : 'Copy link'}
+            </button>
+            <a
+              href={explorerTxUrl(normalizedHash, chainId)}
+              target="_blank"
+              rel="noreferrer"
+              className="border border-brand-border/40 px-3 py-1.5 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+            >
+              {chain.explorerName} ↗
+            </a>
+          </div>
+        </div>
+
+        <DataFreshnessBanner
+          tone={lpSettlement ? 'ready' : finalizedOrders.length > 0 ? 'live' : 'unknown'}
+          statusLabel={kindLabel}
+          networkName={chain.name}
+          isTestnet={chain.isTestnet}
+          releaseVersion={releaseVersion}
+          blockNumber={blockNumber ? Number(blockNumber) : null}
+          observedAt={occurredAt}
+          note={`Transaction ${shortAddress(normalizedHash)}`}
         />
+
+        <Panel className="space-y-4 p-5 sm:p-6">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+              {kindLabel}
+            </p>
+            <button
+              type="button"
+              onClick={handleCopyHash}
+              className="cursor-pointer border border-brand-border/35 bg-app-bg px-2 py-0.5 font-mono text-[11px] font-semibold text-content-secondary hover:border-brand-peach hover:text-content-primary"
+            >
+              {copiedHash ? 'Copied' : 'Copy hash'}
+            </button>
+          </div>
+          <h1 className="break-all font-mono text-base font-semibold text-content-primary sm:text-lg">
+            {normalizedHash}
+          </h1>
+          <div className="grid gap-4 border-t border-brand-border/20 pt-4 text-xs sm:grid-cols-3">
+            <div>
+              <span className="text-content-tertiary">Executor / Keeper</span>
+              <div className="mt-1 font-mono text-sm">
+                {executorAddress ? (
+                  <Link
+                    to={`/keepers/${executorAddress.toLowerCase()}`}
+                    className="inline-flex items-center gap-2 text-brand-peach hover:underline"
+                  >
+                    <AddressAvatar address={executorAddress} size={18} />
+                    {shortAddress(executorAddress)}
+                  </Link>
+                ) : (
+                  <span className="text-content-tertiary">—</span>
+                )}
+              </div>
+            </div>
+            <div>
+              <span className="text-content-tertiary">Block</span>
+              <div className="mt-1 font-mono text-sm text-content-primary">
+                {blockNumber ? `#${Number(blockNumber).toLocaleString('en-US')}` : '—'}
+              </div>
+            </div>
+            <div>
+              <span className="text-content-tertiary">Timestamp (UTC)</span>
+              <div className="mt-1 font-mono text-sm text-content-primary">
+                {occurredAt ? formatUtc(occurredAt) : '—'}
+              </div>
+            </div>
+          </div>
+        </Panel>
+
+        {lpSettlement ? <TxLpSettlementPanel settlement={lpSettlement} /> : null}
+        <BatchFinalizationPanel
+          batchSummary={batchSummary}
+          finalizedOrders={finalizedOrders}
+          chainId={chainId}
+          activeOrderId={null}
+        />
+        <ProtocolEventTracePanel protocolEvents={protocolEvents} chainId={chainId} />
       </div>
     )
   }
@@ -292,6 +409,34 @@ export function TransactionPage() {
                         ? selectedEvent.side
                         : null,
                     realizedPnlAssets: selectedEvent.pnlAssets,
+                    price: selectedEvent.price ?? null,
+                    sizeDelta: selectedEvent.sizeDelta ?? null,
+                    notionalAssets: receipt?.executionNotionalAssets ?? selectedEvent.amountAssets ?? null,
+                    occurredAt: selectedEvent.occurredAt,
+                    txHash: selectedEvent.txHash,
+                  },
+                },
+              ]}
+            />
+          ) : selectedEvent.activityType === 'Open' ? (
+            <ShareCardModal
+              compact
+              triggerLabel="Share Open"
+              cards={[
+                {
+                  id: `open-${selectedEvent.id}`,
+                  label: 'Opened Position Receipt',
+                  data: {
+                    kind: 'open_trade',
+                    traderLabel,
+                    account: selectedEvent.account,
+                    networkName: chain.name,
+                    releaseVersion,
+                    market: 'plDXY-PERP',
+                    side:
+                      selectedEvent.side === 'long' || selectedEvent.side === 'short'
+                        ? selectedEvent.side
+                        : null,
                     price: selectedEvent.price ?? null,
                     sizeDelta: selectedEvent.sizeDelta ?? null,
                     notionalAssets: receipt?.executionNotionalAssets ?? selectedEvent.amountAssets ?? null,
@@ -627,6 +772,24 @@ export function TransactionPage() {
           </Panel>
         </div>
       </div>
+
+      {lpSettlement ? <TxLpSettlementPanel settlement={lpSettlement} /> : null}
+
+      <BatchFinalizationPanel
+        batchSummary={batchSummary}
+        finalizedOrders={finalizedOrders}
+        chainId={chainId}
+        activeOrderId={selectedEvent.orderId ?? null}
+        onInspectOrder={(orderId) => {
+          const match = events.find((ev) => ev.orderId === orderId)
+          const idx = match ? extractLogIndex(match.id) : null
+          if (idx) {
+            setSearchParams({ log: idx }, { replace: true })
+          }
+        }}
+      />
+
+      <ProtocolEventTracePanel protocolEvents={protocolEvents} chainId={chainId} />
     </div>
   )
 }

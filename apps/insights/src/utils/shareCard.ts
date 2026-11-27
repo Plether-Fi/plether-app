@@ -23,6 +23,21 @@ export interface TradeShareCardData {
   txHash?: string | null
 }
 
+export interface OpenTradeShareCardData {
+  kind: 'open_trade'
+  traderLabel: string
+  account: string
+  networkName: string
+  releaseVersion?: string | null
+  market: string
+  side: 'long' | 'short' | null
+  price?: string | null
+  sizeDelta?: string | null
+  notionalAssets?: string | null
+  occurredAt: string
+  txHash?: string | null
+}
+
 export interface PositionShareCardData {
   kind: 'position'
   traderLabel: string
@@ -78,6 +93,7 @@ export interface AccountShareCardData {
 
 export type ShareCardData =
   | TradeShareCardData
+  | OpenTradeShareCardData
   | PositionShareCardData
   | DivisionShareCardData
   | AccountShareCardData
@@ -428,6 +444,39 @@ export function buildShareCardSvg(data: ShareCardData): string {
     return renderFrame(color, 'Closed Position Receipt', data.networkName, data.releaseVersion, data.traderLabel, data.account, footerRight, body)
   }
 
+  if (data.kind === 'open_trade') {
+    const sideText = data.side ? data.side.toUpperCase() : 'PERP'
+    const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99'
+    const sideBg = data.side === 'short' ? '#ff572d26' : '#00ff9922'
+    const heroText = data.notionalAssets
+      ? formatAssets(data.notionalAssets)
+      : data.sizeDelta
+        ? formatPlDxyQuantity(data.sizeDelta)
+        : 'Position Opened'
+    const heroFontSize = heroText.length <= 15 ? 72 : heroText.length <= 20 ? 58 : 48
+    const subParts: string[] = []
+    if (data.price) subParts.push(`Entry @ ${formatPrice(data.price)}`)
+    if (data.sizeDelta) subParts.push(formatPlDxyQuantity(data.sizeDelta))
+    const stats = [
+      { label: 'Entry price', value: data.price ? formatPrice(data.price) : '—' },
+      { label: 'Quantity opened', value: data.sizeDelta ? formatPlDxyQuantity(data.sizeDelta) : '—' },
+      { label: 'Notional', value: data.notionalAssets ? formatCompactAssets(data.notionalAssets) : '—' },
+      { label: 'Executed (UTC)', value: formatShareCardUtc(data.occurredAt) },
+    ]
+    const body = `
+      ${renderPill(60, 134, data.market, '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(218, 134, `OPENED ${sideText}`, sideBg, `${sideFg}88`, sideFg)}
+      <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">${data.notionalAssets ? 'NOTIONAL EXPOSURE' : 'OPENED POSITION'}</text>
+      <text x="60" y="308" fill="${sideFg}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(heroFontSize)}" font-weight="800">${escapeXml(heroText)}</text>
+      ${subParts.length > 0 ? `<text x="60" y="358" fill="#d8cbd0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="600">${escapeXml(subParts.join(' · '))}</text>` : ''}
+      ${renderStatBoxes(stats, 408)}
+    `
+    const footerRight = data.txHash
+      ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
+      : 'insights.plether.com'
+    return renderFrame(sideFg, 'Opened Position Receipt', data.networkName, data.releaseVersion, data.traderLabel, data.account, footerRight, body)
+  }
+
   if (data.kind === 'position') {
     const upnl = formatSignedUsdg(data.unrealizedPnlAssets)
     const color = data.liquidatable ? '#ff572d' : toneHex(upnl.tone)
@@ -530,6 +579,10 @@ export function buildShareTweetUrl(data: ShareCardData, pageUrl: string): string
   if (data.kind === 'trade') {
     const pnl = formatSignedUsdg(data.realizedPnlAssets).text
     headline = `Closed ${data.side ? data.side.toUpperCase() + ' ' : ''}${data.market} on Plether: ${pnl} realized PnL.`
+  } else if (data.kind === 'open_trade') {
+    const notionalPart = data.notionalAssets ? ` (${formatCompactAssets(data.notionalAssets)})` : ''
+    const pricePart = data.price ? ` @ ${formatPrice(data.price)}` : ''
+    headline = `Opened ${data.side ? data.side.toUpperCase() + ' ' : ''}${data.market}${notionalPart}${pricePart} on Plether.`
   } else if (data.kind === 'position') {
     const upnl = formatSignedUsdg(data.unrealizedPnlAssets).text
     headline = `Live ${data.side.toUpperCase()} ${data.market} position on Plether: ${upnl} unrealized PnL.`

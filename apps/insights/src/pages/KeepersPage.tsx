@@ -522,14 +522,27 @@ export function KeepersPage() {
                         {Number(item.blockNumber).toLocaleString('en-US')}
                       </td>
                       <td className="px-4 py-3.5 font-mono text-xs">
-                        <a
-                          href={explorerTxUrl(item.txHash, chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(item.txHash)} ↗
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/tx/${item.txHash.toLowerCase()}`}
+                            state={{
+                              from: '/keepers',
+                              fromLabel: 'Back to Keepers',
+                            }}
+                            className="text-brand-peach hover:underline"
+                          >
+                            {shortAddress(item.txHash)}
+                          </Link>
+                          <a
+                            href={explorerTxUrl(item.txHash, chainId)}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`View ${item.txHash} on explorer`}
+                            className="text-content-tertiary hover:text-content-primary"
+                          >
+                            ↗
+                          </a>
+                        </div>
                       </td>
                     </tr>
                   ))}

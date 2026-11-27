@@ -18,6 +18,7 @@ module Plether.Handlers.InsightsExecution
   , fetchRecentTrades
   , fetchTransactionTrades
   , isValidTxHash
+  , classifyTxKind
   , computeLatencyPercentiles
   , buildTimelineBuckets
   , rateBps
@@ -168,6 +169,112 @@ instance FromRow RecentTradeRow where
       <*> field
       <*> field
 
+data FinalizedOrderRow = FinalizedOrderRow
+  { forOrderId :: Integer
+  , forAccount :: Maybe Text
+  , forSide :: Maybe Int
+  , forCommitTxHash :: Maybe Text
+  , forCommitBlock :: Maybe Integer
+  , forCommitTimestamp :: Maybe Integer
+  , forTerminalBlock :: Maybe Integer
+  , forTerminalTimestamp :: Maybe Integer
+  , forTerminalStatus :: Text
+  , forTerminalReason :: Maybe Text
+  , forFailureReason :: Maybe Text
+  , forFailedConstraint :: Maybe Text
+  , forExecutionMode :: Maybe Text
+  , forExecutionPrice :: Maybe Integer
+  , forOraclePrice :: Maybe Integer
+  , forOracleFrozen :: Maybe Bool
+  , forOracleMinPublishTime :: Maybe Integer
+  , forOracleMaxPublishTime :: Maybe Integer
+  , forVpiAssets :: Maybe Integer
+  , forFrozenSpreadAssets :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow FinalizedOrderRow where
+  fromRow =
+    FinalizedOrderRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+
+data ProtocolEventRow = ProtocolEventRow
+  { perLogIndex :: Integer
+  , perBlockNumber :: Integer
+  , perTimestamp :: Integer
+  , perContractAddress :: Text
+  , perEventName :: Text
+  , perAccount :: Maybe Text
+  , perOrderId :: Maybe Integer
+  , perSide :: Maybe Int
+  , perData :: Value
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow ProtocolEventRow where
+  fromRow =
+    ProtocolEventRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+data TxLpSettlementRow = TxLpSettlementRow
+  { tlsEpoch :: Integer
+  , tlsStatus :: Text
+  , tlsReceiptBlock :: Maybe Integer
+  , tlsConfirmedAt :: Maybe UTCTime
+  , tlsCreatedAt :: UTCTime
+  , tlsSeniorDepositAssets :: Maybe Integer
+  , tlsSeniorRedeemAssets :: Maybe Integer
+  , tlsJuniorDepositAssets :: Maybe Integer
+  , tlsJuniorRedeemAssets :: Maybe Integer
+  , tlsSeniorBacklog :: Maybe Bool
+  , tlsJuniorBacklog :: Maybe Bool
+  , tlsEntriesDeferred :: Maybe Bool
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow TxLpSettlementRow where
+  fromRow =
+    TxLpSettlementRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> field
+      <*> field
+      <*> field
+
 getExecutionQualityResponse
   :: DbPool
   -> Config
@@ -273,16 +380,19 @@ getTransactionResponse pool client cfg rawTxHash = do
     else do
       let chainId = cfgPerpsChainId cfg
           router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
-      (rows, cachedSender) <- withDb pool $ \conn -> do
+      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender) <- withDb pool $ \conn -> do
         ensureTxSenderCacheTable conn
         withReadSnapshot conn $ do
           txRows <- fetchTransactionTrades conn chainId router txHash
+          orders <- fetchTransactionFinalizedOrders conn chainId router txHash
+          protoEvs <- fetchTransactionProtocolEvents conn chainId router txHash
+          lpRow <- fetchTransactionLpSettlement conn chainId txHash
           senders <- fetchCachedTxSenders conn chainId [txHash]
-          pure (txRows, Map.lookup txHash senders)
-      case rows of
-        [] ->
+          pure (txRows, orders, protoEvs, lpRow, Map.lookup txHash senders)
+      if null rows && null finalizedOrders && null protocolEvents && maybe True (const False) mLpSettlement
+        then
           pure $ Left $ E.notFound ("No indexed Plether Perps activity found for transaction " <> txHash)
-        firstRow : _ -> do
+        else do
           executorAddr <- case cachedSender of
             Just addr -> pure (Just addr)
             Nothing -> do
@@ -293,19 +403,47 @@ getTransactionResponse pool client cfg rawTxHash = do
                     `catch` (\(_ :: SqlError) -> pure ())
                 Nothing -> pure ()
               pure mResolved
-          let blockNum = rtrBlockNumber firstRow
-              occurredAt = isoTimestamp (rtrTimestamp firstRow)
+          let blockNum =
+                fromMaybe 0 $
+                  (rtrBlockNumber <$> listToMaybe rows)
+                    <|> (listToMaybe finalizedOrders >>= forTerminalBlock)
+                    <|> (perBlockNumber <$> listToMaybe protocolEvents)
+                    <|> (mLpSettlement >>= tlsReceiptBlock)
+              occurredTs =
+                fromMaybe 0 $
+                  (rtrTimestamp <$> listToMaybe rows)
+                    <|> (listToMaybe finalizedOrders >>= forTerminalTimestamp)
+                    <|> (perTimestamp <$> listToMaybe protocolEvents)
+                    <|> ((\lp -> floor (utcTimeToPOSIXSeconds (fromMaybe (tlsCreatedAt lp) (tlsConfirmedAt lp)))) <$> mLpSettlement)
+              txKind = classifyTxKind (length finalizedOrders) (maybe False (const True) mLpSettlement) (any (\r -> rtrActivityType r == "Liquidated") rows)
+              mBatchSummary =
+                if null finalizedOrders
+                  then Nothing
+                  else Just (batchSummaryToJson finalizedOrders)
           pure $
             Right $
               mkResponse blockNum chainId $
                 object
                   [ "network" .= networkMetaJson cfg
                   , "txHash" .= txHash
+                  , "txKind" .= txKind
                   , "blockNumber" .= show blockNum
-                  , "occurredAt" .= occurredAt
+                  , "occurredAt" .= isoTimestamp occurredTs
                   , "executorAddress" .= executorAddr
+                  , "batchSummary" .= mBatchSummary
+                  , "finalizedOrders" .= map finalizedOrderToJson finalizedOrders
+                  , "protocolEvents" .= map protocolEventToJson protocolEvents
+                  , "lpSettlement" .= (txLpSettlementToJson <$> mLpSettlement)
                   , "events" .= map recentTradeToJson rows
                   ]
+
+classifyTxKind :: Int -> Bool -> Bool -> Text
+classifyTxKind finalizedCount hasLpSettlement hasLiquidation
+  | finalizedCount > 1 = "batch_finalization"
+  | finalizedCount == 1 = "order_finalization"
+  | hasLpSettlement = "lp_settlement"
+  | hasLiquidation = "liquidation"
+  | otherwise = "protocol_tx"
 
 getKeepersStatusResponse
   :: DbPool
@@ -982,6 +1120,137 @@ fetchTransactionTrades conn chainId router txHash =
            \LIMIT 100"
     )
     (chainId, router, txHash)
+
+fetchTransactionFinalizedOrders :: Connection -> Integer -> Text -> Text -> IO [FinalizedOrderRow]
+fetchTransactionFinalizedOrders conn chainId router txHash =
+  query
+    conn
+    "SELECT order_id, account, side, commit_tx_hash, commit_block_number, commit_timestamp, \
+    \  terminal_block_number, terminal_timestamp, terminal_status, terminal_reason, \
+    \  failure_reason, failed_constraint, execution_mode, execution_price, execution_oracle_price, \
+    \  execution_oracle_frozen, oracle_min_publish_time, oracle_max_publish_time, \
+    \  execution_vpi_assets, execution_frozen_close_spread_assets \
+    \FROM perps_orders \
+    \WHERE chain_id = ? AND order_router = ? AND LOWER(terminal_tx_hash) = LOWER(?) \
+    \ORDER BY order_id ASC \
+    \LIMIT 200"
+    (chainId, router, txHash)
+
+fetchTransactionProtocolEvents :: Connection -> Integer -> Text -> Text -> IO [ProtocolEventRow]
+fetchTransactionProtocolEvents conn chainId router txHash =
+  query
+    conn
+    "SELECT log_index, block_number, timestamp, contract_address, event_name, \
+    \  account, order_id, side, data \
+    \FROM perps_events \
+    \WHERE chain_id = ? AND release_router = ? AND LOWER(tx_hash) = LOWER(?) \
+    \ORDER BY log_index ASC \
+    \LIMIT 200"
+    (chainId, router, txHash)
+
+fetchTransactionLpSettlement :: Connection -> Integer -> Text -> IO (Maybe TxLpSettlementRow)
+fetchTransactionLpSettlement conn chainId txHash = do
+  rows <-
+    query
+      conn
+      "SELECT epoch, status, receipt_block_number, confirmed_at, created_at, \
+      \  senior_deposit_assets, senior_redeem_assets, junior_deposit_assets, junior_redeem_assets, \
+      \  senior_backlog, junior_backlog, entries_deferred \
+      \FROM perps_lp_settlement_transactions \
+      \WHERE chain_id = ? AND LOWER(receipt_transaction_hash) = LOWER(?) \
+      \ORDER BY id DESC LIMIT 1"
+      (chainId, txHash)
+  pure (listToMaybe rows)
+
+batchSummaryToJson :: [FinalizedOrderRow] -> Value
+batchSummaryToJson orders =
+  let totalOrders = length orders
+      executedOrders = length $ filter (\o -> forTerminalStatus o == "Executed") orders
+      failedOrders = totalOrders - executedOrders
+      uniqueAccounts = length $ nub $ map T.toLower $ mapMaybe forAccount orders
+      latencies =
+        mapMaybe
+          (\o -> (\t c -> max 0 (t - c)) <$> forTerminalTimestamp o <*> forCommitTimestamp o)
+          orders
+      latStats = computeLatencyPercentiles latencies
+      minLat = case sort latencies of
+        (x : _) -> Just x
+        [] -> Nothing
+      totalVpi = sum $ mapMaybe forVpiAssets orders
+      oracleMin = case mapMaybe forOracleMinPublishTime orders of
+        [] -> Nothing
+        xs -> Just (minimum xs)
+      oracleMax = case mapMaybe forOracleMaxPublishTime orders of
+        [] -> Nothing
+        xs -> Just (maximum xs)
+      oraclePrice = listToMaybe $ mapMaybe forOraclePrice orders
+      oracleFrozen = any (== Just True) (map forOracleFrozen orders)
+   in object
+        [ "totalOrders" .= totalOrders
+        , "executedOrders" .= executedOrders
+        , "failedOrExpiredOrders" .= failedOrders
+        , "uniqueAccounts" .= uniqueAccounts
+        , "minLatencySeconds" .= minLat
+        , "medianLatencySeconds" .= lsP50 latStats
+        , "maxLatencySeconds" .= lsMax latStats
+        , "totalVpiAssets" .= show totalVpi
+        , "oracleMinPublishTime" .= (isoTimestamp <$> oracleMin)
+        , "oracleMaxPublishTime" .= (isoTimestamp <$> oracleMax)
+        , "oracleSpreadSeconds" .= ((\mx mn -> max 0 (mx - mn)) <$> oracleMax <*> oracleMin)
+        , "oraclePrice" .= (show <$> oraclePrice)
+        , "oracleFrozen" .= oracleFrozen
+        ]
+
+finalizedOrderToJson :: FinalizedOrderRow -> Value
+finalizedOrderToJson FinalizedOrderRow {..} =
+  let latencySecs = (\t c -> max 0 (t - c)) <$> forTerminalTimestamp <*> forCommitTimestamp
+      latencyBlks = (\t c -> max 0 (t - c)) <$> forTerminalBlock <*> forCommitBlock
+   in object
+        [ "orderId" .= show forOrderId
+        , "account" .= forAccount
+        , "side" .= (sideText <$> forSide)
+        , "commitTxHash" .= forCommitTxHash
+        , "commitBlock" .= (show <$> forCommitBlock)
+        , "commitAt" .= (isoTimestamp <$> forCommitTimestamp)
+        , "latencySeconds" .= latencySecs
+        , "latencyBlocks" .= latencyBlks
+        , "terminalStatus" .= forTerminalStatus
+        , "terminalReason" .= forTerminalReason
+        , "failureReason" .= forFailureReason
+        , "failedConstraint" .= forFailedConstraint
+        , "executionMode" .= forExecutionMode
+        , "executionPrice" .= (show <$> forExecutionPrice)
+        , "oraclePrice" .= (show <$> forOraclePrice)
+        , "oracleFrozen" .= forOracleFrozen
+        , "vpiAssets" .= (show <$> forVpiAssets)
+        , "frozenCloseSpreadAssets" .= (show <$> forFrozenSpreadAssets)
+        ]
+
+protocolEventToJson :: ProtocolEventRow -> Value
+protocolEventToJson ProtocolEventRow {..} =
+  object
+    [ "logIndex" .= perLogIndex
+    , "contractAddress" .= perContractAddress
+    , "eventName" .= perEventName
+    , "account" .= perAccount
+    , "orderId" .= (show <$> perOrderId)
+    , "side" .= (sideText <$> perSide)
+    , "data" .= perData
+    ]
+
+txLpSettlementToJson :: TxLpSettlementRow -> Value
+txLpSettlementToJson TxLpSettlementRow {..} =
+  object
+    [ "epoch" .= tlsEpoch
+    , "status" .= tlsStatus
+    , "seniorDepositAssets" .= (show <$> tlsSeniorDepositAssets)
+    , "seniorRedeemAssets" .= (show <$> tlsSeniorRedeemAssets)
+    , "juniorDepositAssets" .= (show <$> tlsJuniorDepositAssets)
+    , "juniorRedeemAssets" .= (show <$> tlsJuniorRedeemAssets)
+    , "seniorBacklog" .= tlsSeniorBacklog
+    , "juniorBacklog" .= tlsJuniorBacklog
+    , "entriesDeferred" .= tlsEntriesDeferred
+    ]
 
 networkMetaJson :: Config -> Value
 networkMetaJson cfg =

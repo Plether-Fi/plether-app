@@ -93,12 +93,83 @@ export interface ExecutionTradesResponse {
   trades: ProtocolTradeRecord[]
 }
 
+export type TransactionKind =
+  | 'batch_finalization'
+  | 'order_finalization'
+  | 'lp_settlement'
+  | 'liquidation'
+  | 'protocol_tx'
+
+export interface TransactionBatchSummary {
+  totalOrders: number
+  executedOrders: number
+  failedOrExpiredOrders: number
+  uniqueAccounts: number
+  minLatencySeconds: number | null
+  medianLatencySeconds: number | null
+  maxLatencySeconds: number | null
+  totalVpiAssets: string
+  oracleMinPublishTime: string | null
+  oracleMaxPublishTime: string | null
+  oracleSpreadSeconds: number | null
+  oraclePrice: string | null
+  oracleFrozen: boolean
+}
+
+export interface FinalizedOrderRecord {
+  orderId: string
+  account: string | null
+  side: 'long' | 'short' | 'unknown' | null
+  commitTxHash: string | null
+  commitBlock: string | null
+  commitAt: string | null
+  latencySeconds: number | null
+  latencyBlocks: number | null
+  terminalStatus: string
+  terminalReason: string | null
+  failureReason: string | null
+  failedConstraint: string | null
+  executionMode: string | null
+  executionPrice: string | null
+  oraclePrice: string | null
+  oracleFrozen: boolean | null
+  vpiAssets: string | null
+  frozenCloseSpreadAssets: string | null
+}
+
+export interface ProtocolEventRecord {
+  logIndex: number
+  contractAddress: string
+  eventName: string
+  account: string | null
+  orderId: string | null
+  side: 'long' | 'short' | 'unknown' | null
+  data: Record<string, unknown>
+}
+
+export interface TxLpSettlementRecord {
+  epoch: number
+  status: string
+  seniorDepositAssets: string | null
+  seniorRedeemAssets: string | null
+  juniorDepositAssets: string | null
+  juniorRedeemAssets: string | null
+  seniorBacklog: boolean | null
+  juniorBacklog: boolean | null
+  entriesDeferred: boolean | null
+}
+
 export interface TransactionDetailsResponse {
   network: LiquidityNetworkMeta
   txHash: string
+  txKind?: string
   blockNumber: string
   occurredAt: string
   executorAddress?: string | null
+  batchSummary?: TransactionBatchSummary | null
+  finalizedOrders?: FinalizedOrderRecord[]
+  protocolEvents?: ProtocolEventRecord[]
+  lpSettlement?: TxLpSettlementRecord | null
   events: ProtocolTradeRecord[]
 }
 
@@ -275,14 +346,21 @@ async function fetchTransactionWithFallback(
   }
 }
 
+export const txKeys = {
+  detail: (txHash: string) => ['insights', 'tx', txHash.toLowerCase()] as const,
+}
+
 export function useTransaction(txHash: string | undefined) {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
   const normalized = txHash?.trim().toLowerCase() ?? ''
   const valid = /^0x[0-9a-f]{64}$/.test(normalized)
   return useQuery({
-    queryKey: ['insights', 'tx', normalized] as const,
+    queryKey: txKeys.detail(normalized),
     queryFn: ({ signal }) => fetchTransactionWithFallback(normalized, signal),
     enabled: valid,
-    staleTime: 60_000,
+    staleTime: staticPreview ? Infinity : 60_000,
+    refetchInterval: false,
     retry: shouldRetryEndpoint,
   })
 }
