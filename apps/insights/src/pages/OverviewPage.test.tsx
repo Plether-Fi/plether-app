@@ -160,7 +160,7 @@ describe('OverviewPage (Protocol Pulse)', () => {
       isError: false,
     })
     show()
-    expect(screen.getByText('Arbitrum One')).toBeInTheDocument()
+    expect(screen.getByText(/Arbitrum One/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Vaults on App ↗' })).toHaveAttribute(
       'href',
       'https://app.plether.com/vaults',

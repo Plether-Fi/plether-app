@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-
 import { DEFAULT_COMPETITION_SLUG } from './api'
 import { Layout } from './components/Layout'
 import { AccountPage } from './pages/AccountPage'
+import { AccountsPage } from './pages/AccountsPage'
 import { CompetitionArchivePage } from './pages/CompetitionArchivePage'
 import { CompetitionMethodologyPage } from './pages/CompetitionMethodologyPage'
 import { DivisionsRegistrationPage } from './pages/DivisionsRegistrationPage'
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/treasury" element={<TreasuryPage />} />
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />
+          <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/wallets/:address" element={<AccountPage />} />
           <Route
             path="/wallets/:address/positions/:positionId"

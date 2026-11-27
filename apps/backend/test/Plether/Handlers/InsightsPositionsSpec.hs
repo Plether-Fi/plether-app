@@ -2,27 +2,35 @@
 
 module Plether.Handlers.InsightsPositionsSpec (spec) where
 
+import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Plether.Ethereum.Abi (encodeUint256)
 import Plether.Handlers.InsightsPositions
   ( ExposureTimelinePoint (..)
   , GlobalMarketExposure (..)
+  , GlobalOpenAggregate (..)
   , GlobalOpenPosition (..)
+  , OnChainMarketSides (..)
   , PositionActivityRow (..)
   , PositionLifecycle (..)
   , PositionStepEvent (..)
   , PriceCandleRow (..)
+  , WalletDirectoryEntry (..)
   , WalletExposureSummary (..)
   , buildExposureTimeline
   , computeGlobalMarketExposure
   , computeLeverageX100
   , computeNotionalAssets
   , computeUnrealizedPnl
+  , decodeMarketSideTuple
   , defaultMaintenanceMarginBps
   , distanceToLiquidationBps
   , enrichPositionWithCandles
+  , filterSortWalletsDirectory
   , findLiquidationRawPrice
   , pickCandleIntervalSeconds
+  , reconcileGlobalMarketExposure
   , reconstructPositionLifecycles
   , summarizeWalletExposure
   )
@@ -249,3 +257,75 @@ spec = describe "Plether.Handlers.InsightsPositions" $ do
       `shouldBe` ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
     map gopDiscordUsername (gmeTopPositions globalExp)
       `shouldBe` [Just "whale_alice", Nothing]
+
+  it "decodes CfdEngine.sides() ABI tuples and reconciles canonical on-chain OI + full counts" $ do
+    let bullOi = 228935000 * 10 ^ (18 :: Int)
+        bearOi = 183764200 * 10 ^ (18 :: Int)
+        bullMargin = 162053408260000
+        bearMargin = 170711969440000
+        encodedBull = BS.concat [encodeUint256 999, encodeUint256 bullOi, encodeUint256 1234, encodeUint256 bullMargin]
+    decodeMarketSideTuple encodedBull `shouldBe` Just (bullOi, bullMargin)
+    decodeMarketSideTuple (BS.replicate 64 0) `shouldBe` Nothing
+
+    let markRaw = 94605602
+        base = computeGlobalMarketExposure 1800003600 (Just markRaw) Map.empty Map.empty
+        sides =
+          OnChainMarketSides
+            { ocmsLongOpenInterest = bullOi
+            , ocmsShortOpenInterest = bearOi
+            , ocmsLongTotalMarginAssets = bullMargin
+            , ocmsShortTotalMarginAssets = bearMargin
+            }
+        agg =
+          GlobalOpenAggregate
+            { goaLongCount = 620
+            , goaShortCount = 480
+            , goaLongSize = bullOi
+            , goaShortSize = bearOi
+            }
+        reconciled = reconcileGlobalMarketExposure (Just markRaw) (Just sides) (Just agg) base
+    gmeLongOpenInterestAssets reconciled `shouldBe` computeNotionalAssets bullOi markRaw
+    gmeShortOpenInterestAssets reconciled `shouldBe` computeNotionalAssets bearOi markRaw
+    gmeNetSkewAssets reconciled `shouldSatisfy` (> 0)
+    gmeOpenPositionCount reconciled `shouldBe` 1100
+    gmeLongCount reconciled `shouldBe` 620
+    gmeShortCount reconciled `shouldBe` 480
+    gmeLongShareBps reconciled `shouldBe` Just 5547
+    gmeShortShareBps reconciled `shouldBe` Just 4453
+    gmeAvgLeverageX100 reconciled `shouldBe` Just 117
+
+    -- Fallback to full SQL aggregate sizes when on-chain RPC is unavailable
+    let fallback = reconcileGlobalMarketExposure (Just markRaw) Nothing (Just agg) base
+    gmeLongOpenInterestAssets fallback `shouldBe` computeNotionalAssets bullOi markRaw
+    gmeShortOpenInterestAssets fallback `shouldBe` computeNotionalAssets bearOi markRaw
+    gmeOpenPositionCount fallback `shouldBe` 1100
+
+  it "filters, searches, sorts, and paginates Trading Accounts directory entries" $ do
+    let entries =
+          [ WalletDirectoryEntry "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" (Just "macro_alice") (Just "Gold") "long" 100 9500000000 12 6 6 0 120000000000 500000000 (Just 1700000000) (Just 1800000200)
+          , WalletDirectoryEntry "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" Nothing Nothing "short" 200 19000000000 4 2 2 0 40000000000 (-150000000) (Just 1700000100) (Just 1800000100)
+          , WalletDirectoryEntry "0xcccccccccccccccccccccccccccccccccccccccc" (Just "fx_carol") (Just "Silver") "flat" 0 0 25 12 13 0 250000000000 900000000 (Just 1700000200) (Just 1800000300)
+          ]
+    -- Default sort (notional DESC)
+    let (totAll, byNotional) = filterSortWalletsDirectory Nothing Nothing Nothing 50 0 entries
+    totAll `shouldBe` 3
+    map wdeAccount byNotional
+      `shouldBe` [ "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                 , "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                 , "0xcccccccccccccccccccccccccccccccccccccccc"
+                 ]
+    -- Search by @handle (leading @ stripped, case-insensitive)
+    let (totSearch, matchedSearch) = filterSortWalletsDirectory (Just "@MACRO_ALICE") Nothing Nothing 50 0 entries
+    totSearch `shouldBe` 1
+    map wdeAccount matchedSearch `shouldBe` ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    -- Filter open + sort by volume
+    let (totOpen, openByVol) = filterSortWalletsDirectory Nothing (Just "open") (Just "volume") 50 0 entries
+    totOpen `shouldBe` 2
+    map wdeAccount openByVol
+      `shouldBe` [ "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                 , "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                 ]
+    -- Filter profitable + sort by pnl + pagination
+    let (totProf, profPage) = filterSortWalletsDirectory Nothing (Just "profitable") (Just "pnl") 1 0 entries
+    totProf `shouldBe` 2
+    map wdeAccount profPage `shouldBe` ["0xcccccccccccccccccccccccccccccccccccccccc"]

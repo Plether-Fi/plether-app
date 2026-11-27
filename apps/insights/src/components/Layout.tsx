@@ -4,6 +4,7 @@ import { useInsightsStatus } from '../api'
 import { useLiveDivisions } from '../divisions/query'
 import { resolvePerpsChain } from '../utils/chain'
 import { formatUtc } from '../utils/format'
+import { GlobalSearch } from './GlobalSearch'
 
 const OPS_ROUTES = [
   {
@@ -30,14 +31,14 @@ const OPS_ROUTES = [
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
-    'whitespace-nowrap border px-2.5 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
+    'whitespace-nowrap border px-2 py-1.5 text-[13px] font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
     isActive
       ? 'border-brand-orange bg-brand-orange text-content-primary'
       : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary',
   ].join(' ')
 }
 
-function OperationsDropdown() {
+function OperationsDropdown({ align = 'left' }: { align?: 'left' | 'right' }) {
   const location = useLocation()
   const [openAtPath, setOpenAtPath] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -74,7 +75,7 @@ function OperationsDropdown() {
         onClick={() => {
           setOpenAtPath((prev) => (prev === location.pathname ? null : location.pathname))
         }}
-        className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap border px-2.5 py-2 text-sm font-semibold transition-colors ${
+        className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap border px-2 py-1.5 text-[13px] font-semibold transition-colors ${
           activeOp
             ? 'border-brand-orange bg-brand-orange text-content-primary'
             : open
@@ -92,7 +93,9 @@ function OperationsDropdown() {
         <div
           role="menu"
           aria-label="Operations pages"
-          className="absolute left-0 top-full z-50 mt-1.5 w-72 border border-brand-border/35 bg-surface-panel p-1.5 shadow-xl"
+          className={`absolute top-full z-50 mt-1.5 w-72 border border-brand-border/35 bg-surface-panel p-1.5 shadow-xl ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
         >
           {OPS_ROUTES.map((item) => {
             const isActive =
@@ -102,7 +105,9 @@ function OperationsDropdown() {
                 key={item.to}
                 to={item.to}
                 role="menuitem"
-                onClick={() => { setOpenAtPath(null) }}
+                onClick={() => {
+                  setOpenAtPath(null)
+                }}
                 className={`block border px-3 py-2 transition-colors ${
                   isActive
                     ? 'border-brand-orange/60 bg-brand-orange/15 text-content-primary'
@@ -127,28 +132,66 @@ function OperationsDropdown() {
   )
 }
 
-function Header() {
+function HeaderTelemetryPill() {
+  const statusQuery = useInsightsStatus()
+  const live = useLiveDivisions()
+  const chain = resolvePerpsChain(statusQuery.data?.chainId)
+  const snapshot = live.data?.status === 'ready' ? live.data : null
+  const blockNumber = snapshot?.snapshotBlock ?? statusQuery.data?.latestIndexedBlock ?? null
+  const observedAt = snapshot?.snapshotAt ?? statusQuery.data?.latestIndexedAt ?? null
+  const healthy = snapshot !== null || statusQuery.data?.healthy === true
+  const checking = live.isLoading && statusQuery.isLoading
+
+  const dotClass = healthy ? 'bg-positive' : checking ? 'bg-brand-yellow' : 'bg-brand-orange'
+  const tooltip = [
+    chain.name,
+    blockNumber != null ? `Block #${Number(blockNumber).toLocaleString('en-US')}` : null,
+    observedAt ? `Observed ${formatUtc(observedAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  const shortNetwork = chain.isTestnet ? 'Sepolia' : 'Arbitrum'
+
   return (
-    <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel py-2 sm:py-3.5">
+    <Link
+      to="/infra"
+      title={tooltip || 'Protocol telemetry status'}
+      className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap border border-brand-border/30 bg-app-bg px-2 py-1.5 font-mono text-[11px] text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-content-primary xl:inline-flex"
+    >
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+      <span className="text-content-primary">{shortNetwork}</span>
+    </Link>
+  )
+}
+
+function Header() {
+  const location = useLocation()
+  const accountsActive =
+    location.pathname === '/accounts' || location.pathname.startsWith('/wallets/')
+
+  return (
+    <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel py-2 sm:py-3">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:flex-nowrap lg:px-8">
-        <div className="flex min-w-0 items-center gap-4 lg:gap-8">
+        <div className="flex min-w-0 shrink-0 items-center gap-3 xl:gap-5">
           <Link
             to="/"
-            className="flex shrink-0 items-center gap-2 py-0.5 transition-opacity hover:opacity-90 sm:gap-2.5"
+            className="flex shrink-0 items-center gap-2 py-0.5 transition-opacity hover:opacity-90"
             aria-label="Plether Insights home"
           >
-            <img src="/logomark.svg" alt="" className="h-7 w-7 shrink-0 sm:h-8 sm:w-8" />
-            <img src="/logotype.svg" alt="Plether" className="hidden h-5 w-auto sm:block sm:h-6" />
-            <span className="whitespace-nowrap border-l border-brand-border/35 pl-2.5 text-sm font-semibold text-brand-peach">
+            <img src="/logomark.svg" alt="" className="h-7 w-7 shrink-0 sm:h-7 sm:w-7" />
+            <img src="/logotype.svg" alt="Plether" className="hidden h-5 w-auto sm:block" />
+            <span className="whitespace-nowrap border-l border-brand-border/35 pl-2 text-sm font-semibold text-brand-peach">
               Insights
             </span>
           </Link>
 
           <nav
-            className="hidden items-center gap-1 lg:flex"
+            className="hidden shrink-0 items-center gap-0.5 lg:flex"
             aria-label="Primary navigation"
           >
             <NavLink to="/" end className={navClass}>Overview</NavLink>
+            <Link to="/accounts" className={navClass({ isActive: accountsActive })}>Accounts</Link>
             <NavLink to="/execution" className={navClass}>Execution</NavLink>
             <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
             <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
@@ -158,18 +201,21 @@ function Header() {
           </nav>
         </div>
 
+        <div className="flex shrink-0 items-center gap-2">
+          <GlobalSearch className="w-40 sm:w-44 lg:w-36 xl:w-44" />
+          <HeaderTelemetryPill />
+        </div>
+
         <nav
-          className="flex w-full items-center gap-1 overflow-x-auto pb-0.5 lg:hidden"
+          className="flex w-full flex-wrap items-center gap-1 pb-0.5 lg:hidden"
           aria-label="Mobile navigation"
         >
           <NavLink to="/" end className={navClass}>Overview</NavLink>
+          <Link to="/accounts" className={navClass({ isActive: accountsActive })}>Accounts</Link>
           <NavLink to="/execution" className={navClass}>Execution</NavLink>
           <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
           <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
-          <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
-          <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
-          <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
-          <NavLink to="/infra" className={navClass}>Infra</NavLink>
+          <OperationsDropdown align="left" />
           <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
           <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
         </nav>

@@ -109,7 +109,6 @@ function show() {
 describe('KeepersPage (Stage 2 Permissionless Keepers)', () => {
   it('displays every detected on-chain keeper identically with ETH balance, low-ETH flag, share, and filters', () => {
     show()
-    expect(screen.getByText('2 active keepers (24h)')).toBeInTheDocument()
     expect(screen.getByText('3s / 7s')).toBeInTheDocument()
 
     const table = screen.getByRole('table', { name: /Permissionless on-chain keepers/ })

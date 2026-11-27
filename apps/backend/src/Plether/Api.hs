@@ -156,6 +156,7 @@ import Plether.Handlers.InsightsPositions
   ( getMarketExposureResponse
   , getWalletExposureResponse
   , getWalletPositionDetailResponse
+  , getWalletsDirectoryResponse
   )
 import Plether.Handlers.InsightsWallets
   ( getDivisionsWalletContextResponse
@@ -723,6 +724,32 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
                 >>= handleResult
             Nothing -> insightsUnavailable
 
+  get "/api/insights/v1/wallets" $ do
+    mSearch <- queryParamMaybe "search"
+    mFilter <- queryParamMaybe "filter"
+    mSort <- queryParamMaybe "sort"
+    mLimit <- queryParamMaybe "limit"
+    mOffset <- queryParamMaybe "offset"
+    case (traverse parseNonNegativeInt mLimit, traverse parseNonNegativeInt mOffset) of
+      (Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, Nothing) -> handleError $ E.invalidAmount "offset must be a non-negative integer"
+      (Just parsedLimit, Just parsedOffset) ->
+        case mPool of
+          Just pool ->
+            liftIO
+              ( getWalletsDirectoryResponse
+                  pool
+                  (Just perpsClient)
+                  cfg
+                  mSearch
+                  mFilter
+                  mSort
+                  (maybe 50 id parsedLimit)
+                  (maybe 0 id parsedOffset)
+              )
+              >>= handleResult
+          Nothing -> insightsUnavailable
+
   get "/api/insights/v1/wallets/:address/summary" $ do
     addr <- pathParam "address"
     mLimit <- queryParamMaybe "limit"
@@ -740,7 +767,7 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
   get "/api/insights/v1/market/exposure" $ do
     case mPool of
       Just pool ->
-        liftIO (getMarketExposureResponse pool cfg)
+        liftIO (getMarketExposureResponse pool (Just perpsClient) cfg)
           >>= handleResult
       Nothing -> insightsUnavailable
 

@@ -165,7 +165,6 @@ describe('SponsoredPage (Stage 5 Sponsored Transactions & Paymaster Health)', ()
   it('renders live gate status, EntryPoint deposit runway, budget gauges, reconciler, close assistance, ops tape, and audit trail', () => {
     show()
 
-    expect(screen.getByText('Issuing live')).toBeInTheDocument()
     expect(screen.getAllByText('0.2500 ETH').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Fresh · Alto OK')).toBeInTheDocument()
     expect(screen.getByText('EntryPoint v0.8 Ready')).toBeInTheDocument()

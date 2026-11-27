@@ -15,6 +15,11 @@ module Plether.Handlers.InsightsPositions
   , PositionPricePoint (..)
   , GlobalOpenPosition (..)
   , GlobalMarketExposure (..)
+  , OnChainMarketSides (..)
+  , GlobalOpenAggregate (..)
+  , WalletDirectoryEntry (..)
+  , WalletDirectorySummary (..)
+  , WalletDirectorySnapshot (..)
   , plDxyCapPrice
   , defaultMaintenanceMarginBps
   , computeNotionalAssets
@@ -28,21 +33,31 @@ module Plether.Handlers.InsightsPositions
   , buildExposureTimeline
   , summarizeWalletExposure
   , computeGlobalMarketExposure
+  , decodeMarketSideTuple
+  , fetchOnChainMarketSides
+  , reconcileGlobalMarketExposure
+  , filterSortWalletsDirectory
   , getWalletExposureResponse
   , getWalletPositionDetailResponse
   , getMarketExposureResponse
+  , getWalletsDirectoryResponse
   ) where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (concurrently)
+import Control.Exception (SomeException, catch)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isRight)
+import Data.Foldable (toList)
+import Data.Int (Int64)
 import Data.List (sort, sortOn)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe, mapMaybe)
 import Data.Ord (Down (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -61,7 +76,8 @@ import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSing
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Candles (getActiveBasketSeriesId)
-import Plether.Ethereum.Client (EthClient)
+import Plether.Ethereum.Abi (decodeUint256, encodeCall, encodeUint256)
+import Plether.Ethereum.Client (CallParams (..), EthClient, ethCall)
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , getAccountLedgerSnapshot
@@ -77,6 +93,7 @@ import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 -- | Canonical plDXY price cap in 1e8 precision (2.00000000).
@@ -1895,65 +1912,215 @@ computeGlobalMarketExposure nowUnix mMarkRaw handlesMap byAccount =
         , gmeTopPositions = take 10 openPositions
         }
 
+-- | Canonical on-chain open interest and total locked margin from
+-- @CfdEngine.sides(0)@ (Long / Bull) and @CfdEngine.sides(1)@ (Short / Bear).
+data OnChainMarketSides = OnChainMarketSides
+  { ocmsLongOpenInterest :: Integer
+  , ocmsShortOpenInterest :: Integer
+  , ocmsLongTotalMarginAssets :: Integer
+  , ocmsShortTotalMarginAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+-- | Full-release SQL aggregate across ALL open accounts (no row cap).
+data GlobalOpenAggregate = GlobalOpenAggregate
+  { goaLongCount :: Int
+  , goaShortCount :: Int
+  , goaLongSize :: Integer
+  , goaShortSize :: Integer
+  }
+  deriving stock (Eq, Show)
+
+-- | Decode the 4-word ABI tuple returned by @CfdEngine.sides(uint256)@:
+-- @(maxProfitAssets, openInterest, entryNotional, totalMargin)@.
+-- Returns @(openInterest, totalMargin)@.
+decodeMarketSideTuple :: ByteString -> Maybe (Integer, Integer)
+decodeMarketSideTuple bytes
+  | BS.length bytes < 128 = Nothing
+  | otherwise =
+      let oiWord = BS.take 32 (BS.drop 32 bytes)
+          marginWord = BS.take 32 (BS.drop 96 bytes)
+       in Just (decodeUint256 oiWord, decodeUint256 marginWord)
+
+-- | Fetch canonical Long (@sides(0)@) and Short (@sides(1)@) open interest and
+-- total locked margin directly from @CfdEngine@ on-chain (matching the main
+-- trading app's @usePerpsMarket@ hook).
+fetchOnChainMarketSides :: EthClient -> IO (Maybe OnChainMarketSides)
+fetchOnChainMarketSides client = do
+  let engine = Manifest.cfdEngineAddress
+      callSide :: Integer -> IO (Maybe (Integer, Integer))
+      callSide idx = do
+        let calldata = encodeCall "sides(uint256)" [encodeUint256 idx]
+        res <-
+          timeout 2000000 $
+            (Just <$> ethCall client (CallParams engine calldata))
+              `catch` (\(_ :: SomeException) -> pure Nothing)
+        pure $ case res of
+          Just (Just (Right bytes)) -> decodeMarketSideTuple bytes
+          _ -> Nothing
+  (mBull, mBear) <- concurrently (callSide 0) (callSide 1)
+  pure $ case (mBull, mBear) of
+    (Just (bullOi, bullMargin), Just (bearOi, bearMargin)) ->
+      Just
+        OnChainMarketSides
+          { ocmsLongOpenInterest = bullOi
+          , ocmsShortOpenInterest = bearOi
+          , ocmsLongTotalMarginAssets = bullMargin
+          , ocmsShortTotalMarginAssets = bearMargin
+          }
+    _ -> Nothing
+
+-- | Reconcile reconstructed top-position exposure with canonical on-chain
+-- @CfdEngine.sides()@ OI / margin totals and full-release SQL open counts.
+reconcileGlobalMarketExposure
+  :: Maybe Integer
+  -> Maybe OnChainMarketSides
+  -> Maybe GlobalOpenAggregate
+  -> GlobalMarketExposure
+  -> GlobalMarketExposure
+reconcileGlobalMarketExposure mMarkRaw mOnChainSides mAgg base =
+  let (longOi, shortOi, mTotalMargin) =
+        case (mOnChainSides, mMarkRaw) of
+          (Just sides, Just markRaw) | markRaw > 0 ->
+            ( computeNotionalAssets (ocmsLongOpenInterest sides) markRaw
+            , computeNotionalAssets (ocmsShortOpenInterest sides) markRaw
+            , Just (ocmsLongTotalMarginAssets sides + ocmsShortTotalMarginAssets sides)
+            )
+          _ ->
+            case (mAgg, mMarkRaw) of
+              (Just agg, Just markRaw) | markRaw > 0 ->
+                ( computeNotionalAssets (goaLongSize agg) markRaw
+                , computeNotionalAssets (goaShortSize agg) markRaw
+                , Nothing
+                )
+              _ ->
+                ( gmeLongOpenInterestAssets base
+                , gmeShortOpenInterestAssets base
+                , Nothing
+                )
+      totalOi = longOi + shortOi
+      (longShare, shortShare) =
+        if totalOi <= 0
+          then (Nothing, Nothing)
+          else
+            let ls = (longOi * 10000) `div` totalOi
+             in (Just ls, Just (10000 - ls))
+      (longCnt, shortCnt) = case mAgg of
+        Just agg -> (goaLongCount agg, goaShortCount agg)
+        Nothing -> (gmeLongCount base, gmeShortCount base)
+      avgLev = case mTotalMargin of
+        Just totMargin | totMargin > 0 && totalOi > 0 -> Just (computeLeverageX100 totalOi totMargin)
+        _ -> gmeAvgLeverageX100 base
+   in base
+        { gmeLongOpenInterestAssets = longOi
+        , gmeShortOpenInterestAssets = shortOi
+        , gmeTotalOpenInterestAssets = totalOi
+        , gmeNetSkewAssets = longOi - shortOi
+        , gmeLongShareBps = longShare
+        , gmeShortShareBps = shortShare
+        , gmeOpenPositionCount = longCnt + shortCnt
+        , gmeLongCount = longCnt
+        , gmeShortCount = shortCnt
+        , gmeAvgLeverageX100 = avgLev
+        }
+
 -- | GET /api/insights/v1/market/exposure
 getMarketExposureResponse
   :: DbPool
+  -> Maybe EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getMarketExposureResponse pool cfg =
-  snd <$> runSingleFlightCache marketExposureCache () isRight (computeMarketExposureResponse pool cfg)
+getMarketExposureResponse pool mClient cfg =
+  snd <$> runSingleFlightCache marketExposureCache () isRight (computeMarketExposureResponse pool mClient cfg)
 
 computeMarketExposureResponse
   :: DbPool
+  -> Maybe EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-computeMarketExposureResponse pool cfg = do
+computeMarketExposureResponse pool mClient cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
-  (taggedRows, mMarkTuple, handlesMap, latestBlock) <-
-    withDb pool $ \conn ->
-      withReadSnapshot conn $ do
-        mMark <- fetchLatestBasketMark conn now
-        -- Identify accounts with net positive open size in the active release,
-        -- then pull their position activity to reconstruct live open positions.
-        activeAcctRows <-
-          query
-            conn
-            "SELECT account \
-            \FROM perps_account_activity \
-            \WHERE chain_id = ? AND release_router = ? \
-            \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
-            \GROUP BY account \
-            \HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
-            \ORDER BY MAX(block_number) DESC \
-            \LIMIT 150"
-            (chainId, router) :: IO [Only Text]
-        let accounts = map fromOnly activeAcctRows
-        if null accounts
-          then pure ([], mMark, Map.empty, 0)
-          else do
-            rows <-
+      fetchDbData =
+        withDb pool $ \conn ->
+          withReadSnapshot conn $ do
+            mMark <- fetchLatestBasketMark conn now
+            -- Aggregate open position counts & net open sizes across ALL active
+            -- accounts on this release (no LIMIT truncation).
+            aggRows <-
               query
                 conn
-                "SELECT account, activity_type, order_id, side, price, size_delta, \
-                \amount_assets, pnl_assets, tx_hash, block_number, log_index, timestamp \
+                "WITH acct_sides AS ( \
+                \  SELECT account, side, \
+                \    COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) AS net_size \
+                \  FROM perps_account_activity \
+                \  WHERE chain_id = ? AND release_router = ? \
+                \    AND activity_type IN ('Open', 'Close', 'Liquidated') \
+                \    AND side IN (0, 1) \
+                \  GROUP BY account, side \
+                \  HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
+                \) \
+                \SELECT \
+                \  COUNT(*) FILTER (WHERE side = 0)::int, \
+                \  COUNT(*) FILTER (WHERE side = 1)::int, \
+                \  COALESCE(SUM(net_size) FILTER (WHERE side = 0), 0)::text, \
+                \  COALESCE(SUM(net_size) FILTER (WHERE side = 1), 0)::text \
+                \FROM acct_sides"
+                (chainId, router) :: IO [(Int, Int, Text, Text)]
+            let mAgg = case aggRows of
+                  ((lc, sc, lsTxt, ssTxt) : _) ->
+                    Just
+                      GlobalOpenAggregate
+                        { goaLongCount = lc
+                        , goaShortCount = sc
+                        , goaLongSize = fromMaybe 0 (readMaybe (T.unpack lsTxt))
+                        , goaShortSize = fromMaybe 0 (readMaybe (T.unpack ssTxt))
+                        }
+                  [] -> Nothing
+            -- Pull the 25 largest open accounts by net open size so the Top 10
+            -- Active Positions leaderboard always reflects the biggest live positions.
+            topAcctRows <-
+              query
+                conn
+                "SELECT account \
                 \FROM perps_account_activity \
                 \WHERE chain_id = ? AND release_router = ? \
-                \  AND account IN ? \
-                \  AND activity_type IN ('Open', 'Close', 'Liquidated', 'Add margin') \
-                \ORDER BY block_number ASC, log_index ASC"
-                (chainId, router, In accounts) :: IO [AccountTaggedActivityRow]
-            handleRows <-
-              query
-                conn
-                "SELECT trading_account, discord_username \
-                \FROM insights_divisions_links \
-                \WHERE trading_account IN ?"
-                (Only (In accounts)) :: IO [(Text, Text)]
-            let hMap = Map.fromList [(T.toLower a, T.strip h) | (a, h) <- handleRows, not (T.null (T.strip h))]
-                maxBlk = foldl max 0 (map atarBlockNumber rows)
-            pure (rows, mMark, hMap, maxBlk)
+                \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+                \  AND side IN (0, 1) \
+                \GROUP BY account, side \
+                \HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
+                \ORDER BY COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) DESC \
+                \LIMIT 25"
+                (chainId, router) :: IO [Only Text]
+            let accounts = map fromOnly topAcctRows
+            if null accounts
+              then pure ([], mMark, mAgg, Map.empty, 0)
+              else do
+                rows <-
+                  query
+                    conn
+                    "SELECT account, activity_type, order_id, side, price, size_delta, \
+                    \amount_assets, pnl_assets, tx_hash, block_number, log_index, timestamp \
+                    \FROM perps_account_activity \
+                    \WHERE chain_id = ? AND release_router = ? \
+                    \  AND account IN ? \
+                    \  AND activity_type IN ('Open', 'Close', 'Liquidated', 'Add margin') \
+                    \ORDER BY block_number ASC, log_index ASC"
+                    (chainId, router, In accounts) :: IO [AccountTaggedActivityRow]
+                handleRows <-
+                  query
+                    conn
+                    "SELECT trading_account, discord_username \
+                    \FROM insights_divisions_links \
+                    \WHERE trading_account IN ?"
+                    (Only (In accounts)) :: IO [(Text, Text)]
+                let hMap = Map.fromList [(T.toLower a, T.strip h) | (a, h) <- handleRows, not (T.null (T.strip h))]
+                    maxBlk = foldl max 0 (map atarBlockNumber rows)
+                pure (rows, mMark, mAgg, hMap, maxBlk)
+      fetchSides = maybe (pure Nothing) fetchOnChainMarketSides mClient
+  ((taggedRows, mMarkTuple, mAgg, handlesMap, latestBlock), mOnChainSides) <-
+    concurrently fetchDbData fetchSides
   let mMarkRaw = fst <$> mMarkTuple
       mMarkTs = snd <$> mMarkTuple
       byAccount =
@@ -1981,7 +2148,8 @@ computeMarketExposureResponse pool cfg = do
           )
           Map.empty
           taggedRows
-      exposure = computeGlobalMarketExposure now mMarkRaw handlesMap byAccount
+      reconstructed = computeGlobalMarketExposure now mMarkRaw handlesMap byAccount
+      exposure = reconcileGlobalMarketExposure mMarkRaw mOnChainSides mAgg reconstructed
   pure $
     Right $
       mkResponse latestBlock chainId $
@@ -2030,4 +2198,331 @@ globalOpenPositionToJson GlobalOpenPosition {..} =
     , "unrealizedPnlAssets" .= show gopUnrealizedPnlAssets
     , "openedAt" .= isoTimestamp gopOpenedAt
     , "durationSeconds" .= gopDurationSeconds
+    ]
+
+-- | Single row in the Trading Accounts directory (@GET /api/insights/v1/wallets@).
+data WalletDirectoryEntry = WalletDirectoryEntry
+  { wdeAccount :: Text
+  , wdeDiscordUsername :: Maybe Text
+  , wdeDivisionsTier :: Maybe Text
+  , wdeOpenSide :: Text -- "long" | "short" | "flat"
+  , wdeOpenSize :: Integer
+  , wdeOpenNotionalAssets :: Integer
+  , wdeTotalTrades :: Int64
+  , wdeOpensCount :: Int64
+  , wdeClosesCount :: Int64
+  , wdeLiquidationsCount :: Int64
+  , wdeVolumeAssets :: Integer
+  , wdeRealizedPnlAssets :: Integer
+  , wdeFirstActivityAt :: Maybe Integer
+  , wdeLastActivityAt :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+data WalletDirectorySummary = WalletDirectorySummary
+  { wdsTotalAccounts :: Int
+  , wdsAccountsWithOpenPosition :: Int
+  , wdsLongCount :: Int
+  , wdsShortCount :: Int
+  , wdsLongOpenInterestAssets :: Integer
+  , wdsShortOpenInterestAssets :: Integer
+  , wdsTotalOpenInterestAssets :: Integer
+  , wdsNetSkewAssets :: Integer
+  , wdsAvgLeverageX100 :: Maybe Integer
+  , wdsActive24hCount :: Int
+  , wdsDiscordLinkedCount :: Int
+  , wdsTotalVolumeAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data WalletDirectorySnapshot = WalletDirectorySnapshot
+  { wdSnapObservedAt :: Integer
+  , wdSnapLatestBlock :: Integer
+  , wdSnapMarkPrice :: Maybe Integer
+  , wdSnapMarkObservedAt :: Maybe Integer
+  , wdSnapSummary :: WalletDirectorySummary
+  , wdSnapEntries :: [WalletDirectoryEntry]
+  }
+  deriving stock (Eq, Show)
+
+data DirectoryAccountSqlRow = DirectoryAccountSqlRow
+  { dasrAccount :: Text
+  , dasrTotalTrades :: Int64
+  , dasrOpensCount :: Int64
+  , dasrClosesCount :: Int64
+  , dasrLiquidationsCount :: Int64
+  , dasrVolumeText :: Text
+  , dasrRealizedPnlText :: Text
+  , dasrFirstTs :: Maybe Integer
+  , dasrLastTs :: Maybe Integer
+  , dasrMaxBlock :: Integer
+  , dasrLongNetSizeText :: Text
+  , dasrShortNetSizeText :: Text
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow DirectoryAccountSqlRow where
+  fromRow =
+    DirectoryAccountSqlRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+walletsDirectoryCache :: SingleFlightCache () (Either ApiError WalletDirectorySnapshot)
+walletsDirectoryCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+extractEarnedTiersFromPublication :: Value -> Map.Map Text Text
+extractEarnedTiersFromPublication (Object obj) =
+  case KM.lookup (Key.fromText "standings") obj of
+    Just (Array arr) ->
+      Map.fromList
+        [ (T.toLower (T.strip addr), T.strip tier)
+        | Object row <- toList arr
+        , Just (String addr) <- [KM.lookup (Key.fromText "address") row]
+        , Just (String tier) <- [KM.lookup (Key.fromText "tier") row]
+        , not (T.null (T.strip addr))
+        , not (T.null (T.strip tier))
+        ]
+    _ -> Map.empty
+extractEarnedTiersFromPublication _ = Map.empty
+
+computeWalletsDirectorySnapshot
+  :: DbPool
+  -> Maybe EthClient
+  -> Config
+  -> IO (Either ApiError WalletDirectorySnapshot)
+computeWalletsDirectorySnapshot pool mClient cfg = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
+      router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      fetchDbData =
+        withDb pool $ \conn ->
+          withReadSnapshot conn $ do
+            mMark <- fetchLatestBasketMark conn now
+            acctRows <-
+              query
+                conn
+                "SELECT \
+                \  LOWER(account), \
+                \  COUNT(*) FILTER (WHERE activity_type IN ('Open', 'Close', 'Liquidated')), \
+                \  COUNT(*) FILTER (WHERE activity_type = 'Open'), \
+                \  COUNT(*) FILTER (WHERE activity_type = 'Close'), \
+                \  COUNT(*) FILTER (WHERE activity_type = 'Liquidated'), \
+                \  COALESCE(FLOOR(SUM(CASE WHEN activity_type IN ('Open', 'Close', 'Liquidated') AND size_delta IS NOT NULL AND price IS NOT NULL THEN ABS(size_delta) * price / 100000000000000000000 ELSE 0 END)), 0)::text, \
+                \  COALESCE(SUM(COALESCE(pnl_assets, 0)), 0)::text, \
+                \  MIN(timestamp), \
+                \  MAX(timestamp), \
+                \  COALESCE(MAX(block_number), 0), \
+                \  COALESCE(SUM(CASE WHEN side = 0 AND activity_type = 'Open' THEN COALESCE(size_delta, 0) WHEN side = 0 AND activity_type IN ('Close', 'Liquidated') THEN -COALESCE(size_delta, 0) ELSE 0 END), 0)::text, \
+                \  COALESCE(SUM(CASE WHEN side = 1 AND activity_type = 'Open' THEN COALESCE(size_delta, 0) WHEN side = 1 AND activity_type IN ('Close', 'Liquidated') THEN -COALESCE(size_delta, 0) ELSE 0 END), 0)::text \
+                \FROM perps_account_activity \
+                \WHERE chain_id = ? AND release_router = ? \
+                \GROUP BY LOWER(account)"
+                (chainId, router) :: IO [DirectoryAccountSqlRow]
+            handleRows <-
+              query
+                conn
+                "SELECT LOWER(trading_account), discord_username FROM insights_divisions_links"
+                () :: IO [(Text, Text)]
+            pubRows <-
+              query
+                conn
+                "SELECT publication FROM divisions_publications WHERE chain_id = ? ORDER BY week_start DESC LIMIT 1"
+                (Only chainId) :: IO [Only Value]
+            let hMap = Map.fromList [(T.strip a, T.strip h) | (a, h) <- handleRows, not (T.null (T.strip h))]
+                tMap = maybe Map.empty (extractEarnedTiersFromPublication . fromOnly) (listToMaybe pubRows)
+            pure (acctRows, mMark, hMap, tMap)
+      fetchSides = maybe (pure Nothing) fetchOnChainMarketSides mClient
+  ((acctRows, mMarkTuple, handlesMap, tiersMap), mOnChainSides) <-
+    concurrently fetchDbData fetchSides
+  let mMarkRaw = fst <$> mMarkTuple
+      mMarkTs = snd <$> mMarkTuple
+      effMark = fromMaybe 95000000 mMarkRaw
+      parseInt txt = fromMaybe 0 (readMaybe (T.unpack txt))
+      cutoff24h = now - 86400
+      entries =
+        [ let longSz = max 0 (parseInt (dasrLongNetSizeText r))
+              shortSz = max 0 (parseInt (dasrShortNetSizeText r))
+              (openSide, openSz)
+                | longSz > 0 && longSz >= shortSz = ("long" :: Text, longSz)
+                | shortSz > 0 = ("short" :: Text, shortSz)
+                | otherwise = ("flat" :: Text, 0)
+              openNotional =
+                if openSz > 0 && effMark > 0
+                  then computeNotionalAssets openSz effMark
+                  else 0
+              acct = dasrAccount r
+           in WalletDirectoryEntry
+                { wdeAccount = acct
+                , wdeDiscordUsername = Map.lookup acct handlesMap
+                , wdeDivisionsTier = Map.lookup acct tiersMap
+                , wdeOpenSide = openSide
+                , wdeOpenSize = openSz
+                , wdeOpenNotionalAssets = openNotional
+                , wdeTotalTrades = dasrTotalTrades r
+                , wdeOpensCount = dasrOpensCount r
+                , wdeClosesCount = dasrClosesCount r
+                , wdeLiquidationsCount = dasrLiquidationsCount r
+                , wdeVolumeAssets = max 0 (parseInt (dasrVolumeText r))
+                , wdeRealizedPnlAssets = parseInt (dasrRealizedPnlText r)
+                , wdeFirstActivityAt = dasrFirstTs r
+                , wdeLastActivityAt = dasrLastTs r
+                }
+        | r <- acctRows
+        ]
+      longEntries = filter (\e -> wdeOpenSide e == "long") entries
+      shortEntries = filter (\e -> wdeOpenSide e == "short") entries
+      dbLongOi = sum (map wdeOpenNotionalAssets longEntries)
+      dbShortOi = sum (map wdeOpenNotionalAssets shortEntries)
+      (longOi, shortOi, mAvgLev) = case (mOnChainSides, mMarkRaw) of
+        (Just sides, Just markRaw) | markRaw > 0 ->
+          let lOi = computeNotionalAssets (ocmsLongOpenInterest sides) markRaw
+              sOi = computeNotionalAssets (ocmsShortOpenInterest sides) markRaw
+              totMargin = ocmsLongTotalMarginAssets sides + ocmsShortTotalMarginAssets sides
+              lev = if totMargin > 0 && lOi + sOi > 0 then Just (computeLeverageX100 (lOi + sOi) totMargin) else Nothing
+           in (lOi, sOi, lev)
+        _ -> (dbLongOi, dbShortOi, Nothing)
+      totalOi = longOi + shortOi
+      latestBlk = foldl max 0 (map dasrMaxBlock acctRows)
+      summary =
+        WalletDirectorySummary
+          { wdsTotalAccounts = length entries
+          , wdsAccountsWithOpenPosition = length longEntries + length shortEntries
+          , wdsLongCount = length longEntries
+          , wdsShortCount = length shortEntries
+          , wdsLongOpenInterestAssets = longOi
+          , wdsShortOpenInterestAssets = shortOi
+          , wdsTotalOpenInterestAssets = totalOi
+          , wdsNetSkewAssets = longOi - shortOi
+          , wdsAvgLeverageX100 = mAvgLev
+          , wdsActive24hCount = length (filter (\e -> maybe False (>= cutoff24h) (wdeLastActivityAt e)) entries)
+          , wdsDiscordLinkedCount = length (filter (isJust . wdeDiscordUsername) entries)
+          , wdsTotalVolumeAssets = sum (map wdeVolumeAssets entries)
+          }
+  pure $
+    Right
+      WalletDirectorySnapshot
+        { wdSnapObservedAt = now
+        , wdSnapLatestBlock = latestBlk
+        , wdSnapMarkPrice = mMarkRaw
+        , wdSnapMarkObservedAt = mMarkTs
+        , wdSnapSummary = summary
+        , wdSnapEntries = entries
+        }
+
+-- | Pure filter / search / sort / paginate over a cached directory snapshot.
+filterSortWalletsDirectory
+  :: Maybe Text -- ^ search query (address or Discord handle)
+  -> Maybe Text -- ^ filter ("all" | "open" | "long" | "short" | "profitable" | "discord")
+  -> Maybe Text -- ^ sort ("notional" | "volume" | "pnl" | "trades" | "recent")
+  -> Int        -- ^ limit
+  -> Int        -- ^ offset
+  -> [WalletDirectoryEntry]
+  -> (Int, [WalletDirectoryEntry])
+filterSortWalletsDirectory mSearch mFilter mSort rawLimit rawOffset entries =
+  let q = T.toLower $ T.dropWhile (== '@') $ T.strip (fromMaybe "" mSearch)
+      flt = T.toLower $ T.strip (fromMaybe "all" mFilter)
+      srt = T.toLower $ T.strip (fromMaybe "notional" mSort)
+      matchesSearch e =
+        T.null q
+          || q `T.isInfixOf` wdeAccount e
+          || maybe False (\h -> q `T.isInfixOf` T.toLower h) (wdeDiscordUsername e)
+      matchesFilter e = case flt of
+        "open" -> wdeOpenSide e == "long" || wdeOpenSide e == "short"
+        "long" -> wdeOpenSide e == "long"
+        "short" -> wdeOpenSide e == "short"
+        "profitable" -> wdeRealizedPnlAssets e > 0
+        "discord" -> isJust (wdeDiscordUsername e)
+        _ -> True
+      filtered = filter (\e -> matchesSearch e && matchesFilter e) entries
+      sorted = case srt of
+        "volume" -> sortOn (\e -> (Down (wdeVolumeAssets e), Down (wdeOpenNotionalAssets e))) filtered
+        "pnl" -> sortOn (\e -> (Down (wdeRealizedPnlAssets e), Down (wdeVolumeAssets e))) filtered
+        "trades" -> sortOn (\e -> (Down (wdeTotalTrades e), Down (wdeVolumeAssets e))) filtered
+        "recent" -> sortOn (\e -> (Down (fromMaybe 0 (wdeLastActivityAt e)), Down (wdeOpenNotionalAssets e))) filtered
+        _ -> sortOn (\e -> (Down (wdeOpenNotionalAssets e), Down (wdeVolumeAssets e))) filtered
+      lim = max 1 (min 200 rawLimit)
+      off = max 0 rawOffset
+   in (length sorted, take lim (drop off sorted))
+
+-- | GET /api/insights/v1/wallets
+getWalletsDirectoryResponse
+  :: DbPool
+  -> Maybe EthClient
+  -> Config
+  -> Maybe Text
+  -> Maybe Text
+  -> Maybe Text
+  -> Int
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+getWalletsDirectoryResponse pool mClient cfg mSearch mFilter mSort limit offset = do
+  (_, res) <- runSingleFlightCache walletsDirectoryCache () isRight (computeWalletsDirectorySnapshot pool mClient cfg)
+  pure $ case res of
+    Left err -> Left err
+    Right snap ->
+      let chainId = cfgPerpsChainId cfg
+          (totalMatched, pageItems) =
+            filterSortWalletsDirectory mSearch mFilter mSort limit offset (wdSnapEntries snap)
+          s = wdSnapSummary snap
+       in Right $
+            mkResponse (wdSnapLatestBlock snap) chainId $
+              object
+                [ "network"
+                    .= object
+                      [ "chainId" .= chainId
+                      , "releaseVersion" .= Manifest.releaseVersion
+                      , "settlementAssetSymbol" .= ("USDG" :: Text)
+                      ]
+                , "observedAt" .= isoTimestamp (wdSnapObservedAt snap)
+                , "currentMarkPrice" .= (show <$> wdSnapMarkPrice snap)
+                , "markObservedAt" .= (isoTimestamp <$> wdSnapMarkObservedAt snap)
+                , "summary"
+                    .= object
+                      [ "totalAccounts" .= wdsTotalAccounts s
+                      , "accountsWithOpenPosition" .= wdsAccountsWithOpenPosition s
+                      , "longCount" .= wdsLongCount s
+                      , "shortCount" .= wdsShortCount s
+                      , "longOpenInterestAssets" .= show (wdsLongOpenInterestAssets s)
+                      , "shortOpenInterestAssets" .= show (wdsShortOpenInterestAssets s)
+                      , "totalOpenInterestAssets" .= show (wdsTotalOpenInterestAssets s)
+                      , "netSkewAssets" .= show (wdsNetSkewAssets s)
+                      , "avgLeverageX100" .= wdsAvgLeverageX100 s
+                      , "active24hCount" .= wdsActive24hCount s
+                      , "discordLinkedCount" .= wdsDiscordLinkedCount s
+                      , "totalVolumeAssets" .= show (wdsTotalVolumeAssets s)
+                      ]
+                , "totalMatched" .= totalMatched
+                , "limit" .= max 1 (min 200 limit)
+                , "offset" .= max 0 offset
+                , "items" .= map walletDirectoryEntryToJson pageItems
+                ]
+
+walletDirectoryEntryToJson :: WalletDirectoryEntry -> Value
+walletDirectoryEntryToJson WalletDirectoryEntry {..} =
+  object
+    [ "account" .= wdeAccount
+    , "discordUsername" .= wdeDiscordUsername
+    , "divisionsTier" .= wdeDivisionsTier
+    , "openSide" .= wdeOpenSide
+    , "openSize" .= show wdeOpenSize
+    , "openNotionalAssets" .= show wdeOpenNotionalAssets
+    , "totalTrades" .= wdeTotalTrades
+    , "opensCount" .= wdeOpensCount
+    , "closesCount" .= wdeClosesCount
+    , "liquidationsCount" .= wdeLiquidationsCount
+    , "volumeAssets" .= show wdeVolumeAssets
+    , "realizedPnlAssets" .= show wdeRealizedPnlAssets
+    , "firstActivityAt" .= (isoTimestamp <$> wdeFirstActivityAt)
+    , "lastActivityAt" .= (isoTimestamp <$> wdeLastActivityAt)
     ]
