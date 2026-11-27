@@ -41,9 +41,15 @@ import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple (Connection, In (..), query)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Ethereum.Abi (keccak256)
 import Plether.Ethereum.Client (EthClient)
 import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..), ethGetTransactionReceipt)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
@@ -258,12 +264,25 @@ enrichOrderProtectionsBundleFromRpc client bundle@OrderProtectionsBundle {..} = 
       let decodedMap = Map.fromList [(ibdOrderId item, item) | batch <- fetched, item <- batch]
       pure bundle {opbIntents = Map.union decodedMap opbIntents}
 
+{-# NOINLINE commitReceiptBoundsCache #-}
+commitReceiptBoundsCache :: SingleFlightCache Text [IntentBoundsData]
+commitReceiptBoundsCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 512 (3600 * 1000000000) (7200 * 1000000000))
+
 fetchIntentsFromCommitReceipt :: EthClient -> Text -> IO [IntentBoundsData]
-fetchIntentsFromCommitReceipt client txHash = do
-  mReceipt <- timeout 2500000 (ethGetTransactionReceipt client txHash)
-  pure $ case mReceipt of
-    Just (Right (Just receipt)) -> mapMaybe decodeIntentFromRpcLog (receiptLogs receipt)
-    _ -> []
+fetchIntentsFromCommitReceipt client rawTxHash =
+  let txHash = T.toLower (T.strip rawTxHash)
+   in snd
+        <$> runSingleFlightCache
+          commitReceiptBoundsCache
+          txHash
+          (not . null)
+          ( do
+              mReceipt <- timeout 2500000 (ethGetTransactionReceipt client txHash)
+              pure $ case mReceipt of
+                Just (Right (Just receipt)) -> mapMaybe decodeIntentFromRpcLog (receiptLogs receipt)
+                _ -> []
+          )
 
 decodeIntentFromRpcLog :: RpcLog -> Maybe IntentBoundsData
 decodeIntentFromRpcLog RpcLog {..} =

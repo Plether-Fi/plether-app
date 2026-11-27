@@ -7,6 +7,7 @@ module Plether.Cache
   , AppCache (..)
   , newAppCache
   , newConcurrentSingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
   , newSingleFlightCache
   , newRefreshingSingleFlightCache
   , runSingleFlightCache
@@ -90,6 +91,7 @@ data CurrentCandleCacheValue = CurrentCandleCacheValue
 data SingleFlightEntry value = SingleFlightEntry
   { sfeValue :: !value
   , sfeFreshUntilNs :: !Word64
+  , sfeRefreshAfterNs :: !Word64
   , sfeStaleUntilNs :: !Word64
   }
 
@@ -242,6 +244,25 @@ newRefreshingSingleFlightCache maxEntries freshTtlNs staleTtlNs =
     <*> pure freshTtlNs
     <*> pure (max freshTtlNs staleTtlNs)
 
+-- | Like 'newRefreshingSingleFlightCache', but allows independent keys to load
+-- and refresh concurrently without serializing behind a single global MVar.
+-- Each key still single-flights so duplicate concurrent requests for the same
+-- key share one load.
+newConcurrentRefreshingSingleFlightCache
+  :: Int
+  -> Word64
+  -> Word64
+  -> IO (SingleFlightCache key value)
+newConcurrentRefreshingSingleFlightCache maxEntries freshTtlNs staleTtlNs =
+  SingleFlightCache
+    <$> newTVarIO Map.empty
+    <*> newTVarIO Map.empty
+    <*> pure Nothing
+    <*> pure TtlFromCompletion
+    <*> pure (max 0 maxEntries)
+    <*> pure freshTtlNs
+    <*> pure (max freshTtlNs staleTtlNs)
+
 -- Run at most one loader for a key. Waiting cold callers share its result;
 -- callers with a bounded stale value return it immediately while one serialized
 -- background refresh runs. Only values accepted by shouldCache survive in
@@ -349,7 +370,9 @@ claimSingleFlight
 claimSingleFlight requireFresh SingleFlightCache {..} key nowNs = do
   entries <- readTVar sfcEntries
   let retained = Map.filter ((> nowNs) . sfeStaleUntilNs) entries
-  writeTVar sfcEntries retained
+  if Map.size retained /= Map.size entries
+    then writeTVar sfcEntries retained
+    else pure ()
   inFlight <- readTVar sfcInFlight
   case (requireFresh, Map.lookup key inFlight) of
     (True, Just gate) -> pure $ WaitForLoad gate
@@ -360,6 +383,7 @@ claimSingleFlight requireFresh SingleFlightCache {..} key nowNs = do
     _ -> case Map.lookup key retained of
       Just entry
         | sfeFreshUntilNs entry > nowNs -> pure $ UseMemory $ sfeValue entry
+        | sfeRefreshAfterNs entry > nowNs -> pure $ UseStale $ sfeValue entry
         | otherwise ->
             case Map.lookup key inFlight of
               Just _ -> pure $ UseStale $ sfeValue entry
@@ -407,9 +431,27 @@ completeSingleFlight
             SingleFlightEntry
               { sfeValue = value
               , sfeFreshUntilNs = ttlStartedAtNs + sfcFreshTtlNs
+              , sfeRefreshAfterNs = ttlStartedAtNs + sfcFreshTtlNs
               , sfeStaleUntilNs = ttlStartedAtNs + sfcStaleTtlNs
               }
-    _ -> pure ()
+    _ ->
+      -- On a failed or uncacheable background SWR refresh, apply a short
+      -- cooldown on retrying the refresh while keeping the entry marked stale
+      -- so incoming requests do not spawn a refresh storm on every hit.
+      let retryCooldownNs =
+            if sfcFreshTtlNs >= 1_000_000_000
+              then min 3_000_000_000 (sfcFreshTtlNs `div` 4)
+              else 0
+       in if retryCooldownNs > 0
+            then
+              modifyTVar' sfcEntries $
+                Map.adjust
+                  ( \entry ->
+                      let retryAfter = min (sfeStaleUntilNs entry) (completedAtNs + retryCooldownNs)
+                       in entry {sfeRefreshAfterNs = max (sfeRefreshAfterNs entry) retryAfter}
+                  )
+                  key
+            else pure ()
   putTMVar gate outcome
 
 trimSingleFlightEntries

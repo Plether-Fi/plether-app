@@ -17,6 +17,7 @@ import Plether.Cache
   ( AppCache (..)
   , SingleFlightCache
   , SingleFlightSource (..)
+  , newConcurrentRefreshingSingleFlightCache
   , newConcurrentSingleFlightCache
   , newAppCache
   , newRefreshingSingleFlightCache
@@ -402,3 +403,30 @@ spec = describe "runSingleFlightCache" $ do
       `shouldReturn` (SingleFlightLoaded, 2)
     runSingleFlightCache cache "first" (const True) load
       `shouldReturn` (SingleFlightLoaded, 3)
+
+  it "allows independent keys to stale-refresh concurrently in a concurrent refreshing cache" $ do
+    cache <- newConcurrentRefreshingSingleFlightCache 4 100_000_000 2_000_000_000 :: IO (SingleFlightCache String Int)
+    firstStarted <- newEmptyMVar
+    secondStarted <- newEmptyMVar
+    releaseFirst <- newEmptyMVar
+    let refreshFirst = do
+          putMVar firstStarted ()
+          takeMVar releaseFirst
+          pure (11 :: Int)
+        refreshSecond = putMVar secondStarted () >> pure (22 :: Int)
+
+    runSingleFlightCache cache "first" (const True) (pure 1)
+      `shouldReturn` (SingleFlightLoaded, 1)
+    runSingleFlightCache cache "second" (const True) (pure 2)
+      `shouldReturn` (SingleFlightLoaded, 2)
+    threadDelay 120_000
+    runSingleFlightCache cache "first" (const True) refreshFirst
+      `shouldReturn` (SingleFlightStale, 1)
+    takeMVar firstStarted
+    runSingleFlightCache cache "second" (const True) refreshSecond
+      `shouldReturn` (SingleFlightStale, 2)
+    mSecond <- timeout 500_000 (takeMVar secondStarted)
+    mSecond `shouldBe` Just ()
+    putMVar releaseFirst ()
+    awaitMemory cache "first" 11
+    awaitMemory cache "second" 22

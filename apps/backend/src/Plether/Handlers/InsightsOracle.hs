@@ -37,13 +37,18 @@ import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Plether.AA.OracleReadiness (decodePolicy)
-import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , newRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
-import Plether.Database.Schema (ensureOracleAdmissionEventsSchema)
 import Plether.Ethereum.Abi (decodeUint256, encodeBool, encodeCall)
-import Plether.Ethereum.Client (CallParams (..), EthClient, ethCall)
+import Plether.Ethereum.Client (EthClient)
 import Plether.Ethereum.Contracts.Perps (OrderExecutionPolicy (..))
+import qualified Plether.Ethereum.Multicall as Multicall
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents, basketDisplayPriceCap, normalizeFeedId)
 import Plether.Pyth.RevealPayload (maxComponentPublishTimeDivergence)
@@ -154,7 +159,12 @@ oracleHealthCache =
 {-# NOINLINE oracleUpdateDetailCache #-}
 oracleUpdateDetailCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
 oracleUpdateDetailCache =
-  unsafePerformIO (newRefreshingSingleFlightCache 128 (15 * 1000000000) (300 * 1000000000))
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (30 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE oracleThresholdsCache #-}
+oracleThresholdsCache :: SingleFlightCache () LiveOracleOnChain
+oracleThresholdsCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (300 * 1000000000) (1800 * 1000000000))
 
 getOracleHealthResponse
   :: DbPool
@@ -217,13 +227,12 @@ computeOracleHealthResponse pool client cfg = do
         <$> Concurrently (fetchLiveOracleOnChain client)
         <*> Concurrently
           ( withDb pool $ \conn -> do
-              _ <- observeIo (ensureOracleAdmissionEventsSchema conn)
               latestPayload <- fetchLatestPayload conn
               recentUpdates <- fetchRecentAdmittedUpdates conn chainId router
-              admitted1h <- fetchAdmittedBuckets conn start1h end1h bucket1hSec
-              admitted24h <- fetchAdmittedBuckets conn start24h end24h bucket24hSec
-              rejected1h <- fetchRejectionBuckets conn start1h end1h bucket1hSec
-              rejected24h <- fetchRejectionBuckets conn start24h end24h bucket24hSec
+              (admitted1h, admitted24h) <-
+                fetchAdmittedBucketsPair conn start1h end1h bucket1hSec start24h end24h bucket24hSec
+              (rejected1h, rejected24h) <-
+                fetchRejectionBucketsPair conn start1h end1h bucket1hSec start24h end24h bucket24hSec
               breakdown <- fetchRejectionBreakdown conn since24h
               recentRejections <- fetchRecentRejectionEvents conn since24h
               pure (latestPayload, recentUpdates, admitted1h, admitted24h, rejected1h, rejected24h, breakdown, recentRejections)
@@ -394,7 +403,7 @@ computeOracleUpdateDetailResponse pool client cfg mTargetId = do
   (onChain, mDetailBundle) <-
     runConcurrently $
       (,)
-        <$> Concurrently (fetchLiveOracleOnChain client)
+        <$> Concurrently (getCachedOracleThresholds client)
         <*> Concurrently
           ( withDb pool $ \conn -> do
               mRow <- fetchPayloadDetailRow conn mTargetId
@@ -848,31 +857,55 @@ buildAdmissionChecks components mSpread mAge mMaxConf mBasketPrice stalenessLimi
         , "description" .= desc
         ]
 
+getCachedOracleThresholds :: EthClient -> IO LiveOracleOnChain
+getCachedOracleThresholds client =
+  snd
+    <$> runSingleFlightCache
+      oracleThresholdsCache
+      ()
+      (\s -> maybe False (const True) (looOrderStalenessLimit s))
+      (fetchLiveOracleOnChain client)
+
+-- | Batch all 7 on-chain oracle reads into a single atomic Multicall3 call.
 fetchLiveOracleOnChain :: EthClient -> IO LiveOracleOnChain
 fetchLiveOracleOnChain client = do
   let oracle = Manifest.pletherOracleAddress
       publicLens = Manifest.perpsPublicLensAddress
-      call target sig args = do
-        res <- timeout 2500000 $ observeIo $ ethCall client (CallParams target (encodeCall sig args))
-        pure $ case res of
-          Just (Just (Right bytes)) -> Just bytes
-          _ -> Nothing
-      readUint target sig = do
-        mBytes <- call target sig []
-        pure $ case mBytes of
+      mkCall target sig args =
+        Multicall.Call
+          { Multicall.callTarget = target
+          , Multicall.callAllowFailure = True
+          , Multicall.callCalldata = encodeCall sig args
+          }
+      calls =
+        [ mkCall oracle "basketMaxConfidenceRatioBps()" []
+        , mkCall oracle "adverseConfidenceMultiplierBps()" []
+        , mkCall oracle "orderExecutionStalenessLimit()" []
+        , mkCall oracle "liquidationStalenessLimit()" []
+        , mkCall oracle "getOrderExecutionPolicy(bool)" [encodeBool False]
+        , mkCall oracle "getOrderExecutionPolicy(bool)" [encodeBool True]
+        , mkCall publicLens "getProtocolStatus()" []
+        ]
+      decodeBytes r =
+        if Multicall.resultSuccess r then Just (Multicall.resultData r) else Nothing
+      decodeU r =
+        case decodeBytes r of
           Just b | BS.length b == 32 -> Just (decodeUint256 b)
           _ -> Nothing
 
-  (maxConf, advMult, ordStale, liqStale, openPolRaw, closePolRaw, statusRaw) <-
-    runConcurrently $
-      (,,,,,,)
-        <$> Concurrently (readUint oracle "basketMaxConfidenceRatioBps()")
-        <*> Concurrently (readUint oracle "adverseConfidenceMultiplierBps()")
-        <*> Concurrently (readUint oracle "orderExecutionStalenessLimit()")
-        <*> Concurrently (readUint oracle "liquidationStalenessLimit()")
-        <*> Concurrently (call oracle "getOrderExecutionPolicy(bool)" [encodeBool False])
-        <*> Concurrently (call oracle "getOrderExecutionPolicy(bool)" [encodeBool True])
-        <*> Concurrently (call publicLens "getProtocolStatus()" [])
+  mRes <- timeout 2500000 $ observeIo $ Multicall.multicall client calls
+  let (maxConf, advMult, ordStale, liqStale, openPolRaw, closePolRaw, statusRaw) =
+        case mRes of
+          Just (Just (Right [r0, r1, r2, r3, r4, r5, r6])) ->
+            ( decodeU r0
+            , decodeU r1
+            , decodeU r2
+            , decodeU r3
+            , decodeBytes r4
+            , decodeBytes r5
+            , decodeBytes r6
+            )
+          _ -> (Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing)
 
   let (mMarkPrice, mMarkTime, mFrozen, mFad, mTrading) =
         case statusRaw of
@@ -971,19 +1004,19 @@ fetchNeighborPayload conn isPrev maxPub pid = do
             "SELECT id, basket_price, max_publish_time \
             \FROM perps_pyth_update_payloads \
             \WHERE basket_price IS NOT NULL \
-            \  AND (max_publish_time < ? OR (max_publish_time = ? AND id < ?)) \
+            \  AND (max_publish_time, id) < (?, ?) \
             \ORDER BY max_publish_time DESC, id DESC \
             \LIMIT 1"
           else
             "SELECT id, basket_price, max_publish_time \
             \FROM perps_pyth_update_payloads \
             \WHERE basket_price IS NOT NULL \
-            \  AND (max_publish_time > ? OR (max_publish_time = ? AND id > ?)) \
+            \  AND (max_publish_time, id) > (?, ?) \
             \ORDER BY max_publish_time ASC, id ASC \
             \LIMIT 1"
   mRows <-
     observeIo $
-      query conn sql (maxPub, maxPub, pid)
+      query conn sql (maxPub, pid)
         :: IO (Maybe [(Integer, Maybe Integer, Integer)])
   pure (mRows >>= listToMaybe)
 
@@ -1007,13 +1040,30 @@ fetchOrdersSettledWithUpdate conn chainId router minPub maxPub = do
     | (oid, acct, side, st, txHash, execP, execOracleP, cTs, tTs) <- fromMaybe [] mRows
     ]
 
-fetchAdmittedBuckets :: Connection -> Integer -> Integer -> Integer -> IO (Map.Map Integer AdmittedBucketAgg)
-fetchAdmittedBuckets conn startUnix endUnix bucketSec = do
+-- | Fetch both 1h and 24h admitted buckets in a single index-only range scan
+-- over idx_perps_pyth_update_payloads_fetched_at.
+fetchAdmittedBucketsPair
+  :: Connection
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO (Map.Map Integer AdmittedBucketAgg, Map.Map Integer AdmittedBucketAgg)
+fetchAdmittedBucketsPair conn start1h end1h bucket1hSec start24h end24h bucket24hSec = do
+  let winMin = min start1h start24h
+      winMax = max end1h end24h
   mRows <-
     observeIo $
       query
         conn
-        "SELECT \
+        "WITH scoped AS ( \
+        \  SELECT fetched_at, min_publish_time, max_publish_time, source \
+        \  FROM perps_pyth_update_payloads \
+        \  WHERE fetched_at >= ? AND fetched_at < ? \
+        \) \
+        \SELECT '1h'::TEXT, \
         \  FLOOR((fetched_at - ?) / ?)::BIGINT, \
         \  COUNT(*)::BIGINT, \
         \  COUNT(*) FILTER (WHERE source = 'backend_hermes_latest_v2')::BIGINT, \
@@ -1021,37 +1071,74 @@ fetchAdmittedBuckets conn startUnix endUnix bucketSec = do
         \  COALESCE(MAX(GREATEST(0, max_publish_time - min_publish_time)), 0)::BIGINT, \
         \  COALESCE(MAX(GREATEST(0, fetched_at - min_publish_time)), 0)::BIGINT, \
         \  COUNT(*) FILTER (WHERE (max_publish_time - min_publish_time) >= 4)::BIGINT \
-        \FROM perps_pyth_update_payloads \
-        \WHERE fetched_at >= ? AND fetched_at < ? \
-        \GROUP BY 1 ORDER BY 1 ASC"
-        (startUnix, bucketSec, startUnix, endUnix)
-        :: IO (Maybe [(Integer, Integer, Integer, Integer, Integer, Integer, Integer)])
-  pure $
-    Map.fromList
-      [ (idx, AdmittedBucketAgg tot lat rev mxSp mxLg hiSp)
-      | (idx, tot, lat, rev, mxSp, mxLg, hiSp) <- fromMaybe [] mRows
-      ]
+        \FROM scoped WHERE fetched_at >= ? AND fetched_at < ? \
+        \GROUP BY 2 \
+        \UNION ALL \
+        \SELECT '24h'::TEXT, \
+        \  FLOOR((fetched_at - ?) / ?)::BIGINT, \
+        \  COUNT(*)::BIGINT, \
+        \  COUNT(*) FILTER (WHERE source = 'backend_hermes_latest_v2')::BIGINT, \
+        \  COUNT(*) FILTER (WHERE source <> 'backend_hermes_latest_v2')::BIGINT, \
+        \  COALESCE(MAX(GREATEST(0, max_publish_time - min_publish_time)), 0)::BIGINT, \
+        \  COALESCE(MAX(GREATEST(0, fetched_at - min_publish_time)), 0)::BIGINT, \
+        \  COUNT(*) FILTER (WHERE (max_publish_time - min_publish_time) >= 4)::BIGINT \
+        \FROM scoped WHERE fetched_at >= ? AND fetched_at < ? \
+        \GROUP BY 2"
+        (winMin, winMax, start1h, bucket1hSec, start1h, end1h, start24h, bucket24hSec, start24h, end24h)
+        :: IO (Maybe [(Text, Integer, Integer, Integer, Integer, Integer, Integer, Integer)])
+  let rows = fromMaybe [] mRows
+      m1h =
+        Map.fromList
+          [ (idx, AdmittedBucketAgg tot lat rev mxSp mxLg hiSp)
+          | ("1h", idx, tot, lat, rev, mxSp, mxLg, hiSp) <- rows
+          ]
+      m24h =
+        Map.fromList
+          [ (idx, AdmittedBucketAgg tot lat rev mxSp mxLg hiSp)
+          | ("24h", idx, tot, lat, rev, mxSp, mxLg, hiSp) <- rows
+          ]
+  pure (m1h, m24h)
 
-fetchRejectionBuckets :: Connection -> Integer -> Integer -> Integer -> IO (Map.Map Integer RejectionBucketAgg)
-fetchRejectionBuckets conn startUnix endUnix bucketSec = do
+fetchRejectionBucketsPair
+  :: Connection
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO (Map.Map Integer RejectionBucketAgg, Map.Map Integer RejectionBucketAgg)
+fetchRejectionBucketsPair conn start1h end1h bucket1hSec start24h end24h bucket24hSec = do
+  let winMin = min start1h start24h
+      winMax = max end1h end24h
   mRows <-
     observeIo $
       query
         conn
-        "SELECT \
+        "WITH scoped AS ( \
+        \  SELECT occurred_at, outcome \
+        \  FROM perps_oracle_admission_events \
+        \  WHERE occurred_at >= ? AND occurred_at < ? \
+        \) \
+        \SELECT '1h'::TEXT, \
         \  FLOOR((occurred_at - ?) / ?)::BIGINT, \
         \  COUNT(*) FILTER (WHERE outcome = 'rejected')::BIGINT, \
         \  COUNT(*) FILTER (WHERE outcome = 'stale_market_closed')::BIGINT \
-        \FROM perps_oracle_admission_events \
-        \WHERE occurred_at >= ? AND occurred_at < ? \
-        \GROUP BY 1 ORDER BY 1 ASC"
-        (startUnix, bucketSec, startUnix, endUnix)
-        :: IO (Maybe [(Integer, Integer, Integer)])
-  pure $
-    Map.fromList
-      [ (idx, RejectionBucketAgg rej st)
-      | (idx, rej, st) <- fromMaybe [] mRows
-      ]
+        \FROM scoped WHERE occurred_at >= ? AND occurred_at < ? \
+        \GROUP BY 2 \
+        \UNION ALL \
+        \SELECT '24h'::TEXT, \
+        \  FLOOR((occurred_at - ?) / ?)::BIGINT, \
+        \  COUNT(*) FILTER (WHERE outcome = 'rejected')::BIGINT, \
+        \  COUNT(*) FILTER (WHERE outcome = 'stale_market_closed')::BIGINT \
+        \FROM scoped WHERE occurred_at >= ? AND occurred_at < ? \
+        \GROUP BY 2"
+        (winMin, winMax, start1h, bucket1hSec, start1h, end1h, start24h, bucket24hSec, start24h, end24h)
+        :: IO (Maybe [(Text, Integer, Integer, Integer)])
+  let rows = fromMaybe [] mRows
+      m1h = Map.fromList [(idx, RejectionBucketAgg rej st) | ("1h", idx, rej, st) <- rows]
+      m24h = Map.fromList [(idx, RejectionBucketAgg rej st) | ("24h", idx, rej, st) <- rows]
+  pure (m1h, m24h)
 
 fetchRejectionBreakdown :: Connection -> Integer -> IO [(Text, Text, Integer, Integer)]
 fetchRejectionBreakdown conn sinceUnix = do

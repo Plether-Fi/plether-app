@@ -25,7 +25,7 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
 import Data.Word (Word64)
-import Database.PostgreSQL.Simple (Only (..), Query, ToRow, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), Query, ToRow, query, query_)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Client (Manager)
 import Plether.AA.Kernel (KernelProfile (..))
@@ -452,9 +452,9 @@ probeArbitrumNode client nowSec = do
   (blkRes, syncRes, peerRes) <-
     runConcurrently $
       (,,)
-        <$> Concurrently (observeIo $ ethLatestBlock client)
-        <*> Concurrently (observeIo $ rpcCall client "eth_syncing" (toJSON ([] :: [Text])))
-        <*> Concurrently (observeIo $ rpcCall client "net_peerCount" (toJSON ([] :: [Text])))
+        <$> Concurrently (joinTimeout <$> timeout 3000000 (observeIo $ ethLatestBlock client))
+        <*> Concurrently (joinTimeout <$> timeout 3000000 (observeIo $ rpcCall client "eth_syncing" (toJSON ([] :: [Text]))))
+        <*> Concurrently (joinTimeout <$> timeout 3000000 (observeIo $ rpcCall client "net_peerCount" (toJSON ([] :: [Text]))))
   t1 <- getMonotonicTimeNSec
   let latencyMs = fromIntegral ((t1 - t0) `div` 1000000) :: Int
   pure $ case blkRes of
@@ -543,7 +543,7 @@ probeOraclePipeline pool client cfg nowSec = do
   (mReadiness, mPayload) <-
     runConcurrently $
       (,)
-        <$> Concurrently (observeIo $ oracleReadiness cfg pool client)
+        <$> Concurrently (joinTimeout <$> timeout 3500000 (observeIo $ oracleReadiness cfg pool client))
         <*> Concurrently
           ( observeIo $ withDb pool $ \conn ->
               query_
@@ -559,25 +559,30 @@ probeOraclePipeline pool client cfg nowSec = do
         _ -> (Nothing, Nothing, Nothing)
   pure $ OracleTelemetry mPub mAge mSpread os orr cs cr ps pr
 
+-- | Run all worker heartbeat queries over a single DbPool connection (instead of
+-- 10 concurrent checkouts that self-exhausted the pool).
 fetchWorkerHeartbeats :: DbPool -> Config -> Maybe KernelGatewayConfig -> IO [WorkerHeartbeat]
 fetchWorkerHeartbeats pool cfg mKernel = do
   let chainId = cfgPerpsChainId cfg
       router = T.toLower (cfgPerpsOrderRouter cfg)
       engine = T.toLower (cfgPerpsCfdEngine cfg)
       protBook = T.toLower Manifest.positionProtectionBookAddress
-  (keeperHb, liqHb, protHb, basketHb, lpHb, aaRecHb, perpsIdxHb, vaultIdxHb, insightsHb) <-
-    runConcurrently $
-      (,,,,,,,,)
-        <$> Concurrently (querySingleHb pool "SELECT last_indexed_block, updated_at::timestamptz FROM perps_keeper_state WHERE LOWER(order_router) = ? LIMIT 1" (Only router))
-        <*> Concurrently (querySingleHb pool "SELECT last_indexed_block, updated_at::timestamptz FROM perps_liquidation_state WHERE chain_id = ? AND LOWER(cfd_engine) = ? LIMIT 1" (chainId, engine))
-        <*> Concurrently (querySingleHb pool "SELECT block_number, indexed_at FROM perps_protection_checkpoints WHERE chain_id = ? AND LOWER(book) = ? ORDER BY block_number DESC LIMIT 1" (chainId, protBook))
-        <*> Concurrently (querySingleHbNoParams pool "SELECT NULL::BIGINT, to_timestamp(max_publish_time) FROM perps_pyth_update_payloads ORDER BY max_publish_time DESC LIMIT 1")
-        <*> Concurrently (queryLpSettlementHb pool chainId)
-        <*> Concurrently (queryReconcilerHb pool cfg mKernel)
-        <*> Concurrently (querySingleHb pool "SELECT last_indexed_block, updated_at FROM perps_indexer_state WHERE chain_id = ? ORDER BY updated_at DESC LIMIT 1" (Only chainId))
-        <*> Concurrently (querySingleHb pool "SELECT last_indexed_block::BIGINT, updated_at FROM vault_activity_indexer_state WHERE chain_id = ? ORDER BY updated_at DESC LIMIT 1" (Only chainId))
-        <*> Concurrently (queryInsightsWorkerHb pool chainId)
-  let (lpBlock, lpSeenAt, lpHasFault) = lpHb
+  mTuple <-
+    observeIo $ withDb pool $ \conn -> do
+      keeperHb <- querySingleHbConn conn "SELECT last_indexed_block, updated_at::timestamptz FROM perps_keeper_state WHERE order_router = ? LIMIT 1" (Only router)
+      liqHb <- querySingleHbConn conn "SELECT last_indexed_block, updated_at::timestamptz FROM perps_liquidation_state WHERE chain_id = ? AND cfd_engine = ? LIMIT 1" (chainId, engine)
+      protHb <- querySingleHbConn conn "SELECT block_number, indexed_at FROM perps_protection_checkpoints WHERE chain_id = ? AND book = ? ORDER BY block_number DESC LIMIT 1" (chainId, protBook)
+      basketHb <- querySingleHbNoParamsConn conn "SELECT NULL::BIGINT, to_timestamp(max_publish_time) FROM perps_pyth_update_payloads ORDER BY max_publish_time DESC LIMIT 1"
+      lpHb <- queryLpSettlementHbConn conn chainId
+      aaRecHb <- queryReconcilerHbConn conn cfg mKernel
+      perpsIdxHb <- querySingleHbConn conn "SELECT last_indexed_block, updated_at FROM perps_indexer_state WHERE chain_id = ? ORDER BY updated_at DESC LIMIT 1" (Only chainId)
+      vaultIdxHb <- querySingleHbConn conn "SELECT last_indexed_block::BIGINT, updated_at FROM vault_activity_indexer_state WHERE chain_id = ? ORDER BY updated_at DESC LIMIT 1" (Only chainId)
+      insightsHb <- queryInsightsWorkerHbConn conn chainId
+      pure (keeperHb, liqHb, protHb, basketHb, lpHb, aaRecHb, perpsIdxHb, vaultIdxHb, insightsHb)
+  let emptyHb = (Nothing, Nothing)
+      (keeperHb, liqHb, protHb, basketHb, lpHb, aaRecHb, perpsIdxHb, vaultIdxHb, insightsHb) =
+        fromMaybe (emptyHb, emptyHb, emptyHb, emptyHb, (Nothing, Nothing, False), emptyHb, emptyHb, emptyHb, emptyHb) mTuple
+      (lpBlock, lpSeenAt, lpHasFault) = lpHb
   pure
     [ WorkerHeartbeat "keeper" "keeper" "Order Execution Keeper" "execution" (fst keeperHb) (snd keeperHb) 120 (Just "keeper") False False
     , WorkerHeartbeat "liquidation_worker" "liquidation_worker" "Liquidation Worker" "execution" (fst liqHb) (snd liqHb) 180 (Just "liquidation") False False
@@ -590,10 +595,10 @@ fetchWorkerHeartbeats pool cfg mKernel = do
     , WorkerHeartbeat "insights_worker" "insights_worker" "Insights & Divisions Worker" "indexing" (fst insightsHb) (snd insightsHb) 900 Nothing False False
     ]
 
-queryLpSettlementHb :: DbPool -> Integer -> IO (Maybe Integer, Maybe UTCTime, Bool)
-queryLpSettlementHb pool chainId = do
+queryLpSettlementHbConn :: Connection -> Integer -> IO (Maybe Integer, Maybe UTCTime, Bool)
+queryLpSettlementHbConn conn chainId = do
   mRows <-
-    observeIo $ withDb pool $ \conn ->
+    observeIo $
       query
         conn
         "SELECT observed_block, last_observed_at, \
@@ -603,28 +608,23 @@ queryLpSettlementHb pool chainId = do
         \ORDER BY last_observed_at DESC \
         \LIMIT 1"
         (Only chainId)
-        :: IO [(Maybe Integer, Maybe UTCTime, Bool)]
+        :: IO (Maybe [(Maybe Integer, Maybe UTCTime, Bool)])
   pure $ case mRows of
     Just ((blk, ts, fault) : _) -> (blk, ts, fault)
     _ -> (Nothing, Nothing, False)
 
-queryInsightsWorkerHb :: DbPool -> Integer -> IO (Maybe Integer, Maybe UTCTime)
-queryInsightsWorkerHb pool chainId = do
-  (divHb, batchHb) <-
-    runConcurrently $
-      (,)
-        <$> Concurrently
-          ( querySingleHb
-              pool
-              "SELECT snapshot_block, captured_at FROM divisions_live_snapshots WHERE chain_id = ? ORDER BY captured_at DESC LIMIT 1"
-              (Only chainId)
-          )
-        <*> Concurrently
-          ( querySingleHb
-              pool
-              "SELECT block_number, published_at FROM insights_snapshot_batches WHERE chain_id = ? ORDER BY published_at DESC LIMIT 1"
-              (Only chainId)
-          )
+queryInsightsWorkerHbConn :: Connection -> Integer -> IO (Maybe Integer, Maybe UTCTime)
+queryInsightsWorkerHbConn conn chainId = do
+  divHb <-
+    querySingleHbConn
+      conn
+      "SELECT snapshot_block, captured_at FROM divisions_live_snapshots WHERE chain_id = ? ORDER BY captured_at DESC LIMIT 1"
+      (Only chainId)
+  batchHb <-
+    querySingleHbConn
+      conn
+      "SELECT block_number, published_at FROM insights_snapshot_batches WHERE chain_id = ? ORDER BY published_at DESC LIMIT 1"
+      (Only chainId)
   pure (pickFresherHeartbeat divHb batchHb)
 
 pickFresherHeartbeat
@@ -638,38 +638,42 @@ pickFresherHeartbeat left@(_, mTsLeft) right@(_, mTsRight) =
     (Nothing, Just _) -> right
     (Nothing, Nothing) -> left
 
-queryReconcilerHb :: DbPool -> Config -> Maybe KernelGatewayConfig -> IO (Maybe Integer, Maybe UTCTime)
-queryReconcilerHb pool cfg mKernel =
+queryReconcilerHbConn :: Connection -> Config -> Maybe KernelGatewayConfig -> IO (Maybe Integer, Maybe UTCTime)
+queryReconcilerHbConn conn cfg mKernel =
   case mKernel of
     Just kgc
       | Just ksc <- kgcSponsorship kgc ->
           let KernelScope {..} = kernelScope (kgcProfile kgc)
-           in querySingleHb
-                pool
+           in querySingleHbConn
+                conn
                 "SELECT safe_block, last_success_at FROM aa_kernel_reconciler_state WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? LIMIT 1"
                 (ksDeployment, ksChainId, ksEntryPoint, T.toLower (kscPaymaster ksc))
     _ ->
       case cfgNativeAaConfig cfg of
         Just native ->
-          querySingleHb
-            pool
-            "SELECT safe_block, last_success_at FROM aa_reconciler_health WHERE chain_id = ? AND LOWER(paymaster) = ? LIMIT 1"
+          querySingleHbConn
+            conn
+            "SELECT safe_block, last_success_at FROM aa_reconciler_health WHERE chain_id = ? AND paymaster = ? LIMIT 1"
             (cfgPerpsChainId cfg, T.toLower (naaPaymasterAddress native))
         Nothing -> pure (Nothing, Nothing)
 
-querySingleHb :: (ToRow q) => DbPool -> Query -> q -> IO (Maybe Integer, Maybe UTCTime)
-querySingleHb pool sql params = do
-  mRows <- observeIo $ withDb pool $ \conn -> query conn sql params :: IO [(Maybe Integer, Maybe UTCTime)]
+querySingleHbConn :: (ToRow q) => Connection -> Query -> q -> IO (Maybe Integer, Maybe UTCTime)
+querySingleHbConn conn sql params = do
+  mRows <- observeIo $ (query conn sql params :: IO [(Maybe Integer, Maybe UTCTime)])
   pure $ case mRows of
     Just (pair : _) -> pair
     _ -> (Nothing, Nothing)
 
-querySingleHbNoParams :: DbPool -> Query -> IO (Maybe Integer, Maybe UTCTime)
-querySingleHbNoParams pool sql = do
-  mRows <- observeIo $ withDb pool $ \conn -> query_ conn sql :: IO [(Maybe Integer, Maybe UTCTime)]
+querySingleHbNoParamsConn :: Connection -> Query -> IO (Maybe Integer, Maybe UTCTime)
+querySingleHbNoParamsConn conn sql = do
+  mRows <- observeIo $ (query_ conn sql :: IO [(Maybe Integer, Maybe UTCTime)])
   pure $ case mRows of
     Just (pair : _) -> pair
     _ -> (Nothing, Nothing)
+
+joinTimeout :: Maybe (Maybe a) -> Maybe a
+joinTimeout (Just (Just x)) = Just x
+joinTimeout _ = Nothing
 
 fetchOverviewExecution :: DbPool -> Config -> Integer -> IO Value
 fetchOverviewExecution pool cfg nowSec = do
@@ -710,23 +714,29 @@ fetchOverviewLiquidity :: DbPool -> Config -> IO Value
 fetchOverviewLiquidity pool cfg = do
   let chainId = cfgPerpsChainId cfg
       monitor = T.toLower (T.strip (cfgPerpsSettlementMonitorLens cfg))
-  mObs <- observeIo $ withDb pool $ \conn ->
-    query
-      conn
-      "SELECT epoch, lp_epoch_settlement_paused, \
-      \  (critical_fault_mask > 0 OR dependency_failure_mask > 0), \
-      \  (operational_blocker_mask > 0 OR warning_mask > 0) \
-      \FROM perps_lp_settlement_observations \
-      \WHERE chain_id = ? AND monitor_address = ? \
-      \ORDER BY observed_block DESC, last_observed_at DESC LIMIT 1"
-      (chainId, monitor)
-      :: IO [(Integer, Maybe Bool, Bool, Bool)]
-  mConfirmed <- observeIo $ withDb pool $ \conn ->
-    query
-      conn
-      "SELECT COUNT(*) FILTER (WHERE status = 'confirmed_success')::INT FROM perps_lp_settlement_transactions WHERE chain_id = ? AND monitor_address = ? AND created_at >= NOW() - interval '24 hours'"
-      (chainId, monitor)
-      :: IO [Only Int]
+  mPair <- observeIo $ withDb pool $ \conn -> do
+    obs <-
+      query
+        conn
+        "SELECT epoch, lp_epoch_settlement_paused, \
+        \  (critical_fault_mask > 0 OR dependency_failure_mask > 0), \
+        \  (operational_blocker_mask > 0 OR warning_mask > 0) \
+        \FROM perps_lp_settlement_observations \
+        \WHERE chain_id = ? AND monitor_address = ? \
+        \ORDER BY observed_block DESC, last_observed_at DESC LIMIT 1"
+        (chainId, monitor)
+        :: IO [(Integer, Maybe Bool, Bool, Bool)]
+    confirmed <-
+      query
+        conn
+        "SELECT COUNT(*)::INT FROM perps_lp_settlement_transactions \
+        \WHERE chain_id = ? AND monitor_address = ? AND status = 'confirmed_success' AND confirmed_at >= NOW() - interval '24 hours'"
+        (chainId, monitor)
+        :: IO [Only Int]
+    pure (obs, confirmed)
+  let (mObs, mConfirmed) = case mPair of
+        Just (o, c) -> (Just o, Just c)
+        Nothing -> (Nothing, Nothing)
   let (mEpoch, mReadiness) = case mObs of
         Just [(ep, mPaused, hasCritical, hasWarn)] ->
           let readiness :: Text

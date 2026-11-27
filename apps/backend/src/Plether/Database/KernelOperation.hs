@@ -289,6 +289,24 @@ ensureKernelOperationSchema conn = withTransaction conn $ do
   void $ execute_ conn
     "CREATE INDEX IF NOT EXISTS aa_kernel_sponsorship_settled ON aa_kernel_sponsorships\
     \ (deployment,chain_id,entry_point,paymaster,settled_at) WHERE status='settled'"
+  void $ execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_aa_kernel_prep_sender ON aa_kernel_preparations\
+    \ (deployment,chain_id,entry_point,sender,created_at DESC)"
+  void $ execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_aa_kernel_ops_created ON aa_kernel_operations\
+    \ (deployment,chain_id,entry_point,created_at DESC)"
+  void $ execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_aa_kernel_ops_sender ON aa_kernel_operations\
+    \ (deployment,chain_id,entry_point,sender,created_at DESC)"
+  void $ execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_aa_kernel_cancel_orig ON aa_kernel_cancellations\
+    \ (deployment,chain_id,entry_point,original_hash)"
+  void $ execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_aa_kernel_spon_sender ON aa_kernel_sponsorships\
+    \ (deployment,chain_id,entry_point,paymaster,sender)"
+  void $ execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_aa_kernel_spon_created ON aa_kernel_sponsorships\
+    \ (deployment,chain_id,entry_point,paymaster,created_at DESC)"
 
 storeKernelPreparation :: Connection -> KernelPreparation -> IO StorePreparationResult
 storeKernelPreparation conn prepared

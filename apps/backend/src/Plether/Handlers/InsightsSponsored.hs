@@ -45,22 +45,25 @@ import Numeric (readHex)
 import Plether.AA.Kernel (KernelProfile (..))
 import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelSponsorshipConfig (..), kernelScope)
 import Plether.AA.Readiness (Check (..), aggregateFunding)
-import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , newRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Config (Config (..), NativeAaConfig (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.KernelOperation (KernelScope (..), KernelSponsorBudget (..))
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall, encodeUint256, keccak256)
 import Plether.Ethereum.Client
-  ( CallParams (..)
-  , EthClient
+  ( EthClient
   , RpcClientOptions (..)
   , ethBlockNumber
-  , ethCall
-  , ethCallAtBlock
   , newClientWithManager
   , rpcCall
   )
-import Plether.Ethereum.Rpc (ethGetBalance, ethGetCode)
+import qualified Plether.Ethereum.Multicall as Multicall
+import Plether.Ethereum.Rpc (ethGetCode)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import System.Environment (lookupEnv)
@@ -192,6 +195,16 @@ sponsoredStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value
 sponsoredStatusCache =
   unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
 
+{-# NOINLINE sponsoredOperationsCache #-}
+sponsoredOperationsCache :: SingleFlightCache (Int, Maybe Bool) (Either ApiError (ApiResponse Value))
+sponsoredOperationsCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 32 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE tradingAccountDetailCache #-}
+tradingAccountDetailCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
+tradingAccountDetailCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (15 * 1000000000) (300 * 1000000000))
+
 getSponsoredStatusResponse
   :: DbPool
   -> EthClient
@@ -232,12 +245,27 @@ getSponsoredOperationsResponse
   -> Int
   -> Maybe Text
   -> IO (Either ApiError (ApiResponse Value))
-getSponsoredOperationsResponse pool cfg mKernel rawLimit mStatusFilter = do
+getSponsoredOperationsResponse pool cfg mKernel rawLimit mStatusFilter =
+  let limitCount = max 1 (min 100 rawLimit)
+      statusFilter = normalizeStatusFilter mStatusFilter
+   in snd
+        <$> runSingleFlightCache
+          sponsoredOperationsCache
+          (limitCount, statusFilter)
+          isRight
+          (computeSponsoredOperationsResponse pool cfg mKernel limitCount statusFilter)
+
+computeSponsoredOperationsResponse
+  :: DbPool
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> Int
+  -> Maybe Bool
+  -> IO (Either ApiError (ApiResponse Value))
+computeSponsoredOperationsResponse pool cfg mKernel limitCount statusFilter = do
   nowPosix <- getPOSIXTime
   let nowSec = floor nowPosix :: Integer
       chainId = cfgPerpsChainId cfg
-      limitCount = max 1 (min 100 rawLimit)
-      statusFilter = normalizeStatusFilter mStatusFilter
   stack <- resolveActiveStack cfg mKernel
   case stack of
     StackNone ->
@@ -301,20 +329,18 @@ buildNativeStatusResponse
 buildNativeStatusResponse pool client manager cfg native minDepositWei nowSec nowUtc = do
   let chainId = cfgPerpsChainId cfg
       paymasterAddr = T.toLower (naaPaymasterAddress native)
-  blockRes <- ethBlockNumber client
-  let mHeadBlock = either (const Nothing) Just blockRes
-      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
 
   (chainReads, bundlerRes, dbReads, altoFunding, closeAssist) <-
     runConcurrently $
       (,,,,)
-        <$> Concurrently (fetchPaymasterOnchain client mHeadBlock nativeEntryPoint paymasterAddr)
+        <$> Concurrently (fetchPaymasterOnchainMulticall client nativeEntryPoint paymasterAddr)
         <*> Concurrently (probeBundler manager (naaAltoRpcUrl native) nativeEntryPoint)
         <*> Concurrently (fetchNativeDbTelemetry pool chainId paymasterAddr)
         <*> Concurrently (fetchAltoFundingObservation pool cfg)
         <*> Concurrently (fetchCloseAssistanceSummary pool cfg)
 
-  let (mDepositWei, mOnchainPaused) = chainReads
+  let (mHeadBlock, mDepositWei, mOnchainPaused) = chainReads
+      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
       (mControl, mReconciler, budgetUsed, win1h, win24h, win7d, latencyPair, funnel24h, activeInfo) = dbReads
       (usedOutWei, used1hWei, used24hWei) = budgetUsed
       (mLatP50, mLatP95) = latencyPair
@@ -431,20 +457,18 @@ buildKernelStatusResponse pool client manager cfg kgc ksc nowSec nowUtc = do
       paymasterAddr = T.toLower (kscPaymaster ksc)
       budget = kscBudget ksc
       minDepositWei = kscMinDepositWei ksc
-  blockRes <- ethBlockNumber client
-  let mHeadBlock = either (const Nothing) Just blockRes
-      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
 
   (chainReads, bundlerRes, dbReads, altoFunding, closeAssist) <-
     runConcurrently $
       (,,,,)
-        <$> Concurrently (fetchPaymasterOnchain client mHeadBlock entryPointAddr paymasterAddr)
+        <$> Concurrently (fetchPaymasterOnchainMulticall client entryPointAddr paymasterAddr)
         <*> Concurrently (probeBundler manager (kgcAltoRpcUrl kgc) entryPointAddr)
         <*> Concurrently (fetchKernelDbTelemetry pool scope paymasterAddr)
         <*> Concurrently (fetchAltoFundingObservation pool cfg)
         <*> Concurrently (fetchCloseAssistanceSummary pool cfg)
 
-  let (mDepositWei, mOnchainPaused) = chainReads
+  let (mHeadBlock, mDepositWei, mOnchainPaused) = chainReads
+      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
       (mReconciler, mPausedReasonRaw, budgetUsed, win1h, win24h, win7d, latencyPair, funnel24h, activeInfo) = dbReads
       (usedOutWei, used1hWei, used24hWei) = budgetUsed
       (mLatP50, mLatP95) = latencyPair
@@ -611,25 +635,24 @@ unconfiguredStatusJson chainId nowSec =
     , "closeAssistance" .= closeAssistanceJson unavailableCloseAssistance
     ]
 
-fetchPaymasterOnchain :: EthClient -> Maybe Integer -> Text -> Text -> IO (Maybe Integer, Maybe Bool)
-fetchPaymasterOnchain _ Nothing _ _ = pure (Nothing, Nothing)
-fetchPaymasterOnchain client (Just blockNum) entryPointAddr paymasterAddr =
-  runConcurrently $
-    (,)
-      <$> Concurrently
-        ( either (const Nothing) decodeEntryPointBalance
-            <$> ethCallAtBlock
-              client
-              (CallParams entryPointAddr (encodeCall "balanceOf(address)" [encodeAddress paymasterAddr]))
-              blockNum
-        )
-      <*> Concurrently
-        ( either (const Nothing) decodePaymasterPaused
-            <$> ethCallAtBlock
-              client
-              (CallParams paymasterAddr (encodeCall "paused()" []))
-              blockNum
-        )
+-- | Fetch head block, EntryPoint paymaster deposit, and paymaster paused() in
+-- 1 atomic Multicall3 call with a bounded 3s timeout.
+fetchPaymasterOnchainMulticall :: EthClient -> Text -> Text -> IO (Maybe Integer, Maybe Integer, Maybe Bool)
+fetchPaymasterOnchainMulticall client entryPointAddr paymasterAddr = do
+  let calls =
+        [ Multicall.Call Multicall.multicallAddress True (encodeCall "getBlockNumber()" [])
+        , Multicall.Call entryPointAddr True (encodeCall "balanceOf(address)" [encodeAddress paymasterAddr])
+        , Multicall.Call paymasterAddr True (encodeCall "paused()" [])
+        ]
+      dec f r = if Multicall.resultSuccess r then f (Multicall.resultData r) else Nothing
+  mRes <- timeout 3000000 $ observeIo $ Multicall.multicall client calls
+  pure $ case mRes of
+    Just (Just (Right [rBlk, rBal, rPaused])) ->
+      ( dec decodeEntryPointBalance rBlk
+      , dec decodeEntryPointBalance rBal
+      , dec decodePaymasterPaused rPaused
+      )
+    _ -> (Nothing, Nothing, Nothing)
 
 probeBundler :: Manager -> Text -> Text -> IO (Bool, Bool, Text)
 probeBundler manager altoUrl expectedEntryPoint
@@ -777,7 +800,7 @@ fetchNativeDbTelemetry pool chainId paymasterAddr = do
         conn
         "SELECT \
         \  e.event_json->>'blockTimestamp', \
-        \  (SELECT pe.timestamp FROM perps_events pe WHERE pe.chain_id = ? AND pe.tx_hash = e.transaction_hash LIMIT 1), \
+        \  CASE WHEN e.event_json->>'blockTimestamp' IS NULL THEN (SELECT pe.timestamp FROM perps_events pe WHERE pe.chain_id = ? AND pe.tx_hash = e.transaction_hash LIMIT 1) ELSE NULL END, \
         \  FLOOR(EXTRACT(EPOCH FROM COALESCE(a.submitted_at, a.signed_at, a.created_at)))::BIGINT \
         \FROM aa_user_operation_events e \
         \JOIN aa_sponsorship_authorizations a USING (digest) \
@@ -874,12 +897,14 @@ fetchKernelDbTelemetry pool KernelScope {..} paymasterAddr = do
       query
         conn
         "SELECT \
-        \  COALESCE(SUM(max_cost_wei) FILTER (WHERE status IN ('reserved','signed')), 0)::TEXT, \
-        \  COALESCE(SUM(actual_gas_cost) FILTER (WHERE status = 'settled' AND settled_at >= NOW() - interval '1 hour'), 0)::TEXT, \
-        \  COALESCE(SUM(actual_gas_cost) FILTER (WHERE status = 'settled' AND settled_at >= NOW() - interval '24 hours'), 0)::TEXT \
+        \  COALESCE((SELECT SUM(max_cost_wei) FROM aa_kernel_sponsorships \
+        \    WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? AND status IN ('reserved','signed')), 0)::TEXT, \
+        \  COALESCE(SUM(actual_gas_cost) FILTER (WHERE settled_at >= NOW() - interval '1 hour'), 0)::TEXT, \
+        \  COALESCE(SUM(actual_gas_cost), 0)::TEXT \
         \FROM aa_kernel_sponsorships \
-        \WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ?"
-        (ksDeployment, ksChainId, ksEntryPoint, paymasterAddr)
+        \WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? \
+        \  AND status = 'settled' AND settled_at >= NOW() - interval '24 hours'"
+        (ksDeployment, ksChainId, ksEntryPoint, paymasterAddr, ksDeployment, ksChainId, ksEntryPoint, paymasterAddr)
         :: IO [(Text, Text, Text)]
     let budgetUsed = case budgetRows of
           [(o, h, d)] -> (parseIntegerOrZero o, parseIntegerOrZero h, parseIntegerOrZero d)
@@ -1023,7 +1048,7 @@ fetchNativeOperations conn chainId limitCount mSuccessFilter = do
       \  e.actual_gas_cost_wei::TEXT, \
       \  a.max_cost_wei::TEXT, \
       \  e.event_json->>'blockTimestamp', \
-      \  (SELECT pe.timestamp FROM perps_events pe WHERE pe.chain_id = ? AND pe.tx_hash = e.transaction_hash LIMIT 1), \
+      \  CASE WHEN e.event_json->>'blockTimestamp' IS NULL THEN (SELECT pe.timestamp FROM perps_events pe WHERE pe.chain_id = ? AND pe.tx_hash = e.transaction_hash LIMIT 1) ELSE NULL END, \
       \  FLOOR(EXTRACT(EPOCH FROM COALESCE(a.submitted_at, a.signed_at, a.created_at)))::BIGINT, \
       \  e.observed_at, \
       \  e.finalized_at \
@@ -1469,11 +1494,13 @@ computeTradingAccountsOverview pool client manager cfg mKernel = do
   let nowSec = floor nowPosix :: Integer
       nowUtc = posixSecondsToUTCTime (fromIntegral nowSec)
       chainId = cfgPerpsChainId cfg
-  blockRes <- ethBlockNumber client
-  let mHeadBlock = either (const Nothing) Just blockRes
-      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
   case mKernel of
-    Nothing ->
+    Nothing -> do
+      mBlockRes <- timeout 2500000 $ observeIo $ ethBlockNumber client
+      let mHeadBlock = case mBlockRes of
+            Just (Just (Right b)) -> Just b
+            _ -> Nothing
+          respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
       pure $
         Right $
           mkResponse respBlock chainId $
@@ -1500,12 +1527,17 @@ computeTradingAccountsOverview pool client manager cfg mKernel = do
           (admissionMode, mAdmittedCount) = case kgcAllowedOwners kgc of
             Nothing -> ("open" :: Text, Nothing :: Maybe Int)
             Just owners -> ("canary" :: Text, Just (length owners))
-      (bundlerRes, dbRes) <-
+      (mBlockRes, bundlerRes, dbRes) <-
         runConcurrently $
-          (,)
-            <$> Concurrently (probeBundler manager (kgcAltoRpcUrl kgc) entryPointAddr)
+          (,,)
+            <$> Concurrently (timeout 2500000 $ observeIo $ ethBlockNumber client)
+            <*> Concurrently (probeBundler manager (kgcAltoRpcUrl kgc) entryPointAddr)
             <*> Concurrently (fetchKernelTradingAccountsDb pool scope mPaymaster)
-      let (bundlerOk, bundlerEpOk, bundlerStatus) = bundlerRes
+      let mHeadBlock = case mBlockRes of
+            Just (Just (Right b)) -> Just b
+            _ -> Nothing
+          respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
+          (bundlerOk, bundlerEpOk, bundlerStatus) = bundlerRes
           (mRec, mPausedRaw, adopt, accounts, ops) = fromMaybe (Nothing, Nothing, emptyKernelAdoptionRow, [], []) dbRes
           (recFresh, mLagSec, mBlocksBehind) =
             evaluateReconcilerFreshness mRec mHeadBlock nowUtc (kgcMaxSafeLagSeconds kgc)
@@ -1675,7 +1707,7 @@ fetchKernelTradingAccountsDb pool KernelScope {..} mPaymaster =
         \  ON o.deployment = p.deployment AND o.chain_id = p.chain_id \
         \  AND o.entry_point = p.entry_point AND o.preparation_id = p.preparation_id \
         \LEFT JOIN insights_divisions_links l \
-        \  ON LOWER(l.trading_account) = LOWER(p.sender) \
+        \  ON l.trading_account = p.sender \
         \WHERE p.deployment = ? AND p.chain_id = ? AND p.entry_point = ? \
         \GROUP BY p.sender \
         \ORDER BY last_activity_at DESC \
@@ -1920,16 +1952,32 @@ getTradingAccountDetailResponse
   -> Maybe KernelGatewayConfig
   -> Text
   -> IO (Either ApiError (ApiResponse Value))
-getTradingAccountDetailResponse pool client cfg mKernel rawSender = do
+getTradingAccountDetailResponse pool client cfg mKernel rawSender =
+  let sender = T.toLower (T.strip rawSender)
+   in snd
+        <$> runSingleFlightCache
+          tradingAccountDetailCache
+          sender
+          isRight
+          (computeTradingAccountDetailResponse pool client cfg mKernel sender)
+
+computeTradingAccountDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+computeTradingAccountDetailResponse pool client cfg mKernel sender = do
   nowPosix <- getPOSIXTime
   let nowSec = floor nowPosix :: Integer
       chainId = cfgPerpsChainId cfg
-      sender = T.toLower rawSender
-  blockRes <- ethBlockNumber client
-  let mHeadBlock = either (const Nothing) Just blockRes
-      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
   case mKernel of
-    Nothing ->
+    Nothing -> do
+      mBlockRes <- timeout 2500000 $ observeIo $ ethBlockNumber client
+      let respBlock = case mBlockRes of
+            Just (Just (Right b)) -> b
+            _ -> Manifest.releaseDeploymentBlock
       pure $
         Right $
           mkResponse respBlock chainId $
@@ -1973,7 +2021,8 @@ getTradingAccountDetailResponse pool client cfg mKernel rawSender = do
           (,)
             <$> Concurrently (fetchAccountOnchainState client entryPointAddr sender (kpAccountCodeHash prof))
             <*> Concurrently (fetchAccountKernelDb pool scope mPaymaster sender)
-      let (rpcOk, deployed, mCodeHash, mCodeMatch, mBalanceWei, mEpNonce) = onchainRes
+      let (mHeadBlock, rpcOk, deployed, mCodeHash, mCodeMatch, mBalanceWei, mEpNonce) = onchainRes
+          respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
           (summary, sponsorUsage, pendingOps, ops, cancels, unsubPreps) =
             fromMaybe (emptyAccountKernelSummaryRow, (0, 0, 0), [], [], [], []) dbRes
           (usedHourlyWei, usedOutWei, activeReservedCnt) = sponsorUsage
@@ -2052,26 +2101,30 @@ fetchAccountOnchainState
   -> Text
   -> Text
   -> Text
-  -> IO (Bool, Bool, Maybe Text, Maybe Bool, Maybe Integer, Maybe Integer)
+  -> IO (Maybe Integer, Bool, Bool, Maybe Text, Maybe Bool, Maybe Integer, Maybe Integer)
 fetchAccountOnchainState client entryPointAddr sender expectedCodeHash = do
-  let nonceCall =
-        CallParams
-          entryPointAddr
-          (encodeCall "getNonce(address,uint192)" [encodeAddress sender, encodeUint256 0])
-  (codeRes, balRes, nonceRes) <-
+  let calls =
+        [ Multicall.Call Multicall.multicallAddress True (encodeCall "getBlockNumber()" [])
+        , Multicall.Call Multicall.multicallAddress True (encodeCall "getEthBalance(address)" [encodeAddress sender])
+        , Multicall.Call entryPointAddr True (encodeCall "getNonce(address,uint192)" [encodeAddress sender, encodeUint256 0])
+        ]
+      dec r = if Multicall.resultSuccess r then decodeEntryPointBalance (Multicall.resultData r) else Nothing
+  (codeRes, mcRes) <-
     runConcurrently $
-      (,,)
-        <$> Concurrently (observeIo (ethGetCode client sender))
-        <*> Concurrently (observeIo (ethGetBalance client sender))
-        <*> Concurrently (observeIo (ethCall client nonceCall))
-  let mCode = codeRes >>= either (const Nothing) Just
-      mBal = balRes >>= either (const Nothing) Just
-      mNonce = nonceRes >>= either (const Nothing) decodeEntryPointBalance
+      (,)
+        <$> Concurrently (timeout 3000000 $ observeIo (ethGetCode client sender))
+        <*> Concurrently (timeout 3000000 $ observeIo (Multicall.multicall client calls))
+  let mCode = case codeRes of
+        Just (Just (Right bs)) -> Just bs
+        _ -> Nothing
+      (mBlk, mBal, mNonce) = case mcRes of
+        Just (Just (Right [rBlk, rBal, rNonce])) -> (dec rBlk, dec rBal, dec rNonce)
+        _ -> (Nothing, Nothing, Nothing)
       (deployed, mCodeHash, mCodeMatch) = case mCode of
         Nothing -> (False, Nothing, Nothing)
         Just bs -> classifyAccountBytecode bs expectedCodeHash
       rpcOk = isJust mCode || isJust mBal || isJust mNonce
-  pure (rpcOk, deployed, mCodeHash, mCodeMatch, mBal, mNonce)
+  pure (mBlk, rpcOk, deployed, mCodeHash, mCodeMatch, mBal, mNonce)
   where
     isJust (Just _) = True
     isJust Nothing = False
@@ -2108,7 +2161,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \  LEFT JOIN aa_kernel_operations o \
         \    ON o.deployment = p.deployment AND o.chain_id = p.chain_id \
         \    AND o.entry_point = p.entry_point AND o.preparation_id = p.preparation_id \
-        \  WHERE p.deployment = ? AND p.chain_id = ? AND p.entry_point = ? AND LOWER(p.sender) = ? \
+        \  WHERE p.deployment = ? AND p.chain_id = ? AND p.entry_point = ? AND p.sender = ? \
         \), op_agg AS ( \
         \  SELECT \
         \    MAX(created_at) AS last_op_at, \
@@ -2130,7 +2183,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \    MAX(nonce) FILTER (WHERE status = 'included')::TEXT AS highest_inc_nonce, \
         \    MIN(nonce) FILTER (WHERE status = 'pending')::TEXT AS lowest_pend_nonce \
         \  FROM aa_kernel_operations \
-        \  WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND LOWER(sender) = ? \
+        \  WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND sender = ? \
         \), cancel_agg AS ( \
         \  SELECT \
         \    COUNT(*)::INT AS c_prep, \
@@ -2139,11 +2192,11 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \  JOIN aa_kernel_operations o \
         \    ON o.deployment = c.deployment AND o.chain_id = c.chain_id \
         \    AND o.entry_point = c.entry_point AND o.user_operation_hash = c.original_hash \
-        \  WHERE c.deployment = ? AND c.chain_id = ? AND c.entry_point = ? AND LOWER(o.sender) = ? \
+        \  WHERE c.deployment = ? AND c.chain_id = ? AND c.entry_point = ? AND o.sender = ? \
         \), link_agg AS ( \
         \  SELECT MAX(discord_username) AS discord_username \
         \  FROM insights_divisions_links \
-        \  WHERE LOWER(trading_account) = ? \
+        \  WHERE trading_account = ? \
         \) \
         \SELECT \
         \  p.owner_address, l.discord_username, p.first_seen_at, \
@@ -2175,7 +2228,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
             \  COALESCE(SUM(max_cost_wei) FILTER (WHERE status IN ('reserved','signed')), 0)::TEXT, \
             \  COUNT(*) FILTER (WHERE status IN ('reserved','signed'))::INT \
             \FROM aa_kernel_sponsorships \
-            \WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? AND LOWER(sender) = ?"
+            \WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? AND sender = ?"
             (ksDeployment, ksChainId, ksEntryPoint, pm, sender)
             :: IO [(Text, Text, Int)]
         pure $ case spRows of
@@ -2215,7 +2268,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \LEFT JOIN aa_kernel_sponsorships s \
         \  ON s.deployment = o.deployment AND s.chain_id = o.chain_id \
         \  AND s.entry_point = o.entry_point AND s.preparation_id = o.preparation_id \
-        \WHERE o.deployment = ? AND o.chain_id = ? AND o.entry_point = ? AND LOWER(o.sender) = ? \
+        \WHERE o.deployment = ? AND o.chain_id = ? AND o.entry_point = ? AND o.sender = ? \
         \  AND o.status = 'pending' \
         \ORDER BY o.nonce ASC, o.created_at ASC \
         \LIMIT 25"
@@ -2242,7 +2295,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \LEFT JOIN aa_kernel_sponsorships s \
         \  ON s.deployment = o.deployment AND s.chain_id = o.chain_id \
         \  AND s.entry_point = o.entry_point AND s.preparation_id = o.preparation_id \
-        \WHERE o.deployment = ? AND o.chain_id = ? AND o.entry_point = ? AND LOWER(o.sender) = ? \
+        \WHERE o.deployment = ? AND o.chain_id = ? AND o.entry_point = ? AND o.sender = ? \
         \ORDER BY o.created_at DESC \
         \LIMIT 80"
         (ksDeployment, ksChainId, ksEntryPoint, sender) :: IO [AccountOpRow]
@@ -2261,7 +2314,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \JOIN aa_kernel_operations o \
         \  ON o.deployment = c.deployment AND o.chain_id = c.chain_id \
         \  AND o.entry_point = c.entry_point AND o.user_operation_hash = c.original_hash \
-        \WHERE c.deployment = ? AND c.chain_id = ? AND c.entry_point = ? AND LOWER(o.sender) = ? \
+        \WHERE c.deployment = ? AND c.chain_id = ? AND c.entry_point = ? AND o.sender = ? \
         \ORDER BY c.created_at DESC \
         \LIMIT 25"
         (ksDeployment, ksChainId, ksEntryPoint, sender) :: IO [AccountCancelRow]
@@ -2282,7 +2335,7 @@ fetchAccountKernelDb pool KernelScope {..} mPaymaster sender =
         \LEFT JOIN aa_kernel_operations o \
         \  ON o.deployment = p.deployment AND o.chain_id = p.chain_id \
         \  AND o.entry_point = p.entry_point AND o.preparation_id = p.preparation_id \
-        \WHERE p.deployment = ? AND p.chain_id = ? AND p.entry_point = ? AND LOWER(p.sender) = ? \
+        \WHERE p.deployment = ? AND p.chain_id = ? AND p.entry_point = ? AND p.sender = ? \
         \  AND o.user_operation_hash IS NULL \
         \ORDER BY p.created_at DESC \
         \LIMIT 25"

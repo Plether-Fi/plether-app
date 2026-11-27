@@ -22,6 +22,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.Bits (testBit)
 import qualified Data.ByteString.Char8 as BS8
+import Data.Either (isRight)
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe, isNothing, listToMaybe)
 import Data.Scientific (toRealFloat)
@@ -38,7 +39,14 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , newRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Config (Config (..))
+import System.IO.Unsafe (unsafePerformIO)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
@@ -172,16 +180,43 @@ data ReturnReportResidual = ReturnReportResidual
   }
   deriving stock (Eq, Show)
 
+{-# NOINLINE liquiditySettlementsCache #-}
+liquiditySettlementsCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+liquiditySettlementsCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE liquidityForensicsCache #-}
+liquidityForensicsCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+liquidityForensicsCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE liquidityEpochCache #-}
+liquidityEpochCache :: SingleFlightCache Integer (Either ApiError (ApiResponse Value))
+liquidityEpochCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (30 * 1000000000) (600 * 1000000000))
+
 getLiquiditySettlementsResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getLiquiditySettlementsResponse pool cfg = do
+getLiquiditySettlementsResponse pool cfg =
+  snd
+    <$> runSingleFlightCache
+      liquiditySettlementsCache
+      ()
+      isRight
+      (computeLiquiditySettlementsResponse pool cfg)
+
+computeLiquiditySettlementsResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeLiquiditySettlementsResponse pool cfg = do
   let chainId = cfgPerpsChainId cfg
       monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
   (observations, txs, summaryCounts) <- withDb pool $ \conn ->
     withReadSnapshot conn $ do
-      obs <- fetchRecentSettlementObservations conn chainId monitor 24
+      obs <- fetchRecentSettlementObservations conn chainId monitor 1
       recentTxs <- fetchRecentSettlementTxs conn chainId monitor 30
       counts <- fetchSettlement24hSummary conn chainId monitor
       pure (obs, recentTxs, counts)
@@ -214,7 +249,20 @@ getLiquidityEpochResponse
   -> Config
   -> Integer
   -> IO (Either ApiError (ApiResponse Value))
-getLiquidityEpochResponse pool cfg epoch = do
+getLiquidityEpochResponse pool cfg epoch =
+  snd
+    <$> runSingleFlightCache
+      liquidityEpochCache
+      epoch
+      isRight
+      (computeLiquidityEpochResponse pool cfg epoch)
+
+computeLiquidityEpochResponse
+  :: DbPool
+  -> Config
+  -> Integer
+  -> IO (Either ApiError (ApiResponse Value))
+computeLiquidityEpochResponse pool cfg epoch = do
   let chainId = cfgPerpsChainId cfg
       monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
       housePool = T.toLower $ T.strip $ cfgVaultHistoryHousePoolAddress cfg
@@ -276,7 +324,19 @@ getLiquidityForensicsResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getLiquidityForensicsResponse pool cfg = do
+getLiquidityForensicsResponse pool cfg =
+  snd
+    <$> runSingleFlightCache
+      liquidityForensicsCache
+      ()
+      isRight
+      (computeLiquidityForensicsResponse pool cfg)
+
+computeLiquidityForensicsResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeLiquidityForensicsResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
       housePool = T.toLower $ T.strip $ cfgVaultHistoryHousePoolAddress cfg
@@ -737,27 +797,17 @@ fetchAdjacentEpochs
   -> Integer
   -> IO (Maybe Integer, Maybe Integer)
 fetchAdjacentEpochs conn chainId monitor epoch = do
-  prevRows <-
+  rows <-
     query
       conn
-      "SELECT MAX(epoch) FROM perps_lp_settlement_observations \
-      \WHERE chain_id = ? AND monitor_address = ? AND epoch < ?"
-      (chainId, monitor, epoch)
-      :: IO [Only (Maybe Integer)]
-  nextRows <-
-    query
-      conn
-      "SELECT MIN(epoch) FROM perps_lp_settlement_observations \
-      \WHERE chain_id = ? AND monitor_address = ? AND epoch > ?"
-      (chainId, monitor, epoch)
-      :: IO [Only (Maybe Integer)]
-  let mPrev = case prevRows of
-        [Only p] -> p
-        _ -> Nothing
-      mNext = case nextRows of
-        [Only n] -> n
-        _ -> Nothing
-  pure (mPrev, mNext)
+      "SELECT \
+      \  (SELECT epoch FROM perps_lp_settlement_observations WHERE chain_id = ? AND monitor_address = ? AND epoch < ? ORDER BY epoch DESC LIMIT 1), \
+      \  (SELECT epoch FROM perps_lp_settlement_observations WHERE chain_id = ? AND monitor_address = ? AND epoch > ? ORDER BY epoch ASC LIMIT 1)"
+      (chainId, monitor, epoch, chainId, monitor, epoch)
+      :: IO [(Maybe Integer, Maybe Integer)]
+  pure $ case rows of
+    [(mPrev, mNext)] -> (mPrev, mNext)
+    _ -> (Nothing, Nothing)
 
 fetchCoveringReturnReport
   :: Connection

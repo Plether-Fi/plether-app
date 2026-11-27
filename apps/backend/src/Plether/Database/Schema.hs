@@ -656,6 +656,17 @@ ensureBasketSnapshotSchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_admitted_latest \
     \ON perps_pyth_update_payloads(max_publish_time DESC) \
     \WHERE source = 'backend_hermes_latest_v2'"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_basket_latest \
+    \ON perps_pyth_update_payloads(max_publish_time DESC, id DESC) \
+    \WHERE basket_price IS NOT NULL"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_fetched_at \
+    \ON perps_pyth_update_payloads(fetched_at DESC) \
+    \INCLUDE (min_publish_time, max_publish_time, source)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_max_pub \
+    \ON perps_pyth_update_payloads(max_publish_time DESC)"
   ensureOracleAdmissionEventsSchema conn
   pure ()
 
@@ -1659,6 +1670,25 @@ ensurePerpsKeeperOrdersSchema conn = do
     \BEGIN CREATE TRIGGER trg_perps_lp_settlement_broadcasts_append_only BEFORE UPDATE OR DELETE ON perps_lp_settlement_broadcasts FOR EACH ROW EXECUTE FUNCTION reject_lp_settlement_broadcast_mutation(); \
     \EXCEPTION WHEN duplicate_object THEN NULL; END; \
     \END IF; END $$"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_lp_obs_monitor_block \
+    \ON perps_lp_settlement_observations(chain_id, monitor_address, observed_block DESC, last_observed_at DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_lp_obs_chain_observed_at \
+    \ON perps_lp_settlement_observations(chain_id, last_observed_at DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_lp_obs_monitor_epoch \
+    \ON perps_lp_settlement_observations(chain_id, monitor_address, epoch, observed_block DESC, last_observed_at DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_lp_tx_monitor_created \
+    \ON perps_lp_settlement_transactions(chain_id, monitor_address, created_at DESC, id DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_lp_tx_monitor_epoch \
+    \ON perps_lp_settlement_transactions(chain_id, monitor_address, epoch, created_at DESC, id DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_lp_tx_receipt_hash \
+    \ON perps_lp_settlement_transactions(chain_id, receipt_transaction_hash) \
+    \WHERE receipt_transaction_hash IS NOT NULL"
   pure ()
 
 -- | Read-only catalog verification used by deployment preflight. This checks
@@ -4496,6 +4526,28 @@ ensurePerpsHistorySchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_orders_account_block \
     \ON perps_orders(chain_id, order_router, account, COALESCE(terminal_block_number, commit_block_number) DESC)"
   _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_oracle_window \
+    \ON perps_orders(chain_id, order_router, oracle_min_publish_time, oracle_max_publish_time, order_id DESC) \
+    \WHERE oracle_min_publish_time IS NOT NULL"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_commit_time \
+    \ON perps_orders(chain_id, order_router, commit_timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_executed_time \
+    \ON perps_orders(chain_id, order_router, terminal_timestamp DESC) \
+    \WHERE terminal_status = 'Executed'"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_terminal_tx \
+    \ON perps_orders(chain_id, order_router, terminal_tx_hash) \
+    \WHERE terminal_tx_hash IS NOT NULL"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_events_name_time \
+    \ON perps_events(chain_id, release_router, event_name, timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_events_intent_order \
+    \ON perps_events(chain_id, release_router, order_id, block_number DESC, log_index DESC) \
+    \WHERE event_name = 'IntentRegistered'"
+  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_account_activity (\
     \id SERIAL PRIMARY KEY,\
     \chain_id BIGINT NOT NULL,\
@@ -4558,6 +4610,16 @@ ensurePerpsHistorySchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_open_accounts \
     \ON perps_account_activity(chain_id, release_router, account, block_number) \
     \WHERE activity_type = 'Open'"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_tx_hash \
+    \ON perps_account_activity(chain_id, release_router, tx_hash, log_index)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_type_time \
+    \ON perps_account_activity(chain_id, release_router, activity_type, timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_trades_recent \
+    \ON perps_account_activity(chain_id, release_router, block_number DESC, log_index DESC) \
+    \WHERE activity_type IN ('Open', 'Close', 'Liquidated')"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_asset_transfers (\
     \chain_id BIGINT NOT NULL,\

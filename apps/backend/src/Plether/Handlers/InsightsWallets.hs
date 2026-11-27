@@ -50,7 +50,7 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
-import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
+import Plether.Cache (SingleFlightCache, newConcurrentRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Ethereum.Client (EthClient)
@@ -274,6 +274,11 @@ data DivisionsWeekRecord = DivisionsWeekRecord
   }
   deriving stock (Eq, Show)
 
+{-# NOINLINE walletSummaryCache #-}
+walletSummaryCache :: SingleFlightCache (Text, Int) (Either ApiError (ApiResponse Value))
+walletSummaryCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (15 * 1000000000) (300 * 1000000000))
+
 getWalletSummaryResponse
   :: DbPool
   -> EthClient
@@ -281,10 +286,26 @@ getWalletSummaryResponse
   -> Text
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
-getWalletSummaryResponse pool client cfg rawAddress requestedLimit = do
-  now <- floor <$> getPOSIXTime
+getWalletSummaryResponse pool client cfg rawAddress requestedLimit =
   let account = T.toLower $ T.strip rawAddress
-      chainId = cfgPerpsChainId cfg
+      limit = min 100 $ max 1 requestedLimit
+   in snd
+        <$> runSingleFlightCache
+          walletSummaryCache
+          (account, limit)
+          isRight
+          (computeWalletSummaryResponse pool client cfg account limit)
+
+computeWalletSummaryResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+computeWalletSummaryResponse pool client cfg account limit = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
       housePool = T.toLower $ T.strip $ cfgPerpsHousePool cfg
       seniorVault = T.toLower $ T.strip $ cfgVaultHistorySeniorVaultAddress cfg
@@ -292,10 +313,10 @@ getWalletSummaryResponse pool client cfg rawAddress requestedLimit = do
       deployBlock = cfgVaultHistoryDeploymentBlock cfg
       accountLens = T.toLower $ T.strip $ cfgPerpsAccountLens cfg
       book = T.toLower Manifest.positionProtectionBookAddress
-      limit = min 100 $ max 1 requestedLimit
-  (ledgerRes, dbTuple) <-
+      hasConfiguredVaults = not (T.null seniorVault) && not (T.null juniorVault)
+  (mLedgerRes, dbTuple) <-
     concurrently
-      (getAccountLedgerSnapshot client accountLens account)
+      (timeout 2500000 (getAccountLedgerSnapshot client accountLens account))
       ( withDb pool $ \conn ->
           withReadSnapshot conn $ do
             handle <- fetchDiscordHandle conn account
@@ -310,13 +331,24 @@ getWalletSummaryResponse pool client cfg rawAddress requestedLimit = do
             (protections, _) <- readProtectionHistoryPage conn chainId book account 30 Nothing
             protBlock <- fetchProtectionIndexedBlock conn chainId book
             divHistory <- fetchAccountDivisionsHistory conn chainId router account
-            lpBalances <- fetchAccountVaultBalances conn chainId housePool deployBlock account
-            lpRequests <- fetchAccountVaultRequestStates conn chainId housePool deployBlock account
-            lpEvents <- fetchAccountVaultRequestEvents conn chainId housePool deployBlock account
+            lpBalances <-
+              if hasConfiguredVaults
+                then fetchAccountVaultBalancesForVaults conn chainId housePool deployBlock seniorVault juniorVault account
+                else fetchAccountVaultBalances conn chainId housePool deployBlock account
+            lpRequests <-
+              if hasConfiguredVaults
+                then fetchAccountVaultRequestStatesForVaults conn chainId housePool deployBlock seniorVault juniorVault account
+                else fetchAccountVaultRequestStates conn chainId housePool deployBlock account
+            lpEvents <-
+              if hasConfiguredVaults
+                then fetchAccountVaultRequestEventsForVaults conn chainId housePool deployBlock seniorVault juniorVault account
+                else fetchAccountVaultRequestEvents conn chainId housePool deployBlock account
             pure (handle, stats, activity, protBundle, balanceEvents, protections, protBlock, divHistory, lpBalances, lpRequests, lpEvents)
       )
   let (mHandle, stats, activity, protBundle, balanceEvents, protections, protBlock, divHistory, lpBalances, lpRequests, lpEvents) = dbTuple
-      mLedger = either (const Nothing) Just ledgerRes
+      mLedger = case mLedgerRes of
+        Just (Right snap) -> Just snap
+        _ -> Nothing
       latestBlock = maximum [arsLatestBlock stats, protBlock, 0]
       balanceHistory = buildBalanceHistory now latestBlock mLedger balanceEvents
       firstDivName = listToMaybe $ mapMaybe dwrDisplayName divHistory
@@ -581,7 +613,7 @@ fetchAccountActivity conn chainId router account limit =
     \      AND 1 = (\
     \        SELECT COUNT(*) FROM perps_account_activity sibling \
     \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
-    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
+    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.block_number = a.block_number AND sibling.account = a.account \
     \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
     \          AND sibling.log_index > COALESCE((\
     \            SELECT MAX(prior.log_index) FROM perps_events prior \
@@ -591,7 +623,7 @@ fetchAccountActivity conn chainId router account limit =
     \          ), -1)\
     \      )\
     \  ) candidate\
-    \) execution ON TRUE \
+    \) execution ON a.order_id IS NULL AND a.activity_type IN ('Open', 'Close') \
     \WHERE a.chain_id = ? AND a.release_router = ? AND a.account = ? \
     \ORDER BY a.block_number DESC, a.log_index DESC \
     \LIMIT ?"
@@ -642,7 +674,7 @@ fetchAccountBalanceEvents conn chainId router account =
     \      AND 1 = (\
     \        SELECT COUNT(*) FROM perps_account_activity sibling \
     \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
-    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
+    \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.block_number = a.block_number AND sibling.account = a.account \
     \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
     \          AND sibling.log_index > COALESCE((\
     \            SELECT MAX(prior.log_index) FROM perps_events prior \
@@ -680,6 +712,69 @@ fetchAccountDivisionsHistory conn chainId router account = do
       \ORDER BY week_start DESC LIMIT 20"
       (chainId, router) :: IO [(Integer, Integer, Value)]
   pure $ extractDivisionsHistory account rows
+
+fetchAccountVaultBalancesForVaults
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> IO [AccountVaultBalanceRow]
+fetchAccountVaultBalancesForVaults conn chainId housePool deployBlock seniorVault juniorVault account =
+  query
+    conn
+    "SELECT vault_address, share_balance::TEXT, unclaimed_deposit_shares::TEXT, \
+    \withdrawal_escrow_shares::TEXT, total_attributed_shares::TEXT, observed_block::TEXT \
+    \FROM vault_attributed_holder_balances \
+    \WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
+    \  AND vault_address IN (?, ?) AND holder_address = ? \
+    \ORDER BY vault_address ASC"
+    (chainId, housePool, deployBlock, seniorVault, juniorVault, account)
+
+fetchAccountVaultRequestStatesForVaults
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> IO [AccountVaultRequestStateRow]
+fetchAccountVaultRequestStatesForVaults conn chainId housePool deployBlock seniorVault juniorVault account =
+  query
+    conn
+    "SELECT vault_address, request_id::TEXT, pending_deposit_assets::TEXT, \
+    \claimable_deposit_assets::TEXT, claimable_deposit_shares::TEXT, refundable_deposit_assets::TEXT, \
+    \pending_redeem_shares::TEXT, refundable_redeem_shares::TEXT, redeem_refund_pending, \
+    \is_active, observed_block::TEXT \
+    \FROM vault_deposit_request_states \
+    \WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
+    \  AND vault_address IN (?, ?) AND controller_address = ? \
+    \ORDER BY is_active DESC, request_id DESC LIMIT 30"
+    (chainId, housePool, deployBlock, seniorVault, juniorVault, account)
+
+fetchAccountVaultRequestEventsForVaults
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> IO [AccountVaultRequestEventRow]
+fetchAccountVaultRequestEventsForVaults conn chainId housePool deployBlock seniorVault juniorVault account =
+  query
+    conn
+    "SELECT vault_address, event_name, request_id::TEXT, raw_amount::TEXT, \
+    \tx_hash, block_number::TEXT, block_timestamp \
+    \FROM vault_request_events \
+    \WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
+    \  AND vault_address IN (?, ?) \
+    \  AND (controller_address = ? OR owner_address = ?) \
+    \ORDER BY block_number DESC, log_index DESC LIMIT 30"
+    (chainId, housePool, deployBlock, seniorVault, juniorVault, account, account)
 
 fetchAccountVaultBalances
   :: Connection
@@ -995,7 +1090,7 @@ instance FromRow DivisionsWeekActivityRow where
 {-# NOINLINE divisionsWalletContextCache #-}
 divisionsWalletContextCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
 divisionsWalletContextCache =
-  unsafePerformIO (newRefreshingSingleFlightCache 256 (30 * 1000000000) (600 * 1000000000))
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 256 (30 * 1000000000) (600 * 1000000000))
 
 -- | GET /api/insights/v1/divisions/wallets/:address
 -- Returns verifiable boundary snapshots (wallet balance + exact open position at
@@ -1164,7 +1259,7 @@ fetchWeekActivityStats conn chainId router account baselineBlock cutoffBlock = d
       \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 4), FALSE), \
       \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 5), FALSE) \
       \FROM perps_account_activity a \
-      \WHERE a.chain_id = ? AND a.release_router = ? AND LOWER(a.account) = ? \
+      \WHERE a.chain_id = ? AND a.release_router = ? AND a.account = ? \
       \  AND a.block_number > ? AND a.block_number <= ?"
       (chainId, router, account, baselineBlock, cutoffBlock) :: IO [DivisionsWeekActivityRow]
   pure $

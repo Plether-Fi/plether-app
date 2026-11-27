@@ -18,6 +18,7 @@ module Plether.Handlers.Insights
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Either (isRight)
 import Data.Maybe (catMaybes)
 import Data.Int (Int64)
 import Data.Text (Text)
@@ -32,7 +33,14 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , newRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Config (Config (..))
+import System.IO.Unsafe (unsafePerformIO)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Insights
   ( CompetitionRow (..)
@@ -65,11 +73,58 @@ import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
 
+{-# NOINLINE currentCompetitionCache #-}
+currentCompetitionCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+currentCompetitionCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (60 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE competitionLeaderboardCache #-}
+competitionLeaderboardCache :: SingleFlightCache (Text, Maybe Text, Int, Int) (Either ApiError (ApiResponse Value))
+competitionLeaderboardCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (20 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE insightsStatusCache #-}
+insightsStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+insightsStatusCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsTradersCache #-}
+divisionsTradersCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsTradersCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsCurrentCache #-}
+divisionsCurrentCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsCurrentCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (60 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE divisionsHistoryCache #-}
+divisionsHistoryCache :: SingleFlightCache (Maybe Int) (Either ApiError (ApiResponse Value))
+divisionsHistoryCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 64 (60 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE divisionsStatsCache #-}
+divisionsStatsCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsStatsCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsLiveCache #-}
+divisionsLiveCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsLiveCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
 getCurrentCompetitionResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getCurrentCompetitionResponse pool cfg = do
+getCurrentCompetitionResponse pool cfg =
+  snd <$> runSingleFlightCache currentCompetitionCache () isRight (computeCurrentCompetitionResponse pool cfg)
+
+computeCurrentCompetitionResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeCurrentCompetitionResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   competition <- withDb pool $ \conn ->
     getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
@@ -93,10 +148,27 @@ getCompetitionLeaderboardResponse
   -> Int
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
-getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedOffset = do
-  now <- floor <$> getPOSIXTime
+getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedOffset =
   let pageLimit = clampLimit requestedLimit
       pageOffset = max 0 requestedOffset
+      normalizedSearch = fmap (T.toLower . T.strip) search
+   in snd
+        <$> runSingleFlightCache
+          competitionLeaderboardCache
+          (slug, normalizedSearch, pageLimit, pageOffset)
+          isRight
+          (computeCompetitionLeaderboardResponse pool cfg slug search pageLimit pageOffset)
+
+computeCompetitionLeaderboardResponse
+  :: DbPool
+  -> Config
+  -> Text
+  -> Maybe Text
+  -> Int
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+computeCompetitionLeaderboardResponse pool cfg slug search pageLimit pageOffset = do
+  now <- floor <$> getPOSIXTime
   result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     competition <- getCompetitionBySlug conn slug
     rows <- case competition of
@@ -170,7 +242,14 @@ getInsightsDataStatusResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getInsightsDataStatusResponse pool cfg = do
+getInsightsDataStatusResponse pool cfg =
+  snd <$> runSingleFlightCache insightsStatusCache () isRight (computeInsightsDataStatusResponse pool cfg)
+
+computeInsightsDataStatusResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeInsightsDataStatusResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     competition <- getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
@@ -199,7 +278,14 @@ getDivisionsTradersResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getDivisionsTradersResponse pool cfg = do
+getDivisionsTradersResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsTradersCache () isRight (computeDivisionsTradersResponse pool cfg)
+
+computeDivisionsTradersResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsTradersResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     bindings <- query conn
@@ -251,7 +337,11 @@ getDivisionsTradersResponse pool cfg = do
 -- Finalized badges have no live-snapshot freshness limit: an awarded tier
 -- remains current throughout the following week and across worker restarts.
 getDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-getDivisionsCurrentResponse pool cfg = do
+getDivisionsCurrentResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsCurrentCache () isRight (computeDivisionsCurrentResponse pool cfg)
+
+computeDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsCurrentResponse pool cfg = do
   rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
     (cfgPerpsChainId cfg, Nothing :: Maybe Int, Nothing :: Maybe Int)
   pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
@@ -263,7 +353,11 @@ getDivisionsCurrentResponse pool cfg = do
 -- A week selects its pinned contract release. Cursors span the canonical
 -- timeline across upgrades; callers cannot choose an alternative result.
 getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
-getDivisionsHistoryResponse pool cfg week = do
+getDivisionsHistoryResponse pool cfg week =
+  snd <$> runSingleFlightCache divisionsHistoryCache week isRight (computeDivisionsHistoryResponse pool cfg week)
+
+computeDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsHistoryResponse pool cfg week = do
   rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
     (cfgPerpsChainId cfg, week, week)
   pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
@@ -281,7 +375,11 @@ getDivisionsHistoryResponse pool cfg week = do
 -- Links are inserted only after Discord, wallet ownership and consent are
 -- verified. Count those completed registrations independently of trading activity.
 getDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-getDivisionsStatsResponse pool cfg = do
+getDivisionsStatsResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsStatsCache () isRight (computeDivisionsStatsResponse pool cfg)
+
+computeDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsStatsResponse pool cfg = do
   counts <- withDb pool $ \conn -> query_ conn
     "SELECT COUNT(*) FROM insights_divisions_links"
   pure $ case counts :: [Only Integer] of
@@ -290,7 +388,11 @@ getDivisionsStatsResponse pool cfg = do
     _ -> Left $ E.internalError "Divisions registration count is unavailable"
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-getDivisionsLiveResponse pool cfg = do
+getDivisionsLiveResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsLiveCache () isRight (computeDivisionsLiveResponse pool cfg)
+
+computeDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsLiveResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   let weekStart = divisionWeekStart now
   rows <- withDb pool $ \conn -> query conn

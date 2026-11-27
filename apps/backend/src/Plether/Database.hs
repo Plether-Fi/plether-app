@@ -41,7 +41,7 @@ newDbPool connStr = DbPool <$> newPool poolConfig <*> newObservation getMonotoni
       connect
       (close . fst)
       60.0   -- idle timeout (seconds)
-      10     -- max connections
+      16     -- max connections
 
 withDb :: HasCallStack => DbPool -> (Connection -> IO a) -> IO a
 withDb (DbPool pool observation) action =

@@ -65,12 +65,13 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
-import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
+import Plether.Cache (SingleFlightCache, newConcurrentRefreshingSingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Candles (getActiveBasketSeriesId)
 import Plether.Ethereum.Abi (decodeUint256, encodeCall, encodeUint256)
-import Plether.Ethereum.Client (CallParams (..), EthClient, ethCall)
+import Plether.Ethereum.Client (EthClient)
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , getAccountLedgerSnapshot
@@ -1258,6 +1259,11 @@ summarizeWalletExposure nowUnix positions =
         , wesTightestLiquidationBps = tightestLiq
         }
 
+{-# NOINLINE walletExposureCache #-}
+walletExposureCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
+walletExposureCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (15 * 1000000000) (300 * 1000000000))
+
 -- | GET /api/insights/v1/wallets/:address/exposure
 getWalletExposureResponse
   :: DbPool
@@ -1265,15 +1271,29 @@ getWalletExposureResponse
   -> Config
   -> Text
   -> IO (Either ApiError (ApiResponse Value))
-getWalletExposureResponse pool client cfg rawAddress = do
-  now <- floor <$> getPOSIXTime
+getWalletExposureResponse pool client cfg rawAddress =
   let account = T.toLower $ T.strip rawAddress
-      chainId = cfgPerpsChainId cfg
+   in snd
+        <$> runSingleFlightCache
+          walletExposureCache
+          account
+          isRight
+          (computeWalletExposureResponse pool client cfg account)
+
+computeWalletExposureResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+computeWalletExposureResponse pool client cfg account = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
       accountLens = T.toLower $ T.strip $ cfgPerpsAccountLens cfg
-  (ledgerRes, dbTuple) <-
+  (mLedgerRes, dbTuple) <-
     concurrently
-      (getAccountLedgerSnapshot client accountLens account)
+      (timeout 2500000 (getAccountLedgerSnapshot client accountLens account))
       ( withDb pool $ \conn ->
           withReadSnapshot conn $ do
             rows <- fetchWalletPositionActivity conn chainId router account
@@ -1290,7 +1310,9 @@ getWalletExposureResponse pool client cfg rawAddress = do
             pure (rows, mMark, candles)
       )
   let (rows, mMarkTuple, candles) = dbTuple
-      mLedger = either (const Nothing) Just ledgerRes
+      mLedger = case mLedgerRes of
+        Just (Right snap) -> Just snap
+        _ -> Nothing
       mMarkRaw = fst <$> mMarkTuple
       mMarkTs = snd <$> mMarkTuple
       latestBlock = foldl max 0 (map parBlockNumber rows)
@@ -1320,6 +1342,11 @@ getWalletExposureResponse pool client cfg rawAddress = do
           , "positions" .= map (positionSummaryToJson now) (take 50 enrichedPositions)
           ]
 
+{-# NOINLINE walletPositionDetailCache #-}
+walletPositionDetailCache :: SingleFlightCache (Text, Text) (Either ApiError (ApiResponse Value))
+walletPositionDetailCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (15 * 1000000000) (300 * 1000000000))
+
 -- | GET /api/insights/v1/wallets/:address/positions/:positionId
 getWalletPositionDetailResponse
   :: DbPool
@@ -1328,17 +1355,32 @@ getWalletPositionDetailResponse
   -> Text
   -> Text
   -> IO (Either ApiError (ApiResponse Value))
-getWalletPositionDetailResponse pool client cfg rawAddress rawPositionId = do
-  now <- floor <$> getPOSIXTime
+getWalletPositionDetailResponse pool client cfg rawAddress rawPositionId =
   let account = T.toLower $ T.strip rawAddress
       targetId = T.strip rawPositionId
-      chainId = cfgPerpsChainId cfg
+   in snd
+        <$> runSingleFlightCache
+          walletPositionDetailCache
+          (account, targetId)
+          isRight
+          (computeWalletPositionDetailResponse pool client cfg account targetId)
+
+computeWalletPositionDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+computeWalletPositionDetailResponse pool client cfg account targetId = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
       accountLens = T.toLower $ T.strip $ cfgPerpsAccountLens cfg
       book = T.toLower Manifest.positionProtectionBookAddress
-  (ledgerRes, dbInitial) <-
+  (mLedgerRes, dbInitial) <-
     concurrently
-      (getAccountLedgerSnapshot client accountLens account)
+      (timeout 2500000 (getAccountLedgerSnapshot client accountLens account))
       ( withDb pool $ \conn ->
           withReadSnapshot conn $ do
             handle <- fetchDiscordHandle conn account
@@ -1347,7 +1389,9 @@ getWalletPositionDetailResponse pool client cfg rawAddress rawPositionId = do
             pure (handle, rows, mMark)
       )
   let (mHandle, rows, mMarkTuple) = dbInitial
-      mLedger = either (const Nothing) Just ledgerRes
+      mLedger = case mLedgerRes of
+        Just (Right snap) -> Just snap
+        _ -> Nothing
       mMarkRaw = fst <$> mMarkTuple
       mMarkTs = snd <$> mMarkTuple
       latestBlock = foldl max 0 (map parBlockNumber rows)
@@ -1941,26 +1985,27 @@ decodeMarketSideTuple bytes
 fetchOnChainMarketSides :: EthClient -> IO (Maybe OnChainMarketSides)
 fetchOnChainMarketSides client = do
   let engine = Manifest.cfdEngineAddress
-      callSide :: Integer -> IO (Maybe (Integer, Integer))
-      callSide idx = do
-        let calldata = encodeCall "sides(uint256)" [encodeUint256 idx]
-        res <-
-          timeout 2000000 $
-            (Just <$> ethCall client (CallParams engine calldata))
-              `catch` (\(_ :: SomeException) -> pure Nothing)
-        pure $ case res of
-          Just (Just (Right bytes)) -> decodeMarketSideTuple bytes
-          _ -> Nothing
-  (mBull, mBear) <- concurrently (callSide 0) (callSide 1)
-  pure $ case (mBull, mBear) of
-    (Just (bullOi, bullMargin), Just (bearOi, bearMargin)) ->
-      Just
-        OnChainMarketSides
-          { ocmsLongOpenInterest = bullOi
-          , ocmsShortOpenInterest = bearOi
-          , ocmsLongTotalMarginAssets = bullMargin
-          , ocmsShortTotalMarginAssets = bearMargin
-          }
+      calls =
+        [ Multicall.Call engine True (encodeCall "sides(uint256)" [encodeUint256 0])
+        , Multicall.Call engine True (encodeCall "sides(uint256)" [encodeUint256 1])
+        ]
+  res <-
+    timeout 2000000 $
+      (Just <$> Multicall.multicall client calls)
+        `catch` (\(_ :: SomeException) -> pure Nothing)
+  pure $ case res of
+    Just (Just (Right [bullRes, bearRes]))
+      | Multicall.resultSuccess bullRes && Multicall.resultSuccess bearRes ->
+          case (decodeMarketSideTuple (Multicall.resultData bullRes), decodeMarketSideTuple (Multicall.resultData bearRes)) of
+            (Just (bullOi, bullMargin), Just (bearOi, bearMargin)) ->
+              Just
+                OnChainMarketSides
+                  { ocmsLongOpenInterest = bullOi
+                  , ocmsShortOpenInterest = bearOi
+                  , ocmsLongTotalMarginAssets = bullMargin
+                  , ocmsShortTotalMarginAssets = bearMargin
+                  }
+            _ -> Nothing
     _ -> Nothing
 
 -- | Reconcile reconstructed top-position exposure with canonical on-chain
@@ -2117,30 +2162,31 @@ computeMarketExposureResponse pool mClient cfg = do
   let mMarkRaw = fst <$> mMarkTuple
       mMarkTs = snd <$> mMarkTuple
       byAccount =
-        foldl
-          ( \acc row ->
-              let pRow =
-                    PositionActivityRow
-                      { parActivityType = atarActivityType row
-                      , parOrderId = atarOrderId row
-                      , parSide = atarSide row
-                      , parPrice = atarPrice row
-                      , parSizeDelta = atarSizeDelta row
-                      , parAmountAssets = atarAmountAssets row
-                      , parPnlAssets = atarPnlAssets row
-                      , parFeeAssets = Nothing
-                      , parVpiAssets = Nothing
-                      , parKeeperBountyAssets = Nothing
-                      , parTxHash = atarTxHash row
-                      , parBlockNumber = atarBlockNumber row
-                      , parLogIndex = atarLogIndex row
-                      , parTimestamp = atarTimestamp row
-                      , parExecution = Nothing
-                      }
-               in Map.insertWith (\new old -> old <> new) (T.toLower (atarAccount row)) [pRow] acc
-          )
-          Map.empty
-          taggedRows
+        Map.map reverse $
+          foldl
+            ( \acc row ->
+                let pRow =
+                      PositionActivityRow
+                        { parActivityType = atarActivityType row
+                        , parOrderId = atarOrderId row
+                        , parSide = atarSide row
+                        , parPrice = atarPrice row
+                        , parSizeDelta = atarSizeDelta row
+                        , parAmountAssets = atarAmountAssets row
+                        , parPnlAssets = atarPnlAssets row
+                        , parFeeAssets = Nothing
+                        , parVpiAssets = Nothing
+                        , parKeeperBountyAssets = Nothing
+                        , parTxHash = atarTxHash row
+                        , parBlockNumber = atarBlockNumber row
+                        , parLogIndex = atarLogIndex row
+                        , parTimestamp = atarTimestamp row
+                        , parExecution = Nothing
+                        }
+                 in Map.insertWith (++) (T.toLower (atarAccount row)) [pRow] acc
+            )
+            Map.empty
+            taggedRows
       reconstructed = computeGlobalMarketExposure now mMarkRaw handlesMap byAccount
       exposure = reconcileGlobalMarketExposure mMarkRaw mOnChainSides mAgg reconstructed
   pure $

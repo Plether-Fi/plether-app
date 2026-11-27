@@ -47,10 +47,8 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.KernelOperation (KernelScope (..))
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall, keccak256, selector)
 import Plether.Ethereum.Client
-  ( CallParams (..)
-  , EthClient
+  ( EthClient
   , ethBlockNumber
-  , ethCallAtBlock
   , rpcCall
   )
 import qualified Plether.Ethereum.Multicall as Multicall
@@ -139,6 +137,79 @@ protocolManifestCache :: SingleFlightCache () (Either ApiError (ApiResponse Valu
 protocolManifestCache =
   unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
 
+-- | Runtime bytecode of pinned release contracts is immutable; cache the 30
+-- eth_getCode + keccak256 verifications for 15 minutes (60 min SWR) instead of
+-- downloading 30 contract bytecodes every 30 seconds.
+{-# NOINLINE protocolCodeChecksCache #-}
+protocolCodeChecksCache :: SingleFlightCache Integer [ContractCodeCheck]
+protocolCodeChecksCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 4 (900 * 1000000000) (3600 * 1000000000))
+
+getCachedContractCodeChecks :: EthClient -> Integer -> [ManifestContractSpec] -> IO [ContractCodeCheck]
+getCachedContractCodeChecks client blockNum contracts =
+  snd
+    <$> runSingleFlightCache
+      protocolCodeChecksCache
+      0
+      (all (\c -> maybe False (const True) (cccVerified c)))
+      (mapConcurrently (fetchContractCodeCheck client blockNum) contracts)
+
+-- | Batch all 19 protocol status & risk parameter eth_calls into 1 single
+-- atomic Multicall3 aggregate3 call at blockNum.
+fetchProtocolParamsMulticall
+  :: EthClient
+  -> Integer
+  -> IO (Maybe LiveProtocolStatus, Maybe Bool, Maybe Bool, LiveParameterReads)
+fetchProtocolParamsMulticall client blockNum = do
+  let engine = Manifest.cfdEngineAddress
+      router = Manifest.orderRouterAddress
+      housePool = Manifest.housePoolAddress
+      oracle = Manifest.pletherOracleAddress
+      publicLens = Manifest.perpsPublicLensAddress
+      mk target sig =
+        Multicall.Call
+          { Multicall.callTarget = target
+          , Multicall.callAllowFailure = True
+          , Multicall.callCalldata = selector sig
+          }
+      calls =
+        [ mk publicLens "getProtocolStatus()"
+        , mk housePool "paused()"
+        , mk engine "degradedMode()"
+        , mk engine "riskParams()"
+        , mk engine "executionFeeBps()"
+        , mk engine "settlementBufferBps()"
+        , mk engine "frozenCloseSpreadBps()"
+        , mk router "minOpenNotionalAssets()"
+        , mk router "maxPendingOrders()"
+        , mk router "maxExecutionWindowSeconds()"
+        , mk router "positionProtectionTriggerBountyAssets()"
+        , mk housePool "maxSeniorExposureAssets()"
+        , mk housePool "maxSeniorShareBps()"
+        , mk housePool "LP_EPOCH_DURATION()"
+        , mk housePool "TIMELOCK_DELAY()"
+        , mk oracle "basketMaxConfidenceRatioBps()"
+        , mk oracle "adverseConfidenceMultiplierBps()"
+        , mk oracle "orderExecutionStalenessLimit()"
+        , mk oracle "liquidationStalenessLimit()"
+        ]
+      decWith f r = if Multicall.resultSuccess r then f (Multicall.resultData r) else Nothing
+      decU = decWith decodeSingleUint
+      decB = decWith decodeSingleBool
+  mRes <- timeout 4000000 $ observeIo $ Multicall.multicallAtBlock client calls blockNum
+  pure $ case mRes of
+    Just (Just (Right [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18])) ->
+      ( decWith decodeProtocolStatus r0
+      , decB r1
+      , decB r2
+      , LiveParameterReads
+          (decWith decodeEngineRiskParams r3, decU r4, decU r5, decU r6)
+          (decU r7, decU r8, decU r9, decU r10)
+          (decU r11, decU r12, decU r13, decU r14)
+          (decU r15, decU r16, decU r17, decU r18)
+      )
+    _ -> (Nothing, Nothing, Nothing, emptyLiveParams)
+
 getProtocolManifestResponse
   :: Maybe DbPool
   -> EthClient
@@ -189,55 +260,11 @@ computeProtocolManifestResponse mPool client cfg mKernel = do
           , Nothing
           )
       Right blockNum -> do
-        let callAt target sig =
-              ethCallAtBlock client (CallParams target (selector sig)) blockNum
-            readUint target sig = either (const Nothing) decodeSingleUint <$> callAt target sig
-            readBool target sig = either (const Nothing) decodeSingleBool <$> callAt target sig
-            engine = Manifest.cfdEngineAddress
-            router = Manifest.orderRouterAddress
-            housePool = Manifest.housePoolAddress
-            oracle = Manifest.pletherOracleAddress
-            publicLens = Manifest.perpsPublicLensAddress
-
-        (statusRes, hpPaused, degMode, engineReads, routerReads, poolReads, oracleReads, checks, contractBalances, kernelBalances) <-
+        ((statusRes, hpPaused, degMode, liveReads), checks, contractBalances, kernelBalances) <-
           runConcurrently $
-            (,,,,,,,,,)
-              <$> Concurrently (either (const Nothing) decodeProtocolStatus <$> callAt publicLens "getProtocolStatus()")
-              <*> Concurrently (readBool housePool "paused()")
-              <*> Concurrently (readBool engine "degradedMode()")
-              <*> Concurrently
-                ( runConcurrently $
-                    (,,,)
-                      <$> Concurrently (either (const Nothing) decodeEngineRiskParams <$> callAt engine "riskParams()")
-                      <*> Concurrently (readUint engine "executionFeeBps()")
-                      <*> Concurrently (readUint engine "settlementBufferBps()")
-                      <*> Concurrently (readUint engine "frozenCloseSpreadBps()")
-                )
-              <*> Concurrently
-                ( runConcurrently $
-                    (,,,)
-                      <$> Concurrently (readUint router "minOpenNotionalAssets()")
-                      <*> Concurrently (readUint router "maxPendingOrders()")
-                      <*> Concurrently (readUint router "maxExecutionWindowSeconds()")
-                      <*> Concurrently (readUint router "positionProtectionTriggerBountyAssets()")
-                )
-              <*> Concurrently
-                ( runConcurrently $
-                    (,,,)
-                      <$> Concurrently (readUint housePool "maxSeniorExposureAssets()")
-                      <*> Concurrently (readUint housePool "maxSeniorShareBps()")
-                      <*> Concurrently (readUint housePool "LP_EPOCH_DURATION()")
-                      <*> Concurrently (readUint housePool "TIMELOCK_DELAY()")
-                )
-              <*> Concurrently
-                ( runConcurrently $
-                    (,,,)
-                      <$> Concurrently (readUint oracle "basketMaxConfidenceRatioBps()")
-                      <*> Concurrently (readUint oracle "adverseConfidenceMultiplierBps()")
-                      <*> Concurrently (readUint oracle "orderExecutionStalenessLimit()")
-                      <*> Concurrently (readUint oracle "liquidationStalenessLimit()")
-                )
-              <*> Concurrently (mapConcurrently (fetchContractCodeCheck client blockNum) contracts)
+            (,,,)
+              <$> Concurrently (fetchProtocolParamsMulticall client blockNum)
+              <*> Concurrently (getCachedContractCodeChecks client blockNum contracts)
               <*> Concurrently (fetchUsdgBalancesAtBlock client settlementToken blockNum (map mcsAddress contracts))
               <*> Concurrently
                 ( if kernelDbAvailable
@@ -255,7 +282,7 @@ computeProtocolManifestResponse mPool client cfg mKernel = do
           , statusRes
           , hpPaused
           , degMode
-          , LiveParameterReads engineReads routerReads poolReads oracleReads
+          , liveReads
           , checks
           , balMap
           , Just tvlSummary
@@ -974,7 +1001,7 @@ fetchKnownKernelTradingAccounts (Just pool) cfg mKernel excludeContracts = do
                   <$> observeIo
                     ( query
                         conn
-                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_preparations \
+                        "SELECT DISTINCT sender FROM aa_kernel_preparations \
                         \WHERE deployment = ? AND chain_id = ? AND entry_point = ?"
                         (ksDeployment, ksChainId, ksEntryPoint)
                         :: IO [Only Text]
@@ -984,7 +1011,7 @@ fetchKnownKernelTradingAccounts (Just pool) cfg mKernel excludeContracts = do
                   <$> observeIo
                     ( query
                         conn
-                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_preparations WHERE chain_id = ?"
+                        "SELECT DISTINCT sender FROM aa_kernel_preparations WHERE chain_id = ?"
                         (Only chainId)
                         :: IO [Only Text]
                     )
@@ -996,7 +1023,7 @@ fetchKnownKernelTradingAccounts (Just pool) cfg mKernel excludeContracts = do
                   <$> observeIo
                     ( query
                         conn
-                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_operations \
+                        "SELECT DISTINCT sender FROM aa_kernel_operations \
                         \WHERE deployment = ? AND chain_id = ? AND entry_point = ?"
                         (ksDeployment, ksChainId, ksEntryPoint)
                         :: IO [Only Text]
@@ -1006,7 +1033,7 @@ fetchKnownKernelTradingAccounts (Just pool) cfg mKernel excludeContracts = do
                   <$> observeIo
                     ( query
                         conn
-                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_operations WHERE chain_id = ?"
+                        "SELECT DISTINCT sender FROM aa_kernel_operations WHERE chain_id = ?"
                         (Only chainId)
                         :: IO [Only Text]
                     )

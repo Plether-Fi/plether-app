@@ -54,7 +54,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, In (..), Only (..), Query, SqlError (sqlState), execute, execute_, query, query_)
+import Database.PostgreSQL.Simple (Connection, In (..), Only (..), Query, SqlError (sqlState), executeMany, execute_, query, query_)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.Transaction
@@ -64,12 +64,19 @@ import Database.PostgreSQL.Simple.Transaction
   , withTransactionMode
   )
 import Numeric (readHex)
-import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , newRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getPerpsMarketVolumeSince)
+import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall)
 import Plether.Ethereum.Client (EthClient, rpcCall)
 import qualified Plether.Ethereum.Contracts.Perps as Perps
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Handlers.InsightsOrderProtections
   ( OrderProtectionsBundle
   , buildOrderProtectionsForOrder
@@ -82,6 +89,7 @@ import Plether.Keeper.Reliability (OrderReliability (..), readOrderReliability)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
 import Text.Read (readMaybe)
@@ -332,11 +340,33 @@ instance FromRow TxLpSettlementRow where
       <*> field
       <*> field
 
+{-# NOINLINE executionQualityCache #-}
+executionQualityCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+executionQualityCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE executionTradesCache #-}
+executionTradesCache :: SingleFlightCache Int (Either ApiError (ApiResponse Value))
+executionTradesCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 16 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE txDetailCache #-}
+txDetailCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
+txDetailCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 256 (120 * 1000000000) (1800 * 1000000000))
+
 getExecutionQualityResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getExecutionQualityResponse pool cfg = do
+getExecutionQualityResponse pool cfg =
+  snd <$> runSingleFlightCache executionQualityCache () isRight (computeExecutionQualityResponse pool cfg)
+
+computeExecutionQualityResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeExecutionQualityResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
@@ -402,11 +432,24 @@ getExecutionTradesResponse
   -> Config
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
-getExecutionTradesResponse pool cfg requestedLimit = do
+getExecutionTradesResponse pool cfg requestedLimit =
+  let limit = min 100 $ max 1 requestedLimit
+   in snd
+        <$> runSingleFlightCache
+          executionTradesCache
+          limit
+          isRight
+          (computeExecutionTradesResponse pool cfg limit)
+
+computeExecutionTradesResponse
+  :: DbPool
+  -> Config
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+computeExecutionTradesResponse pool cfg limit = do
   let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
       protBook = T.toLower Manifest.positionProtectionBookAddress
-      limit = min 100 $ max 1 requestedLimit
   (rows, protBundle) <- withDb pool $ \conn ->
     withReadSnapshot conn $ do
       fetched <- fetchRecentTrades conn chainId router limit
@@ -442,12 +485,25 @@ getTransactionResponse pool client cfg rawTxHash = do
   let txHash = T.toLower (T.strip rawTxHash)
   if not (isValidTxHash txHash)
     then pure $ Left $ E.invalidAmount "txHash must be a 0x-prefixed 32-byte hex string"
-    else do
+    else
+      snd
+        <$> runSingleFlightCache
+          txDetailCache
+          txHash
+          isRight
+          (computeTransactionResponse pool client cfg txHash)
+
+computeTransactionResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+computeTransactionResponse pool client cfg txHash = do
       let chainId = cfgPerpsChainId cfg
           router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
           protBook = T.toLower Manifest.positionProtectionBookAddress
-      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender, baseProtBundle) <- withDb pool $ \conn -> do
-        ensureTxSenderCacheTable conn
+      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender, baseProtBundle) <- withDb pool $ \conn ->
         withReadSnapshot conn $ do
           txRows <- fetchTransactionTrades conn chainId router txHash
           orders <- fetchTransactionFinalizedOrders conn chainId router txHash
@@ -532,6 +588,25 @@ keepersStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
 keepersStatusCache =
   unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
 
+{-# NOINLINE keeperFleet24hCache #-}
+keeperFleet24hCache :: SingleFlightCache () KeeperFleet24h
+keeperFleet24hCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE keepersActivityCache #-}
+keepersActivityCache :: SingleFlightCache Int (Either ApiError (ApiResponse Value))
+keepersActivityCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 16 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE keeperDetailCache #-}
+keeperDetailCache :: SingleFlightCache (Text, Int) (Either ApiError (ApiResponse Value))
+keeperDetailCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 64 (15 * 1000000000) (300 * 1000000000))
+
+getCachedKeeperFleet24h :: DbPool -> EthClient -> Config -> Integer -> IO KeeperFleet24h
+getCachedKeeperFleet24h pool client cfg sinceUnix =
+  snd <$> runSingleFlightCache keeperFleet24hCache () (const True) (fetchKeeperFleet24h pool client cfg sinceUnix)
+
 getKeepersStatusResponse
   :: DbPool
   -> EthClient
@@ -548,14 +623,14 @@ computeKeepersStatusResponse
 computeKeepersStatusResponse pool client cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
-  fleet <- fetchKeeperFleet24h pool client cfg (now - 86400)
+  fleet <- getCachedKeeperFleet24h pool client cfg (now - 86400)
   let aggregated =
         mergeKeeperFleetAggregates
           (kfOrderAggs fleet)
           (kfNonOrderEvents fleet)
           (fromIntegral (kfExecutions24h fleet))
       topKeepers = take 30 aggregated
-  balances <- mapConcurrently (fetchKeeperEthBalance client . kaAddress) topKeepers
+  balances <- fetchKeeperEthBalancesMulticall client (map kaAddress topKeepers)
   pure $
     Right $
       mkResponse (kfLatestBlock fleet) chainId $
@@ -579,10 +654,24 @@ getKeepersActivityResponse
   -> Config
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
-getKeepersActivityResponse pool client cfg requestedLimit = do
+getKeepersActivityResponse pool client cfg requestedLimit =
+  let limit = min 100 $ max 1 requestedLimit
+   in snd
+        <$> runSingleFlightCache
+          keepersActivityCache
+          limit
+          isRight
+          (computeKeepersActivityResponse pool client cfg limit)
+
+computeKeepersActivityResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+computeKeepersActivityResponse pool client cfg limit = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
-      limit = min 100 $ max 1 requestedLimit
   events <- resolvePermissionlessKeeperEvents pool client cfg (now - 86400) (max 50 limit)
   let visible = take limit $ sortOn (\e -> (Down (dkeBlockNumber e), Down (dkeTimestamp e))) events
       latestBlock = maximum (0 : map dkeBlockNumber visible)
@@ -604,18 +693,33 @@ getKeeperDetailResponse
   -> IO (Either ApiError (ApiResponse Value))
 getKeeperDetailResponse pool client cfg rawAddress requestedLimit = do
   let addr = T.toLower (T.strip rawAddress)
+      limit = min 100 $ max 1 requestedLimit
   if not (isValidAddress addr)
     then pure $ Left $ E.invalidAddress rawAddress
-    else do
+    else
+      snd
+        <$> runSingleFlightCache
+          keeperDetailCache
+          (addr, limit)
+          isRight
+          (computeKeeperDetailResponse pool client cfg addr limit)
+
+computeKeeperDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+computeKeeperDetailResponse pool client cfg addr limit = do
       now <- floor <$> getPOSIXTime
       let chainId = cfgPerpsChainId cfg
           router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
           sinceUnix = now - 86400
-          limit = min 100 $ max 1 requestedLimit
       (fleet, ethBal) <-
         runConcurrently $
           (,)
-            <$> Concurrently (fetchKeeperFleet24h pool client cfg sinceUnix)
+            <$> Concurrently (getCachedKeeperFleet24h pool client cfg sinceUnix)
             <*> Concurrently (fetchKeeperEthBalance client addr)
       (orderLatStats, recentOrderEvents) <-
         fetchKeeperOrderDetail24h pool chainId router addr sinceUnix limit
@@ -983,8 +1087,7 @@ fetchKeeperFleet24h pool client cfg sinceUnix = do
       book = T.toLower Manifest.positionProtectionBookAddress
       monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
   ((orderCount, mOrderP50, mOrderP95, maxOrderBlock), nonOrderTxs, uncachedOrderHashes, cachedNonOrder) <-
-    withDb pool $ \conn -> do
-      ensureTxSenderCacheTable conn
+    withDb pool $ \conn ->
       withReadSnapshot conn $ do
         fleetSummaryRows <-
           query
@@ -998,7 +1101,7 @@ fetchKeeperFleet24h pool client cfg sinceUnix = do
             \  COALESCE(MAX(terminal_block_number), 0)::BIGINT \
             \FROM perps_orders \
             \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-            \  AND terminal_tx_hash IS NOT NULL AND COALESCE(terminal_timestamp, 0) >= ?"
+            \  AND terminal_tx_hash IS NOT NULL AND terminal_timestamp >= ?"
             (chainId, router, sinceUnix)
             :: IO [(Int, Maybe Double, Maybe Double, Integer)]
         let summary = fromMaybe (0, Nothing, Nothing, 0) (listToMaybe fleetSummaryRows)
@@ -1006,21 +1109,21 @@ fetchKeeperFleet24h pool client cfg sinceUnix = do
         missingOrders <-
           query
             conn
-            "SELECT LOWER(o.terminal_tx_hash) \
+            "SELECT o.terminal_tx_hash \
             \FROM perps_orders o \
             \LEFT JOIN insights_tx_senders s \
-            \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+            \  ON s.chain_id = o.chain_id AND s.tx_hash = o.terminal_tx_hash \
             \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
-            \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
+            \  AND o.terminal_tx_hash IS NOT NULL AND o.terminal_timestamp >= ? \
             \  AND s.tx_hash IS NULL \
-            \GROUP BY LOWER(o.terminal_tx_hash) \
+            \GROUP BY o.terminal_tx_hash \
             \ORDER BY MAX(COALESCE(o.terminal_block_number, 0)) DESC \
             \LIMIT ?"
             (chainId, router, sinceUnix, 60 :: Int)
             :: IO [Only Text]
         let nonOrderHashes = nub $ map (T.toLower . rktTxHash) nonOrders
         cached <- fetchCachedTxSenders conn chainId nonOrderHashes
-        pure (summary, nonOrders, [h | Only h <- missingOrders], cached)
+        pure (summary, nonOrders, [T.toLower h | Only h <- missingOrders], cached)
   -- Always prioritize resolving low-volume roles (liquidations, protections, LP settlements)
   -- before filling the remaining RPC budget with newest uncached order-execution hashes.
   let missingNonOrder =
@@ -1034,7 +1137,7 @@ fetchKeeperFleet24h pool client cfg sinceUnix = do
   orderAggRows <- withDb pool $ \conn ->
     query
       conn
-      "SELECT LOWER(s.sender_address), \
+      "SELECT s.sender_address, \
       \  COUNT(*)::INT, \
       \  percentile_cont(0.50) WITHIN GROUP (ORDER BY o.terminal_timestamp - o.commit_timestamp) \
       \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::DOUBLE PRECISION, \
@@ -1044,10 +1147,10 @@ fetchKeeperFleet24h pool client cfg sinceUnix = do
       \  COALESCE(MAX(o.terminal_timestamp), 0)::BIGINT \
       \FROM perps_orders o \
       \JOIN insights_tx_senders s \
-      \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+      \  ON s.chain_id = o.chain_id AND s.tx_hash = o.terminal_tx_hash \
       \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
-      \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
-      \GROUP BY LOWER(s.sender_address)"
+      \  AND o.terminal_tx_hash IS NOT NULL AND o.terminal_timestamp >= ? \
+      \GROUP BY s.sender_address"
       (chainId, router, sinceUnix)
       :: IO [(Text, Int, Maybe Double, Maybe Double, Integer, Integer)]
   let orderAggs =
@@ -1112,10 +1215,10 @@ fetchKeeperOrderDetail24h pool chainId router addr sinceUnix limit =
           \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::BIGINT \
           \FROM perps_orders o \
           \JOIN insights_tx_senders s \
-          \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+          \  ON s.chain_id = o.chain_id AND s.tx_hash = o.terminal_tx_hash \
           \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
-          \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
-          \  AND LOWER(s.sender_address) = ?"
+          \  AND o.terminal_tx_hash IS NOT NULL AND o.terminal_timestamp >= ? \
+          \  AND s.sender_address = ?"
           (chainId, router, sinceUnix, addr)
           :: IO [(Int, Maybe Double, Maybe Double, Maybe Double, Maybe Integer)]
       let latStats = case latRows of
@@ -1125,15 +1228,15 @@ fetchKeeperOrderDetail24h pool chainId router addr sinceUnix limit =
       recentRows <-
         query
           conn
-          "SELECT LOWER(o.terminal_tx_hash), COALESCE(o.terminal_block_number, 0), COALESCE(o.terminal_timestamp, 0), \
+          "SELECT o.terminal_tx_hash, COALESCE(o.terminal_block_number, 0), COALESCE(o.terminal_timestamp, 0), \
           \  CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
           \    THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END \
           \FROM perps_orders o \
           \JOIN insights_tx_senders s \
-          \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+          \  ON s.chain_id = o.chain_id AND s.tx_hash = o.terminal_tx_hash \
           \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
-          \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
-          \  AND LOWER(s.sender_address) = ? \
+          \  AND o.terminal_tx_hash IS NOT NULL AND o.terminal_timestamp >= ? \
+          \  AND s.sender_address = ? \
           \ORDER BY o.terminal_block_number DESC \
           \LIMIT ?"
           (chainId, router, sinceUnix, addr, limit)
@@ -1157,13 +1260,14 @@ resolvePermissionlessKeeperEvents pool client cfg sinceUnix maxTxs = do
       housePool = T.toLower $ T.strip $ cfgPerpsHousePool cfg
       book = T.toLower Manifest.positionProtectionBookAddress
       monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
-  rawTxs <- withDb pool $ \conn -> do
-    ensureTxSenderCacheTable conn
-    withReadSnapshot conn $
-      fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUnix maxTxs
+  (rawTxs, cached) <- withDb pool $ \conn ->
+    withReadSnapshot conn $ do
+      txs <- fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUnix maxTxs
+      let hashes = nub $ map (T.toLower . rktTxHash) txs
+      senders <- fetchCachedTxSenders conn chainId hashes
+      pure (txs, senders)
   let uniqueHashes = nub $ map (T.toLower . rktTxHash) rawTxs
-  cached <- withDb pool $ \conn -> fetchCachedTxSenders conn chainId uniqueHashes
-  let missing = take 40 $ filter (`Map.notMember` cached) uniqueHashes
+      missing = take 40 $ filter (`Map.notMember` cached) uniqueHashes
   resolvedPairs <- mapConcurrently (resolveTxSenderRpc client) missing
   let newlyResolved = [(h, s) | (h, Just s) <- resolvedPairs]
   if null newlyResolved
@@ -1189,15 +1293,38 @@ resolvePermissionlessKeeperEvents pool client cfg sinceUnix maxTxs = do
 
 resolveTxSenderRpc :: EthClient -> Text -> IO (Text, Maybe Text)
 resolveTxSenderRpc client txHash = do
-  res <- rpcCall client "eth_getTransactionByHash" (toJSON [txHash])
-  pure $ case res of
-    Right val -> (txHash, extractTxFrom val)
-    Left _ -> (txHash, Nothing)
+  mRes <- timeout 2500000 $ rpcCall client "eth_getTransactionByHash" (toJSON [txHash])
+  pure $ case mRes of
+    Just (Right val) -> (txHash, extractTxFrom val)
+    _ -> (txHash, Nothing)
 
 fetchKeeperEthBalance :: EthClient -> Text -> IO (Maybe Integer)
 fetchKeeperEthBalance client addr = do
-  res <- ethGetBalance client addr
-  pure $ either (const Nothing) Just res
+  mRes <- timeout 2500000 $ ethGetBalance client addr
+  pure $ case mRes of
+    Just (Right bal) -> Just bal
+    _ -> Nothing
+
+-- | Batch up to 30 keeper ETH balance queries into 1 atomic Multicall3 call.
+fetchKeeperEthBalancesMulticall :: EthClient -> [Text] -> IO [Maybe Integer]
+fetchKeeperEthBalancesMulticall _ [] = pure []
+fetchKeeperEthBalancesMulticall client addrs = do
+  let calls =
+        [ Multicall.Call
+            { Multicall.callTarget = Multicall.multicallAddress
+            , Multicall.callAllowFailure = True
+            , Multicall.callCalldata = encodeCall "getEthBalance(address)" [encodeAddress a]
+            }
+        | a <- addrs
+        ]
+      dec r =
+        if Multicall.resultSuccess r && BS8.length (Multicall.resultData r) == 32
+          then Just (decodeUint256 (Multicall.resultData r))
+          else Nothing
+  mRes <- timeout 3000000 $ Multicall.multicall client calls
+  pure $ case mRes of
+    Just (Right results) | length results == length addrs -> map dec results
+    _ -> map (const Nothing) addrs
 
 ensureTxSenderCacheTable :: Connection -> IO ()
 ensureTxSenderCacheTable conn = do
@@ -1226,6 +1353,20 @@ ensureTxSenderCacheTable conn = do
             then pure ()
             else throwIO err
       )
+  catch
+    ( do
+        _ <-
+          execute_
+            conn
+            "CREATE INDEX IF NOT EXISTS idx_insights_tx_senders_sender \
+            \ON insights_tx_senders (chain_id, sender_address, tx_hash)"
+        pure ()
+    )
+    ( \(err :: SqlError) ->
+        if sqlState err `elem` ["23505", "42P07", "42710"]
+          then pure ()
+          else throwIO err
+    )
 
 fetchCachedTxSenders :: Connection -> Integer -> [Text] -> IO (Map.Map Text Text)
 fetchCachedTxSenders _ _ [] = pure Map.empty
@@ -1239,15 +1380,15 @@ fetchCachedTxSenders conn chainId hashes = do
   pure $ Map.fromList [(T.toLower h, T.toLower s) | (h, s) <- rows]
 
 upsertCachedTxSenders :: Connection -> Integer -> [(Text, Text)] -> IO ()
-upsertCachedTxSenders conn chainId =
-  mapM_ $ \(txHash, sender) -> do
-    _ <-
-      execute
-        conn
-        "INSERT INTO insights_tx_senders (chain_id, tx_hash, sender_address) \
-        \VALUES (?, ?, ?) ON CONFLICT (chain_id, tx_hash) DO NOTHING"
-        (chainId, T.toLower txHash, T.toLower sender)
-    pure ()
+upsertCachedTxSenders _ _ [] = pure ()
+upsertCachedTxSenders conn chainId pairs = do
+  _ <-
+    executeMany
+      conn
+      "INSERT INTO insights_tx_senders (chain_id, tx_hash, sender_address) \
+      \VALUES (?, ?, ?) ON CONFLICT (chain_id, tx_hash) DO NOTHING"
+      [(chainId, T.toLower txHash, T.toLower sender) | (txHash, sender) <- pairs]
+  pure ()
 
 fetchNonOrderPermissionlessTxs
   :: Connection
@@ -1302,9 +1443,11 @@ fetchNonOrderPermissionlessTxs conn chainId router housePool book monitor sinceU
     query
       conn
       "SELECT l.transaction_hash, l.block_number::TEXT, l.payload->>'blockTimestamp', \
-      \(SELECT s.block_timestamp FROM vault_performance_snapshots s \
-      \ WHERE s.chain_id = ? AND s.house_pool_address = ? AND s.block_number <= l.block_number \
-      \ ORDER BY s.block_number DESC LIMIT 1) \
+      \CASE WHEN l.payload->>'blockTimestamp' IS NULL THEN \
+      \  (SELECT s.block_timestamp FROM vault_performance_snapshots s \
+      \   WHERE s.chain_id = ? AND s.house_pool_address = ? AND s.block_number <= l.block_number \
+      \   ORDER BY s.block_number DESC LIMIT 1) \
+      \ELSE NULL END \
       \FROM vault_return_logs l \
       \WHERE LOWER(l.payload->>'address') = ? \
       \  AND LOWER(l.payload->'topics'->>0) = ? \
@@ -1358,7 +1501,7 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       \  THEN terminal_timestamp - commit_timestamp ELSE NULL END \
       \FROM perps_orders \
       \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-      \  AND terminal_tx_hash IS NOT NULL AND COALESCE(terminal_timestamp, 0) >= ? \
+      \  AND terminal_tx_hash IS NOT NULL AND terminal_timestamp >= ? \
       \ORDER BY terminal_block_number DESC LIMIT ?"
       (chainId, router, sinceUnix, limit) :: IO [(Text, Integer, Integer, Maybe Integer)]
   nonOrders <- fetchNonOrderPermissionlessTxs conn chainId router housePool book monitor sinceUnix (min 50 limit)
@@ -1580,6 +1723,7 @@ recentTradeSelectSql =
   \      AND 1 = (\
   \        SELECT COUNT(*) FROM perps_account_activity sibling \
   \        WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router \
+  \          AND sibling.block_number = a.block_number \
   \          AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account \
   \          AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index \
   \          AND sibling.log_index > COALESCE((\
@@ -1610,7 +1754,7 @@ fetchTransactionTrades conn chainId router txHash =
     conn
     ( recentTradeSelectSql
         <> "WHERE a.chain_id = ? AND a.release_router = ? \
-           \  AND LOWER(a.tx_hash) = LOWER(?) \
+           \  AND a.tx_hash = ? \
            \ORDER BY a.log_index ASC \
            \LIMIT 100"
     )
@@ -1626,7 +1770,7 @@ fetchTransactionFinalizedOrders conn chainId router txHash =
     \  execution_oracle_frozen, oracle_min_publish_time, oracle_max_publish_time, \
     \  execution_vpi_assets, execution_frozen_close_spread_assets \
     \FROM perps_orders \
-    \WHERE chain_id = ? AND order_router = ? AND LOWER(terminal_tx_hash) = LOWER(?) \
+    \WHERE chain_id = ? AND order_router = ? AND terminal_tx_hash = ? \
     \ORDER BY order_id ASC \
     \LIMIT 200"
     (chainId, router, txHash)
@@ -1638,7 +1782,7 @@ fetchTransactionProtocolEvents conn chainId router txHash =
     "SELECT log_index, block_number, timestamp, contract_address, event_name, \
     \  account, order_id, side, data \
     \FROM perps_events \
-    \WHERE chain_id = ? AND release_router = ? AND LOWER(tx_hash) = LOWER(?) \
+    \WHERE chain_id = ? AND release_router = ? AND tx_hash = ? \
     \ORDER BY log_index ASC \
     \LIMIT 200"
     (chainId, router, txHash)
@@ -1652,7 +1796,7 @@ fetchTransactionLpSettlement conn chainId txHash = do
       \  senior_deposit_assets, senior_redeem_assets, junior_deposit_assets, junior_redeem_assets, \
       \  senior_backlog, junior_backlog, entries_deferred \
       \FROM perps_lp_settlement_transactions \
-      \WHERE chain_id = ? AND LOWER(receipt_transaction_hash) = LOWER(?) \
+      \WHERE chain_id = ? AND receipt_transaction_hash = ? \
       \ORDER BY id DESC LIMIT 1"
       (chainId, txHash)
   pure (listToMaybe rows)

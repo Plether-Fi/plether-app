@@ -196,6 +196,10 @@ ensureVaultPerformanceSchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_vault_performance_deployment_epoch \
     \ON vault_performance_snapshots \
     \(chain_id, house_pool_address, senior_vault_address, junior_vault_address, epoch_timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_vault_perf_pool_block \
+    \ON vault_performance_snapshots \
+    \(chain_id, house_pool_address, block_number DESC) INCLUDE (block_timestamp)"
   pure ()
 
 -- | Idempotently publish or repair an hourly checkpoint. A canonical reorg or
