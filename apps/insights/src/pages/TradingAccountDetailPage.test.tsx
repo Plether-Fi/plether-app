@@ -206,6 +206,10 @@ describe('TradingAccountDetailPage (ZeroDev Kernel v4 Smart Wallet Inspector)', 
     renderPage()
 
     expect(screen.getByText('@mnitarik')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Open Wallet Page/i })).toHaveAttribute(
+      'href',
+      `/wallets/${SAMPLE_DETAIL.sender}`,
+    )
     expect(screen.getByText('Deployed · Pinned Kernel v4')).toBeInTheDocument()
     expect(screen.getByText(/Nonce Synced \(EP #36\)/i)).toBeInTheDocument()
     expect(screen.getByText('Rolling 1h Sponsorship Cap')).toBeInTheDocument()

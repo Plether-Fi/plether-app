@@ -197,14 +197,9 @@ export function TradingAccountDetailPage() {
         <Link to="/trading-accounts" className="text-brand-peach hover:underline">
           ← Trading Accounts (Kernel v4)
         </Link>
-        <div className="flex flex-wrap items-center gap-4">
-          <Link to={`/wallets/${normalizedAddress}`} className="text-brand-peach hover:underline">
-            Trading positions &amp; PnL →
-          </Link>
-          <Link to="/sponsored" className="text-content-secondary hover:text-content-primary">
-            Paymaster &amp; budgets →
-          </Link>
-        </div>
+        <Link to="/sponsored" className="text-content-secondary hover:text-content-primary">
+          Paymaster &amp; budgets →
+        </Link>
       </div>
 
       {/* Header */}
@@ -233,7 +228,13 @@ export function TradingAccountDetailPage() {
                   <span className="w-24 text-[11px] uppercase tracking-[0.08em] text-content-tertiary">
                     Smart Acct
                   </span>
-                  <span className="break-all text-content-primary">{normalizedAddress}</span>
+                  <Link
+                    to={`/wallets/${normalizedAddress}`}
+                    title="Open Wallet Page for this smart account"
+                    className="break-all text-content-primary hover:text-brand-peach hover:underline"
+                  >
+                    {normalizedAddress}
+                  </Link>
                   <CopyButton value={normalizedAddress} />
                   {showSenderArb ? (
                     <ArbiscanButton
@@ -248,7 +249,13 @@ export function TradingAccountDetailPage() {
                     <span className="w-24 text-[11px] uppercase tracking-[0.08em] text-content-tertiary">
                       Owner EOA
                     </span>
-                    <span className="break-all text-brand-peach">{data.ownerAddress}</span>
+                    <Link
+                      to={`/wallets/${data.ownerAddress}`}
+                      title="Open Wallet Page for controlling Owner EOA"
+                      className="break-all text-brand-peach hover:underline"
+                    >
+                      {data.ownerAddress}
+                    </Link>
                     <CopyButton value={data.ownerAddress} />
                     {showOwnerArb ? (
                       <ArbiscanButton
@@ -263,12 +270,20 @@ export function TradingAccountDetailPage() {
             </div>
           </div>
 
-          {data?.firstSeenAt || data?.lastActivityAt ? (
-            <div className="flex flex-col items-start gap-1 font-mono text-[11px] text-content-tertiary sm:items-end">
-              {data.firstSeenAt ? <span>First seen: {formatUtc(data.firstSeenAt)}</span> : null}
-              {data.lastActivityAt ? <span>Last active: {formatUtc(data.lastActivityAt)}</span> : null}
-            </div>
-          ) : null}
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <Link
+              to={`/wallets/${normalizedAddress}`}
+              className="inline-flex items-center gap-1.5 border border-brand-peach/50 bg-brand-peach/10 px-3 py-1.5 font-mono text-xs font-semibold text-brand-peach transition-colors hover:border-brand-peach hover:bg-brand-peach/20"
+            >
+              Open Wallet Page →
+            </Link>
+            {data?.firstSeenAt || data?.lastActivityAt ? (
+              <div className="flex flex-col items-start gap-0.5 font-mono text-[11px] text-content-tertiary sm:items-end">
+                {data.firstSeenAt ? <span>First seen: {formatUtc(data.firstSeenAt)}</span> : null}
+                {data.lastActivityAt ? <span>Last active: {formatUtc(data.lastActivityAt)}</span> : null}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {/* Status Pills */}
