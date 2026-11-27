@@ -91,6 +91,15 @@ describe('Divisions leaderboard', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('@mellboi')
+
+    // Filter by earned tier dropdown
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Filter by tier'), { target: { value: 'Bronze' } })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(table).toHaveTextContent('@mellboi')
+    fireEvent.change(screen.getByLabelText('Filter by tier'), { target: { value: 'unranked' } })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(table).toHaveTextContent('Not yet awarded')
   })
   it('shows Iron only after a completed week publishes it, regardless of current-week gains', () => {
     clock.now = Date.parse('2026-10-20T12:00:00Z')

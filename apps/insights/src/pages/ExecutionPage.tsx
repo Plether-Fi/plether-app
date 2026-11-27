@@ -10,8 +10,8 @@ import {
   type TransactionRouteState,
 } from '../api'
 import { ArbiscanButton } from '../components/ActionButtons'
-import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { TraderIdentity } from '../components/TraderIdentity'
 import {
   ExecutionLatencyWhisker,
   OrderOutcomeProportionCard,
@@ -420,14 +420,7 @@ export function ExecutionPage() {
                           )}
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
-                          <Link
-                            to={`/wallets/${trade.account}`}
-                            title={trade.account}
-                            className="inline-flex items-center gap-2 text-brand-peach hover:underline"
-                          >
-                            <AddressAvatar address={trade.account} size={16} />
-                            {shortAddress(trade.account)}
-                          </Link>
+                          <TraderIdentity address={trade.account} avatarSize={16} showCopy />
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
                           {formatCompactAssets(trade.amountAssets)}

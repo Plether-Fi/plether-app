@@ -11,12 +11,13 @@ import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { MarketExposurePulsePanel } from '../components/MarketExposurePulsePanel'
 import { StatCard } from '../components/StatCard'
 import { StatusPill } from '../components/StatusPill'
+import { TraderIdentity } from '../components/TraderIdentity'
 import { EmptyState, Panel } from '../components/ui'
 import { WalletSearch } from '../components/WalletSearch'
 import { CurrentBadge } from '../divisions/CurrentBadge'
 import { useDivisions, useDivisionsStats, useLiveDivisions } from '../divisions/query'
 import { resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
-import { formatRoi, shortAddress } from '../utils/format'
+import { formatRoi } from '../utils/format'
 
 function formatBpsRate(bps: number | null | undefined): string {
   if (bps == null || !Number.isFinite(bps)) return '—'
@@ -456,13 +457,7 @@ export function OverviewPage() {
                         />
                       </td>
                       <td className="px-4 py-3.5 font-mono">
-                        <Link
-                          to={`/wallets/${row.address}`}
-                          title={row.address}
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(row.address)}
-                        </Link>
+                        <TraderIdentity address={row.address} avatarSize={18} showCopy />
                       </td>
                       <td className="px-4 py-3.5">
                         {row.discordUsername ? (

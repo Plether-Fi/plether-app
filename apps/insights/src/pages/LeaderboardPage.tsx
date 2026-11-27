@@ -6,11 +6,18 @@ import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { TierBadge } from '../divisions/Badge'
 import { CurrentBadge } from '../divisions/CurrentBadge'
 import { useDivisions, useDivisionsStats, useLiveDivisions } from '../divisions/query'
-import { TIERS, TIER_REQUIREMENTS, tradingWeek } from '../divisions/rules'
+import { TIERS, TIER_REQUIREMENTS, tradingWeek, type Tier } from '../divisions/rules'
 import { useUtcNow } from '../hooks/useUtcNow'
 import { formatCountdown, formatUtc, shortAddress } from '../utils/format'
 
 type LiveLeaderboardFilter = 'all' | 'qualifying' | 'discord'
+type TierFilter = 'all' | 'unranked' | Tier
+
+const TIER_FILTER_OPTIONS: { id: TierFilter; label: string }[] = [
+  { id: 'all', label: 'All tiers' },
+  ...[...TIERS].reverse().map((tier) => ({ id: tier, label: tier })),
+  { id: 'unranked', label: 'Not yet awarded' },
+]
 
 const LIVE_FILTERS: { id: LiveLeaderboardFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -26,6 +33,7 @@ export function LeaderboardPage() {
   const week = tradingWeek(now)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<LiveLeaderboardFilter>('all')
+  const [tierFilter, setTierFilter] = useState<TierFilter>('all')
   const [livePage, setLivePage] = useState(0)
 
   const publication = query.data
@@ -42,6 +50,12 @@ export function LeaderboardPage() {
       }
       if (filter === 'discord' && !row.discordUsername) {
         return false
+      }
+      if (tierFilter !== 'all') {
+        const earned = earnedTiers.get(row.address.toLowerCase())
+        if (tierFilter === 'unranked' ? earned !== undefined : earned !== tierFilter) {
+          return false
+        }
       }
       if (!normalizedSearch) return true
       return `${row.address} ${row.discordUsername ? `@${row.discordUsername}` : ''}`
@@ -177,7 +191,28 @@ export function LeaderboardPage() {
               })}
             </div>
 
-            <div className="w-full sm:w-64">
+            <div className="flex items-center gap-1.5">
+              <label htmlFor="tier-filter" className="sr-only">
+                Filter by tier
+              </label>
+              <select
+                id="tier-filter"
+                value={tierFilter}
+                onChange={(event) => {
+                  setTierFilter(event.target.value as TierFilter)
+                  setLivePage(0)
+                }}
+                className="border border-brand-border/35 bg-surface-panel px-2.5 py-1.5 text-xs font-semibold text-content-primary focus:border-brand-peach/70 focus:outline-none"
+              >
+                {TIER_FILTER_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="w-full sm:w-56">
               <label htmlFor="trader-search" className="sr-only">
                 Search traders
               </label>
