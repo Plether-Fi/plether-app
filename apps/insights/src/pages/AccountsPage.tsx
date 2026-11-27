@@ -26,11 +26,11 @@ const PAGE_SIZE = 50
 
 const FILTERS: { id: WalletDirectoryFilter; label: string }[] = [
   { id: 'all', label: 'All' },
-  { id: 'open', label: 'Open Position' },
+  { id: 'open', label: 'Open' },
   { id: 'long', label: 'Long' },
   { id: 'short', label: 'Short' },
   { id: 'profitable', label: 'Profitable' },
-  { id: 'discord', label: 'Discord Linked' },
+  { id: 'discord', label: 'Discord' },
 ]
 
 const SORTS: { id: WalletDirectorySort; label: string }[] = [
@@ -51,6 +51,28 @@ function toTier(raw: string | null): Tier | null {
 function parseSignedBigInt(raw: string | null | undefined): bigint {
   if (!raw || !/^-?\d+$/.test(raw)) return 0n
   return BigInt(raw)
+}
+
+function formatSignedCompactAssets(raw: string | null | undefined): string {
+  const val = parseSignedBigInt(raw)
+  if (val === 0n) return '0.00 USDG'
+  const sign = val > 0n ? '+' : '-'
+  const abs = val < 0n ? -val : val
+  return `${sign}${formatCompactAssets(abs.toString())}`
+}
+
+function formatShortUtc(iso: string): string {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return formatUtc(iso)
+  const d = new Date(ms)
+  const day = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })
+  const time = d.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  })
+  return `${day}, ${time}`
 }
 
 export function AccountsPage() {
@@ -177,7 +199,7 @@ export function AccountsPage() {
             />
             <StatCard
               label="Net Market Skew"
-              value={formatSignedAssets(summary.netSkewAssets)}
+              value={formatSignedCompactAssets(summary.netSkewAssets)}
               tone={netSkew > 0n ? 'positive' : netSkew < 0n ? 'negative' : 'neutral'}
               detail={
                 summary.avgLeverageX100 != null
@@ -251,7 +273,7 @@ export function AccountsPage() {
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative w-full sm:w-64">
+            <div className="relative w-full sm:w-52">
               <label htmlFor="accounts-filter-search" className="sr-only">
                 Filter accounts by address or Discord handle
               </label>
@@ -262,7 +284,7 @@ export function AccountsPage() {
                 onChange={(event) => {
                   handleSearchChange(event.target.value)
                 }}
-                placeholder="Filter by 0x address or @discord"
+                placeholder="Filter 0x or @handle"
                 className="w-full border border-brand-border/35 bg-app-bg px-3 py-1.5 font-mono text-xs text-content-primary placeholder:font-sans placeholder:text-content-tertiary focus:border-brand-peach/70 focus:outline-none"
               />
             </div>
@@ -314,20 +336,20 @@ export function AccountsPage() {
         ) : data && data.items.length > 0 ? (
           <Panel>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left text-sm">
+              <table className="w-full min-w-[780px] text-left text-sm">
                 <caption className="sr-only">
                   Active plDXY-PERP Trading Accounts with live exposure and performance stats
                 </caption>
                 <thead className="border-b border-brand-border/25 text-xs uppercase tracking-[0.08em] text-content-tertiary">
                   <tr>
-                    <th scope="col" className="px-4 py-3.5">Account</th>
-                    <th scope="col" className="px-4 py-3.5">Tier</th>
-                    <th scope="col" className="px-4 py-3.5">Live Position</th>
-                    <th scope="col" className="px-4 py-3.5 text-right">Realized PnL</th>
-                    <th scope="col" className="px-4 py-3.5 text-right">Total Volume</th>
-                    <th scope="col" className="px-4 py-3.5 text-right">Trades</th>
-                    <th scope="col" className="px-4 py-3.5 text-right">Last Active</th>
-                    <th scope="col" className="px-4 py-3.5 text-right">Inspect</th>
+                    <th scope="col" className="whitespace-nowrap px-3.5 py-3">Account</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3">Tier</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3">Live Position</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right">Realized PnL</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right">Volume</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right">Trades</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right">Last Active</th>
+                    <th scope="col" className="whitespace-nowrap px-3.5 py-3 text-right">Exposure</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-brand-border/15">
@@ -336,25 +358,25 @@ export function AccountsPage() {
                     const pnl = parseSignedBigInt(row.realizedPnlAssets)
                     return (
                       <tr key={row.account} className="hover:bg-brand-peach/[0.03]">
-                        <td className="px-4 py-3">
+                        <td className="whitespace-nowrap px-3.5 py-3">
                           <TraderIdentity
                             address={row.account}
                             discordUsername={row.discordUsername}
                             showCopy
                           />
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="whitespace-nowrap px-3 py-3 text-xs">
                           {tier ? (
                             <TierBadge tier={tier} showLabel />
                           ) : (
                             <span className="text-xs text-content-tertiary">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                        <td className="whitespace-nowrap px-3 py-3 font-mono text-xs tabular-nums">
                           {row.openSide === 'flat' ? (
                             <span className="text-content-tertiary">Flat</span>
                           ) : (
-                            <div className="inline-flex items-center gap-2">
+                            <div className="inline-flex items-center gap-1.5">
                               <span
                                 className={`border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
                                   row.openSide === 'long'
@@ -371,7 +393,7 @@ export function AccountsPage() {
                           )}
                         </td>
                         <td
-                          className={`px-4 py-3 text-right font-mono text-xs font-semibold tabular-nums ${
+                          className={`whitespace-nowrap px-3 py-3 text-right font-mono text-xs font-semibold tabular-nums ${
                             pnl > 0n
                               ? 'text-positive'
                               : pnl < 0n
@@ -381,33 +403,28 @@ export function AccountsPage() {
                         >
                           {formatSignedAssets(row.realizedPnlAssets)}
                         </td>
-                        <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-content-secondary">
+                        <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums text-content-secondary">
                           {formatCompactAssets(row.volumeAssets)}
                         </td>
                         <td
-                          className="px-4 py-3 text-right font-mono text-xs tabular-nums text-content-secondary"
+                          className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums text-content-secondary"
                           title={`${String(row.opensCount)} opens · ${String(row.closesCount)} closes · ${String(row.liquidationsCount)} liquidations`}
                         >
                           {row.totalTrades.toLocaleString('en-US')}
                         </td>
-                        <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-content-tertiary">
-                          {row.lastActivityAt ? formatUtc(row.lastActivityAt) : '—'}
+                        <td
+                          className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums text-content-tertiary"
+                          title={row.lastActivityAt ? formatUtc(row.lastActivityAt) : undefined}
+                        >
+                          {row.lastActivityAt ? formatShortUtc(row.lastActivityAt) : '—'}
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="inline-flex items-center gap-3 text-xs font-semibold">
-                            <Link
-                              to={`/wallets/${row.account}`}
-                              className="text-brand-peach hover:underline"
-                            >
-                              Account →
-                            </Link>
-                            <Link
-                              to={`/wallets/${row.account}?tab=exposure`}
-                              className="text-content-secondary hover:text-brand-peach hover:underline"
-                            >
-                              Exposure
-                            </Link>
-                          </div>
+                        <td className="whitespace-nowrap px-3.5 py-3 text-right text-xs font-semibold">
+                          <Link
+                            to={`/wallets/${row.account}?tab=exposure`}
+                            className="text-brand-peach hover:underline"
+                          >
+                            Exposure →
+                          </Link>
                         </td>
                       </tr>
                     )

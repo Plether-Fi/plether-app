@@ -118,7 +118,7 @@ describe('AccountsPage', () => {
     expect(within(table).getByText('-320.00 USDG')).toBeInTheDocument()
 
     // Filter pill updates query params
-    fireEvent.click(screen.getByRole('button', { name: 'Open Position' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     expect(walletsDirectoryQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({ filter: 'open', search: 'alice', sort: 'notional' }),
     )
