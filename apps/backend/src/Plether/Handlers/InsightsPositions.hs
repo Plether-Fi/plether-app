@@ -15,6 +15,8 @@ module Plether.Handlers.InsightsPositions
   , PositionPricePoint (..)
   , GlobalOpenPosition (..)
   , GlobalMarketExposure (..)
+  , OnChainMarketSides (..)
+  , GlobalOpenAggregate (..)
   , plDxyCapPrice
   , defaultMaintenanceMarginBps
   , computeNotionalAssets
@@ -28,6 +30,9 @@ module Plether.Handlers.InsightsPositions
   , buildExposureTimeline
   , summarizeWalletExposure
   , computeGlobalMarketExposure
+  , decodeMarketSideTuple
+  , fetchOnChainMarketSides
+  , reconcileGlobalMarketExposure
   , getWalletExposureResponse
   , getWalletPositionDetailResponse
   , getMarketExposureResponse
@@ -35,9 +40,12 @@ module Plether.Handlers.InsightsPositions
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (concurrently)
+import Control.Exception (SomeException, catch)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isRight)
 import Data.List (sort, sortOn)
@@ -61,7 +69,8 @@ import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSing
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Candles (getActiveBasketSeriesId)
-import Plether.Ethereum.Client (EthClient)
+import Plether.Ethereum.Abi (decodeUint256, encodeCall, encodeUint256)
+import Plether.Ethereum.Client (CallParams (..), EthClient, ethCall)
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , getAccountLedgerSnapshot
@@ -77,6 +86,7 @@ import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 -- | Canonical plDXY price cap in 1e8 precision (2.00000000).
@@ -1895,65 +1905,215 @@ computeGlobalMarketExposure nowUnix mMarkRaw handlesMap byAccount =
         , gmeTopPositions = take 10 openPositions
         }
 
+-- | Canonical on-chain open interest and total locked margin from
+-- @CfdEngine.sides(0)@ (Long / Bull) and @CfdEngine.sides(1)@ (Short / Bear).
+data OnChainMarketSides = OnChainMarketSides
+  { ocmsLongOpenInterest :: Integer
+  , ocmsShortOpenInterest :: Integer
+  , ocmsLongTotalMarginAssets :: Integer
+  , ocmsShortTotalMarginAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+-- | Full-release SQL aggregate across ALL open accounts (no row cap).
+data GlobalOpenAggregate = GlobalOpenAggregate
+  { goaLongCount :: Int
+  , goaShortCount :: Int
+  , goaLongSize :: Integer
+  , goaShortSize :: Integer
+  }
+  deriving stock (Eq, Show)
+
+-- | Decode the 4-word ABI tuple returned by @CfdEngine.sides(uint256)@:
+-- @(maxProfitAssets, openInterest, entryNotional, totalMargin)@.
+-- Returns @(openInterest, totalMargin)@.
+decodeMarketSideTuple :: ByteString -> Maybe (Integer, Integer)
+decodeMarketSideTuple bytes
+  | BS.length bytes < 128 = Nothing
+  | otherwise =
+      let oiWord = BS.take 32 (BS.drop 32 bytes)
+          marginWord = BS.take 32 (BS.drop 96 bytes)
+       in Just (decodeUint256 oiWord, decodeUint256 marginWord)
+
+-- | Fetch canonical Long (@sides(0)@) and Short (@sides(1)@) open interest and
+-- total locked margin directly from @CfdEngine@ on-chain (matching the main
+-- trading app's @usePerpsMarket@ hook).
+fetchOnChainMarketSides :: EthClient -> IO (Maybe OnChainMarketSides)
+fetchOnChainMarketSides client = do
+  let engine = Manifest.cfdEngineAddress
+      callSide :: Integer -> IO (Maybe (Integer, Integer))
+      callSide idx = do
+        let calldata = encodeCall "sides(uint256)" [encodeUint256 idx]
+        res <-
+          timeout 2000000 $
+            (Just <$> ethCall client (CallParams engine calldata))
+              `catch` (\(_ :: SomeException) -> pure Nothing)
+        pure $ case res of
+          Just (Just (Right bytes)) -> decodeMarketSideTuple bytes
+          _ -> Nothing
+  (mBull, mBear) <- concurrently (callSide 0) (callSide 1)
+  pure $ case (mBull, mBear) of
+    (Just (bullOi, bullMargin), Just (bearOi, bearMargin)) ->
+      Just
+        OnChainMarketSides
+          { ocmsLongOpenInterest = bullOi
+          , ocmsShortOpenInterest = bearOi
+          , ocmsLongTotalMarginAssets = bullMargin
+          , ocmsShortTotalMarginAssets = bearMargin
+          }
+    _ -> Nothing
+
+-- | Reconcile reconstructed top-position exposure with canonical on-chain
+-- @CfdEngine.sides()@ OI / margin totals and full-release SQL open counts.
+reconcileGlobalMarketExposure
+  :: Maybe Integer
+  -> Maybe OnChainMarketSides
+  -> Maybe GlobalOpenAggregate
+  -> GlobalMarketExposure
+  -> GlobalMarketExposure
+reconcileGlobalMarketExposure mMarkRaw mOnChainSides mAgg base =
+  let (longOi, shortOi, mTotalMargin) =
+        case (mOnChainSides, mMarkRaw) of
+          (Just sides, Just markRaw) | markRaw > 0 ->
+            ( computeNotionalAssets (ocmsLongOpenInterest sides) markRaw
+            , computeNotionalAssets (ocmsShortOpenInterest sides) markRaw
+            , Just (ocmsLongTotalMarginAssets sides + ocmsShortTotalMarginAssets sides)
+            )
+          _ ->
+            case (mAgg, mMarkRaw) of
+              (Just agg, Just markRaw) | markRaw > 0 ->
+                ( computeNotionalAssets (goaLongSize agg) markRaw
+                , computeNotionalAssets (goaShortSize agg) markRaw
+                , Nothing
+                )
+              _ ->
+                ( gmeLongOpenInterestAssets base
+                , gmeShortOpenInterestAssets base
+                , Nothing
+                )
+      totalOi = longOi + shortOi
+      (longShare, shortShare) =
+        if totalOi <= 0
+          then (Nothing, Nothing)
+          else
+            let ls = (longOi * 10000) `div` totalOi
+             in (Just ls, Just (10000 - ls))
+      (longCnt, shortCnt) = case mAgg of
+        Just agg -> (goaLongCount agg, goaShortCount agg)
+        Nothing -> (gmeLongCount base, gmeShortCount base)
+      avgLev = case mTotalMargin of
+        Just totMargin | totMargin > 0 && totalOi > 0 -> Just (computeLeverageX100 totalOi totMargin)
+        _ -> gmeAvgLeverageX100 base
+   in base
+        { gmeLongOpenInterestAssets = longOi
+        , gmeShortOpenInterestAssets = shortOi
+        , gmeTotalOpenInterestAssets = totalOi
+        , gmeNetSkewAssets = longOi - shortOi
+        , gmeLongShareBps = longShare
+        , gmeShortShareBps = shortShare
+        , gmeOpenPositionCount = longCnt + shortCnt
+        , gmeLongCount = longCnt
+        , gmeShortCount = shortCnt
+        , gmeAvgLeverageX100 = avgLev
+        }
+
 -- | GET /api/insights/v1/market/exposure
 getMarketExposureResponse
   :: DbPool
+  -> Maybe EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getMarketExposureResponse pool cfg =
-  snd <$> runSingleFlightCache marketExposureCache () isRight (computeMarketExposureResponse pool cfg)
+getMarketExposureResponse pool mClient cfg =
+  snd <$> runSingleFlightCache marketExposureCache () isRight (computeMarketExposureResponse pool mClient cfg)
 
 computeMarketExposureResponse
   :: DbPool
+  -> Maybe EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-computeMarketExposureResponse pool cfg = do
+computeMarketExposureResponse pool mClient cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
-  (taggedRows, mMarkTuple, handlesMap, latestBlock) <-
-    withDb pool $ \conn ->
-      withReadSnapshot conn $ do
-        mMark <- fetchLatestBasketMark conn now
-        -- Identify accounts with net positive open size in the active release,
-        -- then pull their position activity to reconstruct live open positions.
-        activeAcctRows <-
-          query
-            conn
-            "SELECT account \
-            \FROM perps_account_activity \
-            \WHERE chain_id = ? AND release_router = ? \
-            \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
-            \GROUP BY account \
-            \HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
-            \ORDER BY MAX(block_number) DESC \
-            \LIMIT 150"
-            (chainId, router) :: IO [Only Text]
-        let accounts = map fromOnly activeAcctRows
-        if null accounts
-          then pure ([], mMark, Map.empty, 0)
-          else do
-            rows <-
+      fetchDbData =
+        withDb pool $ \conn ->
+          withReadSnapshot conn $ do
+            mMark <- fetchLatestBasketMark conn now
+            -- Aggregate open position counts & net open sizes across ALL active
+            -- accounts on this release (no LIMIT truncation).
+            aggRows <-
               query
                 conn
-                "SELECT account, activity_type, order_id, side, price, size_delta, \
-                \amount_assets, pnl_assets, tx_hash, block_number, log_index, timestamp \
+                "WITH acct_sides AS ( \
+                \  SELECT account, side, \
+                \    COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) AS net_size \
+                \  FROM perps_account_activity \
+                \  WHERE chain_id = ? AND release_router = ? \
+                \    AND activity_type IN ('Open', 'Close', 'Liquidated') \
+                \    AND side IN (0, 1) \
+                \  GROUP BY account, side \
+                \  HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
+                \) \
+                \SELECT \
+                \  COUNT(*) FILTER (WHERE side = 0)::int, \
+                \  COUNT(*) FILTER (WHERE side = 1)::int, \
+                \  COALESCE(SUM(net_size) FILTER (WHERE side = 0), 0)::text, \
+                \  COALESCE(SUM(net_size) FILTER (WHERE side = 1), 0)::text \
+                \FROM acct_sides"
+                (chainId, router) :: IO [(Int, Int, Text, Text)]
+            let mAgg = case aggRows of
+                  ((lc, sc, lsTxt, ssTxt) : _) ->
+                    Just
+                      GlobalOpenAggregate
+                        { goaLongCount = lc
+                        , goaShortCount = sc
+                        , goaLongSize = fromMaybe 0 (readMaybe (T.unpack lsTxt))
+                        , goaShortSize = fromMaybe 0 (readMaybe (T.unpack ssTxt))
+                        }
+                  [] -> Nothing
+            -- Pull the 25 largest open accounts by net open size so the Top 10
+            -- Active Positions leaderboard always reflects the biggest live positions.
+            topAcctRows <-
+              query
+                conn
+                "SELECT account \
                 \FROM perps_account_activity \
                 \WHERE chain_id = ? AND release_router = ? \
-                \  AND account IN ? \
-                \  AND activity_type IN ('Open', 'Close', 'Liquidated', 'Add margin') \
-                \ORDER BY block_number ASC, log_index ASC"
-                (chainId, router, In accounts) :: IO [AccountTaggedActivityRow]
-            handleRows <-
-              query
-                conn
-                "SELECT trading_account, discord_username \
-                \FROM insights_divisions_links \
-                \WHERE trading_account IN ?"
-                (Only (In accounts)) :: IO [(Text, Text)]
-            let hMap = Map.fromList [(T.toLower a, T.strip h) | (a, h) <- handleRows, not (T.null (T.strip h))]
-                maxBlk = foldl max 0 (map atarBlockNumber rows)
-            pure (rows, mMark, hMap, maxBlk)
+                \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+                \  AND side IN (0, 1) \
+                \GROUP BY account, side \
+                \HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
+                \ORDER BY COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) DESC \
+                \LIMIT 25"
+                (chainId, router) :: IO [Only Text]
+            let accounts = map fromOnly topAcctRows
+            if null accounts
+              then pure ([], mMark, mAgg, Map.empty, 0)
+              else do
+                rows <-
+                  query
+                    conn
+                    "SELECT account, activity_type, order_id, side, price, size_delta, \
+                    \amount_assets, pnl_assets, tx_hash, block_number, log_index, timestamp \
+                    \FROM perps_account_activity \
+                    \WHERE chain_id = ? AND release_router = ? \
+                    \  AND account IN ? \
+                    \  AND activity_type IN ('Open', 'Close', 'Liquidated', 'Add margin') \
+                    \ORDER BY block_number ASC, log_index ASC"
+                    (chainId, router, In accounts) :: IO [AccountTaggedActivityRow]
+                handleRows <-
+                  query
+                    conn
+                    "SELECT trading_account, discord_username \
+                    \FROM insights_divisions_links \
+                    \WHERE trading_account IN ?"
+                    (Only (In accounts)) :: IO [(Text, Text)]
+                let hMap = Map.fromList [(T.toLower a, T.strip h) | (a, h) <- handleRows, not (T.null (T.strip h))]
+                    maxBlk = foldl max 0 (map atarBlockNumber rows)
+                pure (rows, mMark, mAgg, hMap, maxBlk)
+      fetchSides = maybe (pure Nothing) fetchOnChainMarketSides mClient
+  ((taggedRows, mMarkTuple, mAgg, handlesMap, latestBlock), mOnChainSides) <-
+    concurrently fetchDbData fetchSides
   let mMarkRaw = fst <$> mMarkTuple
       mMarkTs = snd <$> mMarkTuple
       byAccount =
@@ -1981,7 +2141,8 @@ computeMarketExposureResponse pool cfg = do
           )
           Map.empty
           taggedRows
-      exposure = computeGlobalMarketExposure now mMarkRaw handlesMap byAccount
+      reconstructed = computeGlobalMarketExposure now mMarkRaw handlesMap byAccount
+      exposure = reconcileGlobalMarketExposure mMarkRaw mOnChainSides mAgg reconstructed
   pure $
     Right $
       mkResponse latestBlock chainId $

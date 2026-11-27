@@ -80,6 +80,8 @@ function resolvePublicApiCacheTtl(method, pathname) {
     apiPath === '/sponsored/operations' ||
     apiPath === '/oracle/health' ||
     apiPath === '/market/exposure' ||
+    apiPath === '/trading-accounts/overview' ||
+    /^\/trading-accounts\/0x[0-9a-fA-F]{40}$/.test(apiPath) ||
     apiPath === '/treasury/overview' ||
     apiPath === '/infra/status'
   ) {

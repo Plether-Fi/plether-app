@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { Layout } from './Layout'
@@ -28,9 +28,17 @@ describe('Layout navigation', () => {
       </MemoryRouter>,
     )
 
-    const opsButton = screen.getByRole('button', { name: /Operations/i })
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' })
+    const opsButton = within(primaryNav).getByRole('button', { name: /Operations/i })
     expect(opsButton).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('menu', { name: 'Operations pages' })).not.toBeInTheDocument()
+
+    // Mobile nav also groups operational routes under Operations instead of dumping all links
+    const mobileNav = screen.getByRole('navigation', { name: 'Mobile navigation' })
+    expect(within(mobileNav).getByRole('button', { name: /Operations/i })).toBeInTheDocument()
+
+    // Global header search is present and Trading Accounts lives inside Operations
+    expect(screen.getByRole('search', { name: /Search accounts/i })).toBeInTheDocument()
 
     fireEvent.click(opsButton)
     expect(opsButton).toHaveAttribute('aria-expanded', 'true')
@@ -38,8 +46,12 @@ describe('Layout navigation', () => {
     expect(menu).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Oracle/i })).toHaveAttribute('href', '/oracle')
     expect(screen.getByRole('menuitem', { name: /Keepers/i })).toHaveAttribute('href', '/keepers')
-    expect(screen.getByRole('menuitem', { name: /Sponsored/i })).toHaveAttribute('href', '/sponsored')
-    expect(screen.getByRole('menuitem', { name: /Infra/i })).toHaveAttribute('href', '/infra')
+    expect(screen.getByRole('menuitem', { name: /^Trading Accounts\b/i })).toHaveAttribute(
+      'href',
+      '/trading-accounts',
+    )
+    expect(screen.getByRole('menuitem', { name: /^Sponsored\b/i })).toHaveAttribute('href', '/sponsored')
+    expect(screen.getByRole('menuitem', { name: /^Infra\b/i })).toHaveAttribute('href', '/infra')
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(opsButton).toHaveAttribute('aria-expanded', 'false')
@@ -55,6 +67,7 @@ describe('Layout navigation', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('button', { name: /Ops · Oracle/i })).toBeInTheDocument()
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' })
+    expect(within(primaryNav).getByRole('button', { name: /Ops · Oracle/i })).toBeInTheDocument()
   })
 })

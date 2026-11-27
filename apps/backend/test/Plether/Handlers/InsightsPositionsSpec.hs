@@ -2,12 +2,16 @@
 
 module Plether.Handlers.InsightsPositionsSpec (spec) where
 
+import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Plether.Ethereum.Abi (encodeUint256)
 import Plether.Handlers.InsightsPositions
   ( ExposureTimelinePoint (..)
   , GlobalMarketExposure (..)
+  , GlobalOpenAggregate (..)
   , GlobalOpenPosition (..)
+  , OnChainMarketSides (..)
   , PositionActivityRow (..)
   , PositionLifecycle (..)
   , PositionStepEvent (..)
@@ -18,11 +22,13 @@ import Plether.Handlers.InsightsPositions
   , computeLeverageX100
   , computeNotionalAssets
   , computeUnrealizedPnl
+  , decodeMarketSideTuple
   , defaultMaintenanceMarginBps
   , distanceToLiquidationBps
   , enrichPositionWithCandles
   , findLiquidationRawPrice
   , pickCandleIntervalSeconds
+  , reconcileGlobalMarketExposure
   , reconstructPositionLifecycles
   , summarizeWalletExposure
   )
@@ -249,3 +255,45 @@ spec = describe "Plether.Handlers.InsightsPositions" $ do
       `shouldBe` ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
     map gopDiscordUsername (gmeTopPositions globalExp)
       `shouldBe` [Just "whale_alice", Nothing]
+
+  it "decodes CfdEngine.sides() ABI tuples and reconciles canonical on-chain OI + full counts" $ do
+    let bullOi = 228935000 * 10 ^ (18 :: Int)
+        bearOi = 183764200 * 10 ^ (18 :: Int)
+        bullMargin = 162053408260000
+        bearMargin = 170711969440000
+        encodedBull = BS.concat [encodeUint256 999, encodeUint256 bullOi, encodeUint256 1234, encodeUint256 bullMargin]
+    decodeMarketSideTuple encodedBull `shouldBe` Just (bullOi, bullMargin)
+    decodeMarketSideTuple (BS.replicate 64 0) `shouldBe` Nothing
+
+    let markRaw = 94605602
+        base = computeGlobalMarketExposure 1800003600 (Just markRaw) Map.empty Map.empty
+        sides =
+          OnChainMarketSides
+            { ocmsLongOpenInterest = bullOi
+            , ocmsShortOpenInterest = bearOi
+            , ocmsLongTotalMarginAssets = bullMargin
+            , ocmsShortTotalMarginAssets = bearMargin
+            }
+        agg =
+          GlobalOpenAggregate
+            { goaLongCount = 620
+            , goaShortCount = 480
+            , goaLongSize = bullOi
+            , goaShortSize = bearOi
+            }
+        reconciled = reconcileGlobalMarketExposure (Just markRaw) (Just sides) (Just agg) base
+    gmeLongOpenInterestAssets reconciled `shouldBe` computeNotionalAssets bullOi markRaw
+    gmeShortOpenInterestAssets reconciled `shouldBe` computeNotionalAssets bearOi markRaw
+    gmeNetSkewAssets reconciled `shouldSatisfy` (> 0)
+    gmeOpenPositionCount reconciled `shouldBe` 1100
+    gmeLongCount reconciled `shouldBe` 620
+    gmeShortCount reconciled `shouldBe` 480
+    gmeLongShareBps reconciled `shouldBe` Just 5547
+    gmeShortShareBps reconciled `shouldBe` Just 4453
+    gmeAvgLeverageX100 reconciled `shouldBe` Just 117
+
+    -- Fallback to full SQL aggregate sizes when on-chain RPC is unavailable
+    let fallback = reconcileGlobalMarketExposure (Just markRaw) Nothing (Just agg) base
+    gmeLongOpenInterestAssets fallback `shouldBe` computeNotionalAssets bullOi markRaw
+    gmeShortOpenInterestAssets fallback `shouldBe` computeNotionalAssets bearOi markRaw
+    gmeOpenPositionCount fallback `shouldBe` 1100

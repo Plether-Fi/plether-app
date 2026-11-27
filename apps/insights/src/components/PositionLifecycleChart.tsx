@@ -247,9 +247,9 @@ export function PositionLifecycleChart({
         })
         .filter((d): d is NonNullable<typeof d> => d !== null)
 
-      const refLines: { y: number; label: string; color: string; dashed?: boolean }[] = []
+      const refLinesRaw: { y: number; label: string; color: string; dashed?: boolean }[] = []
       if (entryDisplay != null) {
-        refLines.push({
+        refLinesRaw.push({
           y: yOf(entryDisplay),
           label: `Entry ${entryDisplay.toFixed(4)}`,
           color: '#ffab96',
@@ -257,7 +257,7 @@ export function PositionLifecycleChart({
         })
       }
       if (liqPlotVal != null) {
-        refLines.push({
+        refLinesRaw.push({
           y: yOf(liqPlotVal),
           label: `Liq ${liqPlotVal.toFixed(4)}`,
           color: '#ff572d',
@@ -265,7 +265,7 @@ export function PositionLifecycleChart({
         })
       }
       if (tpPlotVal != null) {
-        refLines.push({
+        refLinesRaw.push({
           y: yOf(tpPlotVal),
           label: `TP ${tpPlotVal.toFixed(4)}`,
           color: '#34d399',
@@ -273,12 +273,24 @@ export function PositionLifecycleChart({
         })
       }
       if (slPlotVal != null) {
-        refLines.push({
+        refLinesRaw.push({
           y: yOf(slPlotVal),
           label: `SL ${slPlotVal.toFixed(4)}`,
           color: '#f5c451',
           dashed: true,
         })
+      }
+
+      // De-collide left-aligned reference text labels vertically (min 13px spacing)
+      // while preserving exact dashed line positions.
+      const sortedRef = [...refLinesRaw].sort((a, b) => a.y - b.y)
+      const refLines: { y: number; labelY: number; label: string; color: string; dashed?: boolean }[] = []
+      let prevLabelY = PAD_TOP - 4
+      for (const rl of sortedRef) {
+        const desiredY = Math.max(PAD_TOP + 10, rl.y - 4)
+        const labelY = Math.min(PAD_TOP + plotH - 2, Math.max(desiredY, prevLabelY + 13))
+        prevLabelY = labelY
+        refLines.push({ ...rl, labelY })
       }
 
       const yTicks = [0, 0.5, 1].map((frac) => {
@@ -604,7 +616,7 @@ export function PositionLifecycleChart({
                       />
                       <text
                         x={PAD_LEFT + 6}
-                        y={Math.max(PAD_TOP + 10, rl.y - 4)}
+                        y={rl.labelY}
                         fill={rl.color}
                         className="font-mono text-[10px] font-semibold"
                       >

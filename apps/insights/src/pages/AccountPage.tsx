@@ -42,7 +42,6 @@ import {
   formatAssets,
   formatCompactAssets,
   formatPrice,
-  formatRoi,
   formatUtc,
   isWalletAddress,
   shortAddress,
@@ -314,6 +313,12 @@ function TradingAccountInspector({ address }: { address: string }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs">
             <Link
+              to={`/trading-accounts/${address}`}
+              className="text-brand-peach hover:underline"
+            >
+              Kernel v4 Smart Account →
+            </Link>
+            <Link
               to={`/divisions/wallets/${address}`}
               className="text-content-secondary hover:text-brand-peach"
             >
@@ -342,7 +347,11 @@ function TradingAccountInspector({ address }: { address: string }) {
           className="border border-brand-yellow/40 bg-brand-yellow/10 px-4 py-3 text-sm text-brand-yellow"
         >
           <strong>Connected backend does not serve Stage 3 Account Summary yet (HTTP 404).</strong>{' '}
-          Live Divisions standing is shown below. Deploy the updated backend containing{' '}
+          Visit the{' '}
+          <Link to={`/divisions/wallets/${address}`} className="text-brand-peach underline">
+            Divisions Scorecard
+          </Link>{' '}
+          for weekly competition standings, or deploy the updated backend containing{' '}
           <code className="font-mono text-xs">/api/insights/v1/wallets/:address/summary</code> to
           hydrate live on-chain margin health, trade receipts, TP/SL protections, and attributed LP
           vault activity.
@@ -596,45 +605,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                       : 'On-chain ledger snapshot unavailable'
                   }
                   message="We fail closed rather than manufacturing zeros when the on-chain CfdEngineAccountLens call is unavailable."
-                />
-              </Panel>
-            )}
-          </section>
-
-          <section aria-labelledby="account-divisions-title" className="space-y-4">
-            <h2 id="account-divisions-title" className="text-xl font-semibold">
-              Live Divisions standing
-            </h2>
-
-            {liveQuery.isLoading ? (
-              <Panel>
-                <LoadingState rows={2} />
-              </Panel>
-            ) : liveQuery.isError && !live ? (
-              <ErrorState
-                title="Live performance is unavailable"
-                message={liveQuery.error.message}
-                onRetry={() => void liveQuery.refetch()}
-              />
-            ) : current && live ? (
-              <>
-                <p className="text-xs text-content-tertiary">
-                  Provisional · Week starting {formatUtc(live.weekStartsAt)} · Snapshot{' '}
-                  {formatUtc(live.snapshotAt ?? '')}
-                </p>
-                <Panel>
-                  <dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-3 sm:divide-y-0">
-                    <Metric label="Live weekly rank">{current.rank ?? '—'}</Metric>
-                    <Metric label="Live weekly return">{formatRoi(current.weeklyReturnBps)}</Metric>
-                    <Metric label="Active days">{current.activeDays}</Metric>
-                  </dl>
-                </Panel>
-              </>
-            ) : (
-              <Panel>
-                <EmptyState
-                  title="No active-week Trading Account ranking"
-                  message="This Trading Account has no live weekly Divisions snapshot on the current release yet."
                 />
               </Panel>
             )}

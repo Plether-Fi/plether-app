@@ -55,7 +55,7 @@ describe('Divisions trader navigation', () => {
     show('/divisions')
     const liveTable = screen.getByRole('table', { name: /Provisional weekly ranks/ })
     expect(within(liveTable).getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
-      'Rank', 'Current badge', 'Wallet', 'Discord handle', 'Weekly return', 'Active days',
+      'Rank', 'Current badge', 'Wallet', 'Discord handle', 'Weekly return', 'Active days', 'Explorer',
     ])
     fireEvent.click(within(liveTable).getByRole('link', { name: `View trader ${address}` }))
     expect(screen.getByRole('heading', { name: '@mellboi' })).toBeInTheDocument()

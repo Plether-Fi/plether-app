@@ -10,9 +10,8 @@ import {
   formatCompactAssets,
   formatPrice,
   formatSignedAssets,
-  shortAddress,
 } from '../utils/format'
-import { AddressAvatar } from './AddressAvatar'
+import { TraderIdentity } from './TraderIdentity'
 import { EmptyState, LoadingState, Panel, Pnl } from './ui'
 
 interface MarketExposurePulsePanelProps {
@@ -149,18 +148,12 @@ export function MarketExposurePulsePanel({
                         className="border-b border-brand-border/15 transition-colors last:border-0 hover:bg-app-bg/35"
                       >
                         <td className="whitespace-nowrap py-3 pl-4 pr-3">
-                          <Link
+                          <TraderIdentity
+                            address={pos.account}
+                            discordUsername={pos.discordUsername}
                             to={`/wallets/${pos.account}?tab=exposure`}
-                            className="inline-flex items-center gap-2 font-mono text-xs text-brand-peach hover:underline"
-                            title={pos.account}
-                          >
-                            <AddressAvatar address={pos.account} size={18} />
-                            <span>
-                              {pos.discordUsername
-                                ? `@${pos.discordUsername.replace(/^@/, '')}`
-                                : shortAddress(pos.account)}
-                            </span>
-                          </Link>
+                            avatarSize={18}
+                          />
                         </td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-xs font-semibold uppercase">
                           <span className={pos.side === 'long' ? 'text-positive' : 'text-brand-orange'}>

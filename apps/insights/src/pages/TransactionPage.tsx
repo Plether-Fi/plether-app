@@ -16,6 +16,7 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { TraderIdentity } from '../components/TraderIdentity'
 import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
 import { ShareCardModal } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
@@ -522,14 +523,15 @@ export function TransactionPage() {
         <div className="mt-5 grid gap-3 border-t border-brand-border/20 pt-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <span className="text-content-tertiary">Trading Account</span>
-            <div className="mt-1 font-mono text-sm">
-              <Link
-                to={`/wallets/${selectedEvent.account}`}
-                className="inline-flex items-center gap-2 text-brand-peach hover:underline"
-              >
-                <AddressAvatar address={selectedEvent.account} size={18} />
-                {shortAddress(selectedEvent.account)}
-              </Link>
+            <div className="mt-1">
+              <TraderIdentity
+                address={selectedEvent.account}
+                discordUsername={
+                  routeState?.traderLabel?.startsWith('@') ? routeState.traderLabel : undefined
+                }
+                avatarSize={18}
+                showCopy
+              />
             </div>
           </div>
           <div>

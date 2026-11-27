@@ -6,6 +6,10 @@ const config: StorybookConfig = {
     "../src/**/*.mdx",
     "../src/**/*.stories.@(js|jsx|mjs|ts|tsx)"
   ],
+  "staticDirs": [
+    "../public",
+    { "from": "../../insights/public/divisions", "to": "/divisions" }
+  ],
   "addons": [
     "@chromatic-com/storybook",
     "@storybook/addon-vitest",
