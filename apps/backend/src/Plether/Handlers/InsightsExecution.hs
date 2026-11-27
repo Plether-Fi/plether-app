@@ -1067,7 +1067,7 @@ ensureTxSenderCacheTable conn = do
           pure ()
       )
       ( \(err :: SqlError) ->
-          if sqlState err `elem` ["23505", "42P07"]
+          if sqlState err `elem` ["23505", "42P07", "42710"]
             then pure ()
             else throwIO err
       )
