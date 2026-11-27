@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { InsightsApiError } from './client'
 import type { ApiErrorBody } from './types'
 
@@ -135,6 +135,39 @@ export interface LiquidityForensicsResponse {
   }
 }
 
+export interface EpochTrancheSnapshot {
+  totalAssets: string
+  lockedAssets: string | null
+  totalSupply: string
+  sharePriceWad: string
+  sharePriceDeltaBps: number | null
+}
+
+export interface EpochVaultSnapshot {
+  epochTimestamp: number
+  blockNumber: string
+  blockTimestamp: number
+  blockUtc: string
+  markFresh: boolean | null
+  senior: EpochTrancheSnapshot
+  junior: EpochTrancheSnapshot
+}
+
+export interface LiquidityEpochResponse {
+  network: LiquidityNetworkMeta
+  monitorAddress: string
+  epoch: number
+  epochTimestamp: number
+  epochUtc: string
+  previousEpoch: number | null
+  nextEpoch: number | null
+  latestObservation: LpSettlementObservation | null
+  observations: LpSettlementObservation[]
+  settlements: LpSettlementRecord[]
+  vaultSnapshot: EpochVaultSnapshot | null
+  coveringReport: ReturnReportAudit | null
+}
+
 interface Envelope<T> {
   data: T
 }
@@ -170,14 +203,94 @@ export function getLiquidityForensics(signal?: AbortSignal): Promise<LiquidityFo
   return fetchInsightsJson<LiquidityForensicsResponse>('/liquidity/forensics', signal)
 }
 
+export function getLiquidityEpoch(
+  epoch: string | number,
+  signal?: AbortSignal,
+): Promise<LiquidityEpochResponse> {
+  return fetchInsightsJson<LiquidityEpochResponse>(
+    `/liquidity/epochs/${encodeURIComponent(String(epoch))}`,
+    signal,
+  )
+}
+
+async function fetchLiquidityEpochWithFallback(
+  epoch: string,
+  signal?: AbortSignal,
+): Promise<LiquidityEpochResponse> {
+  try {
+    return await getLiquidityEpoch(epoch, signal)
+  } catch (error) {
+    // Before /liquidity/epochs/:epoch is deployed on the backend, hydrate recent
+    // epochs from /liquidity/settlements so clicking any settled epoch works immediately.
+    if (error instanceof InsightsApiError && error.status === 404 && !error.code) {
+      const targetEpoch = Number(epoch)
+      const settlementsResp = await getLiquiditySettlements(signal)
+      const matchingTxs = settlementsResp.recentSettlements.filter(
+        (row) => row.epoch === targetEpoch,
+      )
+      const matchingObs =
+        settlementsResp.latestObservation?.epoch === targetEpoch
+          ? settlementsResp.latestObservation
+          : null
+      if (matchingTxs.length > 0 || matchingObs) {
+        const knownEpochs = Array.from(
+          new Set([
+            ...settlementsResp.recentSettlements.map((r) => r.epoch),
+            ...(settlementsResp.latestObservation ? [settlementsResp.latestObservation.epoch] : []),
+          ]),
+        ).sort((a, b) => a - b)
+        const idx = knownEpochs.indexOf(targetEpoch)
+        const epochTs = targetEpoch * 3600
+        return {
+          network: settlementsResp.network,
+          monitorAddress: settlementsResp.monitorAddress,
+          epoch: targetEpoch,
+          epochTimestamp: epochTs,
+          epochUtc: new Date(epochTs * 1000).toISOString(),
+          previousEpoch: idx > 0 ? knownEpochs[idx - 1] : null,
+          nextEpoch: idx >= 0 && idx < knownEpochs.length - 1 ? knownEpochs[idx + 1] : null,
+          latestObservation: matchingObs,
+          observations: matchingObs ? [matchingObs] : [],
+          settlements: matchingTxs,
+          vaultSnapshot: null,
+          coveringReport: null,
+        }
+      }
+    }
+    throw error
+  }
+}
+
+export function formatSharePriceWad(wad: string | null | undefined, symbol = 'USDG'): string {
+  if (!wad) return '—'
+  try {
+    const raw = BigInt(wad)
+    const sign = raw < 0n ? '-' : ''
+    const abs = raw < 0n ? -raw : raw
+    const whole = abs / 1_000_000_000_000_000_000n
+    const frac = ((abs % 1_000_000_000_000_000_000n) / 100_000_000_000_000n)
+      .toString()
+      .padStart(4, '0')
+    return `${sign}${whole.toLocaleString('en-US')}.${frac} ${symbol}`
+  } catch {
+    return '—'
+  }
+}
+
 function shouldRetryEndpoint(failureCount: number, error: Error): boolean {
-  if (error instanceof InsightsApiError && error.status === 404) return false
+  if (error instanceof InsightsApiError && (error.status === 404 || error.status === 400)) return false
   return failureCount < 2
+}
+
+export const liquidityKeys = {
+  settlements: ['insights', 'liquidity', 'settlements'] as const,
+  forensics: ['insights', 'liquidity', 'forensics'] as const,
+  epoch: (epoch: string | number) => ['insights', 'liquidity', 'epoch', String(epoch)] as const,
 }
 
 export function useLiquiditySettlements() {
   return useQuery({
-    queryKey: ['insights', 'liquidity', 'settlements'] as const,
+    queryKey: liquidityKeys.settlements,
     queryFn: ({ signal }) => getLiquiditySettlements(signal),
     staleTime: 30_000,
     refetchInterval: 30_000,
@@ -188,10 +301,26 @@ export function useLiquiditySettlements() {
 
 export function useLiquidityForensics() {
   return useQuery({
-    queryKey: ['insights', 'liquidity', 'forensics'] as const,
+    queryKey: liquidityKeys.forensics,
     queryFn: ({ signal }) => getLiquidityForensics(signal),
     staleTime: 30_000,
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    retry: shouldRetryEndpoint,
+  })
+}
+
+export function useLiquidityEpoch(epoch: string | undefined) {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
+  const valid = epoch != null && /^\d+$/.test(epoch)
+
+  return useQuery({
+    queryKey: liquidityKeys.epoch(epoch ?? ''),
+    queryFn: ({ signal }) => fetchLiquidityEpochWithFallback(epoch ?? '', signal),
+    enabled: valid,
+    staleTime: staticPreview ? Infinity : 30_000,
+    refetchInterval: staticPreview ? false : 30_000,
     refetchIntervalInBackground: false,
     retry: shouldRetryEndpoint,
   })

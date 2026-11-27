@@ -6,8 +6,11 @@ import Plether.Handlers.InsightsExecution
   ( DetectedKeeperEvent (..)
   , KeeperAggregate (..)
   , LatencyStats (..)
+  , OrderReliabilityBucket (..)
   , RawKeeperTx (..)
   , aggregateKeepers
+  , buildTimelineBuckets
+  , classifyTxKind
   , computeLatencyPercentiles
   , extractTxFrom
   , isValidTxHash
@@ -95,3 +98,18 @@ spec = describe "Plether.Handlers.InsightsExecution" $ do
     isValidTxHash (T.pack ("0x" <> replicate 63 'a')) `shouldBe` False
     isValidTxHash (T.pack ("0x" <> replicate 64 'g')) `shouldBe` False
     isValidTxHash "not-a-hash" `shouldBe` False
+
+  it "builds chronological zero-filled order reliability time buckets with exact timestamps" $ do
+    let buckets = buildTimelineBuckets 1700003600 3600 3 [(0, 10, 10, 0, 0, 0), (2, 5, 3, 1, 1, 0)]
+    buckets
+      `shouldBe` [ OrderReliabilityBucket 1700000000 1700001200 10 10 0 0 0
+                 , OrderReliabilityBucket 1700001200 1700002400 0 0 0 0 0
+                 , OrderReliabilityBucket 1700002400 1700003600 5 3 1 1 0
+                 ]
+
+  it "classifies single finalization, batch finalization, LP settlement, and liquidation transactions" $ do
+    classifyTxKind 3 False False `shouldBe` "batch_finalization"
+    classifyTxKind 1 False False `shouldBe` "order_finalization"
+    classifyTxKind 0 True False `shouldBe` "lp_settlement"
+    classifyTxKind 0 False True `shouldBe` "liquidation"
+    classifyTxKind 0 False False `shouldBe` "protocol_tx"

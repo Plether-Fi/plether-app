@@ -251,6 +251,43 @@ locals {
     ] : []
   )
 
+  insights_infra_environment = concat(
+    !local.native_aa_backend_configured && !local.kernel_aa_backend_configured ? [
+      { name = "AWS_REGION", value = var.aws_region },
+    ] : [],
+    [
+      { name = "INSIGHTS_AWS_ECS_CLUSTER", value = aws_ecs_cluster.main.name },
+      {
+        name = "INSIGHTS_AWS_ECS_SERVICES"
+        value = join(",", concat(
+          [
+            "plether-api",
+            "plether-keeper",
+            "plether-liquidation-worker",
+            "plether-basket-worker",
+            "plether-perps-indexer",
+            "plether-insights-worker",
+            "plether-workers",
+          ],
+          contains(["sepolia", "mainnet"], var.environment) ? [
+            "plether-position-protection-worker",
+          ] : [],
+          local.self_hosted_aa_resource_count == 1 ? [
+            "plether-aa-reconciler",
+            "plether-alto",
+          ] : [],
+          local.rpc_gateway_count > 0 ? [
+            "plether-${local.deployment_name}-rpc-gateway",
+          ] : []
+        ))
+      },
+      { name = "INSIGHTS_AWS_RDS_IDENTIFIER", value = aws_db_instance.postgres.identifier },
+    ],
+    local.rpc_count > 0 ? [
+      { name = "INSIGHTS_AWS_RPC_INSTANCE_ID", value = aws_instance.rpc_node[0].id },
+    ] : []
+  )
+
   native_aa_secrets = local.native_aa_backend_configured ? [
     {
       name      = "AA_RECONCILER_SECONDARY_RPC_URL"
@@ -524,7 +561,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.kernel_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment, local.commitment_wakeup_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.kernel_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment, local.insights_infra_environment, local.commitment_wakeup_environment)
   }, merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image })])
 
   lifecycle {

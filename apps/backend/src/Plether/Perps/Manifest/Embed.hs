@@ -5,13 +5,15 @@
 -- sentinels only; they are never written back to the release document.
 module Plether.Perps.Manifest.Embed
   ( manifestText, manifestInteger, manifestSettlementText, manifestIsDeployed
+  , manifestRawJson
   , settlementTokenField, releaseIsDeployed
   ) where
 
 import Control.Monad (unless, forM_)
-import Data.Aeson (Result (..), Value (..), eitherDecodeFileStrict', fromJSON)
+import Data.Aeson (Result (..), Value (..), eitherDecodeFileStrict', encode, fromJSON)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Char (isHexDigit)
 import qualified Data.Text as T
 import Language.Haskell.TH (Exp, Q, runIO)
@@ -104,6 +106,11 @@ releaseIsDeployed root = do
 
 manifestIsDeployed :: Q Exp
 manifestIsDeployed = manifestRoot >>= either fail lift . releaseIsDeployed
+
+manifestRawJson :: Q Exp
+manifestRawJson = do
+  root <- manifestRoot
+  lift $ LBS8.unpack (encode root)
 
 manifestSettlementText :: String -> Q Exp
 manifestSettlementText field = manifestText ["contracts", "settlementToken", field]

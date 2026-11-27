@@ -789,7 +789,38 @@ function TradingAccountInspector({ address }: { address: string }) {
                                   ]}
                                 />
                               ) : null}
-                              {!hasReceipt && !(row.activityType === 'Close' && row.pnlAssets != null) ? (
+                              {row.activityType === 'Open' ? (
+                                <ShareCardModal
+                                  compact
+                                  triggerLabel="Share Open"
+                                  cards={[
+                                    {
+                                      id: `open-${row.id}`,
+                                      label: 'Opened Position Receipt',
+                                      data: {
+                                        kind: 'open_trade',
+                                        traderLabel,
+                                        account: address,
+                                        networkName: chain.name,
+                                        releaseVersion,
+                                        market: 'plDXY-PERP',
+                                        side:
+                                          row.side === 'long' || row.side === 'short'
+                                            ? row.side
+                                            : null,
+                                        price: row.price,
+                                        sizeDelta: row.sizeDelta,
+                                        notionalAssets: row.amountAssets,
+                                        occurredAt: row.occurredAt,
+                                        txHash: row.txHash,
+                                      },
+                                    },
+                                  ]}
+                                />
+                              ) : null}
+                              {!hasReceipt &&
+                              !(row.activityType === 'Close' && row.pnlAssets != null) &&
+                              row.activityType !== 'Open' ? (
                                 <span className="font-mono text-xs text-content-tertiary">—</span>
                               ) : null}
                             </div>

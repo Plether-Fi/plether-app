@@ -34,6 +34,36 @@ describe('shareCard SVG & social helpers', () => {
     expect(svg).toContain('CLOSED LONG')
     expect(svg).toContain('@alice_fx')
     expect(svg).toContain('Arbitrum Sepolia · v2.0.0')
+    expect(svg).toContain('26 Nov 2026, 12:00')
+    expect(svg).not.toContain('26 Nov 2026, 12:00 UTC')
+    expect(svg).toContain('font-size="18" font-weight="700">26 Nov 2026, 12:00</text>')
+  })
+
+  it('renders an opened-position transaction receipt card with notional, entry price, and X share link', () => {
+    const openData = {
+      kind: 'open_trade' as const,
+      traderLabel: '@alice_fx',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      releaseVersion: 'v2.0.0',
+      market: 'plDXY-PERP',
+      side: 'short' as const,
+      price: '1054110000000000000',
+      sizeDelta: '47433000000000000000000',
+      notionalAssets: '50000000000',
+      occurredAt: '2026-11-23T11:53:00Z',
+      txHash: `0x${'f'.repeat(64)}`,
+    }
+    const svg = buildShareCardSvg(openData)
+    expect(svg).toContain('OPENED POSITION RECEIPT')
+    expect(svg).toContain('OPENED SHORT')
+    expect(svg).toContain('50,000.00 USDG')
+    expect(svg).toContain('23 Nov 2026, 11:53')
+    expect(svg).not.toContain('$')
+    expect(shareCardFilename(openData)).toBe('plether-open_trade-alice_fx.png')
+    expect(buildShareTweetUrl(openData, `https://insights.plether.com/wallets/${account}`)).toContain(
+      'Opened+SHORT+plDXY-PERP',
+    )
   })
 
   it('renders a Divisions badge card with tier crest, rank, and weekly return', () => {

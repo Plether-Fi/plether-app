@@ -90,6 +90,18 @@ export function resolveRouteOgMeta(url) {
     };
   }
 
+  const epochMatch = pathname.match(/^\/liquidity\/epochs\/(\d+)\/?$/);
+  if (epochMatch) {
+    const epochNum = epochMatch[1];
+    return {
+      title: `LP Epoch #${epochNum} — Plether Insights`,
+      description: `LP epoch #${epochNum} settlement transactions, Senior & Junior vault snapshots, decoded SettlementMonitorLens bitmasks, and return attribution audit.`,
+      imageUrl: defaultImage,
+      imageAlt: `Plether Insights — LP Epoch #${epochNum}`,
+      canonicalUrl: `${origin}/liquidity/epochs/${epochNum}`,
+    };
+  }
+
   if (pathname === '/liquidity' || pathname.startsWith('/liquidity/')) {
     return {
       title: 'LP Epoch Settlement & Forensics — Plether Insights',
@@ -110,12 +122,55 @@ export function resolveRouteOgMeta(url) {
     };
   }
 
+  const keeperMatch = pathname.match(/^\/keepers\/(0x[0-9a-fA-F]{40})\/?$/);
+  if (keeperMatch) {
+    const addr = keeperMatch[1].toLowerCase();
+    const label = shortAddr(addr);
+    return {
+      title: `Keeper ${label} — Plether Insights`,
+      description: `Live on-chain execution share, latency distribution, ETH runway, bounties earned, and recent transactions for permissionless keeper ${label} on Plether Insights.`,
+      imageUrl: defaultImage,
+      imageAlt: `Plether Insights — Permissionless Keeper ${label}`,
+      canonicalUrl: `${origin}/keepers/${addr}`,
+    };
+  }
+
   if (pathname === '/keepers' || pathname.startsWith('/keepers/')) {
     return {
       title: 'Permissionless Keepers — Plether Insights',
       description: 'Live activity, latency, ETH balances, and bounties across every permissionless keeper executing Plether Perps.',
       imageUrl: defaultImage,
       imageAlt: 'Plether Insights — Permissionless Keepers',
+      canonicalUrl,
+    };
+  }
+
+  if (pathname === '/sponsored' || pathname.startsWith('/sponsored/')) {
+    return {
+      title: 'Sponsored Transactions & Paymaster Health — Plether Insights',
+      description: 'Live ERC-4337 Paymaster EntryPoint deposit runway, issuance kill-switch, budget caps, AA reconciler lag, Alto bundler readiness, and UserOperations.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — Sponsored Transactions & Paymaster Health',
+      canonicalUrl,
+    };
+  }
+
+  if (pathname === '/protocol' || pathname.startsWith('/protocol/')) {
+    return {
+      title: 'Protocol Contracts & Parameters — Plether Insights',
+      description: 'Live on-chain bytecode hash verification, economic risk parameters vs. release defaults, and emergency pause controls for Plether Perpetuals.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — Protocol Contracts & Parameters',
+      canonicalUrl,
+    };
+  }
+
+  if (pathname === '/infra' || pathname.startsWith('/infra/')) {
+    return {
+      title: 'AWS Infrastructure & Action Readiness — Plether Insights',
+      description: 'Live AWS ECS, RDS PostgreSQL, Arbitrum Nitro EC2 node, Alto bundler, Pyth oracle, and keeper health translated into user action readiness.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — AWS Infrastructure & Action Readiness',
       canonicalUrl,
     };
   }

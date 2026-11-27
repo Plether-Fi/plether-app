@@ -134,15 +134,19 @@ describe('TransactionPage', () => {
       'href',
       `/wallets/${sampleAccount}`,
     )
-    expect(screen.getByRole('link', { name: '0x9999…9999 ↗' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '0x9999…9999' })).toHaveAttribute(
       'href',
-      `https://sepolia.arbiscan.io/address/${sampleKeeper}`,
+      `/keepers/${sampleKeeper}`,
     )
+    expect(
+      screen.getByRole('link', { name: `View ${sampleKeeper} on explorer` }),
+    ).toHaveAttribute('href', `https://sepolia.arbiscan.io/address/${sampleKeeper}`)
 
     // Switch to the first event (#1 Open · log 8)
     fireEvent.click(screen.getByRole('button', { name: /#1 Open/i }))
     expect(screen.getByText('Open / increase')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Share PnL' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Share Open' })).toBeInTheDocument()
   })
 
   it('hydrates immediately from router state even if the backend tx endpoint returns 404', () => {
@@ -194,5 +198,101 @@ describe('TransactionPage', () => {
       'href',
       `https://sepolia.arbiscan.io/tx/${sampleTxHash}`,
     )
+  })
+
+  it('renders protocol-level batch finalization manifest, Pyth oracle window, and event trace even with zero trade fills', () => {
+    txQuery.mockReturnValue({
+      data: {
+        network: { chainId: 421614, releaseVersion: 'v2.0.0', settlementAssetSymbol: 'USDG' },
+        txHash: sampleTxHash,
+        txKind: 'batch_finalization',
+        blockNumber: '333079617',
+        occurredAt: '2026-11-27T06:22:10Z',
+        executorAddress: sampleKeeper,
+        batchSummary: {
+          totalOrders: 2,
+          executedOrders: 1,
+          failedOrExpiredOrders: 1,
+          uniqueAccounts: 2,
+          minLatencySeconds: 2,
+          medianLatencySeconds: 3,
+          maxLatencySeconds: 4,
+          totalVpiAssets: '12500000',
+          oracleMinPublishTime: '2026-11-27T06:22:08Z',
+          oracleMaxPublishTime: '2026-11-27T06:22:09Z',
+          oracleSpreadSeconds: 1,
+          oraclePrice: '1054110000000000000',
+          oracleFrozen: false,
+        },
+        finalizedOrders: [
+          {
+            orderId: '901',
+            account: sampleAccount,
+            side: 'long',
+            commitTxHash: `0x${'2'.repeat(64)}`,
+            commitBlock: '333079609',
+            commitAt: '2026-11-27T06:22:08Z',
+            latencySeconds: 2,
+            latencyBlocks: 8,
+            terminalStatus: 'Executed',
+            terminalReason: 'Executed',
+            failureReason: null,
+            failedConstraint: null,
+            executionMode: 'live',
+            executionPrice: '1054120000000000000',
+            oraclePrice: '1054110000000000000',
+            oracleFrozen: false,
+            vpiAssets: '12500000',
+            frozenCloseSpreadAssets: null,
+          },
+          {
+            orderId: '902',
+            account: `0x${'3'.repeat(40)}`,
+            side: 'short',
+            commitTxHash: `0x${'4'.repeat(64)}`,
+            commitBlock: '333079580',
+            commitAt: '2026-11-27T06:22:06Z',
+            latencySeconds: 4,
+            latencyBlocks: 37,
+            terminalStatus: 'Expired',
+            terminalReason: 'Expired',
+            failureReason: '2',
+            failedConstraint: 'SLIPPAGE_OR_TTL',
+            executionMode: 'live',
+            executionPrice: null,
+            oraclePrice: '1054110000000000000',
+            oracleFrozen: false,
+            vpiAssets: null,
+            frozenCloseSpreadAssets: null,
+          },
+        ],
+        protocolEvents: [
+          {
+            logIndex: 11,
+            contractAddress: `0x${'5'.repeat(40)}`,
+            eventName: 'OrderFinalized',
+            account: sampleAccount,
+            orderId: '901',
+            side: 'long',
+            data: { status: '2', terminalReason: 'Executed' },
+          },
+        ],
+        lpSettlement: null,
+        events: [],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    })
+
+    renderTx(`/tx/${sampleTxHash}`)
+    expect(screen.getByText('Batch finalization manifest (2 orders)')).toBeInTheDocument()
+    expect(screen.getByText('1/2 executed')).toBeInTheDocument()
+    expect(screen.getByText('SLIPPAGE_OR_TTL')).toBeInTheDocument()
+    expect(screen.getByText('On-chain protocol event trace (1)')).toBeInTheDocument()
+    expect(screen.getByText('OrderFinalized')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }))
+    expect(screen.getByText(/"terminalReason": "Executed"/)).toBeInTheDocument()
   })
 })

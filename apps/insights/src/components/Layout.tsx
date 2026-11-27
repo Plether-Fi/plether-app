@@ -4,11 +4,10 @@ import { useInsightsStatus } from '../api'
 import { useLiveDivisions } from '../divisions/query'
 import { resolvePerpsChain } from '../utils/chain'
 import { formatUtc } from '../utils/format'
-import { WalletSearch } from './WalletSearch'
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
-    'whitespace-nowrap border px-3.5 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
+    'whitespace-nowrap border px-3 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
     isActive
       ? 'border-brand-orange bg-brand-orange text-content-primary'
       : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary',
@@ -16,9 +15,6 @@ function navClass({ isActive }: { isActive: boolean }): string {
 }
 
 function Header() {
-  const statusQuery = useInsightsStatus()
-  const chain = resolvePerpsChain(statusQuery.data?.chainId)
-
   return (
     <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel py-2 sm:py-3.5">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:flex-nowrap lg:px-8">
@@ -43,13 +39,11 @@ function Header() {
             <NavLink to="/execution" className={navClass}>Execution</NavLink>
             <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
             <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
+            <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
+            <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
+            <NavLink to="/infra" className={navClass}>Infra</NavLink>
             <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
-            <a href={chain.tradeAppUrl} className={navClass({ isActive: false })}>Trade ↗</a>
           </nav>
-        </div>
-
-        <div className="w-full shrink-0 sm:w-60 lg:w-56 xl:w-64">
-          <WalletSearch compact />
         </div>
 
         <nav
@@ -60,8 +54,10 @@ function Header() {
           <NavLink to="/execution" className={navClass}>Execution</NavLink>
           <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
           <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
+          <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
+          <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
+          <NavLink to="/infra" className={navClass}>Infra</NavLink>
           <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
-          <a href={chain.tradeAppUrl} className={navClass({ isActive: false })}>Trade ↗</a>
         </nav>
       </div>
     </header>

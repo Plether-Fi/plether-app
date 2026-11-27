@@ -45,11 +45,18 @@ module Plether.Perps.Manifest
   , settlementMonitorLensCodeHash
   , settlementMonitorLensSidecarAddress
   , settlementMonitorLensSidecarCodeHash
+  , emergencyPauseCoordinatorAddress
+  , emergencyPauseCoordinatorCodeHash
+  , manifestValue
   ) where
 
+import Data.Aeson (Value (Null), decodeStrict')
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Control.Monad (unless)
-import Plether.Perps.Manifest.Embed (manifestInteger, manifestText, manifestSettlementText, manifestIsDeployed)
+import Plether.Perps.Manifest.Embed (manifestInteger, manifestRawJson, manifestText, manifestSettlementText, manifestIsDeployed)
 
 -- | Internal pins below are unusable until a deployed release has been verified.
 releaseIsDeployed :: Bool
@@ -181,3 +188,12 @@ settlementMonitorLensSidecarAddress = $(manifestText ["contracts", "settlementMo
 
 settlementMonitorLensSidecarCodeHash :: Text
 settlementMonitorLensSidecarCodeHash = $(manifestText ["contracts", "settlementMonitorLensSidecar", "runtimeCodeHash"])
+
+emergencyPauseCoordinatorAddress :: Text
+emergencyPauseCoordinatorAddress = $(manifestText ["contracts", "emergencyPauseCoordinator", "address"])
+
+emergencyPauseCoordinatorCodeHash :: Text
+emergencyPauseCoordinatorCodeHash = $(manifestText ["contracts", "emergencyPauseCoordinator", "runtimeCodeHash"])
+
+manifestValue :: Value
+manifestValue = fromMaybe Null $ decodeStrict' $ TE.encodeUtf8 $ T.pack $(manifestRawJson)

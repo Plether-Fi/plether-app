@@ -153,9 +153,10 @@ function formatUtcShort(iso) {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const day = String(date.getUTCDate()).padStart(2, '0');
   const mon = months[date.getUTCMonth()];
+  const year = String(date.getUTCFullYear());
   const hh = String(date.getUTCHours()).padStart(2, '0');
   const mm = String(date.getUTCMinutes()).padStart(2, '0');
-  return `${day} ${mon} ${hh}:${mm} UTC`;
+  return `${day} ${mon} ${year}, ${hh}:${mm}`;
 }
 
 function computeRoePercent(pnlRaw, baseRaw) {
@@ -206,6 +207,13 @@ function renderPill(x, y, label, bg, border, fg) {
   </g>`;
 }
 
+function fitStatFontSize(value, boxW, maxSize) {
+  const usableW = Math.max(80, boxW - 40);
+  const charCount = Math.max(1, String(value).length);
+  const fitted = Math.floor(usableW / (charCount * 0.64));
+  return Math.min(maxSize, Math.max(14, fitted));
+}
+
 function renderStatBoxes(stats, y) {
   const gap = 18;
   const totalW = 1080;
@@ -214,10 +222,11 @@ function renderStatBoxes(stats, y) {
   return stats
     .map((stat, idx) => {
       const x = 60 + idx * (boxW + gap);
+      const fontSize = fitStatFontSize(stat.value, boxW, 22);
       return `<g>
         <rect x="${String(x)}" y="${String(y)}" width="${String(boxW)}" height="92" fill="#3b212d" fill-opacity="0.72" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
         <text x="${String(x + 20)}" y="${String(y + 30)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="13" font-weight="700" letter-spacing="1.1">${escapeXml(stat.label.toUpperCase())}</text>
-        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="${MONO_FONT}" font-size="22" font-weight="700">${escapeXml(stat.value)}</text>
+        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="${MONO_FONT}" font-size="${String(fontSize)}" font-weight="700">${escapeXml(stat.value)}</text>
       </g>`;
     })
     .join('');
@@ -594,6 +603,48 @@ export function buildOgCardSvg(data) {
     });
   }
 
+  if (data.kind === 'open_trade') {
+    const sideText = data.side ? String(data.side).toUpperCase() : 'PERP';
+    const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99';
+    const sideBg = data.side === 'short' ? '#ff572d26' : '#00ff9922';
+    const heroText = data.notionalAssets
+      ? formatUsdgAssets(data.notionalAssets)
+      : data.sizeDelta
+        ? formatPlDxyQty(data.sizeDelta)
+        : 'Position Opened';
+    const heroFontSize = heroText.length <= 15 ? 70 : heroText.length <= 20 ? 56 : 46;
+    const subParts = [];
+    if (data.price) subParts.push(`Entry @ ${formatPrice18(data.price)}`);
+    if (data.sizeDelta) subParts.push(formatPlDxyQty(data.sizeDelta));
+    const stats = [
+      { label: 'Entry price', value: data.price ? formatPrice18(data.price) : '—' },
+      { label: 'Quantity opened', value: data.sizeDelta ? formatPlDxyQty(data.sizeDelta) : '—' },
+      { label: 'Notional', value: data.notionalAssets ? formatCompactUsdg(data.notionalAssets) : '—' },
+      { label: 'Executed (UTC)', value: formatUtcShort(data.occurredAt) },
+    ];
+    const body = `
+      ${renderPill(60, 134, data.market || 'plDXY-PERP', '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(218, 134, `OPENED ${sideText}`, sideBg, `${sideFg}88`, sideFg)}
+      <text x="60" y="220" fill="#aa98a0" font-family="${SANS_FONT}" font-size="16" font-weight="700" letter-spacing="1.4">${data.notionalAssets ? 'NOTIONAL EXPOSURE' : 'OPENED POSITION'}</text>
+      <text x="60" y="308" fill="${sideFg}" font-family="${MONO_FONT}" font-size="${String(heroFontSize)}" font-weight="700">${escapeXml(heroText)}</text>
+      ${subParts.length > 0 ? `<text x="60" y="358" fill="#d8cbd0" font-family="${MONO_FONT}" font-size="22" font-weight="700">${escapeXml(subParts.join(' · '))}</text>` : ''}
+      ${renderStatBoxes(stats, 408)}
+    `;
+    const footerRight = data.txHash
+      ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
+      : 'insights.plether.com';
+    return renderFrame({
+      accentGlow: sideFg,
+      eyebrow: 'Opened Position Receipt',
+      networkTag,
+      footerLeftPrimary: data.traderLabel,
+      footerLeftSecondary: shortAddress(data.account),
+      footerAvatarAddress: data.account,
+      footerRight,
+      bodySvg: body,
+    });
+  }
+
   if (data.kind === 'position') {
     const upnl = formatSignedUsdg(data.unrealizedPnlAssets);
     const color = data.liquidatable ? '#ff572d' : toneHex(upnl.tone);
@@ -727,10 +778,10 @@ export function selectWalletOgCardData(summaryPayload, { tradeId = null, cardMod
   const releaseVersion = data.network?.releaseVersion ?? null;
 
   if (tradeId && Array.isArray(data.activity)) {
-    const match = data.activity.find(
+    const closeMatch = data.activity.find(
       (row) => row && row.id === tradeId && row.activityType === 'Close' && row.pnlAssets != null,
     );
-    if (match) {
+    if (closeMatch) {
       return {
         kind: 'trade',
         traderLabel: handle,
@@ -738,13 +789,32 @@ export function selectWalletOgCardData(summaryPayload, { tradeId = null, cardMod
         networkName,
         releaseVersion,
         market: 'plDXY-PERP',
-        side: match.side === 'long' || match.side === 'short' ? match.side : null,
-        realizedPnlAssets: String(match.pnlAssets),
-        price: match.price ?? null,
-        sizeDelta: match.sizeDelta ?? null,
-        notionalAssets: match.amountAssets ?? null,
-        occurredAt: match.occurredAt ?? '',
-        txHash: match.txHash ?? null,
+        side: closeMatch.side === 'long' || closeMatch.side === 'short' ? closeMatch.side : null,
+        realizedPnlAssets: String(closeMatch.pnlAssets),
+        price: closeMatch.price ?? null,
+        sizeDelta: closeMatch.sizeDelta ?? null,
+        notionalAssets: closeMatch.amountAssets ?? null,
+        occurredAt: closeMatch.occurredAt ?? '',
+        txHash: closeMatch.txHash ?? null,
+      };
+    }
+    const openMatch = data.activity.find(
+      (row) => row && row.id === tradeId && row.activityType === 'Open',
+    );
+    if (openMatch) {
+      return {
+        kind: 'open_trade',
+        traderLabel: handle,
+        account,
+        networkName,
+        releaseVersion,
+        market: 'plDXY-PERP',
+        side: openMatch.side === 'long' || openMatch.side === 'short' ? openMatch.side : null,
+        price: openMatch.price ?? null,
+        sizeDelta: openMatch.sizeDelta ?? null,
+        notionalAssets: openMatch.amountAssets ?? null,
+        occurredAt: openMatch.occurredAt ?? '',
+        txHash: openMatch.txHash ?? null,
       };
     }
   }

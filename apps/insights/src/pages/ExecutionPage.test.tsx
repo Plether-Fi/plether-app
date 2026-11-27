@@ -156,6 +156,16 @@ describe('ExecutionPage (Stage 2)', () => {
     expect(screen.getByText('Execution pipeline healthy')).toBeInTheDocument()
     expect(screen.getAllByText('98.50%').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText('3s / 8s')).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', {
+        name: /24 hours order outcomes: 985 executed, 10 expired, 5 failed/i,
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', {
+        name: /Execution latency whisker \(seconds\): p50 3s, p95 8s, p99 14s, max 22s/i,
+      }),
+    ).toBeInTheDocument()
     expect(screen.getByText('42')).toBeInTheDocument()
 
     const tape = screen.getByRole('table', { name: /Recent protocol-wide executed trades/ })

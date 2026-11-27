@@ -23,6 +23,21 @@ export interface TradeShareCardData {
   txHash?: string | null
 }
 
+export interface OpenTradeShareCardData {
+  kind: 'open_trade'
+  traderLabel: string
+  account: string
+  networkName: string
+  releaseVersion?: string | null
+  market: string
+  side: 'long' | 'short' | null
+  price?: string | null
+  sizeDelta?: string | null
+  notionalAssets?: string | null
+  occurredAt: string
+  txHash?: string | null
+}
+
 export interface PositionShareCardData {
   kind: 'position'
   traderLabel: string
@@ -78,6 +93,7 @@ export interface AccountShareCardData {
 
 export type ShareCardData =
   | TradeShareCardData
+  | OpenTradeShareCardData
   | PositionShareCardData
   | DivisionShareCardData
   | AccountShareCardData
@@ -161,6 +177,26 @@ function renderPill(x: number, y: number, label: string, bg: string, border: str
   </g>`
 }
 
+function formatShareCardUtc(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return formatUtc(iso).replace(/\s+UTC$/, '')
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const mon = months[date.getUTCMonth()]
+  const year = String(date.getUTCFullYear())
+  const hh = String(date.getUTCHours()).padStart(2, '0')
+  const mm = String(date.getUTCMinutes()).padStart(2, '0')
+  return `${day} ${mon} ${year}, ${hh}:${mm}`
+}
+
+function fitStatFontSize(value: string, boxW: number, maxSize: number): number {
+  const usableW = Math.max(80, boxW - 40)
+  const charCount = Math.max(1, value.length)
+  const fitted = Math.floor(usableW / (charCount * 0.64))
+  return Math.min(maxSize, Math.max(14, fitted))
+}
+
 function renderStatBoxes(stats: { label: string; value: string; accent?: string }[], y: number): string {
   const gap = 18
   const totalW = 1080
@@ -169,10 +205,11 @@ function renderStatBoxes(stats: { label: string; value: string; accent?: string 
   return stats
     .map((stat, idx) => {
       const x = 60 + idx * (boxW + gap)
+      const fontSize = fitStatFontSize(stat.value, boxW, 24)
       return `<g>
         <rect x="${String(x)}" y="${String(y)}" width="${String(boxW)}" height="92" fill="#3b212d" fill-opacity="0.72" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
         <text x="${String(x + 20)}" y="${String(y + 30)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" letter-spacing="1.1">${escapeXml(stat.label.toUpperCase())}</text>
-        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24" font-weight="700">${escapeXml(stat.value)}</text>
+        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(fontSize)}" font-weight="700">${escapeXml(stat.value)}</text>
       </g>`
     })
     .join('')
@@ -391,7 +428,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
       { label: 'Close price', value: data.price ? formatPrice(data.price) : '—' },
       { label: 'Quantity closed', value: data.sizeDelta ? formatPlDxyQuantity(data.sizeDelta) : '—' },
       { label: 'Notional', value: data.notionalAssets ? formatCompactAssets(data.notionalAssets) : '—' },
-      { label: 'Executed (UTC)', value: formatUtc(data.occurredAt).replace(', 20', ' ') },
+      { label: 'Executed (UTC)', value: formatShareCardUtc(data.occurredAt) },
     ]
     const body = `
       ${renderPill(60, 134, data.market, '#3b212d', '#ffab9666', '#fff5f9')}
@@ -405,6 +442,39 @@ export function buildShareCardSvg(data: ShareCardData): string {
       ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
       : 'insights.plether.com'
     return renderFrame(color, 'Closed Position Receipt', data.networkName, data.releaseVersion, data.traderLabel, data.account, footerRight, body)
+  }
+
+  if (data.kind === 'open_trade') {
+    const sideText = data.side ? data.side.toUpperCase() : 'PERP'
+    const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99'
+    const sideBg = data.side === 'short' ? '#ff572d26' : '#00ff9922'
+    const heroText = data.notionalAssets
+      ? formatAssets(data.notionalAssets)
+      : data.sizeDelta
+        ? formatPlDxyQuantity(data.sizeDelta)
+        : 'Position Opened'
+    const heroFontSize = heroText.length <= 15 ? 72 : heroText.length <= 20 ? 58 : 48
+    const subParts: string[] = []
+    if (data.price) subParts.push(`Entry @ ${formatPrice(data.price)}`)
+    if (data.sizeDelta) subParts.push(formatPlDxyQuantity(data.sizeDelta))
+    const stats = [
+      { label: 'Entry price', value: data.price ? formatPrice(data.price) : '—' },
+      { label: 'Quantity opened', value: data.sizeDelta ? formatPlDxyQuantity(data.sizeDelta) : '—' },
+      { label: 'Notional', value: data.notionalAssets ? formatCompactAssets(data.notionalAssets) : '—' },
+      { label: 'Executed (UTC)', value: formatShareCardUtc(data.occurredAt) },
+    ]
+    const body = `
+      ${renderPill(60, 134, data.market, '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(218, 134, `OPENED ${sideText}`, sideBg, `${sideFg}88`, sideFg)}
+      <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">${data.notionalAssets ? 'NOTIONAL EXPOSURE' : 'OPENED POSITION'}</text>
+      <text x="60" y="308" fill="${sideFg}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(heroFontSize)}" font-weight="800">${escapeXml(heroText)}</text>
+      ${subParts.length > 0 ? `<text x="60" y="358" fill="#d8cbd0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="600">${escapeXml(subParts.join(' · '))}</text>` : ''}
+      ${renderStatBoxes(stats, 408)}
+    `
+    const footerRight = data.txHash
+      ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
+      : 'insights.plether.com'
+    return renderFrame(sideFg, 'Opened Position Receipt', data.networkName, data.releaseVersion, data.traderLabel, data.account, footerRight, body)
   }
 
   if (data.kind === 'position') {
@@ -509,6 +579,10 @@ export function buildShareTweetUrl(data: ShareCardData, pageUrl: string): string
   if (data.kind === 'trade') {
     const pnl = formatSignedUsdg(data.realizedPnlAssets).text
     headline = `Closed ${data.side ? data.side.toUpperCase() + ' ' : ''}${data.market} on Plether: ${pnl} realized PnL.`
+  } else if (data.kind === 'open_trade') {
+    const notionalPart = data.notionalAssets ? ` (${formatCompactAssets(data.notionalAssets)})` : ''
+    const pricePart = data.price ? ` @ ${formatPrice(data.price)}` : ''
+    headline = `Opened ${data.side ? data.side.toUpperCase() + ' ' : ''}${data.market}${notionalPart}${pricePart} on Plether.`
   } else if (data.kind === 'position') {
     const upnl = formatSignedUsdg(data.unrealizedPnlAssets).text
     headline = `Live ${data.side.toUpperCase()} ${data.market} position on Plether: ${upnl} unrealized PnL.`
