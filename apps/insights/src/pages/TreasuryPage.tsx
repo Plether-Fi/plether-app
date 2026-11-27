@@ -374,12 +374,12 @@ export function TreasuryPage() {
         />
       ) : (
         <>
-          <Panel className="p-5 sm:p-6">
+          <Panel className="p-4 sm:p-6">
             <TreasuryRevenueChart series={data.dailySeries} />
           </Panel>
 
           <section aria-labelledby="profit-holdings-title" className="grid gap-4 lg:grid-cols-12">
-            <Panel className="p-5 sm:p-6 lg:col-span-7">
+            <Panel className="p-4 sm:p-6 lg:col-span-7">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 id="profit-holdings-title" className="text-base font-semibold">

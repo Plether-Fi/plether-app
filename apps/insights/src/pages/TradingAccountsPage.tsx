@@ -498,7 +498,7 @@ export function TradingAccountsPage() {
                     setAccountSearch(event.target.value)
                   }}
                   placeholder="Filter 0x or @handle"
-                  className="w-full border border-brand-border/35 bg-app-bg px-3 py-1.5 font-mono text-xs text-content-primary placeholder:font-sans placeholder:text-content-tertiary focus:border-brand-peach/70 focus:outline-none"
+                  className="w-full border border-brand-border/35 bg-app-bg px-3 py-1.5 font-mono text-base text-content-primary placeholder:font-sans placeholder:text-xs placeholder:text-content-tertiary focus:border-brand-peach/70 focus:outline-none sm:text-xs"
                 />
               </div>
             </div>

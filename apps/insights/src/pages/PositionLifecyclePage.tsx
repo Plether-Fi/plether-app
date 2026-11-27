@@ -308,7 +308,7 @@ export function PositionLifecyclePage() {
                 />
               </div>
 
-              <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
+              <div className="mt-4 grid grid-cols-1 gap-2.5 text-xs sm:grid-cols-3 sm:gap-3">
                 <div className="border border-brand-orange/25 bg-brand-orange/[0.04] p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-orange">
                     MAE (Worst)

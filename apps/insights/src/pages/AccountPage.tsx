@@ -285,8 +285,8 @@ function TradingAccountInspector({ address }: { address: string }) {
         </div>
       </div>
 
-      <header className="flex flex-col items-start justify-between gap-4 border border-brand-border/25 bg-surface-panel p-6 sm:flex-row">
-        <div className="min-w-0">
+      <header className="flex flex-col items-start justify-between gap-4 border border-brand-border/25 bg-surface-panel p-4 sm:flex-row sm:p-6">
+        <div className="min-w-0 max-w-full">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-peach">
               Public Trading Account Inspector
@@ -298,9 +298,9 @@ function TradingAccountInspector({ address }: { address: string }) {
               <StatusPill tone="live" label="Discord linked" />
             ) : null}
           </div>
-          <div className="mt-3 flex items-center gap-3.5">
-            <AddressAvatar address={address} size={44} />
-            <h1 className="break-all text-3xl font-semibold sm:text-4xl">
+          <div className="mt-3 flex items-center gap-3">
+            <AddressAvatar address={address} size={40} className="shrink-0" />
+            <h1 className="break-all text-2xl font-semibold sm:text-4xl">
               {handle ? `@${handle.replace(/^@/, '')}` : shortAddress(address)}
             </h1>
           </div>

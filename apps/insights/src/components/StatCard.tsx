@@ -28,20 +28,20 @@ export function StatCard({
   action?: ReactNode
 }) {
   return (
-    <div className="flex flex-col justify-between border border-brand-border/30 bg-surface-panel p-5">
+    <div className="flex min-w-0 flex-col justify-between border border-brand-border/30 bg-surface-panel p-4 sm:p-5">
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs font-medium text-content-secondary">
           {label}
         </p>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
-      <div className="mt-2.5">
+      <div className="mt-2.5 min-w-0">
         {loading ? (
           <div className="skeleton h-8 w-28" aria-label={`Loading ${label}`} />
         ) : unavailable || value === undefined || value === null ? (
-          <p className="font-mono text-2xl font-semibold text-content-tertiary">Unavailable</p>
+          <p className="font-mono text-xl font-semibold text-content-tertiary sm:text-2xl">Unavailable</p>
         ) : (
-          <div className={`font-mono text-2xl font-semibold tabular-nums ${VALUE_TONES[tone]}`}>
+          <div className={`break-words font-mono text-xl font-semibold tabular-nums sm:text-2xl ${VALUE_TONES[tone]}`}>
             {value}
           </div>
         )}

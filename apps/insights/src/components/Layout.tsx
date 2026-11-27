@@ -36,7 +36,7 @@ const OPS_ROUTES = [
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
-    'whitespace-nowrap border px-2 py-1.5 text-[13px] font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
+    'whitespace-nowrap border px-2 py-1 text-xs font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:py-1.5 sm:text-[13px]',
     isActive
       ? 'border-brand-orange bg-brand-orange text-content-primary'
       : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary',
@@ -80,7 +80,7 @@ function OperationsDropdown({ align = 'left' }: { align?: 'left' | 'right' }) {
         onClick={() => {
           setOpenAtPath((prev) => (prev === location.pathname ? null : location.pathname))
         }}
-        className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap border px-2 py-1.5 text-[13px] font-semibold transition-colors ${
+        className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap border px-2 py-1 text-xs font-semibold transition-colors sm:py-1.5 sm:text-[13px] ${
           activeOp
             ? 'border-brand-orange bg-brand-orange text-content-primary'
             : open
@@ -98,7 +98,7 @@ function OperationsDropdown({ align = 'left' }: { align?: 'left' | 'right' }) {
         <div
           role="menu"
           aria-label="Operations pages"
-          className={`absolute top-full z-50 mt-1.5 w-72 border border-brand-border/35 bg-surface-panel p-1.5 shadow-xl ${
+          className={`absolute top-full z-50 mt-1.5 w-[min(18rem,calc(100vw-1.5rem))] border border-brand-border/35 bg-surface-panel p-1.5 shadow-xl ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
@@ -173,7 +173,7 @@ function HeaderTelemetryPill() {
 function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel py-2 sm:py-3">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:flex-nowrap lg:px-8">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-2.5 gap-y-2 px-3 sm:gap-3 sm:px-6 lg:flex-nowrap lg:px-8">
         <div className="flex min-w-0 shrink-0 items-center gap-3 xl:gap-5">
           <Link
             to="/"
@@ -201,8 +201,8 @@ function Header() {
           </nav>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <GlobalSearch className="w-40 sm:w-44 lg:w-44 xl:w-52" />
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
+          <GlobalSearch className="w-full max-w-[195px] sm:w-44 xl:w-52" />
           <HeaderTelemetryPill />
         </div>
 
@@ -272,9 +272,9 @@ function Footer() {
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen min-h-dvh flex-col bg-app-bg text-content-primary">
+    <div className="flex min-h-screen min-h-dvh flex-col overflow-x-clip bg-app-bg text-content-primary">
       <Header />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
         {children}
       </main>
       <Footer />

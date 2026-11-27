@@ -98,42 +98,42 @@ export function OverviewPage() {
         note={`Settlement asset: ${assetSymbol}`}
       />
 
-      <section className="border border-brand-border/30 bg-surface-panel p-6 sm:p-8">
+      <section className="min-w-0 border border-brand-border/30 bg-surface-panel p-4 sm:p-8">
         <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr] lg:items-end">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
               {chain.name} · Perps Analytics
             </p>
-            <h1 className="mt-2.5 text-3xl font-semibold tracking-tight sm:text-4xl">
+            <h1 className="mt-2.5 text-2xl font-semibold tracking-tight sm:text-4xl">
               Plether Insights
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary sm:text-base">
               Verifiable execution quality, LP settlement forensics, permissionless keeper activity,
               sponsored AA health, AWS infrastructure telemetry, and public Trading Account audits.
             </p>
-            <div className="mt-5 flex flex-wrap gap-2.5">
+            <div className="mt-5 flex flex-wrap gap-2">
               <Link
                 to="/execution"
-                className="border border-brand-orange bg-brand-orange px-4 py-2 text-sm font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg"
+                className="border border-brand-orange bg-brand-orange px-3 py-2 text-xs font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg sm:px-4 sm:text-sm"
               >
                 Execution quality
               </Link>
               <Link
                 to="/liquidity"
-                className="border border-brand-border/40 px-4 py-2 text-sm font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10"
+                className="border border-brand-border/40 px-3 py-2 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10 sm:px-4 sm:text-sm"
               >
                 LP settlement ops
               </Link>
               <Link
                 to="/infra"
-                className="border border-brand-border/40 px-4 py-2 text-sm font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10"
+                className="border border-brand-border/40 px-3 py-2 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10 sm:px-4 sm:text-sm"
               >
                 AWS infra health
               </Link>
             </div>
           </div>
 
-          <div className="border border-brand-border/25 bg-app-bg p-4">
+          <div className="min-w-0 border border-brand-border/25 bg-app-bg p-3.5 sm:p-4">
             <p className="text-xs font-medium text-content-secondary">
               Inspect any Trading Account
             </p>

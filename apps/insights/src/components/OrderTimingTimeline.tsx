@@ -182,14 +182,14 @@ function LatencyDistributionGauge({
       : []),
   ]
 
-  // Prevent tick labels from colliding when p50/p95/p99 are close together
+  // Prevent tick labels from colliding when p50/p95/p99 are close together on narrow phones
   const spacedTicks: { key: string; label: string; pos: number; labelPos: number }[] = []
   for (const tick of ticks) {
     const labelPos =
       spacedTicks.length > 0
-        ? Math.max(tick.pos, spacedTicks[spacedTicks.length - 1].labelPos + 14)
+        ? Math.max(tick.pos, spacedTicks[spacedTicks.length - 1].labelPos + 19)
         : tick.pos
-    spacedTicks.push({ ...tick, labelPos: Math.min(94, labelPos) })
+    spacedTicks.push({ ...tick, labelPos: Math.min(92, labelPos) })
   }
 
   return (
@@ -401,7 +401,7 @@ export function OrderTimingTimelinePanel({
 
   return (
     <section aria-labelledby="order-timing-title">
-      <Panel className="space-y-5 p-5 sm:p-6">
+      <Panel className="space-y-5 p-4 sm:p-6">
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
@@ -487,9 +487,9 @@ export function OrderTimingTimelinePanel({
         ) : null}
 
         {/* 3-Stage Connected Timeline */}
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:items-stretch">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-stretch">
           {/* Stage 1: Committed */}
-          <div className="flex flex-col justify-between border border-brand-border/25 bg-app-bg/60 p-3.5">
+          <div className="flex min-w-0 flex-col justify-between border border-brand-border/25 bg-app-bg/60 p-3.5">
             <div>
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center border border-brand-peach/50 bg-brand-peach/15 font-mono text-[10px] font-bold text-brand-peach">
@@ -528,8 +528,8 @@ export function OrderTimingTimelinePanel({
           </div>
 
           {/* Connector 1 → 2 */}
-          <div className="flex flex-row items-center justify-center gap-2 md:flex-col md:px-1">
-            <span className="hidden h-px w-4 bg-brand-border/40 md:block" aria-hidden="true" />
+          <div className="flex flex-row items-center justify-center gap-2 lg:flex-col lg:px-1">
+            <span className="hidden h-px w-4 bg-brand-border/40 lg:block" aria-hidden="true" />
             <div className="flex flex-col items-center text-center">
               <span
                 className={`border px-2 py-0.5 font-mono text-xs font-semibold tabular-nums ${
@@ -549,11 +549,11 @@ export function OrderTimingTimelinePanel({
                 </span>
               ) : null}
             </div>
-            <span className="hidden h-px w-4 bg-brand-border/40 md:block" aria-hidden="true" />
+            <span className="hidden h-px w-4 bg-brand-border/40 lg:block" aria-hidden="true" />
           </div>
 
           {/* Stage 2: Oracle Published */}
-          <div className="flex flex-col justify-between border border-brand-border/25 bg-app-bg/60 p-3.5">
+          <div className="flex min-w-0 flex-col justify-between border border-brand-border/25 bg-app-bg/60 p-3.5">
             <div>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
@@ -599,8 +599,8 @@ export function OrderTimingTimelinePanel({
           </div>
 
           {/* Connector 2 → 3 */}
-          <div className="flex flex-row items-center justify-center gap-2 md:flex-col md:px-1">
-            <span className="hidden h-px w-4 bg-brand-border/40 md:block" aria-hidden="true" />
+          <div className="flex flex-row items-center justify-center gap-2 lg:flex-col lg:px-1">
+            <span className="hidden h-px w-4 bg-brand-border/40 lg:block" aria-hidden="true" />
             <div className="flex flex-col items-center text-center">
               <span className="border border-brand-border/40 bg-app-bg px-2 py-0.5 font-mono text-xs font-semibold tabular-nums text-content-primary">
                 {formatSignedDelta(oracleToFinalizeSeconds)}
@@ -614,11 +614,11 @@ export function OrderTimingTimelinePanel({
                 </span>
               ) : null}
             </div>
-            <span className="hidden h-px w-4 bg-brand-border/40 md:block" aria-hidden="true" />
+            <span className="hidden h-px w-4 bg-brand-border/40 lg:block" aria-hidden="true" />
           </div>
 
           {/* Stage 3: Finalized */}
-          <div className="flex flex-col justify-between border border-brand-border/25 bg-app-bg/60 p-3.5">
+          <div className="flex min-w-0 flex-col justify-between border border-brand-border/25 bg-app-bg/60 p-3.5">
             <div>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">

@@ -203,11 +203,11 @@ export function TradingAccountDetailPage() {
       </div>
 
       {/* Header */}
-      <header className="border border-brand-border/30 bg-surface-panel p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3.5">
+      <header className="min-w-0 border border-brand-border/30 bg-surface-panel p-4 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
             <AddressAvatar address={normalizedAddress} size={36} className="mt-0.5 shrink-0" />
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="font-mono text-xs uppercase tracking-[0.14em] text-brand-peach">
                 ZeroDev Kernel v4 · Smart Wallet Inspector
               </p>
@@ -270,7 +270,7 @@ export function TradingAccountDetailPage() {
             </div>
           </div>
 
-          <div className="flex flex-col items-start gap-2 sm:items-end">
+          <div className="flex shrink-0 flex-col items-start gap-2 lg:items-end">
             <Link
               to={`/wallets/${normalizedAddress}`}
               className="inline-flex items-center gap-1.5 border border-brand-peach/50 bg-brand-peach/10 px-3 py-1.5 font-mono text-xs font-semibold text-brand-peach transition-colors hover:border-brand-peach hover:bg-brand-peach/20"
@@ -278,7 +278,7 @@ export function TradingAccountDetailPage() {
               Open Wallet Page →
             </Link>
             {data?.firstSeenAt || data?.lastActivityAt ? (
-              <div className="flex flex-col items-start gap-0.5 font-mono text-[11px] text-content-tertiary sm:items-end">
+              <div className="flex flex-col items-start gap-0.5 font-mono text-[11px] text-content-tertiary lg:items-end">
                 {data.firstSeenAt ? <span>First seen: {formatUtc(data.firstSeenAt)}</span> : null}
                 {data.lastActivityAt ? <span>Last active: {formatUtc(data.lastActivityAt)}</span> : null}
               </div>
@@ -617,9 +617,9 @@ export function TradingAccountDetailPage() {
                 </p>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <div
-                  className="flex items-center gap-1"
+                  className="flex flex-wrap items-center gap-1"
                   role="group"
                   aria-label="Filter account operation mode"
                 >
@@ -791,7 +791,7 @@ export function TradingAccountDetailPage() {
 
           {/* Cancellations & Unsubmitted Preparations Audit Trail */}
           <section aria-label="Cancellations and unsubmitted preparations" className="grid gap-4 xl:grid-cols-2">
-            <div className="space-y-2.5">
+            <div className="min-w-0 space-y-2.5">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-base font-semibold">ETH Nonce Cancellations</h2>
                 <span className="font-mono text-xs text-content-tertiary">
@@ -855,7 +855,7 @@ export function TradingAccountDetailPage() {
               </Panel>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="min-w-0 space-y-2.5">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-base font-semibold">Unsubmitted Preparations</h2>
                 <span className="font-mono text-xs text-content-tertiary">

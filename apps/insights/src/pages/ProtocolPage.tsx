@@ -90,13 +90,15 @@ function SafetyControlTile({
   detail: string
 }) {
   return (
-    <div className="flex flex-col justify-between gap-2.5 border border-brand-border/25 bg-app-bg p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <div className="flex min-w-0 flex-col justify-between gap-2.5 border border-brand-border/25 bg-app-bg p-3.5 sm:p-4">
+      <div className="flex items-start justify-between gap-2.5">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-content-primary">{label}</p>
-          <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">{source}</p>
+          <p className="mt-0.5 break-all font-mono text-[11px] text-content-tertiary">{source}</p>
         </div>
-        <StatusPill tone={tone} label={statusLabel} />
+        <div className="shrink-0">
+          <StatusPill tone={tone} label={statusLabel} />
+        </div>
       </div>
       <p className="text-xs leading-5 text-content-secondary">{detail}</p>
     </div>
@@ -111,7 +113,7 @@ function CopyableValue({
   display: string
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-xs text-content-primary">
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-xs text-content-primary">
       <span title={value}>{display}</span>
       <CopyButton value={value} />
     </span>
@@ -458,7 +460,7 @@ export function ProtocolPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
             Protocol Mechanics &amp; Verification
           </p>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-4xl">
             Contracts, Parameters &amp; Safety Controls
           </h1>
           <p className="text-sm leading-6 text-content-secondary">
@@ -468,9 +470,9 @@ export function ProtocolPage() {
         </div>
 
         {data?.settlementToken ? (
-          <div className="border border-brand-border/30 bg-surface-panel px-4 py-2.5 text-xs">
+          <div className="min-w-0 max-w-full border border-brand-border/30 bg-surface-panel px-3.5 py-2.5 text-xs sm:px-4">
             <p className="text-content-tertiary">Canonical settlement asset</p>
-            <div className="mt-1 flex items-center gap-2 font-mono">
+            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono">
               <span className="font-semibold text-content-primary">
                 {data.settlementToken.symbol ?? 'USDG'}
               </span>

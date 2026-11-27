@@ -44,7 +44,7 @@ export function WalletSearch({
       <label htmlFor={inputId} className="sr-only">
         Inspect Trading Account address or transaction hash
       </label>
-      <div className="flex items-stretch">
+      <div className="flex min-w-0 items-stretch">
         <input
           id={inputId}
           type="search"
@@ -53,17 +53,17 @@ export function WalletSearch({
             setValue(event.target.value)
             if (error) setError(null)
           }}
-          placeholder={compact ? '0x… account / tx' : 'Inspect Trading Account or Tx (0x…)'}
+          placeholder={compact ? '0x… account / tx' : '0x address or tx hash'}
           aria-invalid={error !== null}
           aria-describedby={error ? errorId : undefined}
-          className={`min-w-0 flex-1 border border-brand-border/35 bg-app-bg font-mono text-content-primary placeholder:font-sans placeholder:text-content-tertiary ${
-            compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'
+          className={`w-full min-w-0 flex-1 border border-brand-border/35 bg-app-bg font-mono text-content-primary placeholder:font-sans placeholder:text-xs placeholder:text-content-tertiary sm:placeholder:text-sm ${
+            compact ? 'px-3 py-1.5 text-base sm:text-xs' : 'px-3 py-2 text-base sm:px-4 sm:py-2.5 sm:text-sm'
           }`}
         />
         <button
           type="submit"
           className={`shrink-0 border border-l-0 border-brand-border/35 bg-surface-raised font-semibold text-brand-peach transition-colors hover:border-brand-orange hover:bg-brand-orange hover:text-content-primary ${
-            compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'
+            compact ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2 text-sm sm:px-4 sm:py-2.5'
           }`}
         >
           Inspect
