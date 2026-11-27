@@ -232,6 +232,67 @@ async function fetchPositionsJson<T>(path: string, signal?: AbortSignal): Promis
   return parsed
 }
 
+export interface GlobalOpenPositionRecord {
+  account: string
+  discordUsername: string | null
+  positionId: string
+  market: string
+  side: PositionSide
+  size: string
+  notionalAssets: string
+  marginAssets: string
+  entryPrice: string
+  markPrice: string
+  liquidationPrice: string | null
+  distanceToLiquidationBps: number | null
+  effectiveLeverageX100: number
+  unrealizedPnlAssets: string
+  openedAt: string
+  durationSeconds: number
+}
+
+export interface GlobalMarketExposureSummary {
+  longOpenInterestAssets: string
+  shortOpenInterestAssets: string
+  totalOpenInterestAssets: string
+  netSkewAssets: string
+  longShareBps: number | null
+  shortShareBps: number | null
+  openPositionCount: number
+  longCount: number
+  shortCount: number
+  avgLeverageX100: number | null
+}
+
+export interface GlobalMarketExposureResponse {
+  network: LiquidityNetworkMeta
+  observedAt: string
+  currentMarkPrice: string | null
+  markObservedAt: string | null
+  summary: GlobalMarketExposureSummary
+  positions: GlobalOpenPositionRecord[]
+}
+
+export function useMarketExposure() {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
+  return useQuery({
+    queryKey: ['insights', 'market', 'exposure'] as const,
+    enabled: !staticPreview,
+    queryFn: ({ signal }) =>
+      fetchPositionsJson<GlobalMarketExposureResponse>('/market/exposure', signal),
+    staleTime: staticPreview ? Infinity : 15_000,
+    refetchInterval: staticPreview ? false : 15_000,
+    refetchIntervalInBackground: false,
+    retry(failureCount, error) {
+      if (error instanceof InsightsApiError && (error.status === 404 || error.status === 400)) {
+        return false
+      }
+      return failureCount < 2
+    },
+  })
+}
+
 export function positionPath(address: string, positionId: string): string {
   return `/wallets/${encodeURIComponent(address.toLowerCase())}/positions/${encodeURIComponent(positionId)}`
 }

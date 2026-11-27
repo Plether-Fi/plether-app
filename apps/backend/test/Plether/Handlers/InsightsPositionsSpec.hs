@@ -2,15 +2,19 @@
 
 module Plether.Handlers.InsightsPositionsSpec (spec) where
 
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Plether.Handlers.InsightsPositions
   ( ExposureTimelinePoint (..)
+  , GlobalMarketExposure (..)
+  , GlobalOpenPosition (..)
   , PositionActivityRow (..)
   , PositionLifecycle (..)
   , PositionStepEvent (..)
   , PriceCandleRow (..)
   , WalletExposureSummary (..)
   , buildExposureTimeline
+  , computeGlobalMarketExposure
   , computeLeverageX100
   , computeNotionalAssets
   , computeUnrealizedPnl
@@ -221,3 +225,27 @@ spec = describe "Plether.Handlers.InsightsPositions" $ do
     pickCandleIntervalSeconds (3 * 86400) `shouldBe` 900
     pickCandleIntervalSeconds (14 * 86400) `shouldBe` 3600
     pickCandleIntervalSeconds (45 * 86400) `shouldBe` 86400
+
+  it "computes global long/short market exposure leaderboard sorted by notional" $ do
+    let sLarge = 20000 * 10 ^ (18 :: Int)
+        sSmall = 10000 * 10 ^ (18 :: Int)
+        byAccount =
+          Map.fromList
+            [ ( "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              , [ mkRow {parSide = Just 0, parPrice = Just 95000000, parSizeDelta = Just sLarge, parAmountAssets = Just 1000000000} ]
+              )
+            , ( "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              , [ mkRow {parSide = Just 1, parPrice = Just 95000000, parSizeDelta = Just sSmall, parAmountAssets = Just 500000000} ]
+              )
+            ]
+        handles = Map.singleton "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "whale_alice"
+        globalExp = computeGlobalMarketExposure 1800003600 (Just 94500000) handles byAccount
+    gmeOpenPositionCount globalExp `shouldBe` 2
+    gmeLongCount globalExp `shouldBe` 1
+    gmeShortCount globalExp `shouldBe` 1
+    gmeLongShareBps globalExp `shouldBe` Just 6666
+    gmeShortShareBps globalExp `shouldBe` Just 3334
+    map gopAccount (gmeTopPositions globalExp)
+      `shouldBe` ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+    map gopDiscordUsername (gmeTopPositions globalExp)
+      `shouldBe` [Just "whale_alice", Nothing]

@@ -13,6 +13,8 @@ module Plether.Handlers.InsightsPositions
   , ExposureTimelinePoint (..)
   , WalletExposureSummary (..)
   , PositionPricePoint (..)
+  , GlobalOpenPosition (..)
+  , GlobalMarketExposure (..)
   , plDxyCapPrice
   , defaultMaintenanceMarginBps
   , computeNotionalAssets
@@ -25,8 +27,10 @@ module Plether.Handlers.InsightsPositions
   , enrichPositionWithCandles
   , buildExposureTimeline
   , summarizeWalletExposure
+  , computeGlobalMarketExposure
   , getWalletExposureResponse
   , getWalletPositionDetailResponse
+  , getMarketExposureResponse
   ) where
 
 import Control.Applicative ((<|>))
@@ -35,14 +39,16 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Char8 as BS8
+import Data.Either (isRight)
 import Data.List (sort, sortOn)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import Data.Ord (Down (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), query)
+import Database.PostgreSQL.Simple (Connection, In (..), Only (..), query)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.Transaction
@@ -51,6 +57,7 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Candles (getActiveBasketSeriesId)
@@ -69,6 +76,7 @@ import Plether.Handlers.InsightsWallets (fetchDiscordHandle)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
+import System.IO.Unsafe (unsafePerformIO)
 import Text.Read (readMaybe)
 
 -- | Canonical plDXY price cap in 1e8 precision (2.00000000).
@@ -1752,3 +1760,274 @@ nullableNumericIntegerField =
 isoTimestamp :: Integer -> Text
 isoTimestamp =
   T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" . posixSecondsToUTCTime . fromIntegral
+
+data GlobalOpenPosition = GlobalOpenPosition
+  { gopAccount :: Text
+  , gopDiscordUsername :: Maybe Text
+  , gopPositionId :: Text
+  , gopSide :: Int
+  , gopSize :: Integer
+  , gopNotionalAssets :: Integer
+  , gopMarginAssets :: Integer
+  , gopEntryPrice :: Integer
+  , gopMarkPrice :: Integer
+  , gopLiquidationPrice :: Maybe Integer
+  , gopDistanceToLiquidationBps :: Maybe Integer
+  , gopEffectiveLeverageX100 :: Integer
+  , gopUnrealizedPnlAssets :: Integer
+  , gopOpenedAt :: Integer
+  , gopDurationSeconds :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data GlobalMarketExposure = GlobalMarketExposure
+  { gmeLongOpenInterestAssets :: Integer
+  , gmeShortOpenInterestAssets :: Integer
+  , gmeTotalOpenInterestAssets :: Integer
+  , gmeNetSkewAssets :: Integer
+  , gmeLongShareBps :: Maybe Integer
+  , gmeShortShareBps :: Maybe Integer
+  , gmeOpenPositionCount :: Int
+  , gmeLongCount :: Int
+  , gmeShortCount :: Int
+  , gmeAvgLeverageX100 :: Maybe Integer
+  , gmeTopPositions :: [GlobalOpenPosition]
+  }
+  deriving stock (Eq, Show)
+
+data AccountTaggedActivityRow = AccountTaggedActivityRow
+  { atarAccount :: Text
+  , atarActivityType :: Text
+  , atarOrderId :: Maybe Integer
+  , atarSide :: Maybe Int
+  , atarPrice :: Maybe Integer
+  , atarSizeDelta :: Maybe Integer
+  , atarAmountAssets :: Maybe Integer
+  , atarPnlAssets :: Maybe Integer
+  , atarTxHash :: Text
+  , atarBlockNumber :: Integer
+  , atarLogIndex :: Integer
+  , atarTimestamp :: Integer
+  }
+
+instance FromRow AccountTaggedActivityRow where
+  fromRow =
+    AccountTaggedActivityRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+{-# NOINLINE marketExposureCache #-}
+marketExposureCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+marketExposureCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+computeGlobalMarketExposure
+  :: Integer
+  -> Maybe Integer
+  -> Map.Map Text Text
+  -> Map.Map Text [PositionActivityRow]
+  -> GlobalMarketExposure
+computeGlobalMarketExposure nowUnix mMarkRaw handlesMap byAccount =
+  let openPositions =
+        sortOn
+          (Down . gopNotionalAssets)
+          [ GlobalOpenPosition
+              { gopAccount = acct
+              , gopDiscordUsername = Map.lookup acct handlesMap
+              , gopPositionId = plPositionId pos
+              , gopSide = plSide pos
+              , gopSize = plCurrentSize pos
+              , gopNotionalAssets = notional
+              , gopMarginAssets = plCurrentMarginAssets pos
+              , gopEntryPrice = plEntryPrice pos
+              , gopMarkPrice = effMark
+              , gopLiquidationPrice = plLiquidationPrice pos
+              , gopDistanceToLiquidationBps = plCurrentLiquidationBps pos
+              , gopEffectiveLeverageX100 = plCurrentLeverageX100 pos
+              , gopUnrealizedPnlAssets = plUnrealizedPnlAssets pos
+              , gopOpenedAt = plOpenedAt pos
+              , gopDurationSeconds = max 0 (nowUnix - plOpenedAt pos)
+              }
+          | (acct, rows) <- Map.toList byAccount
+          , let lifecycles = reconstructPositionLifecycles nowUnix mMarkRaw Nothing rows
+          , Just pos <- [listToMaybe $ filter (\p -> plStatus p == "open" && plCurrentSize p > 0) lifecycles]
+          , let effMark = fromMaybe (plEntryPrice pos) mMarkRaw
+          , let notional = computeNotionalAssets (plCurrentSize pos) effMark
+          , notional > 0
+          ]
+      longs = filter (\p -> gopSide p == 0) openPositions
+      shorts = filter (\p -> gopSide p == 1) openPositions
+      longOi = sum (map gopNotionalAssets longs)
+      shortOi = sum (map gopNotionalAssets shorts)
+      totalOi = longOi + shortOi
+      (longShare, shortShare) =
+        if totalOi <= 0
+          then (Nothing, Nothing)
+          else
+            let ls = (longOi * 10000) `div` totalOi
+             in (Just ls, Just (10000 - ls))
+      levs = filter (> 0) (map gopEffectiveLeverageX100 openPositions)
+      avgLev =
+        if null levs
+          then Nothing
+          else Just (sum levs `div` fromIntegral (length levs))
+   in GlobalMarketExposure
+        { gmeLongOpenInterestAssets = longOi
+        , gmeShortOpenInterestAssets = shortOi
+        , gmeTotalOpenInterestAssets = totalOi
+        , gmeNetSkewAssets = longOi - shortOi
+        , gmeLongShareBps = longShare
+        , gmeShortShareBps = shortShare
+        , gmeOpenPositionCount = length openPositions
+        , gmeLongCount = length longs
+        , gmeShortCount = length shorts
+        , gmeAvgLeverageX100 = avgLev
+        , gmeTopPositions = take 10 openPositions
+        }
+
+-- | GET /api/insights/v1/market/exposure
+getMarketExposureResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getMarketExposureResponse pool cfg =
+  snd <$> runSingleFlightCache marketExposureCache () isRight (computeMarketExposureResponse pool cfg)
+
+computeMarketExposureResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeMarketExposureResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
+      router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+  (taggedRows, mMarkTuple, handlesMap, latestBlock) <-
+    withDb pool $ \conn ->
+      withReadSnapshot conn $ do
+        mMark <- fetchLatestBasketMark conn now
+        -- Identify accounts with net positive open size in the active release,
+        -- then pull their position activity to reconstruct live open positions.
+        activeAcctRows <-
+          query
+            conn
+            "SELECT account \
+            \FROM perps_account_activity \
+            \WHERE chain_id = ? AND release_router = ? \
+            \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+            \GROUP BY account \
+            \HAVING COALESCE(SUM(CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END), 0) > 0 \
+            \ORDER BY MAX(block_number) DESC \
+            \LIMIT 150"
+            (chainId, router) :: IO [Only Text]
+        let accounts = map fromOnly activeAcctRows
+        if null accounts
+          then pure ([], mMark, Map.empty, 0)
+          else do
+            rows <-
+              query
+                conn
+                "SELECT account, activity_type, order_id, side, price, size_delta, \
+                \amount_assets, pnl_assets, tx_hash, block_number, log_index, timestamp \
+                \FROM perps_account_activity \
+                \WHERE chain_id = ? AND release_router = ? \
+                \  AND account IN ? \
+                \  AND activity_type IN ('Open', 'Close', 'Liquidated', 'Add margin') \
+                \ORDER BY block_number ASC, log_index ASC"
+                (chainId, router, In accounts) :: IO [AccountTaggedActivityRow]
+            handleRows <-
+              query
+                conn
+                "SELECT trading_account, discord_username \
+                \FROM insights_divisions_links \
+                \WHERE trading_account IN ?"
+                (Only (In accounts)) :: IO [(Text, Text)]
+            let hMap = Map.fromList [(T.toLower a, T.strip h) | (a, h) <- handleRows, not (T.null (T.strip h))]
+                maxBlk = foldl max 0 (map atarBlockNumber rows)
+            pure (rows, mMark, hMap, maxBlk)
+  let mMarkRaw = fst <$> mMarkTuple
+      mMarkTs = snd <$> mMarkTuple
+      byAccount =
+        foldl
+          ( \acc row ->
+              let pRow =
+                    PositionActivityRow
+                      { parActivityType = atarActivityType row
+                      , parOrderId = atarOrderId row
+                      , parSide = atarSide row
+                      , parPrice = atarPrice row
+                      , parSizeDelta = atarSizeDelta row
+                      , parAmountAssets = atarAmountAssets row
+                      , parPnlAssets = atarPnlAssets row
+                      , parFeeAssets = Nothing
+                      , parVpiAssets = Nothing
+                      , parKeeperBountyAssets = Nothing
+                      , parTxHash = atarTxHash row
+                      , parBlockNumber = atarBlockNumber row
+                      , parLogIndex = atarLogIndex row
+                      , parTimestamp = atarTimestamp row
+                      , parExecution = Nothing
+                      }
+               in Map.insertWith (\new old -> old <> new) (T.toLower (atarAccount row)) [pRow] acc
+          )
+          Map.empty
+          taggedRows
+      exposure = computeGlobalMarketExposure now mMarkRaw handlesMap byAccount
+  pure $
+    Right $
+      mkResponse latestBlock chainId $
+        object
+          [ "network"
+              .= object
+                [ "chainId" .= chainId
+                , "releaseVersion" .= Manifest.releaseVersion
+                , "settlementAssetSymbol" .= ("USDG" :: Text)
+                ]
+          , "observedAt" .= isoTimestamp now
+          , "currentMarkPrice" .= (show <$> mMarkRaw)
+          , "markObservedAt" .= (isoTimestamp <$> mMarkTs)
+          , "summary"
+              .= object
+                [ "longOpenInterestAssets" .= show (gmeLongOpenInterestAssets exposure)
+                , "shortOpenInterestAssets" .= show (gmeShortOpenInterestAssets exposure)
+                , "totalOpenInterestAssets" .= show (gmeTotalOpenInterestAssets exposure)
+                , "netSkewAssets" .= show (gmeNetSkewAssets exposure)
+                , "longShareBps" .= gmeLongShareBps exposure
+                , "shortShareBps" .= gmeShortShareBps exposure
+                , "openPositionCount" .= gmeOpenPositionCount exposure
+                , "longCount" .= gmeLongCount exposure
+                , "shortCount" .= gmeShortCount exposure
+                , "avgLeverageX100" .= gmeAvgLeverageX100 exposure
+                ]
+          , "positions" .= map globalOpenPositionToJson (gmeTopPositions exposure)
+          ]
+
+globalOpenPositionToJson :: GlobalOpenPosition -> Value
+globalOpenPositionToJson GlobalOpenPosition {..} =
+  object
+    [ "account" .= gopAccount
+    , "discordUsername" .= gopDiscordUsername
+    , "positionId" .= gopPositionId
+    , "market" .= ("plDXY-PERP" :: Text)
+    , "side" .= sideText gopSide
+    , "size" .= show gopSize
+    , "notionalAssets" .= show gopNotionalAssets
+    , "marginAssets" .= show gopMarginAssets
+    , "entryPrice" .= show gopEntryPrice
+    , "markPrice" .= show gopMarkPrice
+    , "liquidationPrice" .= (show <$> gopLiquidationPrice)
+    , "distanceToLiquidationBps" .= gopDistanceToLiquidationBps
+    , "effectiveLeverageX100" .= gopEffectiveLeverageX100
+    , "unrealizedPnlAssets" .= show gopUnrealizedPnlAssets
+    , "openedAt" .= isoTimestamp gopOpenedAt
+    , "durationSeconds" .= gopDurationSeconds
+    ]

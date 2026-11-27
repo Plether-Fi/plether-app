@@ -1,9 +1,32 @@
-import type { ReactNode } from 'react'
-import { Link, NavLink } from 'react-router-dom'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useInsightsStatus } from '../api'
 import { useLiveDivisions } from '../divisions/query'
 import { resolvePerpsChain } from '../utils/chain'
 import { formatUtc } from '../utils/format'
+
+const OPS_ROUTES = [
+  {
+    to: '/oracle',
+    label: 'Oracle',
+    description: 'Pyth 6-feed admission & value-guard health',
+  },
+  {
+    to: '/keepers',
+    label: 'Keepers',
+    description: 'Permissionless keeper fleet, latency & bounties',
+  },
+  {
+    to: '/sponsored',
+    label: 'Sponsored',
+    description: 'ERC-4337 Paymaster runway & UserOp receipts',
+  },
+  {
+    to: '/infra',
+    label: 'Infra',
+    description: 'AWS ECS workers, RDS pool, Nitro RPC & bundler',
+  },
+] as const
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
@@ -12,6 +35,96 @@ function navClass({ isActive }: { isActive: boolean }): string {
       ? 'border-brand-orange bg-brand-orange text-content-primary'
       : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary',
   ].join(' ')
+}
+
+function OperationsDropdown() {
+  const location = useLocation()
+  const [openAtPath, setOpenAtPath] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const open = openAtPath === location.pathname
+
+  const activeOp = OPS_ROUTES.find(
+    (item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`),
+  )
+
+  useEffect(() => {
+    if (!open) return
+    function onPointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpenAtPath(null)
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpenAtPath(null)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => {
+          setOpenAtPath((prev) => (prev === location.pathname ? null : location.pathname))
+        }}
+        className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap border px-2.5 py-2 text-sm font-semibold transition-colors ${
+          activeOp
+            ? 'border-brand-orange bg-brand-orange text-content-primary'
+            : open
+              ? 'border-brand-orange/50 bg-brand-orange/15 text-content-primary'
+              : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary'
+        }`}
+      >
+        <span>{activeOp ? `Ops · ${activeOp.label}` : 'Operations'}</span>
+        <span aria-hidden="true" className="text-[10px] opacity-80">
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Operations pages"
+          className="absolute left-0 top-full z-50 mt-1.5 w-72 border border-brand-border/35 bg-surface-panel p-1.5 shadow-xl"
+        >
+          {OPS_ROUTES.map((item) => {
+            const isActive =
+              location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                role="menuitem"
+                onClick={() => { setOpenAtPath(null) }}
+                className={`block border px-3 py-2 transition-colors ${
+                  isActive
+                    ? 'border-brand-orange/60 bg-brand-orange/15 text-content-primary'
+                    : 'border-transparent text-content-secondary hover:border-brand-border/30 hover:bg-app-bg hover:text-content-primary'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span>{item.label}</span>
+                  {isActive ? (
+                    <span className="font-mono text-[10px] text-brand-peach">Active</span>
+                  ) : null}
+                </div>
+                <p className="mt-0.5 text-[11px] leading-4 text-content-tertiary">
+                  {item.description}
+                </p>
+              </Link>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function Header() {
@@ -37,13 +150,10 @@ function Header() {
           >
             <NavLink to="/" end className={navClass}>Overview</NavLink>
             <NavLink to="/execution" className={navClass}>Execution</NavLink>
-            <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
             <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
-            <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
-            <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
             <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
+            <OperationsDropdown />
             <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
-            <NavLink to="/infra" className={navClass}>Infra</NavLink>
             <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
           </nav>
         </div>
@@ -54,13 +164,13 @@ function Header() {
         >
           <NavLink to="/" end className={navClass}>Overview</NavLink>
           <NavLink to="/execution" className={navClass}>Execution</NavLink>
-          <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
           <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
+          <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
+          <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
           <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
           <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
-          <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
-          <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
           <NavLink to="/infra" className={navClass}>Infra</NavLink>
+          <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
           <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
         </nav>
       </div>

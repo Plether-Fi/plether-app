@@ -455,21 +455,30 @@ export function ExecutionPage() {
                           {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}
                         </td>
                         <td className="px-4 py-3.5">
-                          <Link
-                            to={transactionPath(trade.txHash, trade.id)}
-                            state={
-                              {
-                                trade,
-                                chainId,
-                                releaseVersion,
-                                from: '/execution',
-                                fromLabel: 'Back to Execution',
-                              } satisfies TransactionRouteState
-                            }
-                            className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
-                          >
-                            {hasReceipt ? 'View breakdown' : 'View details'}
-                          </Link>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Link
+                              to={transactionPath(trade.txHash, trade.id)}
+                              state={
+                                {
+                                  trade,
+                                  chainId,
+                                  releaseVersion,
+                                  from: '/execution',
+                                  fromLabel: 'Back to Execution',
+                                } satisfies TransactionRouteState
+                              }
+                              className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+                            >
+                              {hasReceipt ? 'View breakdown' : 'View details'}
+                            </Link>
+                            <Link
+                              to={`/wallets/${trade.account.toLowerCase()}?tab=exposure`}
+                              className="inline-block border border-brand-border/25 px-2 py-1 text-xs font-medium text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-brand-peach"
+                              title={`Inspect ${shortAddress(trade.account)} market exposure & position lifecycles`}
+                            >
+                              Exposure →
+                            </Link>
+                          </div>
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
                           <a

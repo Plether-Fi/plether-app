@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   InsightsApiError,
   accountActivityToProtocolTrade,
@@ -66,13 +66,27 @@ function trancheLabel(tranche: 'senior' | 'junior' | 'unknown'): string {
   return 'Vault'
 }
 
+const VALID_TABS: readonly InspectorTab[] = [
+  'overview',
+  'exposure',
+  'trades',
+  'protections',
+  'lp',
+  'divisions',
+]
+
+function parseTabParam(raw: string | null): InspectorTab {
+  return VALID_TABS.includes(raw as InspectorTab) ? (raw as InspectorTab) : 'overview'
+}
+
 function TradingAccountInspector({ address }: { address: string }) {
   const protocol = useProtocolContext()
+  const [searchParams, setSearchParams] = useSearchParams()
   const summaryQuery = useWalletSummary(address, 50)
   const exposureQuery = useWalletExposure(address)
   const liveQuery = useLiveDivisions()
   const publicationQuery = useDivisions()
-  const [activeTab, setActiveTab] = useState<InspectorTab>('overview')
+  const activeTab = parseTabParam(searchParams.get('tab'))
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all')
   const [copied, setCopied] = useState(false)
 
@@ -450,7 +464,13 @@ function TradingAccountInspector({ address }: { address: string }) {
               role="tab"
               aria-selected={isSelected}
               onClick={() => {
-                setActiveTab(tab.id)
+                const next = new URLSearchParams(searchParams)
+                if (tab.id === 'overview') {
+                  next.delete('tab')
+                } else {
+                  next.set('tab', tab.id)
+                }
+                setSearchParams(next, { replace: true })
               }}
               className={`border px-3.5 py-2 text-xs font-semibold transition-colors ${
                 isSelected

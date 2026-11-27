@@ -153,7 +153,8 @@ import Plether.Handlers.InsightsInfra
   , getOverviewResponse
   )
 import Plether.Handlers.InsightsPositions
-  ( getWalletExposureResponse
+  ( getMarketExposureResponse
+  , getWalletExposureResponse
   , getWalletPositionDetailResponse
   )
 import Plether.Handlers.InsightsWallets
@@ -726,6 +727,13 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
               liftIO (getWalletSummaryResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
                 >>= handleResult
             Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/market/exposure" $ do
+    case mPool of
+      Just pool ->
+        liftIO (getMarketExposureResponse pool cfg)
+          >>= handleResult
+      Nothing -> insightsUnavailable
 
   get "/api/insights/v1/wallets/:address/exposure" $ do
     addr <- pathParam "address"

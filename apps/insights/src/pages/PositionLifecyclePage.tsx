@@ -13,6 +13,7 @@ import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
 import { PositionLifecycleChart } from '../components/PositionLifecycleChart'
+import { ShareCardModal } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -180,7 +181,41 @@ export function PositionLifecyclePage() {
               </p>
             </div>
 
-            <div className="flex flex-col items-start gap-1.5 font-mono text-xs sm:items-end">
+            <div className="flex flex-col items-start gap-2 font-mono text-xs sm:items-end">
+              <div className="flex items-center gap-2">
+                <ShareCardModal
+                  compact
+                  triggerLabel="Share lifecycle"
+                  cards={[
+                    {
+                      id: `lifecycle-${pos.positionId}`,
+                      label: 'Position Lifecycle',
+                      data: {
+                        kind: 'position_lifecycle',
+                        traderLabel,
+                        account: address,
+                        networkName: chain.name,
+                        releaseVersion,
+                        market: pos.market,
+                        side: pos.side,
+                        status: pos.status,
+                        positionId: pos.positionId,
+                        netPnlAssets: pos.netPnlAssets,
+                        roiBps: pos.roiBps,
+                        entryPrice: pos.entryPrice,
+                        exitOrMarkPrice: pos.exitPrice ?? data.currentMarkPrice,
+                        peakNotionalAssets: pos.peakNotionalAssets,
+                        maxLeverageLabel: formatLeverageX100(pos.maxLeverageX100),
+                        mfePnlAssets: pos.mfePnlAssets,
+                        maePnlAssets: pos.maePnlAssets,
+                        liqBufferLabel:
+                          pos.status === 'liquidated' ? '0.00% (Liq)' : liqBuffer.text,
+                        durationLabel: formatDurationCompact(pos.durationSeconds),
+                      },
+                    },
+                  ]}
+                />
+              </div>
               <span className="text-content-tertiary">Weighted Entry → Exit / Mark</span>
               <span className="text-base font-semibold text-content-primary">
                 {formatPrice(pos.entryPrice)} →{' '}
