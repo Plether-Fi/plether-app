@@ -14,6 +14,7 @@ import { LeaderboardPage } from './pages/LeaderboardPage'
 import { LiquidityEpochPage } from './pages/LiquidityEpochPage'
 import { LiquidityOpsPage } from './pages/LiquidityOpsPage'
 import { MethodologyPage } from './pages/MethodologyPage'
+import { OraclePage } from './pages/OraclePage'
 import { OverviewPage } from './pages/OverviewPage'
 import { ProtocolPage } from './pages/ProtocolPage'
 import { SponsoredPage } from './pages/SponsoredPage'
@@ -33,6 +34,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<OverviewPage />} />
           <Route path="/execution" element={<ExecutionPage />} />
+          <Route path="/oracle" element={<OraclePage />} />
           <Route path="/liquidity" element={<LiquidityOpsPage />} />
           <Route path="/liquidity/epochs/:epoch" element={<LiquidityEpochPage />} />
           <Route path="/keepers" element={<KeepersPage />} />

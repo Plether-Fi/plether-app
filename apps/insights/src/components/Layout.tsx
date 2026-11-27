@@ -37,6 +37,7 @@ function Header() {
           >
             <NavLink to="/" end className={navClass}>Overview</NavLink>
             <NavLink to="/execution" className={navClass}>Execution</NavLink>
+            <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
             <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
             <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
             <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
@@ -52,6 +53,7 @@ function Header() {
         >
           <NavLink to="/" end className={navClass}>Overview</NavLink>
           <NavLink to="/execution" className={navClass}>Execution</NavLink>
+          <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
           <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
           <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
           <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>

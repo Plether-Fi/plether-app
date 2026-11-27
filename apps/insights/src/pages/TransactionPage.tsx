@@ -11,6 +11,7 @@ import {
 } from '../api'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
 import { ShareCardModal } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -229,6 +230,7 @@ export function TransactionPage() {
       )
     }
 
+    const firstProtectedOrder = finalizedOrders.find((order) => order.orderProtections != null)
     const kindLabel =
       txData?.txKind === 'batch_finalization'
         ? `Batch Finalization (${String(finalizedOrders.length)} orders)`
@@ -323,6 +325,12 @@ export function TransactionPage() {
         </Panel>
 
         {lpSettlement ? <TxLpSettlementPanel settlement={lpSettlement} /> : null}
+        {firstProtectedOrder?.orderProtections ? (
+          <OrderProtectionsChecklistPanel
+            protections={firstProtectedOrder.orderProtections}
+            side={firstProtectedOrder.side}
+          />
+        ) : null}
         <BatchFinalizationPanel
           batchSummary={batchSummary}
           finalizedOrders={finalizedOrders}
@@ -357,6 +365,15 @@ export function TransactionPage() {
           : 'Unavailable'
 
   const traderLabel = routeState?.traderLabel ?? shortAddress(selectedEvent.account)
+  const effectiveOrderId =
+    selectedEvent.orderId ?? (validReceipt ? walletActivity.execution?.orderId ?? null : null)
+  const matchedFinalizedOrder =
+    effectiveOrderId != null
+      ? finalizedOrders.find((order) => order.orderId === effectiveOrderId) ?? null
+      : null
+  const selectedOrderProtections =
+    selectedEvent.orderProtections ??
+    (isOpen ? matchedFinalizedOrder?.orderProtections ?? null : null)
 
   const bannerTone: StatusTone = validReceipt ? 'ready' : isLiquidation ? 'blocked' : 'live'
   const bannerLabel = validReceipt
@@ -667,6 +684,13 @@ export function TransactionPage() {
           />
         )}
       </div>
+
+      {selectedOrderProtections ? (
+        <OrderProtectionsChecklistPanel
+          protections={selectedOrderProtections}
+          side={selectedEvent.side}
+        />
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-12">
         <Panel className="p-5 sm:p-6 lg:col-span-7">

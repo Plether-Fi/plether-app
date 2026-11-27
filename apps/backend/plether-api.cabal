@@ -180,6 +180,8 @@ library
         Plether.Handlers.InsightsExecution
         Plether.Handlers.InsightsInfra
         Plether.Handlers.InsightsLiquidity
+        Plether.Handlers.InsightsOracle
+        Plether.Handlers.InsightsOrderProtections
         Plether.Handlers.InsightsProtocol
         Plether.Handlers.InsightsSponsored
         Plether.Handlers.InsightsWallets
@@ -479,6 +481,8 @@ test-suite plether-api-test
         Plether.Handlers.InsightsExecutionSpec
         Plether.Handlers.InsightsInfraSpec
         Plether.Handlers.InsightsLiquiditySpec
+        Plether.Handlers.InsightsOracleSpec
+        Plether.Handlers.InsightsOrderProtectionsSpec
         Plether.Handlers.InsightsProtocolSpec
         Plether.Handlers.InsightsSponsoredSpec
         Plether.Handlers.InsightsWalletsSpec

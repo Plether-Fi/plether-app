@@ -78,6 +78,7 @@ function resolvePublicApiCacheTtl(method, pathname) {
     /^\/keepers\/0x[0-9a-fA-F]{40}$/.test(apiPath) ||
     apiPath === '/sponsored/status' ||
     apiPath === '/sponsored/operations' ||
+    apiPath === '/oracle/health' ||
     apiPath === '/infra/status'
   ) {
     return API_CACHE_TTLS.pulse;

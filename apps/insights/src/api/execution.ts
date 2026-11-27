@@ -67,6 +67,53 @@ export interface ExecutionQualityResponse {
   }
 }
 
+export type ProtectionCheckStatus = 'passed' | 'failed' | 'not_set' | 'unavailable'
+
+export interface OrderProtectionCheck {
+  key: string
+  category: string
+  label: string
+  status: ProtectionCheckStatus
+  limitValue: string | null
+  actualValue: string | null
+  unit: string
+  detail: string
+}
+
+export interface LinkedPositionProtection {
+  protectionId: string
+  parentOrderId: string | null
+  linkedOrderId: string | null
+  status: string
+  triggeredLeg: string | null
+  takeProfitTriggerPrice: string | null
+  stopLossTriggerPrice: string | null
+  triggerMarkPrice: string | null
+  triggerBountyAssets: string | null
+  armedBlock: string | null
+  updatedBlock: string | null
+  txHash: string | null
+}
+
+export interface OrderProtectionsSummary {
+  v3EnforcedCount: number
+  v3PassedCount: number
+  v3FailedCount: number
+  v3UnboundedCount: number
+  hasTakeProfit: boolean
+  hasStopLoss: boolean
+  positionProtectionStatus: string | null
+}
+
+export interface OrderProtectionsPayload {
+  orderId: string
+  boundsSource: string
+  fullBoundsAvailable: boolean
+  summary: OrderProtectionsSummary
+  executionChecks: OrderProtectionCheck[]
+  positionProtection: LinkedPositionProtection | null
+}
+
 export interface ProtocolTradeRecord {
   id: string
   activityType: string
@@ -83,6 +130,7 @@ export interface ProtocolTradeRecord {
   latencySeconds?: number | null
   keeperBountyAssets?: string | null
   execution?: TradeExecution | null
+  orderProtections?: OrderProtectionsPayload | null
   txHash: string
   blockNumber: string
   occurredAt: string
@@ -135,6 +183,7 @@ export interface FinalizedOrderRecord {
   oracleFrozen: boolean | null
   vpiAssets: string | null
   frozenCloseSpreadAssets: string | null
+  orderProtections?: OrderProtectionsPayload | null
 }
 
 export interface ProtocolEventRecord {

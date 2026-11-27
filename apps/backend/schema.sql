@@ -273,6 +273,23 @@ CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_admitted_latest
     ON perps_pyth_update_payloads(max_publish_time DESC)
     WHERE source = 'backend_hermes_latest_v2';
 
+-- Sanitized audit log of rejected and stale Pyth basket oracle update checks
+CREATE TABLE IF NOT EXISTS perps_oracle_admission_events (
+    id BIGSERIAL PRIMARY KEY,
+    occurred_at BIGINT NOT NULL,
+    route VARCHAR(16) NOT NULL,
+    outcome VARCHAR(24) NOT NULL,
+    reason_code VARCHAR(48) NOT NULL,
+    min_publish_time BIGINT,
+    max_publish_time BIGINT,
+    spread_seconds INTEGER,
+    age_seconds INTEGER,
+    detail TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_perps_oracle_admission_events_occurred
+    ON perps_oracle_admission_events(occurred_at DESC);
+
 -- Perps keeper indexer state
 CREATE TABLE IF NOT EXISTS perps_keeper_state (
     id INTEGER DEFAULT 1,

@@ -23,6 +23,7 @@ module Plether.Handlers.InsightsWallets
   , ledgerSnapshotToJson
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent.Async (concurrently)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
@@ -50,6 +51,12 @@ import Plether.Ethereum.Client (EthClient)
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , getAccountLedgerSnapshot
+  )
+import Plether.Handlers.InsightsOrderProtections
+  ( OrderProtectionsBundle
+  , buildOrderProtectionsForOrder
+  , extractExecutionOrderId
+  , fetchOrderProtectionsBundle
   )
 import Plether.Handlers.ProtectionHistory (readProtectionHistoryPage)
 import qualified Plether.Perps.Manifest as Manifest
@@ -281,6 +288,11 @@ getWalletSummaryResponse pool client cfg rawAddress requestedLimit = do
             handle <- fetchDiscordHandle conn account
             stats <- fetchAccountReleaseStats conn chainId router account
             activity <- fetchAccountActivity conn chainId router account limit
+            let openOrderIds =
+                  mapMaybe
+                    (\r -> aarOrderId r <|> extractExecutionOrderId (aarExecution r))
+                    (filter (\r -> aarActivityType r == "Open") activity)
+            protBundle <- fetchOrderProtectionsBundle conn chainId router book openOrderIds
             balanceEvents <- fetchAccountBalanceEvents conn chainId router account
             (protections, _) <- readProtectionHistoryPage conn chainId book account 30 Nothing
             protBlock <- fetchProtectionIndexedBlock conn chainId book
@@ -288,9 +300,9 @@ getWalletSummaryResponse pool client cfg rawAddress requestedLimit = do
             lpBalances <- fetchAccountVaultBalances conn chainId housePool deployBlock account
             lpRequests <- fetchAccountVaultRequestStates conn chainId housePool deployBlock account
             lpEvents <- fetchAccountVaultRequestEvents conn chainId housePool deployBlock account
-            pure (handle, stats, activity, balanceEvents, protections, protBlock, divHistory, lpBalances, lpRequests, lpEvents)
+            pure (handle, stats, activity, protBundle, balanceEvents, protections, protBlock, divHistory, lpBalances, lpRequests, lpEvents)
       )
-  let (mHandle, stats, activity, balanceEvents, protections, protBlock, divHistory, lpBalances, lpRequests, lpEvents) = dbTuple
+  let (mHandle, stats, activity, protBundle, balanceEvents, protections, protBlock, divHistory, lpBalances, lpRequests, lpEvents) = dbTuple
       mLedger = either (const Nothing) Just ledgerRes
       latestBlock = maximum [arsLatestBlock stats, protBlock, 0]
       balanceHistory = buildBalanceHistory now latestBlock mLedger balanceEvents
@@ -319,7 +331,7 @@ getWalletSummaryResponse pool client cfg rawAddress requestedLimit = do
           , "ledger" .= (ledgerSnapshotToJson <$> mLedger)
           , "performance" .= releaseStatsToJson stats
           , "balanceHistory" .= map balanceHistoryPointToJson balanceHistory
-          , "activity" .= map accountActivityToJson activity
+          , "activity" .= map (accountActivityToJson protBundle) activity
           , "protections"
               .= object
                 [ "indexedThroughBlock" .= show protBlock
@@ -737,28 +749,34 @@ releaseStatsToJson AccountReleaseStats {..} =
     , "lastActivityAt" .= (isoTimestamp <$> arsLastActivityAt)
     ]
 
-accountActivityToJson :: AccountActivityRow -> Value
-accountActivityToJson AccountActivityRow {..} =
-  object $
-    catMaybes
-      [ Just $ "id" .= (aarTxHash <> ":" <> T.pack (show aarLogIndex))
-      , Just $ "activityType" .= aarActivityType
-      , ("orderId" .=) . show <$> aarOrderId
-      , ("side" .=) <$> (sideTextInt <$> aarSide)
-      , ("price" .=) . show <$> aarPrice
-      , ("sizeDelta" .=) . show <$> aarSizeDelta
-      , ("amountAssets" .=) . show <$> aarAmountAssets
-      , ("pnlAssets" .=) . show <$> aarPnlAssets
-      , ("vpiAssets" .=) . show <$> aarVpiAssets
-      , ("frozenCloseSpreadAssets" .=) . show <$> aarFrozenSpreadAssets
-      , ("oracleFrozen" .=) <$> aarOracleFrozen
-      , ("latencySeconds" .=) <$> aarLatencySeconds
-      , ("keeperBountyAssets" .=) . show <$> aarKeeperBountyAssets
-      , ("execution" .=) <$> aarExecution
-      , Just $ "txHash" .= aarTxHash
-      , Just $ "blockNumber" .= show aarBlockNumber
-      , Just $ "occurredAt" .= isoTimestamp aarTimestamp
-      ]
+accountActivityToJson :: OrderProtectionsBundle -> AccountActivityRow -> Value
+accountActivityToJson protBundle AccountActivityRow {..} =
+  let effectiveOrderId = aarOrderId <|> extractExecutionOrderId aarExecution
+      mOrderProtections =
+        if aarActivityType == "Open"
+          then effectiveOrderId >>= buildOrderProtectionsForOrder protBundle
+          else Nothing
+   in object $
+        catMaybes
+          [ Just $ "id" .= (aarTxHash <> ":" <> T.pack (show aarLogIndex))
+          , Just $ "activityType" .= aarActivityType
+          , ("orderId" .=) . show <$> effectiveOrderId
+          , ("side" .=) <$> (sideTextInt <$> aarSide)
+          , ("price" .=) . show <$> aarPrice
+          , ("sizeDelta" .=) . show <$> aarSizeDelta
+          , ("amountAssets" .=) . show <$> aarAmountAssets
+          , ("pnlAssets" .=) . show <$> aarPnlAssets
+          , ("vpiAssets" .=) . show <$> aarVpiAssets
+          , ("frozenCloseSpreadAssets" .=) . show <$> aarFrozenSpreadAssets
+          , ("oracleFrozen" .=) <$> aarOracleFrozen
+          , ("latencySeconds" .=) <$> aarLatencySeconds
+          , ("keeperBountyAssets" .=) . show <$> aarKeeperBountyAssets
+          , ("execution" .=) <$> aarExecution
+          , ("orderProtections" .=) <$> mOrderProtections
+          , Just $ "txHash" .= aarTxHash
+          , Just $ "blockNumber" .= show aarBlockNumber
+          , Just $ "occurredAt" .= isoTimestamp aarTimestamp
+          ]
 
 vaultBalanceToJson :: Text -> Text -> AccountVaultBalanceRow -> Value
 vaultBalanceToJson seniorAddr juniorAddr AccountVaultBalanceRow {..} =

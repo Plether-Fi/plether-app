@@ -135,6 +135,9 @@ import Plether.Handlers.InsightsLiquidity
   , getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
   )
+import Plether.Handlers.InsightsOracle
+  ( getOracleHealthResponse
+  )
 import Plether.Handlers.InsightsProtocol
   ( getProtocolManifestResponse
   )
@@ -643,6 +646,11 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
 
   get "/api/insights/v1/protocol/manifest" $
     liftIO (getProtocolManifestResponse perpsClient cfg) >>= handleResult
+
+  get "/api/insights/v1/oracle/health" $
+    case mPool of
+      Just pool -> liftIO (getOracleHealthResponse pool perpsClient cfg) >>= handleResult
+      Nothing -> insightsUnavailable
 
   get "/api/insights/v1/sponsored/status" $
     case mPool of

@@ -15,6 +15,7 @@ import {
   ExecutionLatencyWhisker,
   OrderOutcomeProportionCard,
 } from '../components/ExecutionVisuals'
+import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -384,6 +385,7 @@ export function ExecutionPage() {
                     <th scope="col" className="px-4 py-3.5">Amount</th>
                     <th scope="col" className="px-4 py-3.5">Realized PnL</th>
                     <th scope="col" className="px-4 py-3.5">VPI / Spread</th>
+                    <th scope="col" className="px-4 py-3.5">Protections</th>
                     <th scope="col" className="px-4 py-3.5">Latency</th>
                     <th scope="col" className="px-4 py-3.5">Receipt</th>
                     <th scope="col" className="px-4 py-3.5">Tx</th>
@@ -441,6 +443,13 @@ export function ExecutionPage() {
                             : trade.frozenCloseSpreadAssets != null
                               ? `Spread ${formatCompactAssets(trade.frozenCloseSpreadAssets)}`
                               : '—'}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {trade.activityType === 'Open' ? (
+                            <OrderProtectionsInlineChecklist protections={trade.orderProtections} />
+                          ) : (
+                            <span className="font-mono text-xs text-content-tertiary">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
                           {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}

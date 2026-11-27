@@ -2,6 +2,11 @@ module Plether.Handlers.InsightsSponsored
   ( getSponsoredStatusResponse
   , getSponsoredOperationsResponse
   , sanitizePublicReason
+  , sanitizeControlEventReason
+  , parseLogBlockTimestamp
+  , resolveInclusionEpoch
+  , computeInclusionLatencySeconds
+  , computeIntLatencyPercentiles
   , computeUtilizationBps
   , computeRunwayHours
   , computeSuccessRateBps
@@ -11,6 +16,7 @@ module Plether.Handlers.InsightsSponsored
   , checkBundlerEntryPoint
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Aeson (Value (..), object, toJSON, (.=))
@@ -18,7 +24,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Char (isAlphaNum, isAscii)
 import Data.IORef (newIORef)
-import Data.Maybe (fromMaybe)
+import Data.List (sort)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
@@ -27,6 +34,7 @@ import qualified Data.Vector as V
 import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import Network.HTTP.Client (Manager)
+import Numeric (readHex)
 import Plether.AA.Kernel (KernelProfile (..))
 import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelSponsorshipConfig (..), kernelScope)
 import Plether.AA.Readiness (Check (..), aggregateFunding)
@@ -222,7 +230,7 @@ getSponsoredOperationsResponse pool cfg mKernel rawLimit mStatusFilter = do
       (mOps, mEvents) <-
         runConcurrently $
           (,)
-            <$> Concurrently (observeIo $ withDb pool $ \conn -> fetchNativeOperations conn limitCount statusFilter)
+            <$> Concurrently (observeIo $ withDb pool $ \conn -> fetchNativeOperations conn chainId limitCount statusFilter)
             <*> Concurrently (observeIo $ withDb pool $ \conn -> fetchNativeControlEvents conn 20)
       let ops = fromMaybe [] mOps
           events = fromMaybe [] mEvents
@@ -739,18 +747,26 @@ fetchNativeDbTelemetry pool chainId paymasterAddr = do
           _ -> (emptyWindowMetrics, emptyWindowMetrics, emptyWindowMetrics)
 
     latRows <-
-      query_
+      query
         conn
         "SELECT \
-        \  percentile_cont(0.50) WITHIN GROUP (ORDER BY GREATEST(0, EXTRACT(EPOCH FROM (e.observed_at - COALESCE(a.submitted_at, a.signed_at, a.created_at)))))::DOUBLE PRECISION, \
-        \  percentile_cont(0.95) WITHIN GROUP (ORDER BY GREATEST(0, EXTRACT(EPOCH FROM (e.observed_at - COALESCE(a.submitted_at, a.signed_at, a.created_at)))))::DOUBLE PRECISION \
+        \  e.event_json->>'blockTimestamp', \
+        \  (SELECT pe.timestamp FROM perps_events pe WHERE pe.chain_id = ? AND pe.tx_hash = e.transaction_hash LIMIT 1), \
+        \  FLOOR(EXTRACT(EPOCH FROM COALESCE(a.submitted_at, a.signed_at, a.created_at)))::BIGINT \
         \FROM aa_user_operation_events e \
         \JOIN aa_sponsorship_authorizations a USING (digest) \
-        \WHERE e.finalized_at >= NOW() - interval '24 hours'"
-        :: IO [(Maybe Double, Maybe Double)]
-    let latencyPair = case latRows of
-          [(p50, p95)] -> (round <$> p50, round <$> p95)
-          _ -> (Nothing, Nothing)
+        \WHERE e.finalized_at >= NOW() - interval '24 hours' \
+        \ORDER BY e.finalized_at DESC \
+        \LIMIT 2000"
+        (Only chainId)
+        :: IO [(Maybe Text, Maybe Integer, Integer)]
+    let inclusionSamples =
+          mapMaybe
+            ( \(hexTs, peTs, submitTs) ->
+                computeInclusionLatencySeconds (resolveInclusionEpoch hexTs peTs) submitTs
+            )
+            latRows
+        latencyPair = computeIntLatencyPercentiles inclusionSamples
 
     funnelRows <-
       query_
@@ -936,27 +952,80 @@ fetchKernelDbTelemetry pool KernelScope {..} paymasterAddr = do
       )
       mRes
 
-fetchNativeOperations :: Connection -> Int -> Maybe Bool -> IO [SponsoredOpRow]
-fetchNativeOperations conn limitCount mSuccessFilter =
-  query
-    conn
-    "SELECT \
-    \  e.user_operation_hash, \
-    \  e.transaction_hash, \
-    \  a.sender, \
-    \  e.block_number::TEXT, \
-    \  e.success, \
-    \  e.actual_gas_cost_wei::TEXT, \
-    \  a.max_cost_wei::TEXT, \
-    \  ROUND(GREATEST(0, EXTRACT(EPOCH FROM (e.observed_at - COALESCE(a.submitted_at, a.signed_at, a.created_at)))))::INT, \
-    \  e.observed_at, \
-    \  e.finalized_at \
-    \FROM aa_user_operation_events e \
-    \JOIN aa_sponsorship_authorizations a USING (digest) \
-    \WHERE (?::BOOLEAN IS NULL OR e.success = ?) \
-    \ORDER BY e.finalized_at DESC, e.block_number DESC \
-    \LIMIT ?"
-    (mSuccessFilter, mSuccessFilter, limitCount)
+data NativeOpQueryRow = NativeOpQueryRow
+  { noqrUserOpHash :: Text
+  , noqrTxHash :: Text
+  , noqrSender :: Text
+  , noqrBlockNumber :: Text
+  , noqrSuccess :: Bool
+  , noqrActualGasCost :: Text
+  , noqrMaxCost :: Text
+  , noqrEventBlockTsHex :: Maybe Text
+  , noqrPerpsEventTs :: Maybe Integer
+  , noqrSubmitEpoch :: Integer
+  , noqrObservedAt :: UTCTime
+  , noqrFinalizedAt :: UTCTime
+  }
+
+instance FromRow NativeOpQueryRow where
+  fromRow =
+    NativeOpQueryRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+fetchNativeOperations :: Connection -> Integer -> Int -> Maybe Bool -> IO [SponsoredOpRow]
+fetchNativeOperations conn chainId limitCount mSuccessFilter = do
+  rows <-
+    query
+      conn
+      "SELECT \
+      \  e.user_operation_hash, \
+      \  e.transaction_hash, \
+      \  a.sender, \
+      \  e.block_number::TEXT, \
+      \  e.success, \
+      \  e.actual_gas_cost_wei::TEXT, \
+      \  a.max_cost_wei::TEXT, \
+      \  e.event_json->>'blockTimestamp', \
+      \  (SELECT pe.timestamp FROM perps_events pe WHERE pe.chain_id = ? AND pe.tx_hash = e.transaction_hash LIMIT 1), \
+      \  FLOOR(EXTRACT(EPOCH FROM COALESCE(a.submitted_at, a.signed_at, a.created_at)))::BIGINT, \
+      \  e.observed_at, \
+      \  e.finalized_at \
+      \FROM aa_user_operation_events e \
+      \JOIN aa_sponsorship_authorizations a USING (digest) \
+      \WHERE (?::BOOLEAN IS NULL OR e.success = ?) \
+      \ORDER BY e.finalized_at DESC, e.block_number DESC \
+      \LIMIT ?"
+      (chainId, mSuccessFilter, mSuccessFilter, limitCount)
+      :: IO [NativeOpQueryRow]
+  pure
+    [ let mIncEpoch = resolveInclusionEpoch noqrEventBlockTsHex noqrPerpsEventTs
+          occurredAt = maybe noqrObservedAt (posixSecondsToUTCTime . fromIntegral) mIncEpoch
+          latSec = computeInclusionLatencySeconds mIncEpoch noqrSubmitEpoch
+       in SponsoredOpRow
+            { sorUserOpHash = noqrUserOpHash
+            , sorTxHash = noqrTxHash
+            , sorSender = noqrSender
+            , sorBlockNumber = noqrBlockNumber
+            , sorSuccess = noqrSuccess
+            , sorActualGasCostWei = parseIntegerOrZero noqrActualGasCost
+            , sorMaxCostWei = parseIntegerOrZero noqrMaxCost
+            , sorLatencySeconds = latSec
+            , sorOccurredAt = occurredAt
+            , sorFinalizedAt = noqrFinalizedAt
+            }
+    | NativeOpQueryRow {..} <- rows
+    ]
 
 fetchKernelOperations :: Connection -> KernelScope -> Text -> Int -> Maybe Bool -> IO [SponsoredOpRow]
 fetchKernelOperations conn KernelScope {..} paymasterAddr limitCount mSuccessFilter =
@@ -993,7 +1062,7 @@ fetchNativeControlEvents conn limitCount = do
       (Only limitCount)
       :: IO [(Integer, Text, Text, UTCTime)]
   pure
-    [ ControlEventRow eid action (sanitizePublicReason reason) ts
+    [ ControlEventRow eid action (sanitizeControlEventReason action reason) ts
     | (eid, action, reason, ts) <- rows
     ]
 
@@ -1045,6 +1114,45 @@ sanitizePublicReason raw =
             && not ("arn:" `T.isInfixOf` T.toLower s)
             && not ("//" `T.isInfixOf` s)
             && T.all (\c -> isAscii c && (isAlphaNum c || c `elem` ("_ -" :: String))) s
+
+sanitizeControlEventReason :: Text -> Text -> Text
+sanitizeControlEventReason action raw =
+  let sanitized = sanitizePublicReason raw
+   in case T.toLower (T.strip action) of
+        "resume"
+          | sanitized == "Safety pause active" || sanitized == "Sponsorship issuance resumed" ->
+              "Sponsorship issuance resumed"
+          | otherwise -> "Resumed after: " <> sanitized
+        _ -> sanitized
+
+parseLogBlockTimestamp :: Maybe Text -> Maybe Integer
+parseLogBlockTimestamp Nothing = Nothing
+parseLogBlockTimestamp (Just raw) =
+  let stripped = T.strip raw
+      hexBody = fromMaybe stripped (T.stripPrefix "0x" stripped <|> T.stripPrefix "0X" stripped)
+   in if T.null hexBody
+        then Nothing
+        else case readHex (T.unpack hexBody) of
+          [(n, "")] | n > 0 -> Just n
+          _ -> Nothing
+
+resolveInclusionEpoch :: Maybe Text -> Maybe Integer -> Maybe Integer
+resolveInclusionEpoch mHexTs mPerpsTs =
+  parseLogBlockTimestamp mHexTs <|> (mPerpsTs >>= (\ts -> if ts > 0 then Just ts else Nothing))
+
+computeInclusionLatencySeconds :: Maybe Integer -> Integer -> Maybe Int
+computeInclusionLatencySeconds Nothing _ = Nothing
+computeInclusionLatencySeconds (Just inclusionEpoch) submitEpoch =
+  Just (fromIntegral (max 0 (inclusionEpoch - submitEpoch)))
+
+computeIntLatencyPercentiles :: [Int] -> (Maybe Int, Maybe Int)
+computeIntLatencyPercentiles samples =
+  case sort (filter (>= 0) samples) of
+    [] -> (Nothing, Nothing)
+    sorted ->
+      let count = length sorted
+          atPct p = sorted !! min (count - 1) ((count * p + 99) `div` 100 - 1)
+       in (Just (atPct 50), Just (atPct 95))
 
 computeUtilizationBps :: Integer -> Integer -> Maybe Int
 computeUtilizationBps used cap

@@ -122,6 +122,16 @@ export function resolveRouteOgMeta(url) {
     };
   }
 
+  if (pathname === '/oracle' || pathname.startsWith('/oracle/')) {
+    return {
+      title: 'Oracle Admission & Value-Guard Health — Plether Insights',
+      description: 'Chronological Pyth FX basket update blocks, value-rejection guardrails, 6-feed confidence ratios, and PletherOracle regime status.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — Oracle Admission & Value-Guard Health',
+      canonicalUrl,
+    };
+  }
+
   const keeperMatch = pathname.match(/^\/keepers\/(0x[0-9a-fA-F]{40})\/?$/);
   if (keeperMatch) {
     const addr = keeperMatch[1].toLowerCase();

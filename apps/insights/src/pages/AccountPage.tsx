@@ -9,11 +9,18 @@ import {
   transactionPath,
   useWalletSummary,
   type AccountActivityRecord,
-  type AccountProtectionSnapshot,
   type TransactionRouteState,
 } from '../api'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import {
+  ActivePositionProtectionStrip,
+  OrderProtectionsInlineChecklist,
+} from '../components/OrderProtectionsChecklist'
+import {
+  normalizeAccountProtection,
+  protectionLifecycleTone,
+} from '../utils/orderProtections'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -52,23 +59,6 @@ function trancheLabel(tranche: 'senior' | 'junior' | 'unknown'): string {
   if (tranche === 'senior') return 'Senior Vault'
   if (tranche === 'junior') return 'Junior Vault'
   return 'Vault'
-}
-
-function protectionStatusTone(status: string | undefined): StatusTone {
-  const lowered = status?.toLowerCase() ?? ''
-  if (lowered === 'active' || lowered === 'created' || lowered === 'updated') return 'live'
-  if (lowered === 'triggered' || lowered === 'executed') return 'ready'
-  if (lowered === 'cancelled' || lowered === 'expired') return 'unknown'
-  return 'unknown'
-}
-
-function readProtectionField(item: AccountProtectionSnapshot, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = item[key]
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
-    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
-  }
-  return null
 }
 
 function TradingAccountInspector({ address }: { address: string }) {
@@ -557,20 +547,23 @@ function TradingAccountInspector({ address }: { address: string }) {
                     </div>
                   </div>
                   {position ? (
-                    <dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 sm:divide-y-0">
-                      <Metric label="Market">{position.market}</Metric>
-                      <Metric label="Size">{formatPlDxyQuantity(position.size)}</Metric>
-                      <Metric label="Entry price">{formatPrice(position.entryPrice)}</Metric>
-                      <Metric label="Position margin">
-                        {formatAssets(position.marginAssets)}
-                      </Metric>
-                      <Metric label="Unrealized PnL">
-                        <Pnl value={position.unrealizedPnlAssets} />
-                      </Metric>
-                      <Metric label="Execution bounty reserve">
-                        {formatAssets(ledger.executionBountyReserveAssets)}
-                      </Metric>
-                    </dl>
+                    <>
+                      <dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 sm:divide-y-0">
+                        <Metric label="Market">{position.market}</Metric>
+                        <Metric label="Size">{formatPlDxyQuantity(position.size)}</Metric>
+                        <Metric label="Entry price">{formatPrice(position.entryPrice)}</Metric>
+                        <Metric label="Position margin">
+                          {formatAssets(position.marginAssets)}
+                        </Metric>
+                        <Metric label="Unrealized PnL">
+                          <Pnl value={position.unrealizedPnlAssets} />
+                        </Metric>
+                        <Metric label="Execution bounty reserve">
+                          {formatAssets(ledger.executionBountyReserveAssets)}
+                        </Metric>
+                      </dl>
+                      <ActivePositionProtectionStrip protections={protections} />
+                    </>
                   ) : (
                     <EmptyState
                       title="No open position"
@@ -689,6 +682,7 @@ function TradingAccountInspector({ address }: { address: string }) {
                       <th scope="col" className="px-4 py-3.5">Amount</th>
                       <th scope="col" className="px-4 py-3.5">Realized PnL</th>
                       <th scope="col" className="px-4 py-3.5">VPI / Spread</th>
+                      <th scope="col" className="px-4 py-3.5">Protections</th>
                       <th scope="col" className="px-4 py-3.5">Receipt</th>
                       <th scope="col" className="px-4 py-3.5">Tx</th>
                     </tr>
@@ -738,6 +732,13 @@ function TradingAccountInspector({ address }: { address: string }) {
                               : row.frozenCloseSpreadAssets != null
                                 ? `Spread ${formatCompactAssets(row.frozenCloseSpreadAssets)}`
                                 : '—'}
+                          </td>
+                          <td className="px-4 py-3.5">
+                            {row.activityType === 'Open' ? (
+                              <OrderProtectionsInlineChecklist protections={row.orderProtections} />
+                            ) : (
+                              <span className="font-mono text-xs text-content-tertiary">—</span>
+                            )}
                           </td>
                           <td className="px-4 py-3.5">
                             <div className="flex flex-wrap items-center gap-1.5">
@@ -874,37 +875,64 @@ function TradingAccountInspector({ address }: { address: string }) {
               <LoadingState rows={3} />
             ) : protections.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[700px] text-left text-sm">
+                <table className="w-full min-w-[780px] text-left text-sm">
                   <caption className="sr-only">TP/SL protections for this Trading Account</caption>
                   <thead className="border-b border-brand-border/25 text-xs text-content-tertiary">
                     <tr>
                       <th scope="col" className="px-4 py-3.5">Protection ID</th>
                       <th scope="col" className="px-4 py-3.5">Status</th>
-                      <th scope="col" className="px-4 py-3.5">Type</th>
-                      <th scope="col" className="px-4 py-3.5">Trigger price</th>
+                      <th scope="col" className="px-4 py-3.5">Open Order</th>
+                      <th scope="col" className="px-4 py-3.5">Take Profit (TP)</th>
+                      <th scope="col" className="px-4 py-3.5">Stop Loss (SL)</th>
+                      <th scope="col" className="px-4 py-3.5">Triggered leg</th>
                       <th scope="col" className="px-4 py-3.5">Updated block</th>
                     </tr>
                   </thead>
                   <tbody>
                     {protections.map((item, idx) => {
-                      const id = readProtectionField(item, ['protectionId', 'id']) ?? String(idx + 1)
-                      const status = readProtectionField(item, ['status', 'state']) ?? 'Unknown'
-                      const kind =
-                        readProtectionField(item, ['kind', 'protectionType', 'triggerKind']) ?? '—'
-                      const triggerPrice = readProtectionField(item, ['triggerPrice', 'price'])
-                      const updatedBlock = readProtectionField(item, ['updatedBlock', 'blockNumber'])
+                      const p = normalizeAccountProtection(item, String(idx + 1))
                       return (
-                        <tr key={id} className="border-b border-brand-border/15 last:border-0">
-                          <td className="px-4 py-3.5 font-mono text-xs">#{id}</td>
+                        <tr
+                          key={`${p.protectionId}-${String(idx)}`}
+                          className="border-b border-brand-border/15 last:border-0"
+                        >
+                          <td className="px-4 py-3.5 font-mono text-xs">#{p.protectionId}</td>
                           <td className="px-4 py-3.5">
-                            <StatusPill tone={protectionStatusTone(status)} label={status} />
+                            <StatusPill tone={protectionLifecycleTone(p.status)} label={p.status} />
                           </td>
-                          <td className="px-4 py-3.5 font-mono text-xs">{kind}</td>
-                          <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
-                            {triggerPrice ? formatPrice(triggerPrice) : '—'}
+                          <td className="px-4 py-3.5 font-mono text-xs text-content-secondary">
+                            {p.parentOrderId ? `#${p.parentOrderId}` : 'Standalone'}
                           </td>
                           <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
-                            {updatedBlock ? Number(updatedBlock).toLocaleString('en-US') : '—'}
+                            {p.takeProfitTriggerPrice ? (
+                              <span className="text-positive">
+                                ✓ {formatPrice(p.takeProfitTriggerPrice)}
+                              </span>
+                            ) : (
+                              <span className="text-content-tertiary">○ Not set</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
+                            {p.stopLossTriggerPrice ? (
+                              <span className="text-brand-peach">
+                                ✓ {formatPrice(p.stopLossTriggerPrice)}
+                              </span>
+                            ) : (
+                              <span className="text-content-tertiary">○ Not set</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs">
+                            {p.triggeredLeg ? (
+                              <span className="text-content-primary">
+                                {p.triggeredLeg}
+                                {p.linkedOrderId ? ` (#${p.linkedOrderId})` : ''}
+                              </span>
+                            ) : (
+                              <span className="text-content-tertiary">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
+                            {p.updatedBlock ? Number(p.updatedBlock).toLocaleString('en-US') : '—'}
                           </td>
                         </tr>
                       )

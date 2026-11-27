@@ -174,9 +174,11 @@ beforeEach(() => {
         items: [
           {
             protectionId: '77',
-            status: 'Active',
-            kind: 'TakeProfit',
-            triggerPrice: '106000000000000000000',
+            parentOrderId: '501',
+            statusName: 'Armed',
+            triggeredLegName: 'TakeProfit',
+            takeProfitTriggerPrice: '94000000',
+            stopLossTriggerPrice: '97000000',
             updatedBlock: '332884500',
           },
         ],
