@@ -1,5 +1,6 @@
 module Plether.Handlers.InsightsExecution
   ( LatencyStats (..)
+  , ProtocolLatencyBenchmark (..)
   , OrderReliabilityBucket (..)
   , DetectedKeeperEvent (..)
   , KeeperAggregate (..)
@@ -21,6 +22,8 @@ module Plether.Handlers.InsightsExecution
   , isValidTxHash
   , classifyTxKind
   , computeLatencyPercentiles
+  , computeLatencyPercentileRank
+  , buildLatencyBenchmark
   , buildTimelineBuckets
   , rateBps
   , aggregateKeepers
@@ -91,6 +94,27 @@ data LatencyStats = LatencyStats
   , lsMax :: Maybe Integer
   }
   deriving stock (Eq, Show)
+
+data ProtocolLatencyBenchmark = ProtocolLatencyBenchmark
+  { plbWindowLabel :: Text
+  , plbSamples :: [Integer]
+  , plbSampleCount :: Int
+  , plbMinSeconds :: Maybe Integer
+  , plbP25Seconds :: Maybe Integer
+  , plbP50Seconds :: Maybe Integer
+  , plbP75Seconds :: Maybe Integer
+  , plbP95Seconds :: Maybe Integer
+  , plbP99Seconds :: Maybe Integer
+  , plbMaxSeconds :: Maybe Integer
+  , plbP50CommitToOracleSeconds :: Maybe Integer
+  , plbP50OracleToFinalizeSeconds :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+{-# NOINLINE protocolLatencyBenchmarkCache #-}
+protocolLatencyBenchmarkCache :: SingleFlightCache (Integer, Text) (Maybe ProtocolLatencyBenchmark)
+protocolLatencyBenchmarkCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 8 (60 * 1000000000) (300 * 1000000000))
 
 data OrderReliabilityBucket = OrderReliabilityBucket
   { orbStartUnix :: Integer
@@ -439,9 +463,9 @@ getTransactionResponse pool client cfg rawTxHash = do
         then
           pure $ Left $ E.notFound ("No indexed Plether Perps activity found for transaction " <> txHash)
         else do
-          (executorAddr, protBundle) <-
+          (executorAddr, protBundle, mLatencyBenchmark) <-
             runConcurrently $
-              (,)
+              (,,)
                 <$> Concurrently
                   ( case cachedSender of
                       Just addr -> pure (Just addr)
@@ -455,6 +479,11 @@ getTransactionResponse pool client cfg rawTxHash = do
                         pure mResolved
                   )
                 <*> Concurrently (enrichOrderProtectionsBundleFromRpc client baseProtBundle)
+                <*> Concurrently
+                  ( if null finalizedOrders
+                      then pure Nothing
+                      else getCachedProtocolLatencyBenchmark pool chainId router
+                  )
           let blockNum =
                 fromMaybe 0 $
                   (rtrBlockNumber <$> listToMaybe rows)
@@ -483,7 +512,8 @@ getTransactionResponse pool client cfg rawTxHash = do
                   , "occurredAt" .= isoTimestamp occurredTs
                   , "executorAddress" .= executorAddr
                   , "batchSummary" .= mBatchSummary
-                  , "finalizedOrders" .= map (finalizedOrderToJson protBundle) finalizedOrders
+                  , "latencyBenchmark" .= (protocolLatencyBenchmarkToJson <$> mLatencyBenchmark)
+                  , "finalizedOrders" .= map (finalizedOrderToJson protBundle mLatencyBenchmark) finalizedOrders
                   , "protocolEvents" .= map protocolEventToJson protocolEvents
                   , "lpSettlement" .= (txLpSettlementToJson <$> mLpSettlement)
                   , "events" .= map (recentTradeToJson protBundle) rows
@@ -695,6 +725,115 @@ computeLatencyPercentiles samples =
             , lsP99 = Just $ atPct 99
             , lsMax = Just $ last sorted
             }
+
+computeLatencyPercentileRank :: [Integer] -> Integer -> Maybe Int
+computeLatencyPercentileRank [] _ = Nothing
+computeLatencyPercentileRank samples value =
+  let n = length samples
+      less = length (filter (< value) samples)
+      equal = length (filter (== value) samples)
+      rawPct =
+        round
+          (100.0 * (fromIntegral less + 0.5 * fromIntegral equal) / fromIntegral n :: Double)
+          :: Int
+   in Just (max 1 (min 99 rawPct))
+
+buildLatencyBenchmark
+  :: Text
+  -> [Integer]
+  -> [Integer]
+  -> [Integer]
+  -> ProtocolLatencyBenchmark
+buildLatencyBenchmark windowLabel rawTotal rawCommitToOracle rawOracleToFinalize =
+  let sortedTotal = sort (filter (>= 0) rawTotal)
+      count = length sortedTotal
+      atPct xs p =
+        let c = length xs
+         in xs !! min (c - 1) ((c * p + 99) `div` 100 - 1)
+      medianSigned xs =
+        case sort xs of
+          [] -> Nothing
+          ys -> Just (atPct ys 50)
+   in case sortedTotal of
+        [] ->
+          ProtocolLatencyBenchmark
+            windowLabel [] 0 Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        _ ->
+          ProtocolLatencyBenchmark
+            { plbWindowLabel = windowLabel
+            , plbSamples = sortedTotal
+            , plbSampleCount = count
+            , plbMinSeconds = Just (head sortedTotal)
+            , plbP25Seconds = Just (atPct sortedTotal 25)
+            , plbP50Seconds = Just (atPct sortedTotal 50)
+            , plbP75Seconds = Just (atPct sortedTotal 75)
+            , plbP95Seconds = Just (atPct sortedTotal 95)
+            , plbP99Seconds = Just (atPct sortedTotal 99)
+            , plbMaxSeconds = Just (last sortedTotal)
+            , plbP50CommitToOracleSeconds = medianSigned rawCommitToOracle
+            , plbP50OracleToFinalizeSeconds = medianSigned rawOracleToFinalize
+            }
+
+getCachedProtocolLatencyBenchmark :: DbPool -> Integer -> Text -> IO (Maybe ProtocolLatencyBenchmark)
+getCachedProtocolLatencyBenchmark pool chainId router =
+  snd
+    <$> runSingleFlightCache
+      protocolLatencyBenchmarkCache
+      (chainId, router)
+      (maybe False (\b -> plbSampleCount b > 0))
+      (fetchProtocolLatencyBenchmark pool chainId router)
+
+fetchProtocolLatencyBenchmark :: DbPool -> Integer -> Text -> IO (Maybe ProtocolLatencyBenchmark)
+fetchProtocolLatencyBenchmark pool chainId router = do
+  now <- floor <$> getPOSIXTime :: IO Integer
+  let since7d = now - 7 * 86400
+      since30d = now - 30 * 86400
+      fetchWindow :: Connection -> Integer -> IO [(Integer, Maybe Integer, Maybe Integer)]
+      fetchWindow conn sinceTs =
+        query
+          conn
+          "SELECT \
+          \  GREATEST(0, terminal_timestamp - commit_timestamp), \
+          \  CASE WHEN oracle_max_publish_time IS NOT NULL THEN oracle_max_publish_time - commit_timestamp ELSE NULL END, \
+          \  CASE WHEN oracle_max_publish_time IS NOT NULL THEN terminal_timestamp - oracle_max_publish_time ELSE NULL END \
+          \FROM perps_orders \
+          \WHERE chain_id = ? AND order_router = ? \
+          \  AND terminal_status = 'Executed' \
+          \  AND commit_timestamp IS NOT NULL AND terminal_timestamp IS NOT NULL \
+          \  AND terminal_timestamp >= commit_timestamp \
+          \  AND terminal_timestamp >= ? \
+          \ORDER BY terminal_timestamp DESC \
+          \LIMIT 5000"
+          (chainId, router, sinceTs)
+  (windowLabel, rows) <-
+    withDb pool $ \conn -> do
+      rows7d <- fetchWindow conn since7d
+      if length rows7d >= 20
+        then pure ("7d" :: Text, rows7d)
+        else do
+          rows30d <- fetchWindow conn since30d
+          pure (if null rows30d then "7d" else "30d", rows30d)
+  let totals = [t | (t, _, _) <- rows]
+      cToO = [d | (_, Just d, _) <- rows]
+      oToF = [d | (_, _, Just d) <- rows]
+      bench = buildLatencyBenchmark windowLabel totals cToO oToF
+  pure $ if plbSampleCount bench > 0 then Just bench else Nothing
+
+protocolLatencyBenchmarkToJson :: ProtocolLatencyBenchmark -> Value
+protocolLatencyBenchmarkToJson ProtocolLatencyBenchmark {..} =
+  object
+    [ "windowLabel" .= plbWindowLabel
+    , "sampleCount" .= plbSampleCount
+    , "minSeconds" .= plbMinSeconds
+    , "p25Seconds" .= plbP25Seconds
+    , "p50Seconds" .= plbP50Seconds
+    , "p75Seconds" .= plbP75Seconds
+    , "p95Seconds" .= plbP95Seconds
+    , "p99Seconds" .= plbP99Seconds
+    , "maxSeconds" .= plbMaxSeconds
+    , "p50CommitToOracleSeconds" .= plbP50CommitToOracleSeconds
+    , "p50OracleToFinalizeSeconds" .= plbP50OracleToFinalizeSeconds
+    ]
 
 rateBps :: Integer -> Integer -> Maybe Int
 rateBps numerator denominator
@@ -1557,10 +1696,15 @@ batchSummaryToJson orders =
         , "oracleFrozen" .= oracleFrozen
         ]
 
-finalizedOrderToJson :: OrderProtectionsBundle -> FinalizedOrderRow -> Value
-finalizedOrderToJson protBundle FinalizedOrderRow {..} =
+finalizedOrderToJson :: OrderProtectionsBundle -> Maybe ProtocolLatencyBenchmark -> FinalizedOrderRow -> Value
+finalizedOrderToJson protBundle mBench FinalizedOrderRow {..} =
   let latencySecs = (\t c -> max 0 (t - c)) <$> forTerminalTimestamp <*> forCommitTimestamp
       latencyBlks = (\t c -> max 0 (t - c)) <$> forTerminalBlock <*> forCommitBlock
+      oracleSpread = (\mx mn -> max 0 (mx - mn)) <$> forOracleMaxPublishTime <*> forOracleMinPublishTime
+      commitToOracleMin = (\mn c -> mn - c) <$> forOracleMinPublishTime <*> forCommitTimestamp
+      commitToOracleMax = (\mx c -> mx - c) <$> forOracleMaxPublishTime <*> forCommitTimestamp
+      oracleToFinalize = (\t mx -> t - mx) <$> forTerminalTimestamp <*> forOracleMaxPublishTime
+      mLatencyPct = latencySecs >>= \s -> mBench >>= \b -> computeLatencyPercentileRank (plbSamples b) s
       mOrderProtections = buildOrderProtectionsForOrder protBundle forOrderId
    in object
         [ "orderId" .= show forOrderId
@@ -1569,8 +1713,17 @@ finalizedOrderToJson protBundle FinalizedOrderRow {..} =
         , "commitTxHash" .= forCommitTxHash
         , "commitBlock" .= (show <$> forCommitBlock)
         , "commitAt" .= (isoTimestamp <$> forCommitTimestamp)
+        , "finalizedBlock" .= (show <$> forTerminalBlock)
+        , "finalizedAt" .= (isoTimestamp <$> forTerminalTimestamp)
+        , "oracleMinPublishTime" .= (isoTimestamp <$> forOracleMinPublishTime)
+        , "oracleMaxPublishTime" .= (isoTimestamp <$> forOracleMaxPublishTime)
+        , "oracleSpreadSeconds" .= oracleSpread
+        , "commitToOracleMinSeconds" .= commitToOracleMin
+        , "commitToOracleMaxSeconds" .= commitToOracleMax
+        , "oracleToFinalizeSeconds" .= oracleToFinalize
         , "latencySeconds" .= latencySecs
         , "latencyBlocks" .= latencyBlks
+        , "latencyPercentile" .= mLatencyPct
         , "terminalStatus" .= forTerminalStatus
         , "terminalReason" .= forTerminalReason
         , "failureReason" .= forFailureReason

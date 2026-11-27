@@ -164,6 +164,20 @@ export interface TransactionBatchSummary {
   oracleFrozen: boolean
 }
 
+export interface ProtocolLatencyBenchmark {
+  windowLabel: string
+  sampleCount: number
+  minSeconds: number | null
+  p25Seconds: number | null
+  p50Seconds: number | null
+  p75Seconds: number | null
+  p95Seconds: number | null
+  p99Seconds: number | null
+  maxSeconds: number | null
+  p50CommitToOracleSeconds: number | null
+  p50OracleToFinalizeSeconds: number | null
+}
+
 export interface FinalizedOrderRecord {
   orderId: string
   account: string | null
@@ -171,8 +185,17 @@ export interface FinalizedOrderRecord {
   commitTxHash: string | null
   commitBlock: string | null
   commitAt: string | null
+  finalizedBlock?: string | null
+  finalizedAt?: string | null
+  oracleMinPublishTime?: string | null
+  oracleMaxPublishTime?: string | null
+  oracleSpreadSeconds?: number | null
+  commitToOracleMinSeconds?: number | null
+  commitToOracleMaxSeconds?: number | null
+  oracleToFinalizeSeconds?: number | null
   latencySeconds: number | null
   latencyBlocks: number | null
+  latencyPercentile?: number | null
   terminalStatus: string
   terminalReason: string | null
   failureReason: string | null
@@ -216,6 +239,7 @@ export interface TransactionDetailsResponse {
   occurredAt: string
   executorAddress?: string | null
   batchSummary?: TransactionBatchSummary | null
+  latencyBenchmark?: ProtocolLatencyBenchmark | null
   finalizedOrders?: FinalizedOrderRecord[]
   protocolEvents?: ProtocolEventRecord[]
   lpSettlement?: TxLpSettlementRecord | null

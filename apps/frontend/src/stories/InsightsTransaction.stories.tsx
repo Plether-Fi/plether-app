@@ -39,6 +39,19 @@ const BATCH_FINALIZATION: TransactionDetailsResponse = {
     oraclePrice: '94589000',
     oracleFrozen: false,
   },
+  latencyBenchmark: {
+    windowLabel: '7d',
+    sampleCount: 1420,
+    minSeconds: 1,
+    p25Seconds: 1,
+    p50Seconds: 2,
+    p75Seconds: 3,
+    p95Seconds: 5,
+    p99Seconds: 9,
+    maxSeconds: 18,
+    p50CommitToOracleSeconds: 1,
+    p50OracleToFinalizeSeconds: 1,
+  },
   finalizedOrders: [
     {
       orderId: '10421',
@@ -47,8 +60,17 @@ const BATCH_FINALIZATION: TransactionDetailsResponse = {
       commitTxHash: '0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f60001',
       commitBlock: '333079609',
       commitAt: '2026-11-27T06:22:08Z',
+      finalizedBlock: '333079617',
+      finalizedAt: '2026-11-27T06:22:10Z',
+      oracleMinPublishTime: '2026-11-27T06:22:08Z',
+      oracleMaxPublishTime: '2026-11-27T06:22:09Z',
+      oracleSpreadSeconds: 1,
+      commitToOracleMinSeconds: 0,
+      commitToOracleMaxSeconds: 1,
+      oracleToFinalizeSeconds: 1,
       latencySeconds: 2,
       latencyBlocks: 8,
+      latencyPercentile: 42,
       terminalStatus: 'Executed',
       terminalReason: 'Executed',
       failureReason: null,
@@ -167,8 +189,17 @@ const BATCH_FINALIZATION: TransactionDetailsResponse = {
       commitTxHash: '0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f60002',
       commitBlock: '333079610',
       commitAt: '2026-11-27T06:22:08Z',
+      finalizedBlock: '333079617',
+      finalizedAt: '2026-11-27T06:22:10Z',
+      oracleMinPublishTime: '2026-11-27T06:22:08Z',
+      oracleMaxPublishTime: '2026-11-27T06:22:09Z',
+      oracleSpreadSeconds: 1,
+      commitToOracleMinSeconds: 0,
+      commitToOracleMaxSeconds: 1,
+      oracleToFinalizeSeconds: 1,
       latencySeconds: 2,
       latencyBlocks: 7,
+      latencyPercentile: 42,
       terminalStatus: 'Executed',
       terminalReason: 'Executed',
       failureReason: null,
@@ -187,8 +218,17 @@ const BATCH_FINALIZATION: TransactionDetailsResponse = {
       commitTxHash: '0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f60003',
       commitBlock: '333079595',
       commitAt: '2026-11-27T06:22:05Z',
+      finalizedBlock: '333079617',
+      finalizedAt: '2026-11-27T06:22:10Z',
+      oracleMinPublishTime: '2026-11-27T06:22:08Z',
+      oracleMaxPublishTime: '2026-11-27T06:22:09Z',
+      oracleSpreadSeconds: 1,
+      commitToOracleMinSeconds: 3,
+      commitToOracleMaxSeconds: 4,
+      oracleToFinalizeSeconds: 1,
       latencySeconds: 5,
       latencyBlocks: 22,
+      latencyPercentile: 95,
       terminalStatus: 'Expired',
       terminalReason: 'Expired',
       failureReason: '2',
@@ -336,9 +376,14 @@ function TransactionStoryHarness({ data }: { data: TransactionDetailsResponse })
     const qc = new QueryClient({
       defaultOptions: {
         queries: {
+          enabled: false,
           retry: false,
           staleTime: Infinity,
+          gcTime: Infinity,
           refetchInterval: false,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
         },
       },
     })
@@ -348,6 +393,14 @@ function TransactionStoryHarness({ data }: { data: TransactionDetailsResponse })
       latestIndexedBlock: Number(data.blockNumber),
       latestIndexedAt: data.occurredAt,
       chainId: data.network.chainId,
+    })
+    qc.setQueryData(['insights', 'divisions', 'live'], {
+      status: 'ready',
+      snapshotBlock: data.blockNumber,
+      snapshotAt: data.occurredAt,
+      scoringRelease: { version: data.network.releaseVersion, assetSymbol: 'USDG' },
+      walletCount: 42,
+      standings: [],
     })
     return qc
   }, [data])
@@ -381,6 +434,50 @@ type Story = StoryObj<typeof TransactionStoryHarness>
 
 export const BatchFinalizationMultiOrder: Story = {
   args: { data: BATCH_FINALIZATION },
+}
+
+export const SlowTailOrderTiming: Story = {
+  args: {
+    data: {
+      ...BATCH_FINALIZATION,
+      txKind: 'order_finalization',
+      batchSummary: {
+        ...BATCH_FINALIZATION.batchSummary!,
+        totalOrders: 1,
+        executedOrders: 1,
+        failedOrExpiredOrders: 0,
+        uniqueAccounts: 1,
+        minLatencySeconds: 7,
+        medianLatencySeconds: 7,
+        maxLatencySeconds: 7,
+        oracleMinPublishTime: '2026-11-27T06:22:04Z',
+        oracleMaxPublishTime: '2026-11-27T06:22:05Z',
+        oracleSpreadSeconds: 1,
+      },
+      finalizedOrders: [
+        {
+          ...BATCH_FINALIZATION.finalizedOrders![0],
+          commitAt: '2026-11-27T06:22:03Z',
+          finalizedAt: '2026-11-27T06:22:10Z',
+          oracleMinPublishTime: '2026-11-27T06:22:04Z',
+          oracleMaxPublishTime: '2026-11-27T06:22:05Z',
+          oracleSpreadSeconds: 1,
+          commitToOracleMinSeconds: 1,
+          commitToOracleMaxSeconds: 2,
+          oracleToFinalizeSeconds: 5,
+          latencySeconds: 7,
+          latencyBlocks: 28,
+          latencyPercentile: 97,
+        },
+      ],
+      events: [
+        {
+          ...BATCH_FINALIZATION.events[0],
+          latencySeconds: 7,
+        },
+      ],
+    },
+  },
 }
 
 export const LpSettlementTransaction: Story = {
