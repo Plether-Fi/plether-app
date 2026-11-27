@@ -172,6 +172,7 @@ getOracleHealthResponse pool client cfg = do
         | looFadWindow onChain == Just True = "FAD"
         | looTradingActive onChain == Just True = "Live"
         | otherwise = "Unknown"
+      overallStatus :: Text
       overallStatus
         | looOracleFrozen onChain == Just True = "frozen"
         | rejected24hTotal > 0 && admitted24hTotal == 0 = "degraded"
@@ -446,15 +447,16 @@ buildAdmissionChecks components mSpread mAge mMaxConf mBasketPrice stalenessLimi
           "PletherOracle.getOrderExecutionPolicy(open/close) and PerpsPublicLens status"
       ]
   where
+    checkObj :: Text -> Text -> Text -> Text -> Text -> Integer -> Text -> Value
     checkObj key label st threshold current rej24h desc =
       object
-        [ "key" .= (key :: Text)
-        , "label" .= (label :: Text)
+        [ "key" .= key
+        , "label" .= label
         , "status" .= st
-        , "threshold" .= (threshold :: Text)
-        , "currentValue" .= (current :: Text)
+        , "threshold" .= threshold
+        , "currentValue" .= current
         , "rejections24h" .= rej24h
-        , "description" .= (desc :: Text)
+        , "description" .= desc
         ]
 
 fetchLiveOracleOnChain :: EthClient -> IO LiveOracleOnChain

@@ -576,17 +576,18 @@ buildExecutionChecks mIntent mOutcome =
       bountyCheck =
         case mIntent >>= ibdMaxExecutionBountyAssets of
           Just maxB ->
-            upperBoundCheck
-              "max_execution_bounty"
-              "core"
-              "Max keeper bounty"
-              "Execution bounty"
-              "usdg"
-              uint256Max
-              maxB
-              bountyActual
-              failConstraint
-              isExecuted
+            Just $
+              upperBoundCheck
+                "max_execution_bounty"
+                "core"
+                "Max keeper bounty"
+                "Execution bounty"
+                "usdg"
+                uint256Max
+                maxB
+                bountyActual
+                failConstraint
+                isExecuted
           Nothing -> Nothing
 
       explicitFeesActual = case (receiptInt "executionFeeAssets", receiptInt "frozenSpreadAssets") of
