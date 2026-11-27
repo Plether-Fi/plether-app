@@ -100,6 +100,58 @@ export interface ProtocolContractRecord {
   actualCodeHash: string | null
   verified: boolean | null
   sourcePath?: string | null
+  usdgBalanceAssets?: string | null
+}
+
+export interface ProtocolTvlBucket {
+  key: string
+  label: string
+  detail: string
+  assets: string
+  shareBps: number | null
+  addressCount: number
+}
+
+export interface ProtocolTvlContractHolding {
+  key: string
+  name: string
+  category: ProtocolContractCategory
+  address: string
+  assets: string
+  shareBps: number | null
+}
+
+export interface ProtocolTvlKernelAccount {
+  address: string
+  assets: string
+  shareBps: number | null
+}
+
+export interface ProtocolTvlSummary {
+  available: boolean
+  isComplete: boolean
+  verifiedAtBlock: string
+  settlementAssetSymbol: string
+  totalTvlAssets?: string
+  protocolContractsTvlAssets?: string
+  lpVaultsTvlAssets?: string
+  housePoolAssets?: string
+  seniorVaultAssets?: string
+  juniorVaultAssets?: string
+  marginClearinghouseAssets?: string
+  otherContractsAssets?: string
+  kernelTradingAccountsAssets?: string
+  totalTraderMarginAssets?: string
+  contractsTracked?: number
+  contractsWithBalance?: number
+  contractsFailedReads?: number
+  kernelAccountsAvailable?: boolean
+  kernelAccountsTracked?: number
+  kernelAccountsFunded?: number
+  kernelAccountsFailedReads?: number
+  buckets?: ProtocolTvlBucket[]
+  contractHoldings?: ProtocolTvlContractHolding[]
+  topKernelAccounts?: ProtocolTvlKernelAccount[]
 }
 
 export const PROTOCOL_CORE_GITHUB_REPO = 'Plether-Fi/plether-core'
@@ -204,6 +256,7 @@ export interface ProtocolManifestResponse {
   release: ProtocolReleaseMetadata
   settlementToken: ProtocolSettlementToken
   safety: ProtocolSafetyStatus
+  tvl?: ProtocolTvlSummary
   verification: ProtocolVerificationSummary
   parameters: ProtocolParameterRecord[]
   contracts: ProtocolContractRecord[]

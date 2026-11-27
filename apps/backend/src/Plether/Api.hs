@@ -665,7 +665,7 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
       Nothing -> insightsUnavailable
 
   get "/api/insights/v1/protocol/manifest" $
-    liftIO (getProtocolManifestResponse perpsClient cfg) >>= handleResult
+    liftIO (getProtocolManifestResponse mPool perpsClient cfg kernelAa) >>= handleResult
 
   get "/api/insights/v1/oracle/health" $
     case mPool of

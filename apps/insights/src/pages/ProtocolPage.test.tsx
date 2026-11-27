@@ -53,6 +53,80 @@ const sampleManifest: ProtocolManifestResponse = {
     housePoolPaused: false,
     degradedMode: false,
   },
+  tvl: {
+    available: true,
+    isComplete: true,
+    verifiedAtBlock: '332900000',
+    settlementAssetSymbol: 'USDG',
+    totalTvlAssets: '1000000000000',
+    protocolContractsTvlAssets: '855000000000',
+    lpVaultsTvlAssets: '650000000000',
+    housePoolAssets: '500000000000',
+    seniorVaultAssets: '100000000000',
+    juniorVaultAssets: '50000000000',
+    marginClearinghouseAssets: '200000000000',
+    otherContractsAssets: '5000000000',
+    kernelTradingAccountsAssets: '145000000000',
+    totalTraderMarginAssets: '345000000000',
+    contractsTracked: 3,
+    contractsWithBalance: 2,
+    contractsFailedReads: 0,
+    kernelAccountsAvailable: true,
+    kernelAccountsTracked: 12,
+    kernelAccountsFunded: 5,
+    kernelAccountsFailedReads: 0,
+    buckets: [
+      {
+        key: 'lp_vaults',
+        label: 'LP Liquidity Pools',
+        detail: 'HousePool, Senior Vault & Junior Vault',
+        assets: '650000000000',
+        shareBps: 6500,
+        addressCount: 3,
+      },
+      {
+        key: 'margin_clearinghouse',
+        label: 'Margin Clearinghouse',
+        detail: 'Deposited trader collateral, locked position margin & claims',
+        assets: '200000000000',
+        shareBps: 2000,
+        addressCount: 1,
+      },
+      {
+        key: 'kernel_v4_accounts',
+        label: 'Kernel v4 Trading Accounts',
+        detail: 'User margin held directly in ZeroDev Kernel v4 smart wallets',
+        assets: '145000000000',
+        shareBps: 1450,
+        addressCount: 5,
+      },
+      {
+        key: 'other_contracts',
+        label: 'Other Protocol Contracts',
+        detail: 'Remaining pinned protocol release contracts',
+        assets: '5000000000',
+        shareBps: 50,
+        addressCount: 1,
+      },
+    ],
+    contractHoldings: [
+      {
+        key: 'housePool',
+        name: 'HousePool',
+        category: 'liquidity',
+        address: '0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e',
+        assets: '500000000000',
+        shareBps: 5000,
+      },
+    ],
+    topKernelAccounts: [
+      {
+        address: '0x1111111111111111111111111111111111111111',
+        assets: '95000000000',
+        shareBps: 950,
+      },
+    ],
+  },
   verification: {
     totalContracts: 3,
     verifiedCount: 3,
@@ -128,6 +202,7 @@ const sampleManifest: ProtocolManifestResponse = {
       expectedCodeHash: '0x5e684cc82bfc5b697a24c80ef26910cfbe25efbe6fb2ca184c421808b5ced957',
       actualCodeHash: '0x5e684cc82bfc5b697a24c80ef26910cfbe25efbe6fb2ca184c421808b5ced957',
       verified: true,
+      usdgBalanceAssets: '500000000000',
     },
     {
       key: 'emergencyPauseCoordinator',
@@ -257,6 +332,18 @@ describe('ProtocolPage (Stage 4 Contracts, Parameters & Safety Controls)', () =>
       'href',
       'https://github.com/Plether-Fi/plether-core/commit/1209ca8a5b94a4fb6323c7c4585846ed93db3932',
     )
+
+    // Total Protocol TVL including protocol contracts and Kernel v4 trading accounts
+    expect(
+      screen.getByRole('heading', { name: /Total Protocol TVL/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('1,000,000.00 USDG')).toBeInTheDocument()
+    expect(screen.getByText('Complete on-chain sum')).toBeInTheDocument()
+    expect(screen.getAllByText('145,000.00 USDG').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('345,000.00 USDG')).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: '0x1111…1111' }),
+    ).toHaveAttribute('href', '/trading-accounts/0x1111111111111111111111111111111111111111')
   })
 
   it('fails closed cleanly when Stage 4 backend endpoint returns 404', () => {

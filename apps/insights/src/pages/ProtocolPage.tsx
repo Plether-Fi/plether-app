@@ -27,7 +27,13 @@ import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
 import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
-import { formatPrice, formatUtc, shortAddress } from '../utils/format'
+import {
+  formatAssets,
+  formatCompactAssets,
+  formatPrice,
+  formatUtc,
+  shortAddress,
+} from '../utils/format'
 
 type ParamFilter = 'all' | ProtocolParameterCategory
 type ContractFilter = 'all' | ProtocolContractCategory
@@ -55,6 +61,24 @@ const CONTRACT_CATEGORY_LABEL: Record<ProtocolContractCategory, string> = {
   liquidity: 'Liquidity',
   oracle: 'Oracle & Lenses',
   safety: 'Safety & Admin',
+}
+
+const TVL_BUCKET_COLORS: Record<string, string> = {
+  lp_vaults: '#6EE7B7',
+  margin_clearinghouse: '#FFB78B',
+  kernel_v4_accounts: '#7CC4FA',
+  other_contracts: '#C4B5FD',
+}
+
+function formatTvlShareBps(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps)) return '0.00%'
+  return `${(bps / 100).toFixed(2)}%`
+}
+
+function formatTvlAssetDisplay(raw: string | null | undefined): string {
+  if (!raw || !/^\d+$/.test(raw)) return '—'
+  const val = BigInt(raw)
+  return val >= 10_000_000_000_000n ? formatCompactAssets(raw) : formatAssets(raw)
 }
 
 function paramStatusPill(status: ProtocolParameterStatus): { tone: StatusTone; label: string } {
@@ -312,6 +336,21 @@ function ContractRow({
             />
           ) : null}
         </div>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3.5 align-top text-right font-mono text-xs tabular-nums">
+        {contract.usdgBalanceAssets != null ? (
+          <span
+            className={
+              contract.usdgBalanceAssets !== '0'
+                ? 'font-semibold text-content-primary'
+                : 'text-content-tertiary'
+            }
+          >
+            {formatAssets(contract.usdgBalanceAssets)}
+          </span>
+        ) : (
+          <span className="text-content-tertiary">—</span>
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-3.5 align-top font-mono text-xs text-content-secondary">
         <div title={hashTitle}>
@@ -604,6 +643,299 @@ export function ProtocolPage() {
         />
       ) : (
         <>
+          {data.tvl ? (
+            <section aria-labelledby="protocol-tvl-title" className="space-y-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <div>
+                  <h2 id="protocol-tvl-title" className="text-lg font-semibold">
+                    Total Protocol TVL (Contracts &amp; Kernel v4 User Margin)
+                  </h2>
+                  <p className="mt-1 text-xs text-content-tertiary">
+                    Atomic on-chain <code className="font-mono">USDG.balanceOf</code> sum at block{' '}
+                    {Number(data.tvl.verifiedAtBlock).toLocaleString('en-US')} across all pinned
+                    protocol contracts and ZeroDev Kernel v4 trading accounts — strictly disjoint
+                    with zero double counting
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill
+                    tone={
+                      !data.tvl.available
+                        ? 'unknown'
+                        : data.tvl.isComplete
+                          ? 'live'
+                          : 'degraded'
+                    }
+                    label={
+                      !data.tvl.available
+                        ? 'TVL unavailable'
+                        : data.tvl.isComplete
+                          ? 'Complete on-chain sum'
+                          : 'Partial snapshot'
+                    }
+                  />
+                  <Link
+                    to="/trading-accounts"
+                    className="font-mono text-xs font-semibold text-brand-peach hover:underline"
+                  >
+                    Kernel v4 accounts →
+                  </Link>
+                </div>
+              </div>
+
+              {data.tvl.available && data.tvl.totalTvlAssets != null ? (
+                <Panel className="space-y-5 p-4 sm:p-6">
+                  <div className="flex flex-wrap items-end justify-between gap-4 border-b border-brand-border/20 pb-5">
+                    <div className="min-w-0">
+                      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                        Total Value Locked (All Contracts + Kernel v4 Margin)
+                      </p>
+                      <p className="mt-1 break-words font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                        {formatAssets(data.tvl.totalTvlAssets)}
+                      </p>
+                    </div>
+
+                    <div className="grid w-full grid-cols-1 gap-3 font-mono text-xs sm:w-auto sm:grid-cols-3">
+                      <div className="border border-brand-border/20 bg-app-bg px-3.5 py-2.5">
+                        <div className="text-[11px] text-content-tertiary">Protocol contracts</div>
+                        <div className="mt-0.5 font-semibold tabular-nums text-content-primary">
+                          {formatTvlAssetDisplay(data.tvl.protocolContractsTvlAssets)}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-content-tertiary">
+                          {String(data.tvl.contractsWithBalance ?? 0)} funded /{' '}
+                          {String(data.tvl.contractsTracked ?? data.contracts.length)} pinned
+                        </div>
+                      </div>
+                      <div className="border border-brand-border/20 bg-app-bg px-3.5 py-2.5">
+                        <div className="text-[11px] text-content-tertiary">
+                          Kernel v4 smart wallets
+                        </div>
+                        <div className="mt-0.5 font-semibold tabular-nums text-[#7CC4FA]">
+                          {formatTvlAssetDisplay(data.tvl.kernelTradingAccountsAssets)}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-content-tertiary">
+                          {data.tvl.kernelAccountsAvailable
+                            ? `${String(data.tvl.kernelAccountsFunded ?? 0)} funded / ${String(data.tvl.kernelAccountsTracked ?? 0)} tracked`
+                            : 'Account ledger unavailable'}
+                        </div>
+                      </div>
+                      <div className="border border-brand-border/20 bg-app-bg px-3.5 py-2.5">
+                        <div className="text-[11px] text-content-tertiary">
+                          Combined user margin
+                        </div>
+                        <div className="mt-0.5 font-semibold tabular-nums text-brand-peach">
+                          {formatTvlAssetDisplay(data.tvl.totalTraderMarginAssets)}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-content-tertiary">
+                          Clearinghouse + Kernel v4
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {data.tvl.buckets && data.tvl.buckets.length > 0 ? (
+                    <div className="space-y-4">
+                      <div
+                        className="flex h-3 w-full overflow-hidden bg-app-bg ring-1 ring-inset ring-brand-border/25"
+                        role="img"
+                        aria-label="Protocol TVL distribution across LP pools, Margin Clearinghouse, Kernel v4 trading accounts, and other contracts"
+                      >
+                        {data.tvl.buckets.map((bucket) => {
+                          const sharePct =
+                            bucket.shareBps != null ? Math.max(0, bucket.shareBps / 100) : 0
+                          if (sharePct <= 0) return null
+                          const color = TVL_BUCKET_COLORS[bucket.key] ?? '#FFB78B'
+                          return (
+                            <div
+                              key={bucket.key}
+                              style={{
+                                width: `${sharePct.toFixed(2)}%`,
+                                backgroundColor: color,
+                              }}
+                              title={`${bucket.label}: ${formatAssets(bucket.assets)} (${formatTvlShareBps(bucket.shareBps)})`}
+                              className="h-full border-r border-surface-panel/70 last:border-r-0"
+                            />
+                          )
+                        })}
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {data.tvl.buckets.map((bucket) => {
+                          const color = TVL_BUCKET_COLORS[bucket.key] ?? '#FFB78B'
+                          const isLp = bucket.key === 'lp_vaults'
+                          return (
+                            <div
+                              key={bucket.key}
+                              className="flex min-w-0 flex-col justify-between border border-brand-border/25 bg-app-bg p-3.5"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <span
+                                      className="h-2.5 w-2.5 shrink-0"
+                                      style={{ backgroundColor: color }}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="truncate text-xs font-semibold text-content-primary">
+                                      {bucket.label}
+                                    </span>
+                                  </div>
+                                  <span className="shrink-0 font-mono text-xs font-semibold tabular-nums text-content-secondary">
+                                    {formatTvlShareBps(bucket.shareBps)}
+                                  </span>
+                                </div>
+                                <div className="mt-2 break-words font-mono text-base font-bold tabular-nums text-content-primary">
+                                  {formatTvlAssetDisplay(bucket.assets)}
+                                </div>
+                                <p className="mt-1 text-[11px] leading-4 text-content-tertiary">
+                                  {bucket.detail}
+                                </p>
+                              </div>
+
+                              {isLp ? (
+                                <div className="mt-2.5 space-y-0.5 border-t border-brand-border/15 pt-2 font-mono text-[10px] tabular-nums text-content-tertiary">
+                                  <div className="flex justify-between gap-2">
+                                    <span>HousePool</span>
+                                    <span className="text-content-secondary">
+                                      {formatTvlAssetDisplay(data.tvl?.housePoolAssets)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between gap-2">
+                                    <span>Senior Vault</span>
+                                    <span className="text-content-secondary">
+                                      {formatTvlAssetDisplay(data.tvl?.seniorVaultAssets)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between gap-2">
+                                    <span>Junior Vault</span>
+                                    <span className="text-content-secondary">
+                                      {formatTvlAssetDisplay(data.tvl?.juniorVaultAssets)}
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-2.5 border-t border-brand-border/15 pt-2 font-mono text-[10px] text-content-tertiary">
+                                  {bucket.key === 'kernel_v4_accounts'
+                                    ? `${String(bucket.addressCount)} funded wallet${bucket.addressCount === 1 ? '' : 's'} of ${String(data.tvl?.kernelAccountsTracked ?? 0)} tracked`
+                                    : `${String(bucket.addressCount)} funded contract${bucket.addressCount === 1 ? '' : 's'}`}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-4 border-t border-brand-border/20 pt-5 lg:grid-cols-2">
+                    <div className="min-w-0 space-y-2.5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                          Funded Protocol Contracts
+                        </h3>
+                        <span className="font-mono text-[11px] text-content-tertiary">
+                          {String(data.tvl.contractHoldings?.length ?? 0)} holding USDG
+                        </span>
+                      </div>
+                      {data.tvl.contractHoldings && data.tvl.contractHoldings.length > 0 ? (
+                        <ul className="divide-y divide-brand-border/15 border border-brand-border/20 bg-app-bg">
+                          {data.tvl.contractHoldings.map((holding) => (
+                            <li
+                              key={holding.key}
+                              className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold text-content-primary">
+                                    {holding.name}
+                                  </span>
+                                  <span className="font-mono text-[11px] text-content-tertiary">
+                                    {shortAddress(holding.address)}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-baseline gap-2.5 font-mono tabular-nums">
+                                <span className="font-semibold text-content-primary">
+                                  {formatAssets(holding.assets)}
+                                </span>
+                                <span className="w-14 text-right text-[11px] text-content-tertiary">
+                                  {formatTvlShareBps(holding.shareBps)}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="border border-brand-border/20 bg-app-bg px-3.5 py-4 text-xs text-content-tertiary">
+                          No pinned protocol contracts currently hold non-zero USDG balances.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0 space-y-2.5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7CC4FA]">
+                          Top Funded Kernel v4 Trading Accounts
+                        </h3>
+                        <span className="font-mono text-[11px] text-content-tertiary">
+                          {String(data.tvl.kernelAccountsFunded ?? 0)} funded /{' '}
+                          {String(data.tvl.kernelAccountsTracked ?? 0)} tracked
+                        </span>
+                      </div>
+                      {data.tvl.topKernelAccounts && data.tvl.topKernelAccounts.length > 0 ? (
+                        <ul className="divide-y divide-brand-border/15 border border-brand-border/20 bg-app-bg">
+                          {data.tvl.topKernelAccounts.map((acct) => (
+                            <li
+                              key={acct.address}
+                              className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 text-xs"
+                            >
+                              <div className="flex min-w-0 items-center gap-2">
+                                <AddressAvatar address={acct.address} size={16} />
+                                <Link
+                                  to={`/trading-accounts/${acct.address}`}
+                                  className="font-mono font-semibold text-brand-peach hover:underline"
+                                >
+                                  {shortAddress(acct.address)}
+                                </Link>
+                                <Link
+                                  to={`/wallets/${acct.address}`}
+                                  className="font-mono text-[11px] text-content-tertiary hover:text-content-primary hover:underline"
+                                >
+                                  wallet
+                                </Link>
+                              </div>
+                              <div className="flex shrink-0 items-baseline gap-2.5 font-mono tabular-nums">
+                                <span className="font-semibold text-content-primary">
+                                  {formatAssets(acct.assets)}
+                                </span>
+                                <span className="w-14 text-right text-[11px] text-content-tertiary">
+                                  {formatTvlShareBps(acct.shareBps)}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="border border-brand-border/20 bg-app-bg px-3.5 py-4 text-xs text-content-tertiary">
+                          {data.tvl.kernelAccountsAvailable
+                            ? 'All tracked Kernel v4 trading accounts currently hold 0.00 USDG outside MarginClearinghouse.'
+                            : 'Kernel v4 trading account ledger is currently unavailable.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Panel>
+              ) : (
+                <Panel className="p-5">
+                  <EmptyState
+                    title="Protocol TVL reads unavailable"
+                    message="Live on-chain USDG balance reads across protocol contracts and Kernel v4 trading accounts could not reach RPC."
+                  />
+                </Panel>
+              )}
+            </section>
+          ) : null}
+
           <section aria-labelledby="safety-controls-title" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div>
@@ -971,6 +1303,7 @@ export function ProtocolPage() {
                       <tr>
                         <th scope="col" className="px-4 py-3">Contract &amp; role</th>
                         <th scope="col" className="px-4 py-3">Address</th>
+                        <th scope="col" className="px-4 py-3 text-right">USDG balance</th>
                         <th scope="col" className="px-4 py-3">Pinned code hash</th>
                         <th scope="col" className="px-4 py-3 text-right">Bytecode</th>
                       </tr>

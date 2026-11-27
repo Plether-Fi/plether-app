@@ -3,7 +3,10 @@ module Plether.Handlers.InsightsProtocol
   , LiveEngineRiskParams (..)
   , ManifestContractSpec (..)
   , ContractCodeCheck (..)
+  , ProtocolTvlSummary (..)
   , getProtocolManifestResponse
+  , computeProtocolTvl
+  , computeTvlShareBps
   , decodeProtocolStatus
   , decodeEngineRiskParams
   , decodeSingleUint
@@ -16,23 +19,33 @@ module Plether.Handlers.InsightsProtocol
   ) where
 
 import Control.Concurrent.Async (Concurrently (..), mapConcurrently, runConcurrently)
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Data.Char (isHexDigit)
+import Data.Either (isRight)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Ord (Down (..))
 import Data.Scientific (Scientific, floatingOrInteger)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
+import Database.PostgreSQL.Simple (Only (..), query, query_)
+import Plether.AA.KernelGateway (KernelGatewayConfig (..), kernelScope)
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
-import Plether.Ethereum.Abi (decodeUint256, keccak256, selector)
+import Plether.Database (DbPool, withDb)
+import Plether.Database.KernelOperation (KernelScope (..))
+import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall, keccak256, selector)
 import Plether.Ethereum.Client
   ( CallParams (..)
   , EthClient
@@ -40,9 +53,12 @@ import Plether.Ethereum.Client
   , ethCallAtBlock
   , rpcCall
   )
+import qualified Plether.Ethereum.Multicall as Multicall
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import Plether.Utils.Hex (intToHex)
+import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 
 data LiveProtocolStatus = LiveProtocolStatus
   { lpsPhase :: Integer
@@ -83,6 +99,30 @@ data ContractCodeCheck = ContractCodeCheck
   }
   deriving stock (Eq, Show)
 
+data ProtocolTvlSummary = ProtocolTvlSummary
+  { ptsTotalTvlAssets :: Integer
+  , ptsProtocolContractsTvlAssets :: Integer
+  , ptsLpVaultsTvlAssets :: Integer
+  , ptsHousePoolAssets :: Integer
+  , ptsSeniorVaultAssets :: Integer
+  , ptsJuniorVaultAssets :: Integer
+  , ptsMarginClearinghouseAssets :: Integer
+  , ptsOtherContractsAssets :: Integer
+  , ptsKernelTradingAccountsAssets :: Integer
+  , ptsTotalTraderMarginAssets :: Integer
+  , ptsContractsTracked :: Int
+  , ptsContractsWithBalance :: Int
+  , ptsContractsFailedReads :: Int
+  , ptsKernelAccountsAvailable :: Bool
+  , ptsKernelAccountsTracked :: Int
+  , ptsKernelAccountsFunded :: Int
+  , ptsKernelAccountsFailedReads :: Int
+  , ptsIsComplete :: Bool
+  , ptsContractHoldings :: [(ManifestContractSpec, Integer)]
+  , ptsTopKernelAccounts :: [(Text, Integer)]
+  }
+  deriving stock (Eq, Show)
+
 data ParameterSpec = ParameterSpec
   { psKey :: Text
   , psCategory :: Text
@@ -94,18 +134,47 @@ data ParameterSpec = ParameterSpec
   , psLiveValue :: Maybe Text
   }
 
+{-# NOINLINE protocolManifestCache #-}
+protocolManifestCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+protocolManifestCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
+
 getProtocolManifestResponse
-  :: EthClient
+  :: Maybe DbPool
+  -> EthClient
   -> Config
+  -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
-getProtocolManifestResponse client cfg = do
+getProtocolManifestResponse mPool client cfg mKernel =
+  snd
+    <$> runSingleFlightCache
+      protocolManifestCache
+      ()
+      isRight
+      (computeProtocolManifestResponse mPool client cfg mKernel)
+
+computeProtocolManifestResponse
+  :: Maybe DbPool
+  -> EthClient
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> IO (Either ApiError (ApiResponse Value))
+computeProtocolManifestResponse mPool client cfg mKernel = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
       root = Manifest.manifestValue
       contracts = extractManifestContracts root
       economics = extractManifestEconomics root
-  latestBlockRes <- ethBlockNumber client
-  (rpcAvailable, verifiedBlock, liveStatus, housePoolPaused, degradedMode, liveParams, codeChecks) <-
+      contractAddressSet = Set.fromList (map (T.toLower . mcsAddress) contracts)
+      settlementToken = T.toLower Manifest.settlementTokenAddress
+
+  (latestBlockRes, (kernelDbAvailable, kernelAddresses)) <-
+    runConcurrently $
+      (,)
+        <$> Concurrently (ethBlockNumber client)
+        <*> Concurrently (fetchKnownKernelTradingAccounts mPool cfg mKernel contractAddressSet)
+
+  (rpcAvailable, verifiedBlock, liveStatus, housePoolPaused, degradedMode, liveParams, codeChecks, contractBalanceMap, mTvlSummary) <-
     case latestBlockRes of
       Left _ ->
         pure
@@ -116,6 +185,8 @@ getProtocolManifestResponse client cfg = do
           , Nothing
           , emptyLiveParams
           , map (const (ContractCodeCheck Nothing Nothing)) contracts
+          , Map.empty
+          , Nothing
           )
       Right blockNum -> do
         let callAt target sig =
@@ -128,9 +199,9 @@ getProtocolManifestResponse client cfg = do
             oracle = Manifest.pletherOracleAddress
             publicLens = Manifest.perpsPublicLensAddress
 
-        (statusRes, hpPaused, degMode, engineReads, routerReads, poolReads, oracleReads, checks) <-
+        (statusRes, hpPaused, degMode, engineReads, routerReads, poolReads, oracleReads, checks, contractBalances, kernelBalances) <-
           runConcurrently $
-            (,,,,,,,)
+            (,,,,,,,,,)
               <$> Concurrently (either (const Nothing) decodeProtocolStatus <$> callAt publicLens "getProtocolStatus()")
               <*> Concurrently (readBool housePool "paused()")
               <*> Concurrently (readBool engine "degradedMode()")
@@ -167,6 +238,16 @@ getProtocolManifestResponse client cfg = do
                       <*> Concurrently (readUint oracle "liquidationStalenessLimit()")
                 )
               <*> Concurrently (mapConcurrently (fetchContractCodeCheck client blockNum) contracts)
+              <*> Concurrently (fetchUsdgBalancesAtBlock client settlementToken blockNum (map mcsAddress contracts))
+              <*> Concurrently
+                ( if kernelDbAvailable
+                    then fetchUsdgBalancesAtBlock client settlementToken blockNum kernelAddresses
+                    else pure []
+                )
+
+        let contractPairs = zip contracts (map snd contractBalances)
+            balMap = Map.fromList [(T.toLower addr, mBal) | (addr, mBal) <- contractBalances]
+            tvlSummary = computeProtocolTvl contractPairs kernelDbAvailable kernelBalances
 
         pure
           ( True
@@ -176,9 +257,15 @@ getProtocolManifestResponse client cfg = do
           , degMode
           , LiveParameterReads engineReads routerReads poolReads oracleReads
           , checks
+          , balMap
+          , Just tvlSummary
           )
 
-  let contractEntries = zipWith contractEntryToJson contracts codeChecks
+  let contractEntries =
+        zipWith
+          (\spec chk -> contractEntryToJson spec chk (joinMaybe (Map.lookup (T.toLower (mcsAddress spec)) contractBalanceMap)))
+          contracts
+          codeChecks
       verifiedCount = length [() | ContractCodeCheck _ (Just True) <- codeChecks]
       mismatchCount = length [() | ContractCodeCheck _ (Just False) <- codeChecks]
       uncheckedCount = length [() | ContractCodeCheck _ Nothing <- codeChecks]
@@ -204,6 +291,7 @@ getProtocolManifestResponse client cfg = do
           , "release" .= extractReleaseMetadata root
           , "settlementToken" .= extractSettlementMetadata root
           , "safety" .= safetyToJson liveStatus housePoolPaused degradedMode
+          , "tvl" .= tvlSummaryToJson verifiedBlock mTvlSummary
           , "verification"
               .= object
                 [ "totalContracts" .= length contracts
@@ -646,8 +734,8 @@ extractSettlementMetadata root =
         , "address" .= T.toLower Manifest.settlementTokenAddress
         ]
 
-contractEntryToJson :: ManifestContractSpec -> ContractCodeCheck -> Value
-contractEntryToJson ManifestContractSpec {..} ContractCodeCheck {..} =
+contractEntryToJson :: ManifestContractSpec -> ContractCodeCheck -> Maybe Integer -> Value
+contractEntryToJson ManifestContractSpec {..} ContractCodeCheck {..} mUsdgBalance =
   let (displayName, category, role) = contractMetadata mcsKey
    in object
         [ "key" .= mcsKey
@@ -658,7 +746,329 @@ contractEntryToJson ManifestContractSpec {..} ContractCodeCheck {..} =
         , "expectedCodeHash" .= mcsExpectedCodeHash
         , "actualCodeHash" .= cccActualCodeHash
         , "verified" .= cccVerified
+        , "usdgBalanceAssets" .= (show <$> mUsdgBalance)
         ]
+
+computeTvlShareBps :: Integer -> Integer -> Maybe Int
+computeTvlShareBps part total
+  | total <= 0 || part < 0 = Nothing
+  | otherwise = Just $ fromInteger ((part * 10000 + total `div` 2) `div` total)
+
+computeProtocolTvl
+  :: [(ManifestContractSpec, Maybe Integer)]
+  -> Bool
+  -> [(Text, Maybe Integer)]
+  -> ProtocolTvlSummary
+computeProtocolTvl rawContractPairs kernelAvailable rawKernelPairs =
+  let dedupContracts = dedupByKey (T.toLower . mcsAddress . fst) rawContractPairs
+      contractAddrSet = Set.fromList [T.toLower (mcsAddress spec) | (spec, _) <- dedupContracts]
+      contractFailed = length [() | (_, Nothing) <- dedupContracts]
+      contractValFor k =
+        sum [bal | (spec, Just bal) <- dedupContracts, mcsKey spec == k, bal > 0]
+      housePoolBal = contractValFor "housePool"
+      seniorVaultBal = contractValFor "seniorVault"
+      juniorVaultBal = contractValFor "juniorVault"
+      lpVaultsBal = housePoolBal + seniorVaultBal + juniorVaultBal
+      clearinghouseBal = contractValFor "marginClearinghouse"
+      primaryKeys = Set.fromList ["housePool", "seniorVault", "juniorVault", "marginClearinghouse"]
+      otherContractsBal =
+        sum
+          [ bal
+          | (spec, Just bal) <- dedupContracts
+          , not (Set.member (mcsKey spec) primaryKeys)
+          , bal > 0
+          ]
+      protocolContractsTvl = lpVaultsBal + clearinghouseBal + otherContractsBal
+      contractHoldings =
+        sortOn
+          (Down . snd)
+          [(spec, bal) | (spec, Just bal) <- dedupContracts, bal > 0]
+      dedupKernel =
+        filter
+          (\(addr, _) -> not (Set.member (T.toLower addr) contractAddrSet))
+          (dedupByKey (T.toLower . fst) rawKernelPairs)
+      kernelFailed = length [() | (_, Nothing) <- dedupKernel]
+      fundedKernel =
+        sortOn
+          (Down . snd)
+          [(T.toLower addr, bal) | (addr, Just bal) <- dedupKernel, bal > 0]
+      kernelTotalBal = sum (map snd fundedKernel)
+      totalTvl = protocolContractsTvl + kernelTotalBal
+      totalTraderMargin = clearinghouseBal + kernelTotalBal
+      isComplete = kernelAvailable && contractFailed == 0 && kernelFailed == 0
+   in ProtocolTvlSummary
+        { ptsTotalTvlAssets = totalTvl
+        , ptsProtocolContractsTvlAssets = protocolContractsTvl
+        , ptsLpVaultsTvlAssets = lpVaultsBal
+        , ptsHousePoolAssets = housePoolBal
+        , ptsSeniorVaultAssets = seniorVaultBal
+        , ptsJuniorVaultAssets = juniorVaultBal
+        , ptsMarginClearinghouseAssets = clearinghouseBal
+        , ptsOtherContractsAssets = otherContractsBal
+        , ptsKernelTradingAccountsAssets = kernelTotalBal
+        , ptsTotalTraderMarginAssets = totalTraderMargin
+        , ptsContractsTracked = length dedupContracts
+        , ptsContractsWithBalance = length contractHoldings
+        , ptsContractsFailedReads = contractFailed
+        , ptsKernelAccountsAvailable = kernelAvailable
+        , ptsKernelAccountsTracked = length dedupKernel
+        , ptsKernelAccountsFunded = length fundedKernel
+        , ptsKernelAccountsFailedReads = kernelFailed
+        , ptsIsComplete = isComplete
+        , ptsContractHoldings = contractHoldings
+        , ptsTopKernelAccounts = take 10 fundedKernel
+        }
+
+tvlSummaryToJson :: Integer -> Maybe ProtocolTvlSummary -> Value
+tvlSummaryToJson blockNum Nothing =
+  object
+    [ "available" .= False
+    , "isComplete" .= False
+    , "verifiedAtBlock" .= show blockNum
+    , "settlementAssetSymbol" .= ("USDG" :: Text)
+    ]
+tvlSummaryToJson blockNum (Just ProtocolTvlSummary {..}) =
+  let lpCount =
+        length
+          [ ()
+          | (spec, _) <- ptsContractHoldings
+          , mcsKey spec `elem` ["housePool", "seniorVault", "juniorVault"]
+          ]
+      chCount =
+        length [() | (spec, _) <- ptsContractHoldings, mcsKey spec == "marginClearinghouse"]
+      otherCount =
+        length
+          [ ()
+          | (spec, _) <- ptsContractHoldings
+          , mcsKey spec `notElem` ["housePool", "seniorVault", "juniorVault", "marginClearinghouse"]
+          ]
+      buckets =
+        [ object
+            [ "key" .= ("lp_vaults" :: Text)
+            , "label" .= ("LP Liquidity Pools" :: Text)
+            , "detail" .= ("HousePool, Senior Vault & Junior Vault" :: Text)
+            , "assets" .= show ptsLpVaultsTvlAssets
+            , "shareBps" .= computeTvlShareBps ptsLpVaultsTvlAssets ptsTotalTvlAssets
+            , "addressCount" .= lpCount
+            ]
+        , object
+            [ "key" .= ("margin_clearinghouse" :: Text)
+            , "label" .= ("Margin Clearinghouse" :: Text)
+            , "detail" .= ("Deposited trader collateral, locked position margin & claims" :: Text)
+            , "assets" .= show ptsMarginClearinghouseAssets
+            , "shareBps" .= computeTvlShareBps ptsMarginClearinghouseAssets ptsTotalTvlAssets
+            , "addressCount" .= chCount
+            ]
+        , object
+            [ "key" .= ("kernel_v4_accounts" :: Text)
+            , "label" .= ("Kernel v4 Trading Accounts" :: Text)
+            , "detail" .= ("User margin held directly in ZeroDev Kernel v4 smart wallets" :: Text)
+            , "assets" .= show ptsKernelTradingAccountsAssets
+            , "shareBps" .= computeTvlShareBps ptsKernelTradingAccountsAssets ptsTotalTvlAssets
+            , "addressCount" .= ptsKernelAccountsFunded
+            ]
+        , object
+            [ "key" .= ("other_contracts" :: Text)
+            , "label" .= ("Other Protocol Contracts" :: Text)
+            , "detail" .= ("Remaining pinned protocol release contracts" :: Text)
+            , "assets" .= show ptsOtherContractsAssets
+            , "shareBps" .= computeTvlShareBps ptsOtherContractsAssets ptsTotalTvlAssets
+            , "addressCount" .= otherCount
+            ]
+        ]
+      contractHoldingsJson =
+        [ let (displayName, category, _) = contractMetadata (mcsKey spec)
+           in object
+                [ "key" .= mcsKey spec
+                , "name" .= displayName
+                , "category" .= category
+                , "address" .= mcsAddress spec
+                , "assets" .= show bal
+                , "shareBps" .= computeTvlShareBps bal ptsTotalTvlAssets
+                ]
+        | (spec, bal) <- ptsContractHoldings
+        ]
+      topKernelJson =
+        [ object
+            [ "address" .= addr
+            , "assets" .= show bal
+            , "shareBps" .= computeTvlShareBps bal ptsTotalTvlAssets
+            ]
+        | (addr, bal) <- ptsTopKernelAccounts
+        ]
+   in object
+        [ "available" .= True
+        , "isComplete" .= ptsIsComplete
+        , "verifiedAtBlock" .= show blockNum
+        , "settlementAssetSymbol" .= ("USDG" :: Text)
+        , "totalTvlAssets" .= show ptsTotalTvlAssets
+        , "protocolContractsTvlAssets" .= show ptsProtocolContractsTvlAssets
+        , "lpVaultsTvlAssets" .= show ptsLpVaultsTvlAssets
+        , "housePoolAssets" .= show ptsHousePoolAssets
+        , "seniorVaultAssets" .= show ptsSeniorVaultAssets
+        , "juniorVaultAssets" .= show ptsJuniorVaultAssets
+        , "marginClearinghouseAssets" .= show ptsMarginClearinghouseAssets
+        , "otherContractsAssets" .= show ptsOtherContractsAssets
+        , "kernelTradingAccountsAssets" .= show ptsKernelTradingAccountsAssets
+        , "totalTraderMarginAssets" .= show ptsTotalTraderMarginAssets
+        , "contractsTracked" .= ptsContractsTracked
+        , "contractsWithBalance" .= ptsContractsWithBalance
+        , "contractsFailedReads" .= ptsContractsFailedReads
+        , "kernelAccountsAvailable" .= ptsKernelAccountsAvailable
+        , "kernelAccountsTracked" .= ptsKernelAccountsTracked
+        , "kernelAccountsFunded" .= ptsKernelAccountsFunded
+        , "kernelAccountsFailedReads" .= ptsKernelAccountsFailedReads
+        , "buckets" .= buckets
+        , "contractHoldings" .= contractHoldingsJson
+        , "topKernelAccounts" .= topKernelJson
+        ]
+
+fetchUsdgBalancesAtBlock :: EthClient -> Text -> Integer -> [Text] -> IO [(Text, Maybe Integer)]
+fetchUsdgBalancesAtBlock _ _ _ [] = pure []
+fetchUsdgBalancesAtBlock client tokenAddr blockNum addrs = do
+  let batches = chunksOf 100 addrs
+  batchResults <- mapConcurrently fetchBatch batches
+  pure (concat batchResults)
+  where
+    fetchBatch :: [Text] -> IO [(Text, Maybe Integer)]
+    fetchBatch batch = do
+      let calls =
+            [ Multicall.Call
+                { Multicall.callTarget = tokenAddr
+                , Multicall.callAllowFailure = True
+                , Multicall.callCalldata = encodeCall "balanceOf(address)" [encodeAddress addr]
+                }
+            | addr <- batch
+            ]
+      mRes <- timeout 4000000 $ observeIo $ Multicall.multicallAtBlock client calls blockNum
+      pure $ case mRes of
+        Just (Just (Right results)) | length results == length batch ->
+          zipWith decodeOne batch results
+        _ ->
+          map (\addr -> (addr, Nothing)) batch
+
+    decodeOne :: Text -> Multicall.CallResult -> (Text, Maybe Integer)
+    decodeOne addr res
+      | Multicall.resultSuccess res && BS.length (Multicall.resultData res) == 32 =
+          (addr, Just (decodeUint256 (Multicall.resultData res)))
+      | otherwise = (addr, Nothing)
+
+fetchKnownKernelTradingAccounts
+  :: Maybe DbPool
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> Set.Set Text
+  -> IO (Bool, [Text])
+fetchKnownKernelTradingAccounts Nothing _ _ _ = pure (False, [])
+fetchKnownKernelTradingAccounts (Just pool) cfg mKernel excludeContracts = do
+  let chainId = cfgPerpsChainId cfg
+  mRows <-
+    timeout 3000000 $
+      observeIo $
+        withDb pool $ \conn -> do
+          prepRows <-
+            case mKernel of
+              Just kgc -> do
+                let KernelScope {..} = kernelScope (kgcProfile kgc)
+                fromMaybe []
+                  <$> observeIo
+                    ( query
+                        conn
+                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_preparations \
+                        \WHERE deployment = ? AND chain_id = ? AND entry_point = ?"
+                        (ksDeployment, ksChainId, ksEntryPoint)
+                        :: IO [Only Text]
+                    )
+              Nothing ->
+                fromMaybe []
+                  <$> observeIo
+                    ( query
+                        conn
+                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_preparations WHERE chain_id = ?"
+                        (Only chainId)
+                        :: IO [Only Text]
+                    )
+          opRows <-
+            case mKernel of
+              Just kgc -> do
+                let KernelScope {..} = kernelScope (kgcProfile kgc)
+                fromMaybe []
+                  <$> observeIo
+                    ( query
+                        conn
+                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_operations \
+                        \WHERE deployment = ? AND chain_id = ? AND entry_point = ?"
+                        (ksDeployment, ksChainId, ksEntryPoint)
+                        :: IO [Only Text]
+                    )
+              Nothing ->
+                fromMaybe []
+                  <$> observeIo
+                    ( query
+                        conn
+                        "SELECT DISTINCT LOWER(sender) FROM aa_kernel_operations WHERE chain_id = ?"
+                        (Only chainId)
+                        :: IO [Only Text]
+                    )
+          divRows <-
+            fromMaybe []
+              <$> observeIo
+                ( query_
+                    conn
+                    "SELECT DISTINCT LOWER(trading_account) FROM insights_divisions_links \
+                    \WHERE trading_account IS NOT NULL"
+                    :: IO [Only Text]
+                )
+          pure (prepRows ++ opRows ++ divRows)
+  case mRows of
+    Just (Just rows) ->
+      let validAddrs =
+            Set.toList $
+              Set.fromList
+                [ norm
+                | Only raw <- rows
+                , let norm = T.toLower (T.strip raw)
+                , isHexAddress40 norm
+                , not (Set.member norm excludeContracts)
+                ]
+       in pure (True, validAddrs)
+    _ -> pure (False, [])
+
+isHexAddress40 :: Text -> Bool
+isHexAddress40 addr =
+  T.length addr == 42
+    && "0x" `T.isPrefixOf` addr
+    && T.all isHexDigit (T.drop 2 addr)
+
+dedupByKey :: (Ord k) => (a -> k) -> [a] -> [a]
+dedupByKey keyFn = go Set.empty
+  where
+    go _ [] = []
+    go seen (x : xs) =
+      let k = keyFn x
+       in if Set.member k seen
+            then go seen xs
+            else x : go (Set.insert k seen) xs
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs =
+  let (h, t) = splitAt (max 1 n) xs
+   in h : chunksOf n t
+
+joinMaybe :: Maybe (Maybe a) -> Maybe a
+joinMaybe (Just (Just a)) = Just a
+joinMaybe _ = Nothing
+
+observeIo :: IO a -> IO (Maybe a)
+observeIo action = do
+  res <- try action
+  case res of
+    Right val -> pure (Just val)
+    Left (err :: SomeException) ->
+      case fromException err :: Maybe SomeAsyncException of
+        Just _ -> throwIO err
+        Nothing -> pure Nothing
 
 contractMetadata :: Text -> (Text, Text, Text)
 contractMetadata key = case key of
