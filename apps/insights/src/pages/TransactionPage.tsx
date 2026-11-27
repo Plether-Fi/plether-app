@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import {
   InsightsApiError,
@@ -73,6 +73,10 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   )
 }
 
+function resolveEventOrderId(ev: ProtocolTradeRecord): string | null {
+  return ev.orderId ?? ev.execution?.orderId ?? null
+}
+
 function pickInitialEvent(
   events: ProtocolTradeRecord[],
   logParam: string | null,
@@ -95,6 +99,7 @@ export function TransactionPage() {
   const protocol = useProtocolContext()
   const [copiedHash, setCopiedHash] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
+  const receiptTopRef = useRef<HTMLDivElement>(null)
 
   const normalizedHash = txHash.trim().toLowerCase()
   const validHash = isTxHash(normalizedHash)
@@ -366,7 +371,12 @@ export function TransactionPage() {
 
   const traderLabel = routeState?.traderLabel ?? shortAddress(selectedEvent.account)
   const effectiveOrderId =
-    selectedEvent.orderId ?? (validReceipt ? walletActivity.execution?.orderId ?? null : null)
+    resolveEventOrderId(selectedEvent) ??
+    (events.length === 1 &&
+    finalizedOrders.length === 1 &&
+    finalizedOrders[0].terminalStatus === 'Executed'
+      ? finalizedOrders[0].orderId
+      : null)
   const matchedFinalizedOrder =
     effectiveOrderId != null
       ? finalizedOrders.find((order) => order.orderId === effectiveOrderId) ?? null
@@ -383,7 +393,7 @@ export function TransactionPage() {
       : 'Indexed transaction'
 
   return (
-    <div className="space-y-6">
+    <div ref={receiptTopRef} className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-4 text-sm font-semibold">
           <Link to={backTarget} className="text-brand-peach hover:underline">
@@ -803,12 +813,22 @@ export function TransactionPage() {
         batchSummary={batchSummary}
         finalizedOrders={finalizedOrders}
         chainId={chainId}
-        activeOrderId={selectedEvent.orderId ?? null}
+        activeOrderId={effectiveOrderId}
         onInspectOrder={(orderId) => {
-          const match = events.find((ev) => ev.orderId === orderId)
+          const order = finalizedOrders.find((o) => o.orderId === orderId)
+          const orderAccount = order?.account?.toLowerCase()
+          const match =
+            events.find((ev) => resolveEventOrderId(ev) === orderId) ??
+            (orderAccount
+              ? events.find((ev) => ev.account.toLowerCase() === orderAccount)
+              : undefined) ??
+            (events.length === 1 ? events[0] : undefined)
           const idx = match ? extractLogIndex(match.id) : null
           if (idx) {
             setSearchParams({ log: idx }, { replace: true })
+          }
+          if (typeof receiptTopRef.current?.scrollIntoView === 'function') {
+            receiptTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
         }}
       />

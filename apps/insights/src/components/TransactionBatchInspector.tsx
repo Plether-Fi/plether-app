@@ -246,13 +246,18 @@ export function BatchFinalizationPanel({
                           onClick={() => {
                             onInspectOrder(order.orderId)
                           }}
-                          className={`border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                          title={
+                            isSelected
+                              ? 'Currently inspecting this fill — click to jump to breakdown above'
+                              : `Switch execution breakdown above to Order #${order.orderId}`
+                          }
+                          className={`cursor-pointer border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
                             isSelected
                               ? 'border-brand-orange bg-brand-orange text-content-primary'
-                              : 'border-brand-border/35 text-brand-peach hover:border-brand-peach'
+                              : 'border-brand-border/35 text-brand-peach hover:border-brand-peach hover:bg-brand-peach/10'
                           }`}
                         >
-                          {isSelected ? 'Inspecting' : 'Inspect fill'}
+                          {isSelected ? 'Viewing ↑' : 'Inspect fill'}
                         </button>
                       ) : null}
                     </div>
