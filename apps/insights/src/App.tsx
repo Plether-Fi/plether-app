@@ -16,6 +16,7 @@ import { LiquidityOpsPage } from './pages/LiquidityOpsPage'
 import { MethodologyPage } from './pages/MethodologyPage'
 import { OraclePage } from './pages/OraclePage'
 import { OverviewPage } from './pages/OverviewPage'
+import { PositionLifecyclePage } from './pages/PositionLifecyclePage'
 import { ProtocolPage } from './pages/ProtocolPage'
 import { SponsoredPage } from './pages/SponsoredPage'
 import { TransactionPage } from './pages/TransactionPage'
@@ -45,6 +46,10 @@ export default function App() {
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />
           <Route path="/wallets/:address" element={<AccountPage />} />
+          <Route
+            path="/wallets/:address/positions/:positionId"
+            element={<PositionLifecyclePage />}
+          />
           <Route path="/tx/:txHash" element={<TransactionPage />} />
           <Route path="/divisions" element={<LeaderboardPage />} />
           <Route path="/divisions/wallets/:address" element={<DivisionsWalletPage />} />

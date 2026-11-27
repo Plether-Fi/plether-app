@@ -22,6 +22,20 @@ export function resolveRouteOgMeta(url) {
   const canonicalUrl = `${origin}${pathname}`;
   const defaultImage = `${origin}/og/default.png`;
 
+  const positionMatch = pathname.match(/^\/wallets\/(0x[0-9a-fA-F]{40})\/positions\/([a-zA-Z0-9_-]{1,80})\/?$/);
+  if (positionMatch) {
+    const addr = positionMatch[1].toLowerCase();
+    const posId = positionMatch[2];
+    const label = shortAddr(addr);
+    return {
+      title: `Position Lifecycle ${posId} · ${label} — Plether Insights`,
+      description: `Full on-chain perpetual position lifecycle from open to close, MFE/MAE excursion profile, leverage history, and liquidation proximity for ${label}.`,
+      imageUrl: defaultImage,
+      imageAlt: `Plether Insights position lifecycle for ${label}`,
+      canonicalUrl: `${origin}/wallets/${addr}/positions/${encodeURIComponent(posId)}`,
+    };
+  }
+
   const walletMatch = pathname.match(/^\/wallets\/(0x[0-9a-fA-F]{40})\/?$/);
   if (walletMatch) {
     const addr = walletMatch[1].toLowerCase();

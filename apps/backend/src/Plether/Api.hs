@@ -152,6 +152,10 @@ import Plether.Handlers.InsightsInfra
   ( getInfraStatusResponse
   , getOverviewResponse
   )
+import Plether.Handlers.InsightsPositions
+  ( getWalletExposureResponse
+  , getWalletPositionDetailResponse
+  )
 import Plether.Handlers.InsightsWallets
   ( getWalletSummaryResponse
   )
@@ -722,6 +726,29 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
               liftIO (getWalletSummaryResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
                 >>= handleResult
             Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/wallets/:address/exposure" $ do
+    addr <- pathParam "address"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else case mPool of
+        Just pool ->
+          liftIO (getWalletExposureResponse pool perpsClient cfg addr)
+            >>= handleResult
+        Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/wallets/:address/positions/:positionId" $ do
+    addr <- pathParam "address"
+    posId <- pathParam "positionId"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else if T.null (T.strip posId) || T.length posId > 80
+        then handleError $ E.invalidAmount "Invalid positionId"
+        else case mPool of
+          Just pool ->
+            liftIO (getWalletPositionDetailResponse pool perpsClient cfg addr posId)
+              >>= handleResult
+          Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do

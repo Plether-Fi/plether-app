@@ -7,6 +7,7 @@ import {
   formatPlDxyQuantity,
   formatVaultShares,
   transactionPath,
+  useWalletExposure,
   useWalletSummary,
   type AccountActivityRecord,
   type TransactionRouteState,
@@ -17,6 +18,10 @@ import {
   ActivePositionProtectionStrip,
   OrderProtectionsInlineChecklist,
 } from '../components/OrderProtectionsChecklist'
+import {
+  ActivePositionRiskStrip,
+  WalletExposureSection,
+} from '../components/WalletExposureSection'
 import {
   normalizeAccountProtection,
   protectionLifecycleTone,
@@ -42,7 +47,7 @@ import {
   shortAddress,
 } from '../utils/format'
 
-type InspectorTab = 'overview' | 'trades' | 'protections' | 'lp' | 'divisions'
+type InspectorTab = 'overview' | 'exposure' | 'trades' | 'protections' | 'lp' | 'divisions'
 type ActivityFilter = 'all' | 'Open' | 'Close' | 'Liquidated' | 'other'
 
 function isEndpointNotDeployed(error: unknown): boolean {
@@ -64,6 +69,7 @@ function trancheLabel(tranche: 'senior' | 'junior' | 'unknown'): string {
 function TradingAccountInspector({ address }: { address: string }) {
   const protocol = useProtocolContext()
   const summaryQuery = useWalletSummary(address, 50)
+  const exposureQuery = useWalletExposure(address)
   const liveQuery = useLiveDivisions()
   const publicationQuery = useDivisions()
   const [activeTab, setActiveTab] = useState<InspectorTab>('overview')
@@ -71,7 +77,9 @@ function TradingAccountInspector({ address }: { address: string }) {
   const [copied, setCopied] = useState(false)
 
   const summary = summaryQuery.data
+  const exposure = exposureQuery.data
   const awaitingDeploy = isEndpointNotDeployed(summaryQuery.error)
+  const awaitingExposureDeploy = isEndpointNotDeployed(exposureQuery.error)
   const chainId = summary?.network.chainId ?? protocol.chainId
   const chain = resolvePerpsChain(chainId)
   const releaseVersion = summary?.network.releaseVersion ?? protocol.releaseVersion
@@ -222,6 +230,11 @@ function TradingAccountInspector({ address }: { address: string }) {
 
   const tabs: { id: InspectorTab; label: string; count?: number }[] = [
     { id: 'overview', label: 'Overview & Margin' },
+    {
+      id: 'exposure',
+      label: 'Market Exposure',
+      count: exposure?.summary.totalPositions,
+    },
     { id: 'trades', label: 'Trades & Receipts', count: summary?.activity.length },
     { id: 'protections', label: 'TP/SL Protections', count: protections.length },
     {
@@ -563,6 +576,12 @@ function TradingAccountInspector({ address }: { address: string }) {
                         </Metric>
                       </dl>
                       <ActivePositionProtectionStrip protections={protections} />
+                      {exposure?.activeExposure ? (
+                        <ActivePositionRiskStrip
+                          address={address}
+                          exposure={exposure.activeExposure}
+                        />
+                      ) : null}
                     </>
                   ) : (
                     <EmptyState
@@ -624,6 +643,23 @@ function TradingAccountInspector({ address }: { address: string }) {
               </Panel>
             )}
           </section>
+        </div>
+      ) : null}
+
+      {activeTab === 'exposure' ? (
+        <div role="tabpanel">
+          <WalletExposureSection
+            address={address}
+            data={exposure}
+            isLoading={exposureQuery.isLoading}
+            isError={exposureQuery.isError}
+            awaitingDeploy={awaitingExposureDeploy}
+            errorMessage={
+              exposureQuery.error instanceof Error ? exposureQuery.error.message : undefined
+            }
+            releaseVersion={releaseVersion}
+            onRetry={() => void exposureQuery.refetch()}
+          />
         </div>
       ) : null}
 
