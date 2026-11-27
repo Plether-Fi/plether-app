@@ -130,6 +130,7 @@ describe('Cloudflare Pages Worker', () => {
     ['/api/insights/v1/protocol/manifest', 60],
     ['/api/insights/v1/infra/status', 15],
     [`/api/insights/v1/wallets/0x${'a'.repeat(40)}/summary`, 15],
+    [`/api/insights/v1/divisions/wallets/0x${'a'.repeat(40)}`, 15],
     ['/api/insights/v1/divisions/stats', 15],
     ['/api/insights/v1/divisions/traders', 15],
     ['/api/insights/v1/divisions/live', 15],

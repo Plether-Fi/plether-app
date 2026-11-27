@@ -158,7 +158,8 @@ import Plether.Handlers.InsightsPositions
   , getWalletPositionDetailResponse
   )
 import Plether.Handlers.InsightsWallets
-  ( getWalletSummaryResponse
+  ( getDivisionsWalletContextResponse
+  , getWalletSummaryResponse
   )
 import Plether.Handlers.InsightsRegistration
   ( registerInsightsRegistrationRoutes
@@ -605,6 +606,14 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
     case mPool of
       Just pool -> liftIO (getDivisionsLiveResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/wallets/:address" $ do
+    addr <- pathParam "address"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAmount "address must be a valid 0x-prefixed 20-byte Ethereum address"
+      else case mPool of
+        Just pool -> liftIO (getDivisionsWalletContextResponse pool perpsClient cfg addr) >>= handleResult
+        Nothing -> insightsUnavailable
 
   get "/api/insights/v1/liquidity/settlements" $
     case mPool of

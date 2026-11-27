@@ -7,8 +7,10 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens (AccountLedgerSnapshot (.
 import Plether.Handlers.InsightsWallets
   ( BalanceEventRow (..)
   , BalanceHistoryPoint (..)
+  , DivisionsEquityBridge (..)
   , DivisionsWeekRecord (..)
   , buildBalanceHistory
+  , buildDivisionsEquityBridge
   , classifyVaultTranche
   , extractDivisionsHistory
   , ledgerSnapshotToJson
@@ -156,3 +158,44 @@ spec = describe "Plether.Handlers.InsightsWallets" $ do
 
   it "returns empty balance history when account has no activity and zero live balance" $ do
     buildBalanceHistory 1800000000 400 Nothing [] `shouldBe` []
+
+  it "computes Divisions weekly equity bridge accounting for deposits, withdrawals, and pending carry" $ do
+    let cutoffSnap =
+          AccountLedgerSnapshot
+            { alsSettlementBalanceAssets = 1500000000
+            , alsFreeSettlementAssets = 1100000000
+            , alsActivePositionMarginAssets = 400000000
+            , alsOtherLockedMarginAssets = 0
+            , alsPositionMarginBucketAssets = 400000000
+            , alsCommittedOrderMarginBucketAssets = 0
+            , alsReservedSettlementBucketAssets = 0
+            , alsExecutionBountyReserveAssets = 0
+            , alsCommittedMarginAssets = 0
+            , alsTraderClaimBalanceAssets = 50000000
+            , alsPendingOrderCount = 0
+            , alsCloseReachableAssets = 1500000000
+            , alsLiquidationReachableSettlementAssets = 1500000000
+            , alsTerminalPriceCollectibleCapAssets = 1500000000
+            , alsAccountEquityAssets = 1650000000
+            , alsFreeBuyingPowerAssets = 1100000000
+            , alsHasPosition = True
+            , alsSide = 0
+            , alsSize = 500000000000000000000
+            , alsMargin = 400000000
+            , alsEntryPrice = 95000000
+            , alsUnrealizedPnlAssets = 100000000
+            , alsNetEquityAssets = 1650000000
+            , alsLiquidatable = False
+            }
+        mBridge = buildDivisionsEquityBridge (Just 1000000000) 500000000 200000000 (Just (cutoffSnap, 10000000))
+    case mBridge of
+      Just bridge -> do
+        debStartingEquityAssets bridge `shouldBe` 1000000000
+        debDepositsAssets bridge `shouldBe` 500000000
+        debWithdrawalsAssets bridge `shouldBe` 200000000
+        debAdjustedEquityAssets bridge `shouldBe` 1300000000
+        -- cutoff economic equity = 1500M settlement + 100M upnl - 10M pending carry + 50M claims = 1640M
+        debCutoffEquityAssets bridge `shouldBe` 1640000000
+        debWeeklyPnlAssets bridge `shouldBe` 340000000
+        debPendingCarryAssets bridge `shouldBe` 10000000
+      Nothing -> expectationFailure "Expected Divisions equity bridge"
