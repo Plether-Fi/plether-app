@@ -129,12 +129,6 @@ export function OverviewPage() {
               >
                 AWS infra health
               </Link>
-              <a
-                href={chain.tradeAppUrl}
-                className="border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach transition-colors hover:border-brand-peach hover:bg-brand-peach/10"
-              >
-                Open trading app ↗
-              </a>
             </div>
           </div>
 

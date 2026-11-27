@@ -148,7 +148,7 @@ describe('OverviewPage (Protocol Pulse)', () => {
     expect(screen.getByText('30 contracts')).toBeInTheDocument()
   })
 
-  it('adapts network labels and trading app URL automatically for Arbitrum One', () => {
+  it('adapts network labels and app URLs automatically for Arbitrum One', () => {
     statusQuery.mockReturnValue({
       data: {
         healthy: true,
@@ -161,9 +161,9 @@ describe('OverviewPage (Protocol Pulse)', () => {
     })
     show()
     expect(screen.getByText('Arbitrum One')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open trading app ↗' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Vaults on App ↗' })).toHaveAttribute(
       'href',
-      'https://app.plether.com',
+      'https://app.plether.com/vaults',
     )
   })
 

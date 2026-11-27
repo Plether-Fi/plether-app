@@ -222,26 +222,18 @@ export function LiquidityOpsPage() {
         }
       />
 
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div className="max-w-3xl space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
-            LP Settlement Engine &amp; Risk Forensics
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Epoch Settlements, Attribution Audit &amp; Pool Forensics
-          </h1>
-          <p className="text-sm leading-6 text-content-secondary">
-            Deep settlement and accounting telemetry complementing the main app’s Vaults page—
-            auditing hourly epoch execution, decoded settlement bitmasks, trace-attribution
-            residuals, stale-mark snapshot coverage, and vault indexer lag.
-          </p>
-        </div>
-        <a
-          href={vaultsAppUrl(chainId)}
-          className="shrink-0 border border-brand-border/40 px-4 py-2.5 text-sm font-semibold text-brand-peach hover:bg-brand-peach/10"
-        >
-          Open Vaults on App ↗
-        </a>
+      <header className="max-w-3xl space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
+          LP Settlement Engine &amp; Risk Forensics
+        </p>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          Epoch Settlements, Attribution Audit &amp; Pool Forensics
+        </h1>
+        <p className="text-sm leading-6 text-content-secondary">
+          Deep settlement and accounting telemetry complementing the main app’s Vaults page—
+          auditing hourly epoch execution, decoded settlement bitmasks, trace-attribution
+          residuals, stale-mark snapshot coverage, and vault indexer lag.
+        </p>
       </header>
 
       {awaitingDeploy ? (

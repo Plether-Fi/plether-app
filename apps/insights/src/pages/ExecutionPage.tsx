@@ -122,27 +122,19 @@ export function ExecutionPage() {
         }
       />
 
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div className="max-w-3xl space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
-            Trader Execution &amp; Market Forensics
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Order Reliability, Protections, Liquidations &amp; Trade Tape
-          </h1>
-          <p className="text-sm leading-6 text-content-secondary">
-            Protocol-wide execution telemetry beyond the main app’s price chart and trade ticket—
-            auditing canonical keeper fill/expiration cohorts, commit-to-execution latency, TP/SL
-            protection coverage, liquidation activity, and every executed fill across all Trading
-            Accounts.
-          </p>
-        </div>
-        <a
-          href={chain.tradeAppUrl}
-          className="shrink-0 border border-brand-border/40 px-4 py-2.5 text-sm font-semibold text-brand-peach hover:bg-brand-peach/10"
-        >
-          Open Trading App ↗
-        </a>
+      <header className="max-w-3xl space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
+          Trader Execution &amp; Market Forensics
+        </p>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          Order Reliability, Protections, Liquidations &amp; Trade Tape
+        </h1>
+        <p className="text-sm leading-6 text-content-secondary">
+          Protocol-wide execution telemetry beyond the main app’s price chart and trade ticket—
+          auditing canonical keeper fill/expiration cohorts, commit-to-execution latency, TP/SL
+          protection coverage, liquidation activity, and every executed fill across all Trading
+          Accounts.
+        </p>
       </header>
 
       {awaitingDeploy ? (
