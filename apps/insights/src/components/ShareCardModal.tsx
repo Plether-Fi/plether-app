@@ -127,36 +127,38 @@ export function ShareCardModal({
   return (
     <>
       {compact ? (
-        <button
-          type="button"
-          aria-haspopup="dialog"
-          aria-label={triggerLabel}
-          title={triggerLabel}
-          onClick={openModal}
-          className="group inline-flex h-6 shrink-0 cursor-pointer items-center overflow-hidden whitespace-nowrap border border-brand-border/35 bg-app-bg/75 px-1.5 font-mono text-[11px] font-semibold leading-none text-content-secondary transition-colors duration-200 hover:border-brand-peach/65 hover:bg-brand-peach/10 hover:text-brand-peach focus-visible:border-brand-peach/65 focus-visible:bg-brand-peach/10 focus-visible:text-brand-peach focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-peach"
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 12 12"
-            className="h-3 w-3 shrink-0"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        <span className="relative inline-block h-6 w-[26px] shrink-0 align-middle">
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-label={triggerLabel}
+            title={triggerLabel}
+            onClick={openModal}
+            className="group absolute inset-y-0 right-0 z-10 inline-flex h-6 cursor-pointer items-center overflow-hidden whitespace-nowrap border border-brand-border/35 bg-app-bg px-1.5 font-mono text-[11px] font-semibold leading-none text-content-secondary transition-colors duration-200 hover:z-30 hover:border-brand-peach/70 hover:bg-surface-panel hover:text-brand-peach hover:shadow-lg focus-visible:z-30 focus-visible:border-brand-peach/70 focus-visible:bg-surface-panel focus-visible:text-brand-peach focus-visible:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-peach"
           >
-            <circle cx="9.25" cy="2.75" r="1.45" />
-            <circle cx="2.75" cy="6" r="1.45" />
-            <circle cx="9.25" cy="9.25" r="1.45" />
-            <path d="M4.05 5.35L7.95 3.4M4.05 6.65L7.95 8.6" />
-          </svg>
-          <span
-            aria-hidden="true"
-            className="max-w-0 overflow-hidden opacity-0 transition-all duration-200 ease-out group-hover:ml-1 group-hover:max-w-[7.5rem] group-hover:opacity-100 group-focus-visible:ml-1 group-focus-visible:max-w-[7.5rem] group-focus-visible:opacity-100"
-          >
-            {triggerLabel}
-          </span>
-        </button>
+            <span
+              aria-hidden="true"
+              className="max-w-0 overflow-hidden opacity-0 transition-all duration-200 ease-out group-hover:mr-1 group-hover:max-w-[7.5rem] group-hover:opacity-100 group-focus-visible:mr-1 group-focus-visible:max-w-[7.5rem] group-focus-visible:opacity-100"
+            >
+              {triggerLabel}
+            </span>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 12 12"
+              className="h-3 w-3 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="9.25" cy="2.75" r="1.45" />
+              <circle cx="2.75" cy="6" r="1.45" />
+              <circle cx="9.25" cy="9.25" r="1.45" />
+              <path d="M4.05 5.35L7.95 3.4M4.05 6.65L7.95 8.6" />
+            </svg>
+          </button>
+        </span>
       ) : (
         <button
           type="button"
