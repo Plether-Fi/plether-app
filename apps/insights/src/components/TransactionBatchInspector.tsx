@@ -209,7 +209,7 @@ export function BatchFinalizationPanel({
                     <div>
                       {order.latencySeconds != null ? `${String(order.latencySeconds)}s` : '—'}
                       {order.latencyBlocks != null
-                        ? ` (${String(order.latencyBlocks)} blk)`
+                        ? ` · +${String(order.latencyBlocks)} blk (~${Math.round(order.latencyBlocks * 250).toLocaleString('en-US')} ms)`
                         : ''}
                     </div>
                     {order.commitTxHash ? (

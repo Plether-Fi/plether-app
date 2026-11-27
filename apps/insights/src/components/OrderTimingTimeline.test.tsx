@@ -76,6 +76,8 @@ describe('OrderTimingTimelinePanel', () => {
     expect(screen.getByText('27 Nov 2026, 06:22:08 UTC')).toBeInTheDocument()
     expect(screen.getByText('06:22:08 → 06:22:09 UTC')).toBeInTheDocument()
     expect(screen.getByText('27 Nov 2026, 06:22:10 UTC')).toBeInTheDocument()
+    expect(screen.getByText('(~2,000 ms est.)')).toBeInTheDocument()
+    expect(screen.getByText('~2,000 ms (~250ms/blk)')).toBeInTheDocument()
     expect(screen.getByText(/Protocol Latency Position \(7d · 1,420 executed orders\)/i)).toBeInTheDocument()
     expect(screen.getAllByText(/p50 2s/i).length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText(/p95 5s/i).length).toBeGreaterThanOrEqual(1)

@@ -44,6 +44,13 @@ function formatBlock(block: string | null | undefined): string | null {
   return `#${Number(block).toLocaleString('en-US')}`
 }
 
+const ARBITRUM_BLOCK_MS = 250
+
+function formatArbitrumBlockEstimateMs(blocks: number | null | undefined): string | null {
+  if (blocks == null || !Number.isFinite(blocks) || blocks < 0) return null
+  return `~${Math.round(blocks * ARBITRUM_BLOCK_MS).toLocaleString('en-US')} ms`
+}
+
 function percentileSummary(
   percentile: number | null | undefined,
   latencySeconds: number | null | undefined,
@@ -351,6 +358,7 @@ export function OrderTimingTimelinePanel({
     (finalizedSec != null && commitSec != null ? Math.max(0, finalizedSec - commitSec) : null)
 
   const totalLatencyBlocks = selectedOrder.latencyBlocks
+  const estimatedBlockMs = formatArbitrumBlockEstimateMs(totalLatencyBlocks)
   const executionWindowLimit = resolveExecutionWindowLimit(selectedOrder)
   const windowUsedPct =
     executionWindowLimit != null && totalLatencySeconds != null
@@ -428,9 +436,22 @@ export function OrderTimingTimelinePanel({
 
           <div className="flex flex-wrap items-center gap-2">
             {totalLatencySeconds != null ? (
-              <span className="border border-brand-border/35 bg-app-bg px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-content-primary">
+              <span
+                className="border border-brand-border/35 bg-app-bg px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-content-primary"
+                title={
+                  estimatedBlockMs
+                    ? `On-chain block.timestamp has 1s resolution; ${estimatedBlockMs} estimated from +${String(totalLatencyBlocks)} Arbitrum blocks (~250ms/block)`
+                    : undefined
+                }
+              >
                 {String(totalLatencySeconds)}s
-                {totalLatencyBlocks != null ? ` · ${String(totalLatencyBlocks)} blk` : ''}
+                {totalLatencyBlocks != null ? ` · +${String(totalLatencyBlocks)} blk` : ''}
+                {estimatedBlockMs ? (
+                  <span className="font-normal text-content-secondary">
+                    {' '}
+                    ({estimatedBlockMs} est.)
+                  </span>
+                ) : null}
               </span>
             ) : null}
             <StatusPill tone={pctBadge.tone} label={pctBadge.label} />
@@ -624,6 +645,17 @@ export function OrderTimingTimelinePanel({
                   {totalLatencyBlocks != null ? ` (+${String(totalLatencyBlocks)})` : ''}
                 </span>
               </div>
+              {estimatedBlockMs ? (
+                <div
+                  className="flex items-center justify-between gap-2"
+                  title="Estimated from Arbitrum's ~250ms block cadence (on-chain block.timestamp is 1s resolution)"
+                >
+                  <span className="whitespace-nowrap">Cadence est.</span>
+                  <span className="whitespace-nowrap tabular-nums text-content-secondary">
+                    {estimatedBlockMs} (~250ms/blk)
+                  </span>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-2">
                 <span className="whitespace-nowrap">
                   {executionWindowLimit != null ? 'Window' : 'Tx'}
