@@ -14,10 +14,13 @@ import { LeaderboardPage } from './pages/LeaderboardPage'
 import { LiquidityEpochPage } from './pages/LiquidityEpochPage'
 import { LiquidityOpsPage } from './pages/LiquidityOpsPage'
 import { MethodologyPage } from './pages/MethodologyPage'
+import { OraclePage } from './pages/OraclePage'
 import { OverviewPage } from './pages/OverviewPage'
+import { PositionLifecyclePage } from './pages/PositionLifecyclePage'
 import { ProtocolPage } from './pages/ProtocolPage'
 import { SponsoredPage } from './pages/SponsoredPage'
 import { TransactionPage } from './pages/TransactionPage'
+import { TreasuryPage } from './pages/TreasuryPage'
 import { WalletPage } from './pages/WalletPage'
 import { WeeklyResultsPage } from './pages/WeeklyResultsPage'
 
@@ -33,14 +36,20 @@ export default function App() {
         <Routes>
           <Route path="/" element={<OverviewPage />} />
           <Route path="/execution" element={<ExecutionPage />} />
+          <Route path="/oracle" element={<OraclePage />} />
           <Route path="/liquidity" element={<LiquidityOpsPage />} />
           <Route path="/liquidity/epochs/:epoch" element={<LiquidityEpochPage />} />
           <Route path="/keepers" element={<KeepersPage />} />
           <Route path="/keepers/:address" element={<KeeperDetailPage />} />
           <Route path="/sponsored" element={<SponsoredPage />} />
+          <Route path="/treasury" element={<TreasuryPage />} />
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />
           <Route path="/wallets/:address" element={<AccountPage />} />
+          <Route
+            path="/wallets/:address/positions/:positionId"
+            element={<PositionLifecyclePage />}
+          />
           <Route path="/tx/:txHash" element={<TransactionPage />} />
           <Route path="/divisions" element={<LeaderboardPage />} />
           <Route path="/divisions/wallets/:address" element={<DivisionsWalletPage />} />

@@ -135,6 +135,12 @@ import Plether.Handlers.InsightsLiquidity
   , getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
   )
+import Plether.Handlers.InsightsOracle
+  ( getOracleHealthResponse
+  )
+import Plether.Handlers.InsightsTreasury
+  ( getTreasuryOverviewResponse
+  )
 import Plether.Handlers.InsightsProtocol
   ( getProtocolManifestResponse
   )
@@ -145,6 +151,10 @@ import Plether.Handlers.InsightsSponsored
 import Plether.Handlers.InsightsInfra
   ( getInfraStatusResponse
   , getOverviewResponse
+  )
+import Plether.Handlers.InsightsPositions
+  ( getWalletExposureResponse
+  , getWalletPositionDetailResponse
   )
 import Plether.Handlers.InsightsWallets
   ( getWalletSummaryResponse
@@ -644,6 +654,16 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
   get "/api/insights/v1/protocol/manifest" $
     liftIO (getProtocolManifestResponse perpsClient cfg) >>= handleResult
 
+  get "/api/insights/v1/oracle/health" $
+    case mPool of
+      Just pool -> liftIO (getOracleHealthResponse pool perpsClient cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/treasury/overview" $
+    case mPool of
+      Just pool -> liftIO (getTreasuryOverviewResponse pool perpsClient cfg kernelAa) >>= handleResult
+      Nothing -> insightsUnavailable
+
   get "/api/insights/v1/sponsored/status" $
     case mPool of
       Just pool -> liftIO (getSponsoredStatusResponse pool perpsClient manager cfg kernelAa) >>= handleResult
@@ -706,6 +726,29 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
               liftIO (getWalletSummaryResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
                 >>= handleResult
             Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/wallets/:address/exposure" $ do
+    addr <- pathParam "address"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else case mPool of
+        Just pool ->
+          liftIO (getWalletExposureResponse pool perpsClient cfg addr)
+            >>= handleResult
+        Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/wallets/:address/positions/:positionId" $ do
+    addr <- pathParam "address"
+    posId <- pathParam "positionId"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else if T.null (T.strip posId) || T.length posId > 80
+        then handleError $ E.invalidAmount "Invalid positionId"
+        else case mPool of
+          Just pool ->
+            liftIO (getWalletPositionDetailResponse pool perpsClient cfg addr posId)
+              >>= handleResult
+          Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do

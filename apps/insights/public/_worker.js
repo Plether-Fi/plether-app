@@ -78,6 +78,8 @@ function resolvePublicApiCacheTtl(method, pathname) {
     /^\/keepers\/0x[0-9a-fA-F]{40}$/.test(apiPath) ||
     apiPath === '/sponsored/status' ||
     apiPath === '/sponsored/operations' ||
+    apiPath === '/oracle/health' ||
+    apiPath === '/treasury/overview' ||
     apiPath === '/infra/status'
   ) {
     return API_CACHE_TTLS.pulse;
@@ -95,7 +97,11 @@ function resolvePublicApiCacheTtl(method, pathname) {
     return API_CACHE_TTLS.manifest;
   }
 
-  if (/^\/wallets\/0x[0-9a-fA-F]{40}\/summary$/.test(apiPath)) {
+  if (
+    /^\/wallets\/0x[0-9a-fA-F]{40}\/summary$/.test(apiPath) ||
+    /^\/wallets\/0x[0-9a-fA-F]{40}\/exposure$/.test(apiPath) ||
+    /^\/wallets\/0x[0-9a-fA-F]{40}\/positions\/[a-zA-Z0-9_-]{1,80}$/.test(apiPath)
+  ) {
     return API_CACHE_TTLS.wallet;
   }
 

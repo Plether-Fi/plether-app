@@ -40,6 +40,8 @@ import Plether.Database.Schema
   , PythUpdatePayloadRow (..)
   , ensureBasketSnapshotSchema
   , ensurePerpsKeeperSchema
+  , classifyOracleAdmissionError
+  , insertOracleAdmissionEvent
   , getPendingPerpsKeeperOrders
   , getPythUpdatePayloadForWindow
   , insertBasketSnapshotWithSource
@@ -313,6 +315,7 @@ latestLoop providerGate manager ethClient pool cfg pollSeconds = do
             [field "error" err]
           exitFailure
       | otherwise -> do
+          recordOracleAdmissionBestEffort pool "latest" "rejected" Nothing Nothing err
           logWarnEvery
             60
             "basket_update_skipped"
@@ -567,11 +570,15 @@ revealLoop providerGate manager ethClient pool cfg = do
             logWarnEvery 30 "reveal_payload_backfill_fetch_failed" "Historical reveal price unavailable" [field "order_id" orderId]
             pure $ Left err
           Right update -> case validateRevealWindow commitTime window (hbuPublishTimes update) of
-            Left err -> pure $ Left err
+            Left err -> do
+              recordOracleAdmissionBestEffort pool "reveal" "rejected" Nothing Nothing err
+              pure $ Left err
             Right _ -> do
               cachedResult <- cacheBasketUpdate ethClient pool cfg (Just (firstTick, lastTick)) update
               case cachedResult of
-                Left err -> pure $ Left err
+                Left err -> do
+                  recordOracleAdmissionBestEffort pool "reveal" "rejected" Nothing Nothing err
+                  pure $ Left err
                 Right () -> do
                   finished <- getMonotonicTimeNSec
                   availableAt <- floor . (* 1000) <$> getPOSIXTime
@@ -672,6 +679,7 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               admittedSource
                               "stale_latest_no_update"
                               "A signed stale latest response completed a basket source watermark poll"
+                          recordOracleStaleBestEffort pool (hbuFetchedAt update) minPublishTime maxPublishTime
                           pure $ Right ()
                         else do
                           let minuteBucket = (minPublishTime `div` 60) * 60
@@ -1008,3 +1016,44 @@ lookupFlag name (flag : value : rest)
   | flag == name = Just value
   | otherwise = lookupFlag name (value : rest)
 lookupFlag _ [_] = Nothing
+
+recordOracleAdmissionBestEffort
+  :: DbPool
+  -> T.Text
+  -> T.Text
+  -> Maybe Integer
+  -> Maybe Integer
+  -> T.Text
+  -> IO ()
+recordOracleAdmissionBestEffort pool route outcome mMinPub mMaxPub rawErr = do
+  let (reasonCode, safeDetail) = classifyOracleAdmissionError rawErr
+      mSpread = (\hi lo -> fromIntegral (max 0 (hi - lo))) <$> mMaxPub <*> mMinPub
+  res <- try @SomeException $ do
+    nowSec <- floor <$> getPOSIXTime
+    let mAge = (\lo -> fromIntegral (max 0 (nowSec - lo))) <$> mMinPub
+    withDb pool $ \conn ->
+      insertOracleAdmissionEvent conn nowSec route outcome reasonCode mMinPub mMaxPub mSpread mAge safeDetail
+  case res of
+    Left err | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+    _ -> pure ()
+
+recordOracleStaleBestEffort :: DbPool -> Integer -> Integer -> Integer -> IO ()
+recordOracleStaleBestEffort pool fetchedAt minPub maxPub = do
+  let spreadSec = fromIntegral (max 0 (maxPub - minPub))
+      ageSec = fromIntegral (max 0 (fetchedAt - minPub))
+  res <- try @SomeException $
+    withDb pool $ \conn ->
+      insertOracleAdmissionEvent
+        conn
+        fetchedAt
+        "latest"
+        "stale_market_closed"
+        "stale_price"
+        (Just minPub)
+        (Just maxPub)
+        (Just spreadSec)
+        (Just ageSec)
+        "Signed Pyth latest response remained older than freshness threshold (FX market closed)"
+  case res of
+    Left err | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+    _ -> pure ()

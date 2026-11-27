@@ -28,7 +28,7 @@ baseObservation =
     , lsorWarningMask = 0
     , lsorDependencyFailureMask = 0
     , lsorCriticalFaultMask = 0
-    , lsorHealthState = Just 0
+    , lsorHealthState = Just 1
     , lsorObservationComplete = Just True
     , lsorHasMaturedWork = Just True
     , lsorPaused = Just False
@@ -64,9 +64,10 @@ spec = describe "Plether.Handlers.InsightsLiquidity" $ do
     executionPathLabel 2 `shouldBe` "cached_mark"
     executionPathLabel 3 `shouldBe` "atomic_oracle_refresh"
     executionPathLabel 99 `shouldBe` "unknown"
-    healthStateLabel (Just 0) `shouldBe` "healthy"
-    healthStateLabel (Just 1) `shouldBe` "degraded"
-    healthStateLabel (Just 2) `shouldBe` "faulted"
+    healthStateLabel (Just 0) `shouldBe` "unknown"
+    healthStateLabel (Just 1) `shouldBe` "healthy"
+    healthStateLabel (Just 2) `shouldBe` "degraded"
+    healthStateLabel (Just 3) `shouldBe` "faulted"
     healthStateLabel Nothing `shouldBe` "unknown"
 
   it "decodes active bit positions from settlement masks" $ do

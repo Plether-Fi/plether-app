@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { InsightsApiError } from './client'
-import type { ProtocolTradeRecord } from './execution'
+import type { OrderProtectionsPayload, ProtocolTradeRecord } from './execution'
 import type { LiquidityNetworkMeta } from './liquidity'
 import type { ApiErrorBody, TradeExecution, WalletActivity } from './types'
 
@@ -59,6 +59,7 @@ export interface AccountActivityRecord {
   latencySeconds?: number | null
   keeperBountyAssets?: string | null
   execution?: TradeExecution | null
+  orderProtections?: OrderProtectionsPayload | null
   txHash: string
   blockNumber: string
   occurredAt: string
@@ -293,9 +294,10 @@ export function accountActivityToProtocolTrade(
     vpiAssets: row.vpiAssets ?? null,
     frozenCloseSpreadAssets: row.frozenCloseSpreadAssets ?? null,
     oracleFrozen: row.oracleFrozen ?? null,
-    latencySeconds: null,
-    keeperBountyAssets: null,
+    latencySeconds: row.latencySeconds ?? null,
+    keeperBountyAssets: row.keeperBountyAssets ?? null,
     execution: row.execution ?? null,
+    orderProtections: row.orderProtections ?? null,
     txHash: row.txHash,
     blockNumber: row.blockNumber,
     occurredAt: row.occurredAt,

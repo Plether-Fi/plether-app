@@ -340,9 +340,9 @@ executionPathLabel = \case
 
 healthStateLabel :: Maybe Integer -> Text
 healthStateLabel = \case
-  Just 0 -> "healthy"
-  Just 1 -> "degraded"
-  Just 2 -> "faulted"
+  Just 1 -> "healthy"
+  Just 2 -> "degraded"
+  Just 3 -> "faulted"
   _ -> "unknown"
 
 decodeBitPositions :: Integer -> [Int]

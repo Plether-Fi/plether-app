@@ -475,7 +475,9 @@ export function SponsoredPage() {
                 {data.execution.activeUnfinalizedCount > 0 ? (
                   <StatusPill
                     tone={
-                      (data.execution.oldestUnfinalizedAgeSeconds ?? 0) > 300
+                      !data.reconciler.fresh
+                      || (data.execution.oldestUnfinalizedAgeSeconds ?? 0)
+                        > Math.max(900, (data.reconciler.maxSafeLagSeconds ?? 600) + 300)
                         ? 'degraded'
                         : 'unknown'
                     }

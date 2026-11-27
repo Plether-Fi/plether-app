@@ -295,4 +295,74 @@ describe('TransactionPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'JSON' }))
     expect(screen.getByText(/"terminalReason": "Executed"/)).toBeInTheDocument()
   })
+
+  it('matches batch orders via execution.orderId when activity.orderId is null, shows Viewing ↑, and switches fill on Inspect fill click', () => {
+    const scrollSpy = vi.fn()
+    Element.prototype.scrollIntoView = scrollSpy
+
+    txQuery.mockReturnValue({
+      data: {
+        ...sampleTxResponse,
+        events: [
+          { ...openEvent, orderId: null },
+          { ...closeEvent, orderId: null },
+        ],
+        finalizedOrders: [
+          {
+            orderId: '500',
+            account: sampleAccount,
+            side: 'long',
+            commitTxHash: null,
+            commitBlock: '332919700',
+            commitAt: '2026-11-26T15:33:55Z',
+            latencySeconds: 2,
+            latencyBlocks: 7,
+            terminalStatus: 'Executed',
+            terminalReason: 'Executed',
+            failureReason: null,
+            failedConstraint: null,
+            executionMode: 'live',
+            executionPrice: '94740000',
+            oraclePrice: '94740000',
+            oracleFrozen: false,
+            vpiAssets: '1250000',
+            frozenCloseSpreadAssets: null,
+          },
+          {
+            orderId: '501',
+            account: sampleAccount,
+            side: 'long',
+            commitTxHash: null,
+            commitBlock: '332919701',
+            commitAt: '2026-11-26T15:33:56Z',
+            latencySeconds: 3,
+            latencyBlocks: 6,
+            terminalStatus: 'Executed',
+            terminalReason: 'Executed',
+            failureReason: null,
+            failedConstraint: null,
+            executionMode: 'live',
+            executionPrice: '94700000',
+            oraclePrice: '94700000',
+            oracleFrozen: false,
+            vpiAssets: '1250000',
+            frozenCloseSpreadAssets: null,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    renderTx(`/tx/${sampleTxHash}?log=14`)
+
+    // Order #501 (Close, log 14) is active -> shows Viewing ↑, while Order #500 shows Inspect fill
+    expect(screen.getByRole('button', { name: 'Viewing ↑' })).toBeInTheDocument()
+    const inspectBtn = screen.getByRole('button', { name: 'Inspect fill' })
+    fireEvent.click(inspectBtn)
+
+    // Switches to Order #500 (Open) and scrolls back up to the breakdown
+    expect(screen.getByText('Open / increase')).toBeInTheDocument()
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+  })
 })

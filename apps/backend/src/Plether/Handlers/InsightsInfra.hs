@@ -3,22 +3,27 @@ module Plether.Handlers.InsightsInfra
   , getOverviewResponse
   , classifyActionReadiness
   , classifyServiceHealth
+  , classifyEventDrivenServiceHealth
   , classifyOverallInfra
+  , pickFresherHeartbeat
+  , withTtlCache
   , parseEthSyncing
   , parsePeerCount
   ) where
 
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.IORef (newIORef)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
+import Data.Word (Word64)
 import Database.PostgreSQL.Simple (Only (..), Query, ToRow, query, query_)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Client (Manager)
@@ -54,6 +59,43 @@ import System.Timeout (timeout)
 {-# NOINLINE processStartedAtEpoch #-}
 processStartedAtEpoch :: Integer
 processStartedAtEpoch = unsafePerformIO (floor <$> getPOSIXTime)
+
+cacheTtlNSec :: Word64
+cacheTtlNSec = 10000000000 -- 10 seconds
+
+{-# NOINLINE infraStatusCache #-}
+infraStatusCache :: MVar (Maybe (Word64, ApiResponse Value))
+infraStatusCache = unsafePerformIO (newMVar Nothing)
+
+{-# NOINLINE overviewCache #-}
+overviewCache :: MVar (Maybe (Word64, ApiResponse Value))
+overviewCache = unsafePerformIO (newMVar Nothing)
+
+withTtlCache
+  :: MVar (Maybe (Word64, a))
+  -> Word64
+  -> IO (Either e a)
+  -> IO (Either e a)
+withTtlCache cacheVar ttlNsec compute = do
+  nowNs <- getMonotonicTimeNSec
+  mCached <- readMVar cacheVar
+  case mCached of
+    Just (storedNs, val) | nowNs >= storedNs && (nowNs - storedNs) < ttlNsec ->
+      pure (Right val)
+    _ ->
+      modifyMVar cacheVar $ \current -> do
+        now2 <- getMonotonicTimeNSec
+        case current of
+          Just (storedNs, val) | now2 >= storedNs && (now2 - storedNs) < ttlNsec ->
+            pure (current, Right val)
+          _ -> do
+            res <- compute
+            case res of
+              Right fresh -> do
+                doneNs <- getMonotonicTimeNSec
+                pure (Just (doneNs, fresh), Right fresh)
+              Left err ->
+                pure (current, Left err)
 
 nativeEntryPoint :: Text
 nativeEntryPoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
@@ -102,6 +144,8 @@ data WorkerHeartbeat = WorkerHeartbeat
   , whLastSeenAt :: Maybe UTCTime
   , whFreshThresholdSeconds :: Integer
   , whFundingComponent :: Maybe Text
+  , whEventDriven :: Bool
+  , whHasActiveFault :: Bool
   }
 
 data OracleTelemetry = OracleTelemetry
@@ -123,7 +167,18 @@ getInfraStatusResponse
   -> Config
   -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
-getInfraStatusResponse pool client manager cfg mKernel = do
+getInfraStatusResponse pool client manager cfg mKernel =
+  withTtlCache infraStatusCache cacheTtlNSec $
+    computeInfraStatusResponse pool client manager cfg mKernel
+
+computeInfraStatusResponse
+  :: DbPool
+  -> EthClient
+  -> Manager
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> IO (Either ApiError (ApiResponse Value))
+computeInfraStatusResponse pool client manager cfg mKernel = do
   nowPosix <- getPOSIXTime
   let nowSec = floor nowPosix :: Integer
       nowUtc = posixSecondsToUTCTime (fromIntegral nowSec)
@@ -285,27 +340,39 @@ getOverviewResponse
   -> Config
   -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
-getOverviewResponse pool client manager cfg mKernel = do
+getOverviewResponse pool client manager cfg mKernel =
+  withTtlCache overviewCache cacheTtlNSec $
+    computeOverviewResponse pool client manager cfg mKernel
+
+computeOverviewResponse
+  :: DbPool
+  -> EthClient
+  -> Manager
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> IO (Either ApiError (ApiResponse Value))
+computeOverviewResponse pool client manager cfg mKernel = do
   nowPosix <- getPOSIXTime
   let nowSec = floor nowPosix :: Integer
       nowUtc = posixSecondsToUTCTime (fromIntegral nowSec)
       chainId = cfgPerpsChainId cfg
 
-  (awsSnap, dbProbe, nodeProbe, execAgg, liqAgg, sponsorAgg, heartbeats) <-
+  (awsSnap, dbProbe, nodeProbe, execAgg, liqAgg, sponsorAgg, fundingMap, heartbeats) <-
     runConcurrently $
-      (,,,,,,)
+      (,,,,,,,)
         <$> Concurrently (fetchAwsControlPlaneSnapshot manager)
         <*> Concurrently (probeDatabase pool)
         <*> Concurrently (probeArbitrumNode client nowSec)
         <*> Concurrently (fetchOverviewExecution pool cfg nowSec)
         <*> Concurrently (fetchOverviewLiquidity pool cfg)
         <*> Concurrently (fetchOverviewSponsored pool cfg mKernel)
+        <*> Concurrently (fetchFundingMap pool cfg)
         <*> Concurrently (fetchWorkerHeartbeats pool cfg mKernel)
 
   let ecsMap = acpsEcsServices awsSnap
       mHeadBlock = nhpHeadBlock nodeProbe
       respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
-      serviceRows = map (buildServiceRow ecsMap Map.empty mHeadBlock nowUtc) heartbeats
+      serviceRows = map (buildServiceRow ecsMap fundingMap mHeadBlock nowUtc) heartbeats
       healthyServices = length [() | (_, _, st) <- serviceRows, st == "healthy"]
       totalServices = length serviceRows
       nodeHealthy = nhpReachable nodeProbe && nhpSyncing nodeProbe /= Just True
@@ -502,22 +569,71 @@ fetchWorkerHeartbeats pool cfg mKernel = do
         <*> Concurrently (querySingleHb pool "SELECT last_indexed_block, updated_at::timestamptz FROM perps_liquidation_state WHERE chain_id = ? AND LOWER(cfd_engine) = ? LIMIT 1" (chainId, engine))
         <*> Concurrently (querySingleHb pool "SELECT block_number, indexed_at FROM perps_protection_checkpoints WHERE chain_id = ? AND LOWER(book) = ? ORDER BY block_number DESC LIMIT 1" (chainId, protBook))
         <*> Concurrently (querySingleHbNoParams pool "SELECT NULL::BIGINT, to_timestamp(max_publish_time) FROM perps_pyth_update_payloads ORDER BY max_publish_time DESC LIMIT 1")
-        <*> Concurrently (querySingleHb pool "SELECT observed_block, last_observed_at FROM perps_lp_settlement_observations WHERE chain_id = ? ORDER BY last_observed_at DESC LIMIT 1" (Only chainId))
+        <*> Concurrently (queryLpSettlementHb pool chainId)
         <*> Concurrently (queryReconcilerHb pool cfg mKernel)
         <*> Concurrently (querySingleHb pool "SELECT last_indexed_block, updated_at FROM perps_indexer_state WHERE chain_id = ? ORDER BY updated_at DESC LIMIT 1" (Only chainId))
         <*> Concurrently (querySingleHb pool "SELECT last_indexed_block::BIGINT, updated_at FROM vault_activity_indexer_state WHERE chain_id = ? ORDER BY updated_at DESC LIMIT 1" (Only chainId))
-        <*> Concurrently (querySingleHb pool "SELECT block_number, published_at FROM insights_snapshot_batches WHERE chain_id = ? ORDER BY published_at DESC LIMIT 1" (Only chainId))
+        <*> Concurrently (queryInsightsWorkerHb pool chainId)
+  let (lpBlock, lpSeenAt, lpHasFault) = lpHb
   pure
-    [ WorkerHeartbeat "keeper" "keeper" "Order Execution Keeper" "execution" (fst keeperHb) (snd keeperHb) 120 (Just "keeper")
-    , WorkerHeartbeat "liquidation_worker" "liquidation_worker" "Liquidation Worker" "execution" (fst liqHb) (snd liqHb) 180 (Just "liquidation")
-    , WorkerHeartbeat "protection_worker" "protection_worker" "TP/SL Protection Worker" "execution" (fst protHb) (snd protHb) 180 (Just "protection")
-    , WorkerHeartbeat "basket_worker" "basket_worker" "Pyth Basket / Oracle Worker" "oracle" (fst basketHb) (snd basketHb) 60 (Just "oracle")
-    , WorkerHeartbeat "lp_settlement" "workers" "LP Settlement Worker" "liquidity" (fst lpHb) (snd lpHb) 600 (Just "lp_settlement")
-    , WorkerHeartbeat "aa_reconciler" "aa_reconciler" "AA Sponsorship Reconciler" "sponsorship" (fst aaRecHb) (snd aaRecHb) 600 Nothing
-    , WorkerHeartbeat "perps_indexer" "perps_indexer" "Perps History Indexer" "indexing" (fst perpsIdxHb) (snd perpsIdxHb) 180 Nothing
-    , WorkerHeartbeat "vault_indexers" "workers" "Vault Activity & Attribution" "indexing" (fst vaultIdxHb) (snd vaultIdxHb) 180 Nothing
-    , WorkerHeartbeat "insights_worker" "insights_worker" "Insights & Divisions Worker" "indexing" (fst insightsHb) (snd insightsHb) 900 Nothing
+    [ WorkerHeartbeat "keeper" "keeper" "Order Execution Keeper" "execution" (fst keeperHb) (snd keeperHb) 120 (Just "keeper") False False
+    , WorkerHeartbeat "liquidation_worker" "liquidation_worker" "Liquidation Worker" "execution" (fst liqHb) (snd liqHb) 180 (Just "liquidation") False False
+    , WorkerHeartbeat "protection_worker" "protection_worker" "TP/SL Protection Worker" "execution" (fst protHb) (snd protHb) 180 (Just "protection") False False
+    , WorkerHeartbeat "basket_worker" "basket_worker" "Pyth Basket / Oracle Worker" "oracle" (fst basketHb) (snd basketHb) 60 (Just "oracle") False False
+    , WorkerHeartbeat "lp_settlement" "keeper" "LP Settlement Worker" "liquidity" lpBlock lpSeenAt 600 (Just "lp_settlement") True lpHasFault
+    , WorkerHeartbeat "aa_reconciler" "aa_reconciler" "AA Sponsorship Reconciler" "sponsorship" (fst aaRecHb) (snd aaRecHb) 600 Nothing False False
+    , WorkerHeartbeat "perps_indexer" "perps_indexer" "Perps History Indexer" "indexing" (fst perpsIdxHb) (snd perpsIdxHb) 180 Nothing False False
+    , WorkerHeartbeat "vault_indexers" "workers" "Vault Activity & Attribution" "indexing" (fst vaultIdxHb) (snd vaultIdxHb) 180 Nothing False False
+    , WorkerHeartbeat "insights_worker" "insights_worker" "Insights & Divisions Worker" "indexing" (fst insightsHb) (snd insightsHb) 900 Nothing False False
     ]
+
+queryLpSettlementHb :: DbPool -> Integer -> IO (Maybe Integer, Maybe UTCTime, Bool)
+queryLpSettlementHb pool chainId = do
+  mRows <-
+    observeIo $ withDb pool $ \conn ->
+      query
+        conn
+        "SELECT observed_block, last_observed_at, \
+        \  (critical_fault_mask > 0 OR dependency_failure_mask > 0 OR operational_blocker_mask > 0 OR COALESCE(lp_epoch_settlement_paused, FALSE)) \
+        \FROM perps_lp_settlement_observations \
+        \WHERE chain_id = ? \
+        \ORDER BY last_observed_at DESC \
+        \LIMIT 1"
+        (Only chainId)
+        :: IO [(Maybe Integer, Maybe UTCTime, Bool)]
+  pure $ case mRows of
+    Just ((blk, ts, fault) : _) -> (blk, ts, fault)
+    _ -> (Nothing, Nothing, False)
+
+queryInsightsWorkerHb :: DbPool -> Integer -> IO (Maybe Integer, Maybe UTCTime)
+queryInsightsWorkerHb pool chainId = do
+  (divHb, batchHb) <-
+    runConcurrently $
+      (,)
+        <$> Concurrently
+          ( querySingleHb
+              pool
+              "SELECT snapshot_block, captured_at FROM divisions_live_snapshots WHERE chain_id = ? ORDER BY captured_at DESC LIMIT 1"
+              (Only chainId)
+          )
+        <*> Concurrently
+          ( querySingleHb
+              pool
+              "SELECT block_number, published_at FROM insights_snapshot_batches WHERE chain_id = ? ORDER BY published_at DESC LIMIT 1"
+              (Only chainId)
+          )
+  pure (pickFresherHeartbeat divHb batchHb)
+
+pickFresherHeartbeat
+  :: (Maybe Integer, Maybe UTCTime)
+  -> (Maybe Integer, Maybe UTCTime)
+  -> (Maybe Integer, Maybe UTCTime)
+pickFresherHeartbeat left@(_, mTsLeft) right@(_, mTsRight) =
+  case (mTsLeft, mTsRight) of
+    (Just tl, Just tr) -> if tl >= tr then left else right
+    (Just _, Nothing) -> left
+    (Nothing, Just _) -> right
+    (Nothing, Nothing) -> left
 
 queryReconcilerHb :: DbPool -> Config -> Maybe KernelGatewayConfig -> IO (Maybe Integer, Maybe UTCTime)
 queryReconcilerHb pool cfg mKernel =
@@ -689,7 +805,10 @@ buildServiceRow ecsMap fundingMap mHead nowUtc WorkerHeartbeat {..} =
       mFunding = whFundingComponent >>= (`Map.lookup` fundingMap)
       mHeartbeatAge = (\ts -> max 0 (floor (diffUTCTime nowUtc ts) :: Integer)) <$> whLastSeenAt
       mBlocksBehind = (\h b -> max 0 (h - b)) <$> mHead <*> whLastBlock
-      health = classifyServiceHealth mEcs mHeartbeatAge whFreshThresholdSeconds (fst <$> mFunding)
+      health =
+        if whEventDriven
+          then classifyEventDrivenServiceHealth mEcs mHeartbeatAge whFreshThresholdSeconds (fst <$> mFunding) whHasActiveFault
+          else classifyServiceHealth mEcs mHeartbeatAge whFreshThresholdSeconds (fst <$> mFunding)
       val =
         object
           [ "key" .= whKey
@@ -729,6 +848,30 @@ classifyServiceHealth mEcs mAgeSec thresholdSec mFundingState =
       else if ecsDegraded || hbStale
         then "degraded"
       else if hbFresh || maybe False (\e -> aessRunningCount e > 0) mEcs
+        then "healthy"
+      else "unknown"
+
+classifyEventDrivenServiceHealth
+  :: Maybe AwsEcsServiceStatus
+  -> Maybe Integer
+  -> Integer
+  -> Maybe Text
+  -> Bool
+  -> Text
+classifyEventDrivenServiceHealth mEcs mAgeSec thresholdSec mFundingState hasActiveFault =
+  let ecsDown = maybe False (\e -> aessDesiredCount e > 0 && aessRunningCount e == 0) mEcs
+      ecsDegraded = maybe False (\e -> aessDesiredCount e > 0 && aessRunningCount e < aessDesiredCount e) mEcs
+      ecsScaledZero = maybe False (\e -> aessDesiredCount e == 0) mEcs
+      fundingBlocked = mFundingState == Just "blocked"
+      fundingReady = mFundingState == Just "ready"
+      hbFresh = maybe False (<= thresholdSec) mAgeSec
+   in if ecsDown || fundingBlocked
+        then "down"
+      else if ecsScaledZero
+        then "scaled_zero"
+      else if ecsDegraded || hasActiveFault
+        then "degraded"
+      else if fundingReady || hbFresh || maybe False (\e -> aessRunningCount e > 0) mEcs || isJust mAgeSec
         then "healthy"
       else "unknown"
 

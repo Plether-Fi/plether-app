@@ -10,6 +10,9 @@ module Plether.Database.Schema
   , insertStakingSnapshot
   , getStakingRatesAt
   , ensureBasketSnapshotSchema
+  , ensureOracleAdmissionEventsSchema
+  , insertOracleAdmissionEvent
+  , classifyOracleAdmissionError
   , insertBasketSnapshot
   , insertBasketSnapshotWithSource
   , insertBasketSnapshotsWithSource
@@ -653,6 +656,67 @@ ensureBasketSnapshotSchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_admitted_latest \
     \ON perps_pyth_update_payloads(max_publish_time DESC) \
     \WHERE source = 'backend_hermes_latest_v2'"
+  ensureOracleAdmissionEventsSchema conn
+  pure ()
+
+ensureOracleAdmissionEventsSchema :: Connection -> IO ()
+ensureOracleAdmissionEventsSchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_oracle_admission_events (\
+    \id BIGSERIAL PRIMARY KEY,\
+    \occurred_at BIGINT NOT NULL,\
+    \route VARCHAR(16) NOT NULL,\
+    \outcome VARCHAR(24) NOT NULL,\
+    \reason_code VARCHAR(48) NOT NULL,\
+    \min_publish_time BIGINT,\
+    \max_publish_time BIGINT,\
+    \spread_seconds INTEGER,\
+    \age_seconds INTEGER,\
+    \detail TEXT NOT NULL,\
+    \created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_oracle_admission_events_occurred \
+    \ON perps_oracle_admission_events(occurred_at DESC)"
+  pure ()
+
+-- | Map an internal BasketWorker / PletherOracle rejection message into a
+-- public-safe canonical reason code and redacted summary (never leaks URLs,
+-- credentials, or raw provider headers).
+classifyOracleAdmissionError :: Text -> (Text, Text)
+classifyOracleAdmissionError rawErr
+  | "diverged" `T.isInfixOf` lower = ("publish_time_divergence", "Component publish times exceeded 5s divergence policy")
+  | "in the future" `T.isInfixOf` lower = ("future_skew", "Pyth payload publish time exceeded future clock-skew limit")
+  | "stale" `T.isInfixOf` lower || "s old" `T.isInfixOf` lower = ("stale_price", "Pyth payload exceeded freshness staleness bound")
+  | "confidence" `T.isInfixOf` lower = ("confidence_too_wide", "Basket confidence interval exceeded on-chain ratio limit")
+  | "display domain" `T.isInfixOf` lower || "must be positive" `T.isInfixOf` lower || "zero" `T.isInfixOf` lower = ("price_domain_invalid", "Computed basket price violated positive display-domain bounds")
+  | "did not match" `T.isInfixOf` lower || "differed" `T.isInfixOf` lower = ("metadata_mismatch", "On-chain verified Pyth prices diverged from Hermes metadata")
+  | "reveal window" `T.isInfixOf` lower || "reveal tick" `T.isInfixOf` lower = ("reveal_window_invalid", "Historical reveal payload fell outside order settlement window")
+  | "pyth rejected" `T.isInfixOf` lower || "parsepythupdatedata" `T.isInfixOf` lower = ("onchain_pyth_rejected", "On-chain Pyth verification rejected the 6-feed update payload")
+  | "429" `T.isInfixOf` lower || "rate" `T.isInfixOf` lower = ("hermes_rate_limited", "Pyth Hermes upstream rate-limited the poll")
+  | "hermes" `T.isInfixOf` lower || "http" `T.isInfixOf` lower || "timeout" `T.isInfixOf` lower = ("hermes_fetch_error", "Pyth Hermes upstream fetch failed or timed out")
+  | otherwise = ("other", "Oracle admission guard rejected update")
+  where
+    lower = T.toLower rawErr
+
+insertOracleAdmissionEvent
+  :: Connection
+  -> Integer -- occurredAt
+  -> Text -- route ("latest" | "reveal")
+  -> Text -- outcome ("rejected" | "stale_market_closed")
+  -> Text -- reasonCode
+  -> Maybe Integer -- minPublishTime
+  -> Maybe Integer -- maxPublishTime
+  -> Maybe Int -- spreadSeconds
+  -> Maybe Int -- ageSeconds
+  -> Text -- detail
+  -> IO ()
+insertOracleAdmissionEvent conn occurredAt route outcome reasonCode mMinPub mMaxPub mSpread mAge detail = do
+  _ <- execute conn
+    "INSERT INTO perps_oracle_admission_events \
+    \(occurred_at, route, outcome, reason_code, min_publish_time, max_publish_time, spread_seconds, age_seconds, detail) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    (occurredAt, route, outcome, reasonCode, mMinPub, mMaxPub, mSpread, mAge, detail)
   pure ()
 
 -- Several ECS services initialize this schema concurrently during deployment.

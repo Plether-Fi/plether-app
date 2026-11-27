@@ -7,6 +7,7 @@ import { AccountPage } from './AccountPage'
 
 const protocolContext = vi.hoisted(() => vi.fn())
 const walletSummaryQuery = vi.hoisted(() => vi.fn())
+const walletExposureQuery = vi.hoisted(() => vi.fn())
 const liveDivisionsQuery = vi.hoisted(() => vi.fn())
 const divisionsQuery = vi.hoisted(() => vi.fn())
 
@@ -14,6 +15,7 @@ vi.mock('../hooks/useProtocolContext', () => ({ useProtocolContext: protocolCont
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   useWalletSummary: walletSummaryQuery,
+  useWalletExposure: walletExposureQuery,
 }))
 vi.mock('../divisions/query', () => ({
   useLiveDivisions: liveDivisionsQuery,
@@ -23,6 +25,13 @@ vi.mock('../divisions/query', () => ({
 const testAccount = `0x${'a'.repeat(40)}`
 
 beforeEach(() => {
+  walletExposureQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })
   protocolContext.mockReturnValue({
     chainId: 421614,
     chain: resolvePerpsChain(421614),
@@ -174,9 +183,11 @@ beforeEach(() => {
         items: [
           {
             protectionId: '77',
-            status: 'Active',
-            kind: 'TakeProfit',
-            triggerPrice: '106000000000000000000',
+            parentOrderId: '501',
+            statusName: 'Armed',
+            triggeredLegName: 'TakeProfit',
+            takeProfitTriggerPrice: '94000000',
+            stopLossTriggerPrice: '97000000',
             updatedBlock: '332884500',
           },
         ],

@@ -99,6 +99,93 @@ export interface ProtocolContractRecord {
   expectedCodeHash: string
   actualCodeHash: string | null
   verified: boolean | null
+  sourcePath?: string | null
+}
+
+export const PROTOCOL_CORE_GITHUB_REPO = 'Plether-Fi/plether-core'
+export const PROTOCOL_CORE_GITHUB_URL = `https://github.com/${PROTOCOL_CORE_GITHUB_REPO}`
+const PROTOCOL_CORE_DEFAULT_BRANCH = 'master'
+const GIT_COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/i
+
+/**
+ * Verified Solidity source paths in Plether-Fi/plether-core for each pinned
+ * perps protocol contract key.
+ */
+export const PROTOCOL_CONTRACT_SOURCE_PATHS: Readonly<Record<string, string>> = {
+  cfdEngine: 'packages/perps/src/CfdEngine.sol',
+  marginClearinghouse: 'packages/perps/src/MarginClearinghouse.sol',
+  terminalNavBookV2: 'packages/perps/src/TerminalNavBookV2.sol',
+  cfdEnginePlanner: 'packages/perps/src/CfdEnginePlanner.sol',
+  cfdEnginePlanningReader: 'packages/perps/src/CfdEnginePlanningReader.sol',
+  cfdEngineSettlementSidecar: 'packages/perps/src/CfdEngineSettlementSidecar.sol',
+  cfdEngineOpenQuoter: 'packages/perps/src/CfdEngineOpenQuoter.sol',
+  cfdClosePreview: 'packages/perps/src/CfdClosePreview.sol',
+  orderRouter: 'packages/perps/src/OrderRouter.sol',
+  orderLifecycleBook: 'packages/perps/src/OrderLifecycleBook.sol',
+  cfdOrderPolicyEvaluator: 'packages/perps/src/CfdOrderPolicyEvaluator.sol',
+  positionProtectionBook: 'packages/perps/src/PositionProtectionBook.sol',
+  orderRouterExecutionSidecar: 'packages/perps/src/OrderRouterExecutionSidecar.sol',
+  orderRecoverySidecar: 'packages/perps/src/OrderRecoverySidecar.sol',
+  orderRouterLiquidationBatchSidecar: 'packages/perps/src/OrderRouterLiquidationBatchSidecar.sol',
+  housePool: 'packages/perps/src/HousePool.sol',
+  seniorVault: 'packages/perps/src/TrancheVault.sol',
+  juniorVault: 'packages/perps/src/TrancheVault.sol',
+  housePoolRedemptionMathSidecar: 'packages/perps/src/HousePoolRedemptionMathSidecar.sol',
+  pletherOracle: 'packages/perps/src/PletherOracle.sol',
+  perpsPublicLens: 'packages/perps/src/PerpsPublicLens.sol',
+  cfdEngineLens: 'packages/perps/src/CfdEngineLens.sol',
+  cfdEngineAccountLens: 'packages/perps/src/CfdEngineAccountLens.sol',
+  cfdEngineProtocolLens: 'packages/perps/src/CfdEngineProtocolLens.sol',
+  settlementMonitorLens: 'packages/perps/src/SettlementMonitorLens.sol',
+  settlementMonitorLensSidecar: 'packages/perps/src/SettlementMonitorLensSidecar.sol',
+  emergencyPauseCoordinator: 'packages/perps/src/EmergencyPauseCoordinator.sol',
+  cfdEngineAdmin: 'packages/perps/src/CfdEngineAdmin.sol',
+  orderRouterAdmin: 'packages/perps/src/OrderRouterAdmin.sol',
+}
+
+const MOCK_SETTLEMENT_TOKEN_SOURCE_PATH = 'script/DeployPerpsArbitrumSepolia.s.sol'
+
+function normalizeGitCommitRef(sourceCommit: string | null | undefined): string | null {
+  if (!sourceCommit) return null
+  const trimmed = sourceCommit.trim()
+  return GIT_COMMIT_SHA_RE.test(trimmed) ? trimmed : null
+}
+
+export function protocolCommitGitHubUrl(sourceCommit: string | null | undefined): string | null {
+  const commit = normalizeGitCommitRef(sourceCommit)
+  return commit ? `${PROTOCOL_CORE_GITHUB_URL}/commit/${commit}` : null
+}
+
+export function protocolTreeGitHubUrl(sourceCommit: string | null | undefined): string {
+  const commit = normalizeGitCommitRef(sourceCommit)
+  return commit
+    ? `${PROTOCOL_CORE_GITHUB_URL}/tree/${commit}/packages/perps/src`
+    : `${PROTOCOL_CORE_GITHUB_URL}/tree/${PROTOCOL_CORE_DEFAULT_BRANCH}/packages/perps/src`
+}
+
+export function protocolContractGitHubUrl(
+  contract: Pick<ProtocolContractRecord, 'key' | 'sourcePath'>,
+  sourceCommit: string | null | undefined,
+  options?: { settlementTokenIsMock?: boolean | null },
+): { url: string; path: string; ref: string } | null {
+  const explicitPath = contract.sourcePath?.trim().replace(/^\/+/, '') ?? ''
+  const path =
+    explicitPath !== ''
+      ? explicitPath
+      : contract.key === 'settlementToken'
+        ? options?.settlementTokenIsMock === true
+          ? MOCK_SETTLEMENT_TOKEN_SOURCE_PATH
+          : null
+        : (PROTOCOL_CONTRACT_SOURCE_PATHS[contract.key] ?? null)
+
+  if (!path) return null
+
+  const ref = normalizeGitCommitRef(sourceCommit) ?? PROTOCOL_CORE_DEFAULT_BRANCH
+  return {
+    url: `${PROTOCOL_CORE_GITHUB_URL}/blob/${ref}/${path}`,
+    path,
+    ref,
+  }
 }
 
 export interface ProtocolReleaseHistoryItem {

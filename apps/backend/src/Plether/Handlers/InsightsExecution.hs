@@ -3,6 +3,7 @@ module Plether.Handlers.InsightsExecution
   , OrderReliabilityBucket (..)
   , DetectedKeeperEvent (..)
   , KeeperAggregate (..)
+  , KeeperOrderAggregateRow (..)
   , RawKeeperTx (..)
   , RecentTradeRow (..)
   , getExecutionQualityResponse
@@ -23,6 +24,7 @@ module Plether.Handlers.InsightsExecution
   , buildTimelineBuckets
   , rateBps
   , aggregateKeepers
+  , mergeKeeperFleetAggregates
   , mergeLpSettlementTxs
   , parseHexInteger
   , extractTxFrom
@@ -63,6 +65,13 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getPerpsMarketVolumeSince)
 import Plether.Ethereum.Client (EthClient, rpcCall)
 import qualified Plether.Ethereum.Contracts.Perps as Perps
+import Plether.Handlers.InsightsOrderProtections
+  ( OrderProtectionsBundle
+  , buildOrderProtectionsForOrder
+  , enrichOrderProtectionsBundleFromRpc
+  , extractExecutionOrderId
+  , fetchOrderProtectionsBundle
+  )
 import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Keeper.Reliability (OrderReliability (..), readOrderReliability)
 import qualified Plether.Perps.Manifest as Manifest
@@ -112,6 +121,27 @@ data KeeperAggregate = KeeperAggregate
   , kaBountiesEarnedAssets :: Integer
   , kaLastActiveBlock :: Integer
   , kaLastActiveTimestamp :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data KeeperOrderAggregateRow = KeeperOrderAggregateRow
+  { koarAddress :: Text
+  , koarExecutions24h :: Int
+  , koarLatencyP50Seconds :: Maybe Integer
+  , koarLatencyP95Seconds :: Maybe Integer
+  , koarLastActiveBlock :: Integer
+  , koarLastActiveTimestamp :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data KeeperFleet24h = KeeperFleet24h
+  { kfExecutions24h :: Int
+  , kfLatencyP50Seconds :: Maybe Integer
+  , kfLatencyP95Seconds :: Maybe Integer
+  , kfBountiesPaid24hAssets :: Integer
+  , kfLatestBlock :: Integer
+  , kfOrderAggs :: [KeeperOrderAggregateRow]
+  , kfNonOrderEvents :: [DetectedKeeperEvent]
   }
   deriving stock (Eq, Show)
 
@@ -348,16 +378,24 @@ getExecutionTradesResponse
 getExecutionTradesResponse pool cfg requestedLimit = do
   let chainId = cfgPerpsChainId cfg
       router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      protBook = T.toLower Manifest.positionProtectionBookAddress
       limit = min 100 $ max 1 requestedLimit
-  rows <- withDb pool $ \conn ->
-    withReadSnapshot conn $ fetchRecentTrades conn chainId router limit
+  (rows, protBundle) <- withDb pool $ \conn ->
+    withReadSnapshot conn $ do
+      fetched <- fetchRecentTrades conn chainId router limit
+      let openOrderIds =
+            mapMaybe
+              (\r -> rtrOrderId r <|> extractExecutionOrderId (rtrExecution r))
+              (filter (\r -> rtrActivityType r == "Open") fetched)
+      bundle <- fetchOrderProtectionsBundle conn chainId router protBook openOrderIds
+      pure (fetched, bundle)
   let latestBlock = maximum (0 : map rtrBlockNumber rows)
   pure $
     Right $
       mkResponse latestBlock chainId $
         object
           [ "network" .= networkMetaJson cfg
-          , "trades" .= map recentTradeToJson rows
+          , "trades" .= map (recentTradeToJson protBundle) rows
           ]
 
 isValidTxHash :: Text -> Bool
@@ -380,7 +418,8 @@ getTransactionResponse pool client cfg rawTxHash = do
     else do
       let chainId = cfgPerpsChainId cfg
           router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
-      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender) <- withDb pool $ \conn -> do
+          protBook = T.toLower Manifest.positionProtectionBookAddress
+      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender, baseProtBundle) <- withDb pool $ \conn -> do
         ensureTxSenderCacheTable conn
         withReadSnapshot conn $ do
           txRows <- fetchTransactionTrades conn chainId router txHash
@@ -388,21 +427,31 @@ getTransactionResponse pool client cfg rawTxHash = do
           protoEvs <- fetchTransactionProtocolEvents conn chainId router txHash
           lpRow <- fetchTransactionLpSettlement conn chainId txHash
           senders <- fetchCachedTxSenders conn chainId [txHash]
-          pure (txRows, orders, protoEvs, lpRow, Map.lookup txHash senders)
+          let txOrderIds =
+                mapMaybe (\r -> rtrOrderId r <|> extractExecutionOrderId (rtrExecution r)) txRows
+                  <> map forOrderId orders
+          bundle <- fetchOrderProtectionsBundle conn chainId router protBook txOrderIds
+          pure (txRows, orders, protoEvs, lpRow, Map.lookup txHash senders, bundle)
       if null rows && null finalizedOrders && null protocolEvents && maybe True (const False) mLpSettlement
         then
           pure $ Left $ E.notFound ("No indexed Plether Perps activity found for transaction " <> txHash)
         else do
-          executorAddr <- case cachedSender of
-            Just addr -> pure (Just addr)
-            Nothing -> do
-              (_, mResolved) <- resolveTxSenderRpc client txHash
-              case mResolved of
-                Just resolved ->
-                  withDb pool (\conn -> upsertCachedTxSenders conn chainId [(txHash, resolved)])
-                    `catch` (\(_ :: SqlError) -> pure ())
-                Nothing -> pure ()
-              pure mResolved
+          (executorAddr, protBundle) <-
+            runConcurrently $
+              (,)
+                <$> Concurrently
+                  ( case cachedSender of
+                      Just addr -> pure (Just addr)
+                      Nothing -> do
+                        (_, mResolved) <- resolveTxSenderRpc client txHash
+                        case mResolved of
+                          Just resolved ->
+                            withDb pool (\conn -> upsertCachedTxSenders conn chainId [(txHash, resolved)])
+                              `catch` (\(_ :: SqlError) -> pure ())
+                          Nothing -> pure ()
+                        pure mResolved
+                  )
+                <*> Concurrently (enrichOrderProtectionsBundleFromRpc client baseProtBundle)
           let blockNum =
                 fromMaybe 0 $
                   (rtrBlockNumber <$> listToMaybe rows)
@@ -431,10 +480,10 @@ getTransactionResponse pool client cfg rawTxHash = do
                   , "occurredAt" .= isoTimestamp occurredTs
                   , "executorAddress" .= executorAddr
                   , "batchSummary" .= mBatchSummary
-                  , "finalizedOrders" .= map finalizedOrderToJson finalizedOrders
+                  , "finalizedOrders" .= map (finalizedOrderToJson protBundle) finalizedOrders
                   , "protocolEvents" .= map protocolEventToJson protocolEvents
                   , "lpSettlement" .= (txLpSettlementToJson <$> mLpSettlement)
-                  , "events" .= map recentTradeToJson rows
+                  , "events" .= map (recentTradeToJson protBundle) rows
                   ]
 
 classifyTxKind :: Int -> Bool -> Bool -> Text
@@ -453,27 +502,27 @@ getKeepersStatusResponse
 getKeepersStatusResponse pool client cfg = do
   now <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
-  events <- resolvePermissionlessKeeperEvents pool client cfg (now - 86400) 250
-  let aggregated = aggregateKeepers events
+  fleet <- fetchKeeperFleet24h pool client cfg (now - 86400)
+  let aggregated =
+        mergeKeeperFleetAggregates
+          (kfOrderAggs fleet)
+          (kfNonOrderEvents fleet)
+          (fromIntegral (kfExecutions24h fleet))
       topKeepers = take 30 aggregated
   balances <- mapConcurrently (fetchKeeperEthBalance client . kaAddress) topKeepers
-  let allLatencies = mapMaybe dkeLatencySeconds events
-      fleetLatency = computeLatencyPercentiles allLatencies
-      totalBounties = sum $ mapMaybe dkeBountyAssets events
-      latestBlock = maximum (0 : map dkeBlockNumber events)
   pure $
     Right $
-      mkResponse latestBlock chainId $
+      mkResponse (kfLatestBlock fleet) chainId $
         object
           [ "network" .= networkMetaJson cfg
           , "observedAt" .= isoTimestamp now
           , "summary"
               .= object
                 [ "activeKeepers24h" .= length aggregated
-                , "executions24h" .= length events
-                , "latencyP50Seconds" .= lsP50 fleetLatency
-                , "latencyP95Seconds" .= lsP95 fleetLatency
-                , "bountiesPaid24hAssets" .= show totalBounties
+                , "executions24h" .= kfExecutions24h fleet
+                , "latencyP50Seconds" .= kfLatencyP50Seconds fleet
+                , "latencyP95Seconds" .= kfLatencyP95Seconds fleet
+                , "bountiesPaid24hAssets" .= show (kfBountiesPaid24hAssets fleet)
                 ]
           , "keepers" .= zipWith keeperAggregateToJson topKeepers balances
           ]
@@ -514,28 +563,59 @@ getKeeperDetailResponse pool client cfg rawAddress requestedLimit = do
     else do
       now <- floor <$> getPOSIXTime
       let chainId = cfgPerpsChainId cfg
+          router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+          sinceUnix = now - 86400
           limit = min 100 $ max 1 requestedLimit
-      (allEvents, ethBal) <-
+      (fleet, ethBal) <-
         runConcurrently $
           (,)
-            <$> Concurrently (resolvePermissionlessKeeperEvents pool client cfg (now - 86400) 250)
+            <$> Concurrently (fetchKeeperFleet24h pool client cfg sinceUnix)
             <*> Concurrently (fetchKeeperEthBalance client addr)
-      let keeperEvents =
-            sortOn (\e -> (Down (dkeBlockNumber e), Down (dkeTimestamp e))) $
-              filter (\e -> T.toLower (dkeKeeperAddress e) == addr) allEvents
-          totalFleet = fromIntegral (length allEvents) :: Integer
-          execCount = length keeperEvents
-          latencyStats = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds keeperEvents
-          bounties = sum $ mapMaybe dkeBountyAssets keeperEvents
-          roles = sort $ nub $ map dkeRole keeperEvents
-          mLastBlock = case keeperEvents of
+      (orderLatStats, recentOrderEvents) <-
+        fetchKeeperOrderDetail24h pool chainId router addr sinceUnix limit
+      let mOrderAgg = listToMaybe [row | row <- kfOrderAggs fleet, T.toLower (koarAddress row) == addr]
+          nonOrderForKeeper =
+            filter (\e -> T.toLower (dkeKeeperAddress e) == addr) (kfNonOrderEvents fleet)
+          orderExecCount = maybe 0 koarExecutions24h mOrderAgg
+          execCount = orderExecCount + length nonOrderForKeeper
+          totalFleet = max (fromIntegral (kfExecutions24h fleet) :: Integer) (fromIntegral execCount)
+          nonOrderLatStats = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds nonOrderForKeeper
+          latencyStats =
+            if lsSampleCount orderLatStats > 0
+              then orderLatStats
+              else nonOrderLatStats
+          bounties = sum $ mapMaybe dkeBountyAssets nonOrderForKeeper
+          roles =
+            sort $
+              nub $
+                (if orderExecCount > 0 then ["order_execution"] else [])
+                  <> map dkeRole nonOrderForKeeper
+          allBlocks =
+            maybe [] (pure . koarLastActiveBlock) mOrderAgg
+              <> map dkeBlockNumber nonOrderForKeeper
+          allTimestamps =
+            maybe [] (pure . koarLastActiveTimestamp) mOrderAgg
+              <> map dkeTimestamp nonOrderForKeeper
+          mLastBlock = case allBlocks of
             [] -> Nothing
-            xs -> Just (maximum $ map dkeBlockNumber xs)
-          mLastTs = case keeperEvents of
+            xs -> Just (maximum xs)
+          mLastTs = case allTimestamps of
             [] -> Nothing
-            xs -> Just (maximum $ map dkeTimestamp xs)
-          roleBreakdown =
-            [ let rEvs = filter (\e -> dkeRole e == r) keeperEvents
+            xs -> Just (maximum xs)
+          orderRoleBreakdown =
+            [ object
+                [ "role" .= ("order_execution" :: Text)
+                , "executions24h" .= orderExecCount
+                , "shareBps" .= rateBps (fromIntegral orderExecCount) (fromIntegral execCount)
+                , "latencyP50Seconds" .= (lsP50 orderLatStats <|> (mOrderAgg >>= koarLatencyP50Seconds))
+                , "latencyP95Seconds" .= (lsP95 orderLatStats <|> (mOrderAgg >>= koarLatencyP95Seconds))
+                , "bountiesEarnedAssets" .= ("0" :: Text)
+                ]
+            | orderExecCount > 0
+            ]
+          nonOrderRoles = sort $ nub $ map dkeRole nonOrderForKeeper
+          nonOrderRoleBreakdown =
+            [ let rEvs = filter (\e -> dkeRole e == r) nonOrderForKeeper
                   rLat = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds rEvs
                   rCount = length rEvs
                   rBounty = sum $ mapMaybe dkeBountyAssets rEvs
@@ -547,8 +627,21 @@ getKeeperDetailResponse pool client cfg rawAddress requestedLimit = do
                     , "latencyP95Seconds" .= lsP95 rLat
                     , "bountiesEarnedAssets" .= show rBounty
                     ]
-            | r <- roles
+            | r <- nonOrderRoles
             ]
+          roleBreakdown =
+            sortOn
+              ( \v -> case v of
+                  Object o -> case KM.lookup (Key.fromText "role") o of
+                    Just (String r) -> r
+                    _ -> ""
+                  _ -> ""
+              )
+              (orderRoleBreakdown <> nonOrderRoleBreakdown)
+          activity =
+            take limit $
+              sortOn (\e -> (Down (dkeBlockNumber e), Down (dkeTimestamp e))) $
+                recentOrderEvents <> nonOrderForKeeper
           latestBlock = fromMaybe 0 mLastBlock
       pure $
         Right $
@@ -569,7 +662,7 @@ getKeeperDetailResponse pool client cfg rawAddress requestedLimit = do
                     , "lastActiveAt" .= (isoTimestamp <$> mLastTs)
                     ]
               , "roleBreakdown" .= roleBreakdown
-              , "activity" .= map keeperEventToJson (take limit keeperEvents)
+              , "activity" .= map keeperEventToJson activity
               ]
 
 computeLatencyPercentiles :: [Integer] -> LatencyStats
@@ -622,6 +715,64 @@ aggregateKeepers events =
         map buildAgg $
           Map.toList grouped
 
+mergeKeeperFleetAggregates
+  :: [KeeperOrderAggregateRow]
+  -> [DetectedKeeperEvent]
+  -> Integer
+  -> [KeeperAggregate]
+mergeKeeperFleetAggregates orderAggs nonOrderEvents fleetTotal =
+  let orderMap =
+        Map.fromList
+          [(T.toLower (koarAddress row), row) | row <- orderAggs, koarExecutions24h row > 0]
+      nonOrderMap =
+        foldr
+          (\ev acc -> Map.insertWith (++) (T.toLower (dkeKeeperAddress ev)) [ev] acc)
+          Map.empty
+          nonOrderEvents
+      allAddrs = nub (Map.keys orderMap <> Map.keys nonOrderMap)
+      sumAttributed =
+        sum
+          [ maybe 0 koarExecutions24h (Map.lookup addr orderMap)
+              + length (Map.findWithDefault [] addr nonOrderMap)
+          | addr <- allAddrs
+          ]
+      shareDenom = max fleetTotal (fromIntegral sumAttributed)
+      buildOne addr =
+        let mOrder = Map.lookup addr orderMap
+            nonOrderEvs = Map.findWithDefault [] addr nonOrderMap
+            orderCount = maybe 0 koarExecutions24h mOrder
+            totalExecs = orderCount + length nonOrderEvs
+            nonOrderLat = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds nonOrderEvs
+            roles =
+              sort $
+                nub $
+                  (if orderCount > 0 then ["order_execution"] else [])
+                    <> map dkeRole nonOrderEvs
+            bounties = sum $ mapMaybe dkeBountyAssets nonOrderEvs
+            lastBlock =
+              maximum $
+                0
+                  : maybe [] (pure . koarLastActiveBlock) mOrder
+                    <> map dkeBlockNumber nonOrderEvs
+            lastTs =
+              maximum $
+                0
+                  : maybe [] (pure . koarLastActiveTimestamp) mOrder
+                    <> map dkeTimestamp nonOrderEvs
+         in KeeperAggregate
+              { kaAddress = addr
+              , kaRoles = roles
+              , kaExecutions24h = totalExecs
+              , kaShareBps = rateBps (fromIntegral totalExecs) shareDenom
+              , kaLatencyP50Seconds = (mOrder >>= koarLatencyP50Seconds) <|> lsP50 nonOrderLat
+              , kaLatencyP95Seconds = (mOrder >>= koarLatencyP95Seconds) <|> lsP95 nonOrderLat
+              , kaBountiesEarnedAssets = bounties
+              , kaLastActiveBlock = lastBlock
+              , kaLastActiveTimestamp = lastTs
+              }
+   in sortOn (\k -> (Down (kaExecutions24h k), Down (kaLastActiveBlock k), kaAddress k)) $
+        map buildOne allAddrs
+
 mergeLpSettlementTxs :: [RawKeeperTx] -> [RawKeeperTx] -> [RawKeeperTx]
 mergeLpSettlementTxs journalTxs canonicalLogTxs =
   let toMap =
@@ -663,6 +814,180 @@ extractTxFrom (Object obj) =
     Just (String addr) | isValidAddress addr -> Just $ T.toLower $ T.strip addr
     _ -> Nothing
 extractTxFrom _ = Nothing
+
+fetchKeeperFleet24h
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Integer
+  -> IO KeeperFleet24h
+fetchKeeperFleet24h pool client cfg sinceUnix = do
+  let chainId = cfgPerpsChainId cfg
+      router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      housePool = T.toLower $ T.strip $ cfgPerpsHousePool cfg
+      book = T.toLower Manifest.positionProtectionBookAddress
+      monitor = T.toLower $ T.strip $ cfgPerpsSettlementMonitorLens cfg
+  ((orderCount, mOrderP50, mOrderP95, maxOrderBlock), nonOrderTxs, uncachedOrderHashes, cachedNonOrder) <-
+    withDb pool $ \conn -> do
+      ensureTxSenderCacheTable conn
+      withReadSnapshot conn $ do
+        fleetSummaryRows <-
+          query
+            conn
+            "SELECT \
+            \  COUNT(*)::INT, \
+            \  percentile_cont(0.50) WITHIN GROUP (ORDER BY terminal_timestamp - commit_timestamp) \
+            \    FILTER (WHERE commit_timestamp IS NOT NULL AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= commit_timestamp)::DOUBLE PRECISION, \
+            \  percentile_cont(0.95) WITHIN GROUP (ORDER BY terminal_timestamp - commit_timestamp) \
+            \    FILTER (WHERE commit_timestamp IS NOT NULL AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= commit_timestamp)::DOUBLE PRECISION, \
+            \  COALESCE(MAX(terminal_block_number), 0)::BIGINT \
+            \FROM perps_orders \
+            \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+            \  AND terminal_tx_hash IS NOT NULL AND COALESCE(terminal_timestamp, 0) >= ?"
+            (chainId, router, sinceUnix)
+            :: IO [(Int, Maybe Double, Maybe Double, Integer)]
+        let summary = fromMaybe (0, Nothing, Nothing, 0) (listToMaybe fleetSummaryRows)
+        nonOrders <- fetchNonOrderPermissionlessTxs conn chainId router housePool book monitor sinceUnix 500
+        missingOrders <-
+          query
+            conn
+            "SELECT LOWER(o.terminal_tx_hash) \
+            \FROM perps_orders o \
+            \LEFT JOIN insights_tx_senders s \
+            \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+            \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
+            \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
+            \  AND s.tx_hash IS NULL \
+            \GROUP BY LOWER(o.terminal_tx_hash) \
+            \ORDER BY MAX(COALESCE(o.terminal_block_number, 0)) DESC \
+            \LIMIT ?"
+            (chainId, router, sinceUnix, 60 :: Int)
+            :: IO [Only Text]
+        let nonOrderHashes = nub $ map (T.toLower . rktTxHash) nonOrders
+        cached <- fetchCachedTxSenders conn chainId nonOrderHashes
+        pure (summary, nonOrders, [h | Only h <- missingOrders], cached)
+  -- Always prioritize resolving low-volume roles (liquidations, protections, LP settlements)
+  -- before filling the remaining RPC budget with newest uncached order-execution hashes.
+  let missingNonOrder =
+        filter (`Map.notMember` cachedNonOrder) (nub $ map (T.toLower . rktTxHash) nonOrderTxs)
+      missingToResolve = take 60 $ nub (missingNonOrder <> uncachedOrderHashes)
+  resolvedPairs <- mapConcurrently (resolveTxSenderRpc client) missingToResolve
+  let newlyResolved = [(h, s) | (h, Just s) <- resolvedPairs]
+  unless (null newlyResolved) $
+    withDb pool $ \conn -> upsertCachedTxSenders conn chainId newlyResolved
+  let nonOrderSenderMap = Map.union cachedNonOrder (Map.fromList newlyResolved)
+  orderAggRows <- withDb pool $ \conn ->
+    query
+      conn
+      "SELECT LOWER(s.sender_address), \
+      \  COUNT(*)::INT, \
+      \  percentile_cont(0.50) WITHIN GROUP (ORDER BY o.terminal_timestamp - o.commit_timestamp) \
+      \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::DOUBLE PRECISION, \
+      \  percentile_cont(0.95) WITHIN GROUP (ORDER BY o.terminal_timestamp - o.commit_timestamp) \
+      \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::DOUBLE PRECISION, \
+      \  COALESCE(MAX(o.terminal_block_number), 0)::BIGINT, \
+      \  COALESCE(MAX(o.terminal_timestamp), 0)::BIGINT \
+      \FROM perps_orders o \
+      \JOIN insights_tx_senders s \
+      \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+      \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
+      \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
+      \GROUP BY LOWER(s.sender_address)"
+      (chainId, router, sinceUnix)
+      :: IO [(Text, Int, Maybe Double, Maybe Double, Integer, Integer)]
+  let orderAggs =
+        [ KeeperOrderAggregateRow addr cnt (round <$> p50) (round <$> p95) maxBlk maxTs
+        | (addr, cnt, p50, p95, maxBlk, maxTs) <- orderAggRows
+        ]
+      nonOrderEvents =
+        mapMaybe
+          ( \raw -> do
+              sender <- Map.lookup (T.toLower $ rktTxHash raw) nonOrderSenderMap
+              pure
+                DetectedKeeperEvent
+                  { dkeRole = rktRole raw
+                  , dkeKeeperAddress = sender
+                  , dkeTxHash = T.toLower $ rktTxHash raw
+                  , dkeBlockNumber = rktBlockNumber raw
+                  , dkeTimestamp = rktTimestamp raw
+                  , dkeLatencySeconds = rktLatencySeconds raw
+                  , dkeBountyAssets = rktBountyAssets raw
+                  }
+          )
+          nonOrderTxs
+      nonOrderLat = computeLatencyPercentiles $ mapMaybe rktLatencySeconds nonOrderTxs
+      fleetP50 = (round <$> mOrderP50) <|> lsP50 nonOrderLat
+      fleetP95 = (round <$> mOrderP95) <|> lsP95 nonOrderLat
+      totalBounties = sum $ mapMaybe rktBountyAssets nonOrderTxs
+      latestBlock = maximum (0 : maxOrderBlock : map rktBlockNumber nonOrderTxs)
+  pure
+    KeeperFleet24h
+      { kfExecutions24h = orderCount + length nonOrderTxs
+      , kfLatencyP50Seconds = fleetP50
+      , kfLatencyP95Seconds = fleetP95
+      , kfBountiesPaid24hAssets = totalBounties
+      , kfLatestBlock = latestBlock
+      , kfOrderAggs = orderAggs
+      , kfNonOrderEvents = nonOrderEvents
+      }
+
+fetchKeeperOrderDetail24h
+  :: DbPool
+  -> Integer
+  -> Text
+  -> Text
+  -> Integer
+  -> Int
+  -> IO (LatencyStats, [DetectedKeeperEvent])
+fetchKeeperOrderDetail24h pool chainId router addr sinceUnix limit =
+  withDb pool $ \conn ->
+    withReadSnapshot conn $ do
+      latRows <-
+        query
+          conn
+          "SELECT \
+          \  COUNT(*) FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::INT, \
+          \  percentile_cont(0.50) WITHIN GROUP (ORDER BY o.terminal_timestamp - o.commit_timestamp) \
+          \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::DOUBLE PRECISION, \
+          \  percentile_cont(0.95) WITHIN GROUP (ORDER BY o.terminal_timestamp - o.commit_timestamp) \
+          \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::DOUBLE PRECISION, \
+          \  percentile_cont(0.99) WITHIN GROUP (ORDER BY o.terminal_timestamp - o.commit_timestamp) \
+          \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::DOUBLE PRECISION, \
+          \  MAX(o.terminal_timestamp - o.commit_timestamp) \
+          \    FILTER (WHERE o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp)::BIGINT \
+          \FROM perps_orders o \
+          \JOIN insights_tx_senders s \
+          \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+          \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
+          \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
+          \  AND LOWER(s.sender_address) = ?"
+          (chainId, router, sinceUnix, addr)
+          :: IO [(Int, Maybe Double, Maybe Double, Maybe Double, Maybe Integer)]
+      let latStats = case latRows of
+            [(cnt, p50, p95, p99, mx)] | cnt > 0 ->
+              LatencyStats cnt (round <$> p50) (round <$> p95) (round <$> p99) mx
+            _ -> LatencyStats 0 Nothing Nothing Nothing Nothing
+      recentRows <-
+        query
+          conn
+          "SELECT LOWER(o.terminal_tx_hash), COALESCE(o.terminal_block_number, 0), COALESCE(o.terminal_timestamp, 0), \
+          \  CASE WHEN o.commit_timestamp IS NOT NULL AND o.terminal_timestamp IS NOT NULL AND o.terminal_timestamp >= o.commit_timestamp \
+          \    THEN o.terminal_timestamp - o.commit_timestamp ELSE NULL END \
+          \FROM perps_orders o \
+          \JOIN insights_tx_senders s \
+          \  ON s.chain_id = o.chain_id AND s.tx_hash = LOWER(o.terminal_tx_hash) \
+          \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
+          \  AND o.terminal_tx_hash IS NOT NULL AND COALESCE(o.terminal_timestamp, 0) >= ? \
+          \  AND LOWER(s.sender_address) = ? \
+          \ORDER BY o.terminal_block_number DESC \
+          \LIMIT ?"
+          (chainId, router, sinceUnix, addr, limit)
+          :: IO [(Text, Integer, Integer, Maybe Integer)]
+      let events =
+            [ DetectedKeeperEvent "order_execution" addr h blk ts lat Nothing
+            | (h, blk, ts, lat) <- recentRows
+            ]
+      pure (latStats, events)
 
 resolvePermissionlessKeeperEvents
   :: DbPool
@@ -742,7 +1067,7 @@ ensureTxSenderCacheTable conn = do
           pure ()
       )
       ( \(err :: SqlError) ->
-          if sqlState err `elem` ["23505", "42P07"]
+          if sqlState err `elem` ["23505", "42P07", "42710"]
             then pure ()
             else throwIO err
       )
@@ -769,7 +1094,7 @@ upsertCachedTxSenders conn chainId =
         (chainId, T.toLower txHash, T.toLower sender)
     pure ()
 
-fetchRecentPermissionlessTxs
+fetchNonOrderPermissionlessTxs
   :: Connection
   -> Integer
   -> Text
@@ -779,19 +1104,9 @@ fetchRecentPermissionlessTxs
   -> Integer
   -> Int
   -> IO [RawKeeperTx]
-fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUnix limit = do
+fetchNonOrderPermissionlessTxs conn chainId router housePool book monitor sinceUnix limit = do
   let lpTopicHex = "0x" <> T.toLower (TE.decodeUtf8 (B16.encode Perps.lpEpochSettledTopic))
-  orderRows <-
-    query
-      conn
-      "SELECT terminal_tx_hash, COALESCE(terminal_block_number, 0), COALESCE(terminal_timestamp, 0), \
-      \CASE WHEN commit_timestamp IS NOT NULL AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= commit_timestamp \
-      \  THEN terminal_timestamp - commit_timestamp ELSE NULL END \
-      \FROM perps_orders \
-      \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-      \  AND terminal_tx_hash IS NOT NULL AND COALESCE(terminal_timestamp, 0) >= ? \
-      \ORDER BY terminal_block_number DESC LIMIT ?"
-      (chainId, router, sinceUnix, limit) :: IO [(Text, Integer, Integer, Maybe Integer)]
+      nonOrderLimit = max 50 limit
   liqRows <-
     query
       conn
@@ -800,7 +1115,7 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       \FROM perps_account_activity \
       \WHERE chain_id = ? AND release_router = ? AND activity_type = 'Liquidated' AND timestamp >= ? \
       \ORDER BY block_number DESC LIMIT ?"
-      (chainId, router, sinceUnix, limit) :: IO [(Text, Integer, Integer, Maybe String)]
+      (chainId, router, sinceUnix, nonOrderLimit) :: IO [(Text, Integer, Integer, Maybe String)]
   protRows <-
     query
       conn
@@ -816,7 +1131,7 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       \FROM perps_protection_events p \
       \WHERE p.chain_id = ? AND p.book = ? AND p.event_name = 'PositionProtectionTriggered' \
       \ORDER BY p.block_number DESC LIMIT ?"
-      (housePool, chainId, book, min 50 limit) :: IO [(Text, Integer, Integer)]
+      (housePool, chainId, book, nonOrderLimit) :: IO [(Text, Integer, Integer)]
   lpJournalRows <-
     query
       conn
@@ -825,7 +1140,7 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       \WHERE chain_id = ? AND monitor_address = ? AND status = 'confirmed_success' \
       \  AND receipt_transaction_hash IS NOT NULL AND created_at >= NOW() - INTERVAL '24 hours' \
       \ORDER BY receipt_block_number DESC LIMIT ?"
-      (chainId, monitor, min 50 limit) :: IO [(Text, Integer, UTCTime, Maybe UTCTime)]
+      (chainId, monitor, min 200 nonOrderLimit) :: IO [(Text, Integer, UTCTime, Maybe UTCTime)]
   -- Canonical on-chain LpEpochSettled logs capture every permissionless caller,
   -- not only Plether-operated keeper journal entries.
   lpCanonicalRows <-
@@ -839,12 +1154,8 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       \WHERE LOWER(l.payload->>'address') = ? \
       \  AND LOWER(l.payload->'topics'->>0) = ? \
       \ORDER BY l.block_number DESC LIMIT ?"
-      (chainId, housePool, housePool, lpTopicHex, min 50 limit) :: IO [(Text, String, Maybe Text, Maybe Integer)]
-  let orders =
-        [ RawKeeperTx "order_execution" h blk ts lat Nothing
-        | (h, blk, ts, lat) <- orderRows
-        ]
-      liqs =
+      (chainId, housePool, housePool, lpTopicHex, min 200 nonOrderLimit) :: IO [(Text, String, Maybe Text, Maybe Integer)]
+  let liqs =
         [ RawKeeperTx "liquidation" h blk ts Nothing (bounty >>= readMaybe)
         | (h, blk, ts, bounty) <- liqRows
         ]
@@ -871,7 +1182,36 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
         , ts >= sinceUnix
         ]
       lps = mergeLpSettlementTxs lpJournal lpCanonical
-  pure $ take limit $ sortOn (Down . rktBlockNumber) (orders <> liqs <> prots <> lps)
+  pure (liqs <> prots <> lps)
+
+fetchRecentPermissionlessTxs
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> Int
+  -> IO [RawKeeperTx]
+fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUnix limit = do
+  orderRows <-
+    query
+      conn
+      "SELECT terminal_tx_hash, COALESCE(terminal_block_number, 0), COALESCE(terminal_timestamp, 0), \
+      \CASE WHEN commit_timestamp IS NOT NULL AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= commit_timestamp \
+      \  THEN terminal_timestamp - commit_timestamp ELSE NULL END \
+      \FROM perps_orders \
+      \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+      \  AND terminal_tx_hash IS NOT NULL AND COALESCE(terminal_timestamp, 0) >= ? \
+      \ORDER BY terminal_block_number DESC LIMIT ?"
+      (chainId, router, sinceUnix, limit) :: IO [(Text, Integer, Integer, Maybe Integer)]
+  nonOrders <- fetchNonOrderPermissionlessTxs conn chainId router housePool book monitor sinceUnix (min 50 limit)
+  let orders =
+        [ RawKeeperTx "order_execution" h blk ts lat Nothing
+        | (h, blk, ts, lat) <- orderRows
+        ]
+  pure $ take limit $ sortOn (Down . rktBlockNumber) (orders <> nonOrders)
 
 fetchOrderReliabilityBuckets
   :: Connection
@@ -1201,10 +1541,11 @@ batchSummaryToJson orders =
         , "oracleFrozen" .= oracleFrozen
         ]
 
-finalizedOrderToJson :: FinalizedOrderRow -> Value
-finalizedOrderToJson FinalizedOrderRow {..} =
+finalizedOrderToJson :: OrderProtectionsBundle -> FinalizedOrderRow -> Value
+finalizedOrderToJson protBundle FinalizedOrderRow {..} =
   let latencySecs = (\t c -> max 0 (t - c)) <$> forTerminalTimestamp <*> forCommitTimestamp
       latencyBlks = (\t c -> max 0 (t - c)) <$> forTerminalBlock <*> forCommitBlock
+      mOrderProtections = buildOrderProtectionsForOrder protBundle forOrderId
    in object
         [ "orderId" .= show forOrderId
         , "account" .= forAccount
@@ -1224,6 +1565,7 @@ finalizedOrderToJson FinalizedOrderRow {..} =
         , "oracleFrozen" .= forOracleFrozen
         , "vpiAssets" .= (show <$> forVpiAssets)
         , "frozenCloseSpreadAssets" .= (show <$> forFrozenSpreadAssets)
+        , "orderProtections" .= mOrderProtections
         ]
 
 protocolEventToJson :: ProtocolEventRow -> Value
@@ -1299,29 +1641,35 @@ latencyStatsToJson LatencyStats {..} =
     , "max" .= lsMax
     ]
 
-recentTradeToJson :: RecentTradeRow -> Value
-recentTradeToJson RecentTradeRow {..} =
-  object $
-    catMaybes
-      [ Just $ "id" .= (rtrTxHash <> ":" <> T.pack (show rtrLogIndex))
-      , Just $ "activityType" .= rtrActivityType
-      , Just $ "account" .= rtrAccount
-      , ("orderId" .=) . show <$> rtrOrderId
-      , ("side" .=) <$> (sideText <$> rtrSide)
-      , ("price" .=) . show <$> rtrPrice
-      , ("sizeDelta" .=) . show <$> rtrSizeDelta
-      , ("amountAssets" .=) . show <$> rtrAmountAssets
-      , ("pnlAssets" .=) . show <$> rtrPnlAssets
-      , ("vpiAssets" .=) . show <$> rtrVpiAssets
-      , ("frozenCloseSpreadAssets" .=) . show <$> rtrFrozenSpreadAssets
-      , ("oracleFrozen" .=) <$> rtrOracleFrozen
-      , ("latencySeconds" .=) <$> rtrLatencySeconds
-      , ("keeperBountyAssets" .=) . show <$> rtrKeeperBountyAssets
-      , ("execution" .=) <$> rtrExecution
-      , Just $ "txHash" .= rtrTxHash
-      , Just $ "blockNumber" .= show rtrBlockNumber
-      , Just $ "occurredAt" .= isoTimestamp rtrTimestamp
-      ]
+recentTradeToJson :: OrderProtectionsBundle -> RecentTradeRow -> Value
+recentTradeToJson protBundle RecentTradeRow {..} =
+  let effectiveOrderId = rtrOrderId <|> extractExecutionOrderId rtrExecution
+      mOrderProtections =
+        if rtrActivityType == "Open"
+          then effectiveOrderId >>= buildOrderProtectionsForOrder protBundle
+          else Nothing
+   in object $
+        catMaybes
+          [ Just $ "id" .= (rtrTxHash <> ":" <> T.pack (show rtrLogIndex))
+          , Just $ "activityType" .= rtrActivityType
+          , Just $ "account" .= rtrAccount
+          , ("orderId" .=) . show <$> effectiveOrderId
+          , ("side" .=) <$> (sideText <$> rtrSide)
+          , ("price" .=) . show <$> rtrPrice
+          , ("sizeDelta" .=) . show <$> rtrSizeDelta
+          , ("amountAssets" .=) . show <$> rtrAmountAssets
+          , ("pnlAssets" .=) . show <$> rtrPnlAssets
+          , ("vpiAssets" .=) . show <$> rtrVpiAssets
+          , ("frozenCloseSpreadAssets" .=) . show <$> rtrFrozenSpreadAssets
+          , ("oracleFrozen" .=) <$> rtrOracleFrozen
+          , ("latencySeconds" .=) <$> rtrLatencySeconds
+          , ("keeperBountyAssets" .=) . show <$> rtrKeeperBountyAssets
+          , ("execution" .=) <$> rtrExecution
+          , ("orderProtections" .=) <$> mOrderProtections
+          , Just $ "txHash" .= rtrTxHash
+          , Just $ "blockNumber" .= show rtrBlockNumber
+          , Just $ "occurredAt" .= isoTimestamp rtrTimestamp
+          ]
 
 keeperAggregateToJson :: KeeperAggregate -> Maybe Integer -> Value
 keeperAggregateToJson KeeperAggregate {..} ethBalance =

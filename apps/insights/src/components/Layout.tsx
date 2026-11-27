@@ -7,7 +7,7 @@ import { formatUtc } from '../utils/format'
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
-    'whitespace-nowrap border px-3 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
+    'whitespace-nowrap border px-2.5 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4',
     isActive
       ? 'border-brand-orange bg-brand-orange text-content-primary'
       : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary',
@@ -37,9 +37,11 @@ function Header() {
           >
             <NavLink to="/" end className={navClass}>Overview</NavLink>
             <NavLink to="/execution" className={navClass}>Execution</NavLink>
+            <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
             <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
             <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
             <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
+            <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
             <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
             <NavLink to="/infra" className={navClass}>Infra</NavLink>
             <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
@@ -52,9 +54,11 @@ function Header() {
         >
           <NavLink to="/" end className={navClass}>Overview</NavLink>
           <NavLink to="/execution" className={navClass}>Execution</NavLink>
+          <NavLink to="/oracle" className={navClass}>Oracle</NavLink>
           <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
           <NavLink to="/keepers" className={navClass}>Keepers</NavLink>
           <NavLink to="/sponsored" className={navClass}>Sponsored</NavLink>
+          <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
           <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
           <NavLink to="/infra" className={navClass}>Infra</NavLink>
           <NavLink to="/divisions" className={navClass}>Divisions</NavLink>

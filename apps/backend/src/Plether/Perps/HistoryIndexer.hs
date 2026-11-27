@@ -1908,6 +1908,9 @@ parseIntentRegistered logEntry = do
         , "intentHash" .= hexWordAt (rlData logEntry) 0
         , "executionBountyAssets" .= show (wordAt (rlData logEntry) 1)
         , "side" .= side
+        , "sizeDelta" .= show (wordAt (rlData logEntry) 4)
+        , "marginDelta" .= show (wordAt (rlData logEntry) 5)
+        , "targetPrice" .= show (wordAt (rlData logEntry) 6)
         , "isClose" .= (wordAt (rlData logEntry) 7 == 1)
         , "submitBy" .= show (wordAt (rlData logEntry) 8)
         , "executionWindowSeconds" .= wordAt (rlData logEntry) 9
@@ -1915,6 +1918,15 @@ parseIntentRegistered logEntry = do
         , "executionDeadline" .= show (wordAt (rlData logEntry) 24)
         , "allowedExecutionModes" .= wordAt (rlData logEntry) 10
         , "expectedConfigHash" .= hexWordAt (rlData logEntry) 11
+        , "maxExecutionBountyAssets" .= show (wordAt (rlData logEntry) 12)
+        , "maxExecutionNotionalAssets" .= show (wordAt (rlData logEntry) 13)
+        , "maxGrossAccountDebitAssets" .= show (wordAt (rlData logEntry) 14)
+        , "maxActionChargeAssets" .= show (wordAt (rlData logEntry) 15)
+        , "maxExplicitFeesAssets" .= show (wordAt (rlData logEntry) 16)
+        , "maxPostPositionSize" .= show (wordAt (rlData logEntry) 17)
+        , "minPostSettlementBalanceAssets" .= show (wordAt (rlData logEntry) 18)
+        , "minPostPositionEquityAssets" .= show (wordAt (rlData logEntry) 19)
+        , "maxPostLeverageBps" .= wordAt (rlData logEntry) 20
         ]
   pure $ ParsedIntentRegistered oid account clientOrderId side payload
 

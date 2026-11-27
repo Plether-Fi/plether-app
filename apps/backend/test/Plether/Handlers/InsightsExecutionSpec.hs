@@ -5,6 +5,7 @@ import qualified Data.Text as T
 import Plether.Handlers.InsightsExecution
   ( DetectedKeeperEvent (..)
   , KeeperAggregate (..)
+  , KeeperOrderAggregateRow (..)
   , LatencyStats (..)
   , OrderReliabilityBucket (..)
   , RawKeeperTx (..)
@@ -14,6 +15,7 @@ import Plether.Handlers.InsightsExecution
   , computeLatencyPercentiles
   , extractTxFrom
   , isValidTxHash
+  , mergeKeeperFleetAggregates
   , mergeLpSettlementTxs
   , parseHexInteger
   , rateBps
@@ -113,3 +115,34 @@ spec = describe "Plether.Handlers.InsightsExecution" $ do
     classifyTxKind 0 True False `shouldBe` "lp_settlement"
     classifyTxKind 0 False True `shouldBe` "liquidation"
     classifyTxKind 0 False False `shouldBe` "protocol_tx"
+
+  it "merges full-24h SQL order aggregates with liquidations, protections, and LP settlements without truncating roles" $ do
+    let keeperA = "0x1111111111111111111111111111111111111111"
+        keeperB = "0x2222222222222222222222222222222222222222"
+        orderAggs =
+          [ KeeperOrderAggregateRow keeperA 6590 (Just 3) (Just 6) 2000 1700005000
+          ]
+        nonOrderEvents =
+          [ DetectedKeeperEvent "liquidation" keeperB "0xliq1" 1900 1700004000 Nothing (Just 44550000)
+          , DetectedKeeperEvent "protection" keeperA "0xprot1" 1950 1700004500 Nothing Nothing
+          , DetectedKeeperEvent "lp_settlement" keeperB "0xlp1" 1850 1700003500 (Just 4) Nothing
+          ]
+        merged = mergeKeeperFleetAggregates orderAggs nonOrderEvents 6600
+    length merged `shouldBe` 2
+    case merged of
+      [firstK, secondK] -> do
+        kaAddress firstK `shouldBe` keeperA
+        kaRoles firstK `shouldBe` ["order_execution", "protection"]
+        kaExecutions24h firstK `shouldBe` 6591
+        kaShareBps firstK `shouldBe` Just 9986
+        kaLatencyP50Seconds firstK `shouldBe` Just 3
+        kaLatencyP95Seconds firstK `shouldBe` Just 6
+        kaBountiesEarnedAssets firstK `shouldBe` 0
+        kaLastActiveBlock firstK `shouldBe` 2000
+
+        kaAddress secondK `shouldBe` keeperB
+        kaRoles secondK `shouldBe` ["liquidation", "lp_settlement"]
+        kaExecutions24h secondK `shouldBe` 2
+        kaLatencyP50Seconds secondK `shouldBe` Just 4
+        kaBountiesEarnedAssets secondK `shouldBe` 44550000
+      _ -> expectationFailure "Expected two merged keeper aggregates"

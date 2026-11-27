@@ -206,12 +206,33 @@ describe('ProtocolPage (Stage 4 Contracts, Parameters & Safety Controls)', () =>
     expect(within(paramsTable).getByText('Protocol execution fee')).toBeInTheDocument()
     expect(within(paramsTable).queryByText('Initial margin')).not.toBeInTheDocument()
 
-    // Search verified contracts
+    // Search verified contracts & verify pinned GitHub links
     const contractsTable = screen.getByRole('table', {
       name: /Verified on-chain protocol contracts/i,
     })
     expect(within(contractsTable).getByText('CfdEngine')).toBeInTheDocument()
     expect(within(contractsTable).getByText('HousePool')).toBeInTheDocument()
+
+    const cfdGitHub = within(contractsTable).getByRole('link', {
+      name: /View CfdEngine source on GitHub/i,
+    })
+    expect(cfdGitHub).toHaveAttribute(
+      'href',
+      'https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/CfdEngine.sol',
+    )
+    const housePoolGitHub = within(contractsTable).getByRole('link', {
+      name: /View HousePool source on GitHub/i,
+    })
+    expect(housePoolGitHub).toHaveAttribute(
+      'href',
+      'https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/HousePool.sol',
+    )
+    expect(
+      screen.getByRole('link', { name: /Plether-Fi\/plether-core@1209ca8a/i }),
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/Plether-Fi/plether-core/tree/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src',
+    )
 
     fireEvent.change(screen.getByLabelText(/Filter contracts/i), {
       target: { value: '0xeb56' },
@@ -222,6 +243,12 @@ describe('ProtocolPage (Stage 4 Contracts, Parameters & Safety Controls)', () =>
     // Release history & provenance
     expect(screen.getByText('Core v1.2.3')).toBeInTheDocument()
     expect(screen.getByText('1.5.1-stable')).toBeInTheDocument()
+    expect(
+      screen.getByTitle(/Inspect commit 1209ca8a5b94a4fb6323c7c4585846ed93db3932 on GitHub/i),
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/Plether-Fi/plether-core/commit/1209ca8a5b94a4fb6323c7c4585846ed93db3932',
+    )
   })
 
   it('fails closed cleanly when Stage 4 backend endpoint returns 404', () => {

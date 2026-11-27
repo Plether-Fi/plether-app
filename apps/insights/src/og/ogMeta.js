@@ -22,6 +22,20 @@ export function resolveRouteOgMeta(url) {
   const canonicalUrl = `${origin}${pathname}`;
   const defaultImage = `${origin}/og/default.png`;
 
+  const positionMatch = pathname.match(/^\/wallets\/(0x[0-9a-fA-F]{40})\/positions\/([a-zA-Z0-9_-]{1,80})\/?$/);
+  if (positionMatch) {
+    const addr = positionMatch[1].toLowerCase();
+    const posId = positionMatch[2];
+    const label = shortAddr(addr);
+    return {
+      title: `Position Lifecycle ${posId} · ${label} — Plether Insights`,
+      description: `Full on-chain perpetual position lifecycle from open to close, MFE/MAE excursion profile, leverage history, and liquidation proximity for ${label}.`,
+      imageUrl: defaultImage,
+      imageAlt: `Plether Insights position lifecycle for ${label}`,
+      canonicalUrl: `${origin}/wallets/${addr}/positions/${encodeURIComponent(posId)}`,
+    };
+  }
+
   const walletMatch = pathname.match(/^\/wallets\/(0x[0-9a-fA-F]{40})\/?$/);
   if (walletMatch) {
     const addr = walletMatch[1].toLowerCase();
@@ -122,6 +136,16 @@ export function resolveRouteOgMeta(url) {
     };
   }
 
+  if (pathname === '/oracle' || pathname.startsWith('/oracle/')) {
+    return {
+      title: 'Oracle Admission & Value-Guard Health — Plether Insights',
+      description: 'Chronological Pyth FX basket update blocks, value-rejection guardrails, 6-feed confidence ratios, and PletherOracle regime status.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — Oracle Admission & Value-Guard Health',
+      canonicalUrl,
+    };
+  }
+
   const keeperMatch = pathname.match(/^\/keepers\/(0x[0-9a-fA-F]{40})\/?$/);
   if (keeperMatch) {
     const addr = keeperMatch[1].toLowerCase();
@@ -151,6 +175,16 @@ export function resolveRouteOgMeta(url) {
       description: 'Live ERC-4337 Paymaster EntryPoint deposit runway, issuance kill-switch, budget caps, AA reconciler lag, Alto bundler readiness, and UserOperations.',
       imageUrl: defaultImage,
       imageAlt: 'Plether Insights — Sponsored Transactions & Paymaster Health',
+      canonicalUrl,
+    };
+  }
+
+  if (pathname === '/treasury' || pathname.startsWith('/treasury/')) {
+    return {
+      title: 'Treasury Wallet & Protocol Profit — Plether Insights',
+      description: 'Live on-chain Plether protocol treasury holdings, execution fee revenue curves, LP maintenance fee policy, subsidy costs, and treasury cash flows.',
+      imageUrl: defaultImage,
+      imageAlt: 'Plether Insights — Treasury Wallet & Protocol Profit',
       canonicalUrl,
     };
   }

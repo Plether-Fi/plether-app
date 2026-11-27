@@ -8,11 +8,16 @@ import Plether.Ethereum.Abi (encodeUint256)
 import Plether.Handlers.InsightsSponsored
   ( checkBundlerEntryPoint
   , classifySponsorshipGate
+  , computeInclusionLatencySeconds
+  , computeIntLatencyPercentiles
   , computeRunwayHours
   , computeSuccessRateBps
   , computeUtilizationBps
   , decodeEntryPointBalance
   , decodePaymasterPaused
+  , parseLogBlockTimestamp
+  , resolveInclusionEpoch
+  , sanitizeControlEventReason
   , sanitizePublicReason
   )
 import Test.Hspec
@@ -67,3 +72,26 @@ spec = describe "Plether.Handlers.InsightsSponsored" $ do
     checkBundlerEntryPoint ep (toJSON (["0x0000000000000000000000000000000000000001"] :: [Text]))
       `shouldBe` False
     checkBundlerEntryPoint ep Null `shouldBe` False
+
+  it "never labels resume control events as Safety pause active" $ do
+    sanitizeControlEventReason "resume" "https://rpc.internal/secret failed"
+      `shouldBe` "Sponsorship issuance resumed"
+    sanitizeControlEventReason "resume" ""
+      `shouldBe` "Sponsorship issuance resumed"
+    sanitizeControlEventReason "resume" "EntryPoint deposit dropped below minimum"
+      `shouldBe` "Resumed after: Paymaster EntryPoint deposit below minimum floor"
+    sanitizeControlEventReason "pause" "https://rpc.internal/secret failed"
+      `shouldBe` "Safety pause active"
+
+  it "computes on-chain UserOp inclusion latency from log blockTimestamp or perps_events timestamp" $ do
+    parseLogBlockTimestamp (Just "0x67000010") `shouldBe` Just 1728053264
+    parseLogBlockTimestamp (Just "0x0") `shouldBe` Nothing
+    parseLogBlockTimestamp Nothing `shouldBe` Nothing
+    resolveInclusionEpoch (Just "0x67000010") (Just 1728053200) `shouldBe` Just 1728053264
+    resolveInclusionEpoch Nothing (Just 1728053200) `shouldBe` Just 1728053200
+    resolveInclusionEpoch Nothing Nothing `shouldBe` Nothing
+    computeInclusionLatencySeconds (Just 1728053264) 1728053261 `shouldBe` Just 3
+    computeInclusionLatencySeconds (Just 1728053260) 1728053264 `shouldBe` Just 0
+    computeInclusionLatencySeconds Nothing 1728053264 `shouldBe` Nothing
+    computeIntLatencyPercentiles [1, 2, 2, 3, 4, 5, 6, 7, 8, 12] `shouldBe` (Just 4, Just 12)
+    computeIntLatencyPercentiles [] `shouldBe` (Nothing, Nothing)

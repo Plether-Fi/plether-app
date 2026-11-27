@@ -2,10 +2,14 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   InsightsApiError,
+  PROTOCOL_CORE_GITHUB_REPO,
   deriveProtocolHealthBanner,
   deriveProtocolStateSummary,
   formatProtocolParamValue,
   parameterImpactHint,
+  protocolCommitGitHubUrl,
+  protocolContractGitHubUrl,
+  protocolTreeGitHubUrl,
   resolveParameterRange,
   shortHash,
   useProtocolManifest,
@@ -240,20 +244,38 @@ function ParameterRow({ param }: { param: ProtocolParameterRecord }) {
   )
 }
 
+function GitHubIcon({ className = 'h-3 w-3 shrink-0' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+    </svg>
+  )
+}
+
 function ContractRow({
   contract,
   chainId,
   explorerName,
+  sourceCommit,
+  settlementTokenIsMock,
   copiedKey,
   onCopy,
 }: {
   contract: ProtocolContractRecord
   chainId: number
   explorerName: string
+  sourceCommit: string | null
+  settlementTokenIsMock: boolean | null
   copiedKey: string | null
   onCopy: (key: string, text: string) => void
 }) {
   const badge = contractVerifyPill(contract.verified)
+  const github = protocolContractGitHubUrl(contract, sourceCommit, { settlementTokenIsMock })
   const hashTitle = contract.actualCodeHash
     ? `Expected: ${contract.expectedCodeHash}\nOn-chain: ${contract.actualCodeHash}`
     : `Expected: ${contract.expectedCodeHash}`
@@ -273,6 +295,19 @@ function ContractRow({
               <span className="border border-brand-border/25 bg-app-bg px-1.5 py-0.5 text-[11px] text-content-tertiary">
                 {CONTRACT_CATEGORY_LABEL[contract.category]}
               </span>
+              {github ? (
+                <a
+                  href={github.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 border border-brand-border/25 bg-app-bg px-1.5 py-0.5 text-[11px] font-medium text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-brand-peach"
+                  title={`View ${github.path} in ${PROTOCOL_CORE_GITHUB_REPO}@${github.ref.slice(0, 8)}`}
+                  aria-label={`View ${contract.name} source on GitHub`}
+                >
+                  <GitHubIcon />
+                  <span>GitHub ↗</span>
+                </a>
+              ) : null}
             </div>
             <p className="mt-0.5 max-w-md text-xs leading-5 text-content-secondary">
               {contract.role}
@@ -335,6 +370,10 @@ export function ProtocolPage() {
 
   const data = manifestQuery.data
   const chain = resolvePerpsChain(data?.network.chainId ?? ctx.chain.chainId)
+  const sourceCommitUrl = protocolCommitGitHubUrl(data?.release.sourceCommit)
+  const sourceCommitShort = sourceCommitUrl && data?.release.sourceCommit
+    ? data.release.sourceCommit.trim().slice(0, 8)
+    : null
   const isEndpointMissing =
     manifestQuery.isError
     && manifestQuery.error instanceof InsightsApiError
@@ -858,9 +897,25 @@ export function ProtocolPage() {
                 <h2 id="contracts-title" className="text-lg font-semibold">
                   Verified contract registry
                 </h2>
-                <p className="mt-1 text-xs text-content-tertiary">
-                  All {String(data.contracts.length)} pinned contracts hashed on-chain via{' '}
-                  <code className="font-mono">eth_getCode</code> + <code className="font-mono">keccak256</code>
+                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-content-tertiary">
+                  <span>
+                    All {String(data.contracts.length)} pinned contracts hashed on-chain via{' '}
+                    <code className="font-mono">eth_getCode</code> + <code className="font-mono">keccak256</code>
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <a
+                    href={protocolTreeGitHubUrl(data.release.sourceCommit)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-mono text-brand-peach hover:underline"
+                    title={`Browse verified Solidity source in ${PROTOCOL_CORE_GITHUB_REPO}`}
+                  >
+                    <GitHubIcon />
+                    <span>
+                      {PROTOCOL_CORE_GITHUB_REPO}
+                      {sourceCommitShort ? `@${sourceCommitShort}` : ''} ↗
+                    </span>
+                  </a>
                 </p>
               </div>
               <p className="font-mono text-xs text-content-tertiary">
@@ -933,6 +988,8 @@ export function ProtocolPage() {
                           contract={contract}
                           chainId={chain.chainId}
                           explorerName={chain.explorerName}
+                          sourceCommit={data.release.sourceCommit}
+                          settlementTokenIsMock={data.settlementToken.isMock}
                           copiedKey={copiedKey}
                           onCopy={handleCopy}
                         />
@@ -1022,13 +1079,27 @@ export function ProtocolPage() {
                     <dt className="text-content-secondary">Source commit</dt>
                     <dd>
                       {data.release.sourceCommit ? (
-                        <CopyableChip
-                          value={data.release.sourceCommit}
-                          display={shortHash(data.release.sourceCommit)}
-                          copiedKey={copiedKey}
-                          itemKey="prov:commit"
-                          onCopy={handleCopy}
-                        />
+                        <div className="flex items-center gap-2">
+                          <CopyableChip
+                            value={data.release.sourceCommit}
+                            display={shortHash(data.release.sourceCommit)}
+                            copiedKey={copiedKey}
+                            itemKey="prov:commit"
+                            onCopy={handleCopy}
+                          />
+                          {sourceCommitUrl ? (
+                            <a
+                              href={sourceCommitUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 font-semibold text-brand-peach hover:underline"
+                              title={`Inspect commit ${data.release.sourceCommit} on GitHub`}
+                            >
+                              <GitHubIcon />
+                              <span>GitHub ↗</span>
+                            </a>
+                          ) : null}
+                        </div>
                       ) : (
                         <span className="font-mono text-content-tertiary">Unavailable</span>
                       )}

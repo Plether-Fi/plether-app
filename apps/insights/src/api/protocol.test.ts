@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PROTOCOL_CONTRACT_SOURCE_PATHS,
   deriveProtocolHealthBanner,
   deriveProtocolStateSummary,
   formatProtocolParamValue,
   parameterImpactHint,
+  protocolCommitGitHubUrl,
+  protocolContractGitHubUrl,
+  protocolTreeGitHubUrl,
   resolveParameterRange,
   shortHash,
   type ProtocolManifestResponse,
@@ -214,5 +218,46 @@ describe('protocol API formatters and health helpers', () => {
     expect(expanded.maxLabel).toBe('0.50%')
     expect(expanded.livePercent).toBe(100)
     expect(expanded.defaultPercent).toBe(8)
+  })
+
+  it('builds pinned GitHub source links for protocol contracts and commits', () => {
+    const commit = '1209ca8a5b94a4fb6323c7c4585846ed93db3932'
+
+    expect(Object.keys(PROTOCOL_CONTRACT_SOURCE_PATHS)).toHaveLength(29)
+    expect(protocolContractGitHubUrl({ key: 'cfdEngine' }, commit)).toEqual({
+      url: `https://github.com/Plether-Fi/plether-core/blob/${commit}/packages/perps/src/CfdEngine.sol`,
+      path: 'packages/perps/src/CfdEngine.sol',
+      ref: commit,
+    })
+    expect(protocolContractGitHubUrl({ key: 'seniorVault' }, commit)?.url).toBe(
+      `https://github.com/Plether-Fi/plether-core/blob/${commit}/packages/perps/src/TrancheVault.sol`,
+    )
+    expect(
+      protocolContractGitHubUrl({ key: 'settlementToken' }, commit, { settlementTokenIsMock: true })?.url,
+    ).toBe(
+      `https://github.com/Plether-Fi/plether-core/blob/${commit}/script/DeployPerpsArbitrumSepolia.s.sol`,
+    )
+    expect(
+      protocolContractGitHubUrl({ key: 'settlementToken' }, commit, { settlementTokenIsMock: false }),
+    ).toBeNull()
+    expect(
+      protocolContractGitHubUrl({ key: 'customContract', sourcePath: '/packages/perps/src/Custom.sol' }, null),
+    ).toEqual({
+      url: 'https://github.com/Plether-Fi/plether-core/blob/master/packages/perps/src/Custom.sol',
+      path: 'packages/perps/src/Custom.sol',
+      ref: 'master',
+    })
+    expect(protocolContractGitHubUrl({ key: 'unknownContract' }, commit)).toBeNull()
+
+    expect(protocolCommitGitHubUrl(commit)).toBe(
+      `https://github.com/Plether-Fi/plether-core/commit/${commit}`,
+    )
+    expect(protocolCommitGitHubUrl('not-a-sha')).toBeNull()
+    expect(protocolTreeGitHubUrl(commit)).toBe(
+      `https://github.com/Plether-Fi/plether-core/tree/${commit}/packages/perps/src`,
+    )
+    expect(protocolTreeGitHubUrl(null)).toBe(
+      'https://github.com/Plether-Fi/plether-core/tree/master/packages/perps/src',
+    )
   })
 })
