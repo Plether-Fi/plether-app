@@ -220,8 +220,10 @@ function TradingAccountsStoryCanvas({ data }: { data: TradingAccountsOverviewRes
     const qc = new QueryClient({
       defaultOptions: {
         queries: {
+          enabled: false,
           retry: false,
           staleTime: Infinity,
+          gcTime: Infinity,
           refetchInterval: false,
           refetchOnMount: false,
           refetchOnWindowFocus: false,
@@ -233,9 +235,17 @@ function TradingAccountsStoryCanvas({ data }: { data: TradingAccountsOverviewRes
     qc.setQueryData(['insights', 'status'], {
       chainId: 421614,
       releaseVersion: 'v2.0.0',
-      latestIndexedBlock: '333171209',
+      latestIndexedBlock: 333171209,
       latestIndexedAt: '2026-11-27T15:15:00Z',
       healthy: true,
+    })
+    qc.setQueryData(['insights', 'divisions', 'live'], {
+      status: 'ready',
+      snapshotBlock: '333171209',
+      snapshotAt: '2026-11-27T15:15:00Z',
+      scoringRelease: { version: 'v2.0.0', assetSymbol: 'USDG' },
+      walletCount: 19,
+      standings: [],
     })
     return qc
   }, [data])

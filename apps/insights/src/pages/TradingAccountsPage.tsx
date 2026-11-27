@@ -260,18 +260,18 @@ export function TradingAccountsPage() {
         ) : null}
       </header>
 
-      {query.isLoading ? (
+      {query.isLoading && !data ? (
         <Panel>
           <LoadingState rows={5} />
         </Panel>
-      ) : awaitingDeploy ? (
+      ) : !data && awaitingDeploy ? (
         <Panel>
           <EmptyState
             title="Kernel Trading Accounts telemetry awaiting backend deploy"
             message="Deploy the backend serving GET /api/insights/v1/trading-accounts/overview to inspect ZeroDev Kernel v4 smart wallet telemetry."
           />
         </Panel>
-      ) : query.isError ? (
+      ) : !data && query.isError ? (
         <ErrorState
           title="Unable to load Kernel Trading Accounts telemetry"
           message={query.error instanceof Error ? query.error.message : 'Unexpected error'}
