@@ -8,9 +8,15 @@ module Plether.Handlers.InsightsOracle
   , RejectionBucketAgg (..)
   , OracleHealthBucket (..)
   , getOracleHealthResponse
+  , getOracleUpdateDetailResponse
   , buildOracleHealthBuckets
   , classifyOracleSliceStatus
   , computeComponentConfidenceBps
+  , computeComponentContribution
+  , computeEffectiveShareBps
+  , computeChangeFromBaseBps
+  , computeDisplayDeltaBps
+  , parseOracleUpdateIdParam
   ) where
 
 import Control.Applicative ((<|>))
@@ -39,9 +45,10 @@ import Plether.Ethereum.Abi (decodeUint256, encodeBool, encodeCall)
 import Plether.Ethereum.Client (CallParams (..), EthClient, ethCall)
 import Plether.Ethereum.Contracts.Perps (OrderExecutionPolicy (..))
 import qualified Plether.Perps.Manifest as Manifest
-import Plether.Pyth.Basket (basketDisplayPriceCap)
+import Plether.Pyth.Basket (BasketComponent (..), basketComponents, basketDisplayPriceCap, normalizeFeedId)
 import Plether.Pyth.RevealPayload (maxComponentPublishTimeDivergence)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import qualified Plether.Types.Error as E
 import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
@@ -102,13 +109,52 @@ data ParsedComponent = ParsedComponent
   , pcExponent :: Maybe Int
   , pcPublishTime :: Maybe Integer
   , pcWeightBps :: Maybe Integer
+  , pcBasePrice :: Maybe Integer
   , pcInverted :: Bool
+  }
+
+data PayloadDetailRow = PayloadDetailRow
+  { pdrId :: Integer
+  , pdrMinPublishTime :: Integer
+  , pdrMaxPublishTime :: Integer
+  , pdrFetchedAt :: Integer
+  , pdrSource :: Text
+  , pdrBasketPrice :: Maybe Integer
+  , pdrComponentPrices :: Maybe Value
+  , pdrVaaCount :: Int
+  }
+
+data RecentUpdateRow = RecentUpdateRow
+  { rurId :: Integer
+  , rurMinPublishTime :: Integer
+  , rurMaxPublishTime :: Integer
+  , rurFetchedAt :: Integer
+  , rurSource :: Text
+  , rurBasketPrice :: Maybe Integer
+  , rurOrdersSettledCount :: Integer
+  }
+
+data SettledOrderRow = SettledOrderRow
+  { sorOrderId :: Text
+  , sorAccount :: Text
+  , sorSide :: Maybe Text
+  , sorStatus :: Text
+  , sorTxHash :: Maybe Text
+  , sorExecutionPrice :: Maybe Text
+  , sorExecutionOraclePrice :: Maybe Text
+  , sorCommitTimestamp :: Maybe Integer
+  , sorTerminalTimestamp :: Maybe Integer
   }
 
 {-# NOINLINE oracleHealthCache #-}
 oracleHealthCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
 oracleHealthCache =
   unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE oracleUpdateDetailCache #-}
+oracleUpdateDetailCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
+oracleUpdateDetailCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 128 (15 * 1000000000) (300 * 1000000000))
 
 getOracleHealthResponse
   :: DbPool
@@ -118,6 +164,34 @@ getOracleHealthResponse
 getOracleHealthResponse pool client cfg =
   snd <$> runSingleFlightCache oracleHealthCache () isRight (computeOracleHealthResponse pool client cfg)
 
+getOracleUpdateDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+getOracleUpdateDetailResponse pool client cfg rawIdParam =
+  let normalizedKey = T.toLower (T.strip rawIdParam)
+   in case parseOracleUpdateIdParam normalizedKey of
+        Nothing ->
+          pure $ Left $ E.invalidAmount "oracle update id must be a positive integer or 'latest'"
+        Just mTargetId ->
+          snd
+            <$> runSingleFlightCache
+              oracleUpdateDetailCache
+              normalizedKey
+              isRight
+              (computeOracleUpdateDetailResponse pool client cfg mTargetId)
+
+parseOracleUpdateIdParam :: Text -> Maybe (Maybe Integer)
+parseOracleUpdateIdParam raw =
+  let cleaned = T.toLower (T.strip raw)
+   in if cleaned == "latest"
+        then Just Nothing
+        else case readMaybe (T.unpack cleaned) :: Maybe Integer of
+          Just n | n > 0 -> Just (Just n)
+          _ -> Nothing
+
 computeOracleHealthResponse
   :: DbPool
   -> EthClient
@@ -126,6 +200,7 @@ computeOracleHealthResponse
 computeOracleHealthResponse pool client cfg = do
   nowSec <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
+      router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
       bucket1hSec = 120 :: Integer
       bucket1hCount = 30 :: Int
       end1h = ((nowSec `div` bucket1hSec) + 1) * bucket1hSec
@@ -144,29 +219,31 @@ computeOracleHealthResponse pool client cfg = do
           ( withDb pool $ \conn -> do
               _ <- observeIo (ensureOracleAdmissionEventsSchema conn)
               latestPayload <- fetchLatestPayload conn
+              recentUpdates <- fetchRecentAdmittedUpdates conn chainId router
               admitted1h <- fetchAdmittedBuckets conn start1h end1h bucket1hSec
               admitted24h <- fetchAdmittedBuckets conn start24h end24h bucket24hSec
               rejected1h <- fetchRejectionBuckets conn start1h end1h bucket1hSec
               rejected24h <- fetchRejectionBuckets conn start24h end24h bucket24hSec
               breakdown <- fetchRejectionBreakdown conn since24h
               recentRejections <- fetchRecentRejectionEvents conn since24h
-              pure (latestPayload, admitted1h, admitted24h, rejected1h, rejected24h, breakdown, recentRejections)
+              pure (latestPayload, recentUpdates, admitted1h, admitted24h, rejected1h, rejected24h, breakdown, recentRejections)
           )
 
-  let (mLatest, admitted1h, admitted24h, rejected1h, rejected24h, breakdown, recentRejections) = dbRes
+  let (mLatest, recentUpdates, admitted1h, admitted24h, rejected1h, rejected24h, breakdown, recentRejections) = dbRes
       buckets1h = buildOracleHealthBuckets start1h bucket1hSec bucket1hCount admitted1h rejected1h
       buckets24h = buildOracleHealthBuckets start24h bucket24hSec bucket24hCount admitted24h rejected24h
-      (mMinPub, mMaxPub, mFetchedAt, mSource, mBasketPrice, components) =
+      (mLatestId, mMinPub, mMaxPub, mFetchedAt, mSource, mBasketPrice, components) =
         case mLatest of
-          Just (mn, mx, ft, src, bp, compsVal) ->
-            (Just mn, Just mx, Just ft, Just src, bp, maybe [] parseComponentList compsVal)
-          Nothing -> (Nothing, Nothing, Nothing, Nothing, Nothing, [])
+          Just (pid, mn, mx, ft, src, bp, compsVal) ->
+            (Just pid, Just mn, Just mx, Just ft, Just src, bp, maybe [] parseComponentList compsVal)
+          Nothing -> (Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, [])
       mCurrentSpread = (\mx mn -> max 0 (mx - mn)) <$> mMaxPub <*> mMinPub
       mCurrentAge = (\mx -> max 0 (nowSec - mx)) <$> mMaxPub
       mMaxConfBps =
         case mapMaybe pcConfidenceBps components of
           [] -> Nothing
           xs -> Just (maximum xs)
+      totalContribution = computeTotalContribution components mBasketPrice
       reasonCountMap =
         Map.fromListWith (+) [(code, cnt) | (code, outcome, cnt, _) <- breakdown, outcome == "rejected"]
       admitted24hTotal = sum $ map ohbAdmittedCount buckets24h
@@ -222,7 +299,8 @@ computeOracleHealthResponse pool client cfg = do
           , "regime" .= regimeTxt
           , "live"
               .= object
-                [ "basketPrice" .= (showT <$> (mBasketPrice <|> looLastMarkPrice onChain))
+                [ "latestUpdateId" .= (showT <$> mLatestId)
+                , "basketPrice" .= (showT <$> (mBasketPrice <|> looLastMarkPrice onChain))
                 , "onChainMarkPrice" .= (showT <$> looLastMarkPrice onChain)
                 , "onChainMarkTime" .= (isoTimestamp <$> looLastMarkTime onChain)
                 , "latestPublishTime" .= (isoTimestamp <$> mMaxPub)
@@ -274,7 +352,8 @@ computeOracleHealthResponse pool client cfg = do
                       ]
                 ]
           , "admissionChecks" .= checks
-          , "components" .= map (componentToJson mMinPub confLimit) components
+          , "components" .= map (componentToJson mMinPub confLimit totalContribution) components
+          , "recentUpdates" .= map recentUpdateToJson recentUpdates
           , "rejectionBreakdown"
               .= [ object
                     [ "reasonCode" .= code
@@ -300,6 +379,143 @@ computeOracleHealthResponse pool client cfg = do
                  | (evId, ts, route, outcome, code, mn, mx, sp, ag, detail) <- recentRejections
                  ]
           ]
+
+computeOracleUpdateDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Maybe Integer
+  -> IO (Either ApiError (ApiResponse Value))
+computeOracleUpdateDetailResponse pool client cfg mTargetId = do
+  nowSec <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
+      router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+
+  (onChain, mDetailBundle) <-
+    runConcurrently $
+      (,)
+        <$> Concurrently (fetchLiveOracleOnChain client)
+        <*> Concurrently
+          ( withDb pool $ \conn -> do
+              mRow <- fetchPayloadDetailRow conn mTargetId
+              case mRow of
+                Nothing -> pure Nothing
+                Just row -> do
+                  mPrev <- fetchNeighborPayload conn True (pdrMaxPublishTime row) (pdrId row)
+                  mNext <- fetchNeighborPayload conn False (pdrMaxPublishTime row) (pdrId row)
+                  orders <-
+                    fetchOrdersSettledWithUpdate
+                      conn
+                      chainId
+                      router
+                      (pdrMinPublishTime row)
+                      (pdrMaxPublishTime row)
+                  pure (Just (row, mPrev, mNext, orders))
+          )
+
+  case mDetailBundle of
+    Nothing ->
+      pure $ Left $ E.notFound "Oracle price update not found"
+    Just (row, mPrev, mNext, settledOrders) -> do
+      let components = maybe [] parseComponentList (pdrComponentPrices row)
+          spreadSec = max 0 (pdrMaxPublishTime row - pdrMinPublishTime row)
+          lagSec = max 0 (pdrFetchedAt row - pdrMinPublishTime row)
+          mMaxConfBps =
+            case mapMaybe pcConfidenceBps components of
+              [] -> Nothing
+              xs -> Just (maximum xs)
+          stalenessLimit = fromMaybe 15 (looOrderStalenessLimit onChain)
+          confLimit = looMaxConfidenceRatioBps onChain
+          contribs = mapMaybe componentContributionMaybe components
+          mReconstructed =
+            if length contribs == length components && not (null contribs)
+              then Just (sum contribs)
+              else Nothing
+          mReconDiff = (\recon bp -> abs (recon - bp)) <$> mReconstructed <*> pdrBasketPrice row
+          totalContribution = computeTotalContribution components (pdrBasketPrice row)
+          totalTargetWeightBps = sum (mapMaybe pcWeightBps components)
+          totalEffectiveShareBps =
+            sum
+              [ s
+              | comp <- components
+              , Just c <- [componentContributionMaybe comp]
+              , Just tot <- [totalContribution]
+              , Just s <- [computeEffectiveShareBps c tot]
+              ]
+          mPrevBasketPrice = mPrev >>= \(_, bp, _) -> bp
+          mDisplayDeltaBps =
+            case (pdrBasketPrice row, mPrevBasketPrice) of
+              (Just currBp, Just prevBp) -> computeDisplayDeltaBps currBp prevBp
+              _ -> Nothing
+          updateStatus :: Text
+          updateStatus
+            | spreadSec > maxComponentPublishTimeDivergence = "degraded"
+            | maybe False (\c -> maybe False (toInteger c >) confLimit) mMaxConfBps = "degraded"
+            | spreadSec >= maxComponentPublishTimeDivergence - 1 = "warning"
+            | otherwise = "admitted"
+          checks =
+            buildUpdateDetailChecks
+              components
+              spreadSec
+              lagSec
+              mMaxConfBps
+              (pdrBasketPrice row)
+              mReconDiff
+              stalenessLimit
+              confLimit
+
+      pure $
+        Right $
+          mkResponse 0 chainId $
+            object
+              [ "network"
+                  .= object
+                    [ "chainId" .= chainId
+                    , "releaseVersion" .= Manifest.releaseVersion
+                    , "settlementAssetSymbol" .= ("USDG" :: Text)
+                    ]
+              , "observedAt" .= isoTimestamp nowSec
+              , "update"
+                  .= object
+                    [ "id" .= showT (pdrId row)
+                    , "source" .= pdrSource row
+                    , "status" .= updateStatus
+                    , "minPublishTime" .= isoTimestamp (pdrMinPublishTime row)
+                    , "maxPublishTime" .= isoTimestamp (pdrMaxPublishTime row)
+                    , "fetchedAt" .= isoTimestamp (pdrFetchedAt row)
+                    , "spreadSeconds" .= spreadSec
+                    , "lagSeconds" .= lagSec
+                    , "vaaCount" .= pdrVaaCount row
+                    , "basketPrice" .= (showT <$> pdrBasketPrice row)
+                    , "displayPriceCap" .= showT basketDisplayPriceCap
+                    , "reconstructedBasketPrice" .= (showT <$> mReconstructed)
+                    , "reconstructionDiffRaw" .= mReconDiff
+                    , "previousBasketPrice" .= (showT <$> mPrevBasketPrice)
+                    , "displayDeltaBps" .= mDisplayDeltaBps
+                    , "maxComponentConfidenceBps" .= mMaxConfBps
+                    , "totalTargetWeightBps" .= totalTargetWeightBps
+                    , "totalEffectiveShareBps" .= totalEffectiveShareBps
+                    ]
+              , "navigation"
+                  .= object
+                    [ "previousId" .= ((\(pid, _, _) -> showT pid) <$> mPrev)
+                    , "nextId" .= ((\(nid, _, _) -> showT nid) <$> mNext)
+                    , "previousMaxPublishTime" .= ((\(_, _, ts) -> isoTimestamp ts) <$> mPrev)
+                    , "nextMaxPublishTime" .= ((\(_, _, ts) -> isoTimestamp ts) <$> mNext)
+                    ]
+              , "thresholds"
+                  .= object
+                    [ "maxComponentDivergenceSeconds" .= maxComponentPublishTimeDivergence
+                    , "orderStalenessLimitSeconds" .= looOrderStalenessLimit onChain
+                    , "liquidationStalenessLimitSeconds" .= looLiqStalenessLimit onChain
+                    , "maxConfidenceRatioBps" .= looMaxConfidenceRatioBps onChain
+                    , "adverseConfidenceMultiplierBps" .= looAdverseConfMultiplierBps onChain
+                    , "displayPriceCap" .= showT basketDisplayPriceCap
+                    ]
+              , "admissionChecks" .= checks
+              , "components" .= map (componentToJson (Just (pdrMinPublishTime row)) confLimit totalContribution) components
+              , "settledOrders" .= map settledOrderToJson settledOrders
+              ]
 
 buildOracleHealthBuckets
   :: Integer
@@ -349,6 +565,163 @@ computeComponentConfidenceBps :: Integer -> Integer -> Maybe Int
 computeComponentConfidenceBps rawPrice conf
   | rawPrice <= 0 || conf < 0 = Nothing
   | otherwise = Just $ fromInteger ((conf * 10000 + rawPrice `div` 2) `div` rawPrice)
+
+-- | Compute a component's raw 8-decimal contribution to the DXY basket index,
+-- matching Plether.Pyth.Basket.computeBasketSnapshot:
+-- (normalizedPrice * (weightBps * 10^14)) `div` (basePrice * 10^10)
+-- = (normalizedPrice * weightBps * 10_000) `div` basePrice
+computeComponentContribution :: Integer -> Integer -> Integer -> Maybe Integer
+computeComponentContribution normalizedPrice weightBps basePrice
+  | normalizedPrice <= 0 || weightBps <= 0 || basePrice <= 0 = Nothing
+  | otherwise = Just ((normalizedPrice * weightBps * 10_000) `div` basePrice)
+
+computeEffectiveShareBps :: Integer -> Integer -> Maybe Int
+computeEffectiveShareBps contribution totalContribution
+  | contribution < 0 || totalContribution <= 0 = Nothing
+  | otherwise =
+      Just $
+        fromInteger ((contribution * 10000 + totalContribution `div` 2) `div` totalContribution)
+
+computeChangeFromBaseBps :: Integer -> Integer -> Maybe Int
+computeChangeFromBaseBps normalizedPrice basePrice
+  | normalizedPrice <= 0 || basePrice <= 0 = Nothing
+  | otherwise =
+      let diff = normalizedPrice - basePrice
+          mag = (abs diff * 10000 + basePrice `div` 2) `div` basePrice
+       in Just $ fromInteger (if diff < 0 then negate mag else mag)
+
+computeDisplayDeltaBps :: Integer -> Integer -> Maybe Int
+computeDisplayDeltaBps currRaw prevRaw =
+  let currDisp = basketDisplayPriceCap - currRaw
+      prevDisp = basketDisplayPriceCap - prevRaw
+   in if currDisp <= 0 || prevDisp <= 0
+        then Nothing
+        else
+          let diff = currDisp - prevDisp
+              mag = (abs diff * 10000 + prevDisp `div` 2) `div` prevDisp
+           in Just $ fromInteger (if diff < 0 then negate mag else mag)
+
+componentContributionMaybe :: ParsedComponent -> Maybe Integer
+componentContributionMaybe ParsedComponent {..} = do
+  normPrice <- readMaybe (T.unpack pcPrice) :: Maybe Integer
+  wBps <- pcWeightBps
+  baseP <- pcBasePrice
+  computeComponentContribution normPrice wBps baseP
+
+computeTotalContribution :: [ParsedComponent] -> Maybe Integer -> Maybe Integer
+computeTotalContribution components mBasketPrice =
+  let contribs = mapMaybe componentContributionMaybe components
+   in if not (null contribs) && length contribs == length components
+        then Just (sum contribs)
+        else mBasketPrice
+
+buildUpdateDetailChecks
+  :: [ParsedComponent]
+  -> Integer
+  -> Integer
+  -> Maybe Int
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Integer
+  -> Maybe Integer
+  -> [Value]
+buildUpdateDetailChecks components spreadSec lagSec mMaxConf mBasketPrice mReconDiff stalenessLimit mConfLimit =
+  let sixFeedStatus :: Text
+      sixFeedStatus
+        | length components == 6 = "passed"
+        | null components = "unknown"
+        | otherwise = "failed"
+
+      divStatus :: Text
+      divStatus
+        | spreadSec > maxComponentPublishTimeDivergence = "failed"
+        | spreadSec >= maxComponentPublishTimeDivergence - 1 = "warning"
+        | otherwise = "passed"
+
+      lagStatus :: Text
+      lagStatus
+        | lagSec > stalenessLimit = "warning"
+        | lagSec * 4 >= stalenessLimit * 3 = "warning"
+        | otherwise = "passed"
+
+      confStatus :: Text
+      confStatus = case (mMaxConf, mConfLimit) of
+        (Just c, Just lim)
+          | toInteger c > lim -> "failed"
+          | toInteger c * 4 >= lim * 3 -> "warning"
+          | otherwise -> "passed"
+        (Just _, Nothing) -> "passed"
+        _ -> "unknown"
+
+      domainStatus :: Text
+      domainStatus = case mBasketPrice of
+        Nothing -> "unknown"
+        Just bp
+          | bp > 0 && bp < basketDisplayPriceCap -> "passed"
+          | otherwise -> "failed"
+
+      reconStatus :: Text
+      reconStatus = case mReconDiff of
+        Nothing -> "unknown"
+        Just d
+          | d <= 6 -> "passed"
+          | d <= 100 -> "warning"
+          | otherwise -> "failed"
+   in [ checkObj
+          "six_feed_signature"
+          "6-feed Pyth signature & completeness"
+          sixFeedStatus
+          "6/6 FX feeds signed"
+          (showT (length components) <> "/6 feeds")
+          "All 6 DXY FX feeds verified and persisted together as an atomic basket payload"
+      , checkObj
+          "publish_time_divergence"
+          "Component publish-time divergence"
+          divStatus
+          ("≤ " <> showT maxComponentPublishTimeDivergence <> "s spread")
+          (showT spreadSec <> "s")
+          "max(publishTime) - min(publishTime) across the 6 signed FX feeds in this update"
+      , checkObj
+          "ingestion_lag"
+          "Hermes ingestion lag at admission"
+          lagStatus
+          ("≤ " <> showT stalenessLimit <> "s order bound")
+          (showT lagSec <> "s")
+          "Elapsed seconds between earliest component publishTime and backend ingestion (fetchedAt)"
+      , checkObj
+          "confidence_ratio"
+          "Peak component confidence ratio"
+          confStatus
+          (maybe "On-chain limit" (\l -> "≤ " <> showT l <> " bps") mConfLimit)
+          (maybe "—" (\c -> showT c <> " bps") mMaxConf)
+          "Largest Pyth confidence-to-price ratio among the 6 FX components in this snapshot"
+      , checkObj
+          "display_domain"
+          "Display-domain & positivity bounds"
+          domainStatus
+          "0 < raw < 2.00"
+          (maybe "—" (\bp -> if bp > 0 && bp < basketDisplayPriceCap then "Valid" else "Out of bounds") mBasketPrice)
+          "Verifies raw basket index is strictly within the immutable v1 display transform domain"
+      , checkObj
+          "basket_reconstruction"
+          "Weighted sum reconstruction"
+          reconStatus
+          "Σ contributions = raw basket"
+          (maybe "—" (\d -> if d == 0 then "Exact match" else "±" <> showT d <> " raw units") mReconDiff)
+          "Recomputes Σ (price × weight / basePrice) across all 6 components against stored basketPrice"
+      ]
+  where
+    checkObj :: Text -> Text -> Text -> Text -> Text -> Text -> Value
+    checkObj key label st threshold current desc =
+      object
+        [ "key" .= key
+        , "label" .= label
+        , "status" .= st
+        , "threshold" .= threshold
+        , "currentValue" .= current
+        , "rejections24h" .= (0 :: Integer)
+        , "description" .= desc
+        ]
 
 buildAdmissionChecks
   :: [ParsedComponent]
@@ -524,18 +897,115 @@ fetchLiveOracleOnChain client = do
       , looTradingActive = mTrading
       }
 
-fetchLatestPayload :: Connection -> IO (Maybe (Integer, Integer, Integer, Text, Maybe Integer, Maybe Value))
+fetchLatestPayload :: Connection -> IO (Maybe (Integer, Integer, Integer, Integer, Text, Maybe Integer, Maybe Value))
 fetchLatestPayload conn = do
   mRows <-
     observeIo $
       query_
         conn
-        "SELECT min_publish_time, max_publish_time, fetched_at, source, basket_price, component_prices \
+        "SELECT id, min_publish_time, max_publish_time, fetched_at, source, basket_price, component_prices \
         \FROM perps_pyth_update_payloads \
         \WHERE source = 'backend_hermes_latest_v2' AND basket_price IS NOT NULL \
-        \ORDER BY max_publish_time DESC LIMIT 1"
-        :: IO (Maybe [(Integer, Integer, Integer, Text, Maybe Integer, Maybe Value)])
+        \ORDER BY max_publish_time DESC, id DESC LIMIT 1"
+        :: IO (Maybe [(Integer, Integer, Integer, Integer, Text, Maybe Integer, Maybe Value)])
   pure (mRows >>= listToMaybe)
+
+fetchRecentAdmittedUpdates :: Connection -> Integer -> Text -> IO [RecentUpdateRow]
+fetchRecentAdmittedUpdates conn chainId router = do
+  mRows <-
+    observeIo $
+      query
+        conn
+        "SELECT p.id, p.min_publish_time, p.max_publish_time, p.fetched_at, p.source, p.basket_price, \
+        \  (SELECT COUNT(*)::BIGINT FROM perps_orders o \
+        \   WHERE o.chain_id = ? AND o.order_router = ? \
+        \     AND o.oracle_min_publish_time = p.min_publish_time \
+        \     AND o.oracle_max_publish_time = p.max_publish_time) AS orders_settled \
+        \FROM perps_pyth_update_payloads p \
+        \WHERE p.basket_price IS NOT NULL \
+        \ORDER BY p.max_publish_time DESC, p.id DESC \
+        \LIMIT 25"
+        (chainId, router)
+        :: IO (Maybe [(Integer, Integer, Integer, Integer, Text, Maybe Integer, Integer)])
+  pure
+    [ RecentUpdateRow pid mn mx ft src bp cnt
+    | (pid, mn, mx, ft, src, bp, cnt) <- fromMaybe [] mRows
+    ]
+
+fetchPayloadDetailRow :: Connection -> Maybe Integer -> IO (Maybe PayloadDetailRow)
+fetchPayloadDetailRow conn mTargetId = do
+  mRows <-
+    case mTargetId of
+      Just pid ->
+        observeIo $
+          query
+            conn
+            "SELECT id, min_publish_time, max_publish_time, fetched_at, source, basket_price, component_prices, \
+            \  COALESCE(jsonb_array_length(update_data), 0)::INT \
+            \FROM perps_pyth_update_payloads \
+            \WHERE id = ? \
+            \LIMIT 1"
+            (Only pid)
+            :: IO (Maybe [(Integer, Integer, Integer, Integer, Text, Maybe Integer, Maybe Value, Int)])
+      Nothing ->
+        observeIo $
+          query_
+            conn
+            "SELECT id, min_publish_time, max_publish_time, fetched_at, source, basket_price, component_prices, \
+            \  COALESCE(jsonb_array_length(update_data), 0)::INT \
+            \FROM perps_pyth_update_payloads \
+            \WHERE basket_price IS NOT NULL \
+            \ORDER BY max_publish_time DESC, id DESC \
+            \LIMIT 1"
+            :: IO (Maybe [(Integer, Integer, Integer, Integer, Text, Maybe Integer, Maybe Value, Int)])
+  pure $
+    fmap
+      (\(pid, mn, mx, ft, src, bp, comps, vaaCnt) -> PayloadDetailRow pid mn mx ft src bp comps vaaCnt)
+      (mRows >>= listToMaybe)
+
+fetchNeighborPayload :: Connection -> Bool -> Integer -> Integer -> IO (Maybe (Integer, Maybe Integer, Integer))
+fetchNeighborPayload conn isPrev maxPub pid = do
+  let sql =
+        if isPrev
+          then
+            "SELECT id, basket_price, max_publish_time \
+            \FROM perps_pyth_update_payloads \
+            \WHERE basket_price IS NOT NULL \
+            \  AND (max_publish_time < ? OR (max_publish_time = ? AND id < ?)) \
+            \ORDER BY max_publish_time DESC, id DESC \
+            \LIMIT 1"
+          else
+            "SELECT id, basket_price, max_publish_time \
+            \FROM perps_pyth_update_payloads \
+            \WHERE basket_price IS NOT NULL \
+            \  AND (max_publish_time > ? OR (max_publish_time = ? AND id > ?)) \
+            \ORDER BY max_publish_time ASC, id ASC \
+            \LIMIT 1"
+  mRows <-
+    observeIo $
+      query conn sql (maxPub, maxPub, pid)
+        :: IO (Maybe [(Integer, Maybe Integer, Integer)])
+  pure (mRows >>= listToMaybe)
+
+fetchOrdersSettledWithUpdate :: Connection -> Integer -> Text -> Integer -> Integer -> IO [SettledOrderRow]
+fetchOrdersSettledWithUpdate conn chainId router minPub maxPub = do
+  mRows <-
+    observeIo $
+      query
+        conn
+        "SELECT order_id::text, account, side, terminal_status, terminal_tx_hash, \
+        \  execution_price::text, execution_oracle_price::text, commit_timestamp, terminal_timestamp \
+        \FROM perps_orders \
+        \WHERE chain_id = ? AND order_router = ? \
+        \  AND oracle_min_publish_time = ? AND oracle_max_publish_time = ? \
+        \ORDER BY order_id DESC \
+        \LIMIT 50"
+        (chainId, router, minPub, maxPub)
+        :: IO (Maybe [(Text, Text, Maybe Text, Text, Maybe Text, Maybe Text, Maybe Text, Maybe Integer, Maybe Integer)])
+  pure
+    [ SettledOrderRow oid acct side st txHash execP execOracleP cTs tTs
+    | (oid, acct, side, st, txHash, execP, execOracleP, cTs, tTs) <- fromMaybe [] mRows
+    ]
 
 fetchAdmittedBuckets :: Connection -> Integer -> Integer -> Integer -> IO (Map.Map Integer AdmittedBucketAgg)
 fetchAdmittedBuckets conn startUnix endUnix bucketSec = do
@@ -618,6 +1088,14 @@ fetchRecentRejectionEvents conn sinceUnix = do
         :: IO (Maybe [(Integer, Integer, Text, Text, Text, Maybe Integer, Maybe Integer, Maybe Int, Maybe Int, Text)])
   pure (fromMaybe [] mRows)
 
+canonicalComponentsByFeedId :: Map.Map Text BasketComponent
+canonicalComponentsByFeedId =
+  Map.fromList [(normalizeFeedId (bcFeedId bc), bc) | bc <- basketComponents]
+
+canonicalComponentsBySymbol :: Map.Map Text BasketComponent
+canonicalComponentsBySymbol =
+  Map.fromList [(T.toUpper (bcSymbol bc), bc) | bc <- basketComponents]
+
 parseComponentList :: Value -> [ParsedComponent]
 parseComponentList (Array arr) = mapMaybe parseOne (toList arr)
   where
@@ -628,11 +1106,20 @@ parseComponentList (Array arr) = mapMaybe parseOne (toList arr)
       priceTxt <- lookupStringOrInt "price" obj
       rawTxt <- lookupStringOrInt "rawPrice" obj
       confTxt <- lookupStringOrInt "confidence" obj
-      let mRawInt = readMaybe (T.unpack rawTxt) :: Maybe Integer
+      let mCanonical =
+            Map.lookup (normalizeFeedId feedId) canonicalComponentsByFeedId
+              <|> Map.lookup (T.toUpper sym) canonicalComponentsBySymbol
+          mRawInt = readMaybe (T.unpack rawTxt) :: Maybe Integer
           mConfInt = readMaybe (T.unpack confTxt) :: Maybe Integer
           confBps = case (mRawInt, mConfInt) of
             (Just r, Just c) -> computeComponentConfidenceBps r c
             _ -> Nothing
+          mWeight =
+            lookupInteger "weightBps" obj
+              <|> ((\bc -> bcWeight bc `div` (10 ^ (14 :: Int))) <$> mCanonical)
+          mBasePrice =
+            lookupInteger "basePrice" obj
+              <|> (bcBasePrice <$> mCanonical)
       pure
         ParsedComponent
           { pcSymbol = sym
@@ -644,18 +1131,29 @@ parseComponentList (Array arr) = mapMaybe parseOne (toList arr)
           , pcConfidenceBps = confBps
           , pcExponent = fromInteger <$> lookupInteger "exponent" obj
           , pcPublishTime = lookupInteger "publishTime" obj
-          , pcWeightBps = lookupInteger "weightBps" obj
-          , pcInverted = fromMaybe False (lookupBool "inverted" obj)
+          , pcWeightBps = mWeight
+          , pcBasePrice = mBasePrice
+          , pcInverted = fromMaybe (maybe False bcInverted mCanonical) (lookupBool "inverted" obj)
           }
     parseOne _ = Nothing
 parseComponentList _ = []
 
-componentToJson :: Maybe Integer -> Maybe Integer -> ParsedComponent -> Value
-componentToJson mMinPub mConfLimit ParsedComponent {..} =
+componentToJson :: Maybe Integer -> Maybe Integer -> Maybe Integer -> ParsedComponent -> Value
+componentToJson mMinPub mConfLimit mTotalContribution comp@ParsedComponent {..} =
   let mDrift = (\pt mn -> max 0 (pt - mn)) <$> pcPublishTime <*> mMinPub
       confOver = case (pcConfidenceBps, mConfLimit) of
         (Just c, Just lim) -> toInteger c > lim
         _ -> False
+      mNormPrice = readMaybe (T.unpack pcPrice) :: Maybe Integer
+      mContribution = componentContributionMaybe comp
+      mEffShareBps = do
+        c <- mContribution
+        tot <- mTotalContribution
+        computeEffectiveShareBps c tot
+      mChangeFromBaseBps = do
+        norm <- mNormPrice
+        baseP <- pcBasePrice
+        computeChangeFromBaseBps norm baseP
    in object
         [ "symbol" .= pcSymbol
         , "feedSymbol" .= pcFeedSymbol
@@ -669,8 +1167,40 @@ componentToJson mMinPub mConfLimit ParsedComponent {..} =
         , "publishTime" .= (isoTimestamp <$> pcPublishTime)
         , "driftFromMinSeconds" .= mDrift
         , "weightBps" .= pcWeightBps
+        , "basePrice" .= (showT <$> pcBasePrice)
+        , "contribution" .= (showT <$> mContribution)
+        , "effectiveShareBps" .= mEffShareBps
+        , "changeFromBaseBps" .= mChangeFromBaseBps
         , "inverted" .= pcInverted
         ]
+
+recentUpdateToJson :: RecentUpdateRow -> Value
+recentUpdateToJson RecentUpdateRow {..} =
+  object
+    [ "id" .= showT rurId
+    , "minPublishTime" .= isoTimestamp rurMinPublishTime
+    , "maxPublishTime" .= isoTimestamp rurMaxPublishTime
+    , "fetchedAt" .= isoTimestamp rurFetchedAt
+    , "source" .= rurSource
+    , "basketPrice" .= (showT <$> rurBasketPrice)
+    , "spreadSeconds" .= max 0 (rurMaxPublishTime - rurMinPublishTime)
+    , "lagSeconds" .= max 0 (rurFetchedAt - rurMinPublishTime)
+    , "ordersSettledCount" .= rurOrdersSettledCount
+    ]
+
+settledOrderToJson :: SettledOrderRow -> Value
+settledOrderToJson SettledOrderRow {..} =
+  object
+    [ "orderId" .= sorOrderId
+    , "account" .= sorAccount
+    , "side" .= sorSide
+    , "status" .= sorStatus
+    , "txHash" .= sorTxHash
+    , "executionPrice" .= sorExecutionPrice
+    , "executionOraclePrice" .= sorExecutionOraclePrice
+    , "commitTimestamp" .= (isoTimestamp <$> sorCommitTimestamp)
+    , "terminalTimestamp" .= (isoTimestamp <$> sorTerminalTimestamp)
+    ]
 
 bucketToJson :: OracleHealthBucket -> Value
 bucketToJson OracleHealthBucket {..} =

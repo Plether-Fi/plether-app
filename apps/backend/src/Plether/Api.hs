@@ -137,6 +137,7 @@ import Plether.Handlers.InsightsLiquidity
   )
 import Plether.Handlers.InsightsOracle
   ( getOracleHealthResponse
+  , getOracleUpdateDetailResponse
   )
 import Plether.Handlers.InsightsTreasury
   ( getTreasuryOverviewResponse
@@ -669,6 +670,12 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
   get "/api/insights/v1/oracle/health" $
     case mPool of
       Just pool -> liftIO (getOracleHealthResponse pool perpsClient cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/oracle/updates/:id" $ do
+    updateId <- pathParam "id"
+    case mPool of
+      Just pool -> liftIO (getOracleUpdateDetailResponse pool perpsClient cfg updateId) >>= handleResult
       Nothing -> insightsUnavailable
 
   get "/api/insights/v1/treasury/overview" $

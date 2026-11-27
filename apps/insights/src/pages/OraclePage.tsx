@@ -7,7 +7,7 @@ import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
 import { resolvePerpsChain } from '../utils/chain'
-import { formatPrice, formatUtc } from '../utils/format'
+import { formatPrice, formatUtc, formatUtcWithSeconds } from '../utils/format'
 
 function overallTone(status: string | undefined): StatusTone {
   if (status === 'healthy') return 'live'
@@ -102,6 +102,12 @@ export function OraclePage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
+          <Link
+            to={`/oracle/updates/${data?.live.latestUpdateId ?? 'latest'}`}
+            className="border border-brand-peach/50 bg-brand-peach/15 px-3 py-1.5 font-mono text-brand-peach transition-colors hover:bg-brand-peach/25"
+          >
+            Inspect latest update →
+          </Link>
           <Link to="/execution" className="text-brand-peach hover:underline">
             Execution quality →
           </Link>
@@ -265,11 +271,19 @@ export function OraclePage() {
                   {String(maxConfLimit)} bps limit, and per-feed publish drift
                 </p>
               </div>
-              {data.live.latestPublishTime ? (
-                <span className="font-mono text-xs text-content-tertiary">
-                  Published {formatUtc(data.live.latestPublishTime)}
-                </span>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+                {data.live.latestPublishTime ? (
+                  <span className="text-content-tertiary">
+                    Published {formatUtc(data.live.latestPublishTime)}
+                  </span>
+                ) : null}
+                <Link
+                  to={`/oracle/updates/${data.live.latestUpdateId ?? 'latest'}`}
+                  className="font-semibold text-brand-peach hover:underline"
+                >
+                  Open basket pie chart &amp; detail →
+                </Link>
+              </div>
             </div>
 
             <Panel>
@@ -377,6 +391,100 @@ export function OraclePage() {
               )}
             </Panel>
           </section>
+
+          {data.recentUpdates && data.recentUpdates.length > 0 ? (
+            <section aria-labelledby="oracle-recent-updates-title" className="space-y-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                  <h2 id="oracle-recent-updates-title" className="text-xl font-semibold">
+                    Recent Admitted Oracle Updates
+                  </h2>
+                  <p className="mt-1 text-xs text-content-tertiary">
+                    Click any admitted Pyth basket payload to inspect its 6-currency weight pie
+                    chart, exact FX quotes, guard checks, and settled orders
+                  </p>
+                </div>
+                <span className="font-mono text-xs text-content-tertiary">
+                  Latest {String(data.recentUpdates.length)} payloads
+                </span>
+              </div>
+
+              <Panel>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[740px] text-left text-sm">
+                    <caption className="sr-only">Recent admitted Pyth basket oracle updates</caption>
+                    <thead className="border-b border-brand-border/25 text-xs text-content-tertiary">
+                      <tr>
+                        <th scope="col" className="px-4 py-3.5">Payload</th>
+                        <th scope="col" className="px-4 py-3.5">Published (UTC)</th>
+                        <th scope="col" className="px-4 py-3.5">plDXY Mark</th>
+                        <th scope="col" className="px-4 py-3.5">Spread / Lag</th>
+                        <th scope="col" className="px-4 py-3.5">Source</th>
+                        <th scope="col" className="px-4 py-3.5">Orders Settled</th>
+                        <th scope="col" className="px-4 py-3.5 text-right">Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.recentUpdates.map((upd) => (
+                        <tr
+                          key={upd.id}
+                          className="border-b border-brand-border/15 last:border-0"
+                        >
+                          <td className="px-4 py-3.5 font-mono text-xs font-semibold">
+                            <Link
+                              to={`/oracle/updates/${upd.id}`}
+                              className="text-brand-peach hover:underline"
+                            >
+                              #{upd.id}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs text-content-secondary">
+                            {formatUtcWithSeconds(upd.maxPublishTime)}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs font-semibold tabular-nums text-content-primary">
+                            {upd.basketPrice ? `${formatPrice(upd.basketPrice)} plDXY` : '—'}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs tabular-nums text-content-secondary">
+                            <span
+                              className={
+                                upd.spreadSeconds >= data.thresholds.maxComponentDivergenceSeconds - 1
+                                  ? 'font-semibold text-brand-yellow'
+                                  : ''
+                              }
+                            >
+                              {String(upd.spreadSeconds)}s spread
+                            </span>
+                            {' · '}
+                            {String(upd.lagSeconds)}s lag
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs text-content-tertiary">
+                            {upd.source === 'backend_hermes_latest_v2' ? 'Latest v2' : upd.source}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs tabular-nums">
+                            {upd.ordersSettledCount > 0 ? (
+                              <span className="font-semibold text-positive">
+                                {upd.ordersSettledCount.toLocaleString('en-US')}
+                              </span>
+                            ) : (
+                              <span className="text-content-tertiary">0</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono text-xs">
+                            <Link
+                              to={`/oracle/updates/${upd.id}`}
+                              className="font-semibold text-brand-peach hover:underline"
+                            >
+                              Inspect →
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </section>
+          ) : null}
 
           <section aria-labelledby="oracle-rejections-title" className="space-y-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
