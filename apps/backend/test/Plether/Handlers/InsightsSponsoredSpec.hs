@@ -7,6 +7,7 @@ import qualified Data.Text as T
 import Plether.Ethereum.Abi (encodeUint256)
 import Plether.Handlers.InsightsSponsored
   ( checkBundlerEntryPoint
+  , classifyKernelHealth
   , classifySponsorshipGate
   , computeInclusionLatencySeconds
   , computeIntLatencyPercentiles
@@ -95,3 +96,13 @@ spec = describe "Plether.Handlers.InsightsSponsored" $ do
     computeInclusionLatencySeconds Nothing 1728053264 `shouldBe` Nothing
     computeIntLatencyPercentiles [1, 2, 2, 3, 4, 5, 6, 7, 8, 12] `shouldBe` (Just 4, Just 12)
     computeIntLatencyPercentiles [] `shouldBe` (Nothing, Nothing)
+
+  it "classifies ZeroDev Kernel v4 Trading Account stack health fail-closed" $ do
+    classifyKernelHealth True True True True True Nothing `shouldBe` "healthy"
+    classifyKernelHealth True False True True True Nothing `shouldBe` "healthy"
+    classifyKernelHealth False True True True True Nothing `shouldBe` "healthy"
+    classifyKernelHealth False False True True True Nothing `shouldBe` "disabled"
+    classifyKernelHealth True True True True True (Just "Safety pause active") `shouldBe` "paused"
+    classifyKernelHealth True True False True True Nothing `shouldBe` "degraded"
+    classifyKernelHealth True True True False True Nothing `shouldBe` "degraded"
+    classifyKernelHealth True True True True False Nothing `shouldBe` "degraded"

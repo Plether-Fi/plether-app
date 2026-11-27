@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
@@ -31,10 +31,18 @@ export function LeaderboardPage() {
   const statsQuery = useDivisionsStats()
   const now = useUtcNow(10_000)
   const week = tradingWeek(now)
-  const [search, setSearch] = useState('')
+  const [searchParams] = useSearchParams()
+  const urlQuery = searchParams.get('q') ?? ''
+  const [search, setSearch] = useState(urlQuery)
+  const [prevUrlQuery, setPrevUrlQuery] = useState(urlQuery)
   const [filter, setFilter] = useState<LiveLeaderboardFilter>('all')
   const [tierFilter, setTierFilter] = useState<TierFilter>('all')
   const [livePage, setLivePage] = useState(0)
+  if (urlQuery !== prevUrlQuery) {
+    setPrevUrlQuery(urlQuery)
+    setSearch(urlQuery)
+    setLivePage(0)
+  }
 
   const publication = query.data
   const live = liveQuery.data?.status === 'ready' ? liveQuery.data : null

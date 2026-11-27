@@ -2,7 +2,6 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-
 import { DEFAULT_COMPETITION_SLUG } from './api'
 import { Layout } from './components/Layout'
 import { AccountPage } from './pages/AccountPage'
-import { AccountsPage } from './pages/AccountsPage'
 import { CompetitionArchivePage } from './pages/CompetitionArchivePage'
 import { CompetitionMethodologyPage } from './pages/CompetitionMethodologyPage'
 import { DivisionsRegistrationPage } from './pages/DivisionsRegistrationPage'
@@ -20,6 +19,7 @@ import { OverviewPage } from './pages/OverviewPage'
 import { PositionLifecyclePage } from './pages/PositionLifecyclePage'
 import { ProtocolPage } from './pages/ProtocolPage'
 import { SponsoredPage } from './pages/SponsoredPage'
+import { TradingAccountsPage } from './pages/TradingAccountsPage'
 import { TransactionPage } from './pages/TransactionPage'
 import { TreasuryPage } from './pages/TreasuryPage'
 import { WalletPage } from './pages/WalletPage'
@@ -43,10 +43,10 @@ export default function App() {
           <Route path="/keepers" element={<KeepersPage />} />
           <Route path="/keepers/:address" element={<KeeperDetailPage />} />
           <Route path="/sponsored" element={<SponsoredPage />} />
+          <Route path="/trading-accounts" element={<TradingAccountsPage />} />
           <Route path="/treasury" element={<TreasuryPage />} />
           <Route path="/protocol" element={<ProtocolPage />} />
           <Route path="/infra" element={<InfraPage />} />
-          <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/wallets/:address" element={<AccountPage />} />
           <Route
             path="/wallets/:address/positions/:positionId"

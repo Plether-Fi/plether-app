@@ -65,7 +65,7 @@ export function GlobalSearch({ className = '' }: { className?: string }) {
     const query = trimmed.replace(/^@+/, '')
     setValue('')
     inputRef.current?.blur()
-    void navigate(`/accounts?q=${encodeURIComponent(query)}`)
+    void navigate(`/divisions?q=${encodeURIComponent(query)}`)
   }
 
   return (

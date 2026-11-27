@@ -147,6 +147,7 @@ import Plether.Handlers.InsightsProtocol
 import Plether.Handlers.InsightsSponsored
   ( getSponsoredOperationsResponse
   , getSponsoredStatusResponse
+  , getTradingAccountsOverviewResponse
   )
 import Plether.Handlers.InsightsInfra
   ( getInfraStatusResponse
@@ -156,7 +157,6 @@ import Plether.Handlers.InsightsPositions
   ( getMarketExposureResponse
   , getWalletExposureResponse
   , getWalletPositionDetailResponse
-  , getWalletsDirectoryResponse
   )
 import Plether.Handlers.InsightsWallets
   ( getDivisionsWalletContextResponse
@@ -675,6 +675,13 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
       Just pool -> liftIO (getTreasuryOverviewResponse pool perpsClient cfg kernelAa) >>= handleResult
       Nothing -> insightsUnavailable
 
+  get "/api/insights/v1/trading-accounts/overview" $
+    case mPool of
+      Just pool ->
+        liftIO (getTradingAccountsOverviewResponse pool perpsClient manager cfg kernelAa)
+          >>= handleResult
+      Nothing -> insightsUnavailable
+
   get "/api/insights/v1/sponsored/status" $
     case mPool of
       Just pool -> liftIO (getSponsoredStatusResponse pool perpsClient manager cfg kernelAa) >>= handleResult
@@ -723,32 +730,6 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
               liftIO (getKeeperDetailResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
                 >>= handleResult
             Nothing -> insightsUnavailable
-
-  get "/api/insights/v1/wallets" $ do
-    mSearch <- queryParamMaybe "search"
-    mFilter <- queryParamMaybe "filter"
-    mSort <- queryParamMaybe "sort"
-    mLimit <- queryParamMaybe "limit"
-    mOffset <- queryParamMaybe "offset"
-    case (traverse parseNonNegativeInt mLimit, traverse parseNonNegativeInt mOffset) of
-      (Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
-      (_, Nothing) -> handleError $ E.invalidAmount "offset must be a non-negative integer"
-      (Just parsedLimit, Just parsedOffset) ->
-        case mPool of
-          Just pool ->
-            liftIO
-              ( getWalletsDirectoryResponse
-                  pool
-                  (Just perpsClient)
-                  cfg
-                  mSearch
-                  mFilter
-                  mSort
-                  (maybe 50 id parsedLimit)
-                  (maybe 0 id parsedOffset)
-              )
-              >>= handleResult
-          Nothing -> insightsUnavailable
 
   get "/api/insights/v1/wallets/:address/summary" $ do
     addr <- pathParam "address"

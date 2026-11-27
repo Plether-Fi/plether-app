@@ -37,9 +37,8 @@ describe('Layout navigation', () => {
     const mobileNav = screen.getByRole('navigation', { name: 'Mobile navigation' })
     expect(within(mobileNav).getByRole('button', { name: /Operations/i })).toBeInTheDocument()
 
-    // Global header search and Accounts link are present
+    // Global header search is present and Trading Accounts lives inside Operations
     expect(screen.getByRole('search', { name: /Search accounts/i })).toBeInTheDocument()
-    expect(within(primaryNav).getByRole('link', { name: 'Accounts' })).toHaveAttribute('href', '/accounts')
 
     fireEvent.click(opsButton)
     expect(opsButton).toHaveAttribute('aria-expanded', 'true')
@@ -47,8 +46,12 @@ describe('Layout navigation', () => {
     expect(menu).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Oracle/i })).toHaveAttribute('href', '/oracle')
     expect(screen.getByRole('menuitem', { name: /Keepers/i })).toHaveAttribute('href', '/keepers')
-    expect(screen.getByRole('menuitem', { name: /Sponsored/i })).toHaveAttribute('href', '/sponsored')
-    expect(screen.getByRole('menuitem', { name: /Infra/i })).toHaveAttribute('href', '/infra')
+    expect(screen.getByRole('menuitem', { name: /^Trading Accounts\b/i })).toHaveAttribute(
+      'href',
+      '/trading-accounts',
+    )
+    expect(screen.getByRole('menuitem', { name: /^Sponsored\b/i })).toHaveAttribute('href', '/sponsored')
+    expect(screen.getByRole('menuitem', { name: /^Infra\b/i })).toHaveAttribute('href', '/infra')
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(opsButton).toHaveAttribute('aria-expanded', 'false')

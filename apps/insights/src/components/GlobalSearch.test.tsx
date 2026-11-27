@@ -37,7 +37,7 @@ describe('GlobalSearch', () => {
 
     fireEvent.change(input, { target: { value: '@macro_fox' } })
     fireEvent.submit(form)
-    expect(screen.getByTestId('route-echo')).toHaveTextContent('/accounts?q=macro_fox')
+    expect(screen.getByTestId('route-echo')).toHaveTextContent('/divisions?q=macro_fox')
   })
 
   it('focuses search input when pressing / outside an editable control', () => {

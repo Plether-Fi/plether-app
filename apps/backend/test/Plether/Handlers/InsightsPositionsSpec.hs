@@ -16,7 +16,6 @@ import Plether.Handlers.InsightsPositions
   , PositionLifecycle (..)
   , PositionStepEvent (..)
   , PriceCandleRow (..)
-  , WalletDirectoryEntry (..)
   , WalletExposureSummary (..)
   , buildExposureTimeline
   , computeGlobalMarketExposure
@@ -27,7 +26,6 @@ import Plether.Handlers.InsightsPositions
   , defaultMaintenanceMarginBps
   , distanceToLiquidationBps
   , enrichPositionWithCandles
-  , filterSortWalletsDirectory
   , findLiquidationRawPrice
   , pickCandleIntervalSeconds
   , reconcileGlobalMarketExposure
@@ -299,33 +297,3 @@ spec = describe "Plether.Handlers.InsightsPositions" $ do
     gmeLongOpenInterestAssets fallback `shouldBe` computeNotionalAssets bullOi markRaw
     gmeShortOpenInterestAssets fallback `shouldBe` computeNotionalAssets bearOi markRaw
     gmeOpenPositionCount fallback `shouldBe` 1100
-
-  it "filters, searches, sorts, and paginates Trading Accounts directory entries" $ do
-    let entries =
-          [ WalletDirectoryEntry "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" (Just "macro_alice") (Just "Gold") "long" 100 9500000000 12 6 6 0 120000000000 500000000 (Just 1700000000) (Just 1800000200)
-          , WalletDirectoryEntry "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" Nothing Nothing "short" 200 19000000000 4 2 2 0 40000000000 (-150000000) (Just 1700000100) (Just 1800000100)
-          , WalletDirectoryEntry "0xcccccccccccccccccccccccccccccccccccccccc" (Just "fx_carol") (Just "Silver") "flat" 0 0 25 12 13 0 250000000000 900000000 (Just 1700000200) (Just 1800000300)
-          ]
-    -- Default sort (notional DESC)
-    let (totAll, byNotional) = filterSortWalletsDirectory Nothing Nothing Nothing 50 0 entries
-    totAll `shouldBe` 3
-    map wdeAccount byNotional
-      `shouldBe` [ "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                 , "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                 , "0xcccccccccccccccccccccccccccccccccccccccc"
-                 ]
-    -- Search by @handle (leading @ stripped, case-insensitive)
-    let (totSearch, matchedSearch) = filterSortWalletsDirectory (Just "@MACRO_ALICE") Nothing Nothing 50 0 entries
-    totSearch `shouldBe` 1
-    map wdeAccount matchedSearch `shouldBe` ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
-    -- Filter open + sort by volume
-    let (totOpen, openByVol) = filterSortWalletsDirectory Nothing (Just "open") (Just "volume") 50 0 entries
-    totOpen `shouldBe` 2
-    map wdeAccount openByVol
-      `shouldBe` [ "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                 , "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                 ]
-    -- Filter profitable + sort by pnl + pagination
-    let (totProf, profPage) = filterSortWalletsDirectory Nothing (Just "profitable") (Just "pnl") 1 0 entries
-    totProf `shouldBe` 2
-    map wdeAccount profPage `shouldBe` ["0xcccccccccccccccccccccccccccccccccccccccc"]

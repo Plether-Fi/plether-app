@@ -18,6 +18,11 @@ const OPS_ROUTES = [
     description: 'Permissionless keeper fleet, latency & bounties',
   },
   {
+    to: '/trading-accounts',
+    label: 'Trading Accounts',
+    description: 'ZeroDev Kernel v4 smart wallets, ETH vs. sponsored gas & ops',
+  },
+  {
     to: '/sponsored',
     label: 'Sponsored',
     description: 'ERC-4337 Paymaster runway & UserOp receipts',
@@ -166,10 +171,6 @@ function HeaderTelemetryPill() {
 }
 
 function Header() {
-  const location = useLocation()
-  const accountsActive =
-    location.pathname === '/accounts' || location.pathname.startsWith('/wallets/')
-
   return (
     <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel py-2 sm:py-3">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:flex-nowrap lg:px-8">
@@ -191,7 +192,6 @@ function Header() {
             aria-label="Primary navigation"
           >
             <NavLink to="/" end className={navClass}>Overview</NavLink>
-            <Link to="/accounts" className={navClass({ isActive: accountsActive })}>Accounts</Link>
             <NavLink to="/execution" className={navClass}>Execution</NavLink>
             <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
             <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
@@ -202,7 +202,7 @@ function Header() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <GlobalSearch className="w-40 sm:w-44 lg:w-36 xl:w-44" />
+          <GlobalSearch className="w-40 sm:w-44 lg:w-44 xl:w-52" />
           <HeaderTelemetryPill />
         </div>
 
@@ -211,7 +211,6 @@ function Header() {
           aria-label="Mobile navigation"
         >
           <NavLink to="/" end className={navClass}>Overview</NavLink>
-          <Link to="/accounts" className={navClass({ isActive: accountsActive })}>Accounts</Link>
           <NavLink to="/execution" className={navClass}>Execution</NavLink>
           <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
           <NavLink to="/treasury" className={navClass}>Treasury</NavLink>

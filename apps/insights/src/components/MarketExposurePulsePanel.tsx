@@ -41,19 +41,14 @@ export function MarketExposurePulsePanel({
             Real-time Long vs. Short open interest skew across active plDXY-PERP accounts
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          {data?.currentMarkPrice ? (
-            <span className="font-mono text-content-secondary">
-              Mark <strong className="text-content-primary">{formatPrice(data.currentMarkPrice)}</strong>
-              {summary?.avgLeverageX100 != null
-                ? ` · Avg lev ${formatLeverageX100(summary.avgLeverageX100)}`
-                : ''}
-            </span>
-          ) : null}
-          <Link to="/accounts" className="font-semibold text-brand-peach hover:underline">
-            All accounts →
-          </Link>
-        </div>
+        {data?.currentMarkPrice ? (
+          <span className="font-mono text-xs text-content-secondary">
+            Mark <strong className="text-content-primary">{formatPrice(data.currentMarkPrice)}</strong>
+            {summary?.avgLeverageX100 != null
+              ? ` · Avg lev ${formatLeverageX100(summary.avgLeverageX100)}`
+              : ''}
+          </span>
+        ) : null}
       </div>
 
       <Panel>

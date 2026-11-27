@@ -1,6 +1,8 @@
 module Plether.Handlers.InsightsSponsored
   ( getSponsoredStatusResponse
   , getSponsoredOperationsResponse
+  , getTradingAccountsOverviewResponse
+  , classifyKernelHealth
   , sanitizePublicReason
   , sanitizeControlEventReason
   , parseLogBlockTimestamp
@@ -1327,3 +1329,445 @@ formatUtcIso = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
 
 isoTimestamp :: Integer -> Text
 isoTimestamp = formatUtcIso . posixSecondsToUTCTime . fromIntegral
+
+-- ============================================================================
+-- ZeroDev Kernel v4 Trading Accounts Overview
+-- GET /api/insights/v1/trading-accounts/overview
+-- ============================================================================
+
+{-# NOINLINE tradingAccountsCache #-}
+tradingAccountsCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+tradingAccountsCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+-- | Classify overall ZeroDev Kernel v4 Trading Account stack health.
+classifyKernelHealth
+  :: Bool -- ^ ethModeEnabled
+  -> Bool -- ^ sponsorshipEnabled
+  -> Bool -- ^ bundlerReachable
+  -> Bool -- ^ bundlerEntryPointSupported
+  -> Bool -- ^ reconcilerFresh
+  -> Maybe Text -- ^ reconcilerPausedReason
+  -> Text
+classifyKernelHealth ethEnabled sponsorEnabled bundlerOk epOk recFresh mPaused
+  | not ethEnabled && not sponsorEnabled = "disabled"
+  | maybe False (const True) mPaused = "paused"
+  | not bundlerOk || not epOk || not recFresh = "degraded"
+  | otherwise = "healthy"
+
+data KernelAdoptionRow = KernelAdoptionRow
+  { karUniqueAccounts :: Int
+  , karUniqueOwners :: Int
+  , karActiveAccounts24h :: Int
+  , karTotalPreparations :: Int
+  , karTotalOperations :: Int
+  , karOperations24h :: Int
+  , karSponsoredOpsTotal :: Int
+  , karEthOpsTotal :: Int
+  , karSponsoredOps24h :: Int
+  , karEthOps24h :: Int
+  , karCancellationOpsTotal :: Int
+  , karPendingOpsCount :: Int
+  , karOldestPendingAgeSec :: Maybe Int
+  , karIncludedSucceeded :: Int
+  , karIncludedReverted :: Int
+  , karNonceConsumed :: Int
+  , karSponsorshipExpired :: Int
+  , karCancellationsPrepared :: Int
+  , karCancellationsAccepted :: Int
+  , karTotalGasCostWei :: Text
+  , karSponsoredGasCostWei :: Text
+  , karEthGasCostWei :: Text
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow KernelAdoptionRow where
+  fromRow =
+    KernelAdoptionRow
+      <$> field <*> field <*> field <*> field <*> field
+      <*> field <*> field <*> field <*> field <*> field
+      <*> field <*> field <*> field <*> field <*> field
+      <*> field <*> field <*> field <*> field <*> field
+      <*> field <*> field
+
+emptyKernelAdoptionRow :: KernelAdoptionRow
+emptyKernelAdoptionRow =
+  KernelAdoptionRow 0 0 0 0 0 0 0 0 0 0 0 0 Nothing 0 0 0 0 0 0 "0" "0" "0"
+
+data KernelSmartAccountRow = KernelSmartAccountRow
+  { ksarSender :: Text
+  , ksarOwner :: Text
+  , ksarDiscordUsername :: Maybe Text
+  , ksarSponsoredCount :: Int
+  , ksarEthCount :: Int
+  , ksarIncludedCount :: Int
+  , ksarPendingCount :: Int
+  , ksarRetiredCount :: Int
+  , ksarHighestNonce :: Text
+  , ksarLastMode :: Text
+  , ksarFirstSeenAt :: UTCTime
+  , ksarLastActivityAt :: UTCTime
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow KernelSmartAccountRow where
+  fromRow =
+    KernelSmartAccountRow
+      <$> field <*> field <*> field <*> field <*> field
+      <*> field <*> field <*> field <*> field <*> field
+      <*> field <*> field
+
+data KernelOpJournalRow = KernelOpJournalRow
+  { kojrUserOpHash :: Text
+  , kojrSender :: Text
+  , kojrOwner :: Text
+  , kojrMode :: Text
+  , kojrCancellationOnly :: Bool
+  , kojrNonce :: Text
+  , kojrStatus :: Text
+  , kojrExecutionSuccess :: Maybe Bool
+  , kojrTxHash :: Maybe Text
+  , kojrBlockNumber :: Maybe Text
+  , kojrActualGasCostWei :: Maybe Text
+  , kojrCancellationHash :: Maybe Text
+  , kojrCreatedAt :: UTCTime
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow KernelOpJournalRow where
+  fromRow =
+    KernelOpJournalRow
+      <$> field <*> field <*> field <*> field <*> field
+      <*> field <*> field <*> field <*> field <*> field
+      <*> field <*> field <*> field
+
+getTradingAccountsOverviewResponse
+  :: DbPool
+  -> EthClient
+  -> Manager
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> IO (Either ApiError (ApiResponse Value))
+getTradingAccountsOverviewResponse pool client manager cfg mKernel =
+  snd <$> runSingleFlightCache tradingAccountsCache () isRight (computeTradingAccountsOverview pool client manager cfg mKernel)
+
+computeTradingAccountsOverview
+  :: DbPool
+  -> EthClient
+  -> Manager
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> IO (Either ApiError (ApiResponse Value))
+computeTradingAccountsOverview pool client manager cfg mKernel = do
+  nowPosix <- getPOSIXTime
+  let nowSec = floor nowPosix :: Integer
+      nowUtc = posixSecondsToUTCTime (fromIntegral nowSec)
+      chainId = cfgPerpsChainId cfg
+  blockRes <- ethBlockNumber client
+  let mHeadBlock = either (const Nothing) Just blockRes
+      respBlock = fromMaybe Manifest.releaseDeploymentBlock mHeadBlock
+  case mKernel of
+    Nothing ->
+      pure $
+        Right $
+          mkResponse respBlock chainId $
+            object
+              [ "network" .= networkJson chainId
+              , "observedAt" .= isoTimestamp nowSec
+              , "configured" .= False
+              , "status" .= ("unconfigured" :: Text)
+              , "profile" .= Null
+              , "controls" .= Null
+              , "pipeline" .= Null
+              , "adoption" .= kernelAdoptionJson emptyKernelAdoptionRow
+              , "lifecycle" .= kernelLifecycleJson emptyKernelAdoptionRow
+              , "accounts" .= ([] :: [Value])
+              , "operations" .= ([] :: [Value])
+              ]
+    Just kgc -> do
+      let prof = kgcProfile kgc
+          scope = kernelScope prof
+          entryPointAddr = T.toLower (kpEntryPoint prof)
+          mPaymaster = T.toLower . kscPaymaster <$> kgcSponsorship kgc
+          mPolicyId = kscPolicyId <$> kgcSponsorship kgc
+          sponsorshipEnabled = maybe False kscEnabled (kgcSponsorship kgc)
+          (admissionMode, mAdmittedCount) = case kgcAllowedOwners kgc of
+            Nothing -> ("open" :: Text, Nothing :: Maybe Int)
+            Just owners -> ("canary" :: Text, Just (length owners))
+      (bundlerRes, dbRes) <-
+        runConcurrently $
+          (,)
+            <$> Concurrently (probeBundler manager (kgcAltoRpcUrl kgc) entryPointAddr)
+            <*> Concurrently (fetchKernelTradingAccountsDb pool scope mPaymaster)
+      let (bundlerOk, bundlerEpOk, bundlerStatus) = bundlerRes
+          (mRec, mPausedRaw, adopt, accounts, ops) = fromMaybe (Nothing, Nothing, emptyKernelAdoptionRow, [], []) dbRes
+          (recFresh, mLagSec, mBlocksBehind) =
+            evaluateReconcilerFreshness mRec mHeadBlock nowUtc (kgcMaxSafeLagSeconds kgc)
+          pausedReason = sanitizePublicReason <$> mPausedRaw
+          overallStatus =
+            classifyKernelHealth
+              (kgcEthModeEnabled kgc)
+              sponsorshipEnabled
+              bundlerOk
+              bundlerEpOk
+              (maybe True (const recFresh) mPaymaster)
+              pausedReason
+      pure $
+        Right $
+          mkResponse respBlock chainId $
+            object
+              [ "network" .= networkJson chainId
+              , "observedAt" .= isoTimestamp nowSec
+              , "configured" .= True
+              , "status" .= overallStatus
+              , "profile"
+                  .= object
+                    [ "deployment" .= kpDeployment prof
+                    , "accountVersion" .= ("kernel-v4-uups" :: Text)
+                    , "entryPointVersion" .= ("0.9" :: Text)
+                    , "entryPoint" .= entryPointAddr
+                    , "entryPointCodeHash" .= kpEntryPointCodeHash prof
+                    , "factory" .= T.toLower (kpFactory prof)
+                    , "factoryCodeHash" .= kpFactoryCodeHash prof
+                    , "implementation" .= T.toLower (kpImplementation prof)
+                    , "implementationCodeHash" .= kpImplementationCodeHash prof
+                    , "validator" .= T.toLower (kpValidator prof)
+                    , "validatorCodeHash" .= kpValidatorCodeHash prof
+                    , "accountCodeHash" .= kpAccountCodeHash prof
+                    , "paymaster" .= mPaymaster
+                    , "policyId" .= mPolicyId
+                    ]
+              , "controls"
+                  .= object
+                    [ "ethModeEnabled" .= kgcEthModeEnabled kgc
+                    , "sponsorshipEnabled" .= sponsorshipEnabled
+                    , "protectionCommitsEnabled" .= kgcProtectionCommitsEnabled kgc
+                    , "ownerAdmissionMode" .= admissionMode
+                    , "admittedOwnerCount" .= mAdmittedCount
+                    ]
+              , "pipeline"
+                  .= object
+                    [ "bundlerReachable" .= bundlerOk
+                    , "bundlerEntryPointSupported" .= bundlerEpOk
+                    , "bundlerStatus" .= bundlerStatus
+                    , "reconcilerSafeBlock" .= (T.pack . show . rrSafeBlock <$> mRec)
+                    , "reconcilerHeadBlock" .= (T.pack . show <$> mHeadBlock)
+                    , "reconcilerBlocksBehind" .= mBlocksBehind
+                    , "reconcilerLagSeconds" .= mLagSec
+                    , "reconcilerMaxSafeLagSeconds" .= kgcMaxSafeLagSeconds kgc
+                    , "reconcilerFresh" .= recFresh
+                    , "reconcilerPausedReason" .= pausedReason
+                    ]
+              , "adoption" .= kernelAdoptionJson adopt
+              , "lifecycle" .= kernelLifecycleJson adopt
+              , "accounts" .= map kernelSmartAccountToJson accounts
+              , "operations" .= map kernelOpJournalToJson ops
+              ]
+
+fetchKernelTradingAccountsDb
+  :: DbPool
+  -> KernelScope
+  -> Maybe Text
+  -> IO
+      ( Maybe
+          ( Maybe ReconcilerRow
+          , Maybe Text
+          , KernelAdoptionRow
+          , [KernelSmartAccountRow]
+          , [KernelOpJournalRow]
+          )
+      )
+fetchKernelTradingAccountsDb pool KernelScope {..} mPaymaster =
+  observeIo $ withDb pool $ \conn -> do
+    (mRec, mPausedRaw) <- case mPaymaster of
+      Nothing -> pure (Nothing, Nothing)
+      Just pm -> do
+        recRows <-
+          query
+            conn
+            "SELECT safe_block, last_success_at, paused_reason \
+            \FROM aa_kernel_reconciler_state \
+            \WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? LIMIT 1"
+            (ksDeployment, ksChainId, ksEntryPoint, pm)
+            :: IO [(Maybe Integer, Maybe UTCTime, Maybe Text)]
+        pure $ case recRows of
+          [(Just sb, Just ts, mReason)] -> (Just (ReconcilerRow sb ts), mReason)
+          [(_, _, mReason)] -> (Nothing, mReason)
+          _ -> (Nothing, Nothing)
+
+    adoptRows <-
+      query
+        conn
+        "WITH prep_agg AS ( \
+        \  SELECT \
+        \    COUNT(DISTINCT sender)::INT AS unique_accounts, \
+        \    COUNT(DISTINCT owner_address)::INT AS unique_owners, \
+        \    COUNT(DISTINCT sender) FILTER (WHERE created_at >= NOW() - interval '24 hours')::INT AS active_24h, \
+        \    COUNT(*)::INT AS total_preps \
+        \  FROM aa_kernel_preparations \
+        \  WHERE deployment = ? AND chain_id = ? AND entry_point = ? \
+        \), op_agg AS ( \
+        \  SELECT \
+        \    COUNT(*)::INT AS total_ops, \
+        \    COUNT(*) FILTER (WHERE created_at >= NOW() - interval '24 hours')::INT AS ops_24h, \
+        \    COUNT(*) FILTER (WHERE mode = 'sponsored')::INT AS sponsored_total, \
+        \    COUNT(*) FILTER (WHERE mode = 'eth')::INT AS eth_total, \
+        \    COUNT(*) FILTER (WHERE mode = 'sponsored' AND created_at >= NOW() - interval '24 hours')::INT AS sponsored_24h, \
+        \    COUNT(*) FILTER (WHERE mode = 'eth' AND created_at >= NOW() - interval '24 hours')::INT AS eth_24h, \
+        \    COUNT(*) FILTER (WHERE cancellation_only)::INT AS cancel_ops_total, \
+        \    COUNT(*) FILTER (WHERE status = 'pending')::INT AS pending_count, \
+        \    MAX(GREATEST(0, EXTRACT(EPOCH FROM (NOW() - created_at)))) FILTER (WHERE status = 'pending')::INT AS oldest_pending_sec, \
+        \    COUNT(*) FILTER (WHERE status = 'included' AND COALESCE((terminal_evidence->>'executionSuccess')::BOOLEAN, FALSE))::INT AS inc_ok, \
+        \    COUNT(*) FILTER (WHERE status = 'included' AND NOT COALESCE((terminal_evidence->>'executionSuccess')::BOOLEAN, FALSE))::INT AS inc_rev, \
+        \    COUNT(*) FILTER (WHERE status = 'nonce_consumed')::INT AS nonce_consumed, \
+        \    COUNT(*) FILTER (WHERE status = 'sponsorship_expired')::INT AS sponsor_expired, \
+        \    COALESCE(SUM(CASE WHEN (terminal_evidence->>'actualGasCost') ~ '^[0-9]+$' THEN (terminal_evidence->>'actualGasCost')::NUMERIC ELSE 0 END), 0)::TEXT AS tot_gas, \
+        \    COALESCE(SUM(CASE WHEN mode = 'sponsored' AND (terminal_evidence->>'actualGasCost') ~ '^[0-9]+$' THEN (terminal_evidence->>'actualGasCost')::NUMERIC ELSE 0 END), 0)::TEXT AS spon_gas, \
+        \    COALESCE(SUM(CASE WHEN mode = 'eth' AND (terminal_evidence->>'actualGasCost') ~ '^[0-9]+$' THEN (terminal_evidence->>'actualGasCost')::NUMERIC ELSE 0 END), 0)::TEXT AS eth_gas \
+        \  FROM aa_kernel_operations \
+        \  WHERE deployment = ? AND chain_id = ? AND entry_point = ? \
+        \), cancel_agg AS ( \
+        \  SELECT \
+        \    COUNT(*)::INT AS c_prep, \
+        \    COUNT(*) FILTER (WHERE cancellation_hash IS NOT NULL)::INT AS c_acc \
+        \  FROM aa_kernel_cancellations \
+        \  WHERE deployment = ? AND chain_id = ? AND entry_point = ? \
+        \) \
+        \SELECT \
+        \  p.unique_accounts, p.unique_owners, p.active_24h, p.total_preps, \
+        \  o.total_ops, o.ops_24h, o.sponsored_total, o.eth_total, o.sponsored_24h, o.eth_24h, \
+        \  o.cancel_ops_total, o.pending_count, o.oldest_pending_sec, \
+        \  o.inc_ok, o.inc_rev, o.nonce_consumed, o.sponsor_expired, \
+        \  c.c_prep, c.c_acc, o.tot_gas, o.spon_gas, o.eth_gas \
+        \FROM prep_agg p, op_agg o, cancel_agg c"
+        ( ksDeployment, ksChainId, ksEntryPoint
+        , ksDeployment, ksChainId, ksEntryPoint
+        , ksDeployment, ksChainId, ksEntryPoint
+        ) :: IO [KernelAdoptionRow]
+    let adopt = case adoptRows of
+          (r : _) -> r
+          [] -> emptyKernelAdoptionRow
+
+    acctRows <-
+      query
+        conn
+        "SELECT \
+        \  p.sender, \
+        \  MAX(p.owner_address) AS owner_address, \
+        \  MAX(l.discord_username) AS discord_username, \
+        \  COUNT(o.user_operation_hash) FILTER (WHERE o.mode = 'sponsored')::INT AS sponsored_count, \
+        \  COUNT(o.user_operation_hash) FILTER (WHERE o.mode = 'eth')::INT AS eth_count, \
+        \  COUNT(o.user_operation_hash) FILTER (WHERE o.status = 'included')::INT AS included_count, \
+        \  COUNT(o.user_operation_hash) FILTER (WHERE o.status = 'pending')::INT AS pending_count, \
+        \  COUNT(o.user_operation_hash) FILTER (WHERE o.status IN ('nonce_consumed', 'sponsorship_expired'))::INT AS retired_count, \
+        \  COALESCE(MAX(COALESCE(o.nonce, p.nonce)), 0)::TEXT AS highest_nonce, \
+        \  (ARRAY_AGG(COALESCE(o.mode, p.mode) ORDER BY COALESCE(o.created_at, p.created_at) DESC))[1] AS last_mode, \
+        \  MIN(p.created_at) AS first_seen_at, \
+        \  MAX(COALESCE(o.created_at, p.created_at)) AS last_activity_at \
+        \FROM aa_kernel_preparations p \
+        \LEFT JOIN aa_kernel_operations o \
+        \  ON o.deployment = p.deployment AND o.chain_id = p.chain_id \
+        \  AND o.entry_point = p.entry_point AND o.preparation_id = p.preparation_id \
+        \LEFT JOIN insights_divisions_links l \
+        \  ON LOWER(l.trading_account) = LOWER(p.sender) \
+        \WHERE p.deployment = ? AND p.chain_id = ? AND p.entry_point = ? \
+        \GROUP BY p.sender \
+        \ORDER BY last_activity_at DESC \
+        \LIMIT 50"
+        (ksDeployment, ksChainId, ksEntryPoint) :: IO [KernelSmartAccountRow]
+
+    opRows <-
+      query
+        conn
+        "SELECT \
+        \  o.user_operation_hash, \
+        \  o.sender, \
+        \  p.owner_address, \
+        \  o.mode, \
+        \  o.cancellation_only, \
+        \  o.nonce::TEXT, \
+        \  o.status, \
+        \  (o.terminal_evidence->>'executionSuccess')::BOOLEAN, \
+        \  o.terminal_evidence->>'transactionHash', \
+        \  o.terminal_evidence->>'blockNumber', \
+        \  o.terminal_evidence->>'actualGasCost', \
+        \  o.terminal_evidence->>'cancellationHash', \
+        \  o.created_at \
+        \FROM aa_kernel_operations o \
+        \JOIN aa_kernel_preparations p \
+        \  USING (deployment, chain_id, entry_point, preparation_id) \
+        \WHERE o.deployment = ? AND o.chain_id = ? AND o.entry_point = ? \
+        \ORDER BY o.created_at DESC \
+        \LIMIT 60"
+        (ksDeployment, ksChainId, ksEntryPoint) :: IO [KernelOpJournalRow]
+
+    pure (mRec, mPausedRaw, adopt, acctRows, opRows)
+
+kernelAdoptionJson :: KernelAdoptionRow -> Value
+kernelAdoptionJson KernelAdoptionRow {..} =
+  object
+    [ "uniqueAccounts" .= karUniqueAccounts
+    , "uniqueOwners" .= karUniqueOwners
+    , "activeAccounts24h" .= karActiveAccounts24h
+    , "totalPreparations" .= karTotalPreparations
+    , "totalOperations" .= karTotalOperations
+    , "operations24h" .= karOperations24h
+    , "sponsoredOpsTotal" .= karSponsoredOpsTotal
+    , "ethOpsTotal" .= karEthOpsTotal
+    , "sponsoredOps24h" .= karSponsoredOps24h
+    , "ethOps24h" .= karEthOps24h
+    , "cancellationOpsTotal" .= karCancellationOpsTotal
+    , "pendingOpsCount" .= karPendingOpsCount
+    , "oldestPendingAgeSeconds" .= karOldestPendingAgeSec
+    ]
+
+kernelLifecycleJson :: KernelAdoptionRow -> Value
+kernelLifecycleJson KernelAdoptionRow {..} =
+  object
+    [ "includedSucceeded" .= karIncludedSucceeded
+    , "includedReverted" .= karIncludedReverted
+    , "pending" .= karPendingOpsCount
+    , "nonceConsumed" .= karNonceConsumed
+    , "sponsorshipExpired" .= karSponsorshipExpired
+    , "cancellationsPrepared" .= karCancellationsPrepared
+    , "cancellationsAccepted" .= karCancellationsAccepted
+    , "successRateBps" .= computeSuccessRateBps karIncludedSucceeded (karIncludedSucceeded + karIncludedReverted)
+    , "totalGasCostWei" .= karTotalGasCostWei
+    , "sponsoredGasCostWei" .= karSponsoredGasCostWei
+    , "ethGasCostWei" .= karEthGasCostWei
+    ]
+
+kernelSmartAccountToJson :: KernelSmartAccountRow -> Value
+kernelSmartAccountToJson KernelSmartAccountRow {..} =
+  object
+    [ "sender" .= T.toLower ksarSender
+    , "ownerAddress" .= T.toLower ksarOwner
+    , "discordUsername" .= ksarDiscordUsername
+    , "sponsoredCount" .= ksarSponsoredCount
+    , "ethCount" .= ksarEthCount
+    , "includedCount" .= ksarIncludedCount
+    , "pendingCount" .= ksarPendingCount
+    , "retiredCount" .= ksarRetiredCount
+    , "highestNonce" .= ksarHighestNonce
+    , "lastMode" .= ksarLastMode
+    , "firstSeenAt" .= formatUtcIso ksarFirstSeenAt
+    , "lastActivityAt" .= formatUtcIso ksarLastActivityAt
+    ]
+
+kernelOpJournalToJson :: KernelOpJournalRow -> Value
+kernelOpJournalToJson KernelOpJournalRow {..} =
+  object
+    [ "userOpHash" .= T.toLower kojrUserOpHash
+    , "sender" .= T.toLower kojrSender
+    , "ownerAddress" .= T.toLower kojrOwner
+    , "mode" .= kojrMode
+    , "cancellationOnly" .= kojrCancellationOnly
+    , "nonce" .= kojrNonce
+    , "status" .= kojrStatus
+    , "executionSuccess" .= kojrExecutionSuccess
+    , "txHash" .= (T.toLower <$> kojrTxHash)
+    , "blockNumber" .= kojrBlockNumber
+    , "actualGasCostWei" .= kojrActualGasCostWei
+    , "cancellationHash" .= (T.toLower <$> kojrCancellationHash)
+    , "createdAt" .= formatUtcIso kojrCreatedAt
+    ]
