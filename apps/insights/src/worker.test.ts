@@ -120,8 +120,12 @@ describe('Cloudflare Pages Worker', () => {
     ['/api/insights/v1/execution/trades?limit=25', 15],
     ['/api/insights/v1/keepers/status', 15],
     ['/api/insights/v1/keepers/activity?limit=25', 15],
+    [`/api/insights/v1/keepers/0x${'b'.repeat(40)}`, 15],
+    ['/api/insights/v1/sponsored/status', 15],
+    ['/api/insights/v1/sponsored/operations?limit=50', 15],
     ['/api/insights/v1/liquidity/settlements', 30],
     ['/api/insights/v1/liquidity/forensics', 30],
+    ['/api/insights/v1/liquidity/epochs/498776', 30],
     ['/api/insights/v1/protocol/manifest', 60],
     ['/api/insights/v1/infra/status', 15],
     [`/api/insights/v1/wallets/0x${'a'.repeat(40)}/summary`, 15],
@@ -948,5 +952,49 @@ describe('OpenGraph thumbnails and HTML meta rewriting', () => {
     const unsafeHtml = await unsafeRes.text()
     expect(unsafeHtml).toContain(`content="https://insights.plether.com/tx/${txHash}"`)
     expect(unsafeHtml).not.toContain('evil')
+  })
+
+  it('rewrites OG metadata for /protocol, /sponsored, and /infra', async () => {
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: spaAssets(),
+    }
+
+    const res = await worker.fetch(new Request('https://insights.plether.com/protocol'), env)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('Protocol Contracts &amp; Parameters — Plether Insights')
+    expect(html).toContain('content="https://insights.plether.com/protocol"')
+
+    const sponsoredRes = await worker.fetch(new Request('https://insights.plether.com/sponsored'), env)
+    expect(sponsoredRes.status).toBe(200)
+    const sponsoredHtml = await sponsoredRes.text()
+    expect(sponsoredHtml).toContain('Sponsored Transactions &amp; Paymaster Health — Plether Insights')
+    expect(sponsoredHtml).toContain('content="https://insights.plether.com/sponsored"')
+
+    const infraRes = await worker.fetch(new Request('https://insights.plether.com/infra'), env)
+    expect(infraRes.status).toBe(200)
+    const infraHtml = await infraRes.text()
+    expect(infraHtml).toContain('AWS Infrastructure &amp; Action Readiness — Plether Insights')
+    expect(infraHtml).toContain('content="https://insights.plether.com/infra"')
+
+    const epochRes = await worker.fetch(
+      new Request('https://insights.plether.com/liquidity/epochs/498776'),
+      env,
+    )
+    expect(epochRes.status).toBe(200)
+    const epochHtml = await epochRes.text()
+    expect(epochHtml).toContain('LP Epoch #498776 — Plether Insights')
+    expect(epochHtml).toContain('content="https://insights.plether.com/liquidity/epochs/498776"')
+
+    const keeperAddr = `0x5a71${'0'.repeat(32)}0d6b`
+    const keeperRes = await worker.fetch(
+      new Request(`https://insights.plether.com/keepers/${keeperAddr}`),
+      env,
+    )
+    expect(keeperRes.status).toBe(200)
+    const keeperHtml = await keeperRes.text()
+    expect(keeperHtml).toContain('Keeper 0x5a71...0d6b — Plether Insights')
+    expect(keeperHtml).toContain(`content="https://insights.plether.com/keepers/${keeperAddr}"`)
   })
 })

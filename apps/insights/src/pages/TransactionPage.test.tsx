@@ -134,10 +134,13 @@ describe('TransactionPage', () => {
       'href',
       `/wallets/${sampleAccount}`,
     )
-    expect(screen.getByRole('link', { name: '0x9999…9999 ↗' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '0x9999…9999' })).toHaveAttribute(
       'href',
-      `https://sepolia.arbiscan.io/address/${sampleKeeper}`,
+      `/keepers/${sampleKeeper}`,
     )
+    expect(
+      screen.getByRole('link', { name: `View ${sampleKeeper} on explorer` }),
+    ).toHaveAttribute('href', `https://sepolia.arbiscan.io/address/${sampleKeeper}`)
 
     // Switch to the first event (#1 Open · log 8)
     fireEvent.click(screen.getByRole('button', { name: /#1 Open/i }))

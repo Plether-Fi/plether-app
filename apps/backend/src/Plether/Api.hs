@@ -125,13 +125,26 @@ import Plether.Handlers.InsightsExecution
   ( getExecutionQualityResponse
   , getExecutionTradesResponse
   , getTransactionResponse
+  , getKeeperDetailResponse
   , getKeepersActivityResponse
   , getKeepersStatusResponse
   , isValidTxHash
   )
 import Plether.Handlers.InsightsLiquidity
-  ( getLiquidityForensicsResponse
+  ( getLiquidityEpochResponse
+  , getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
+  )
+import Plether.Handlers.InsightsProtocol
+  ( getProtocolManifestResponse
+  )
+import Plether.Handlers.InsightsSponsored
+  ( getSponsoredOperationsResponse
+  , getSponsoredStatusResponse
+  )
+import Plether.Handlers.InsightsInfra
+  ( getInfraStatusResponse
+  , getOverviewResponse
   )
 import Plether.Handlers.InsightsWallets
   ( getWalletSummaryResponse
@@ -592,6 +605,15 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
       Just pool -> liftIO (getLiquidityForensicsResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
+  get "/api/insights/v1/liquidity/epochs/:epoch" $ do
+    rawEpoch <- pathParam "epoch"
+    case parseStrictUnsignedInteger rawEpoch of
+      Nothing -> handleError $ E.invalidAmount "epoch must be a non-negative integer"
+      Just epochNum ->
+        case mPool of
+          Just pool -> liftIO (getLiquidityEpochResponse pool cfg epochNum) >>= handleResult
+          Nothing -> insightsUnavailable
+
   get "/api/insights/v1/execution/quality" $
     case mPool of
       Just pool -> liftIO (getExecutionQualityResponse pool cfg) >>= handleResult
@@ -619,6 +641,35 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
       Just pool -> liftIO (getKeepersStatusResponse pool perpsClient cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
+  get "/api/insights/v1/protocol/manifest" $
+    liftIO (getProtocolManifestResponse perpsClient cfg) >>= handleResult
+
+  get "/api/insights/v1/sponsored/status" $
+    case mPool of
+      Just pool -> liftIO (getSponsoredStatusResponse pool perpsClient manager cfg kernelAa) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/sponsored/operations" $ do
+    mLimit <- queryParamMaybe "limit"
+    mStatus <- queryParamMaybe "status"
+    case traverse parseNonNegativeInt mLimit of
+      Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool ->
+            liftIO (getSponsoredOperationsResponse pool cfg kernelAa (maybe 50 id parsedLimit) mStatus) >>= handleResult
+          Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/infra/status" $
+    case mPool of
+      Just pool -> liftIO (getInfraStatusResponse pool perpsClient manager cfg kernelAa) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/overview" $
+    case mPool of
+      Just pool -> liftIO (getOverviewResponse pool perpsClient manager cfg kernelAa) >>= handleResult
+      Nothing -> insightsUnavailable
+
   get "/api/insights/v1/keepers/activity" $ do
     mLimit <- queryParamMaybe "limit"
     case traverse parseNonNegativeInt mLimit of
@@ -627,6 +678,20 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
         case mPool of
           Just pool -> liftIO (getKeepersActivityResponse pool perpsClient cfg (maybe 50 id parsedLimit)) >>= handleResult
           Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/keepers/:address" $ do
+    addr <- pathParam "address"
+    mLimit <- queryParamMaybe "limit"
+    if not (isValidAddress addr)
+      then handleError $ E.invalidAddress addr
+      else case traverse parseNonNegativeInt mLimit of
+        Nothing -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+        Just parsedLimit ->
+          case mPool of
+            Just pool ->
+              liftIO (getKeeperDetailResponse pool perpsClient cfg addr (maybe 50 id parsedLimit))
+                >>= handleResult
+            Nothing -> insightsUnavailable
 
   get "/api/insights/v1/wallets/:address/summary" $ do
     addr <- pathParam "address"

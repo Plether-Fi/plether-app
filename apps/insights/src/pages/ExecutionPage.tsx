@@ -11,6 +11,10 @@ import {
 } from '../api'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import {
+  ExecutionLatencyWhisker,
+  OrderOutcomeProportionCard,
+} from '../components/ExecutionVisuals'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -216,7 +220,7 @@ export function ExecutionPage() {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <h2 id="cohorts-title" className="text-xl font-semibold">
-              Canonical order reliability cohorts
+              Canonical order reliability &amp; latency
             </h2>
             <p className="mt-1 text-xs text-content-tertiary">
               Half-open commitment windows shifted 120s before observation · Expirations count
@@ -229,6 +233,29 @@ export function ExecutionPage() {
             </span>
           ) : null}
         </div>
+
+        {quality && quality.orderReliability.length > 0 ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel className="space-y-3 p-5">
+              <div>
+                <h3 className="text-base font-semibold">Order outcome breakdown</h3>
+                <p className="mt-0.5 text-xs text-content-tertiary">
+                  Executed vs. expired (r=2) and failed orders across 1h &amp; 24h cohorts
+                </p>
+              </div>
+              <div className="space-y-3">
+                {quality.orderReliability.map((cohort) => (
+                  <OrderOutcomeProportionCard key={cohort.windowSeconds} cohort={cohort} />
+                ))}
+              </div>
+            </Panel>
+
+            <ExecutionLatencyWhisker
+              seconds={quality.executionLatency.seconds}
+              blocks={quality.executionLatency.blocks}
+            />
+          </div>
+        ) : null}
 
         <Panel>
           {qualityQuery.isLoading ? (

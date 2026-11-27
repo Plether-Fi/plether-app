@@ -399,15 +399,24 @@ export function TransactionPage() {
             <span className="text-content-tertiary">Executor / Keeper</span>
             <div className="mt-1 font-mono text-sm">
               {executorAddress ? (
-                <a
-                  href={explorerAddressUrl(executorAddress, chainId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 text-brand-peach hover:underline"
-                >
-                  <AddressAvatar address={executorAddress} size={18} />
-                  {shortAddress(executorAddress)} ↗
-                </a>
+                <div className="inline-flex items-center gap-2">
+                  <Link
+                    to={`/keepers/${executorAddress.toLowerCase()}`}
+                    className="inline-flex items-center gap-2 text-brand-peach hover:underline"
+                  >
+                    <AddressAvatar address={executorAddress} size={18} />
+                    {shortAddress(executorAddress)}
+                  </Link>
+                  <a
+                    href={explorerAddressUrl(executorAddress, chainId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`View ${executorAddress} on explorer`}
+                    className="text-xs text-content-tertiary hover:text-content-primary"
+                  >
+                    ↗
+                  </a>
+                </div>
               ) : (
                 <span className="text-content-tertiary">—</span>
               )}

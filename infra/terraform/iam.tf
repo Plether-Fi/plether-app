@@ -778,6 +778,44 @@ resource "aws_iam_role_policy" "api_paymaster_kms_signer" {
   })
 }
 
+resource "aws_iam_role_policy" "api_task_infra_readonly" {
+  name = "insights-infra-readonly"
+  role = aws_iam_role.api_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      [
+        {
+          Sid    = "DescribeDeploymentEcsServices"
+          Effect = "Allow"
+          Action = ["ecs:DescribeServices"]
+          Resource = concat(
+            local.github_deploy_ecs_service_arns,
+            local.rpc_gateway_count > 0 ? [
+              "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/plether-${local.deployment_name}/plether-${local.deployment_name}-rpc-gateway"
+            ] : []
+          )
+        },
+        {
+          Sid      = "DescribeDeploymentRdsInstance"
+          Effect   = "Allow"
+          Action   = ["rds:DescribeDBInstances"]
+          Resource = "arn:aws:rds:${var.aws_region}:${data.aws_caller_identity.current.account_id}:db:plether-${local.deployment_name}"
+        },
+      ],
+      local.rpc_count > 0 ? [
+        {
+          Sid      = "DescribeRpcNodeStatus"
+          Effect   = "Allow"
+          Action   = ["ec2:DescribeInstanceStatus"]
+          Resource = "*"
+        }
+      ] : []
+    )
+  })
+}
+
 resource "aws_iam_role" "alto_execution" {
   count = local.self_hosted_aa_resource_count
 

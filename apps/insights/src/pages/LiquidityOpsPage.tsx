@@ -8,6 +8,10 @@ import {
   type SnapshotFreshnessWindow,
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import {
+  ResidualAccuracyMeter,
+  SettlementContinuityStrip,
+} from '../components/LiquidityVisuals'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
@@ -389,6 +393,12 @@ export function LiquidityOpsPage() {
                   {latestObs.paused === null ? 'Unknown' : latestObs.paused ? 'Yes' : 'No'}
                 </strong>
               </span>
+              <Link
+                to={`/liquidity/epochs/${String(latestObs.epoch)}`}
+                className="ml-auto font-mono font-semibold text-brand-peach hover:underline"
+              >
+                Inspect Epoch #{latestObs.epoch} →
+              </Link>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
@@ -441,6 +451,13 @@ export function LiquidityOpsPage() {
           ) : null}
         </div>
 
+        {!settlementsQuery.isLoading && (settlements || forensics) ? (
+          <SettlementContinuityStrip
+            settlements={settlements?.recentSettlements ?? []}
+            reports={forensics?.attributionWorker.recentReports}
+          />
+        ) : null}
+
         <Panel>
           {settlementsQuery.isLoading ? (
             <LoadingState rows={4} />
@@ -472,7 +489,14 @@ export function LiquidityOpsPage() {
                         key={`${String(row.epoch)}-${row.txHash ?? row.createdAt}`}
                         className="border-b border-brand-border/15 last:border-0"
                       >
-                        <td className="px-4 py-3.5 font-mono">#{row.epoch}</td>
+                        <td className="px-4 py-3.5 font-mono">
+                          <Link
+                            to={`/liquidity/epochs/${String(row.epoch)}`}
+                            className="font-semibold text-brand-peach hover:underline"
+                          >
+                            #{row.epoch}
+                          </Link>
+                        </td>
                         <td className="px-4 py-3.5">
                           <StatusPill tone={txStatusTone(row.status)} label={row.status} />
                         </td>
@@ -663,54 +687,47 @@ export function LiquidityOpsPage() {
                         <th scope="col" className="px-4 py-3">7d return</th>
                         <th scope="col" className="px-4 py-3">Net return</th>
                         <th scope="col" className="px-4 py-3">Junior liq. fees</th>
-                        <th scope="col" className="px-4 py-3">Residual</th>
+                        <th scope="col" className="px-4 py-3">Attribution accuracy</th>
                         <th scope="col" className="px-4 py-3">Updated</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {forensics.attributionWorker.recentReports.map((report) => {
-                        const exact = report.unexplainedUsdg === '0'
-                        return (
-                          <tr
-                            key={`${report.startBlockNumber}-${report.endBlockNumber}`}
-                            className="border-b border-brand-border/15 last:border-0"
-                          >
-                            <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                      {forensics.attributionWorker.recentReports.map((report) => (
+                        <tr
+                          key={`${report.startBlockNumber}-${report.endBlockNumber}`}
+                          className="border-b border-brand-border/15 last:border-0"
+                        >
+                          <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                            <div>
                               {Number(report.startBlockNumber).toLocaleString('en-US')} →{' '}
                               {Number(report.endBlockNumber).toLocaleString('en-US')}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-xs tabular-nums">
-                              {report.sourceBlockCount?.toLocaleString('en-US') ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-xs tabular-nums">
-                              {report.reportedReturnPp !== null
-                                ? `${report.reportedReturnPp > 0 ? '+' : ''}${report.reportedReturnPp.toFixed(4)}%`
-                                : '—'}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-xs tabular-nums">
-                              {formatCompactAssets(report.netReturnUsdg)}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-xs tabular-nums">
-                              {formatCompactAssets(report.liquidationFeesUsdg)}
-                            </td>
-                            <td className="px-4 py-3">
-                              {report.unexplainedUsdg === null ? (
-                                <span className="font-mono text-xs text-content-tertiary">—</span>
-                              ) : exact ? (
-                                <StatusPill tone="ready" label="Exact (0.00)" />
-                              ) : (
-                                <StatusPill
-                                  tone="degraded"
-                                  label={formatCompactAssets(report.unexplainedUsdg)}
-                                />
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-content-secondary">
-                              {formatUtc(report.updatedAt)}
-                            </td>
-                          </tr>
-                        )
-                      })}
+                            </div>
+                            <span className="text-[10px] text-content-tertiary">
+                              schema v{report.schemaVersion}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                            {report.sourceBlockCount?.toLocaleString('en-US') ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                            {report.reportedReturnPp !== null
+                              ? `${report.reportedReturnPp > 0 ? '+' : ''}${report.reportedReturnPp.toFixed(4)}%`
+                              : '—'}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                            {formatCompactAssets(report.netReturnUsdg)}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs tabular-nums">
+                            {formatCompactAssets(report.liquidationFeesUsdg)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <ResidualAccuracyMeter report={report} />
+                          </td>
+                          <td className="px-4 py-3 text-xs text-content-secondary">
+                            {formatUtc(report.updatedAt)}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>

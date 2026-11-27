@@ -75,6 +75,9 @@ function resolvePublicApiCacheTtl(method, pathname) {
     apiPath === '/execution/trades' ||
     apiPath === '/keepers/status' ||
     apiPath === '/keepers/activity' ||
+    /^\/keepers\/0x[0-9a-fA-F]{40}$/.test(apiPath) ||
+    apiPath === '/sponsored/status' ||
+    apiPath === '/sponsored/operations' ||
     apiPath === '/infra/status'
   ) {
     return API_CACHE_TTLS.pulse;
@@ -82,7 +85,8 @@ function resolvePublicApiCacheTtl(method, pathname) {
 
   if (
     apiPath === '/liquidity/settlements' ||
-    apiPath === '/liquidity/forensics'
+    apiPath === '/liquidity/forensics' ||
+    /^\/liquidity\/epochs\/\d+$/.test(apiPath)
   ) {
     return API_CACHE_TTLS.liquidity;
   }

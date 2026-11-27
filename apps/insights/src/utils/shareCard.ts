@@ -161,6 +161,26 @@ function renderPill(x: number, y: number, label: string, bg: string, border: str
   </g>`
 }
 
+function formatShareCardUtc(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return formatUtc(iso).replace(/\s+UTC$/, '')
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const mon = months[date.getUTCMonth()]
+  const year = String(date.getUTCFullYear())
+  const hh = String(date.getUTCHours()).padStart(2, '0')
+  const mm = String(date.getUTCMinutes()).padStart(2, '0')
+  return `${day} ${mon} ${year}, ${hh}:${mm}`
+}
+
+function fitStatFontSize(value: string, boxW: number, maxSize: number): number {
+  const usableW = Math.max(80, boxW - 40)
+  const charCount = Math.max(1, value.length)
+  const fitted = Math.floor(usableW / (charCount * 0.64))
+  return Math.min(maxSize, Math.max(14, fitted))
+}
+
 function renderStatBoxes(stats: { label: string; value: string; accent?: string }[], y: number): string {
   const gap = 18
   const totalW = 1080
@@ -169,10 +189,11 @@ function renderStatBoxes(stats: { label: string; value: string; accent?: string 
   return stats
     .map((stat, idx) => {
       const x = 60 + idx * (boxW + gap)
+      const fontSize = fitStatFontSize(stat.value, boxW, 24)
       return `<g>
         <rect x="${String(x)}" y="${String(y)}" width="${String(boxW)}" height="92" fill="#3b212d" fill-opacity="0.72" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
         <text x="${String(x + 20)}" y="${String(y + 30)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" letter-spacing="1.1">${escapeXml(stat.label.toUpperCase())}</text>
-        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24" font-weight="700">${escapeXml(stat.value)}</text>
+        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(fontSize)}" font-weight="700">${escapeXml(stat.value)}</text>
       </g>`
     })
     .join('')
@@ -391,7 +412,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
       { label: 'Close price', value: data.price ? formatPrice(data.price) : '—' },
       { label: 'Quantity closed', value: data.sizeDelta ? formatPlDxyQuantity(data.sizeDelta) : '—' },
       { label: 'Notional', value: data.notionalAssets ? formatCompactAssets(data.notionalAssets) : '—' },
-      { label: 'Executed (UTC)', value: formatUtc(data.occurredAt).replace(', 20', ' ') },
+      { label: 'Executed (UTC)', value: formatShareCardUtc(data.occurredAt) },
     ]
     const body = `
       ${renderPill(60, 134, data.market, '#3b212d', '#ffab9666', '#fff5f9')}

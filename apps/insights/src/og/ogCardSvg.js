@@ -153,9 +153,10 @@ function formatUtcShort(iso) {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const day = String(date.getUTCDate()).padStart(2, '0');
   const mon = months[date.getUTCMonth()];
+  const year = String(date.getUTCFullYear());
   const hh = String(date.getUTCHours()).padStart(2, '0');
   const mm = String(date.getUTCMinutes()).padStart(2, '0');
-  return `${day} ${mon} ${hh}:${mm} UTC`;
+  return `${day} ${mon} ${year}, ${hh}:${mm}`;
 }
 
 function computeRoePercent(pnlRaw, baseRaw) {
@@ -206,6 +207,13 @@ function renderPill(x, y, label, bg, border, fg) {
   </g>`;
 }
 
+function fitStatFontSize(value, boxW, maxSize) {
+  const usableW = Math.max(80, boxW - 40);
+  const charCount = Math.max(1, String(value).length);
+  const fitted = Math.floor(usableW / (charCount * 0.64));
+  return Math.min(maxSize, Math.max(14, fitted));
+}
+
 function renderStatBoxes(stats, y) {
   const gap = 18;
   const totalW = 1080;
@@ -214,10 +222,11 @@ function renderStatBoxes(stats, y) {
   return stats
     .map((stat, idx) => {
       const x = 60 + idx * (boxW + gap);
+      const fontSize = fitStatFontSize(stat.value, boxW, 22);
       return `<g>
         <rect x="${String(x)}" y="${String(y)}" width="${String(boxW)}" height="92" fill="#3b212d" fill-opacity="0.72" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
         <text x="${String(x + 20)}" y="${String(y + 30)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="13" font-weight="700" letter-spacing="1.1">${escapeXml(stat.label.toUpperCase())}</text>
-        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="${MONO_FONT}" font-size="22" font-weight="700">${escapeXml(stat.value)}</text>
+        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="${MONO_FONT}" font-size="${String(fontSize)}" font-weight="700">${escapeXml(stat.value)}</text>
       </g>`;
     })
     .join('');

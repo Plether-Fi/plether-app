@@ -34,6 +34,9 @@ describe('shareCard SVG & social helpers', () => {
     expect(svg).toContain('CLOSED LONG')
     expect(svg).toContain('@alice_fx')
     expect(svg).toContain('Arbitrum Sepolia · v2.0.0')
+    expect(svg).toContain('26 Nov 2026, 12:00')
+    expect(svg).not.toContain('26 Nov 2026, 12:00 UTC')
+    expect(svg).toContain('font-size="18" font-weight="700">26 Nov 2026, 12:00</text>')
   })
 
   it('renders a Divisions badge card with tier crest, rank, and weekly return', () => {

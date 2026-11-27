@@ -1,5 +1,6 @@
 module Plether.Handlers.InsightsExecution
   ( LatencyStats (..)
+  , OrderReliabilityBucket (..)
   , DetectedKeeperEvent (..)
   , KeeperAggregate (..)
   , RawKeeperTx (..)
@@ -9,6 +10,7 @@ module Plether.Handlers.InsightsExecution
   , getTransactionResponse
   , getKeepersStatusResponse
   , getKeepersActivityResponse
+  , getKeeperDetailResponse
   , ensureTxSenderCacheTable
   , fetchLiquidationQuality
   , fetchOrderLatencies24h
@@ -17,6 +19,7 @@ module Plether.Handlers.InsightsExecution
   , fetchTransactionTrades
   , isValidTxHash
   , computeLatencyPercentiles
+  , buildTimelineBuckets
   , rateBps
   , aggregateKeepers
   , mergeLpSettlementTxs
@@ -25,7 +28,7 @@ module Plether.Handlers.InsightsExecution
   ) where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (Concurrently (..), mapConcurrently, runConcurrently)
 import Control.Exception (catch, throwIO)
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, toJSON, (.=))
@@ -73,6 +76,17 @@ data LatencyStats = LatencyStats
   , lsP95 :: Maybe Integer
   , lsP99 :: Maybe Integer
   , lsMax :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+data OrderReliabilityBucket = OrderReliabilityBucket
+  { orbStartUnix :: Integer
+  , orbEndUnix :: Integer
+  , orbTotalOrders :: Integer
+  , orbExecutedOrders :: Integer
+  , orbExpiredOrders :: Integer
+  , orbOtherFailedOrders :: Integer
+  , orbPendingOrders :: Integer
   }
   deriving stock (Eq, Show)
 
@@ -166,16 +180,17 @@ getExecutionQualityResponse pool cfg = do
       book = T.toLower Manifest.positionProtectionBookAddress
       cohortEnd = now - 120
       since24h = now - 86400
-  (cohorts, pendingQueue, latencySecs, latencyBlks, protSummary, liqSummary, vol24h) <-
+  (cohorts, timelineByWindow, pendingQueue, latencySecs, latencyBlks, protSummary, liqSummary, vol24h) <-
     withDb pool $ \conn ->
       withReadSnapshot conn $ do
         rel <- readOrderReliability conn router cohortEnd
+        tl <- fetchOrderReliabilityBuckets conn router cohortEnd
         pending <- fetchPendingKeeperOrdersCount conn router
         (secs, blks) <- fetchOrderLatencies24h conn chainId router since24h
         prot <- fetchProtectionQuality conn chainId book since24h
         liq <- fetchLiquidationQuality conn chainId engine router since24h
         vol <- getPerpsMarketVolumeSince conn chainId router since24h
-        pure (rel, pending, secs, blks, prot, liq, vol)
+        pure (rel, tl, pending, secs, blks, prot, liq, vol)
   let secStats = computeLatencyPercentiles latencySecs
       blkStats = computeLatencyPercentiles latencyBlks
       (protBlock, protActive, protTriggered24h, protCreated24h, protCancelled24h, protExpired24h) = protSummary
@@ -190,7 +205,10 @@ getExecutionQualityResponse pool cfg = do
           , "cohortEndAt" .= isoTimestamp cohortEnd
           , "volume24hAssets" .= show vol24h
           , "pendingOrderQueue" .= pendingQueue
-          , "orderReliability" .= map reliabilityToJson cohorts
+          , "orderReliability"
+              .= map
+                (\c -> reliabilityToJson c (Map.findWithDefault [] (windowSeconds c) timelineByWindow))
+                cohorts
           , "executionLatency"
               .= object
                 [ "seconds" .= latencyStatsToJson secStats
@@ -343,6 +361,78 @@ getKeepersActivityResponse pool client cfg requestedLimit = do
           , "observedAt" .= isoTimestamp now
           , "activity" .= map keeperEventToJson visible
           ]
+
+getKeeperDetailResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+getKeeperDetailResponse pool client cfg rawAddress requestedLimit = do
+  let addr = T.toLower (T.strip rawAddress)
+  if not (isValidAddress addr)
+    then pure $ Left $ E.invalidAddress rawAddress
+    else do
+      now <- floor <$> getPOSIXTime
+      let chainId = cfgPerpsChainId cfg
+          limit = min 100 $ max 1 requestedLimit
+      (allEvents, ethBal) <-
+        runConcurrently $
+          (,)
+            <$> Concurrently (resolvePermissionlessKeeperEvents pool client cfg (now - 86400) 250)
+            <*> Concurrently (fetchKeeperEthBalance client addr)
+      let keeperEvents =
+            sortOn (\e -> (Down (dkeBlockNumber e), Down (dkeTimestamp e))) $
+              filter (\e -> T.toLower (dkeKeeperAddress e) == addr) allEvents
+          totalFleet = fromIntegral (length allEvents) :: Integer
+          execCount = length keeperEvents
+          latencyStats = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds keeperEvents
+          bounties = sum $ mapMaybe dkeBountyAssets keeperEvents
+          roles = sort $ nub $ map dkeRole keeperEvents
+          mLastBlock = case keeperEvents of
+            [] -> Nothing
+            xs -> Just (maximum $ map dkeBlockNumber xs)
+          mLastTs = case keeperEvents of
+            [] -> Nothing
+            xs -> Just (maximum $ map dkeTimestamp xs)
+          roleBreakdown =
+            [ let rEvs = filter (\e -> dkeRole e == r) keeperEvents
+                  rLat = computeLatencyPercentiles $ mapMaybe dkeLatencySeconds rEvs
+                  rCount = length rEvs
+                  rBounty = sum $ mapMaybe dkeBountyAssets rEvs
+               in object
+                    [ "role" .= r
+                    , "executions24h" .= rCount
+                    , "shareBps" .= rateBps (fromIntegral rCount) (fromIntegral execCount)
+                    , "latencyP50Seconds" .= lsP50 rLat
+                    , "latencyP95Seconds" .= lsP95 rLat
+                    , "bountiesEarnedAssets" .= show rBounty
+                    ]
+            | r <- roles
+            ]
+          latestBlock = fromMaybe 0 mLastBlock
+      pure $
+        Right $
+          mkResponse latestBlock chainId $
+            object
+              [ "network" .= networkMetaJson cfg
+              , "observedAt" .= isoTimestamp now
+              , "keeper"
+                  .= object
+                    [ "address" .= addr
+                    , "roles" .= roles
+                    , "executions24h" .= execCount
+                    , "shareBps" .= rateBps (fromIntegral execCount) totalFleet
+                    , "latency" .= latencyStatsToJson latencyStats
+                    , "ethBalanceWei" .= (show <$> ethBal)
+                    , "bountiesEarnedAssets" .= show bounties
+                    , "lastActiveBlock" .= (show <$> mLastBlock)
+                    , "lastActiveAt" .= (isoTimestamp <$> mLastTs)
+                    ]
+              , "roleBreakdown" .= roleBreakdown
+              , "activity" .= map keeperEventToJson (take limit keeperEvents)
+              ]
 
 computeLatencyPercentiles :: [Integer] -> LatencyStats
 computeLatencyPercentiles samples =
@@ -645,6 +735,73 @@ fetchRecentPermissionlessTxs conn chainId router housePool book monitor sinceUni
       lps = mergeLpSettlementTxs lpJournal lpCanonical
   pure $ take limit $ sortOn (Down . rktBlockNumber) (orders <> liqs <> prots <> lps)
 
+fetchOrderReliabilityBuckets
+  :: Connection
+  -> Text
+  -> Integer
+  -> IO (Map.Map Integer [OrderReliabilityBucket])
+fetchOrderReliabilityBuckets conn router cohortEnd = do
+  rows <-
+    query
+      conn
+      "WITH cohort AS MATERIALIZED (\
+      \ SELECT commit_time, status, failure_reason \
+      \ FROM perps_keeper_orders \
+      \ WHERE order_router = ? AND commit_time >= ? - 86400 AND commit_time < ?\
+      \), \
+      \specs(window_seconds, bucket_count, bucket_seconds) AS (\
+      \ VALUES (3600::bigint, 30::int, 120::bigint), \
+      \        (86400::bigint, 48::int, 1800::bigint)\
+      \) \
+      \SELECT \
+      \ s.window_seconds, \
+      \ LEAST(s.bucket_count - 1, GREATEST(0, ((c.commit_time - (? - s.window_seconds)) / s.bucket_seconds)::int)) AS bucket_idx, \
+      \ COUNT(*)::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status = 'executed')::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status = 'failed' AND c.failure_reason = 2)::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status = 'failed' AND c.failure_reason IS DISTINCT FROM 2)::bigint, \
+      \ COUNT(*) FILTER (WHERE c.status NOT IN ('executed', 'failed'))::bigint \
+      \FROM specs s \
+      \JOIN cohort c ON c.commit_time >= ? - s.window_seconds \
+      \GROUP BY s.window_seconds, bucket_idx \
+      \ORDER BY s.window_seconds, bucket_idx"
+      (router, cohortEnd, cohortEnd, cohortEnd, cohortEnd)
+      :: IO [(Integer, Int, Integer, Integer, Integer, Integer, Integer)]
+  let rowsFor win =
+        [ (idx, tot, execC, expC, failC, pendC)
+        | (w, idx, tot, execC, expC, failC, pendC) <- rows
+        , w == win
+        ]
+  pure $
+    Map.fromList
+      [ (3600, buildTimelineBuckets cohortEnd 3600 30 (rowsFor 3600))
+      , (86400, buildTimelineBuckets cohortEnd 86400 48 (rowsFor 86400))
+      ]
+
+buildTimelineBuckets
+  :: Integer
+  -> Integer
+  -> Int
+  -> [(Int, Integer, Integer, Integer, Integer, Integer)]
+  -> [OrderReliabilityBucket]
+buildTimelineBuckets cohortEnd windowSecs bucketCount rawRows
+  | bucketCount <= 0 || windowSecs <= 0 = []
+  | otherwise =
+      let windowStart = cohortEnd - windowSecs
+          bucketWidth = windowSecs `div` fromIntegral bucketCount
+          byIdx =
+            Map.fromListWith
+              (\(t1, e1, x1, f1, p1) (t2, e2, x2, f2, p2) -> (t1 + t2, e1 + e2, x1 + x2, f1 + f2, p1 + p2))
+              [ (max 0 (min (bucketCount - 1) idx), (tot, execC, expC, failC, pendC))
+              | (idx, tot, execC, expC, failC, pendC) <- rawRows
+              ]
+          mkBucket i =
+            let startTs = windowStart + fromIntegral i * bucketWidth
+                endTs = if i == bucketCount - 1 then cohortEnd else startTs + bucketWidth
+                (tot, execC, expC, failC, pendC) = Map.findWithDefault (0, 0, 0, 0, 0) i byIdx
+             in OrderReliabilityBucket startTs endTs tot execC expC failC pendC
+       in map mkBucket [0 .. bucketCount - 1]
+
 fetchPendingKeeperOrdersCount :: Connection -> Text -> IO Int64
 fetchPendingKeeperOrdersCount conn router = do
   rows <-
@@ -834,8 +991,8 @@ networkMetaJson cfg =
     , "settlementAssetSymbol" .= ("USDG" :: Text)
     ]
 
-reliabilityToJson :: OrderReliability -> Value
-reliabilityToJson OrderReliability {..} =
+reliabilityToJson :: OrderReliability -> [OrderReliabilityBucket] -> Value
+reliabilityToJson OrderReliability {..} timeline =
   object
     [ "windowSeconds" .= windowSeconds
     , "totalOrders" .= totalOrders
@@ -848,6 +1005,19 @@ reliabilityToJson OrderReliability {..} =
     , "repeatAffectedAccounts" .= repeatAffectedAccounts
     , "fillRateBps" .= rateBps executedOrders totalOrders
     , "expiryRateBps" .= rateBps expiredOrders totalOrders
+    , "timeline" .= map bucketToJson timeline
+    ]
+
+bucketToJson :: OrderReliabilityBucket -> Value
+bucketToJson OrderReliabilityBucket {..} =
+  object
+    [ "bucketStart" .= isoTimestamp orbStartUnix
+    , "bucketEnd" .= isoTimestamp orbEndUnix
+    , "totalOrders" .= orbTotalOrders
+    , "executedOrders" .= orbExecutedOrders
+    , "expiredOrders" .= orbExpiredOrders
+    , "otherFailedOrders" .= orbOtherFailedOrders
+    , "pendingOrders" .= orbPendingOrders
     ]
 
 latencyStatsToJson :: LatencyStats -> Value
