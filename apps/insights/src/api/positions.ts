@@ -297,6 +297,72 @@ export function positionPath(address: string, positionId: string): string {
   return `/wallets/${encodeURIComponent(address.toLowerCase())}/positions/${encodeURIComponent(positionId)}`
 }
 
+export interface TradePositionMatchInput {
+  id: string
+  txHash: string
+  blockNumber: string
+  occurredAt: string
+  orderId?: string | null
+  side?: string | null
+}
+
+/**
+ * Resolves the reconstructed PositionLifecycleSummary that a specific trade/fill
+ * event belongs to, using exact open/close tx hash, orderId, block timeline, and
+ * non-overlapping timestamp interval matching.
+ */
+export function matchPositionForTrade(
+  exposure: WalletExposureResponse | undefined,
+  event: TradePositionMatchInput,
+): PositionLifecycleSummary | null {
+  if (!exposure || exposure.positions.length === 0) return null
+  const positions = exposure.positions
+  const lowerId = event.id.toLowerCase()
+  const lowerTx = event.txHash.toLowerCase()
+
+  const byPosId = positions.find(
+    (p) => p.positionId.toLowerCase() === `pos-${lowerId}`,
+  )
+  if (byPosId) return byPosId
+
+  if (event.orderId) {
+    const byOrder = positions.find((p) => p.openOrderId === event.orderId)
+    if (byOrder) return byOrder
+  }
+
+  const byTx = positions.filter(
+    (p) =>
+      p.openTxHash.toLowerCase() === lowerTx ||
+      p.closeTxHash?.toLowerCase() === lowerTx,
+  )
+  if (byTx.length === 1) return byTx[0]
+  if (byTx.length > 1 && event.side) {
+    const sideMatch = byTx.find((p) => p.side === event.side)
+    if (sideMatch) return sideMatch
+  }
+  if (byTx.length > 0) return byTx[0]
+
+  const timelineHit = exposure.exposureTimeline.find(
+    (pt) => pt.blockNumber === event.blockNumber && pt.positionId != null,
+  )
+  if (timelineHit?.positionId) {
+    const fromTimeline = positions.find((p) => p.positionId === timelineHit.positionId)
+    if (fromTimeline) return fromTimeline
+  }
+
+  const evTime = Date.parse(event.occurredAt)
+  if (Number.isFinite(evTime)) {
+    const byWindow = positions.find((p) => {
+      const start = Date.parse(p.openedAt)
+      const end = p.closedAt ? Date.parse(p.closedAt) : Number.POSITIVE_INFINITY
+      return Number.isFinite(start) && evTime >= start && evTime <= end
+    })
+    if (byWindow) return byWindow
+  }
+
+  return null
+}
+
 export function useWalletExposure(address: string | undefined) {
   const queryClient = useQueryClient()
   const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false

@@ -3,9 +3,13 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import {
   InsightsApiError,
   extractLogIndex,
+  formatDurationCompact,
   formatPlDxyQuantity,
+  matchPositionForTrade,
+  positionPath,
   tradeToWalletActivity,
   useTransaction,
+  useWalletExposure,
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
@@ -109,6 +113,14 @@ export function TransactionPage() {
     rawState?.trade?.txHash.toLowerCase() === normalizedHash ? rawState : null
 
   const txQuery = useTransaction(validHash ? normalizedHash : undefined)
+  const txData = txQuery.data
+  const events: ProtocolTradeRecord[] = txData?.events.length
+    ? txData.events
+    : routeState?.trade
+      ? [routeState.trade]
+      : []
+  const selectedEvent = pickInitialEvent(events, logParam)
+  const exposureQuery = useWalletExposure(validHash ? selectedEvent?.account : undefined)
 
   if (!validHash) {
     return (
@@ -124,20 +136,12 @@ export function TransactionPage() {
     )
   }
 
-  const txData = txQuery.data
-  const events: ProtocolTradeRecord[] = txData?.events.length
-    ? txData.events
-    : routeState?.trade
-      ? [routeState.trade]
-      : []
   const finalizedOrders = txData?.finalizedOrders ?? []
   const protocolEvents = txData?.protocolEvents ?? []
   const batchSummary = txData?.batchSummary ?? null
   const lpSettlement = txData?.lpSettlement ?? null
   const hasAnyProtocolData =
     events.length > 0 || finalizedOrders.length > 0 || protocolEvents.length > 0 || lpSettlement != null
-
-  const selectedEvent = pickInitialEvent(events, logParam)
 
   const chainId = txData?.network.chainId ?? routeState?.chainId ?? protocol.chainId
   const chain = resolvePerpsChain(chainId)
@@ -361,6 +365,18 @@ export function TransactionPage() {
       ? 'On-chain liquidation'
       : 'Indexed transaction'
 
+  const matchedPosition = matchPositionForTrade(exposureQuery.data, {
+    id: selectedEvent.id,
+    txHash: selectedEvent.txHash,
+    blockNumber: selectedEvent.blockNumber,
+    occurredAt: selectedEvent.occurredAt,
+    orderId: effectiveOrderId,
+    side: selectedEvent.side,
+  })
+  const positionHref = matchedPosition
+    ? positionPath(selectedEvent.account, matchedPosition.positionId)
+    : `/wallets/${selectedEvent.account.toLowerCase()}?tab=exposure`
+
   return (
     <div ref={receiptTopRef} className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -376,6 +392,12 @@ export function TransactionPage() {
               Account {shortAddress(selectedEvent.account)} →
             </Link>
           ) : null}
+          <Link
+            to={positionHref}
+            className="text-content-secondary hover:text-brand-peach hover:underline"
+          >
+            {matchedPosition ? 'Position lifecycle →' : 'Market exposure →'}
+          </Link>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CopyButton
@@ -732,10 +754,26 @@ export function TransactionPage() {
                 </>
               ) : null}
             </dl>
-            <div className="mt-4 border-t border-brand-border/20 pt-3">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-brand-border/20 pt-3">
+              <div className="space-y-0.5">
+                <Link
+                  to={positionHref}
+                  className="inline-block text-sm font-semibold text-brand-peach hover:underline"
+                >
+                  {matchedPosition ? 'View full position lifecycle →' : 'View wallet market exposure →'}
+                </Link>
+                {matchedPosition ? (
+                  <p className="font-mono text-xs text-content-tertiary">
+                    {matchedPosition.side.toUpperCase()} · {matchedPosition.status} ·{' '}
+                    {String(matchedPosition.fillCount)}{' '}
+                    {matchedPosition.fillCount === 1 ? 'fill' : 'fills'} · held{' '}
+                    {formatDurationCompact(matchedPosition.durationSeconds)}
+                  </p>
+                ) : null}
+              </div>
               <Link
                 to={`/wallets/${selectedEvent.account}`}
-                className="text-sm font-semibold text-brand-peach hover:underline"
+                className="text-xs font-semibold text-content-secondary hover:text-content-primary hover:underline"
               >
                 Inspect full Trading Account →
               </Link>
