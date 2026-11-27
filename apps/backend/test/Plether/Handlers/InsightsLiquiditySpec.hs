@@ -123,9 +123,9 @@ spec = describe "Plether.Handlers.InsightsLiquidity" $ do
     rrrUnexplainedUsdg residual `shouldBe` Just 0
     rrrLiquidationFeesUsdg residual `shouldBe` Just 200000
     rrrSourceBlockCount residual `shouldBe` Just 42
+    rrrNotesCount residual `shouldBe` 1
 
   it "computes hourly share price deltas in bps and fails closed on non-positive baselines" $ do
     sharePriceDeltaBps 1010000000000000000 1000000000000000000 `shouldBe` Just 100
     sharePriceDeltaBps 995000000000000000 1000000000000000000 `shouldBe` Just (-50)
     sharePriceDeltaBps 1000000000000000000 0 `shouldBe` Nothing
-    rrrNotesCount residual `shouldBe` 1
