@@ -2,13 +2,14 @@ import { Link } from 'react-router-dom'
 import { InsightsApiError } from '../api'
 import { formatSponsoredEthWei } from '../api/sponsored'
 import { useTreasuryOverview, type TreasuryWindowSummary } from '../api/treasury'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard, type StatTone } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { TreasuryRevenueChart } from '../components/TreasuryRevenueChart'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatAssets, formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 function shortTx(hash: string): string {
@@ -171,6 +172,20 @@ export function TreasuryPage() {
         : 'neutral'
     : 'neutral'
 
+  const seenExternalKeys = new Set<string>()
+  function claimAddressArbiscan(address: string | null | undefined): boolean {
+    if (!address) return false
+    const key = arbiscanLinkKey('address', address, chain.chainId)
+    if (seenExternalKeys.has(key)) return false
+    seenExternalKeys.add(key)
+    return true
+  }
+  const showTreasuryArbiscan = claimAddressArbiscan(data?.treasury.address)
+  const showPendingRotationArbiscan = claimAddressArbiscan(data?.treasury.pendingRotation?.treasury)
+  const showMaintenanceRecipientArbiscan = claimAddressArbiscan(
+    data?.feePolicy.juniorMaintenanceFeeRecipient,
+  )
+
   return (
     <div className="space-y-6 sm:space-y-8">
       <DataFreshnessBanner
@@ -208,18 +223,21 @@ export function TreasuryPage() {
                 label={data.treasury.addressSource === 'onchain' ? 'On-chain' : 'Manifest'}
               />
             </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-3 font-mono">
-              <a
-                href={explorerAddressUrl(data.treasury.address, chain.chainId)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-brand-peach hover:underline"
-              >
-                {shortAddress(data.treasury.address)} ↗
-              </a>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono">
+              <span className="text-content-primary" title={data.treasury.address}>
+                {shortAddress(data.treasury.address)}
+              </span>
+              <CopyButton value={data.treasury.address} />
+              {showTreasuryArbiscan ? (
+                <ArbiscanButton
+                  kind="address"
+                  value={data.treasury.address}
+                  chainId={chain.chainId}
+                />
+              ) : null}
               <Link
                 to={`/wallets/${data.treasury.address}`}
-                className="text-content-secondary hover:text-content-primary hover:underline"
+                className="ml-1 text-content-secondary hover:text-content-primary hover:underline"
               >
                 Wallet explorer →
               </Link>
@@ -240,18 +258,18 @@ export function TreasuryPage() {
               <p className="text-xs font-semibold uppercase tracking-wider text-brand-yellow">
                 Pending Treasury Rotation Proposed
               </p>
-              <p className="font-mono text-xs text-content-primary">
-                Next treasury:{' '}
-                <a
-                  href={explorerAddressUrl(data.treasury.pendingRotation.treasury, chain.chainId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-brand-peach hover:underline"
-                >
-                  {shortAddress(data.treasury.pendingRotation.treasury)} ↗
-                </a>{' '}
-                · Activates {formatUtc(data.treasury.pendingRotation.activationTime)}
-              </p>
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs text-content-primary">
+                <span>Next treasury: {shortAddress(data.treasury.pendingRotation.treasury)}</span>
+                <CopyButton value={data.treasury.pendingRotation.treasury} />
+                {showPendingRotationArbiscan ? (
+                  <ArbiscanButton
+                    kind="address"
+                    value={data.treasury.pendingRotation.treasury}
+                    chainId={chain.chainId}
+                  />
+                ) : null}
+                <span>· Activates {formatUtc(data.treasury.pendingRotation.activationTime)}</span>
+              </div>
             </div>
             <StatusPill tone="degraded" label="Timelock active" />
           </div>
@@ -531,15 +549,18 @@ export function TreasuryPage() {
                   {data.feePolicy.juniorMaintenanceFeeRecipient ? (
                     <div className="flex items-center justify-between gap-2">
                       <dt className="text-content-tertiary">Maintenance fee recipient</dt>
-                      <dd className="font-mono">
-                        <a
-                          href={explorerAddressUrl(data.feePolicy.juniorMaintenanceFeeRecipient, chain.chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brand-peach hover:underline"
-                        >
-                          {shortAddress(data.feePolicy.juniorMaintenanceFeeRecipient)} ↗
-                        </a>
+                      <dd className="inline-flex items-center gap-1.5 font-mono text-content-primary">
+                        <span title={data.feePolicy.juniorMaintenanceFeeRecipient}>
+                          {shortAddress(data.feePolicy.juniorMaintenanceFeeRecipient)}
+                        </span>
+                        <CopyButton value={data.feePolicy.juniorMaintenanceFeeRecipient} />
+                        {showMaintenanceRecipientArbiscan ? (
+                          <ArbiscanButton
+                            kind="address"
+                            value={data.feePolicy.juniorMaintenanceFeeRecipient}
+                            chainId={chain.chainId}
+                          />
+                        ) : null}
                       </dd>
                     </div>
                   ) : null}

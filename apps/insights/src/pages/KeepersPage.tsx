@@ -9,13 +9,14 @@ import {
   useKeepersStatus,
   type KeeperRoleId,
 } from '../api'
+import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 type KeeperRoleFilter = 'all' | KeeperRoleId
@@ -316,11 +317,16 @@ export function KeepersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredKeepers.map((keeper) => {
-                      const lowEth = isLowEthBalance(keeper.ethBalanceWei)
-                      const sharePct =
-                        keeper.shareBps !== null ? Math.min(100, keeper.shareBps / 100) : 0
-                      return (
+                    {(() => {
+                      const seenKeeperKeys = new Set<string>()
+                      return filteredKeepers.map((keeper) => {
+                        const lowEth = isLowEthBalance(keeper.ethBalanceWei)
+                        const sharePct =
+                          keeper.shareBps !== null ? Math.min(100, keeper.shareBps / 100) : 0
+                        const keeperKey = arbiscanLinkKey('address', keeper.address, chainId)
+                        const showArbiscan = !seenKeeperKeys.has(keeperKey)
+                        if (showArbiscan) seenKeeperKeys.add(keeperKey)
+                        return (
                         <tr
                           key={keeper.address}
                           className="border-b border-brand-border/15 last:border-0"
@@ -335,15 +341,13 @@ export function KeepersPage() {
                                 <AddressAvatar address={keeper.address} size={18} />
                                 {shortAddress(keeper.address)}
                               </Link>
-                              <a
-                                href={explorerAddressUrl(keeper.address, chainId)}
-                                target="_blank"
-                                rel="noreferrer"
-                                aria-label={`View ${keeper.address} on explorer`}
-                                className="text-content-tertiary hover:text-content-primary"
-                              >
-                                ↗
-                              </a>
+                              {showArbiscan ? (
+                                <ArbiscanButton
+                                  kind="address"
+                                  value={keeper.address}
+                                  chainId={chainId}
+                                />
+                              ) : null}
                             </div>
                           </td>
                           <td className="px-4 py-3.5">
@@ -400,7 +404,7 @@ export function KeepersPage() {
                           </td>
                         </tr>
                       )
-                    })}
+                    })})()}
                   </tbody>
                 </table>
               </div>
@@ -489,11 +493,17 @@ export function KeepersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredActivity.map((item, index) => (
-                    <tr
-                      key={`${item.txHash}-${item.role}-${String(index)}`}
-                      className="border-b border-brand-border/15 last:border-0"
-                    >
+                  {(() => {
+                    const seenTxKeys = new Set<string>()
+                    return filteredActivity.map((item, index) => {
+                      const txKey = arbiscanLinkKey('tx', item.txHash, chainId)
+                      const showArbiscan = !seenTxKeys.has(txKey)
+                      if (showArbiscan) seenTxKeys.add(txKey)
+                      return (
+                        <tr
+                          key={`${item.txHash}-${item.role}-${String(index)}`}
+                          className="border-b border-brand-border/15 last:border-0"
+                        >
                       <td className="px-4 py-3.5 text-xs text-content-secondary">
                         {formatUtc(item.occurredAt)}
                       </td>
@@ -533,19 +543,15 @@ export function KeepersPage() {
                           >
                             {shortAddress(item.txHash)}
                           </Link>
-                          <a
-                            href={explorerTxUrl(item.txHash, chainId)}
-                            target="_blank"
-                            rel="noreferrer"
-                            aria-label={`View ${item.txHash} on explorer`}
-                            className="text-content-tertiary hover:text-content-primary"
-                          >
-                            ↗
-                          </a>
+                          {showArbiscan ? (
+                            <ArbiscanButton kind="tx" value={item.txHash} chainId={chainId} />
+                          ) : null}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                      )
+                    })
+                  })()}
                 </tbody>
               </table>
             </div>

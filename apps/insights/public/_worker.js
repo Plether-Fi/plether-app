@@ -35,7 +35,7 @@ const REGISTRATION_PATH_PATTERN =
 const REGISTRATION_CALLBACK_PATH_PATTERN =
   /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations\/x|divisions\/registrations\/discord)\/callback$/;
 const REGISTRATION_ORIGIN_HEADER = 'X-Plether-Registration-Origin';
-const ORIGIN_READ_TIMEOUT_MS = 4_000;
+const ORIGIN_READ_TIMEOUT_MS = 10_000;
 const MAX_ORIGIN_READ_ATTEMPTS = 2;
 const RETRYABLE_EDGE_ORIGIN_STATUSES = new Set([520, 522, 524, 525]);
 
@@ -79,6 +79,7 @@ function resolvePublicApiCacheTtl(method, pathname) {
     apiPath === '/sponsored/status' ||
     apiPath === '/sponsored/operations' ||
     apiPath === '/oracle/health' ||
+    apiPath === '/market/exposure' ||
     apiPath === '/treasury/overview' ||
     apiPath === '/infra/status'
   ) {
@@ -100,7 +101,8 @@ function resolvePublicApiCacheTtl(method, pathname) {
   if (
     /^\/wallets\/0x[0-9a-fA-F]{40}\/summary$/.test(apiPath) ||
     /^\/wallets\/0x[0-9a-fA-F]{40}\/exposure$/.test(apiPath) ||
-    /^\/wallets\/0x[0-9a-fA-F]{40}\/positions\/[a-zA-Z0-9_-]{1,80}$/.test(apiPath)
+    /^\/wallets\/0x[0-9a-fA-F]{40}\/positions\/[a-zA-Z0-9_:%-]{1,100}$/.test(apiPath) ||
+    /^\/divisions\/wallets\/0x[0-9a-fA-F]{40}$/.test(apiPath)
   ) {
     return API_CACHE_TTLS.wallet;
   }

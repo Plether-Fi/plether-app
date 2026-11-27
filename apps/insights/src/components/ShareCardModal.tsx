@@ -126,18 +126,49 @@ export function ShareCardModal({
 
   return (
     <>
-      <button
-        type="button"
-        aria-haspopup="dialog"
-        onClick={openModal}
-        className={
-          compact
-            ? 'cursor-pointer border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach hover:bg-brand-peach/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
-            : 'cursor-pointer border border-brand-orange/60 bg-brand-orange/15 px-3.5 py-2 text-xs font-semibold text-brand-peach hover:bg-brand-orange/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
-        }
-      >
-        {triggerLabel}
-      </button>
+      {compact ? (
+        <span className="relative inline-block h-6 w-[26px] shrink-0 align-middle">
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-label={triggerLabel}
+            title={triggerLabel}
+            onClick={openModal}
+            className="group absolute inset-y-0 right-0 z-10 inline-flex h-6 cursor-pointer items-center overflow-hidden whitespace-nowrap border border-brand-border/35 bg-app-bg px-1.5 font-mono text-[11px] font-semibold leading-none text-content-secondary transition-colors duration-200 hover:z-30 hover:border-brand-peach/70 hover:bg-surface-panel hover:text-brand-peach hover:shadow-lg focus-visible:z-30 focus-visible:border-brand-peach/70 focus-visible:bg-surface-panel focus-visible:text-brand-peach focus-visible:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-peach"
+          >
+            <span
+              aria-hidden="true"
+              className="max-w-0 overflow-hidden opacity-0 transition-all duration-200 ease-out group-hover:mr-1 group-hover:max-w-[7.5rem] group-hover:opacity-100 group-focus-visible:mr-1 group-focus-visible:max-w-[7.5rem] group-focus-visible:opacity-100"
+            >
+              {triggerLabel}
+            </span>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 12 12"
+              className="h-3 w-3 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="9.25" cy="2.75" r="1.45" />
+              <circle cx="2.75" cy="6" r="1.45" />
+              <circle cx="9.25" cy="9.25" r="1.45" />
+              <path d="M4.05 5.35L7.95 3.4M4.05 6.65L7.95 8.6" />
+            </svg>
+          </button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          onClick={openModal}
+          className="cursor-pointer border border-brand-orange/60 bg-brand-orange/15 px-3.5 py-2 text-xs font-semibold text-brand-peach hover:bg-brand-orange/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        >
+          {triggerLabel}
+        </button>
+      )}
 
       {isOpen
         ? createPortal(

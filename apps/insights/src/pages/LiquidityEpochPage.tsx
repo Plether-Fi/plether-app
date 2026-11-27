@@ -7,13 +7,14 @@ import {
   type EpochTrancheSnapshot,
   type LpSettlementObservation,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { ResidualAccuracyMeter } from '../components/LiquidityVisuals'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 const EXECUTION_PATH_LABELS: Record<LpSettlementObservation['executionPath'], string> = {
@@ -487,15 +488,25 @@ export function LiquidityEpochPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.settlements.map((row) => {
-                        const flags: string[] = []
-                        if (row.seniorBacklog) flags.push('Senior backlog')
-                        if (row.juniorBacklog) flags.push('Junior backlog')
-                        if (row.entriesDeferred) flags.push('Entries deferred')
-                        if (row.replacementCount > 0) {
-                          flags.push(`Replaced ×${String(row.replacementCount)}`)
-                        }
-                        return (
+                      {(() => {
+                        const seenTxKeys = new Set<string>()
+                        return data.settlements.map((row) => {
+                          const flags: string[] = []
+                          if (row.seniorBacklog) flags.push('Senior backlog')
+                          if (row.juniorBacklog) flags.push('Junior backlog')
+                          if (row.entriesDeferred) flags.push('Entries deferred')
+                          if (row.replacementCount > 0) {
+                            flags.push(`Replaced ×${String(row.replacementCount)}`)
+                          }
+                          let showArbiscan = false
+                          if (row.txHash) {
+                            const txKey = arbiscanLinkKey('tx', row.txHash, chainId)
+                            if (!seenTxKeys.has(txKey)) {
+                              seenTxKeys.add(txKey)
+                              showArbiscan = true
+                            }
+                          }
+                          return (
                           <tr
                             key={`${String(row.epoch)}-${row.txHash ?? row.createdAt}`}
                             className="border-b border-brand-border/15 last:border-0"
@@ -534,15 +545,9 @@ export function LiquidityEpochPage() {
                                   >
                                     {shortAddress(row.txHash)}
                                   </Link>
-                                  <a
-                                    href={explorerTxUrl(row.txHash, chainId)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    aria-label={`View ${row.txHash} on explorer`}
-                                    className="text-content-tertiary hover:text-content-primary"
-                                  >
-                                    ↗
-                                  </a>
+                                  {showArbiscan ? (
+                                    <ArbiscanButton kind="tx" value={row.txHash} chainId={chainId} />
+                                  ) : null}
                                 </div>
                               ) : (
                                 '—'
@@ -550,7 +555,7 @@ export function LiquidityEpochPage() {
                             </td>
                           </tr>
                         )
-                      })}
+                      })})()}
                     </tbody>
                   </table>
                 </div>
@@ -570,14 +575,13 @@ export function LiquidityEpochPage() {
                 <h2 id="epoch-masks-title" className="text-lg font-semibold">
                   SettlementMonitorLens diagnostics
                 </h2>
-                <a
-                  href={explorerAddressUrl(data.monitorAddress, chainId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono text-xs text-brand-peach hover:underline"
-                >
-                  Monitor {shortAddress(data.monitorAddress)} ↗
-                </a>
+                <div className="inline-flex items-center gap-1.5 font-mono text-xs text-content-secondary">
+                  <span title={data.monitorAddress}>
+                    Monitor {shortAddress(data.monitorAddress)}
+                  </span>
+                  <CopyButton value={data.monitorAddress} />
+                  <ArbiscanButton kind="address" value={data.monitorAddress} chainId={chainId} />
+                </div>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <MaskCard

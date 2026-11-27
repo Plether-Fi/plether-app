@@ -7,6 +7,7 @@ import {
   type LpSettlementObservation,
   type SnapshotFreshnessWindow,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import {
   ResidualAccuracyMeter,
@@ -16,7 +17,7 @@ import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, explorerTxUrl, resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 const EXECUTION_PATH_LABELS: Record<LpSettlementObservation['executionPath'], string> = {
@@ -221,26 +222,18 @@ export function LiquidityOpsPage() {
         }
       />
 
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div className="max-w-3xl space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
-            LP Settlement Engine &amp; Risk Forensics
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Epoch Settlements, Attribution Audit &amp; Pool Forensics
-          </h1>
-          <p className="text-sm leading-6 text-content-secondary">
-            Deep settlement and accounting telemetry complementing the main app’s Vaults page—
-            auditing hourly epoch execution, decoded settlement bitmasks, trace-attribution
-            residuals, stale-mark snapshot coverage, and vault indexer lag.
-          </p>
-        </div>
-        <a
-          href={vaultsAppUrl(chainId)}
-          className="shrink-0 border border-brand-border/40 px-4 py-2.5 text-sm font-semibold text-brand-peach hover:bg-brand-peach/10"
-        >
-          Open Vaults on App ↗
-        </a>
+      <header className="max-w-3xl space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
+          LP Settlement Engine &amp; Risk Forensics
+        </p>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          Epoch Settlements, Attribution Audit &amp; Pool Forensics
+        </h1>
+        <p className="text-sm leading-6 text-content-secondary">
+          Deep settlement and accounting telemetry complementing the main app’s Vaults page—
+          auditing hourly epoch execution, decoded settlement bitmasks, trace-attribution
+          residuals, stale-mark snapshot coverage, and vault indexer lag.
+        </p>
       </header>
 
       {awaitingDeploy ? (
@@ -339,14 +332,17 @@ export function LiquidityOpsPage() {
             </p>
           </div>
           {settlements?.monitorAddress ? (
-            <a
-              href={explorerAddressUrl(settlements.monitorAddress, chainId)}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-xs text-brand-peach hover:underline"
-            >
-              Monitor {shortAddress(settlements.monitorAddress)} ↗
-            </a>
+            <div className="inline-flex items-center gap-1.5 font-mono text-xs text-content-secondary">
+              <span title={settlements.monitorAddress}>
+                Monitor {shortAddress(settlements.monitorAddress)}
+              </span>
+              <CopyButton value={settlements.monitorAddress} />
+              <ArbiscanButton
+                kind="address"
+                value={settlements.monitorAddress}
+                chainId={chainId}
+              />
+            </div>
           ) : null}
         </div>
 
@@ -478,13 +474,23 @@ export function LiquidityOpsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {settlements.recentSettlements.map((row) => {
-                    const flags: string[] = []
-                    if (row.seniorBacklog) flags.push('Senior backlog')
-                    if (row.juniorBacklog) flags.push('Junior backlog')
-                    if (row.entriesDeferred) flags.push('Entries deferred')
-                    if (row.replacementCount > 0) flags.push(`Replaced ×${String(row.replacementCount)}`)
-                    return (
+                  {(() => {
+                    const seenTxKeys = new Set<string>()
+                    return settlements.recentSettlements.map((row) => {
+                      const flags: string[] = []
+                      if (row.seniorBacklog) flags.push('Senior backlog')
+                      if (row.juniorBacklog) flags.push('Junior backlog')
+                      if (row.entriesDeferred) flags.push('Entries deferred')
+                      if (row.replacementCount > 0) flags.push(`Replaced ×${String(row.replacementCount)}`)
+                      let showArbiscan = false
+                      if (row.txHash) {
+                        const txKey = arbiscanLinkKey('tx', row.txHash, chainId)
+                        if (!seenTxKeys.has(txKey)) {
+                          seenTxKeys.add(txKey)
+                          showArbiscan = true
+                        }
+                      }
+                      return (
                       <tr
                         key={`${String(row.epoch)}-${row.txHash ?? row.createdAt}`}
                         className="border-b border-brand-border/15 last:border-0"
@@ -521,21 +527,25 @@ export function LiquidityOpsPage() {
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
                           {row.txHash ? (
-                            <a
-                              href={explorerTxUrl(row.txHash, chainId)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-brand-peach hover:underline"
-                            >
-                              {shortAddress(row.txHash)} ↗
-                            </a>
+                            <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                              <Link
+                                to={`/tx/${row.txHash}`}
+                                className="text-brand-peach hover:underline"
+                                title={row.txHash}
+                              >
+                                {shortAddress(row.txHash)}
+                              </Link>
+                              {showArbiscan ? (
+                                <ArbiscanButton kind="tx" value={row.txHash} chainId={chainId} />
+                              ) : null}
+                            </div>
                           ) : (
                             '—'
                           )}
                         </td>
                       </tr>
                     )
-                  })}
+                  })})()}
                 </tbody>
               </table>
             </div>

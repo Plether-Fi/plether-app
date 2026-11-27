@@ -234,6 +234,14 @@ describe('ProtocolPage (Stage 4 Contracts, Parameters & Safety Controls)', () =>
       'https://github.com/Plether-Fi/plether-core/tree/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src',
     )
 
+    // Verify every external Arbiscan URL appears at most once across the entire Protocol page
+    const arbiscanHrefs = screen
+      .getAllByRole('link')
+      .map((el) => el.getAttribute('href') ?? '')
+      .filter((href) => href.includes('arbiscan.io'))
+    expect(arbiscanHrefs.length).toBeGreaterThanOrEqual(3)
+    expect(new Set(arbiscanHrefs.map((u) => u.toLowerCase())).size).toBe(arbiscanHrefs.length)
+
     fireEvent.change(screen.getByLabelText(/Filter contracts/i), {
       target: { value: '0xeb56' },
     })

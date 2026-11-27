@@ -3,6 +3,7 @@ import {
   formatLeverageX100,
   type ExposureTimelinePoint,
 } from '../api/positions'
+import { useContainerWidth } from '../hooks/useContainerWidth'
 import { formatCompactAssets, formatUtc } from '../utils/format'
 import { EmptyState, Panel } from './ui'
 
@@ -13,10 +14,10 @@ interface WalletExposureChartProps {
 
 type ExposureChartMode = 'notional' | 'leverage'
 
-const WIDTH = 1040
+const DEFAULT_WIDTH = 1040
 const HEIGHT = 236
-const PAD_LEFT = 14
-const PAD_RIGHT = 82
+const PAD_LEFT = 12
+const PAD_RIGHT = 76
 const PAD_TOP = 18
 const PAD_BOTTOM = 28
 
@@ -46,8 +47,10 @@ function shortDate(unixSeconds: number, showTime: boolean): string {
 export function WalletExposureChart({ points, releaseVersion }: WalletExposureChartProps) {
   const [mode, setMode] = useState<ExposureChartMode>('notional')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [chartBoxRef, measuredWidth] = useContainerWidth(DEFAULT_WIDTH)
+  const chartWidth = Math.max(320, measuredWidth)
 
-  const plotW = WIDTH - PAD_LEFT - PAD_RIGHT
+  const plotW = chartWidth - PAD_LEFT - PAD_RIGHT
   const plotH = HEIGHT - PAD_TOP - PAD_BOTTOM
 
   const chart = useMemo(() => {
@@ -249,10 +252,11 @@ export function WalletExposureChart({ points, releaseVersion }: WalletExposureCh
             </div>
           </div>
 
-          <div className="border border-brand-border/20 bg-app-bg p-2">
+          <div ref={chartBoxRef} className="w-full border border-brand-border/20 bg-app-bg p-2">
             <svg
-              viewBox={`0 0 ${String(WIDTH)} ${String(HEIGHT)}`}
-              className="h-56 w-full overflow-visible"
+              viewBox={`0 0 ${String(chartWidth)} ${String(HEIGHT)}`}
+              style={{ height: `${String(HEIGHT)}px` }}
+              className="block w-full overflow-visible"
               role="img"
               aria-label={
                 mode === 'notional'
@@ -267,7 +271,7 @@ export function WalletExposureChart({ points, releaseVersion }: WalletExposureCh
                   <line
                     x1={PAD_LEFT}
                     y1={tick.y}
-                    x2={WIDTH - PAD_RIGHT}
+                    x2={chartWidth - PAD_RIGHT}
                     y2={tick.y}
                     stroke="currentColor"
                     className={
@@ -279,7 +283,7 @@ export function WalletExposureChart({ points, releaseVersion }: WalletExposureCh
                     strokeWidth={1}
                   />
                   <text
-                    x={WIDTH - PAD_RIGHT + 8}
+                    x={chartWidth - PAD_RIGHT + 8}
                     y={tick.y + 3}
                     className="fill-content-tertiary font-mono text-[10px]"
                   >

@@ -5,12 +5,14 @@ import { InsightsApiError, type ProtocolTradeRecord, type TransactionDetailsResp
 import { TransactionPage } from './TransactionPage'
 
 const txQuery = vi.fn()
+const walletExposureQuery = vi.fn()
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
     ...actual,
     useTransaction: (...args: unknown[]) => txQuery(...args),
+    useWalletExposure: (...args: unknown[]) => walletExposureQuery(...args),
   }
 })
 
@@ -117,6 +119,61 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   })
+  walletExposureQuery.mockReset()
+  walletExposureQuery.mockReturnValue({
+    data: {
+      positions: [
+        {
+          positionId: `pos-${sampleTxHash}:8`,
+          market: 'plDXY-PERP',
+          status: 'closed',
+          side: 'long',
+          openedAt: '2026-11-26T15:30:00Z',
+          closedAt: '2026-11-26T15:34:00Z',
+          durationSeconds: 240,
+          entryPrice: '98800000',
+          exitPrice: '98750000',
+          currentSize: '0',
+          peakSize: '500000000000000000000',
+          peakNotionalAssets: '50000000000',
+          peakMarginAssets: '10000000000',
+          entryLeverageX100: 500,
+          maxLeverageX100: 500,
+          currentLeverageX100: 0,
+          realizedPnlAssets: '1250000000',
+          unrealizedPnlAssets: '0',
+          netPnlAssets: '1250000000',
+          roiBps: 1250,
+          totalFeesAssets: '1500000',
+          totalVpiAssets: '1250000',
+          totalKeeperBountyAssets: '0',
+          mfePnlAssets: '1500000000',
+          mfeBps: 1500,
+          mfePrice: '98600000',
+          mfeOccurredAt: '2026-11-26T15:32:00Z',
+          maePnlAssets: '-100000000',
+          maeBps: -100,
+          maePrice: '98900000',
+          maeOccurredAt: '2026-11-26T15:31:00Z',
+          liquidationPrice: null,
+          closestLiquidationBps: 1800,
+          closestLiquidationAt: '2026-11-26T15:31:00Z',
+          currentLiquidationBps: null,
+          liquidatable: false,
+          fillCount: 2,
+          scaleInCount: 0,
+          partialCloseCount: 0,
+          marginAddCount: 0,
+          openTxHash: sampleTxHash,
+          closeTxHash: sampleTxHash,
+          openOrderId: '500',
+        },
+      ],
+      exposureTimeline: [],
+    },
+    isLoading: false,
+    isError: false,
+  })
 })
 
 describe('TransactionPage', () => {
@@ -139,8 +196,27 @@ describe('TransactionPage', () => {
       `/keepers/${sampleKeeper}`,
     )
     expect(
-      screen.getByRole('link', { name: `View ${sampleKeeper} on explorer` }),
+      screen.getByRole('link', { name: `View ${sampleKeeper} on Arbiscan` }),
     ).toHaveAttribute('href', `https://sepolia.arbiscan.io/address/${sampleKeeper}`)
+
+    // Direct links to the matched position lifecycle
+    const expectedPositionPath = `/wallets/${sampleAccount}/positions/${encodeURIComponent(`pos-${sampleTxHash}:8`)}`
+    expect(screen.getByRole('link', { name: 'Position lifecycle →' })).toHaveAttribute(
+      'href',
+      expectedPositionPath,
+    )
+    expect(screen.getByRole('link', { name: 'View full position lifecycle →' })).toHaveAttribute(
+      'href',
+      expectedPositionPath,
+    )
+
+    // Verify no duplicate external Arbiscan URLs are rendered on the page
+    const arbiscanHrefs = screen
+      .getAllByRole('link')
+      .map((el) => el.getAttribute('href') ?? '')
+      .filter((href) => href.includes('arbiscan.io'))
+    expect(arbiscanHrefs.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(arbiscanHrefs.map((u) => u.toLowerCase())).size).toBe(arbiscanHrefs.length)
 
     // Switch to the first event (#1 Open · log 8)
     fireEvent.click(screen.getByRole('button', { name: /#1 Open/i }))

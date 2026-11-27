@@ -177,4 +177,47 @@ describe('shareCard SVG & social helpers', () => {
     expect(svg).not.toContain('SILVER DIVISION')
     expect(svg).not.toContain('$')
   })
+
+  it('renders a Position Lifecycle Audit share card with MFE/MAE, max leverage, and X intent URL', () => {
+    const lifecycleData = {
+      kind: 'position_lifecycle' as const,
+      traderLabel: '@alice_fx',
+      account,
+      networkName: 'Arbitrum Sepolia',
+      releaseVersion: 'v2.0.0',
+      positionId: 'pos-0x1111:0',
+      market: 'plDXY-PERP',
+      side: 'long' as const,
+      status: 'closed' as const,
+      netPnlAssets: '1250400000',
+      roiBps: 1840,
+      entryPrice: '104200000000000000000',
+      exitOrMarkPrice: '106500000000000000000',
+      peakNotionalAssets: '50000000000',
+      maxLeverageLabel: '7.4x',
+      mfePnlAssets: '1500000000',
+      maePnlAssets: '-210000000',
+      liqBufferLabel: '14.2%',
+      durationLabel: '3h 42m',
+    }
+    const svg = buildShareCardSvg(lifecycleData)
+    expect(svg).toContain(`width="${String(SHARE_CARD_WIDTH)}"`)
+    expect(svg).toContain(`height="${String(SHARE_CARD_HEIGHT)}"`)
+    expect(svg).toContain('CLOSED LONG')
+    expect(svg).toContain('POSITION LIFECYCLE NET PNL')
+    expect(svg).toContain('+1,250.40 USDG')
+    expect(svg).toContain('+18.40% ROI')
+    expect(svg).toContain('7.4x')
+    expect(svg).toContain('Held 3h 42m')
+    expect(svg).toContain('pos-0x1111:0 · insights.plether.com')
+    expect(svg).not.toContain('$')
+    expect(shareCardFilename(lifecycleData)).toBe('plether-position_lifecycle-alice_fx.png')
+    const url = buildShareTweetUrl(
+      lifecycleData,
+      `https://insights.plether.com/wallets/${account}/positions/pos-0x1111:0`,
+    )
+    expect(url).toContain('https://x.com/intent/tweet?')
+    expect(url).toContain('Closed+LONG+plDXY-PERP+lifecycle')
+    expect(url).toContain('7.4x+max+lev')
+  })
 })

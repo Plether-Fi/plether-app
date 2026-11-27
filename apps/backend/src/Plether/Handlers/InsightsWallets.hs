@@ -5,9 +5,12 @@ module Plether.Handlers.InsightsWallets
   , AccountVaultRequestStateRow (..)
   , AccountVaultRequestEventRow (..)
   , DivisionsWeekRecord (..)
+  , DivisionsEquityBridge (..)
   , BalanceEventRow (..)
   , BalanceHistoryPoint (..)
   , getWalletSummaryResponse
+  , getDivisionsWalletContextResponse
+  , buildDivisionsEquityBridge
   , fetchDiscordHandle
   , fetchAccountReleaseStats
   , fetchAccountActivity
@@ -24,16 +27,18 @@ module Plether.Handlers.InsightsWallets
   ) where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent.Async (concurrently)
-import Data.Aeson (Value (..), object, (.=))
+import Control.Concurrent.Async (Concurrently (..), concurrently)
+import Data.Aeson (Value (..), decodeStrict', object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Char8 as BS8
+import Data.Either (isRight)
 import Data.Foldable (toList)
 import Data.Int (Int64)
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple (Connection, Only (..), query)
@@ -45,12 +50,15 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Ethereum.Client (EthClient)
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , getAccountLedgerSnapshot
+  , getAccountLedgerSnapshotAtBlock
+  , getPendingCarryAtBlock
   )
 import Plether.Handlers.InsightsOrderProtections
   ( OrderProtectionsBundle
@@ -59,8 +67,13 @@ import Plether.Handlers.InsightsOrderProtections
   , fetchOrderProtectionsBundle
   )
 import Plether.Handlers.ProtectionHistory (readProtectionHistoryPage)
+import Plether.Insights.Competition (economicAccountValue)
+import Plether.Insights.Divisions (divisionWeekStart)
+import Plether.Insights.SnapshotWorker (inferPendingCarry, ledgerToEquity)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 data AccountReleaseStats = AccountReleaseStats
@@ -900,3 +913,377 @@ nullableNumericIntegerField =
 isoTimestamp :: Integer -> Text
 isoTimestamp =
   T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" . posixSecondsToUTCTime . fromIntegral
+
+data DivisionsEquityBridge = DivisionsEquityBridge
+  { debStartingEquityAssets :: Integer
+  , debDepositsAssets :: Integer
+  , debWithdrawalsAssets :: Integer
+  , debAdjustedEquityAssets :: Integer
+  , debCutoffEquityAssets :: Integer
+  , debWeeklyPnlAssets :: Integer
+  , debPendingCarryAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+buildDivisionsEquityBridge
+  :: Maybe Integer
+  -> Integer
+  -> Integer
+  -> Maybe (AccountLedgerSnapshot, Integer)
+  -> Maybe DivisionsEquityBridge
+buildDivisionsEquityBridge mStartEquity deposits withdrawals mCutoff = do
+  startEq <- mStartEquity
+  (cutoffSnap, carry) <- mCutoff
+  let cutoffEq = economicAccountValue (ledgerToEquity cutoffSnap carry)
+      adjusted = startEq + deposits - withdrawals
+  pure
+    DivisionsEquityBridge
+      { debStartingEquityAssets = startEq
+      , debDepositsAssets = deposits
+      , debWithdrawalsAssets = withdrawals
+      , debAdjustedEquityAssets = adjusted
+      , debCutoffEquityAssets = cutoffEq
+      , debWeeklyPnlAssets = cutoffEq - adjusted
+      , debPendingCarryAssets = carry
+      }
+
+data DivisionsWeekBoundary = DivisionsWeekBoundary
+  { dwbWeekStart :: Integer
+  , dwbBaselineBlock :: Integer
+  , dwbCutoffBlock :: Integer
+  , dwbCutoffTimestamp :: Integer
+  , dwbReleaseRouter :: Text
+  , dwbReleaseVersion :: Text
+  , dwbAssetSymbol :: Text
+  }
+  deriving stock (Eq, Show)
+
+data DivisionsWeekActivityRow = DivisionsWeekActivityRow
+  { dwaTradesCount :: Int64
+  , dwaOpensCount :: Int64
+  , dwaClosesCount :: Int64
+  , dwaLiquidationsCount :: Int64
+  , dwaVolumeAssets :: Text
+  , dwaRealizedPnlAssets :: Text
+  , dwaDepositsAssets :: Integer
+  , dwaWithdrawalsAssets :: Integer
+  , dwaMon :: Bool
+  , dwaTue :: Bool
+  , dwaWed :: Bool
+  , dwaThu :: Bool
+  , dwaFri :: Bool
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow DivisionsWeekActivityRow where
+  fromRow =
+    DivisionsWeekActivityRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+{-# NOINLINE divisionsWalletContextCache #-}
+divisionsWalletContextCache :: SingleFlightCache Text (Either ApiError (ApiResponse Value))
+divisionsWalletContextCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 256 (30 * 1000000000) (600 * 1000000000))
+
+-- | GET /api/insights/v1/divisions/wallets/:address
+-- Returns verifiable boundary snapshots (wallet balance + exact open position at
+-- baseline and cutoff blocks), equity accounting bridge, Mon-Fri FX session
+-- flags, week-scoped trading activity, and multi-week Divisions history.
+getDivisionsWalletContextResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+getDivisionsWalletContextResponse pool client cfg rawAddress =
+  let account = T.toLower $ T.strip rawAddress
+   in snd
+        <$> runSingleFlightCache
+          divisionsWalletContextCache
+          account
+          isRight
+          (computeDivisionsWalletContextResponse pool client cfg account)
+
+computeDivisionsWalletContextResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsWalletContextResponse pool client cfg account = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
+      activeRouter = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      currentWeekStart = divisionWeekStart now
+  (mHandle, mLiveBoundary, mPublishedBoundary, history) <-
+    withDb pool $ \conn ->
+      withReadSnapshot conn $ do
+        handle <- fetchDiscordHandle conn account
+        liveRow <- fetchLiveWeekBoundary conn chainId currentWeekStart
+        pubRow <- fetchLatestPublishedWeekBoundary conn chainId
+        hist <- fetchAllDivisionsHistoryForWallet conn chainId account
+        pure (handle, liveRow, pubRow, hist)
+  (mLiveSection, mPublishedSection) <-
+    concurrently
+      (traverse (hydrateDivisionsWeekSection pool client cfg chainId activeRouter account) mLiveBoundary)
+      (traverse (hydrateDivisionsWeekSection pool client cfg chainId activeRouter account) mPublishedBoundary)
+  let latestBlock =
+        max
+          (maybe 0 dwbCutoffBlock mLiveBoundary)
+          (maybe 0 dwbCutoffBlock mPublishedBoundary)
+  pure $
+    Right $
+      mkResponse latestBlock chainId $
+        object
+          [ "network"
+              .= object
+                [ "chainId" .= chainId
+                , "releaseVersion" .= Manifest.releaseVersion
+                , "settlementAssetSymbol" .= ("USDG" :: Text)
+                ]
+          , "account" .= account
+          , "observedAt" .= isoTimestamp now
+          , "identity"
+              .= object
+                [ "discordUsername" .= mHandle
+                , "isDivisionsLinked" .= maybe False (const True) mHandle
+                ]
+          , "liveWeek" .= mLiveSection
+          , "publishedWeek" .= mPublishedSection
+          , "history" .= map divisionsWeekToJson history
+          ]
+
+fetchLiveWeekBoundary :: Connection -> Integer -> Integer -> IO (Maybe DivisionsWeekBoundary)
+fetchLiveWeekBoundary conn chainId weekStart = do
+  rows <-
+    query
+      conn
+      "SELECT s.week_start, s.baseline_block, s.snapshot_block, s.snapshot_timestamp, \
+      \w.release_router, w.release_version, w.asset_symbol \
+      \FROM divisions_live_snapshots s \
+      \JOIN divisions_weeks w \
+      \  ON w.chain_id = s.chain_id AND w.week_start = s.week_start AND w.release_router = s.release_router \
+      \WHERE s.chain_id = ? AND s.week_start = ? \
+      \ORDER BY s.snapshot_block DESC \
+      \LIMIT 1"
+      (chainId, weekStart) :: IO [(Integer, Integer, Integer, Integer, Text, Text, Text)]
+  pure $ case rows of
+    (ws, baseBlk, snapBlk, snapTs, rtr, ver, sym) : _ ->
+      Just (DivisionsWeekBoundary ws baseBlk snapBlk snapTs (T.toLower rtr) ver sym)
+    [] -> Nothing
+
+fetchLatestPublishedWeekBoundary :: Connection -> Integer -> IO (Maybe DivisionsWeekBoundary)
+fetchLatestPublishedWeekBoundary conn chainId = do
+  rows <-
+    query
+      conn
+      "SELECT p.week_start, p.closing_block, p.publication::TEXT, \
+      \w.release_router, w.release_version, w.asset_symbol \
+      \FROM divisions_publications p \
+      \JOIN divisions_weeks w \
+      \  ON w.chain_id = p.chain_id AND w.week_start = p.week_start AND w.release_router = p.release_router \
+      \WHERE p.chain_id = ? \
+      \ORDER BY p.week_start DESC \
+      \LIMIT 1"
+      (Only chainId) :: IO [(Integer, Integer, Text, Text, Text, Text)]
+  pure $ case rows of
+    (ws, closeBlk, pubText, rtr, ver, sym) : _ ->
+      let mBaseBlk = do
+            val <- decodeStrict' (TE.encodeUtf8 pubText)
+            obj <- asObject val
+            src <- lookupObject "source" obj
+            baseObj <- lookupObject "baselineBlock" src
+            lookupInteger "number" baseObj
+       in Just $
+            DivisionsWeekBoundary
+              ws
+              (fromMaybe 0 mBaseBlk)
+              closeBlk
+              (ws + 5 * 86400)
+              (T.toLower rtr)
+              ver
+              sym
+    [] -> Nothing
+
+fetchAllDivisionsHistoryForWallet :: Connection -> Integer -> Text -> IO [DivisionsWeekRecord]
+fetchAllDivisionsHistoryForWallet conn chainId account = do
+  rows <-
+    query
+      conn
+      "SELECT p.week_start, p.closing_block, p.publication \
+      \FROM divisions_publications p \
+      \JOIN divisions_weeks w \
+      \  ON w.chain_id = p.chain_id AND w.week_start = p.week_start AND w.release_router = p.release_router \
+      \WHERE p.chain_id = ? \
+      \ORDER BY p.week_start DESC LIMIT 20"
+      (Only chainId) :: IO [(Integer, Integer, Value)]
+  pure $ extractDivisionsHistory account rows
+
+fetchWeekActivityStats
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO DivisionsWeekActivityRow
+fetchWeekActivityStats conn chainId router account baselineBlock cutoffBlock = do
+  rows <-
+    query
+      conn
+      "SELECT \
+      \  COUNT(*) FILTER (WHERE a.activity_type IN ('Open', 'Close', 'Liquidated')), \
+      \  COUNT(*) FILTER (WHERE a.activity_type = 'Open'), \
+      \  COUNT(*) FILTER (WHERE a.activity_type = 'Close'), \
+      \  COUNT(*) FILTER (WHERE a.activity_type = 'Liquidated'), \
+      \  COALESCE(SUM(CASE WHEN a.activity_type IN ('Open', 'Close', 'Liquidated') THEN ABS(COALESCE(a.amount_assets, 0)) ELSE 0 END), 0)::TEXT, \
+      \  COALESCE(SUM(COALESCE(a.pnl_assets, 0)), 0)::TEXT, \
+      \  COALESCE(SUM(CASE WHEN a.activity_type = 'Deposit' AND NOT EXISTS (\
+      \    SELECT 1 FROM aa_close_assistance g WHERE g.verified \
+      \      AND g.chain_id = a.chain_id AND g.router = a.release_router \
+      \      AND g.account = a.account AND g.transaction_hash = a.tx_hash \
+      \      AND g.block_number = a.block_number AND g.block_hash = a.block_hash \
+      \      AND g.deposit_log_index = a.log_index AND g.amount_assets = a.amount_assets\
+      \  ) THEN ABS(COALESCE(a.amount_assets, 0)) ELSE 0 END), 0)::BIGINT, \
+      \  COALESCE(SUM(CASE WHEN a.activity_type = 'Withdraw' THEN ABS(COALESCE(a.amount_assets, 0)) ELSE 0 END), 0)::BIGINT, \
+      \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 1), FALSE), \
+      \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 2), FALSE), \
+      \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 3), FALSE), \
+      \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 4), FALSE), \
+      \  COALESCE(BOOL_OR(a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 AND EXTRACT(DOW FROM to_timestamp(a.timestamp + 10800) AT TIME ZONE 'UTC') = 5), FALSE) \
+      \FROM perps_account_activity a \
+      \WHERE a.chain_id = ? AND a.release_router = ? AND LOWER(a.account) = ? \
+      \  AND a.block_number > ? AND a.block_number <= ?"
+      (chainId, router, account, baselineBlock, cutoffBlock) :: IO [DivisionsWeekActivityRow]
+  pure $
+    fromMaybe
+      (DivisionsWeekActivityRow 0 0 0 0 "0" "0" 0 0 False False False False False)
+      (listToMaybe rows)
+
+captureHistoricalSnapshotAtBlock
+  :: EthClient
+  -> Config
+  -> Text
+  -> Integer
+  -> IO (Maybe (AccountLedgerSnapshot, Integer))
+captureHistoricalSnapshotAtBlock client cfg account blockNum
+  | blockNum <= 0 || T.null (cfgPerpsAccountLens cfg) = pure Nothing
+  | otherwise = do
+      mLedger <- timeout (2000 * 1000) (getAccountLedgerSnapshotAtBlock client (cfgPerpsAccountLens cfg) account blockNum)
+      case mLedger of
+        Just (Right snap) -> do
+          carry <- case inferPendingCarry snap of
+            Just c -> pure c
+            Nothing
+              | T.null (cfgPerpsCfdEngineLens cfg) -> pure 0
+              | otherwise -> do
+                  mCarry <- timeout (1500 * 1000) (getPendingCarryAtBlock client (cfgPerpsCfdEngineLens cfg) account blockNum)
+                  pure $ case mCarry of
+                    Just (Right c) -> c
+                    _ -> 0
+          pure $ Just (snap, carry)
+        _ -> pure Nothing
+
+hydrateDivisionsWeekSection
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Integer
+  -> Text
+  -> Text
+  -> DivisionsWeekBoundary
+  -> IO Value
+hydrateDivisionsWeekSection pool client cfg chainId activeRouter account boundary = do
+  let sameRelease = dwbReleaseRouter boundary == activeRouter
+      fetchActivity =
+        withDb pool $ \conn ->
+          fetchWeekActivityStats
+            conn
+            chainId
+            (dwbReleaseRouter boundary)
+            account
+            (dwbBaselineBlock boundary)
+            (dwbCutoffBlock boundary)
+      fetchStartEquity
+        | not sameRelease = pure Nothing
+        | dwbBaselineBlock boundary <= 0 = pure Nothing
+        | dwbBaselineBlock boundary < cfgPerpsIndexerStartBlock cfg = pure (Just 0)
+        | otherwise =
+            fmap (\(s, c) -> economicAccountValue (ledgerToEquity s c))
+              <$> captureHistoricalSnapshotAtBlock client cfg account (dwbBaselineBlock boundary)
+      fetchCutoffSnap
+        | not sameRelease = pure Nothing
+        | otherwise =
+            captureHistoricalSnapshotAtBlock client cfg account (dwbCutoffBlock boundary)
+  (act, mStartEq, mCutoff) <-
+    runConcurrently $
+      (,,)
+        <$> Concurrently fetchActivity
+        <*> Concurrently fetchStartEquity
+        <*> Concurrently fetchCutoffSnap
+  let mBridge =
+        buildDivisionsEquityBridge
+          mStartEq
+          (dwaDepositsAssets act)
+          (dwaWithdrawalsAssets act)
+          mCutoff
+      cutoffSnapJson =
+        case mCutoff of
+          Nothing -> Null
+          Just (snap, carry) ->
+            let econ = economicAccountValue (ledgerToEquity snap carry)
+             in case ledgerSnapshotToJson snap of
+                  Object base ->
+                    Object $
+                      KM.insert (Key.fromText "pendingCarryAssets") (String (T.pack (show carry))) $
+                        KM.insert (Key.fromText "economicEquityAssets") (String (T.pack (show econ))) base
+                  other -> other
+  pure $
+    object
+      [ "weekStart" .= dwbWeekStart boundary
+      , "weekStartsAt" .= isoTimestamp (dwbWeekStart boundary)
+      , "weekClosesAt" .= isoTimestamp (dwbWeekStart boundary + 5 * 86400)
+      , "baselineBlock" .= show (dwbBaselineBlock boundary)
+      , "cutoffBlock" .= show (dwbCutoffBlock boundary)
+      , "cutoffAt" .= isoTimestamp (dwbCutoffTimestamp boundary)
+      , "releaseVersion" .= dwbReleaseVersion boundary
+      , "assetSymbol" .= dwbAssetSymbol boundary
+      , "activeWeekdays" .= [dwaMon act, dwaTue act, dwaWed act, dwaThu act, dwaFri act]
+      , "activity"
+          .= object
+            [ "tradesCount" .= dwaTradesCount act
+            , "opensCount" .= dwaOpensCount act
+            , "closesCount" .= dwaClosesCount act
+            , "liquidationsCount" .= dwaLiquidationsCount act
+            , "volumeAssets" .= dwaVolumeAssets act
+            , "realizedPnlAssets" .= dwaRealizedPnlAssets act
+            , "depositsAssets" .= show (dwaDepositsAssets act)
+            , "withdrawalsAssets" .= show (dwaWithdrawalsAssets act)
+            ]
+      , "equityBridge" .= (equityBridgeToJson <$> mBridge)
+      , "cutoffSnapshot" .= cutoffSnapJson
+      ]
+
+equityBridgeToJson :: DivisionsEquityBridge -> Value
+equityBridgeToJson DivisionsEquityBridge {..} =
+  object
+    [ "startingEquityAssets" .= show debStartingEquityAssets
+    , "depositsAssets" .= show debDepositsAssets
+    , "withdrawalsAssets" .= show debWithdrawalsAssets
+    , "adjustedEquityAssets" .= show debAdjustedEquityAssets
+    , "cutoffEquityAssets" .= show debCutoffEquityAssets
+    , "weeklyPnlAssets" .= show debWeeklyPnlAssets
+    , "pendingCarryAssets" .= show debPendingCarryAssets
+    ]

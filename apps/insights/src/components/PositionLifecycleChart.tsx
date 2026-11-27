@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import {
   classifyLiquidationBuffer,
   formatLeverageX100,
@@ -8,6 +8,7 @@ import {
   type PositionProtectionEvent,
   type PositionStepEvent,
 } from '../api/positions'
+import { useContainerWidth } from '../hooks/useContainerWidth'
 import {
   formatCompactAssets,
   formatPrice,
@@ -25,12 +26,12 @@ interface PositionLifecycleChartProps {
 
 type LifecycleChartMode = 'price' | 'pnl' | 'leverage'
 
-const WIDTH = 1040
-const HEIGHT = 286
-const PAD_LEFT = 14
-const PAD_RIGHT = 86
-const PAD_TOP = 20
-const PAD_BOTTOM = 30
+const DEFAULT_WIDTH = 1040
+const HEIGHT = 260
+const PAD_LEFT = 12
+const PAD_RIGHT = 74
+const PAD_TOP = 18
+const PAD_BOTTOM = 28
 
 function parseUsdg(raw: string): number {
   const n = Number(raw)
@@ -98,8 +99,11 @@ export function PositionLifecycleChart({
 }: PositionLifecycleChartProps) {
   const [mode, setMode] = useState<LifecycleChartMode>('price')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [chartBoxRef, measuredWidth] = useContainerWidth(DEFAULT_WIDTH)
+  const gradBaseId = useId().replace(/:/g, '')
+  const chartWidth = Math.max(320, measuredWidth)
 
-  const plotW = WIDTH - PAD_LEFT - PAD_RIGHT
+  const plotW = chartWidth - PAD_LEFT - PAD_RIGHT
   const plotH = HEIGHT - PAD_TOP - PAD_BOTTOM
 
   const series = useMemo(() => {
@@ -282,15 +286,28 @@ export function PositionLifecycleChart({
         return { y: yOf(val), label: val.toFixed(4) }
       })
 
+      const entryY = entryDisplay != null ? yOf(entryDisplay) : null
+      const areaPath =
+        entryY != null && coords.length > 1
+          ? [
+              `M${coords[0].x.toFixed(1)},${entryY.toFixed(1)}`,
+              ...coords.map((c) => `L${c.x.toFixed(1)},${c.y.toFixed(1)}`),
+              `L${coords[coords.length - 1].x.toFixed(1)},${entryY.toFixed(1)}`,
+              'Z',
+            ].join(' ')
+          : ''
+
       return {
         coords,
         linePath,
+        areaPath,
         bandPath,
         eventDots,
         refLines,
         yTicks,
         showDate,
         zeroY: null as number | null,
+        splitBaselineY: entryY,
       }
     }
 
@@ -314,6 +331,15 @@ export function PositionLifecycleChart({
       const linePath = coords
         .map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
         .join(' ')
+      const areaPath =
+        coords.length > 1
+          ? [
+              `M${coords[0].x.toFixed(1)},${zeroY.toFixed(1)}`,
+              ...coords.map((c) => `L${c.x.toFixed(1)},${c.y.toFixed(1)}`),
+              `L${coords[coords.length - 1].x.toFixed(1)},${zeroY.toFixed(1)}`,
+              'Z',
+            ].join(' ')
+          : ''
 
       const yTicks = [padMax, 0, padMin].map((v) => ({
         y: yOf(v),
@@ -323,12 +349,14 @@ export function PositionLifecycleChart({
       return {
         coords,
         linePath,
+        areaPath,
         bandPath: '',
         eventDots: [],
         refLines: [],
         yTicks,
         showDate,
         zeroY,
+        splitBaselineY: zeroY,
       }
     }
 
@@ -357,12 +385,14 @@ export function PositionLifecycleChart({
     return {
       coords,
       linePath,
+      areaPath: '',
       bandPath: '',
       eventDots: [],
       refLines: [],
       yTicks,
       showDate,
       zeroY: yOf(0),
+      splitBaselineY: null as number | null,
     }
   }, [series, events, mode, entryDisplay, liqDisplay, mfeDisplay, maeDisplay, tpPrice, slPrice, plotW, plotH])
 
@@ -463,159 +493,219 @@ export function PositionLifecycleChart({
             </div>
           </div>
 
-          <div className="border border-brand-border/20 bg-app-bg p-2">
-            <svg
-              viewBox={`0 0 ${String(WIDTH)} ${String(HEIGHT)}`}
-              className="h-64 w-full overflow-visible"
-              role="img"
-              aria-label={`Position ${mode} trajectory chart`}
-              onMouseLeave={() => { setHoveredIdx(null) }}
-            >
-              {/* Subtle Y gridlines */}
-              {chart.yTicks.map((tick, i) => (
-                <g key={`yt-${String(i)}`}>
-                  <line
-                    x1={PAD_LEFT}
-                    y1={tick.y}
-                    x2={WIDTH - PAD_RIGHT}
-                    y2={tick.y}
-                    stroke="currentColor"
-                    className="text-brand-border/20"
-                    strokeWidth={1}
+          <div ref={chartBoxRef} className="w-full border border-brand-border/20 bg-app-bg p-2">
+            {(() => {
+              const splitY = chart.splitBaselineY
+              const hasSplit = splitY != null && (mode === 'pnl' || mode === 'price')
+              const splitPct =
+                splitY != null
+                  ? Math.max(0, Math.min(100, ((splitY - PAD_TOP) / plotH) * 100))
+                  : 50
+              const aboveColor =
+                mode === 'price' && position.side === 'short' ? '#ff572d' : '#34d399'
+              const belowColor =
+                mode === 'price' && position.side === 'short' ? '#34d399' : '#ff572d'
+              const strokeGradId = `${gradBaseId}-stroke`
+              const fillGradId = `${gradBaseId}-fill`
+              const activeDotColor =
+                mode === 'leverage'
+                  ? '#ffab96'
+                  : parseUsdg(activePt.unrealizedPnlAssets) < 0
+                    ? '#ff572d'
+                    : '#34d399'
+
+              return (
+                <svg
+                  viewBox={`0 0 ${String(chartWidth)} ${String(HEIGHT)}`}
+                  style={{ height: `${String(HEIGHT)}px` }}
+                  className="block w-full overflow-visible"
+                  role="img"
+                  aria-label={`Position ${mode} trajectory chart`}
+                  onMouseLeave={() => { setHoveredIdx(null) }}
+                >
+                  {hasSplit ? (
+                    <defs>
+                      <linearGradient
+                        id={strokeGradId}
+                        gradientUnits="userSpaceOnUse"
+                        x1="0"
+                        y1={PAD_TOP}
+                        x2="0"
+                        y2={PAD_TOP + plotH}
+                      >
+                        <stop offset="0%" stopColor={aboveColor} />
+                        <stop offset={`${splitPct.toFixed(3)}%`} stopColor={aboveColor} />
+                        <stop offset={`${splitPct.toFixed(3)}%`} stopColor={belowColor} />
+                        <stop offset="100%" stopColor={belowColor} />
+                      </linearGradient>
+                      <linearGradient
+                        id={fillGradId}
+                        gradientUnits="userSpaceOnUse"
+                        x1="0"
+                        y1={PAD_TOP}
+                        x2="0"
+                        y2={PAD_TOP + plotH}
+                      >
+                        <stop offset="0%" stopColor={aboveColor} stopOpacity="0.22" />
+                        <stop offset={`${splitPct.toFixed(3)}%`} stopColor={aboveColor} stopOpacity="0.02" />
+                        <stop offset={`${splitPct.toFixed(3)}%`} stopColor={belowColor} stopOpacity="0.02" />
+                        <stop offset="100%" stopColor={belowColor} stopOpacity="0.24" />
+                      </linearGradient>
+                    </defs>
+                  ) : null}
+
+                  {/* Subtle Y gridlines */}
+                  {chart.yTicks.map((tick, i) => (
+                    <g key={`yt-${String(i)}`}>
+                      <line
+                        x1={PAD_LEFT}
+                        y1={tick.y}
+                        x2={chartWidth - PAD_RIGHT}
+                        y2={tick.y}
+                        stroke="currentColor"
+                        className="text-brand-border/20"
+                        strokeWidth={1}
+                      />
+                      <text
+                        x={chartWidth - PAD_RIGHT + 8}
+                        y={tick.y + 3}
+                        className="fill-content-tertiary font-mono text-[10px]"
+                      >
+                        {tick.label}
+                      </text>
+                    </g>
+                  ))}
+
+                  {/* Zero line in PnL mode */}
+                  {chart.zeroY != null ? (
+                    <line
+                      x1={PAD_LEFT}
+                      y1={chart.zeroY}
+                      x2={chartWidth - PAD_RIGHT}
+                      y2={chart.zeroY}
+                      stroke="#9a8c8f"
+                      strokeOpacity={0.45}
+                      strokeDasharray="4 4"
+                    />
+                  ) : null}
+
+                  {/* Reference price levels (Entry / Liq / TP / SL) */}
+                  {chart.refLines.map((rl) => (
+                    <g key={rl.label}>
+                      <line
+                        x1={PAD_LEFT}
+                        y1={rl.y}
+                        x2={chartWidth - PAD_RIGHT}
+                        y2={rl.y}
+                        stroke={rl.color}
+                        strokeOpacity={0.65}
+                        strokeDasharray={rl.dashed ? '5 4' : undefined}
+                        strokeWidth={1.25}
+                      />
+                      <text
+                        x={PAD_LEFT + 6}
+                        y={Math.max(PAD_TOP + 10, rl.y - 4)}
+                        fill={rl.color}
+                        className="font-mono text-[10px] font-semibold"
+                      >
+                        {rl.label}
+                      </text>
+                    </g>
+                  ))}
+
+                  {/* High/Low candle band */}
+                  {chart.bandPath ? (
+                    <path d={chart.bandPath} fill="#ffab96" fillOpacity={0.09} />
+                  ) : null}
+
+                  {/* Translucent split green / orange area to baseline */}
+                  {hasSplit && chart.areaPath ? (
+                    <path d={chart.areaPath} fill={`url(#${fillGradId})`} />
+                  ) : null}
+
+                  {/* Primary line: split green above profit threshold / brand orange below */}
+                  <path
+                    d={chart.linePath}
+                    fill="none"
+                    stroke={hasSplit ? `url(#${strokeGradId})` : '#ffab96'}
+                    strokeWidth={2}
+                    strokeLinejoin="round"
                   />
-                  <text
-                    x={WIDTH - PAD_RIGHT + 8}
-                    y={tick.y + 3}
-                    className="fill-content-tertiary font-mono text-[10px]"
-                  >
-                    {tick.label}
-                  </text>
-                </g>
-              ))}
 
-              {/* Zero line in PnL mode */}
-              {chart.zeroY != null ? (
-                <line
-                  x1={PAD_LEFT}
-                  y1={chart.zeroY}
-                  x2={WIDTH - PAD_RIGHT}
-                  y2={chart.zeroY}
-                  stroke="#9a8c8f"
-                  strokeOpacity={0.45}
-                  strokeDasharray="4 4"
-                />
-              ) : null}
+                  {/* Event markers (Open / Scale-in / Margin + / Partial Close / Close / Liq) */}
+                  {chart.eventDots.map((dot) => (
+                    <g key={dot.ev.id}>
+                      <circle
+                        cx={dot.x}
+                        cy={dot.y}
+                        r={5.5}
+                        fill={dot.color}
+                        stroke="#14080e"
+                        strokeWidth={1.75}
+                      >
+                        <title>
+                          {`${dot.ev.action} @ ${formatPrice(dot.ev.price)} (${formatUtc(dot.ev.occurredAt)})`}
+                        </title>
+                      </circle>
+                    </g>
+                  ))}
 
-              {/* Reference price levels (Entry / Liq / TP / SL) */}
-              {chart.refLines.map((rl) => (
-                <g key={rl.label}>
-                  <line
-                    x1={PAD_LEFT}
-                    y1={rl.y}
-                    x2={WIDTH - PAD_RIGHT}
-                    y2={rl.y}
-                    stroke={rl.color}
-                    strokeOpacity={0.65}
-                    strokeDasharray={rl.dashed ? '5 4' : undefined}
-                    strokeWidth={1.25}
-                  />
-                  <text
-                    x={PAD_LEFT + 6}
-                    y={Math.max(PAD_TOP + 10, rl.y - 4)}
-                    fill={rl.color}
-                    className="font-mono text-[10px] font-semibold"
-                  >
-                    {rl.label}
-                  </text>
-                </g>
-              ))}
+                  {/* Active crosshair & hover columns */}
+                  {chart.coords[activeIdx] ? (
+                    <g>
+                      <line
+                        x1={chart.coords[activeIdx].x}
+                        y1={PAD_TOP}
+                        x2={chart.coords[activeIdx].x}
+                        y2={PAD_TOP + plotH}
+                        stroke="#ffab96"
+                        strokeOpacity={0.45}
+                        strokeDasharray="3 3"
+                      />
+                      <circle
+                        cx={chart.coords[activeIdx].x}
+                        cy={chart.coords[activeIdx].y}
+                        r={4.5}
+                        fill={activeDotColor}
+                        stroke="#14080e"
+                        strokeWidth={1.5}
+                      />
+                    </g>
+                  ) : null}
 
-              {/* High/Low candle band */}
-              {chart.bandPath ? (
-                <path d={chart.bandPath} fill="#ffab96" fillOpacity={0.12} />
-              ) : null}
+                  {chart.coords.map((c, idx) => (
+                    <rect
+                      key={`hit-${String(idx)}`}
+                      x={c.x - Math.max(4, plotW / Math.max(chart.coords.length * 2, 1))}
+                      y={PAD_TOP}
+                      width={Math.max(8, plotW / Math.max(chart.coords.length, 1))}
+                      height={plotH}
+                      fill="transparent"
+                      className="cursor-crosshair"
+                      onMouseEnter={() => { setHoveredIdx(idx) }}
+                    />
+                  ))}
 
-              {/* Primary line */}
-              <path
-                d={chart.linePath}
-                fill="none"
-                stroke={mode === 'pnl' ? '#34d399' : '#f5efe6'}
-                strokeWidth={2}
-                strokeLinejoin="round"
-              />
-
-              {/* Event markers (Open / Scale-in / Margin + / Partial Close / Close / Liq) */}
-              {chart.eventDots.map((dot) => (
-                <g key={dot.ev.id}>
-                  <circle
-                    cx={dot.x}
-                    cy={dot.y}
-                    r={5.5}
-                    fill={dot.color}
-                    stroke="#14080e"
-                    strokeWidth={1.75}
-                  >
-                    <title>
-                      {`${dot.ev.action} @ ${formatPrice(dot.ev.price)} (${formatUtc(dot.ev.occurredAt)})`}
-                    </title>
-                  </circle>
-                </g>
-              ))}
-
-              {/* Active crosshair & hover columns */}
-              {chart.coords[activeIdx] ? (
-                <g>
-                  <line
-                    x1={chart.coords[activeIdx].x}
-                    y1={PAD_TOP}
-                    x2={chart.coords[activeIdx].x}
-                    y2={PAD_TOP + plotH}
-                    stroke="#ffab96"
-                    strokeOpacity={0.45}
-                    strokeDasharray="3 3"
-                  />
-                  <circle
-                    cx={chart.coords[activeIdx].x}
-                    cy={chart.coords[activeIdx].y}
-                    r={4}
-                    fill="#ffab96"
-                    stroke="#14080e"
-                    strokeWidth={1.5}
-                  />
-                </g>
-              ) : null}
-
-              {chart.coords.map((c, idx) => (
-                <rect
-                  key={`hit-${String(idx)}`}
-                  x={c.x - Math.max(4, plotW / Math.max(chart.coords.length * 2, 1))}
-                  y={PAD_TOP}
-                  width={Math.max(8, plotW / Math.max(chart.coords.length, 1))}
-                  height={plotH}
-                  fill="transparent"
-                  className="cursor-crosshair"
-                  onMouseEnter={() => { setHoveredIdx(idx) }}
-                />
-              ))}
-
-              {/* X-axis timestamps */}
-              {[0, Math.floor((chart.coords.length - 1) / 2), chart.coords.length - 1]
-                .filter((idx, i, arr) => arr.indexOf(idx) === i && idx >= 0 && idx < chart.coords.length)
-                .map((idx) => {
-                  const c = chart.coords[idx]
-                  return (
-                    <text
-                      key={`xt-${String(idx)}`}
-                      x={c.x}
-                      y={HEIGHT - 8}
-                      textAnchor={idx === 0 ? 'start' : idx === chart.coords.length - 1 ? 'end' : 'middle'}
-                      className="fill-content-tertiary font-mono text-[10px]"
-                    >
-                      {shortTime(c.pt.timestamp, chart.showDate)}
-                    </text>
-                  )
-                })}
-            </svg>
+                  {/* X-axis timestamps */}
+                  {[0, Math.floor((chart.coords.length - 1) / 2), chart.coords.length - 1]
+                    .filter((idx, i, arr) => arr.indexOf(idx) === i && idx >= 0 && idx < chart.coords.length)
+                    .map((idx) => {
+                      const c = chart.coords[idx]
+                      return (
+                        <text
+                          key={`xt-${String(idx)}`}
+                          x={c.x}
+                          y={HEIGHT - 8}
+                          textAnchor={idx === 0 ? 'start' : idx === chart.coords.length - 1 ? 'end' : 'middle'}
+                          className="fill-content-tertiary font-mono text-[10px]"
+                        >
+                          {shortTime(c.pt.timestamp, chart.showDate)}
+                        </text>
+                      )
+                    })}
+                </svg>
+              )
+            })()}
           </div>
 
           {/* Clean compact legend */}

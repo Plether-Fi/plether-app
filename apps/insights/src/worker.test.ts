@@ -116,6 +116,7 @@ describe('Cloudflare Pages Worker', () => {
   it.each([
     ['/api/insights/v1/status', 30],
     ['/api/insights/v1/overview', 15],
+    ['/api/insights/v1/market/exposure', 15],
     ['/api/insights/v1/execution/quality', 15],
     ['/api/insights/v1/execution/trades?limit=25', 15],
     ['/api/insights/v1/keepers/status', 15],
@@ -129,6 +130,7 @@ describe('Cloudflare Pages Worker', () => {
     ['/api/insights/v1/protocol/manifest', 60],
     ['/api/insights/v1/infra/status', 15],
     [`/api/insights/v1/wallets/0x${'a'.repeat(40)}/summary`, 15],
+    [`/api/insights/v1/divisions/wallets/0x${'a'.repeat(40)}`, 15],
     ['/api/insights/v1/divisions/stats', 15],
     ['/api/insights/v1/divisions/traders', 15],
     ['/api/insights/v1/divisions/live', 15],

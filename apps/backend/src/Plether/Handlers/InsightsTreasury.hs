@@ -20,7 +20,6 @@ module Plether.Handlers.InsightsTreasury
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
-import Control.Concurrent.MVar (MVar, newMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
@@ -28,6 +27,7 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Data.Either (isRight)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -48,6 +48,7 @@ import Database.PostgreSQL.Simple.Transaction
   )
 import Plether.AA.Kernel (KernelProfile (..))
 import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelSponsorshipConfig (..), kernelScope)
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.KernelOperation (KernelScope (..))
@@ -58,7 +59,6 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
   , getAccountLedgerSnapshotAtBlock
   )
 import Plether.Ethereum.Rpc (ethGetBalance)
-import Plether.Handlers.InsightsInfra (withTtlCache)
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import System.IO.Unsafe (unsafePerformIO)
@@ -68,12 +68,16 @@ import Text.Read (readMaybe)
 zeroAddress :: Text
 zeroAddress = "0x0000000000000000000000000000000000000000"
 
-treasuryCacheTtlNSec :: Word64
-treasuryCacheTtlNSec = 10000000000 -- 10 seconds
+treasuryFreshTtlNSec :: Word64
+treasuryFreshTtlNSec = 30 * 1000000000 -- 30 seconds fresh
+
+treasuryStaleTtlNSec :: Word64
+treasuryStaleTtlNSec = 600 * 1000000000 -- 10 minutes stale-while-revalidate
 
 {-# NOINLINE treasuryOverviewCache #-}
-treasuryOverviewCache :: MVar (Maybe (Word64, ApiResponse Value))
-treasuryOverviewCache = unsafePerformIO (newMVar Nothing)
+treasuryOverviewCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+treasuryOverviewCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 treasuryFreshTtlNSec treasuryStaleTtlNSec)
 
 data PendingTreasuryRotation = PendingTreasuryRotation
   { ptrTreasury :: Text
@@ -110,22 +114,33 @@ data DailyRevenuePoint = DailyRevenuePoint
   }
   deriving stock (Eq, Show)
 
-data OrderWindowRow = OrderWindowRow
-  { owrOrders24h :: Int
-  , owrVol24h :: Text
-  , owrFee24h :: Text
-  , owrSpread24h :: Text
-  , owrBounty24h :: Text
-  , owrOrders7d :: Int
-  , owrVol7d :: Text
-  , owrFee7d :: Text
-  , owrSpread7d :: Text
-  , owrBounty7d :: Text
+data OrderAllWindowsRow = OrderAllWindowsRow
+  { oawOrders24h :: Int
+  , oawVol24h :: Text
+  , oawFee24h :: Text
+  , oawSpread24h :: Text
+  , oawBounty24h :: Text
+  , oawOrders7d :: Int
+  , oawVol7d :: Text
+  , oawFee7d :: Text
+  , oawSpread7d :: Text
+  , oawBounty7d :: Text
+  , oawOrders30d :: Int
+  , oawVol30d :: Text
+  , oawFee30d :: Text
+  , oawSpread30d :: Text
+  , oawBounty30d :: Text
+  , oawOrdersAll :: Int
+  , oawVolAll :: Text
+  , oawFeeAll :: Text
+  , oawSpreadAll :: Text
+  , oawBountyAll :: Text
+  , oawPriorSeriesFee :: Text
   }
 
-instance FromRow OrderWindowRow where
+instance FromRow OrderAllWindowsRow where
   fromRow =
-    OrderWindowRow
+    OrderAllWindowsRow
       <$> field
       <*> field
       <*> field
@@ -136,24 +151,8 @@ instance FromRow OrderWindowRow where
       <*> field
       <*> field
       <*> field
-
-data OrderLongWindowRow = OrderLongWindowRow
-  { olwrOrders30d :: Int
-  , olwrVol30d :: Text
-  , olwrFee30d :: Text
-  , olwrSpread30d :: Text
-  , olwrBounty30d :: Text
-  , olwrOrdersAll :: Int
-  , olwrVolAll :: Text
-  , olwrFeeAll :: Text
-  , olwrSpreadAll :: Text
-  , olwrBountyAll :: Text
-  }
-
-instance FromRow OrderLongWindowRow where
-  fromRow =
-    OrderLongWindowRow
-      <$> field
+      <*> field
+      <*> field
       <*> field
       <*> field
       <*> field
@@ -215,8 +214,7 @@ getTreasuryOverviewResponse
   -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
 getTreasuryOverviewResponse pool client cfg mKernel =
-  withTtlCache treasuryOverviewCache treasuryCacheTtlNSec $
-    computeTreasuryOverviewResponse pool client cfg mKernel
+  snd <$> runSingleFlightCache treasuryOverviewCache () isRight (computeTreasuryOverviewResponse pool client cfg mKernel)
 
 computeTreasuryOverviewResponse
   :: DbPool
@@ -236,23 +234,33 @@ computeTreasuryOverviewResponse pool client cfg mKernel = do
       todayStart = (nowSec `div` 86400) * 86400
       seriesStart = todayStart - 29 * 86400
 
-  onChain <- fetchOnChainTreasuryState client manifestTreasury
+  (onChain, (win24, win7, win30, winAll, dailySeries, recentFeeOrders, initialMovements)) <-
+    runConcurrently $
+      (,)
+        <$> Concurrently (fetchOnChainTreasuryState client manifestTreasury)
+        <*> Concurrently
+          ( fetchTreasuryDbLedger
+              pool
+              cfg
+              mKernel
+              chainId
+              router
+              settlementToken
+              manifestTreasury
+              since24h
+              since7d
+              since30d
+              seriesStart
+              todayStart
+          )
   let effectiveTreasury = octTreasuryAddress onChain <|> manifestTreasury
-
-  (win24, win7, win30, winAll, dailySeries, recentFeeOrders, movements) <-
-    fetchTreasuryDbLedger
-      pool
-      cfg
-      mKernel
-      chainId
-      router
-      settlementToken
-      effectiveTreasury
-      since24h
-      since7d
-      since30d
-      seriesStart
-      todayStart
+  movements <-
+    case (effectiveTreasury, manifestTreasury) of
+      (Just eff, Just man) | T.toLower eff == T.toLower man -> pure initialMovements
+      (Just eff, _) ->
+        withDb pool $ \conn ->
+          withReadSnapshot conn $ fetchTreasuryMovements conn chainId router settlementToken (T.toLower eff)
+      (Nothing, _) -> pure []
 
   let clearinghouseBal = alsSettlementBalanceAssets <$> octClearinghouseSnapshot onChain
       clearinghouseFree = alsFreeSettlementAssets <$> octClearinghouseSnapshot onChain
@@ -338,7 +346,7 @@ computeTreasuryOverviewResponse pool client cfg mKernel = do
 
 fetchOnChainTreasuryState :: EthClient -> Maybe Text -> IO OnChainTreasuryState
 fetchOnChainTreasuryState client manifestTreasury = do
-  mBlock <- timeout 3000000 $ observeIo $ ethBlockNumber client
+  mBlock <- timeout 1500000 $ observeIo $ ethBlockNumber client
   case mBlock of
     Just (Just (Right blk)) -> do
       let engine = Manifest.cfdEngineAddress
@@ -347,7 +355,7 @@ fetchOnChainTreasuryState client manifestTreasury = do
           token = Manifest.settlementTokenAddress
           accountLens = Manifest.cfdEngineAccountLensAddress
           callAt target calldata = do
-            res <- timeout 2500000 $ observeIo $ ethCallAtBlock client (CallParams target calldata) blk
+            res <- timeout 1500000 $ observeIo $ ethCallAtBlock client (CallParams target calldata) blk
             pure $ case res of
               Just (Just (Right bytes)) -> Just bytes
               _ -> Nothing
@@ -507,151 +515,137 @@ fetchTreasuryDbLedger
       , [TreasuryMovementRow]
       )
 fetchTreasuryDbLedger pool _cfg mKernel chainId router tokenAddr mTreasury since24h since7d since30d seriesStart todayStart = do
-  (ordShort, ordLong, creditedTuple, liqTuple, dailyOrders, priorFeeTotal, topFeeOrders, movements) <-
-    withDb pool $ \conn ->
-      withReadSnapshot conn $ do
-        sRows <-
-          query
-            conn
-            "WITH bounds AS (SELECT ?::BIGINT AS s24, ?::BIGINT AS s7) \
-            \SELECT \
-            \  COUNT(*) FILTER (WHERE o.terminal_timestamp >= b.s24)::INT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
-            \  COUNT(*) FILTER (WHERE o.terminal_timestamp >= b.s7)::INT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT \
-            \FROM perps_orders o \
-            \CROSS JOIN bounds b \
-            \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' AND o.terminal_timestamp IS NOT NULL"
-            (since24h, since7d, chainId, router)
-            :: IO [OrderWindowRow]
-        lRows <-
-          query
-            conn
-            "WITH bounds AS (SELECT ?::BIGINT AS s30) \
-            \SELECT \
-            \  COUNT(*) FILTER (WHERE o.terminal_timestamp >= b.s30)::INT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
-            \  COUNT(*)::INT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
-            \FROM perps_orders o \
-            \CROSS JOIN bounds b \
-            \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' AND o.terminal_timestamp IS NOT NULL"
-            (since30d, chainId, router)
-            :: IO [OrderLongWindowRow]
-        credRows <-
-          query
-            conn
-            "SELECT \
-            \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
-            \FROM perps_events \
-            \WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
-            (since24h, since7d, since30d, chainId, router)
-            :: IO [(Text, Text, Text, Text)]
-        liqRows <-
-          query
-            conn
-            "SELECT \
-            \  COUNT(*) FILTER (WHERE timestamp >= ?)::INT, \
-            \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
-            \  COUNT(*) FILTER (WHERE timestamp >= ?)::INT, \
-            \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
-            \  COUNT(*) FILTER (WHERE timestamp >= ?)::INT, \
-            \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
-            \  COUNT(*)::INT, \
-            \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
-            \FROM perps_account_activity \
-            \WHERE chain_id = ? AND release_router = ? AND activity_type = 'Liquidated'"
-            (since24h, since24h, since7d, since7d, since30d, since30d, chainId, router)
-            :: IO [(Int, Text, Int, Text, Int, Text, Int, Text)]
-        priorRows <-
-          query
-            conn
-            "SELECT COALESCE(SUM(CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
-            \FROM perps_orders \
-            \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' AND terminal_timestamp IS NOT NULL AND terminal_timestamp < ?"
-            (chainId, router, seriesStart)
-            :: IO [Only Text]
-        dayOrdRows <-
-          query
-            conn
-            "SELECT \
-            \  ((terminal_timestamp / 86400) * 86400)::BIGINT AS day_unix, \
-            \  COUNT(*)::INT, \
-            \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
-            \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
-            \FROM perps_orders \
-            \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-            \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ? \
-            \GROUP BY day_unix \
-            \ORDER BY day_unix ASC"
-            (chainId, router, seriesStart)
-            :: IO [(Integer, Int, Text, Text)]
-        topRows <-
-          query
-            conn
-            "SELECT \
-            \  order_id, \
-            \  COALESCE(terminal_tx_hash, ''), \
-            \  COALESCE(account, ''), \
-            \  side, \
-            \  COALESCE(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN receipt_economics->>'executionNotionalAssets' ELSE '0' END, '0'), \
-            \  COALESCE(CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN receipt_economics->>'executionFeeAssets' ELSE '0' END, '0'), \
-            \  COALESCE(terminal_block_number, 0), \
-            \  COALESCE(terminal_timestamp, 0) \
-            \FROM perps_orders \
-            \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-            \  AND receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' \
-            \  AND (receipt_economics->>'executionFeeAssets')::NUMERIC > 0 \
-            \ORDER BY COALESCE(terminal_block_number, 0) DESC, order_id DESC \
-            \LIMIT 20"
-            (chainId, router)
-            :: IO [(Integer, Text, Text, Maybe Int, Text, Text, Integer, Integer)]
-        movRows <- case mTreasury of
-          Nothing -> pure []
-          Just addr -> fetchTreasuryMovements conn chainId router tokenAddr (T.toLower addr)
-        let sRow = fromMaybe (OrderWindowRow 0 "0" "0" "0" "0" 0 "0" "0" "0" "0") (listToMaybe sRows)
-            lRow = fromMaybe (OrderLongWindowRow 0 "0" "0" "0" "0" 0 "0" "0" "0" "0") (listToMaybe lRows)
-            credT = fromMaybe ("0", "0", "0", "0") (listToMaybe credRows)
-            liqT = fromMaybe (0, "0", 0, "0", 0, "0", 0, "0") (listToMaybe liqRows)
-            priorFee = maybe 0 (\(Only t) -> parseIntegerOrZero t) (listToMaybe priorRows)
-            parsedTop =
-              [ TopFeeOrderRow oid txH acc sd (parseIntegerOrZero volT) (parseIntegerOrZero feeT) blk ts
-              | (oid, txH, acc, sd, volT, feeT, blk, ts) <- topRows
-              ]
-        pure (sRow, lRow, credT, liqT, dayOrdRows, priorFee, parsedTop, movRows)
-
-  -- Subsidy & AA sponsorship costs live in optional tables depending on stack;
-  -- query them best-effort via observeIo so missing tables fail softly to 0.
-  (closeAssistWin, dailyCloseAssist) <- fetchCloseAssistanceTelemetry pool chainId router seriesStart
-  (gasWin, dailyGas) <- fetchSponsoredGasTelemetry pool mKernel seriesStart
+  ((ordAll, creditedTuple, liqTuple, dailyOrders, topFeeOrders, movements), (closeAssistWin, dailyCloseAssist), (gasWin, dailyGas)) <-
+    runConcurrently $
+      (,,)
+        <$> Concurrently
+          ( withDb pool $ \conn ->
+              withReadSnapshot conn $ do
+                allOrderRows <-
+                  query
+                    conn
+                    "WITH bounds AS (SELECT ?::BIGINT AS s24, ?::BIGINT AS s7, ?::BIGINT AS s30, ?::BIGINT AS sser) \
+                    \SELECT \
+                    \  COUNT(*) FILTER (WHERE o.terminal_timestamp >= b.s24)::INT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s24), 0)::TEXT, \
+                    \  COUNT(*) FILTER (WHERE o.terminal_timestamp >= b.s7)::INT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s7), 0)::TEXT, \
+                    \  COUNT(*) FILTER (WHERE o.terminal_timestamp >= b.s30)::INT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp >= b.s30), 0)::TEXT, \
+                    \  COUNT(*)::INT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'frozenSpreadAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'frozenSpreadAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionBountyAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionBountyAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN o.receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (o.receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) FILTER (WHERE o.terminal_timestamp < b.sser), 0)::TEXT \
+                    \FROM perps_orders o \
+                    \CROSS JOIN bounds b \
+                    \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' AND o.terminal_timestamp IS NOT NULL"
+                    (since24h, since7d, since30d, seriesStart, chainId, router)
+                    :: IO [OrderAllWindowsRow]
+                credRows <-
+                  query
+                    conn
+                    "SELECT \
+                    \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'protocolFeeCollectedAssets' ~ '^[0-9]+$' THEN (data->>'protocolFeeCollectedAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
+                    \FROM perps_events \
+                    \WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
+                    (since24h, since7d, since30d, chainId, router)
+                    :: IO [(Text, Text, Text, Text)]
+                liqRows <-
+                  query
+                    conn
+                    "SELECT \
+                    \  COUNT(*) FILTER (WHERE timestamp >= ?)::INT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
+                    \  COUNT(*) FILTER (WHERE timestamp >= ?)::INT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
+                    \  COUNT(*) FILTER (WHERE timestamp >= ?)::INT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END) FILTER (WHERE timestamp >= ?), 0)::TEXT, \
+                    \  COUNT(*)::INT, \
+                    \  COALESCE(SUM(CASE WHEN data->>'keeperBountyAssets' ~ '^[0-9]+$' THEN (data->>'keeperBountyAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
+                    \FROM perps_account_activity \
+                    \WHERE chain_id = ? AND release_router = ? AND activity_type = 'Liquidated'"
+                    (since24h, since24h, since7d, since7d, since30d, since30d, chainId, router)
+                    :: IO [(Int, Text, Int, Text, Int, Text, Int, Text)]
+                dayOrdRows <-
+                  query
+                    conn
+                    "SELECT \
+                    \  ((terminal_timestamp / 86400) * 86400)::BIGINT AS day_unix, \
+                    \  COUNT(*)::INT, \
+                    \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+                    \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END), 0)::TEXT \
+                    \FROM perps_orders \
+                    \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+                    \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ? \
+                    \GROUP BY day_unix \
+                    \ORDER BY day_unix ASC"
+                    (chainId, router, seriesStart)
+                    :: IO [(Integer, Int, Text, Text)]
+                topRows <-
+                  query
+                    conn
+                    "SELECT \
+                    \  order_id, \
+                    \  COALESCE(terminal_tx_hash, ''), \
+                    \  COALESCE(account, ''), \
+                    \  side, \
+                    \  COALESCE(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN receipt_economics->>'executionNotionalAssets' ELSE '0' END, '0'), \
+                    \  COALESCE(CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN receipt_economics->>'executionFeeAssets' ELSE '0' END, '0'), \
+                    \  COALESCE(terminal_block_number, 0), \
+                    \  COALESCE(terminal_timestamp, 0) \
+                    \FROM perps_orders \
+                    \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+                    \  AND receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' \
+                    \  AND (receipt_economics->>'executionFeeAssets')::NUMERIC > 0 \
+                    \ORDER BY COALESCE(terminal_block_number, 0) DESC, order_id DESC \
+                    \LIMIT 20"
+                    (chainId, router)
+                    :: IO [(Integer, Text, Text, Maybe Int, Text, Text, Integer, Integer)]
+                movRows <- case mTreasury of
+                  Nothing -> pure []
+                  Just addr -> fetchTreasuryMovements conn chainId router tokenAddr (T.toLower addr)
+                let aRow =
+                      fromMaybe
+                        (OrderAllWindowsRow 0 "0" "0" "0" "0" 0 "0" "0" "0" "0" 0 "0" "0" "0" "0" 0 "0" "0" "0" "0" "0")
+                        (listToMaybe allOrderRows)
+                    credT = fromMaybe ("0", "0", "0", "0") (listToMaybe credRows)
+                    liqT = fromMaybe (0, "0", 0, "0", 0, "0", 0, "0") (listToMaybe liqRows)
+                    parsedTop =
+                      [ TopFeeOrderRow oid txH acc sd (parseIntegerOrZero volT) (parseIntegerOrZero feeT) blk ts
+                      | (oid, txH, acc, sd, volT, feeT, blk, ts) <- topRows
+                      ]
+                pure (aRow, credT, liqT, dayOrdRows, parsedTop, movRows)
+          )
+        <*> Concurrently (fetchCloseAssistanceTelemetry pool chainId router seriesStart)
+        <*> Concurrently (fetchSponsoredGasTelemetry pool mKernel seriesStart)
 
   let (cred24, cred7, cred30, credAll) = creditedTuple
       (liqC24, liqB24, liqC7, liqB7, liqC30, liqB30, liqCAll, liqBAll) = liqTuple
       ((caC24, caA24), (caC7, caA7), (caC30, caA30), (caCAll, caAAll)) = closeAssistWin
       ((gC24, gW24), (gC7, gW7), (gC30, gW30), (gCAll, gWAll)) = gasWin
+      priorFeeTotal = parseIntegerOrZero (oawPriorSeriesFee ordAll)
       win24 =
         TreasuryWindowSummary
-          { twsExecutedOrders = owrOrders24h ordShort
-          , twsVolumeAssets = parseIntegerOrZero (owrVol24h ordShort)
-          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (owrFee24h ordShort)
+          { twsExecutedOrders = oawOrders24h ordAll
+          , twsVolumeAssets = parseIntegerOrZero (oawVol24h ordAll)
+          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (oawFee24h ordAll)
           , twsExecutionFeeCreditedAssets = parseIntegerOrZero cred24
-          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (owrSpread24h ordShort)
-          , twsKeeperBountyAssets = parseIntegerOrZero (owrBounty24h ordShort)
+          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (oawSpread24h ordAll)
+          , twsKeeperBountyAssets = parseIntegerOrZero (oawBounty24h ordAll)
           , twsLiquidationCount = liqC24
           , twsLiquidationKeeperBountyAssets = parseIntegerOrZero liqB24
           , twsCloseAssistanceCount = caC24
@@ -661,12 +655,12 @@ fetchTreasuryDbLedger pool _cfg mKernel chainId router tokenAddr mTreasury since
           }
       win7 =
         TreasuryWindowSummary
-          { twsExecutedOrders = owrOrders7d ordShort
-          , twsVolumeAssets = parseIntegerOrZero (owrVol7d ordShort)
-          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (owrFee7d ordShort)
+          { twsExecutedOrders = oawOrders7d ordAll
+          , twsVolumeAssets = parseIntegerOrZero (oawVol7d ordAll)
+          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (oawFee7d ordAll)
           , twsExecutionFeeCreditedAssets = parseIntegerOrZero cred7
-          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (owrSpread7d ordShort)
-          , twsKeeperBountyAssets = parseIntegerOrZero (owrBounty7d ordShort)
+          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (oawSpread7d ordAll)
+          , twsKeeperBountyAssets = parseIntegerOrZero (oawBounty7d ordAll)
           , twsLiquidationCount = liqC7
           , twsLiquidationKeeperBountyAssets = parseIntegerOrZero liqB7
           , twsCloseAssistanceCount = caC7
@@ -676,12 +670,12 @@ fetchTreasuryDbLedger pool _cfg mKernel chainId router tokenAddr mTreasury since
           }
       win30 =
         TreasuryWindowSummary
-          { twsExecutedOrders = olwrOrders30d ordLong
-          , twsVolumeAssets = parseIntegerOrZero (olwrVol30d ordLong)
-          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (olwrFee30d ordLong)
+          { twsExecutedOrders = oawOrders30d ordAll
+          , twsVolumeAssets = parseIntegerOrZero (oawVol30d ordAll)
+          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (oawFee30d ordAll)
           , twsExecutionFeeCreditedAssets = parseIntegerOrZero cred30
-          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (olwrSpread30d ordLong)
-          , twsKeeperBountyAssets = parseIntegerOrZero (olwrBounty30d ordLong)
+          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (oawSpread30d ordAll)
+          , twsKeeperBountyAssets = parseIntegerOrZero (oawBounty30d ordAll)
           , twsLiquidationCount = liqC30
           , twsLiquidationKeeperBountyAssets = parseIntegerOrZero liqB30
           , twsCloseAssistanceCount = caC30
@@ -691,12 +685,12 @@ fetchTreasuryDbLedger pool _cfg mKernel chainId router tokenAddr mTreasury since
           }
       winAll =
         TreasuryWindowSummary
-          { twsExecutedOrders = olwrOrdersAll ordLong
-          , twsVolumeAssets = parseIntegerOrZero (olwrVolAll ordLong)
-          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (olwrFeeAll ordLong)
+          { twsExecutedOrders = oawOrdersAll ordAll
+          , twsVolumeAssets = parseIntegerOrZero (oawVolAll ordAll)
+          , twsExecutionFeeAssessedAssets = parseIntegerOrZero (oawFeeAll ordAll)
           , twsExecutionFeeCreditedAssets = parseIntegerOrZero credAll
-          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (olwrSpreadAll ordLong)
-          , twsKeeperBountyAssets = parseIntegerOrZero (olwrBountyAll ordLong)
+          , twsFrozenSpreadAssessedAssets = parseIntegerOrZero (oawSpreadAll ordAll)
+          , twsKeeperBountyAssets = parseIntegerOrZero (oawBountyAll ordAll)
           , twsLiquidationCount = liqCAll
           , twsLiquidationKeeperBountyAssets = parseIntegerOrZero liqBAll
           , twsCloseAssistanceCount = caCAll

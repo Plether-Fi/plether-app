@@ -8,6 +8,7 @@ import { publishWeek } from '../divisions/engine'
 
 const statusQuery = vi.hoisted(() => vi.fn())
 const overviewQuery = vi.hoisted(() => vi.fn())
+const marketExposureQuery = vi.hoisted(() => vi.fn())
 const liveQuery = vi.hoisted(() => vi.fn())
 const publicationQuery = vi.hoisted(() => vi.fn())
 const statsQuery = vi.hoisted(() => vi.fn())
@@ -18,6 +19,7 @@ vi.mock('../api', async () => {
     ...actual,
     useInsightsStatus: statusQuery,
     useOverview: overviewQuery,
+    useMarketExposure: marketExposureQuery,
   }
 })
 vi.mock('../divisions/query', () => ({
@@ -38,6 +40,11 @@ beforeEach(() => {
     isError: false,
   })
   overviewQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  })
+  marketExposureQuery.mockReturnValue({
     data: undefined,
     isLoading: false,
     isError: false,
@@ -141,7 +148,7 @@ describe('OverviewPage (Protocol Pulse)', () => {
     expect(screen.getByText('30 contracts')).toBeInTheDocument()
   })
 
-  it('adapts network labels and trading app URL automatically for Arbitrum One', () => {
+  it('adapts network labels and app URLs automatically for Arbitrum One', () => {
     statusQuery.mockReturnValue({
       data: {
         healthy: true,
@@ -154,9 +161,71 @@ describe('OverviewPage (Protocol Pulse)', () => {
     })
     show()
     expect(screen.getByText('Arbitrum One')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open trading app ↗' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Vaults on App ↗' })).toHaveAttribute(
       'href',
-      'https://app.plether.com',
+      'https://app.plether.com/vaults',
+    )
+  })
+
+  it('renders global market exposure skew and top active positions with lifecycle links', () => {
+    marketExposureQuery.mockReturnValue({
+      data: {
+        network: { chainId: 421614, releaseVersion: 'v2.0.0', settlementAssetSymbol: 'USDG' },
+        observedAt: '2026-11-26T22:00:00Z',
+        currentMarkPrice: '95500000',
+        markObservedAt: '2026-11-26T21:59:55Z',
+        summary: {
+          longOpenInterestAssets: '75000000000',
+          shortOpenInterestAssets: '25000000000',
+          totalOpenInterestAssets: '100000000000',
+          netSkewAssets: '50000000000',
+          longShareBps: 7500,
+          shortShareBps: 2500,
+          openPositionCount: 3,
+          longCount: 2,
+          shortCount: 1,
+          avgLeverageX100: 750,
+        },
+        positions: [
+          {
+            account: account(1).address,
+            discordUsername: 'alice',
+            positionId: 'pos-0xabc:0',
+            market: 'plDXY-PERP',
+            side: 'long',
+            size: '50000000000000000000000',
+            notionalAssets: '50000000000',
+            marginAssets: '6000000000',
+            entryPrice: '96200000',
+            markPrice: '95500000',
+            liquidationPrice: '105000000',
+            distanceToLiquidationBps: 900,
+            effectiveLeverageX100: 833,
+            unrealizedPnlAssets: '950000000',
+            openedAt: '2026-11-26T18:00:00Z',
+            durationSeconds: 14400,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    show()
+    expect(screen.getByText('Live market exposure & top active positions')).toBeInTheDocument()
+    expect(screen.getByText(/Long 75\.0%/)).toBeInTheDocument()
+    expect(screen.getByText(/Short 25\.0%/)).toBeInTheDocument()
+    const posTable = screen.getByRole('table', {
+      name: /Largest active plDXY-PERP open positions by notional exposure/i,
+    })
+    expect(within(posTable).getByText('@alice')).toBeInTheDocument()
+    expect(within(posTable).getByRole('link', { name: 'Lifecycle →' })).toHaveAttribute(
+      'href',
+      `/wallets/${account(1).address}/positions/pos-0xabc%3A0`,
+    )
+    expect(within(posTable).getByRole('link', { name: '@alice' })).toHaveAttribute(
+      'href',
+      `/wallets/${account(1).address}?tab=exposure`,
     )
   })
 

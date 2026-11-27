@@ -23,6 +23,7 @@ import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Char (isAlphaNum, isAscii)
+import Data.Either (isRight)
 import Data.IORef (newIORef)
 import Data.List (sort)
 import Data.Maybe (fromMaybe, mapMaybe)
@@ -38,6 +39,7 @@ import Numeric (readHex)
 import Plether.AA.Kernel (KernelProfile (..))
 import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelSponsorshipConfig (..), kernelScope)
 import Plether.AA.Readiness (Check (..), aggregateFunding)
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..), NativeAaConfig (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.KernelOperation (KernelScope (..), KernelSponsorBudget (..))
@@ -54,6 +56,7 @@ import Plether.Ethereum.Client
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
@@ -176,6 +179,11 @@ readMinDepositWei = do
     Just n | n > 0 -> n
     _ -> defaultMinDepositWei
 
+{-# NOINLINE sponsoredStatusCache #-}
+sponsoredStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+sponsoredStatusCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
 getSponsoredStatusResponse
   :: DbPool
   -> EthClient
@@ -183,7 +191,17 @@ getSponsoredStatusResponse
   -> Config
   -> Maybe KernelGatewayConfig
   -> IO (Either ApiError (ApiResponse Value))
-getSponsoredStatusResponse pool client manager cfg mKernel = do
+getSponsoredStatusResponse pool client manager cfg mKernel =
+  snd <$> runSingleFlightCache sponsoredStatusCache () isRight (computeSponsoredStatusResponse pool client manager cfg mKernel)
+
+computeSponsoredStatusResponse
+  :: DbPool
+  -> EthClient
+  -> Manager
+  -> Config
+  -> Maybe KernelGatewayConfig
+  -> IO (Either ApiError (ApiResponse Value))
+computeSponsoredStatusResponse pool client manager cfg mKernel = do
   nowPosix <- getPOSIXTime
   let nowSec = floor nowPosix :: Integer
       nowUtc = posixSecondsToUTCTime (fromIntegral nowSec)

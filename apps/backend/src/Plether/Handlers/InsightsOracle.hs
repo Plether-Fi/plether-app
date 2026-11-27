@@ -20,6 +20,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
+import Data.Either (isRight)
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
@@ -30,6 +31,7 @@ import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
 import Plether.AA.OracleReadiness (decodePolicy)
+import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (ensureOracleAdmissionEventsSchema)
@@ -40,6 +42,7 @@ import qualified Plether.Perps.Manifest as Manifest
 import Plether.Pyth.Basket (basketDisplayPriceCap)
 import Plether.Pyth.RevealPayload (maxComponentPublishTimeDivergence)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
@@ -102,12 +105,25 @@ data ParsedComponent = ParsedComponent
   , pcInverted :: Bool
   }
 
+{-# NOINLINE oracleHealthCache #-}
+oracleHealthCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+oracleHealthCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
 getOracleHealthResponse
   :: DbPool
   -> EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getOracleHealthResponse pool client cfg = do
+getOracleHealthResponse pool client cfg =
+  snd <$> runSingleFlightCache oracleHealthCache () isRight (computeOracleHealthResponse pool client cfg)
+
+computeOracleHealthResponse
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeOracleHealthResponse pool client cfg = do
   nowSec <- floor <$> getPOSIXTime
   let chainId = cfgPerpsChainId cfg
       bucket1hSec = 120 :: Integer

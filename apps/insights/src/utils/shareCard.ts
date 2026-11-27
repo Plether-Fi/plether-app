@@ -91,10 +91,33 @@ export interface AccountShareCardData {
   sparklineValues?: number[]
 }
 
+export interface PositionLifecycleShareCardData {
+  kind: 'position_lifecycle'
+  traderLabel: string
+  account: string
+  networkName: string
+  releaseVersion?: string | null
+  market: string
+  side: 'long' | 'short' | 'unknown'
+  status: 'open' | 'closed' | 'liquidated'
+  positionId: string
+  netPnlAssets: string
+  roiBps?: number | null
+  entryPrice: string
+  exitOrMarkPrice?: string | null
+  peakNotionalAssets: string
+  maxLeverageLabel: string
+  mfePnlAssets: string
+  maePnlAssets: string
+  liqBufferLabel: string
+  durationLabel: string
+}
+
 export type ShareCardData =
   | TradeShareCardData
   | OpenTradeShareCardData
   | PositionShareCardData
+  | PositionLifecycleShareCardData
   | DivisionShareCardData
   | AccountShareCardData
 
@@ -500,6 +523,55 @@ export function buildShareCardSvg(data: ShareCardData): string {
     return renderFrame(color, 'Live Perpetual Position', data.networkName, data.releaseVersion, data.traderLabel, data.account, 'CfdEngineAccountLens · insights.plether.com', body)
   }
 
+  if (data.kind === 'position_lifecycle') {
+    const netPnl = formatSignedUsdg(data.netPnlAssets)
+    const color = data.status === 'liquidated' ? '#ff572d' : toneHex(netPnl.tone)
+    const sideUpper = data.side.toUpperCase()
+    const statusUpper = data.status.toUpperCase()
+    const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99'
+    const roiText =
+      data.roiBps != null && Number.isFinite(data.roiBps)
+        ? `${data.roiBps > 0 ? '+' : ''}${(data.roiBps / 100).toFixed(2)}% ROI`
+        : null
+    const subParts: string[] = [
+      `${formatPrice(data.entryPrice)} → ${data.exitOrMarkPrice ? formatPrice(data.exitOrMarkPrice) : 'Open'}`,
+      `Held ${data.durationLabel}`,
+    ]
+    if (roiText) subParts.unshift(roiText)
+    const mfeCompact = `+${formatCompactAssets(data.mfePnlAssets).replace(' USDG', '')}`
+    const maeCompact = formatCompactAssets(data.maePnlAssets)
+    const stats = [
+      { label: 'Peak notional', value: formatCompactAssets(data.peakNotionalAssets) },
+      { label: 'Max leverage', value: data.maxLeverageLabel, accent: '#ffab96' },
+      { label: 'MFE / MAE', value: `${mfeCompact} / ${maeCompact}` },
+      {
+        label: data.status === 'open' ? 'Liq buffer' : 'Closest liq',
+        value: data.liqBufferLabel,
+        accent: data.status === 'liquidated' ? '#ff572d' : undefined,
+      },
+    ]
+    const pnlFontSize = netPnl.text.length <= 14 ? 72 : netPnl.text.length <= 18 ? 58 : 48
+    const sidePillText = `${statusUpper} ${sideUpper}`
+    const body = `
+      ${renderPill(60, 134, data.market, '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(218, 134, sidePillText, `${sideFg}22`, `${sideFg}88`, sideFg)}
+      <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">${data.status === 'open' ? 'NET PNL (INCL. UNREALIZED)' : 'POSITION LIFECYCLE NET PNL'}</text>
+      <text x="60" y="304" fill="${color}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(pnlFontSize)}" font-weight="800">${escapeXml(netPnl.text)}</text>
+      <text x="60" y="356" fill="#d8cbd0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="600">${escapeXml(subParts.join(' · '))}</text>
+      ${renderStatBoxes(stats, 408)}
+    `
+    return renderFrame(
+      color,
+      'Position Lifecycle Audit',
+      data.networkName,
+      data.releaseVersion,
+      data.traderLabel,
+      data.account,
+      `${data.positionId} · insights.plether.com`,
+      body,
+    )
+  }
+
   if (data.kind === 'division') {
     const tierPalette = resolveTierPalette(data.tier)
     const rankHeadline = data.rank !== null ? `RANK #${String(data.rank)}` : 'ACTIVE TRADER'
@@ -586,6 +658,11 @@ export function buildShareTweetUrl(data: ShareCardData, pageUrl: string): string
   } else if (data.kind === 'position') {
     const upnl = formatSignedUsdg(data.unrealizedPnlAssets).text
     headline = `Live ${data.side.toUpperCase()} ${data.market} position on Plether: ${upnl} unrealized PnL.`
+  } else if (data.kind === 'position_lifecycle') {
+    const netPnl = formatSignedUsdg(data.netPnlAssets).text
+    const stateLabel =
+      data.status === 'open' ? 'Live' : data.status === 'liquidated' ? 'Liquidated' : 'Closed'
+    headline = `${stateLabel} ${data.side.toUpperCase()} ${data.market} lifecycle on Plether: ${netPnl} net PnL (${data.maxLeverageLabel} max lev, held ${data.durationLabel}).`
   } else if (data.kind === 'division') {
     const tierPart = data.tier ? `${data.tier} Division` : 'Plether Divisions'
     const rankPart = data.rank !== null ? `Rank #${String(data.rank)} ` : ''

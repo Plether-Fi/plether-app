@@ -6,6 +6,7 @@ import {
   type BalanceHistoryPoint,
   type BalanceTimeframe,
 } from '../api/wallets'
+import { useContainerWidth } from '../hooks/useContainerWidth'
 import { formatAssets, formatCompactAssets, formatSignedAssets, formatUtc } from '../utils/format'
 import { EmptyState, LoadingState, Panel } from './ui'
 
@@ -27,7 +28,7 @@ const TIMEFRAMES: { id: BalanceTimeframe; label: string }[] = [
   { id: 'all', label: 'ALL' },
 ]
 
-const CHART_WIDTH = 1120
+const DEFAULT_CHART_WIDTH = 1120
 const CHART_HEIGHT = 276
 const PAD_LEFT = 12
 const PAD_RIGHT = 88
@@ -100,7 +101,9 @@ export function WalletBalanceChart({
   const [mode, setMode] = useState<ChartMode>('balance')
   const [timeframe, setTimeframe] = useState<BalanceTimeframe>('30d')
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-  const gradientId = useId()
+  const gradientId = useId().replace(/:/g, '')
+  const [chartBoxRef, measuredWidth] = useContainerWidth(DEFAULT_CHART_WIDTH)
+  const chartWidth = Math.max(320, measuredWidth)
 
   const nowUnix = useMemo(() => {
     if (observedAt) {
@@ -135,7 +138,7 @@ export function WalletBalanceChart({
     const maxTs = balanceSeries[balanceSeries.length - 1].timestamp
     const tsSpan = Math.max(maxTs - minTs, 1)
 
-    const plotW = CHART_WIDTH - PAD_LEFT - PAD_RIGHT
+    const plotW = chartWidth - PAD_LEFT - PAD_RIGHT
     const plotH = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM
 
     const coords = balanceSeries.map((pt, idx) => {
@@ -190,7 +193,7 @@ export function WalletBalanceChart({
       startRefY,
       yTicks,
       xTicks,
-      plotRight: CHART_WIDTH - PAD_RIGHT,
+      plotRight: chartWidth - PAD_RIGHT,
       plotBottom: PAD_TOP + plotH,
       delta: formatDeltaSummary(startBig, endBig),
       startAssets: balanceSeries[0].balanceAssets,
@@ -198,7 +201,7 @@ export function WalletBalanceChart({
       minAssets: minBig.toString(),
       maxAssets: maxBig.toString(),
     }
-  }, [balanceSeries])
+  }, [balanceSeries, chartWidth])
 
   const pnlGeometry = useMemo(() => {
     if (pnlSeries.points.length === 0) return null
@@ -216,7 +219,7 @@ export function WalletBalanceChart({
     const maxTs = pnlSeries.points[pnlSeries.points.length - 1].timestamp
     const tsSpan = Math.max(maxTs - minTs, 1)
 
-    const plotW = CHART_WIDTH - PAD_LEFT - PAD_RIGHT
+    const plotW = chartWidth - PAD_LEFT - PAD_RIGHT
     const plotH = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM
     const zeroY = PAD_TOP + (1 - (0 - minVal) / rangeVal) * plotH
     const maxAbsTrade = Math.max(...tradeValues.map((v) => Math.abs(v)), 1)
@@ -267,13 +270,13 @@ export function WalletBalanceChart({
       zeroY,
       yTicks,
       xTicks,
-      plotRight: CHART_WIDTH - PAD_RIGHT,
+      plotRight: chartWidth - PAD_RIGHT,
       plotBottom: PAD_TOP + plotH,
       positive: totalBig > 0n,
       negative: totalBig < 0n,
       winRatePct,
     }
-  }, [pnlSeries])
+  }, [pnlSeries, chartWidth])
 
   const activeBalancePoint =
     mode === 'balance' &&
@@ -305,7 +308,7 @@ export function WalletBalanceChart({
     if (!activeCoords || activeCoords.length === 0) return
     const rect = event.currentTarget.getBoundingClientRect()
     if (rect.width <= 0) return
-    const relX = ((event.clientX - rect.left) / rect.width) * CHART_WIDTH
+    const relX = ((event.clientX - rect.left) / rect.width) * chartWidth
     let closestIdx = 0
     let closestDist = Infinity
     for (let i = 0; i < activeCoords.length; i += 1) {
@@ -545,12 +548,13 @@ export function WalletBalanceChart({
         </div>
       ) : mode === 'balance' ? (
         balanceGeometry && balanceGeometry.coords.length > 0 ? (
-          <div className="px-4 pb-3 pt-4 sm:px-5">
+          <div ref={chartBoxRef} className="px-4 pb-3 pt-4 sm:px-5">
             <svg
-              viewBox={`0 0 ${String(CHART_WIDTH)} ${String(CHART_HEIGHT)}`}
+              viewBox={`0 0 ${String(chartWidth)} ${String(CHART_HEIGHT)}`}
+              style={{ height: `${String(CHART_HEIGHT)}px` }}
               role="img"
               aria-label={`Wallet balance chart over ${timeframe}`}
-              className="h-64 w-full select-none overflow-visible sm:h-72"
+              className="block w-full select-none overflow-visible"
               onPointerMove={handlePointerMove}
               onPointerLeave={() => {
                 setHoveredIndex(null)
@@ -739,22 +743,56 @@ export function WalletBalanceChart({
           />
         )
       ) : pnlGeometry && pnlGeometry.coords.length > 0 ? (
-        <div className="px-4 pb-3 pt-4 sm:px-5">
+        <div ref={chartBoxRef} className="px-4 pb-3 pt-4 sm:px-5">
           <svg
-            viewBox={`0 0 ${String(CHART_WIDTH)} ${String(CHART_HEIGHT)}`}
+            viewBox={`0 0 ${String(chartWidth)} ${String(CHART_HEIGHT)}`}
+            style={{ height: `${String(CHART_HEIGHT)}px` }}
             role="img"
             aria-label={`Cumulative realized PnL chart over ${timeframe}`}
-            className="h-64 w-full select-none overflow-visible sm:h-72"
+            className="block w-full select-none overflow-visible"
             onPointerMove={handlePointerMove}
             onPointerLeave={() => {
               setHoveredIndex(null)
             }}
           >
             <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={strokeColor} stopOpacity="0.22" />
-                <stop offset="100%" stopColor={strokeColor} stopOpacity="0.01" />
-              </linearGradient>
+              {(() => {
+                const plotH = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM
+                const splitPct = Math.max(
+                  0,
+                  Math.min(100, ((pnlGeometry.zeroY - PAD_TOP) / plotH) * 100),
+                )
+                return (
+                  <>
+                    <linearGradient
+                      id={`${gradientId}-pnl-stroke`}
+                      gradientUnits="userSpaceOnUse"
+                      x1="0"
+                      y1={PAD_TOP}
+                      x2="0"
+                      y2={PAD_TOP + plotH}
+                    >
+                      <stop offset="0%" stopColor="#34d399" />
+                      <stop offset={`${splitPct.toFixed(3)}%`} stopColor="#34d399" />
+                      <stop offset={`${splitPct.toFixed(3)}%`} stopColor="#ff572d" />
+                      <stop offset="100%" stopColor="#ff572d" />
+                    </linearGradient>
+                    <linearGradient
+                      id={gradientId}
+                      gradientUnits="userSpaceOnUse"
+                      x1="0"
+                      y1={PAD_TOP}
+                      x2="0"
+                      y2={PAD_TOP + plotH}
+                    >
+                      <stop offset="0%" stopColor="#34d399" stopOpacity="0.22" />
+                      <stop offset={`${splitPct.toFixed(3)}%`} stopColor="#34d399" stopOpacity="0.02" />
+                      <stop offset={`${splitPct.toFixed(3)}%`} stopColor="#ff572d" stopOpacity="0.02" />
+                      <stop offset="100%" stopColor="#ff572d" stopOpacity="0.22" />
+                    </linearGradient>
+                  </>
+                )
+              })()}
             </defs>
 
             {pnlGeometry.xTicks.map((tick, idx) => (
@@ -826,7 +864,7 @@ export function WalletBalanceChart({
               <path
                 d={pnlGeometry.linePath}
                 fill="none"
-                stroke={strokeColor}
+                stroke={`url(#${gradientId}-pnl-stroke)`}
                 strokeWidth="2.2"
                 strokeLinejoin="round"
                 strokeLinecap="round"

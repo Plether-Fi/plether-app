@@ -4,9 +4,11 @@ import {
   infraHealthLabel,
   infraHealthTone,
   useInsightsStatus,
+  useMarketExposure,
   useOverview,
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { MarketExposurePulsePanel } from '../components/MarketExposurePulsePanel'
 import { StatCard } from '../components/StatCard'
 import { StatusPill } from '../components/StatusPill'
 import { EmptyState, Panel } from '../components/ui'
@@ -24,6 +26,7 @@ function formatBpsRate(bps: number | null | undefined): string {
 export function OverviewPage() {
   const statusQuery = useInsightsStatus()
   const overviewQuery = useOverview()
+  const marketExposureQuery = useMarketExposure()
   const liveQuery = useLiveDivisions()
   const publicationQuery = useDivisions()
   const statsQuery = useDivisionsStats()
@@ -126,12 +129,6 @@ export function OverviewPage() {
               >
                 AWS infra health
               </Link>
-              <a
-                href={chain.tradeAppUrl}
-                className="border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach transition-colors hover:border-brand-peach hover:bg-brand-peach/10"
-              >
-                Open trading app ↗
-              </a>
             </div>
           </div>
 
@@ -408,6 +405,12 @@ export function OverviewPage() {
           </Panel>
         </div>
       </section>
+
+      <MarketExposurePulsePanel
+        data={marketExposureQuery.data}
+        isLoading={marketExposureQuery.isLoading}
+        isError={marketExposureQuery.isError}
+      />
 
       <section aria-labelledby="pulse-divisions-title" className="space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-3">

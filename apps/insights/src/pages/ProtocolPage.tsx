@@ -19,13 +19,14 @@ import {
   type ProtocolParameterRecord,
   type ProtocolParameterStatus,
 } from '../api'
+import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerAddressUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
 
 type ParamFilter = 'all' | ProtocolParameterCategory
@@ -102,32 +103,18 @@ function SafetyControlTile({
   )
 }
 
-function CopyableChip({
+function CopyableValue({
   value,
   display,
-  copiedKey,
-  itemKey,
-  onCopy,
 }: {
   value: string
   display: string
-  copiedKey: string | null
-  itemKey: string
-  onCopy: (key: string, text: string) => void
 }) {
-  const isCopied = copiedKey === itemKey
   return (
-    <button
-      type="button"
-      onClick={() => { onCopy(itemKey, value) }}
-      title={`Copy ${value}`}
-      className="inline-flex items-center gap-1.5 font-mono text-xs text-content-primary transition-colors hover:text-brand-peach"
-    >
-      <span>{display}</span>
-      <span className="text-[10px] uppercase tracking-wider text-content-tertiary">
-        {isCopied ? 'Copied' : 'Copy'}
-      </span>
-    </button>
+    <span className="inline-flex items-center gap-1.5 font-mono text-xs text-content-primary">
+      <span title={value}>{display}</span>
+      <CopyButton value={value} />
+    </span>
   )
 }
 
@@ -260,19 +247,15 @@ function GitHubIcon({ className = 'h-3 w-3 shrink-0' }: { className?: string }) 
 function ContractRow({
   contract,
   chainId,
-  explorerName,
   sourceCommit,
   settlementTokenIsMock,
-  copiedKey,
-  onCopy,
+  showArbiscan,
 }: {
   contract: ProtocolContractRecord
   chainId: number
-  explorerName: string
   sourceCommit: string | null
   settlementTokenIsMock: boolean | null
-  copiedKey: string | null
-  onCopy: (key: string, text: string) => void
+  showArbiscan: boolean
 }) {
   const badge = contractVerifyPill(contract.verified)
   const github = protocolContractGitHubUrl(contract, sourceCommit, { settlementTokenIsMock })
@@ -316,34 +299,21 @@ function ContractRow({
         </div>
       </td>
       <td className="whitespace-nowrap px-4 py-3.5 align-top">
-        <div className="flex items-center gap-2">
-          <CopyableChip
-            value={contract.address}
-            display={shortAddress(contract.address)}
-            copiedKey={copiedKey}
-            itemKey={`addr:${contract.key}`}
-            onCopy={onCopy}
-          />
-          <a
-            href={explorerAddressUrl(contract.address, chainId)}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs font-semibold text-brand-peach hover:underline"
-            title={`Inspect ${contract.name} on ${explorerName}`}
-          >
-            {explorerName} ↗
-          </a>
+        <div className="flex items-center gap-1.5">
+          <CopyableValue value={contract.address} display={shortAddress(contract.address)} />
+          {showArbiscan ? (
+            <ArbiscanButton
+              kind="address"
+              value={contract.address}
+              chainId={chainId}
+              label={`Inspect ${contract.name} on Arbiscan`}
+            />
+          ) : null}
         </div>
       </td>
       <td className="whitespace-nowrap px-4 py-3.5 align-top font-mono text-xs text-content-secondary">
         <div title={hashTitle}>
-          <CopyableChip
-            value={contract.expectedCodeHash}
-            display={shortHash(contract.expectedCodeHash)}
-            copiedKey={copiedKey}
-            itemKey={`hash:${contract.key}`}
-            onCopy={onCopy}
-          />
+          <CopyableValue value={contract.expectedCodeHash} display={shortHash(contract.expectedCodeHash)} />
           {contract.verified === false && contract.actualCodeHash ? (
             <p className="mt-1 text-[11px] text-brand-orange">
               Live: {shortHash(contract.actualCodeHash)}
@@ -366,7 +336,6 @@ export function ProtocolPage() {
   const [driftOnly, setDriftOnly] = useState(false)
   const [contractFilter, setContractFilter] = useState<ContractFilter>('all')
   const [contractSearch, setContractSearch] = useState('')
-  const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
   const data = manifestQuery.data
   const chain = resolvePerpsChain(data?.network.chainId ?? ctx.chain.chainId)
@@ -378,16 +347,6 @@ export function ProtocolPage() {
     manifestQuery.isError
     && manifestQuery.error instanceof InsightsApiError
     && manifestQuery.error.status === 404
-
-  function handleCopy(key: string, text: string) {
-    if ('clipboard' in navigator) {
-      void navigator.clipboard.writeText(text)
-    }
-    setCopiedKey(key)
-    window.setTimeout(() => {
-      setCopiedKey((current) => (current === key ? null : current))
-    }, 1500)
-  }
 
   const filteredParams = useMemo(() => {
     if (!data) return []
@@ -414,6 +373,30 @@ export function ProtocolPage() {
   }, [data, contractFilter, contractSearch])
 
   const pauseCoordinator = data?.contracts.find((c) => c.key === 'emergencyPauseCoordinator')
+
+  // Deduplicate Arbiscan links across the entire Protocol page: the Verified
+  // Contract Registry owns canonical links for any visible contract rows, and
+  // callout badges only render an Arbiscan link if not already shown elsewhere.
+  const registryExternalKeys = new Set(
+    filteredContracts.map((c) => arbiscanLinkKey('address', c.address, chain.chainId)),
+  )
+  const seenOutsideRegistry = new Set<string>()
+  function claimOutsideRegistry(address: string): boolean {
+    const key = arbiscanLinkKey('address', address, chain.chainId)
+    if (registryExternalKeys.has(key) || seenOutsideRegistry.has(key)) return false
+    seenOutsideRegistry.add(key)
+    return true
+  }
+  const showSettlementTokenArbiscan = data?.settlementToken
+    ? claimOutsideRegistry(data.settlementToken.address)
+    : false
+  const showPauseCoordinatorArbiscan = pauseCoordinator
+    ? claimOutsideRegistry(pauseCoordinator.address)
+    : false
+  const showPythArbiscan = data?.release.pythAddress
+    ? claimOutsideRegistry(data.release.pythAddress)
+    : false
+  const seenRegistryRows = new Set<string>()
 
   const banner = data
     ? deriveProtocolHealthBanner(data)
@@ -495,14 +478,17 @@ export function ProtocolPage() {
                 ({data.settlementToken.decimals ?? 6} decimals
                 {data.settlementToken.isMock ? ' · testnet mock' : ''})
               </span>
-              <a
-                href={explorerAddressUrl(data.settlementToken.address, chain.chainId)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-brand-peach hover:underline"
-              >
-                {shortAddress(data.settlementToken.address)} ↗
-              </a>
+              <CopyableValue
+                value={data.settlementToken.address}
+                display={shortAddress(data.settlementToken.address)}
+              />
+              {showSettlementTokenArbiscan ? (
+                <ArbiscanButton
+                  kind="address"
+                  value={data.settlementToken.address}
+                  chainId={chain.chainId}
+                />
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -628,14 +614,20 @@ export function ProtocolPage() {
                 </p>
               </div>
               {pauseCoordinator ? (
-                <a
-                  href={explorerAddressUrl(pauseCoordinator.address, chain.chainId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono text-xs text-brand-peach hover:underline"
-                >
-                  EmergencyPauseCoordinator {shortAddress(pauseCoordinator.address)} ↗
-                </a>
+                <div className="inline-flex items-center gap-1.5 font-mono text-xs text-content-secondary">
+                  <span>EmergencyPauseCoordinator</span>
+                  <CopyableValue
+                    value={pauseCoordinator.address}
+                    display={shortAddress(pauseCoordinator.address)}
+                  />
+                  {showPauseCoordinatorArbiscan ? (
+                    <ArbiscanButton
+                      kind="address"
+                      value={pauseCoordinator.address}
+                      chainId={chain.chainId}
+                    />
+                  ) : null}
+                </div>
               ) : null}
             </div>
 
@@ -982,18 +974,21 @@ export function ProtocolPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredContracts.map((contract) => (
-                        <ContractRow
-                          key={contract.key}
-                          contract={contract}
-                          chainId={chain.chainId}
-                          explorerName={chain.explorerName}
-                          sourceCommit={data.release.sourceCommit}
-                          settlementTokenIsMock={data.settlementToken.isMock}
-                          copiedKey={copiedKey}
-                          onCopy={handleCopy}
-                        />
-                      ))}
+                      {filteredContracts.map((contract) => {
+                        const key = arbiscanLinkKey('address', contract.address, chain.chainId)
+                        const showArbiscan = !seenRegistryRows.has(key)
+                        if (showArbiscan) seenRegistryRows.add(key)
+                        return (
+                          <ContractRow
+                            key={contract.key}
+                            contract={contract}
+                            chainId={chain.chainId}
+                            sourceCommit={data.release.sourceCommit}
+                            settlementTokenIsMock={data.settlementToken.isMock}
+                            showArbiscan={showArbiscan}
+                          />
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1080,12 +1075,9 @@ export function ProtocolPage() {
                     <dd>
                       {data.release.sourceCommit ? (
                         <div className="flex items-center gap-2">
-                          <CopyableChip
+                          <CopyableValue
                             value={data.release.sourceCommit}
                             display={shortHash(data.release.sourceCommit)}
-                            copiedKey={copiedKey}
-                            itemKey="prov:commit"
-                            onCopy={handleCopy}
                           />
                           {sourceCommitUrl ? (
                             <a
@@ -1115,12 +1107,9 @@ export function ProtocolPage() {
                     <dt className="text-content-secondary">Manifest SHA-256</dt>
                     <dd>
                       {data.release.manifestSha256 ? (
-                        <CopyableChip
+                        <CopyableValue
                           value={data.release.manifestSha256}
                           display={shortHash(data.release.manifestSha256)}
-                          copiedKey={copiedKey}
-                          itemKey="prov:manifestSha"
-                          onCopy={handleCopy}
                         />
                       ) : (
                         <span className="font-mono text-content-tertiary">Unavailable</span>
@@ -1131,12 +1120,9 @@ export function ProtocolPage() {
                     <dt className="text-content-secondary">Bundle SHA-256</dt>
                     <dd>
                       {data.release.bundleSha256 ? (
-                        <CopyableChip
+                        <CopyableValue
                           value={data.release.bundleSha256}
                           display={shortHash(data.release.bundleSha256)}
-                          copiedKey={copiedKey}
-                          itemKey="prov:bundleSha"
-                          onCopy={handleCopy}
                         />
                       ) : (
                         <span className="font-mono text-content-tertiary">Unavailable</span>
@@ -1147,14 +1133,19 @@ export function ProtocolPage() {
                     <dt className="text-content-secondary">Pyth contract</dt>
                     <dd>
                       {data.release.pythAddress ? (
-                        <a
-                          href={explorerAddressUrl(data.release.pythAddress, chain.chainId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="font-mono text-brand-peach hover:underline"
-                        >
-                          {shortAddress(data.release.pythAddress)} ↗
-                        </a>
+                        <div className="inline-flex items-center gap-1.5">
+                          <CopyableValue
+                            value={data.release.pythAddress}
+                            display={shortAddress(data.release.pythAddress)}
+                          />
+                          {showPythArbiscan ? (
+                            <ArbiscanButton
+                              kind="address"
+                              value={data.release.pythAddress}
+                              chainId={chain.chainId}
+                            />
+                          ) : null}
+                        </div>
                       ) : (
                         <span className="font-mono text-content-tertiary">Unavailable</span>
                       )}

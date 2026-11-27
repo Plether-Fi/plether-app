@@ -300,6 +300,12 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     expect(screen.getByText('promoted')).toBeInTheDocument()
   })
 
+  it('selects the Market Exposure tab directly when navigated with ?tab=exposure', () => {
+    renderAt(`/wallets/${testAccount}?tab=exposure`)
+    expect(screen.getByRole('tab', { name: /Market Exposure/i })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /Overview & Margin/i })).toHaveAttribute('aria-selected', 'false')
+  })
+
   it('rejects invalid addresses cleanly without calling the inspector', () => {
     renderAt('/wallets/not-an-address')
     expect(screen.getByText('Invalid Trading Account address')).toBeInTheDocument()

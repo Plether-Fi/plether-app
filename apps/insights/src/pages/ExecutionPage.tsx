@@ -9,6 +9,7 @@ import {
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
+import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import {
@@ -20,7 +21,7 @@ import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
-import { explorerTxUrl, resolvePerpsChain } from '../utils/chain'
+import { arbiscanLinkKey, resolvePerpsChain } from '../utils/chain'
 import { formatCompactAssets, formatUtc, shortAddress } from '../utils/format'
 
 type TradeTypeFilter = 'all' | 'Open' | 'Close' | 'Liquidated'
@@ -121,27 +122,19 @@ export function ExecutionPage() {
         }
       />
 
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div className="max-w-3xl space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
-            Trader Execution &amp; Market Forensics
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Order Reliability, Protections, Liquidations &amp; Trade Tape
-          </h1>
-          <p className="text-sm leading-6 text-content-secondary">
-            Protocol-wide execution telemetry beyond the main app’s price chart and trade ticket—
-            auditing canonical keeper fill/expiration cohorts, commit-to-execution latency, TP/SL
-            protection coverage, liquidation activity, and every executed fill across all Trading
-            Accounts.
-          </p>
-        </div>
-        <a
-          href={chain.tradeAppUrl}
-          className="shrink-0 border border-brand-border/40 px-4 py-2.5 text-sm font-semibold text-brand-peach hover:bg-brand-peach/10"
-        >
-          Open Trading App ↗
-        </a>
+      <header className="max-w-3xl space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
+          Trader Execution &amp; Market Forensics
+        </p>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          Order Reliability, Protections, Liquidations &amp; Trade Tape
+        </h1>
+        <p className="text-sm leading-6 text-content-secondary">
+          Protocol-wide execution telemetry beyond the main app’s price chart and trade ticket—
+          auditing canonical keeper fill/expiration cohorts, commit-to-execution latency, TP/SL
+          protection coverage, liquidation activity, and every executed fill across all Trading
+          Accounts.
+        </p>
       </header>
 
       {awaitingDeploy ? (
@@ -392,11 +385,16 @@ export function ExecutionPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTrades.map((trade) => {
-                    const hasReceipt =
-                      trade.execution != null &&
-                      (trade.activityType === 'Open' || trade.activityType === 'Close')
-                    return (
+                  {(() => {
+                    const seenTxKeys = new Set<string>()
+                    return visibleTrades.map((trade) => {
+                      const hasReceipt =
+                        trade.execution != null &&
+                        (trade.activityType === 'Open' || trade.activityType === 'Close')
+                      const txKey = arbiscanLinkKey('tx', trade.txHash, chainId)
+                      const showArbiscan = !seenTxKeys.has(txKey)
+                      if (showArbiscan) seenTxKeys.add(txKey)
+                      return (
                       <tr key={trade.id} className="border-b border-brand-border/15 last:border-0">
                         <td className="px-4 py-3.5 text-xs text-content-secondary">
                           {formatUtc(trade.occurredAt)}
@@ -455,35 +453,42 @@ export function ExecutionPage() {
                           {trade.latencySeconds != null ? `${String(trade.latencySeconds)}s` : '—'}
                         </td>
                         <td className="px-4 py-3.5">
-                          <Link
-                            to={transactionPath(trade.txHash, trade.id)}
-                            state={
-                              {
-                                trade,
-                                chainId,
-                                releaseVersion,
-                                from: '/execution',
-                                fromLabel: 'Back to Execution',
-                              } satisfies TransactionRouteState
-                            }
-                            className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
-                          >
-                            {hasReceipt ? 'View breakdown' : 'View details'}
-                          </Link>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Link
+                              to={transactionPath(trade.txHash, trade.id)}
+                              state={
+                                {
+                                  trade,
+                                  chainId,
+                                  releaseVersion,
+                                  from: '/execution',
+                                  fromLabel: 'Back to Execution',
+                                } satisfies TransactionRouteState
+                              }
+                              className="inline-block border border-brand-border/40 px-2.5 py-1 text-xs font-semibold text-brand-peach transition-colors hover:bg-brand-peach/10"
+                            >
+                              {hasReceipt ? 'View breakdown' : 'View details'}
+                            </Link>
+                            <Link
+                              to={`/wallets/${trade.account.toLowerCase()}?tab=exposure`}
+                              className="inline-block border border-brand-border/25 px-2 py-1 text-xs font-medium text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-brand-peach"
+                              title={`Inspect ${shortAddress(trade.account)} market exposure & position lifecycles`}
+                            >
+                              Exposure →
+                            </Link>
+                          </div>
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
-                          <a
-                            href={explorerTxUrl(trade.txHash, chainId)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-brand-peach hover:underline"
-                          >
-                            {shortAddress(trade.txHash)} ↗
-                          </a>
+                          <div className="inline-flex items-center gap-1.5 text-content-secondary">
+                            <span title={trade.txHash}>{shortAddress(trade.txHash)}</span>
+                            {showArbiscan ? (
+                              <ArbiscanButton kind="tx" value={trade.txHash} chainId={chainId} />
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     )
-                  })}
+                  })})()}
                 </tbody>
               </table>
             </div>

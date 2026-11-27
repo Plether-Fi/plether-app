@@ -175,11 +175,15 @@ describe('ExecutionPage (Stage 2)', () => {
     )
     expect(within(tape).getByText('Liquidated')).toBeInTheDocument()
 
-    // Trade with receipt links directly to the dedicated Transaction breakdown page
+    // Trade with receipt links directly to the dedicated Transaction breakdown page and wallet exposure tab
     const breakdownLink = within(tape).getByRole('link', { name: 'View breakdown' })
     expect(breakdownLink).toHaveAttribute('href', `/tx/0x${'a'.repeat(64)}?log=0`)
     const detailsLink = within(tape).getByRole('link', { name: 'View details' })
     expect(detailsLink).toHaveAttribute('href', `/tx/0x${'b'.repeat(64)}?log=0`)
+    const exposureLinks = within(tape).getAllByRole('link', { name: 'Exposure →' })
+    expect(exposureLinks).toHaveLength(2)
+    expect(exposureLinks[0]).toHaveAttribute('href', `/wallets/0x${'1'.repeat(40)}?tab=exposure`)
+    expect(exposureLinks[1]).toHaveAttribute('href', `/wallets/0x${'2'.repeat(40)}?tab=exposure`)
 
     fireEvent.click(screen.getByRole('button', { name: 'Liquidations' }))
     expect(within(tape).queryByText('Open')).not.toBeInTheDocument()
