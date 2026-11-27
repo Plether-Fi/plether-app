@@ -432,9 +432,24 @@ describe('PositionLifecyclePage', () => {
     expect(screen.getByText(/Back to @macro_fox/)).toBeInTheDocument()
     expect(container.textContent).not.toContain('$')
 
+    // Verify split green/orange gradient in Price & Levels mode (Short: orange above entry, green below)
+    const priceSvg = screen.getByRole('img', { name: /Position price trajectory chart/i })
+    const priceStops = Array.from(priceSvg.querySelectorAll('linearGradient stop')).map((s) =>
+      s.getAttribute('stop-color'),
+    )
+    expect(priceStops).toContain('#ff572d')
+    expect(priceStops).toContain('#34d399')
+
     // Toggle chart modes cleanly
     fireEvent.click(screen.getByRole('button', { name: 'Unrealized PnL' }))
-    expect(screen.getByRole('img', { name: /Position pnl trajectory chart/i })).toBeInTheDocument()
+    const pnlSvg = screen.getByRole('img', { name: /Position pnl trajectory chart/i })
+    expect(pnlSvg).toBeInTheDocument()
+    const pnlStops = Array.from(pnlSvg.querySelectorAll('linearGradient stop')).map((s) =>
+      s.getAttribute('stop-color'),
+    )
+    expect(pnlStops[0]).toBe('#34d399')
+    expect(pnlStops[pnlStops.length - 1]).toBe('#ff572d')
+
     fireEvent.click(screen.getByRole('button', { name: 'Leverage (×)' }))
     expect(screen.getByRole('img', { name: /Position leverage trajectory chart/i })).toBeInTheDocument()
 

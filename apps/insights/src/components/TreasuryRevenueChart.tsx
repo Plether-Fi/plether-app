@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { formatSponsoredEthWei } from '../api/sponsored'
 import type { DailyRevenuePoint } from '../api/treasury'
+import { useContainerWidth } from '../hooks/useContainerWidth'
 import { formatAssets } from '../utils/format'
 
 export interface TreasuryRevenueChartProps {
@@ -26,6 +27,8 @@ function shortDayLabel(isoDay: string): string {
 export function TreasuryRevenueChart({ series }: TreasuryRevenueChartProps) {
   const [range, setRange] = useState<'7d' | '30d'>('30d')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [chartBoxRef, measuredWidth] = useContainerWidth(760)
+  const width = Math.max(320, measuredWidth)
 
   const visible = range === '7d' ? series.slice(-7) : series
   const activeIdx =
@@ -41,7 +44,6 @@ export function TreasuryRevenueChart({ series }: TreasuryRevenueChartProps) {
   const maxCum = Math.max(...cumValues, minCum + 0.01)
   const cumSpan = Math.max(maxCum - minCum, 0.01)
 
-  const width = 760
   const height = 210
   const padLeft = 10
   const padRight = 10
@@ -101,10 +103,11 @@ export function TreasuryRevenueChart({ series }: TreasuryRevenueChartProps) {
         </div>
       ) : (
         <>
-          <div className="border border-brand-border/20 bg-app-bg p-3">
+          <div ref={chartBoxRef} className="w-full border border-brand-border/20 bg-app-bg p-3">
             <svg
               viewBox={`0 0 ${String(width)} ${String(height)}`}
-              className="h-52 w-full overflow-visible"
+              style={{ height: `${String(height)}px` }}
+              className="block w-full overflow-visible"
               role="img"
               aria-label={`Daily protocol execution fees over the last ${range}`}
               onMouseLeave={() => { setHoveredIdx(null) }}
