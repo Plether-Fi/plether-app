@@ -74,16 +74,16 @@ function blockBgForStatus(status: string): string {
   }
 }
 
-function ActionReadinessCard({ action }: { action: InfraActionReadiness }) {
+function ActionReadinessCell({ action }: { action: InfraActionReadiness }) {
   const tone = infraHealthTone(action.status)
   return (
-    <Panel className="flex flex-col justify-between gap-3 p-4">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-semibold text-content-primary">{action.label}</p>
+    <div className="flex flex-col justify-between gap-1.5 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-content-primary">{action.label}</span>
         <StatusPill tone={tone} label={infraHealthLabel(action.status)} />
       </div>
-      <p className="text-xs leading-5 text-content-secondary">{formatInfraReason(action.reason)}</p>
-    </Panel>
+      <p className="text-[11px] leading-4 text-content-tertiary">{formatInfraReason(action.reason)}</p>
+    </div>
   )
 }
 
@@ -297,39 +297,41 @@ export function InfraPage() {
         </Panel>
       )}
 
-      <section aria-labelledby="infra-actions-title" className="space-y-3">
-        <h2 id="infra-actions-title" className="text-lg font-semibold">
+      <section aria-labelledby="infra-actions-title">
+        <h2 id="infra-actions-title" className="sr-only">
           User action readiness
         </h2>
-        {infraQuery.isLoading ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {FALLBACK_ACTIONS.map((item) => (
-              <Panel key={item.key} className="space-y-3 p-4">
-                <div className="skeleton h-4 w-28" />
-                <div className="skeleton h-3 w-40" />
-              </Panel>
-            ))}
-          </div>
-        ) : data ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <ActionReadinessCard action={data.actions.deposit} />
-            <ActionReadinessCard action={data.actions.open} />
-            <ActionReadinessCard action={data.actions.close} />
-            <ActionReadinessCard action={data.actions.protection} />
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {FALLBACK_ACTIONS.map((item) => (
-              <Panel key={item.key} className="space-y-2 p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold">{item.label}</p>
-                  <StatusPill tone="unknown" label="Unavailable" />
+        <Panel className="overflow-hidden">
+          {infraQuery.isLoading ? (
+            <div className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+              {FALLBACK_ACTIONS.map((item) => (
+                <div key={item.key} className="space-y-2 px-4 py-3">
+                  <div className="skeleton h-4 w-28" />
+                  <div className="skeleton h-3 w-40" />
                 </div>
-                <p className="text-xs text-content-tertiary">{item.detail}</p>
-              </Panel>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          ) : data ? (
+            <div className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+              <ActionReadinessCell action={data.actions.deposit} />
+              <ActionReadinessCell action={data.actions.open} />
+              <ActionReadinessCell action={data.actions.close} />
+              <ActionReadinessCell action={data.actions.protection} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+              {FALLBACK_ACTIONS.map((item) => (
+                <div key={item.key} className="space-y-1.5 px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-content-primary">{item.label}</span>
+                    <StatusPill tone="unknown" label="Unavailable" />
+                  </div>
+                  <p className="text-[11px] text-content-tertiary">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
       </section>
 
       {data && (

@@ -19,7 +19,6 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard, type StatTone } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -143,19 +142,19 @@ export function SponsoredPage() {
           }
 
   const gateCard = (() => {
-    if (!data) return { label: undefined, tone: 'neutral' as StatTone, detail: 'Paymaster & issuance kill-switch' }
-    if (!data.configured) return { label: 'Not configured', tone: 'neutral' as StatTone, detail: 'No active AA sponsorship stack' }
+    if (!data) return { label: undefined, tone: 'unknown' as StatusTone, detail: 'Paymaster & issuance kill-switch' }
+    if (!data.configured) return { label: 'Not configured', tone: 'unknown' as StatusTone, detail: 'No active AA sponsorship stack' }
     if (data.gate.status === 'issuing') {
       return {
         label: data.gate.rolloutMode === 'canary' ? 'Issuing (Canary)' : 'Issuing',
-        tone: 'positive' as StatTone,
+        tone: 'live' as StatusTone,
         detail: `Rollout: ${data.gate.rolloutMode} · On-chain paymaster unpaused`,
       }
     }
     if (data.gate.status === 'paused') {
       return {
         label: 'Paused',
-        tone: 'negative' as StatTone,
+        tone: 'blocked' as StatusTone,
         detail: data.gate.paymasterOnchainPaused
           ? 'Paymaster contract paused on-chain'
           : data.gate.pausedReason ?? 'Issuance kill-switch engaged',
@@ -164,13 +163,13 @@ export function SponsoredPage() {
     if (data.gate.status === 'degraded') {
       return {
         label: 'Degraded',
-        tone: 'warning' as StatTone,
+        tone: 'degraded' as StatusTone,
         detail: !data.reconciler.fresh ? 'Reconciler lag exceeds safe window' : 'Bundler or control check degraded',
       }
     }
     return {
       label: 'Disabled',
-      tone: 'neutral' as StatTone,
+      tone: 'unknown' as StatusTone,
       detail: 'Sponsorship feature flag turned off',
     }
   })()
@@ -262,95 +261,120 @@ export function SponsoredPage() {
         ) : null}
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Sponsorship gate"
-          loading={statusQuery.isLoading}
-          unavailable={!data}
-          tone={gateCard.tone}
-          value={gateCard.label}
-          detail={gateCard.detail}
-        />
+      {/* Paymaster ETH Runway Fuel Gauge + Live Health Strip */}
+      <Panel className="p-4 sm:p-6">
+        {statusQuery.isLoading ? (
+          <LoadingState rows={3} />
+        ) : !data || !data.configured ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-content-tertiary">
+            <span>Sponsorship gate: <strong className="text-content-secondary">{gateCard.label ?? 'Unavailable'}</strong></span>
+            <span>{gateCard.detail}</span>
+          </div>
+        ) : (
+          <div className="grid gap-5 lg:grid-cols-12 lg:items-center">
+            {/* Left: EntryPoint Deposit Fuel Gauge & Runway */}
+            <div className="space-y-3 lg:col-span-7 lg:border-r lg:border-brand-border/20 lg:pr-6">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Paymaster EntryPoint Deposit
+                  </p>
+                  <p
+                    className={`mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                      data.paymaster.depositHealthy === false
+                        ? 'text-brand-orange'
+                        : data.paymaster.depositHealthy === true
+                          ? 'text-positive'
+                          : 'text-content-primary'
+                    }`}
+                  >
+                    {data.paymaster.entryPointDepositWei != null
+                      ? formatSponsoredEthWei(data.paymaster.entryPointDepositWei, 4)
+                      : 'Unavailable'}
+                  </p>
+                </div>
+                <div className="text-left font-mono sm:text-right">
+                  <p className="text-xs text-content-tertiary">Estimated Runway</p>
+                  <p className="mt-0.5 text-lg font-bold tabular-nums text-content-primary">
+                    {formatRunwayHours(data.paymaster.estimatedRunwayHours)}
+                  </p>
+                </div>
+              </div>
 
-        <StatCard
-          label="EntryPoint deposit"
-          loading={statusQuery.isLoading}
-          unavailable={!data || !data.configured || data.paymaster.entryPointDepositWei == null}
-          tone={
-            data?.paymaster.depositHealthy === false
-              ? 'negative'
-              : data?.paymaster.depositHealthy === true
-                ? 'positive'
-                : 'neutral'
-          }
-          value={
-            data?.paymaster.entryPointDepositWei != null
-              ? formatSponsoredEthWei(data.paymaster.entryPointDepositWei, 4)
-              : undefined
-          }
-          detail={
-            data?.configured
-              ? `Runway: ${formatRunwayHours(data.paymaster.estimatedRunwayHours)} · Floor ${formatSponsoredEthWei(data.paymaster.minDepositWei, 3)}`
-              : 'On-chain EntryPoint.balanceOf(paymaster)'
-          }
-        />
+              {(() => {
+                const dep = BigInt(data.paymaster.entryPointDepositWei ?? '0')
+                const floor = BigInt(data.paymaster.minDepositWei ?? '0')
+                const scale = floor > 0n ? (dep > floor * 10n ? dep : floor * 10n) : dep > 0n ? dep : 1n
+                const fillPct = dep > 0n ? Math.min(100, Number((dep * 10000n) / scale) / 100) : 0
+                const floorPct = floor > 0n ? Math.min(95, Math.max(4, Number((floor * 10000n) / scale) / 100)) : 0
+                return (
+                  <div className="space-y-1.5">
+                    <div className="relative h-2.5 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                      <div
+                        className={data.paymaster.depositHealthy === false ? 'h-full bg-brand-orange' : 'h-full bg-positive'}
+                        style={{ width: `${String(fillPct)}%` }}
+                      />
+                      {floorPct > 0 ? (
+                        <span
+                          className="absolute inset-y-0 w-0.5 bg-brand-orange"
+                          style={{ left: `${String(floorPct)}%` }}
+                          title={`Minimum floor: ${formatSponsoredEthWei(data.paymaster.minDepositWei, 3)}`}
+                        />
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap justify-between gap-2 font-mono text-[11px] tabular-nums text-content-tertiary">
+                      <span>Floor: {formatSponsoredEthWei(data.paymaster.minDepositWei, 3)}</span>
+                      <span>24h burn: {formatSponsoredEthWei(data.paymaster.burn24hWei, 4)}</span>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
 
-        <StatCard
-          label="24h UserOp success"
-          loading={statusQuery.isLoading}
-          unavailable={!data || !data.configured || data.execution.window24h.totalOps === 0}
-          tone={
-            data && data.execution.window24h.successRateBps != null
-              ? data.execution.window24h.successRateBps >= 9800
-                ? 'positive'
-                : data.execution.window24h.successRateBps >= 9000
-                  ? 'warning'
-                  : 'negative'
-              : 'neutral'
-          }
-          value={
-            data && data.execution.window24h.totalOps > 0
-              ? formatBpsPercent(data.execution.window24h.successRateBps)
-              : undefined
-          }
-          detail={
-            data?.configured
-              ? data.execution.window24h.totalOps > 0
-                ? `${data.execution.window24h.succeededOps.toLocaleString('en-US')} ok · ${data.execution.window24h.revertedOps.toLocaleString('en-US')} reverted · p50 ${formatDurationSeconds(data.execution.latencyP50Seconds)}`
-                : 'No finalized sponsored UserOps in last 24h'
-              : '24h finalized UserOperation execution rate'
-          }
-        />
-
-        <StatCard
-          label="Reconciler & Alto"
-          loading={statusQuery.isLoading}
-          unavailable={!data || !data.configured}
-          tone={
-            !data || !data.configured
-              ? 'neutral'
-              : data.reconciler.fresh && data.bundler.reachable && data.bundler.entryPointSupported
-                ? 'positive'
-                : !data.reconciler.fresh && !data.bundler.reachable
-                  ? 'negative'
-                  : 'warning'
-          }
-          value={
-            data?.configured
-              ? `${data.reconciler.fresh ? 'Fresh' : 'Stale'} · ${data.bundler.reachable ? 'Alto OK' : 'Alto Down'}`
-              : undefined
-          }
-          detail={
-            data?.configured
-              ? `Lag ${formatDurationSeconds(data.reconciler.lagSeconds)}${
-                  data.reconciler.blocksBehind != null
-                    ? ` · ${data.reconciler.blocksBehind.toLocaleString('en-US')} blocks behind`
-                    : ''
-                }`
-              : 'Safe-block reconciliation & bundler probe'
-          }
-        />
-      </div>
+            {/* Right: 24h UserOp Success + Gate / Alto / Reconciler Strip */}
+            <div className="space-y-3 lg:col-span-5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-xs text-content-tertiary">24h UserOp Success</span>
+                <span
+                  className={`font-mono text-2xl font-bold tabular-nums ${
+                    data.execution.window24h.successRateBps != null
+                      ? data.execution.window24h.successRateBps >= 9800
+                        ? 'text-positive'
+                        : data.execution.window24h.successRateBps >= 9000
+                          ? 'text-brand-yellow'
+                          : 'text-brand-orange'
+                      : 'text-content-tertiary'
+                  }`}
+                >
+                  {data.execution.window24h.totalOps > 0
+                    ? formatBpsPercent(data.execution.window24h.successRateBps)
+                    : '—'}
+                </span>
+              </div>
+              <p className="font-mono text-xs tabular-nums text-content-tertiary">
+                {data.execution.window24h.totalOps > 0
+                  ? `${data.execution.window24h.succeededOps.toLocaleString('en-US')} ok · ${data.execution.window24h.revertedOps.toLocaleString('en-US')} reverted · p50 ${formatDurationSeconds(data.execution.latencyP50Seconds)}`
+                  : 'No finalized sponsored UserOps in last 24h'}
+              </p>
+              <div className="flex flex-wrap items-center gap-2 border-t border-brand-border/15 pt-3 font-mono text-xs">
+                <StatusPill tone={gateCard.tone} label={`Gate: ${gateCard.label ?? 'Unknown'}`} />
+                <StatusPill
+                  tone={data.bundler.reachable && data.bundler.entryPointSupported ? 'live' : 'blocked'}
+                  label={data.bundler.reachable ? 'Alto OK' : 'Alto Down'}
+                />
+                <StatusPill
+                  tone={data.reconciler.fresh ? 'live' : 'degraded'}
+                  label={
+                    data.reconciler.fresh
+                      ? `Reconciler ${formatDurationSeconds(data.reconciler.lagSeconds)} lag`
+                      : `Stale (${formatDurationSeconds(data.reconciler.lagSeconds)})`
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </Panel>
 
       {statusQuery.isLoading ? (
         <Panel>
@@ -431,34 +455,22 @@ export function SponsoredPage() {
 
                 <dl className="mt-4 divide-y divide-brand-border/15 text-xs">
                   <div className="flex items-center justify-between gap-4 py-2.5">
-                    <dt className="text-content-secondary">EntryPoint balance</dt>
-                    <dd className="font-mono font-semibold tabular-nums text-content-primary">
-                      {formatSponsoredEthWei(data.paymaster.entryPointDepositWei, 5)}
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-4 py-2.5">
                     <dt className="text-content-secondary">Free headroom (deposit − reserved)</dt>
                     <dd className="font-mono font-semibold tabular-nums text-content-primary">
                       {formatSponsoredEthWei(data.paymaster.freeHeadroomWei, 5)}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-4 py-2.5">
-                    <dt className="text-content-secondary">Minimum deposit floor</dt>
-                    <dd className="font-mono tabular-nums text-content-secondary">
-                      {formatSponsoredEthWei(data.paymaster.minDepositWei, 4)}
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-4 py-2.5">
-                    <dt className="text-content-secondary">24h gas burn</dt>
+                    <dt className="text-content-secondary">Reconciler blocks behind</dt>
                     <dd className="font-mono tabular-nums text-content-primary">
-                      {formatSponsoredEthWei(data.paymaster.burn24hWei, 5)}
+                      {data.reconciler.blocksBehind != null
+                        ? `${data.reconciler.blocksBehind.toLocaleString('en-US')} blocks`
+                        : '—'}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-4 py-2.5">
-                    <dt className="text-content-secondary">Estimated runway (at 24h rate)</dt>
-                    <dd className="font-mono font-semibold tabular-nums text-brand-peach">
-                      {formatRunwayHours(data.paymaster.estimatedRunwayHours)}
-                    </dd>
+                    <dt className="text-content-secondary">Rollout gate policy</dt>
+                    <dd className="font-mono text-content-secondary">{gateCard.detail}</dd>
                   </div>
                   <div className="flex items-center justify-between gap-4 py-2.5">
                     <dt className="text-content-secondary">Alto executor ETH funding</dt>

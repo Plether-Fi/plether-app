@@ -217,6 +217,6 @@ describe('LiquidityOpsPage (Stage 1 LP Ops)', () => {
     forensicsQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: notFound })
     show()
     expect(screen.getByText(/Connected backend does not serve Stage 1 LP endpoints yet/i)).toBeInTheDocument()
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2)
   })
 })

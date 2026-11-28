@@ -22,7 +22,6 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -461,21 +460,21 @@ export function ProtocolPage() {
 
   const stateSummary = data ? deriveProtocolStateSummary(data.safety) : null
 
-  const verifiedCardTone = !data
-    ? 'neutral'
+  const verifiedPillTone: StatusTone = !data || !data.rpcAvailable
+    ? 'unknown'
     : data.verification.mismatchCount > 0
-      ? 'negative'
+      ? 'blocked'
       : data.verification.uncheckedCount > 0
-        ? 'warning'
-        : 'positive'
+        ? 'degraded'
+        : 'live'
 
-  const driftCardTone = !data
-    ? 'neutral'
+  const driftPillTone: StatusTone = !data || !data.rpcAvailable
+    ? 'unknown'
     : data.verification.driftedParameters > 0
-      ? 'warning'
+      ? 'degraded'
       : data.verification.unavailableParameters > 0
-        ? 'neutral'
-        : 'positive'
+        ? 'unknown'
+        : 'live'
 
   const liveOnlyCount = data
     ? data.parameters.filter((p) => p.status === 'live_only').length
@@ -535,79 +534,75 @@ export function ProtocolPage() {
         ) : null}
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Verified contracts"
-          loading={manifestQuery.isLoading}
-          unavailable={!data || !data.rpcAvailable}
-          tone={verifiedCardTone}
-          value={
-            data && data.rpcAvailable
-              ? `${String(data.verification.verifiedCount)} / ${String(data.verification.totalContracts)}`
-              : undefined
-          }
-          detail={
-            data
-              ? !data.rpcAvailable
-                ? `${String(data.verification.totalContracts)} contracts pinned in manifest; RPC unreachable`
-                : data.verification.mismatchCount > 0
-                  ? `${String(data.verification.mismatchCount)} bytecode mismatch${data.verification.mismatchCount === 1 ? '' : 'es'} detected`
-                  : data.verification.uncheckedCount > 0
-                    ? `${String(data.verification.uncheckedCount)} contract reads unchecked`
-                    : 'Runtime keccak256 matches pinned manifest'
-              : 'Runtime code hash checks'
-          }
-        />
-
-        <StatCard
-          label="Protocol state"
-          loading={manifestQuery.isLoading}
-          unavailable={!stateSummary || !data?.safety.available}
-          tone={stateSummary?.tone ?? 'neutral'}
-          value={stateSummary?.label}
-          detail={stateSummary?.detail ?? 'PerpsPublicLens & HousePool pause flags'}
-        />
-
-        <StatCard
-          label="Parameter drift"
-          loading={manifestQuery.isLoading}
-          unavailable={!data || !data.rpcAvailable}
-          tone={driftCardTone}
-          value={
-            data && data.rpcAvailable
-              ? `${String(data.verification.driftedParameters)} drifted`
-              : undefined
-          }
-          detail={
-            data
-              ? !data.rpcAvailable
-                ? 'Live parameter reads unavailable'
-                : `${String(data.verification.matchedParameters)} matched · ${String(liveOnlyCount)} on-chain only${
-                    data.verification.unavailableParameters > 0
-                      ? ` · ${String(data.verification.unavailableParameters)} unavailable`
-                      : ''
-                  }`
-              : 'Live contracts vs. release defaults'
-          }
-        />
-
-        <StatCard
-          label="Active release"
-          loading={manifestQuery.isLoading}
-          unavailable={!data?.release.version}
-          tone="accent"
-          value={data?.release.version ?? undefined}
-          detail={
-            data
-              ? `Block ${
-                  data.release.deploymentBlock
+      {/* Compact Verification Verdict Ribbon — promotes Total Protocol TVL above the fold */}
+      <Panel className="px-4 py-3 sm:px-5">
+        {manifestQuery.isLoading ? (
+          <div className="flex flex-wrap gap-3">
+            <div className="skeleton h-6 w-36" />
+            <div className="skeleton h-6 w-28" />
+            <div className="skeleton h-6 w-28" />
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+              <StatusPill
+                tone={verifiedPillTone}
+                label={
+                  data && data.rpcAvailable
+                    ? `${String(data.verification.verifiedCount)} / ${String(data.verification.totalContracts)} bytecode verified`
+                    : data
+                      ? `${String(data.verification.totalContracts)} pinned · RPC unreachable`
+                      : 'Bytecode unchecked'
+                }
+              />
+              {stateSummary && data?.safety.available ? (
+                <StatusPill
+                  tone={
+                    stateSummary.tone === 'positive'
+                      ? 'live'
+                      : stateSummary.tone === 'negative'
+                        ? 'blocked'
+                        : stateSummary.tone === 'warning'
+                          ? 'degraded'
+                          : 'unknown'
+                  }
+                  label={stateSummary.label}
+                />
+              ) : null}
+              <StatusPill
+                tone={driftPillTone}
+                label={
+                  data && data.rpcAvailable
+                    ? `${String(data.verification.driftedParameters)} drifted`
+                    : 'Params unavailable'
+                }
+              />
+              {data?.release.version ? (
+                <span className="border border-brand-border/30 bg-app-bg px-2.5 py-0.5 font-mono text-xs font-semibold text-brand-peach">
+                  {data.release.version}
+                </span>
+              ) : null}
+            </div>
+            {data ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-content-tertiary">
+                {data.rpcAvailable ? (
+                  <span>
+                    {String(data.verification.matchedParameters)} matched · {String(liveOnlyCount)}{' '}
+                    on-chain only
+                  </span>
+                ) : null}
+                <span>
+                  Deploy block{' '}
+                  {data.release.deploymentBlock
                     ? Number(data.release.deploymentBlock).toLocaleString('en-US')
-                    : '—'
-                }${data.release.sourceCommit ? ` · ${data.release.sourceCommit.slice(0, 8)}` : ''}`
-              : 'Pinned Core release manifest'
-          }
-        />
-      </div>
+                    : '—'}
+                  {data.release.sourceCommit ? ` · ${data.release.sourceCommit.slice(0, 8)}` : ''}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Panel>
 
       {manifestQuery.isLoading ? (
         <Panel>

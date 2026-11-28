@@ -141,8 +141,9 @@ describe('OverviewPage (Protocol Pulse)', () => {
 
     show()
     expect(screen.getByText('332,945,120')).toBeInTheDocument()
-    expect(screen.getByText('99.76% fill (24h)')).toBeInTheDocument()
-    expect(screen.getByText(/Epoch #148 · 24 confirmed \(24h\)/)).toBeInTheDocument()
+    expect(screen.getByText('99.76%')).toBeInTheDocument()
+    expect(screen.getByText(/Epoch #148/)).toBeInTheDocument()
+    expect(screen.getByText('24')).toBeInTheDocument()
     expect(screen.getByText(/9\/9 workers healthy · DB 4 ms/)).toBeInTheDocument()
     expect(screen.getByText(/842 UserOps \(24h\) · 99.52% success/)).toBeInTheDocument()
     expect(screen.getByText('30 contracts')).toBeInTheDocument()

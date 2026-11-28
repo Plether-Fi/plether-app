@@ -166,7 +166,8 @@ describe('SponsoredPage (Stage 5 Sponsored Transactions & Paymaster Health)', ()
     show()
 
     expect(screen.getAllByText('0.2500 ETH').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Fresh · Alto OK')).toBeInTheDocument()
+    expect(screen.getByText('Alto OK')).toBeInTheDocument()
+    expect(screen.getByText(/^Reconciler \d+s lag$/)).toBeInTheDocument()
     expect(screen.getByText('EntryPoint v0.8 Ready')).toBeInTheDocument()
     expect(screen.getByText('3.80 USDG')).toBeInTheDocument()
     expect(screen.getByText('Sponsorship issuance resumed')).toBeInTheDocument()
@@ -202,7 +203,7 @@ describe('SponsoredPage (Stage 5 Sponsored Transactions & Paymaster Health)', ()
 
     expect(screen.getByText('Awaiting Stage 5 backend deploy')).toBeInTheDocument()
     expect(screen.getByText('Stage 5 backend deployment pending')).toBeInTheDocument()
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(1)
   })
 
   it('renders unconfigured state honestly without synthetic placeholders', () => {

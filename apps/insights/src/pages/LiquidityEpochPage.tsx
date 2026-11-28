@@ -10,7 +10,6 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { ResidualAccuracyMeter } from '../components/LiquidityVisuals'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -350,82 +349,99 @@ export function LiquidityEpochPage() {
         />
       ) : data ? (
         <>
-          {/* Summary Stats */}
-          <section aria-labelledby="epoch-summary-title" className="space-y-3">
+          {/* Unified Epoch Settlement & Tranche Flows Hero */}
+          <section aria-labelledby="epoch-summary-title">
             <h2 id="epoch-summary-title" className="sr-only">
               Epoch summary metrics
             </h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard
-                label="Settlement status"
-                value={
-                  primaryTx
-                    ? txStatusLabel(primaryTx.status)
-                    : latestObs
-                      ? readinessLabel(latestObs.readiness)
-                      : 'No tx'
-                }
-                tone={primaryTx?.status === 'confirmed_success' ? 'positive' : undefined}
-                detail={
-                  primaryTx?.confirmationLatencySeconds != null
-                    ? `Confirmed in ${String(primaryTx.confirmationLatencySeconds)}s · ${EXECUTION_PATH_LABELS[primaryTx.executionPath]}`
-                    : latestObs
-                      ? `Path: ${EXECUTION_PATH_LABELS[latestObs.executionPath]}`
-                      : 'No settlement transaction recorded'
-                }
-              />
-              <StatCard
-                label="Senior flows (dep / red)"
-                unavailable={!primaryTx}
-                value={
-                  primaryTx
-                    ? `${formatCompactAssets(primaryTx.seniorDepositAssets).replace(/ USDG$/, '')} / ${formatCompactAssets(primaryTx.seniorRedeemAssets)}`
-                    : undefined
-                }
-                detail={
-                  primaryTx
-                    ? primaryTx.seniorBacklog
-                      ? 'Senior backlog flagged'
-                      : 'No senior backlog'
-                    : 'Awaiting settlement receipt'
-                }
-              />
-              <StatCard
-                label="Junior flows (dep / red)"
-                unavailable={!primaryTx}
-                value={
-                  primaryTx
-                    ? `${formatCompactAssets(primaryTx.juniorDepositAssets).replace(/ USDG$/, '')} / ${formatCompactAssets(primaryTx.juniorRedeemAssets)}`
-                    : undefined
-                }
-                detail={
-                  primaryTx
-                    ? primaryTx.juniorBacklog
-                      ? 'Junior backlog flagged'
-                      : 'No junior backlog'
-                    : 'Awaiting settlement receipt'
-                }
-              />
-              <StatCard
-                label="Vault mark freshness"
-                unavailable={!data.vaultSnapshot}
-                value={
-                  data.vaultSnapshot
-                    ? data.vaultSnapshot.markFresh === true
-                      ? 'Fresh'
-                      : data.vaultSnapshot.markFresh === false
-                        ? 'Stale'
-                        : 'Recorded'
-                    : undefined
-                }
-                tone={data.vaultSnapshot?.markFresh === true ? 'positive' : undefined}
-                detail={
-                  data.vaultSnapshot
-                    ? `Block ${Number(data.vaultSnapshot.blockNumber).toLocaleString('en-US')}`
-                    : 'No hourly vault snapshot at boundary'
-                }
-              />
-            </div>
+            <Panel className="overflow-hidden">
+              <div className="flex flex-wrap items-end justify-between gap-4 p-4 sm:p-6">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Settlement Status
+                  </p>
+                  <p
+                    className={`mt-1 font-mono text-3xl font-bold tracking-tight sm:text-4xl ${
+                      primaryTx?.status === 'confirmed_success'
+                        ? 'text-positive'
+                        : 'text-content-primary'
+                    }`}
+                  >
+                    {primaryTx
+                      ? txStatusLabel(primaryTx.status)
+                      : latestObs
+                        ? readinessLabel(latestObs.readiness)
+                        : 'No tx'}
+                  </p>
+                  <p className="mt-1 font-mono text-xs text-content-tertiary">
+                    {primaryTx?.confirmationLatencySeconds != null
+                      ? `Confirmed in ${String(primaryTx.confirmationLatencySeconds)}s · ${EXECUTION_PATH_LABELS[primaryTx.executionPath]}`
+                      : latestObs
+                        ? `Path: ${EXECUTION_PATH_LABELS[latestObs.executionPath]}`
+                        : 'No settlement transaction recorded'}
+                  </p>
+                </div>
+
+                <div className="text-left font-mono sm:text-right">
+                  <p className="text-xs text-content-tertiary">Vault Mark Freshness</p>
+                  <p
+                    className={`mt-1 text-xl font-bold ${
+                      data.vaultSnapshot?.markFresh === true
+                        ? 'text-positive'
+                        : data.vaultSnapshot?.markFresh === false
+                          ? 'text-brand-yellow'
+                          : 'text-content-primary'
+                    }`}
+                  >
+                    {data.vaultSnapshot
+                      ? data.vaultSnapshot.markFresh === true
+                        ? 'Fresh'
+                        : data.vaultSnapshot.markFresh === false
+                          ? 'Stale'
+                          : 'Recorded'
+                      : 'Unavailable'}
+                  </p>
+                  <p className="mt-0.5 text-xs text-content-tertiary">
+                    {data.vaultSnapshot
+                      ? 'Hourly boundary mark verified'
+                      : 'No hourly vault snapshot at boundary'}
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-1 divide-y divide-brand-border/15 border-t border-brand-border/20 bg-app-bg/35 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                <div className="px-4 py-3.5 sm:px-6">
+                  <dt className="text-xs text-content-tertiary">Senior Flows (Deposit / Redeem)</dt>
+                  <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-content-primary">
+                    {primaryTx
+                      ? `${formatCompactAssets(primaryTx.seniorDepositAssets).replace(/ USDG$/, '')} / ${formatCompactAssets(primaryTx.seniorRedeemAssets)}`
+                      : 'Unavailable'}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    {primaryTx
+                      ? primaryTx.seniorBacklog
+                        ? 'Senior backlog flagged'
+                        : 'No senior backlog'
+                      : 'Awaiting settlement receipt'}
+                  </p>
+                </div>
+                <div className="px-4 py-3.5 sm:px-6">
+                  <dt className="text-xs text-content-tertiary">Junior Flows (Deposit / Redeem)</dt>
+                  <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-content-primary">
+                    {primaryTx
+                      ? `${formatCompactAssets(primaryTx.juniorDepositAssets).replace(/ USDG$/, '')} / ${formatCompactAssets(primaryTx.juniorRedeemAssets)}`
+                      : 'Unavailable'}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    {primaryTx
+                      ? primaryTx.juniorBacklog
+                        ? 'Junior backlog flagged'
+                        : 'No junior backlog'
+                      : 'Awaiting settlement receipt'}
+                  </p>
+                </div>
+              </dl>
+            </Panel>
           </section>
 
           {/* Vault Snapshot */}

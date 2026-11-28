@@ -9,7 +9,6 @@ import {
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { MarketExposurePulsePanel } from '../components/MarketExposurePulsePanel'
-import { StatCard } from '../components/StatCard'
 import { StatusPill } from '../components/StatusPill'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { EmptyState, Panel } from '../components/ui'
@@ -145,64 +144,120 @@ export function OverviewPage() {
         </div>
       </section>
 
-      <section aria-labelledby="pulse-metrics-title" className="space-y-3">
-        <h2 id="pulse-metrics-title" className="text-lg font-semibold">
+      <section aria-labelledby="pulse-metrics-title">
+        <h2 id="pulse-metrics-title" className="sr-only">
           Protocol snapshot
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Indexed block"
-            loading={statusQuery.isLoading && liveQuery.isLoading && !overview}
-            unavailable={blockNumber === null}
-            value={blockNumber !== null ? Number(blockNumber).toLocaleString('en-US') : undefined}
-            detail={
-              overview?.infra.rpcReachable
-                ? `Nitro RPC live (${formatLatencyMs(overview.infra.rpcLatencyMs)})`
-                : statusQuery.data?.healthy
-                  ? 'Perps history indexer synced'
-                  : live?.snapshotBlock
-                    ? 'Latest Divisions snapshot block'
-                    : statusQuery.isError
-                      ? 'Status endpoint unreachable'
-                      : 'Waiting for latest block heartbeat'
-            }
-          />
-          <StatCard
-            label="Active traders (week)"
-            loading={liveQuery.isLoading}
-            unavailable={!live}
-            value={live?.walletCount?.toLocaleString('en-US')}
-            tone="accent"
-            detail={
-              releaseVersion
-                ? `Accounts active on Core ${releaseVersion}`
-                : 'Current scoring week accounts'
-            }
-          />
-          <StatCard
-            label="Discord-linked wallets"
-            loading={statsQuery.isLoading}
-            unavailable={statsQuery.isError}
-            value={statsQuery.data?.registeredWallets.toLocaleString('en-US')}
-            detail={
-              <Link to="/register" className="text-brand-peach hover:underline">
-                Link Discord for Divisions roles →
-              </Link>
-            }
-          />
-          <StatCard
-            label="Active release"
-            loading={liveQuery.isLoading && publicationQuery.isLoading && !overview}
-            unavailable={!releaseVersion}
-            value={releaseVersion ?? undefined}
-            tone="positive"
-            detail={
-              <Link to="/protocol" className="text-brand-peach hover:underline">
-                Verify contracts &amp; params ({assetSymbol}) →
-              </Link>
-            }
-          />
-        </div>
+        <Panel className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-border/20 bg-app-bg/50 px-4 py-2.5 font-mono text-xs text-content-secondary sm:px-5">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>
+                Block{' '}
+                <strong className="text-content-primary tabular-nums">
+                  {blockNumber !== null ? Number(blockNumber).toLocaleString('en-US') : '—'}
+                </strong>
+              </span>
+              {releaseVersion ? (
+                <span>
+                  Core{' '}
+                  <strong className="text-positive">{releaseVersion}</strong>
+                </span>
+              ) : null}
+              <span className="text-content-tertiary">
+                {overview?.infra.rpcReachable
+                  ? `Nitro RPC ${formatLatencyMs(overview.infra.rpcLatencyMs)}`
+                  : statusQuery.data?.healthy
+                    ? 'Indexer synced'
+                    : live?.snapshotBlock
+                      ? 'Divisions snapshot synced'
+                      : 'Checking heartbeat'}
+              </span>
+            </div>
+            <Link to="/protocol" className="font-semibold text-brand-peach hover:underline">
+              Verify {assetSymbol} contracts →
+            </Link>
+          </div>
+
+          <dl className="grid grid-cols-1 divide-y divide-brand-border/15 sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x">
+            <div className="p-4 sm:p-5">
+              <dt className="text-xs font-medium text-content-tertiary">Active traders (week)</dt>
+              <dd className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-brand-peach">
+                {liveQuery.isLoading ? (
+                  <span className="skeleton inline-block h-7 w-20 align-middle" />
+                ) : live?.walletCount != null ? (
+                  live.walletCount.toLocaleString('en-US')
+                ) : (
+                  <span className="text-sm font-normal text-content-tertiary">Unavailable</span>
+                )}
+              </dd>
+              <p className="mt-1 text-xs text-content-tertiary">Current scoring week accounts</p>
+            </div>
+
+            <div className="border-brand-border/15 p-4 sm:border-l sm:p-5 lg:border-l-0">
+              <dt className="text-xs font-medium text-content-tertiary">24h order fill rate</dt>
+              <dd
+                className={`mt-1.5 font-mono text-2xl font-bold tabular-nums ${
+                  overview?.execution.fillRate24hBps != null && overview.execution.fillRate24hBps >= 9800
+                    ? 'text-positive'
+                    : 'text-content-primary'
+                }`}
+              >
+                {overviewQuery.isLoading ? (
+                  <span className="skeleton inline-block h-7 w-20 align-middle" />
+                ) : overview?.execution.fillRate24hBps != null ? (
+                  formatBpsRate(overview.execution.fillRate24hBps)
+                ) : (
+                  <span className="text-sm font-normal text-content-tertiary">Unavailable</span>
+                )}
+              </dd>
+              <p className="mt-1 font-mono text-xs text-content-tertiary">
+                {overview?.execution.orders24h != null
+                  ? `${overview.execution.orders24h.toLocaleString('en-US')} orders${
+                      overview.execution.latencyP50Seconds != null
+                        ? ` · p50 ${String(overview.execution.latencyP50Seconds)}s`
+                        : ''
+                    }`
+                  : 'Canonical 24h keeper cohort'}
+              </p>
+            </div>
+
+            <div className="border-brand-border/15 p-4 sm:border-t sm:p-5 lg:border-t-0">
+              <dt className="text-xs font-medium text-content-tertiary">LP settlements (24h)</dt>
+              <dd className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-content-primary">
+                {overviewQuery.isLoading ? (
+                  <span className="skeleton inline-block h-7 w-20 align-middle" />
+                ) : overview?.liquidity.confirmedSettlements24h != null ? (
+                  overview.liquidity.confirmedSettlements24h.toLocaleString('en-US')
+                ) : (
+                  <span className="text-sm font-normal text-content-tertiary">Unavailable</span>
+                )}
+              </dd>
+              <p className="mt-1 font-mono text-xs text-content-tertiary">
+                {overview?.liquidity.latestEpoch != null
+                  ? `Epoch #${overview.liquidity.latestEpoch.toLocaleString('en-US')}`
+                  : 'Hourly HousePool epochs'}
+              </p>
+            </div>
+
+            <div className="border-brand-border/15 p-4 sm:border-l sm:border-t sm:p-5 lg:border-l-0 lg:border-t-0">
+              <dt className="text-xs font-medium text-content-tertiary">Discord-linked wallets</dt>
+              <dd className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-content-primary">
+                {statsQuery.isLoading ? (
+                  <span className="skeleton inline-block h-7 w-20 align-middle" />
+                ) : statsQuery.data ? (
+                  statsQuery.data.registeredWallets.toLocaleString('en-US')
+                ) : (
+                  <span className="text-sm font-normal text-content-tertiary">Unavailable</span>
+                )}
+              </dd>
+              <p className="mt-1 text-xs">
+                <Link to="/register" className="text-brand-peach hover:underline">
+                  Link Discord for Divisions →
+                </Link>
+              </p>
+            </div>
+          </dl>
+        </Panel>
       </section>
 
       <section aria-labelledby="pillars-title" className="space-y-3">
@@ -216,10 +271,10 @@ export function OverviewPage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-brand-peach">
                   Traders
                 </p>
-                {overview?.execution.fillRate24hBps != null && (
+                {overview?.execution.latencyP95Seconds != null && (
                   <StatusPill
-                    tone={overview.execution.fillRate24hBps >= 9800 ? 'live' : 'stale'}
-                    label={`${formatBpsRate(overview.execution.fillRate24hBps)} fill (24h)`}
+                    tone="live"
+                    label={`p95 ${String(overview.execution.latencyP95Seconds)}s`}
                   />
                 )}
               </div>
@@ -228,17 +283,6 @@ export function OverviewPage() {
                 1h and 24h fill rates, commit-to-execution latency percentiles, TP/SL protection
                 triggers, and verifiable settlement receipts.
               </p>
-              {overview?.execution.orders24h != null && (
-                <p className="mt-3 font-mono text-xs text-content-tertiary">
-                  {overview.execution.orders24h.toLocaleString('en-US')} orders (24h)
-                  {overview.execution.latencyP50Seconds != null
-                    ? ` · p50 ${String(overview.execution.latencyP50Seconds)}s`
-                    : ''}
-                  {overview.execution.latencyP95Seconds != null
-                    ? ` · p95 ${String(overview.execution.latencyP95Seconds)}s`
-                    : ''}
-                </p>
-              )}
             </div>
             <div className="mt-5 flex flex-wrap gap-4 text-sm font-semibold">
               <Link to="/execution" className="text-brand-peach hover:underline hover:underline-offset-4">
@@ -268,14 +312,6 @@ export function OverviewPage() {
                 Hourly LP epoch settlement readiness, decoded blocker and warning masks, snapshot
                 freshness, and Junior vault attribution residuals.
               </p>
-              {overview?.liquidity.latestEpoch != null && (
-                <p className="mt-3 font-mono text-xs text-content-tertiary">
-                  Epoch #{overview.liquidity.latestEpoch}
-                  {overview.liquidity.confirmedSettlements24h != null
-                    ? ` · ${String(overview.liquidity.confirmedSettlements24h)} confirmed (24h)`
-                    : ''}
-                </p>
-              )}
             </div>
             <div className="mt-5 flex flex-wrap gap-4 text-sm font-semibold">
               <Link to="/liquidity" className="text-brand-peach hover:underline hover:underline-offset-4">

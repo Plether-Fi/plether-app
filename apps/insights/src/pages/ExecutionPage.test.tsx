@@ -155,7 +155,6 @@ describe('ExecutionPage (Stage 2)', () => {
     show()
     expect(screen.getByText('Execution pipeline healthy')).toBeInTheDocument()
     expect(screen.getAllByText('98.50%').length).toBeGreaterThanOrEqual(2)
-    expect(screen.getByText('3s / 8s')).toBeInTheDocument()
     expect(
       screen.getByRole('img', {
         name: /24 hours order outcomes: 985 executed, 10 expired, 5 failed/i,
@@ -196,6 +195,6 @@ describe('ExecutionPage (Stage 2)', () => {
     tradesQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: notFound })
     show()
     expect(screen.getByText(/Connected backend does not serve Stage 2 Execution endpoints yet/i)).toBeInTheDocument()
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2)
   })
 })

@@ -12,7 +12,6 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -373,60 +372,105 @@ export function TradingAccountDetailPage() {
             </Panel>
           ) : null}
 
-          {/* 4-Card KPI Strip */}
-          <section
-            aria-label="Kernel smart account detail KPIs"
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-          >
-            <StatCard
-              label="Smart Account ETH Gas"
-              value={
-                onchain.ethBalanceWei != null
-                  ? formatSponsoredEthWei(onchain.ethBalanceWei, 4)
-                  : '—'
-              }
-              tone={lowEthGas ? 'negative' : 'neutral'}
-              detail={`EP v0.9 nonce ${onchain.entryPointNonce ?? '—'} · DB max ${onchain.dbHighestNonce ?? '—'}`}
-            />
-            <StatCard
-              label="Hourly Sponsorship Quota"
-              value={
-                sponsorship
-                  ? formatBpsPercent(sponsorship.hourlyUtilizationBps)
-                  : 'Not configured'
-              }
-              tone={
-                sponsorship && (sponsorship.hourlyUtilizationBps ?? 0) >= 9000
-                  ? 'negative'
-                  : 'neutral'
-              }
-              detail={
-                sponsorship
-                  ? `${formatSponsoredEthWei(sponsorship.hourlyUsedWei, 4)} / ${formatSponsoredEthWei(sponsorship.hourlyCapWei, 4)} · ${String(sponsorship.activeReservedCount)} active`
-                  : 'ETH-paid gas mode only'
-              }
-            />
-            <StatCard
-              label="Gas Mode Split"
-              value={
-                totalModeOps > 0
-                  ? `${sponsoredSharePct.toFixed(0)}% / ${ethSharePct.toFixed(0)}%`
-                  : '—'
-              }
-              detail={`Sponsored ${summary.sponsoredCount.toLocaleString('en-US')} · ETH-paid ${summary.ethCount.toLocaleString('en-US')} · ${formatSponsoredEthWei(summary.totalGasCostWei, 4)}`}
-            />
-            <StatCard
-              label="Execution & Recovery"
-              value={formatBpsPercent(summary.successRateBps)}
-              tone={
-                summary.successRateBps != null && summary.successRateBps >= 9500
-                  ? 'positive'
-                  : summary.successRateBps != null && summary.successRateBps < 9000
-                    ? 'negative'
-                    : 'neutral'
-              }
-              detail={`${summary.includedSucceeded.toLocaleString('en-US')} ok · ${summary.includedReverted.toLocaleString('en-US')} rev · ${summary.cancellationsAccepted.toLocaleString('en-US')} ETH cancels`}
-            />
+          {/* Unified Smart Account Gas, Quota & Execution Hero */}
+          <section aria-label="Kernel smart account detail KPIs">
+            <Panel className="overflow-hidden">
+              <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-12 lg:items-center">
+                <div className="lg:col-span-5 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Smart Account ETH Gas
+                  </p>
+                  <p
+                    className={`mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                      lowEthGas ? 'text-brand-orange' : 'text-content-primary'
+                    }`}
+                  >
+                    {onchain.ethBalanceWei != null
+                      ? formatSponsoredEthWei(onchain.ethBalanceWei, 4)
+                      : '—'}
+                  </p>
+                  <p className="mt-1 font-mono text-xs text-content-tertiary">
+                    EP v0.9 nonce {onchain.entryPointNonce ?? '—'} · DB max{' '}
+                    {onchain.dbHighestNonce ?? '—'}
+                  </p>
+                </div>
+
+                <div className="space-y-3 lg:col-span-7">
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                      <span className="text-content-tertiary">Hourly Sponsorship Quota</span>
+                      <span
+                        className={`font-semibold tabular-nums ${
+                          sponsorship && (sponsorship.hourlyUtilizationBps ?? 0) >= 9000
+                            ? 'text-brand-orange'
+                            : 'text-content-primary'
+                        }`}
+                      >
+                        {sponsorship
+                          ? formatBpsPercent(sponsorship.hourlyUtilizationBps)
+                          : 'Not configured'}
+                        {sponsorship ? (
+                          <span className="ml-2 font-normal text-content-tertiary">
+                            ({formatSponsoredEthWei(sponsorship.hourlyUsedWei, 4)} /{' '}
+                            {formatSponsoredEthWei(sponsorship.hourlyCapWei, 4)} ·{' '}
+                            {String(sponsorship.activeReservedCount)} active)
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    {sponsorship ? (
+                      <div className="h-2 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                        <div
+                          className={
+                            (sponsorship.hourlyUtilizationBps ?? 0) >= 9000
+                              ? 'h-full bg-brand-orange'
+                              : 'h-full bg-positive'
+                          }
+                          style={{
+                            width: `${String(Math.min(100, (sponsorship.hourlyUtilizationBps ?? 0) / 100))}%`,
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <dl className="grid grid-cols-1 gap-3 border-t border-brand-border/15 pt-3 font-mono text-xs sm:grid-cols-2">
+                    <div>
+                      <dt className="text-content-tertiary">Gas Mode Split</dt>
+                      <dd className="mt-0.5 text-base font-bold tabular-nums text-content-primary">
+                        {totalModeOps > 0
+                          ? `${sponsoredSharePct.toFixed(0)}% / ${ethSharePct.toFixed(0)}%`
+                          : '—'}
+                      </dd>
+                      <p className="text-[11px] text-content-tertiary">
+                        Sponsored {summary.sponsoredCount.toLocaleString('en-US')} · ETH-paid{' '}
+                        {summary.ethCount.toLocaleString('en-US')} ·{' '}
+                        {formatSponsoredEthWei(summary.totalGasCostWei, 4)}
+                      </p>
+                    </div>
+                    <div>
+                      <dt className="text-content-tertiary">Execution &amp; Recovery</dt>
+                      <dd
+                        className={`mt-0.5 text-base font-bold tabular-nums ${
+                          summary.successRateBps != null && summary.successRateBps >= 9500
+                            ? 'text-positive'
+                            : summary.successRateBps != null && summary.successRateBps < 9000
+                              ? 'text-brand-orange'
+                              : 'text-content-primary'
+                        }`}
+                      >
+                        {formatBpsPercent(summary.successRateBps)}
+                      </dd>
+                      <p className="text-[11px] text-content-tertiary">
+                        {summary.includedSucceeded.toLocaleString('en-US')} ok ·{' '}
+                        {summary.includedReverted.toLocaleString('en-US')} rev ·{' '}
+                        {summary.cancellationsAccepted.toLocaleString('en-US')} ETH cancels
+                      </p>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            </Panel>
           </section>
 
           {/* Active Pending Nonce Lanes */}

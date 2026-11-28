@@ -15,7 +15,6 @@ import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
 import { PositionLifecycleChart } from '../components/PositionLifecycleChart'
 import { ShareCardModal } from '../components/ShareCardModal'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { ExcursionMiniBar } from '../components/WalletExposureSection'
@@ -235,51 +234,71 @@ export function PositionLifecyclePage() {
             </div>
           </header>
 
-          {/* 4 Headline KPI Cards */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label={pos.status === 'open' ? 'Net PnL (incl. uPnL)' : 'Realized Net PnL'}
-              value={<Pnl value={pos.netPnlAssets} />}
-              tone={
-                BigInt(pos.netPnlAssets) > 0n
-                  ? 'positive'
-                  : BigInt(pos.netPnlAssets) < 0n
-                    ? 'negative'
-                    : 'neutral'
-              }
-              detail={
-                pos.roiBps != null
-                  ? `${formatRoi(pos.roiBps)} ROI on ${formatCompactAssets(pos.peakMarginAssets)} peak margin`
-                  : `Peak margin ${formatCompactAssets(pos.peakMarginAssets)}`
-              }
-            />
-            <StatCard
-              label="Peak Exposure & Leverage"
-              value={formatCompactAssets(pos.peakNotionalAssets)}
-              tone="accent"
-              detail={`${formatLeverageX100(pos.entryLeverageX100)} entry · ${formatLeverageX100(pos.maxLeverageX100)} max · ${formatPlDxyQuantity(pos.peakSize)}`}
-            />
-            <StatCard
-              label="Excursion (MFE / MAE)"
-              value={`+${formatCompactAssets(pos.mfePnlAssets).replace(' USDG', '')} / ${formatCompactAssets(pos.maePnlAssets)}`}
-              tone="neutral"
-              detail={
-                pos.captureRatioBps != null
-                  ? `Captured ${formatPositionBpsPercent(pos.captureRatioBps)} of peak MFE`
-                  : `Peak ${formatPositionBpsPercent(pos.mfeBps, true)} / Worst ${formatPositionBpsPercent(pos.maeBps, true)}`
-              }
-            />
-            <StatCard
-              label={pos.status === 'open' ? 'Current Liq Buffer' : 'Closest Liq Buffer'}
-              value={pos.status === 'liquidated' ? '0.00% (Liq)' : liqBuffer.text}
-              tone={pos.status === 'liquidated' ? 'negative' : liqBuffer.tone}
-              detail={
-                pos.liquidationPrice
-                  ? `Liq ${formatPrice(pos.liquidationPrice)} · Maint ${formatPositionBpsPercent(data.maintenanceMarginBps)}`
-                  : `Liquidation out of range · Maint ${formatPositionBpsPercent(data.maintenanceMarginBps)}`
-              }
-            />
-          </div>
+          {/* Unified Position Performance & Risk Hero */}
+          <Panel className="overflow-hidden">
+            <div className="flex flex-wrap items-end justify-between gap-4 p-4 sm:p-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                  {pos.status === 'open' ? 'Net PnL (incl. uPnL)' : 'Realized Net PnL'}
+                </p>
+                <p className="mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl">
+                  <Pnl value={pos.netPnlAssets} />
+                </p>
+                <p className="mt-1 font-mono text-xs text-content-tertiary">
+                  {pos.roiBps != null
+                    ? `${formatRoi(pos.roiBps)} ROI on ${formatCompactAssets(pos.peakMarginAssets)} peak margin`
+                    : `Peak margin ${formatCompactAssets(pos.peakMarginAssets)}`}
+                </p>
+              </div>
+
+              <div className="text-left font-mono sm:text-right">
+                <p className="text-xs text-content-tertiary">
+                  {pos.status === 'open' ? 'Current Liq Buffer' : 'Closest Liq Buffer'}
+                </p>
+                <p
+                  className={`mt-1 text-2xl font-bold tabular-nums ${
+                    pos.status === 'liquidated' || liqBuffer.tone === 'negative'
+                      ? 'text-brand-orange'
+                      : liqBuffer.tone === 'warning'
+                        ? 'text-brand-yellow'
+                        : 'text-positive'
+                  }`}
+                >
+                  {pos.status === 'liquidated' ? '0.00% (Liq)' : liqBuffer.text}
+                </p>
+                <p className="mt-0.5 text-xs text-content-tertiary">
+                  {pos.liquidationPrice
+                    ? `Liq ${formatPrice(pos.liquidationPrice)} · Maint ${formatPositionBpsPercent(data.maintenanceMarginBps)}`
+                    : `Liquidation out of range · Maint ${formatPositionBpsPercent(data.maintenanceMarginBps)}`}
+                </p>
+              </div>
+            </div>
+
+            <dl className="grid grid-cols-1 divide-y divide-brand-border/15 border-t border-brand-border/20 bg-app-bg/35 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+              <div className="px-4 py-3.5 sm:px-6">
+                <dt className="text-xs text-content-tertiary">Peak Exposure &amp; Leverage</dt>
+                <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-brand-peach">
+                  {formatCompactAssets(pos.peakNotionalAssets)}
+                </dd>
+                <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                  {formatLeverageX100(pos.entryLeverageX100)} entry ·{' '}
+                  {formatLeverageX100(pos.maxLeverageX100)} max · {formatPlDxyQuantity(pos.peakSize)}
+                </p>
+              </div>
+              <div className="px-4 py-3.5 sm:px-6">
+                <dt className="text-xs text-content-tertiary">Excursion (MFE / MAE)</dt>
+                <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-content-primary">
+                  +{formatCompactAssets(pos.mfePnlAssets).replace(' USDG', '')} /{' '}
+                  {formatCompactAssets(pos.maePnlAssets)}
+                </dd>
+                <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                  {pos.captureRatioBps != null
+                    ? `Captured ${formatPositionBpsPercent(pos.captureRatioBps)} of peak MFE`
+                    : `Peak ${formatPositionBpsPercent(pos.mfeBps, true)} / Worst ${formatPositionBpsPercent(pos.maeBps, true)}`}
+                </p>
+              </div>
+            </dl>
+          </Panel>
 
           {/* Hero Interactive Price / PnL / Leverage Trajectory Chart */}
           <PositionLifecycleChart

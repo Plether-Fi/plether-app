@@ -13,7 +13,6 @@ import {
   ResidualAccuracyMeter,
   SettlementContinuityStrip,
 } from '../components/LiquidityVisuals'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -249,75 +248,133 @@ export function LiquidityOpsPage() {
         </div>
       ) : null}
 
-      <section aria-labelledby="lp-ops-kpis-title" className="space-y-4">
-        <h2 id="lp-ops-kpis-title" className="text-xl font-semibold">
+      <section aria-labelledby="lp-ops-kpis-title">
+        <h2 id="lp-ops-kpis-title" className="sr-only">
           Settlement &amp; accounting health
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Latest LP epoch"
-            loading={settlementsQuery.isLoading}
-            unavailable={!latestObs}
-            value={latestObs ? `#${latestObs.epoch.toLocaleString('en-US')}` : undefined}
-            tone={latestObs?.readiness === 'ready' ? 'positive' : 'accent'}
-            detail={
-              latestObs
-                ? `${EXECUTION_PATH_LABELS[latestObs.executionPath]} · Health: ${latestObs.healthState}`
-                : 'Awaiting settlement monitor observation'
-            }
-          />
-          <StatCard
-            label="Confirmed settlements (24h)"
-            loading={settlementsQuery.isLoading}
-            unavailable={!settlements}
-            value={
-              settlements
-                ? settlements.summary.confirmedSettlements24h.toLocaleString('en-US')
-                : undefined
-            }
-            tone={
-              settlements && settlements.summary.failedOrReverted24h > 0 ? 'warning' : 'positive'
-            }
-            detail={
-              settlements
-                ? `${String(settlements.summary.observedEpochs24h)} epochs observed · ${String(settlements.summary.failedOrReverted24h)} failed · ${String(settlements.summary.replacedAttempts24h)} gas-bumped`
-                : '24h LP settlement tx summary'
-            }
-          />
-          <StatCard
-            label="7d mark freshness"
-            loading={forensicsQuery.isLoading}
-            unavailable={!fresh7d}
-            value={
-              fresh7d
-                ? `${String(fresh7d.freshHours)}/${String(fresh7d.expectedHours)} hrs`
-                : undefined
-            }
-            tone={fresh7d && fresh7d.staleHours > 0 ? 'warning' : 'positive'}
-            detail={
-              fresh7d
-                ? `${String(fresh7d.staleHours)} stale-mark gaps across ${String(fresh7d.observedHours)} observed hours`
-                : 'Hourly vault_performance_snapshots audit'
-            }
-          />
-          <StatCard
-            label="Attribution & indexer head"
-            loading={forensicsQuery.isLoading}
-            unavailable={!forensics?.attributionWorker.indexedThroughBlock && !activityIndexer}
-            value={
-              forensics?.attributionWorker.indexedThroughBlock
-                ? Number(forensics.attributionWorker.indexedThroughBlock).toLocaleString('en-US')
-                : activityIndexer
-                  ? Number(activityIndexer.lastIndexedBlock).toLocaleString('en-US')
-                  : undefined
-            }
-            detail={
-              activityIndexer
-                ? `Vault activity lag: ${activityIndexer.lagBlocks.toLocaleString('en-US')} blocks (${String(activityIndexer.lagSeconds)}s)`
-                : 'Trace-proven return attribution block'
-            }
-          />
-        </div>
+        <Panel className="p-4 sm:p-6">
+          {settlementsQuery.isLoading && forensicsQuery.isLoading ? (
+            <LoadingState rows={3} />
+          ) : !latestObs && !settlements && !fresh7d ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-content-tertiary">
+              <span>Latest LP epoch &amp; 24h settlements: <strong className="text-content-secondary">Unavailable</strong></span>
+              <span>7d mark freshness &amp; indexer lag: <strong className="text-content-secondary">Unavailable</strong></span>
+            </div>
+          ) : (
+            <div className="grid gap-5 lg:grid-cols-12 lg:items-center">
+              {/* Left: Latest LP Epoch + 24h Settlement Tally */}
+              <div className="space-y-3 lg:col-span-6 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Latest LP Epoch
+                  </p>
+                  {latestObs ? (
+                    <StatusPill
+                      tone={readinessTone(latestObs.readiness)}
+                      label={readinessLabel(latestObs.readiness)}
+                    />
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <span className="font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                    {latestObs ? `#${latestObs.epoch.toLocaleString('en-US')}` : 'Unavailable'}
+                  </span>
+                  {latestObs ? (
+                    <span className="font-mono text-xs text-content-secondary">
+                      {EXECUTION_PATH_LABELS[latestObs.executionPath]} · {latestObs.healthState}
+                    </span>
+                  ) : null}
+                </div>
+                {settlements ? (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-brand-border/15 pt-2.5 font-mono text-xs tabular-nums">
+                    <span>
+                      <strong className="text-positive">
+                        {settlements.summary.confirmedSettlements24h.toLocaleString('en-US')}
+                      </strong>{' '}
+                      <span className="text-content-tertiary">
+                        confirmed (24h · {String(settlements.summary.observedEpochs24h)} epochs)
+                      </span>
+                    </span>
+                    <span
+                      className={
+                        settlements.summary.failedOrReverted24h > 0
+                          ? 'font-semibold text-brand-orange'
+                          : 'text-content-tertiary'
+                      }
+                    >
+                      {String(settlements.summary.failedOrReverted24h)} failed
+                    </span>
+                    <span className="text-content-tertiary">
+                      {String(settlements.summary.replacedAttempts24h)} gas-bumped
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Right: 7d Mark Freshness Gauge + Indexer Lag */}
+              <div className="space-y-3.5 lg:col-span-6">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                    <span className="text-content-tertiary">7d Mark Freshness</span>
+                    {fresh7d ? (
+                      <span className="tabular-nums">
+                        <strong
+                          className={
+                            fresh7d.staleHours > 0 ? 'text-brand-yellow' : 'text-positive'
+                          }
+                        >
+                          {String(fresh7d.freshHours)}/{String(fresh7d.expectedHours)} hrs
+                        </strong>{' '}
+                        <span className="text-content-tertiary">
+                          ({String(fresh7d.staleHours)} stale gaps · {String(fresh7d.observedHours)} observed)
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-content-tertiary">Unavailable</span>
+                    )}
+                  </div>
+                  <div className="h-2 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                    {fresh7d && fresh7d.expectedHours > 0 ? (
+                      <div
+                        className={fresh7d.staleHours > 0 ? 'h-full bg-brand-yellow' : 'h-full bg-positive'}
+                        style={{
+                          width: `${String(Math.min(100, Math.round((fresh7d.freshHours / fresh7d.expectedHours) * 100)))}%`,
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+
+                <dl className="grid grid-cols-1 gap-y-2 border-t border-brand-border/15 pt-2.5 font-mono text-xs sm:grid-cols-2 sm:divide-x sm:divide-brand-border/20">
+                  <div className="flex items-baseline justify-between gap-3 sm:pr-4">
+                    <dt className="text-content-tertiary">Vault indexer lag</dt>
+                    <dd
+                      className={`font-semibold tabular-nums ${
+                        activityIndexer && activityIndexer.lagSeconds > 120
+                          ? 'text-brand-yellow'
+                          : 'text-positive'
+                      }`}
+                    >
+                      {activityIndexer
+                        ? `${activityIndexer.lagBlocks.toLocaleString('en-US')} blk (${String(activityIndexer.lagSeconds)}s)`
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 sm:pl-4">
+                    <dt className="text-content-tertiary">Attribution head</dt>
+                    <dd className="font-semibold tabular-nums text-content-primary">
+                      {forensics?.attributionWorker.indexedThroughBlock
+                        ? Number(forensics.attributionWorker.indexedThroughBlock).toLocaleString('en-US')
+                        : activityIndexer
+                          ? Number(activityIndexer.lastIndexedBlock).toLocaleString('en-US')
+                          : 'Unavailable'}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
+          )}
+        </Panel>
       </section>
 
       <section aria-labelledby="settlement-masks-title" className="space-y-4">

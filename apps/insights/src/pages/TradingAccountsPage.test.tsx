@@ -164,7 +164,7 @@ describe('TradingAccountsPage (ZeroDev Kernel v4 Smart Wallets)', () => {
     expect(screen.getByText('Sponsored Gas: On')).toBeInTheDocument()
     expect(screen.getByText('ETH-Paid Gas: On')).toBeInTheDocument()
     expect(screen.getByText('Alto v0.9 SafeMode OK')).toBeInTheDocument()
-    expect(screen.getByText('70% / 30%')).toBeInTheDocument()
+    expect(screen.getByText('Split 70% sponsored / 30% ETH')).toBeInTheDocument()
     expect(screen.getByText('EntryPoint v0.9')).toBeInTheDocument()
     expect(screen.getByText('KernelFactory')).toBeInTheDocument()
     expect(screen.getByText('@kernel_pilot')).toBeInTheDocument()

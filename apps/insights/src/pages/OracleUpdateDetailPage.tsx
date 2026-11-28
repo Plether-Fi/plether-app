@@ -3,7 +3,6 @@ import { InsightsApiError, isValidOracleUpdateId, useOracleUpdateDetail } from '
 import { CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OracleBasketPieChart } from '../components/OracleBasketPieChart'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -294,62 +293,109 @@ export function OracleUpdateDetailPage() {
             </p>
           </header>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label="plDXY display mark"
-              value={data.update.basketPrice ? formatPrice(data.update.basketPrice) : undefined}
-              unavailable={!data.update.basketPrice}
-              tone={
-                data.update.displayDeltaBps != null && data.update.displayDeltaBps > 0
-                  ? 'positive'
-                  : data.update.displayDeltaBps != null && data.update.displayDeltaBps < 0
-                    ? 'negative'
-                    : 'neutral'
-              }
-              detail={
-                data.update.basketPrice
-                  ? `Raw basket ${formatEightDec(data.update.basketPrice)} · Cap ${formatEightDec(data.update.displayPriceCap, 2)}`
-                  : 'Raw basket unavailable'
-              }
-            />
-            <StatCard
-              label="6-feed publish spread"
-              value={`${String(data.update.spreadSeconds)}s / ${String(data.thresholds.maxComponentDivergenceSeconds)}s`}
-              tone={
-                data.update.spreadSeconds > data.thresholds.maxComponentDivergenceSeconds
-                  ? 'negative'
-                  : data.update.spreadSeconds >= data.thresholds.maxComponentDivergenceSeconds - 1
-                    ? 'neutral'
-                    : 'positive'
-              }
-              detail={`Ingestion lag: ${String(data.update.lagSeconds)}s · ${String(data.update.vaaCount)} VAA${data.update.vaaCount === 1 ? '' : 's'}`}
-            />
-            <StatCard
-              label="Peak component conf"
-              value={
-                data.update.maxComponentConfidenceBps != null
-                  ? `${String(data.update.maxComponentConfidenceBps)} bps`
-                  : undefined
-              }
-              unavailable={data.update.maxComponentConfidenceBps == null}
-              tone={
-                data.update.maxComponentConfidenceBps != null &&
-                data.update.maxComponentConfidenceBps > maxConfLimit
-                  ? 'negative'
-                  : 'positive'
-              }
-              detail={`Limit: ${String(maxConfLimit)} bps${adverseMultText ? ` · ${adverseMultText}` : ''}`}
-            />
-            <StatCard
-              label="Orders settled on update"
-              value={data.settledOrders.length.toLocaleString('en-US')}
-              detail={
-                data.settledOrders.length > 0
-                  ? `Matched on (${formatTimeSecondsUtc(data.update.minPublishTime)}–${formatTimeSecondsUtc(data.update.maxPublishTime)})`
-                  : 'No orders finalized on this exact tick'
-              }
-            />
-          </div>
+          {/* Unified Oracle Update Hero Panel */}
+          <Panel className="overflow-hidden">
+            <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-12 lg:items-center">
+              <div className="lg:col-span-6 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                  plDXY Display Mark
+                </p>
+                <p
+                  className={`mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                    data.update.displayDeltaBps != null && data.update.displayDeltaBps > 0
+                      ? 'text-positive'
+                      : data.update.displayDeltaBps != null && data.update.displayDeltaBps < 0
+                        ? 'text-brand-orange'
+                        : 'text-content-primary'
+                  }`}
+                >
+                  {data.update.basketPrice ? formatPrice(data.update.basketPrice) : 'Unavailable'}
+                </p>
+                <p className="mt-1 font-mono text-xs text-content-tertiary">
+                  {data.update.basketPrice
+                    ? `Raw basket ${formatEightDec(data.update.basketPrice)} · Cap ${formatEightDec(data.update.displayPriceCap, 2)}`
+                    : 'Raw basket unavailable'}
+                </p>
+              </div>
+
+              <div className="space-y-3 lg:col-span-6">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                    <span className="text-content-tertiary">6-Feed Publish Spread</span>
+                    <span
+                      className={`font-semibold tabular-nums ${
+                        data.update.spreadSeconds > data.thresholds.maxComponentDivergenceSeconds
+                          ? 'text-brand-orange'
+                          : 'text-positive'
+                      }`}
+                    >
+                      {String(data.update.spreadSeconds)}s /{' '}
+                      {String(data.thresholds.maxComponentDivergenceSeconds)}s
+                      <span className="ml-2 font-normal text-content-tertiary">
+                        · lag {String(data.update.lagSeconds)}s · {String(data.update.vaaCount)} VAA
+                        {data.update.vaaCount === 1 ? '' : 's'}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                    <div
+                      className={
+                        data.update.spreadSeconds > data.thresholds.maxComponentDivergenceSeconds
+                          ? 'h-full bg-brand-orange'
+                          : 'h-full bg-brand-peach'
+                      }
+                      style={{
+                        width: `${String(
+                          data.thresholds.maxComponentDivergenceSeconds > 0
+                            ? Math.min(
+                                100,
+                                Math.round(
+                                  (data.update.spreadSeconds /
+                                    data.thresholds.maxComponentDivergenceSeconds) *
+                                    100,
+                                ),
+                              )
+                            : 0,
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <dl className="grid grid-cols-1 gap-3 border-t border-brand-border/15 pt-3 font-mono text-xs sm:grid-cols-2">
+                  <div>
+                    <dt className="text-content-tertiary">Peak Component Conf</dt>
+                    <dd
+                      className={`mt-0.5 text-base font-bold tabular-nums ${
+                        data.update.maxComponentConfidenceBps != null &&
+                        data.update.maxComponentConfidenceBps > maxConfLimit
+                          ? 'text-brand-orange'
+                          : 'text-positive'
+                      }`}
+                    >
+                      {data.update.maxComponentConfidenceBps != null
+                        ? `${String(data.update.maxComponentConfidenceBps)} bps`
+                        : 'Unavailable'}
+                    </dd>
+                    <p className="text-[11px] text-content-tertiary">
+                      Limit {String(maxConfLimit)} bps{adverseMultText ? ` · ${adverseMultText}` : ''}
+                    </p>
+                  </div>
+                  <div>
+                    <dt className="text-content-tertiary">Orders Settled on Update</dt>
+                    <dd className="mt-0.5 text-base font-bold tabular-nums text-content-primary">
+                      {data.settledOrders.length.toLocaleString('en-US')}
+                    </dd>
+                    <p className="text-[11px] text-content-tertiary">
+                      {data.settledOrders.length > 0
+                        ? `Matched on (${formatTimeSecondsUtc(data.update.minPublishTime)}–${formatTimeSecondsUtc(data.update.maxPublishTime)})`
+                        : 'No orders finalized on this tick'}
+                    </p>
+                  </div>
+                </dl>
+              </div>
+            </div>
+          </Panel>
 
           <section
             aria-label="Basket weights pie chart and value-guard verification"
