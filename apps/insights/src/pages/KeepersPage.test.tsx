@@ -134,6 +134,6 @@ describe('KeepersPage (Stage 2 Permissionless Keepers)', () => {
     activityQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: notFound })
     show()
     expect(screen.getByText(/Connected backend does not serve Stage 2 Keepers endpoints yet/i)).toBeInTheDocument()
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(1)
   })
 })

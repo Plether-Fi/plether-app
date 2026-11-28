@@ -12,7 +12,6 @@ import {
 } from '../api'
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
@@ -286,47 +285,60 @@ export function TradingAccountsPage() {
         </Panel>
       ) : data && adoption && lifecycle ? (
         <>
-          {/* 4-Card KPI Strip */}
-          <section aria-label="Kernel smart account KPIs" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label="Kernel Smart Accounts"
-              value={adoption.uniqueAccounts.toLocaleString('en-US')}
-              detail={`${adoption.uniqueOwners.toLocaleString('en-US')} owners · ${adoption.activeAccounts24h.toLocaleString('en-US')} active (24h)`}
-            />
-            <StatCard
-              label="Kernel Operations"
-              value={adoption.totalOperations.toLocaleString('en-US')}
-              detail={`${adoption.operations24h.toLocaleString('en-US')} in 24h · ${adoption.pendingOpsCount.toLocaleString('en-US')} pending${adoption.oldestPendingAgeSeconds != null ? ` (oldest ${formatDurationSeconds(adoption.oldestPendingAgeSeconds)})` : ''}`}
-            />
-            <StatCard
-              label="Gas Mode Split"
-              value={
-                totalModeOps > 0
-                  ? `${sponsoredSharePct.toFixed(0)}% / ${ethSharePct.toFixed(0)}%`
-                  : '—'
-              }
-              detail={`Sponsored ${adoption.sponsoredOpsTotal.toLocaleString('en-US')} · ETH-paid ${adoption.ethOpsTotal.toLocaleString('en-US')} · ${formatSponsoredEthWei(lifecycle.totalGasCostWei, 4)}`}
-            />
-            <StatCard
-              label="Execution & Recovery"
-              value={formatBpsPercent(lifecycle.successRateBps)}
-              tone={
-                lifecycle.successRateBps != null && lifecycle.successRateBps >= 9500
-                  ? 'positive'
-                  : lifecycle.successRateBps != null && lifecycle.successRateBps < 9000
-                    ? 'negative'
-                    : 'neutral'
-              }
-              detail={`${lifecycle.cancellationsAccepted.toLocaleString('en-US')} ETH cancellations · ${lifecycle.sponsorshipExpired.toLocaleString('en-US')} expired`}
-            />
-          </section>
-
-          {/* Payment Mode Split & Lifecycle Funnel */}
+          {/* Unified Adoption, Gas Payment Mode Split & Operation Lifecycle Hero */}
           <section aria-labelledby="kernel-modes-title" className="space-y-3">
-            <h2 id="kernel-modes-title" className="text-lg font-semibold">
-              Gas Payment Mode Split &amp; Operation Lifecycle
+            <h2 id="kernel-modes-title" className="sr-only">
+              Kernel smart accounts adoption, gas payment mode split, and operation lifecycle
             </h2>
-            <Panel className="space-y-4 p-5">
+            <Panel className="space-y-5 p-4 sm:p-6">
+              <div className="grid gap-4 border-b border-brand-border/20 pb-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Kernel Smart Accounts
+                  </p>
+                  <p className="mt-1 font-mono text-3xl font-bold tabular-nums text-content-primary">
+                    {adoption.uniqueAccounts.toLocaleString('en-US')}
+                  </p>
+                  <p className="mt-0.5 font-mono text-xs text-content-tertiary">
+                    {adoption.uniqueOwners.toLocaleString('en-US')} owners ·{' '}
+                    {adoption.activeAccounts24h.toLocaleString('en-US')} active (24h)
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-content-tertiary">Total Kernel Operations</p>
+                  <p className="mt-1 font-mono text-3xl font-bold tabular-nums text-content-primary">
+                    {adoption.totalOperations.toLocaleString('en-US')}
+                  </p>
+                  <p className="mt-0.5 font-mono text-xs text-content-tertiary">
+                    {adoption.operations24h.toLocaleString('en-US')} in 24h
+                    {adoption.oldestPendingAgeSeconds != null
+                      ? ` · oldest pending ${formatDurationSeconds(adoption.oldestPendingAgeSeconds)}`
+                      : ` · total gas ${formatSponsoredEthWei(lifecycle.totalGasCostWei, 4)}`}
+                  </p>
+                </div>
+
+                <div className="sm:text-right">
+                  <p className="text-xs text-content-tertiary">Execution Success Rate</p>
+                  <p
+                    className={`mt-1 font-mono text-3xl font-bold tabular-nums ${
+                      lifecycle.successRateBps != null && lifecycle.successRateBps >= 9500
+                        ? 'text-positive'
+                        : lifecycle.successRateBps != null && lifecycle.successRateBps < 9000
+                          ? 'text-brand-orange'
+                          : 'text-content-primary'
+                    }`}
+                  >
+                    {formatBpsPercent(lifecycle.successRateBps)}
+                  </p>
+                  <p className="mt-0.5 font-mono text-xs text-content-tertiary">
+                    {totalModeOps > 0
+                      ? `Split ${sponsoredSharePct.toFixed(0)}% sponsored / ${ethSharePct.toFixed(0)}% ETH`
+                      : 'No finalized operations yet'}
+                  </p>
+                </div>
+              </div>
+
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
                   <div className="flex flex-wrap items-center gap-4">

@@ -18,6 +18,7 @@ import {
   formatSignedAssets,
   formatUtc,
 } from '../utils/format'
+import { OraclePriceLink } from './OraclePriceLink'
 import { StatCard } from './StatCard'
 import { StatusPill, type StatusTone } from './StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from './ui'
@@ -143,7 +144,7 @@ export function ActivePositionRiskStrip({
             {formatLeverageX100(exposure.effectiveLeverageX100)}
           </span>
           <span className="font-mono text-[11px] text-content-secondary">
-            Mark {formatPrice(exposure.markPrice)} · Liq{' '}
+            Mark <OraclePriceLink>{formatPrice(exposure.markPrice)}</OraclePriceLink> · Liq{' '}
             {exposure.liquidationPrice ? formatPrice(exposure.liquidationPrice) : 'Out of range'}
           </span>
         </div>
@@ -501,11 +502,13 @@ export function WalletExposureSection({
                         <td className="whitespace-nowrap px-3 py-3.5 align-top font-mono text-xs tabular-nums">
                           <p className="text-content-primary">
                             {formatPrice(pos.entryPrice)} →{' '}
-                            {pos.exitPrice
-                              ? formatPrice(pos.exitPrice)
-                              : data.currentMarkPrice
-                                ? `${formatPrice(data.currentMarkPrice)} mark`
-                                : 'Open'}
+                            {pos.exitPrice ? (
+                              formatPrice(pos.exitPrice)
+                            ) : data.currentMarkPrice ? (
+                              <OraclePriceLink>{formatPrice(data.currentMarkPrice)} mark</OraclePriceLink>
+                            ) : (
+                              'Open'
+                            )}
                           </p>
                           <p className="mt-1 text-[11px] text-content-tertiary">
                             {String(pos.fillCount)} fill{pos.fillCount === 1 ? '' : 's'}

@@ -4,7 +4,6 @@ import { formatSponsoredEthWei } from '../api/sponsored'
 import { useTreasuryOverview, type TreasuryWindowSummary } from '../api/treasury'
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard, type StatTone } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { TreasuryRevenueChart } from '../components/TreasuryRevenueChart'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
@@ -164,13 +163,13 @@ export function TreasuryPage() {
   const win7 = data?.profitOverview.window7d
   const win30 = data?.profitOverview.window30d
 
-  const netSurplusTone: StatTone = allTime
+  const netSurplusClass = allTime
     ? BigInt(allTime.netUsdgSurplusAssets || '0') > 0n
-      ? 'positive'
+      ? 'text-positive'
       : BigInt(allTime.netUsdgSurplusAssets || '0') < 0n
-        ? 'negative'
-        : 'neutral'
-    : 'neutral'
+        ? 'text-brand-orange'
+        : 'text-content-primary'
+    : 'text-content-primary'
 
   const seenExternalKeys = new Set<string>()
   function claimAddressArbiscan(address: string | null | undefined): boolean {
@@ -276,69 +275,119 @@ export function TreasuryPage() {
         </Panel>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Total treasury holdings"
-          loading={query.isLoading}
-          unavailable={!data || data.holdings.totalUsdgAssets === null}
-          tone="positive"
-          value={
-            data?.holdings.totalUsdgAssets != null
-              ? formatAssets(data.holdings.totalUsdgAssets)
-              : undefined
-          }
-          detail={
-            data?.holdings.clearinghouseSettlementAssets != null
-              ? `Clearinghouse ${formatAssets(data.holdings.clearinghouseSettlementAssets)} · Wallet ${formatAssets(data.holdings.walletUsdgAssets)}`
-              : 'Clearinghouse + Wallet USDG + LP Vaults'
-          }
-        />
+      {/* Capital Stack + P&L Equation Hero */}
+      <Panel className="space-y-4 p-4 sm:p-6">
+        {query.isLoading ? (
+          <LoadingState rows={3} />
+        ) : !data ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-content-tertiary">
+            <span>Total treasury holdings: <strong className="text-content-secondary">Unavailable</strong></span>
+            <span>All-time fees &amp; net surplus: <strong className="text-content-secondary">Unavailable</strong></span>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                  Total Treasury Holdings
+                </p>
+                <p className="mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums text-positive sm:text-4xl">
+                  {data.holdings.totalUsdgAssets != null
+                    ? formatAssets(data.holdings.totalUsdgAssets)
+                    : 'Unavailable'}
+                </p>
+              </div>
+              <div className="text-left font-mono sm:text-right">
+                <p className="text-xs text-content-tertiary">7d Annualized Fee Run-Rate</p>
+                <p className="mt-0.5 text-lg font-bold tabular-nums text-content-primary">
+                  {data.profitOverview.annualizedExecutionFeeRunRate7dAssets != null
+                    ? formatAssets(data.profitOverview.annualizedExecutionFeeRunRate7dAssets)
+                    : 'Unavailable'}
+                </p>
+                {win24 && win7 ? (
+                  <p className="text-[11px] tabular-nums text-content-tertiary">
+                    24h {formatCompactAssets(win24.executionFeeAssessedAssets)} · 7d{' '}
+                    {formatCompactAssets(win7.executionFeeAssessedAssets)}
+                  </p>
+                ) : null}
+              </div>
+            </div>
 
-        <StatCard
-          label="All-time protocol fees"
-          loading={query.isLoading}
-          unavailable={!allTime}
-          tone="positive"
-          value={allTime ? formatAssets(allTime.executionFeeAssessedAssets) : undefined}
-          detail={
-            allTime
-              ? `${allTime.executedOrders.toLocaleString('en-US')} fills · ${formatAssets(allTime.volumeAssets)} vol · ${
-                  allTime.effectiveFeeBps !== null ? `${allTime.effectiveFeeBps.toFixed(2)} bps eff.` : '—'
-                }`
-              : 'Cumulative execution fees assessed'
-          }
-        />
+            {/* Proportional Capital Allocation Bar */}
+            {(() => {
+              const totalBig = BigInt(data.holdings.totalUsdgAssets ?? '0')
+              const chBig = BigInt(data.holdings.clearinghouseSettlementAssets ?? '0')
+              const walletBig = BigInt(data.holdings.walletUsdgAssets ?? '0')
+              const lpBig =
+                BigInt(data.holdings.juniorVaultAssets ?? '0') +
+                BigInt(data.holdings.seniorVaultAssets ?? '0')
+              const pct = (part: bigint) =>
+                totalBig > 0n ? Number((part * 10000n) / totalBig) / 100 : 0
+              const chPct = pct(chBig)
+              const lpPct = pct(lpBig)
+              const walletPct = pct(walletBig)
+              return totalBig > 0n ? (
+                <div className="space-y-1.5">
+                  <div className="flex h-2.5 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                    {chPct > 0 ? <div style={{ width: `${String(chPct)}%`, background: '#6EE7B7' }} /> : null}
+                    {lpPct > 0 ? <div style={{ width: `${String(lpPct)}%`, background: '#FFB78B' }} /> : null}
+                    {walletPct > 0 ? <div style={{ width: `${String(walletPct)}%`, background: '#7CC4FA' }} /> : null}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] tabular-nums text-content-tertiary">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2 w-2" style={{ background: '#6EE7B7' }} />
+                      Clearinghouse {chPct.toFixed(1)}%
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2 w-2" style={{ background: '#FFB78B' }} />
+                      LP Vaults {lpPct.toFixed(1)}%
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2 w-2" style={{ background: '#7CC4FA' }} />
+                      Wallet USDG {walletPct.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              ) : null
+            })()}
 
-        <StatCard
-          label="7d annualized run-rate"
-          loading={query.isLoading}
-          unavailable={!data || data.profitOverview.annualizedExecutionFeeRunRate7dAssets === null}
-          tone="neutral"
-          value={
-            data?.profitOverview.annualizedExecutionFeeRunRate7dAssets != null
-              ? formatAssets(data.profitOverview.annualizedExecutionFeeRunRate7dAssets)
-              : undefined
-          }
-          detail={
-            win24 && win7
-              ? `24h: ${formatAssets(win24.executionFeeAssessedAssets)} · 7d: ${formatAssets(win7.executionFeeAssessedAssets)}`
-              : 'Extrapolated from trailing 7d execution fees'
-          }
-        />
-
-        <StatCard
-          label="Net USDG surplus (all-time)"
-          loading={query.isLoading}
-          unavailable={!allTime}
-          tone={netSurplusTone}
-          value={allTime ? formatAssets(allTime.netUsdgSurplusAssets) : undefined}
-          detail={
-            allTime
-              ? `Close assist ${formatAssets(allTime.closeAssistanceUsdgAssets)} · Gas sponsored ${formatSponsoredEthWei(allTime.sponsoredGasSpentWei, 4)}`
-              : 'Execution fees minus USDG subsidies'
-          }
-        />
-      </div>
+            {/* Accounting Equation Strip: Fees − Subsidies = Net Surplus */}
+            {allTime ? (
+              <dl className="grid grid-cols-1 gap-3 border-t border-brand-border/20 pt-4 font-mono sm:grid-cols-3">
+                <div>
+                  <dt className="text-xs text-content-tertiary">All-Time Execution Fees</dt>
+                  <dd className="mt-1 text-base font-bold tabular-nums text-content-primary">
+                    +{formatAssets(allTime.executionFeeAssessedAssets)}
+                  </dd>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-content-tertiary">
+                    {allTime.executedOrders.toLocaleString('en-US')} fills ·{' '}
+                    {formatCompactAssets(allTime.volumeAssets)} vol ·{' '}
+                    {allTime.effectiveFeeBps !== null ? `${allTime.effectiveFeeBps.toFixed(2)} bps eff.` : '—'}
+                  </p>
+                </div>
+                <div>
+                  <dt className="text-xs text-content-tertiary">− Subsidies &amp; Sponsored Gas</dt>
+                  <dd className="mt-1 text-base font-bold tabular-nums text-brand-yellow">
+                    −{formatAssets(allTime.closeAssistanceUsdgAssets)}
+                  </dd>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-content-tertiary">
+                    + {formatSponsoredEthWei(allTime.sponsoredGasSpentWei, 4)} sponsored ETH
+                  </p>
+                </div>
+                <div>
+                  <dt className="text-xs text-content-tertiary">= Net USDG Surplus (all-time)</dt>
+                  <dd className={`mt-1 text-base font-bold tabular-nums ${netSurplusClass}`}>
+                    {formatAssets(allTime.netUsdgSurplusAssets)}
+                  </dd>
+                  <p className="mt-0.5 text-[11px] text-content-tertiary">
+                    Fees minus USDG close assistance
+                  </p>
+                </div>
+              </dl>
+            ) : null}
+          </>
+        )}
+      </Panel>
 
       {query.isLoading ? (
         <Panel>

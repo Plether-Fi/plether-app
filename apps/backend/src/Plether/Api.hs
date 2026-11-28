@@ -138,7 +138,8 @@ import Plether.Handlers.InsightsExecution
   , isValidTxHash
   )
 import Plether.Handlers.InsightsLiquidity
-  ( getLiquidityEpochResponse
+  ( getLiquidityEfficiencyResponse
+  , getLiquidityEpochResponse
   , getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
   )
@@ -639,6 +640,11 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
   get "/api/insights/v1/liquidity/forensics" $
     case mPool of
       Just pool -> liftIO (getLiquidityForensicsResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/liquidity/efficiency" $
+    case mPool of
+      Just pool -> liftIO (getLiquidityEfficiencyResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
   get "/api/insights/v1/liquidity/epochs/:epoch" $ do

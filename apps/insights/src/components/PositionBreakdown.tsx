@@ -4,6 +4,7 @@ import type { WalletActivity } from '../api/types'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
 import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
 import { ArbiscanButton } from './ActionButtons'
+import { OraclePriceLink } from './OraclePriceLink'
 import { ShareCardModal } from './ShareCardModal'
 import { TradeBreakdownDetails } from './TradeBreakdown'
 
@@ -115,7 +116,9 @@ export function PositionBreakdown({
             <Detail label="Position side">{item.side?.toUpperCase() ?? 'Unavailable'}</Detail>
             <Detail label="Executed at">{formatUtc(item.occurredAt)}</Detail>
             <Detail label="Order ID">{validReceipt ? item.execution?.orderId : 'Unavailable'}</Detail>
-            <Detail label="Final plDXY price">{formatPrice(item.price)}</Detail>
+            <Detail label="Final plDXY price">
+              {item.price ? <OraclePriceLink>{formatPrice(item.price)}</OraclePriceLink> : '—'}
+            </Detail>
             <Detail label={isClose ? 'Quantity closed' : 'Quantity added'}>{quantity(unsigned(item.sizeDelta))}</Detail>
             <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeAssets(notional, false, true)}</Detail>
             <Detail label="Execution transaction">{item.txHash ? <span className="inline-flex items-center gap-1.5 font-mono text-content-primary"><span title={item.txHash}>{shortAddress(item.txHash)}</span><ArbiscanButton kind="tx" value={item.txHash} chainId={chainId} /></span> : 'Unavailable'}</Detail>

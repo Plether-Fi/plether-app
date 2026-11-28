@@ -9,6 +9,7 @@ import { publishWeek } from '../divisions/engine'
 const statusQuery = vi.hoisted(() => vi.fn())
 const overviewQuery = vi.hoisted(() => vi.fn())
 const marketExposureQuery = vi.hoisted(() => vi.fn())
+const efficiencyQuery = vi.hoisted(() => vi.fn())
 const liveQuery = vi.hoisted(() => vi.fn())
 const publicationQuery = vi.hoisted(() => vi.fn())
 const statsQuery = vi.hoisted(() => vi.fn())
@@ -20,6 +21,7 @@ vi.mock('../api', async () => {
     useInsightsStatus: statusQuery,
     useOverview: overviewQuery,
     useMarketExposure: marketExposureQuery,
+    useLiquidityEfficiency: efficiencyQuery,
   }
 })
 vi.mock('../divisions/query', () => ({
@@ -48,6 +50,12 @@ beforeEach(() => {
     data: undefined,
     isLoading: false,
     isError: false,
+  })
+  efficiencyQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
   })
   statsQuery.mockReturnValue({ data: { registeredWallets: 88 }, isLoading: false, isError: false })
   publicationQuery.mockReturnValue({ data: publishWeek(input(0, [account(1)]), null), isLoading: false, isError: false })
@@ -141,8 +149,9 @@ describe('OverviewPage (Protocol Pulse)', () => {
 
     show()
     expect(screen.getByText('332,945,120')).toBeInTheDocument()
-    expect(screen.getByText('99.76% fill (24h)')).toBeInTheDocument()
-    expect(screen.getByText(/Epoch #148 · 24 confirmed \(24h\)/)).toBeInTheDocument()
+    expect(screen.getByText('99.76%')).toBeInTheDocument()
+    expect(screen.getByText(/Epoch #148/)).toBeInTheDocument()
+    expect(screen.getByText('24')).toBeInTheDocument()
     expect(screen.getByText(/9\/9 workers healthy · DB 4 ms/)).toBeInTheDocument()
     expect(screen.getByText(/842 UserOps \(24h\) · 99.52% success/)).toBeInTheDocument()
     expect(screen.getByText('30 contracts')).toBeInTheDocument()

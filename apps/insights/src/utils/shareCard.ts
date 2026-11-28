@@ -213,29 +213,114 @@ function formatShareCardUtc(iso: string | null | undefined): string {
   return `${day} ${mon} ${year}, ${hh}:${mm}`
 }
 
-function fitStatFontSize(value: string, boxW: number, maxSize: number): number {
-  const usableW = Math.max(80, boxW - 40)
+interface RibbonItem {
+  label: string
+  value: string
+  accent?: string
+  /** Optional status dot rendered to the left of the value. */
+  dotColor?: string
+  /** Optional domain-native SVG micro-visual rendered below/beside the value inside the column. */
+  renderVisual?: (x: number, y: number, colW: number) => string
+}
+
+function fitStatFontSize(value: string, colW: number, maxSize: number): number {
+  const usableW = Math.max(80, colW - 48)
   const charCount = Math.max(1, value.length)
   const fitted = Math.floor(usableW / (charCount * 0.64))
   return Math.min(maxSize, Math.max(14, fitted))
 }
 
-function renderStatBoxes(stats: { label: string; value: string; accent?: string }[], y: number): string {
-  const gap = 18
+/**
+ * Unified borderless hairline metric ribbon replacing separated boxed KPI cards.
+ * Uses a single translucent band with subtle top/bottom hairlines and vertical column dividers.
+ */
+function renderMetricRibbon(items: RibbonItem[], y: number): string {
   const totalW = 1080
-  const count = stats.length
-  const boxW = Math.floor((totalW - gap * (count - 1)) / count)
-  return stats
-    .map((stat, idx) => {
-      const x = 60 + idx * (boxW + gap)
-      const fontSize = fitStatFontSize(stat.value, boxW, 24)
+  const height = 96
+  const count = items.length
+  const colW = totalW / count
+
+  const colsSvg = items
+    .map((item, idx) => {
+      const x = Math.round(60 + idx * colW)
+      const width = Math.round(colW)
+      const divider =
+        idx > 0
+          ? `<line x1="${String(x)}" y1="${String(y + 18)}" x2="${String(x)}" y2="${String(y + height - 18)}" stroke="#ffab96" stroke-opacity="0.2" stroke-width="1" />`
+          : ''
+      const labelSvg = `<text x="${String(x + 24)}" y="${String(y + 30)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" font-weight="600" letter-spacing="1.2">${escapeXml(item.label.toUpperCase())}</text>`
+
+      if (item.renderVisual) {
+        return `<g>${divider}${labelSvg}${item.renderVisual(x + 24, y + 44, width - 48)}</g>`
+      }
+
+      const fontSize = fitStatFontSize(item.value, width - (item.dotColor ? 24 : 0), 23)
+      const valueX = item.dotColor ? x + 44 : x + 24
+      const dotSvg = item.dotColor
+        ? `<circle cx="${String(x + 29)}" cy="${String(y + 60)}" r="4.5" fill="${item.dotColor}" />`
+        : ''
       return `<g>
-        <rect x="${String(x)}" y="${String(y)}" width="${String(boxW)}" height="92" fill="#3b212d" fill-opacity="0.72" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
-        <text x="${String(x + 20)}" y="${String(y + 30)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" letter-spacing="1.1">${escapeXml(stat.label.toUpperCase())}</text>
-        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(fontSize)}" font-weight="700">${escapeXml(stat.value)}</text>
+        ${divider}
+        ${labelSvg}
+        ${dotSvg}
+        <text x="${String(valueX)}" y="${String(y + 68)}" fill="${item.accent ?? '#fff5f9'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(fontSize)}" font-weight="700">${escapeXml(item.value)}</text>
       </g>`
     })
     .join('')
+
+  return `<g>
+    <rect x="60" y="${String(y)}" width="${String(totalW)}" height="${String(height)}" fill="#3b212d" fill-opacity="0.36" />
+    <line x1="60" y1="${String(y)}" x2="1140" y2="${String(y)}" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
+    <line x1="60" y1="${String(y + height)}" x2="1140" y2="${String(y + height)}" stroke="#ffab96" stroke-opacity="0.16" stroke-width="1" />
+    ${colsSvg}
+  </g>`
+}
+
+function renderFxSessionPips(activeDays: number, activeColor: string): (x: number, y: number, w: number) => string {
+  const clamped = Math.max(0, Math.min(5, Math.round(activeDays)))
+  const labels = ['M', 'T', 'W', 'T', 'F']
+  return (x, y) => {
+    const pipW = 24
+    const pipH = 22
+    const gap = 6
+    const pips = labels
+      .map((day, idx) => {
+        const px = x + idx * (pipW + gap)
+        const active = idx < clamped
+        return `<g>
+          <rect x="${String(px)}" y="${String(y + 4)}" width="${String(pipW)}" height="${String(pipH)}" fill="${active ? activeColor : '#250917'}" fill-opacity="${active ? '0.2' : '0.6'}" stroke="${active ? activeColor : '#ffab96'}" stroke-opacity="${active ? '0.85' : '0.24'}" stroke-width="1.2" />
+          <text x="${String(px + pipW / 2)}" y="${String(y + 19)}" text-anchor="middle" fill="${active ? activeColor : '#aa98a0'}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="700">${day}</text>
+        </g>`
+      })
+      .join('')
+    const textX = x + 5 * (pipW + gap) + 10
+    return `${pips}<text x="${String(textX)}" y="${String(y + 21)}" fill="#fff5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">${String(clamped)} / 5</text>`
+  }
+}
+
+function renderExcursionMicroBar(
+  mfeRaw: string,
+  maeRaw: string,
+  mfeText: string,
+  maeText: string,
+): (x: number, y: number, w: number) => string {
+  const mfeMag = /^-?\d+$/.test(mfeRaw) ? Math.abs(Number(BigInt(mfeRaw))) : 0
+  const maeMag = /^-?\d+$/.test(maeRaw) ? Math.abs(Number(BigInt(maeRaw))) : 0
+  const total = mfeMag + maeMag
+  const mfeRatio = total > 0 ? Math.max(0.08, Math.min(0.92, mfeMag / total)) : 0.5
+  return (x, y, w) => {
+    const barW = Math.max(80, w)
+    const greenW = Math.round(barW * mfeRatio)
+    const orangeW = Math.max(0, barW - greenW)
+    const combined = `${mfeText} / ${maeText}`
+    const fontSize = fitStatFontSize(combined, w + 48, 17)
+    return `
+      <text x="${String(x)}" y="${String(y + 16)}" fill="#fff5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(fontSize)}" font-weight="700">${escapeXml(combined)}</text>
+      <rect x="${String(x)}" y="${String(y + 27)}" width="${String(barW)}" height="6" fill="#250917" stroke="#ffab96" stroke-opacity="0.22" stroke-width="0.8" />
+      <rect x="${String(x)}" y="${String(y + 27)}" width="${String(greenW)}" height="6" fill="#00ff99" fill-opacity="0.85" />
+      <rect x="${String(x + greenW)}" y="${String(y + 27)}" width="${String(orangeW)}" height="6" fill="#ff572d" fill-opacity="0.85" />
+    `
+  }
 }
 
 function renderTierBadge(tier: Tier | null | undefined, cx: number, cy: number): string {
@@ -447,7 +532,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
     const sideText = data.side ? data.side.toUpperCase() : 'PERP'
     const sideBg = data.side === 'short' ? '#ff572d26' : '#00ff9922'
     const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99'
-    const stats = [
+    const stats: RibbonItem[] = [
       { label: 'Close price', value: data.price ? formatPrice(data.price) : '—' },
       { label: 'Quantity closed', value: data.sizeDelta ? formatPlDxyQuantity(data.sizeDelta) : '—' },
       { label: 'Notional', value: data.notionalAssets ? formatCompactAssets(data.notionalAssets) : '—' },
@@ -459,7 +544,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
       <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">REALIZED PNL</text>
       <text x="60" y="308" fill="${color}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="76" font-weight="800">${escapeXml(pnl.text)}</text>
       ${roi ? `<text x="60" y="358" fill="${color}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24" font-weight="700">${escapeXml(roi)} on notional</text>` : ''}
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `
     const footerRight = data.txHash
       ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
@@ -477,13 +562,9 @@ export function buildShareCardSvg(data: ShareCardData): string {
         ? formatPlDxyQuantity(data.sizeDelta)
         : 'Position Opened'
     const heroFontSize = heroText.length <= 15 ? 72 : heroText.length <= 20 ? 58 : 48
-    const subParts: string[] = []
-    if (data.price) subParts.push(`Entry @ ${formatPrice(data.price)}`)
-    if (data.sizeDelta) subParts.push(formatPlDxyQuantity(data.sizeDelta))
-    const stats = [
+    const stats: RibbonItem[] = [
       { label: 'Entry price', value: data.price ? formatPrice(data.price) : '—' },
       { label: 'Quantity opened', value: data.sizeDelta ? formatPlDxyQuantity(data.sizeDelta) : '—' },
-      { label: 'Notional', value: data.notionalAssets ? formatCompactAssets(data.notionalAssets) : '—' },
       { label: 'Executed (UTC)', value: formatShareCardUtc(data.occurredAt) },
     ]
     const body = `
@@ -491,8 +572,8 @@ export function buildShareCardSvg(data: ShareCardData): string {
       ${renderPill(218, 134, `OPENED ${sideText}`, sideBg, `${sideFg}88`, sideFg)}
       <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">${data.notionalAssets ? 'NOTIONAL EXPOSURE' : 'OPENED POSITION'}</text>
       <text x="60" y="308" fill="${sideFg}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(heroFontSize)}" font-weight="800">${escapeXml(heroText)}</text>
-      ${subParts.length > 0 ? `<text x="60" y="358" fill="#d8cbd0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="600">${escapeXml(subParts.join(' · '))}</text>` : ''}
-      ${renderStatBoxes(stats, 408)}
+      <text x="60" y="358" fill="#d8cbd0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="600">Verified on-chain perpetual fill</text>
+      ${renderMetricRibbon(stats, 412)}
     `
     const footerRight = data.txHash
       ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
@@ -506,11 +587,17 @@ export function buildShareCardSvg(data: ShareCardData): string {
     const roe = computeRoePercent(data.unrealizedPnlAssets, data.marginAssets)
     const sideUpper = data.side.toUpperCase()
     const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99'
-    const stats = [
+    const healthColor = data.liquidatable ? '#ff572d' : '#00ff99'
+    const stats: RibbonItem[] = [
       { label: 'Position size', value: formatPlDxyQuantity(data.size) },
       { label: 'Entry price', value: formatPrice(data.entryPrice) },
       { label: 'Margin posted', value: formatCompactAssets(data.marginAssets) },
-      { label: 'Status', value: data.liquidatable ? 'Liquidatable' : 'Healthy', accent: data.liquidatable ? '#ff572d' : '#00ff99' },
+      {
+        label: 'Health',
+        value: data.liquidatable ? 'Liquidatable' : 'Healthy',
+        accent: healthColor,
+        dotColor: healthColor,
+      },
     ]
     const body = `
       ${renderPill(60, 134, data.market, '#3b212d', '#ffab9666', '#fff5f9')}
@@ -518,7 +605,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
       <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">UNREALIZED PNL</text>
       <text x="60" y="308" fill="${color}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="76" font-weight="800">${escapeXml(upnl.text)}</text>
       ${roe ? `<text x="60" y="358" fill="${color}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="26" font-weight="700">${escapeXml(roe)} ROE</text>` : ''}
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `
     return renderFrame(color, 'Live Perpetual Position', data.networkName, data.releaseVersion, data.traderLabel, data.account, 'CfdEngineAccountLens · insights.plether.com', body)
   }
@@ -540,10 +627,14 @@ export function buildShareCardSvg(data: ShareCardData): string {
     if (roiText) subParts.unshift(roiText)
     const mfeCompact = `+${formatCompactAssets(data.mfePnlAssets).replace(' USDG', '')}`
     const maeCompact = formatCompactAssets(data.maePnlAssets)
-    const stats = [
+    const stats: RibbonItem[] = [
       { label: 'Peak notional', value: formatCompactAssets(data.peakNotionalAssets) },
       { label: 'Max leverage', value: data.maxLeverageLabel, accent: '#ffab96' },
-      { label: 'MFE / MAE', value: `${mfeCompact} / ${maeCompact}` },
+      {
+        label: 'Excursion (MFE / MAE)',
+        value: `${mfeCompact} / ${maeCompact}`,
+        renderVisual: renderExcursionMicroBar(data.mfePnlAssets, data.maePnlAssets, mfeCompact, maeCompact),
+      },
       {
         label: data.status === 'open' ? 'Liq buffer' : 'Closest liq',
         value: data.liqBufferLabel,
@@ -558,7 +649,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
       <text x="60" y="220" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600" letter-spacing="1.4">${data.status === 'open' ? 'NET PNL (INCL. UNREALIZED)' : 'POSITION LIFECYCLE NET PNL'}</text>
       <text x="60" y="304" fill="${color}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(pnlFontSize)}" font-weight="800">${escapeXml(netPnl.text)}</text>
       <text x="60" y="356" fill="#d8cbd0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="600">${escapeXml(subParts.join(' · '))}</text>
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `
     return renderFrame(
       color,
@@ -579,12 +670,36 @@ export function buildShareCardSvg(data: ShareCardData): string {
       ? '#ff572d'
       : '#00ff99'
     const pnlText = data.weeklyPnlAssets ? formatSignedUsdg(data.weeklyPnlAssets).text : null
-    const stats = [
+    const qualified = data.activeDays >= 1
+    const thirdCol: RibbonItem = data.tier
+      ? !data.provisional
+        ? {
+            label: 'Result audit',
+            value: data.rank !== null ? 'Verified & ranked' : 'Audited',
+            accent: '#00ff99',
+            dotColor: '#00ff99',
+          }
+        : {
+            label: 'Qualification',
+            value: qualified ? 'Qualified' : 'In progress',
+            accent: qualified ? '#00ff99' : '#ffab96',
+            dotColor: qualified ? '#00ff99' : '#ffab96',
+          }
+      : {
+          label: 'Division badge',
+          value: 'Pending Monday',
+          accent: tierPalette.primary,
+        }
+    const stats: RibbonItem[] = [
+      {
+        label: 'Active FX sessions',
+        value: `${String(data.activeDays)} / 5`,
+        renderVisual: renderFxSessionPips(data.activeDays, qualified ? '#00ff99' : '#ffab96'),
+      },
       pnlText
         ? { label: 'Weekly PnL', value: pnlText, accent: returnColor }
-        : { label: 'Status', value: data.provisional ? 'Provisional' : 'Published' },
-      { label: 'Active days', value: `${String(data.activeDays)} / 5` },
-      { label: 'Tier standing', value: data.tier ?? 'Not yet awarded', accent: tierPalette.primary },
+        : { label: 'Scoring cutoff', value: 'Fri 21:00 UTC' },
+      thirdCol,
     ]
     const badgeTag = data.movement && data.movement !== 'unchanged'
       ? data.movement.toUpperCase()
@@ -598,7 +713,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
       <text x="60" y="308" fill="#fff5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="74" font-weight="800">${escapeXml(rankHeadline)}</text>
       <text x="60" y="358" fill="${returnColor}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" font-weight="700">${escapeXml(data.weeklyReturnLabel)} weekly return</text>
       ${renderTierBadge(data.tier, 990, 244)}
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `
     const eyebrow = data.tier ? 'Plether Divisions Badge' : 'Plether Divisions Live Standing'
     return renderFrame(tierPalette.glow, eyebrow, data.networkName, undefined, data.traderLabel, data.account, 'insights.plether.com/divisions', body)
@@ -615,7 +730,7 @@ export function buildShareCardSvg(data: ShareCardData): string {
     data.balancePoints?.[data.balancePoints.length - 1]?.balanceAssets ??
     data.netEquityAssets ??
     null
-  const stats = [
+  const stats: RibbonItem[] = [
     { label: 'Balance', value: effectiveBalance ? formatCompactAssets(effectiveBalance) : 'Unavailable' },
     { label: 'Volume', value: data.volumeAssets ? formatCompactAssets(data.volumeAssets) : 'Unavailable' },
     { label: 'Executed fills', value: data.totalTrades != null ? data.totalTrades.toLocaleString('en-US') : 'Unavailable' },
@@ -629,10 +744,9 @@ export function buildShareCardSvg(data: ShareCardData): string {
     ${data.tier ? renderPill(264, 132, `${data.tier.toUpperCase()} TIER`, `${accountTierPalette.primary}22`, `${accountTierPalette.primary}88`, accountTierPalette.primary) : ''}
     <text x="60" y="216" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="600" letter-spacing="1.4">ALL-TIME REALIZED PNL</text>
     <text x="60" y="282" fill="${pnlColor}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(pnlFontSize)}" font-weight="800">${escapeXml(pnl.text)}</text>
-    <text x="60" y="328" fill="#d8cbd0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" font-weight="500">${escapeXml(sinceText ? `Life-long history since ${sinceText}` : 'Life-long on-chain perps performance')}</text>
-    ${effectiveBalance ? `<text x="60" y="362" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="600">Current balance · ${escapeXml(formatCompactAssets(effectiveBalance))}</text>` : ''}
+    <text x="60" y="330" fill="#d8cbd0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" font-weight="500">${escapeXml(sinceText ? `Life-long history since ${sinceText}` : 'Life-long on-chain perps performance')}</text>
     ${chart.svg}
-    ${renderStatBoxes(stats, 412)}
+    ${renderMetricRibbon(stats, 412)}
   `
   return renderFrame(glowAccent, 'Trading Account Summary', data.networkName, data.releaseVersion, data.traderLabel, data.account, 'insights.plether.com/wallets', body)
 }

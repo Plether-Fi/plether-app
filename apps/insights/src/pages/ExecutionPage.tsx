@@ -17,7 +17,6 @@ import {
   OrderOutcomeProportionCard,
 } from '../components/ExecutionVisuals'
 import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -43,13 +42,6 @@ function tradeTone(activityType: ProtocolTradeRecord['activityType']): StatusTon
   return 'unknown'
 }
 
-function formatLatencyPair(p50: number | null, p95: number | null, unit: string): string | undefined {
-  if (p50 === null && p95 === null) return undefined
-  const left = p50 !== null ? `${String(p50)}${unit}` : '—'
-  const right = p95 !== null ? `${String(p95)}${unit}` : '—'
-  return `${left} / ${right}`
-}
-
 export function ExecutionPage() {
   const protocol = useProtocolContext()
   const qualityQuery = useExecutionQuality()
@@ -68,9 +60,6 @@ export function ExecutionPage() {
     isEndpointNotDeployed(qualityQuery.error) || isEndpointNotDeployed(tradesQuery.error)
 
   const cohort24h = quality?.orderReliability.find((row) => row.windowSeconds === 86400) ?? null
-  const cohort1h = quality?.orderReliability.find((row) => row.windowSeconds === 3600) ?? null
-  const latencySec = quality?.executionLatency.seconds ?? null
-  const latencyBlk = quality?.executionLatency.blocks ?? null
 
   const bannerTone: StatusTone = awaitingDeploy
     ? 'unknown'
@@ -150,64 +139,98 @@ export function ExecutionPage() {
         </div>
       ) : null}
 
-      <section aria-labelledby="execution-kpis-title" className="space-y-4">
-        <h2 id="execution-kpis-title" className="text-xl font-semibold">
+      <section aria-labelledby="execution-kpis-title">
+        <h2 id="execution-kpis-title" className="sr-only">
           Execution quality snapshot
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Order fill rate (24h)"
-            loading={qualityQuery.isLoading}
-            unavailable={cohort24h?.fillRateBps == null}
-            value={cohort24h ? formatRateBps(cohort24h.fillRateBps) : undefined}
-            tone={
-              cohort24h?.expiryRateBps != null && cohort24h.expiryRateBps > 500
-                ? 'warning'
-                : 'positive'
-            }
-            detail={
-              cohort24h
-                ? `1h fill: ${formatRateBps(cohort1h?.fillRateBps)} · 24h expired: ${formatRateBps(cohort24h.expiryRateBps)} (${String(cohort24h.totalOrders)} orders)`
-                : 'Canonical keeper cohort (shifted 120s)'
-            }
-          />
-          <StatCard
-            label="Execution latency (p50 / p95)"
-            loading={qualityQuery.isLoading}
-            unavailable={!latencySec || latencySec.sampleCount === 0}
-            value={
-              latencySec ? formatLatencyPair(latencySec.p50, latencySec.p95, 's') : undefined
-            }
-            tone="accent"
-            detail={
-              latencyBlk && latencyBlk.sampleCount > 0
-                ? `Blocks: ${formatLatencyPair(latencyBlk.p50, latencyBlk.p95, ' blk') ?? '—'} · ${latencySec?.sampleCount.toLocaleString('en-US') ?? '0'} fills`
-                : 'Commit block to execution confirmation'
-            }
-          />
-          <StatCard
-            label="Active TP/SL protections"
-            loading={qualityQuery.isLoading}
-            unavailable={!quality}
-            value={quality?.protections.activeProtections.toLocaleString('en-US')}
-            detail={
-              quality
-                ? `Triggered: ${String(quality.protections.triggered24h)} · Cancelled: ${String(quality.protections.cancelled24h)} · Expired: ${String(quality.protections.expired24h)}`
-                : 'PositionProtectionBook live state'
-            }
-          />
-          <StatCard
-            label="Liquidations & volume (24h)"
-            loading={qualityQuery.isLoading}
-            unavailable={!quality}
-            value={quality?.liquidations.liquidations24h.toLocaleString('en-US')}
-            detail={
-              quality
-                ? `24h volume: ${formatCompactAssets(quality.volume24hAssets)} · Bounties: ${formatCompactAssets(quality.liquidations.bountiesPaid24hAssets)}`
-                : 'Liquidated positions, bounties & 24h volume'
-            }
-          />
-        </div>
+        <Panel className="p-4 sm:p-6">
+          {qualityQuery.isLoading ? (
+            <LoadingState rows={3} />
+          ) : !quality ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-content-tertiary">
+              <span>24h volume &amp; order reliability telemetry: <strong className="text-content-secondary">Unavailable</strong></span>
+              <span>TP/SL protections &amp; liquidations: <strong className="text-content-secondary">Unavailable</strong></span>
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-5 lg:grid-cols-12 lg:items-center">
+                {/* Primary Hero: 24h Notional Volume & Active Scope */}
+                <div className="space-y-3 lg:col-span-6 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                      24h Notional Volume
+                    </p>
+                    <p className="mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                      {formatCompactAssets(quality.volume24hAssets)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-brand-border/15 pt-2.5 font-mono text-xs tabular-nums text-content-tertiary">
+                    <span>
+                      <strong className="text-content-primary">
+                        {quality.protections.created24h.toLocaleString('en-US')}
+                      </strong>{' '}
+                      TP/SL created (24h)
+                    </span>
+                    <span>
+                      <strong className="text-content-primary">
+                        {quality.liquidations.watchedCandidates.toLocaleString('en-US')}
+                      </strong>{' '}
+                      liquidation watch
+                    </span>
+                    {cohort24h ? (
+                      <span>
+                        <strong className="text-content-primary">
+                          {cohort24h.activeAccounts.toLocaleString('en-US')}
+                        </strong>{' '}
+                        active traders (24h)
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Secondary Operational Strip: Queue, TP/SL & Liquidations */}
+                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-6 lg:grid-cols-1 lg:gap-0 lg:divide-y lg:divide-brand-border/15">
+                  <div className="flex items-baseline justify-between gap-3 py-1 lg:py-2.5">
+                    <dt className="text-xs text-content-tertiary">Pending keeper queue</dt>
+                    <dd className="font-mono text-sm font-semibold tabular-nums text-content-primary">
+                      {quality.pendingOrderQueue.toLocaleString('en-US')}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-1 lg:py-2.5">
+                    <dt className="text-xs text-content-tertiary">Active TP/SL protections</dt>
+                    <dd className="text-right font-mono tabular-nums">
+                      <span className="text-sm font-semibold text-content-primary">
+                        {quality.protections.activeProtections.toLocaleString('en-US')}
+                      </span>
+                      <span className="ml-2 text-[11px] text-content-tertiary">
+                        {String(quality.protections.triggered24h)} trig ·{' '}
+                        {String(quality.protections.cancelled24h)} cancel ·{' '}
+                        {String(quality.protections.expired24h)} exp
+                      </span>
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-1 lg:py-2.5">
+                    <dt className="text-xs text-content-tertiary">Liquidations (24h)</dt>
+                    <dd className="text-right font-mono tabular-nums">
+                      <span
+                        className={`text-sm font-semibold ${
+                          quality.liquidations.liquidations24h > 0
+                            ? 'text-brand-yellow'
+                            : 'text-content-primary'
+                        }`}
+                      >
+                        {quality.liquidations.liquidations24h.toLocaleString('en-US')}
+                      </span>
+                      <span className="ml-2 text-[11px] text-content-tertiary">
+                        Bounties {formatCompactAssets(quality.liquidations.bountiesPaid24hAssets)}
+                      </span>
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            </>
+          )}
+        </Panel>
       </section>
 
       <section aria-labelledby="cohorts-title" className="space-y-4">
@@ -221,11 +244,6 @@ export function ExecutionPage() {
               canonical terminal reason 2
             </p>
           </div>
-          {quality ? (
-            <span className="font-mono text-xs text-content-secondary">
-              Pending keeper queue: {quality.pendingOrderQueue.toLocaleString('en-US')}
-            </span>
-          ) : null}
         </div>
 
         {quality && quality.orderReliability.length > 0 ? (

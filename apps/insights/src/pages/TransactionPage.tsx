@@ -16,11 +16,11 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
 import { OrderTimingTimelinePanel } from '../components/OrderTimingTimeline'
 import { ShareCardModal } from '../components/ShareCardModal'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { ExactUsdgAmount, TradeBreakdownDetails } from '../components/TradeBreakdown'
 import {
@@ -617,73 +617,106 @@ export function TransactionPage() {
         </section>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Execution price"
-          value={selectedEvent.price ? formatPrice(selectedEvent.price) : undefined}
-          unavailable={!selectedEvent.price}
-          detail={
-            selectedEvent.oracleFrozen
-              ? 'Executed with frozen oracle mark'
-              : 'Final verified plDXY mark'
-          }
-        />
-        <StatCard
-          label={isClose ? 'Quantity closed' : isOpen ? 'Quantity added' : 'Quantity'}
-          value={quantityDelta !== null ? formatPlDxyQuantity(selectedEvent.sizeDelta) : undefined}
-          unavailable={quantityDelta === null}
-          detail={selectedEvent.side ? `${selectedEvent.side.toUpperCase()} exposure` : 'Position size delta'}
-        />
-        <StatCard
-          label="Executed exposure"
-          value={
-            notional !== null
-              ? formatAssets(notional.toString())
-              : selectedEvent.amountAssets
-                ? formatCompactAssets(selectedEvent.amountAssets)
-                : undefined
-          }
-          unavailable={notional === null && !selectedEvent.amountAssets}
-          detail={
-            selectedEvent.latencySeconds != null
-              ? `Commit → fill: ${String(selectedEvent.latencySeconds)}s${
-                  matchedFinalizedOrder?.latencyPercentile != null
-                    ? ` (P${String(matchedFinalizedOrder.latencyPercentile)})`
-                    : ''
-                }`
-              : 'Settled in USDG'
-          }
-        />
-        {selectedEvent.pnlAssets != null ? (
-          <StatCard
-            label="Directional realized PnL"
-            value={formatSignedAssets(selectedEvent.pnlAssets)}
-            tone={
-              selectedEvent.pnlAssets.startsWith('-')
-                ? 'negative'
-                : selectedEvent.pnlAssets === '0'
-                  ? 'neutral'
-                  : 'positive'
-            }
-            detail={
-              isLiquidation && selectedEvent.keeperBountyAssets
-                ? `Keeper bounty: ${formatCompactAssets(selectedEvent.keeperBountyAssets)}`
-                : 'Before fees, VPI & adjustments'
-            }
-          />
-        ) : (
-          <StatCard
-            label="Position after fill"
-            value={positionStatus}
-            tone={positionStatus === 'Open' ? 'positive' : 'neutral'}
-            detail={
-              margin !== null
-                ? `Margin: ${formatAssets(margin.toString())}`
-                : 'Post-execution position state'
-            }
-          />
-        )}
-      </div>
+      {/* Unified Execution Fill Summary Panel */}
+      <Panel className="overflow-hidden">
+        <div className="flex flex-wrap items-end justify-between gap-4 p-4 sm:p-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+              Executed Exposure
+            </p>
+            <p className="mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+              {notional !== null
+                ? formatAssets(notional.toString())
+                : selectedEvent.amountAssets
+                  ? formatCompactAssets(selectedEvent.amountAssets)
+                  : 'Unavailable'}
+            </p>
+            <p className="mt-1 font-mono text-xs text-content-tertiary">
+              {selectedEvent.latencySeconds != null
+                ? `Commit → fill: ${String(selectedEvent.latencySeconds)}s${
+                    matchedFinalizedOrder?.latencyPercentile != null
+                      ? ` (P${String(matchedFinalizedOrder.latencyPercentile)})`
+                      : ''
+                  }`
+                : 'Settled in USDG'}
+            </p>
+          </div>
+
+          <div className="text-left font-mono sm:text-right">
+            <p className="text-xs text-content-tertiary">Execution Price</p>
+            <p className="mt-1 text-2xl font-bold tabular-nums text-content-primary">
+              {selectedEvent.price ? (
+                <OraclePriceLink
+                  updateId={matchedFinalizedOrder?.oracleUpdateId ?? batchSummary?.oracleUpdateId}
+                >
+                  {formatPrice(selectedEvent.price)}
+                </OraclePriceLink>
+              ) : (
+                'Unavailable'
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-content-tertiary">
+              {selectedEvent.oracleFrozen
+                ? 'Executed with frozen oracle mark'
+                : 'Final verified plDXY mark'}
+            </p>
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-1 divide-y divide-brand-border/15 border-t border-brand-border/20 bg-app-bg/35 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+          <div className="px-4 py-3.5 sm:px-6">
+            <dt className="text-xs text-content-tertiary">
+              {isClose ? 'Quantity closed' : isOpen ? 'Quantity added' : 'Quantity'}
+            </dt>
+            <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-content-primary">
+              {quantityDelta !== null ? formatPlDxyQuantity(selectedEvent.sizeDelta) : 'Unavailable'}
+            </dd>
+            <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+              {selectedEvent.side ? `${selectedEvent.side.toUpperCase()} exposure` : 'Position size delta'}
+            </p>
+          </div>
+
+          <div className="px-4 py-3.5 sm:px-6">
+            {selectedEvent.pnlAssets != null ? (
+              <>
+                <dt className="text-xs text-content-tertiary">Directional realized PnL</dt>
+                <dd
+                  className={`mt-1 font-mono text-lg font-bold tabular-nums ${
+                    selectedEvent.pnlAssets.startsWith('-')
+                      ? 'text-brand-orange'
+                      : selectedEvent.pnlAssets === '0'
+                        ? 'text-content-primary'
+                        : 'text-positive'
+                  }`}
+                >
+                  {formatSignedAssets(selectedEvent.pnlAssets)}
+                </dd>
+                <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                  {isLiquidation && selectedEvent.keeperBountyAssets
+                    ? `Keeper bounty: ${formatCompactAssets(selectedEvent.keeperBountyAssets)}`
+                    : 'Before fees, VPI & adjustments'}
+                </p>
+              </>
+            ) : (
+              <>
+                <dt className="text-xs text-content-tertiary">Position after fill</dt>
+                <dd
+                  className={`mt-1 font-mono text-lg font-bold ${
+                    positionStatus === 'Open' ? 'text-positive' : 'text-content-primary'
+                  }`}
+                >
+                  {positionStatus}
+                </dd>
+                <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                  {margin !== null
+                    ? `Margin: ${formatAssets(margin.toString())}`
+                    : 'Post-execution position state'}
+                </p>
+              </>
+            )}
+          </div>
+        </dl>
+      </Panel>
 
       {finalizedOrders.length > 0 ? (
         <OrderTimingTimelinePanel
@@ -756,7 +789,16 @@ export function TransactionPage() {
                 </span>
               </DetailRow>
               <DetailRow label="Final plDXY price">
-                <span className="font-mono">{formatPrice(selectedEvent.price)}</span>
+                {selectedEvent.price ? (
+                  <OraclePriceLink
+                    updateId={matchedFinalizedOrder?.oracleUpdateId ?? batchSummary?.oracleUpdateId}
+                    className="font-mono"
+                  >
+                    {formatPrice(selectedEvent.price)}
+                  </OraclePriceLink>
+                ) : (
+                  <span className="font-mono">—</span>
+                )}
               </DetailRow>
               <DetailRow label={isClose ? 'Quantity closed' : 'Quantity added'}>
                 <ExactPlDxy value={quantityDelta} />

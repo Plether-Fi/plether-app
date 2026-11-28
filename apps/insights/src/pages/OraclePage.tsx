@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { InsightsApiError, formatRateBps, useOracleHealth } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OracleHealthBlocks } from '../components/OracleHealthBlocks'
-import { StatCard } from '../components/StatCard'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -136,50 +136,185 @@ export function OraclePage() {
         </Panel>
       ) : data ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label="plDXY live mark"
-              value={data.live.basketPrice ? formatPrice(data.live.basketPrice) : undefined}
-              unavailable={!data.live.basketPrice}
-              tone={
-                data.regime === 'Live'
-                  ? 'positive'
-                  : data.regime === 'Frozen'
-                    ? 'negative'
-                    : 'neutral'
-              }
-              detail={
-                data.live.ageSeconds != null
-                  ? `${data.regime} regime · ${String(data.live.ageSeconds)}s old`
-                  : `${data.regime} regime`
-              }
-            />
-            <StatCard
-              label="24h admitted updates"
-              value={data.summary24h.admittedUpdates.toLocaleString('en-US')}
-              detail={`${data.summary24h.latestAdmittedUpdates.toLocaleString('en-US')} latest · ${data.summary24h.revealAdmittedUpdates.toLocaleString('en-US')} reveal (${formatRateBps(data.summary24h.admissionRateBps)})`}
-            />
-            <StatCard
-              label="24h max feed spread"
-              value={
-                data.summary24h.maxSpreadSeconds != null
-                  ? `${String(data.summary24h.maxSpreadSeconds)}s / ${String(data.thresholds.maxComponentDivergenceSeconds)}s`
-                  : undefined
-              }
-              unavailable={data.summary24h.maxSpreadSeconds == null}
-              detail={
-                data.summary24h.maxLagSeconds != null
-                  ? `Max ingestion lag: ${String(data.summary24h.maxLagSeconds)}s`
-                  : 'Across all 6 FX Pyth feeds'
-              }
-            />
-            <StatCard
-              label="24h rejected / stale"
-              value={`${data.summary24h.rejectedUpdates.toLocaleString('en-US')} rej`}
-              tone={data.summary24h.rejectedUpdates > 0 ? 'negative' : 'positive'}
-              detail={`${data.summary24h.staleMarketClosedPolls.toLocaleString('en-US')} market-closed stale polls`}
-            />
-          </div>
+          <Panel className="p-4 sm:p-6">
+            <div className="grid gap-5 lg:grid-cols-12 lg:items-center">
+              {/* Left: Live plDXY Mark + 6-FX Feed Heartbeat Strip */}
+              <div className="space-y-3 lg:col-span-6 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    plDXY Live Mark
+                  </p>
+                  <StatusPill
+                    tone={
+                      data.regime === 'Live'
+                        ? 'live'
+                        : data.regime === 'Frozen'
+                          ? 'blocked'
+                          : 'degraded'
+                    }
+                    label={
+                      data.live.ageSeconds != null
+                        ? `${data.regime} · ${String(data.live.ageSeconds)}s old`
+                        : data.regime
+                    }
+                  />
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  {data.live.basketPrice ? (
+                    <OraclePriceLink
+                      updateId={data.live.latestUpdateId}
+                      preserveColor
+                      className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                        data.regime === 'Live'
+                          ? 'text-positive'
+                          : data.regime === 'Frozen'
+                            ? 'text-brand-orange'
+                            : 'text-content-primary'
+                      }`}
+                    >
+                      {formatPrice(data.live.basketPrice)}
+                    </OraclePriceLink>
+                  ) : (
+                    <span className="font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                      Unavailable
+                    </span>
+                  )}
+                  {data.live.latestUpdateId ? (
+                    <Link
+                      to={`/oracle/updates/${data.live.latestUpdateId}`}
+                      className="font-mono text-xs font-semibold text-brand-peach hover:underline"
+                    >
+                      Inspect basket weights →
+                    </Link>
+                  ) : null}
+                </div>
+                {data.components.length > 0 ? (
+                  <div
+                    className="grid grid-cols-3 gap-1.5 sm:grid-cols-6"
+                    aria-label="6-feed FX component status"
+                  >
+                    {data.components.map((comp) => {
+                      const dotClass = comp.confidenceExceeded
+                        ? 'bg-brand-orange'
+                        : comp.driftFromMinSeconds != null &&
+                            comp.driftFromMinSeconds > data.thresholds.maxComponentDivergenceSeconds
+                          ? 'bg-brand-yellow'
+                          : 'bg-positive'
+                      return (
+                        <Link
+                          key={comp.feedId}
+                          to={`/oracle/updates/${data.live.latestUpdateId ?? 'latest'}`}
+                          className="inline-flex items-center justify-center gap-1 border border-brand-border/25 bg-app-bg px-1.5 py-1 font-mono text-[11px] text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-content-primary"
+                        >
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+                          <span className="font-semibold text-content-primary">
+                            {comp.symbol.split('/')[0]}
+                          </span>
+                          {comp.weightBps != null ? (
+                            <span className="text-content-tertiary">
+                              {(comp.weightBps / 100).toFixed(1)}%
+                            </span>
+                          ) : null}
+                        </Link>
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Right: Policy Headroom Gauges */}
+              <div className="space-y-3.5 lg:col-span-6">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                    <span className="text-content-tertiary">24h Admission Rate</span>
+                    <span className="tabular-nums">
+                      <strong
+                        className={
+                          data.summary24h.rejectedUpdates > 0 ? 'text-brand-yellow' : 'text-positive'
+                        }
+                      >
+                        {formatRateBps(data.summary24h.admissionRateBps)}
+                      </strong>{' '}
+                      <span className="text-content-tertiary">
+                        · {data.summary24h.admittedUpdates.toLocaleString('en-US')} ok ·{' '}
+                        {data.summary24h.rejectedUpdates.toLocaleString('en-US')} rej
+                      </span>
+                    </span>
+                  </div>
+                  <div className="flex h-2 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                    {(() => {
+                      const total = data.summary24h.admittedUpdates + data.summary24h.rejectedUpdates
+                      const okPct = total > 0 ? (data.summary24h.admittedUpdates / total) * 100 : 100
+                      return (
+                        <>
+                          <div className="bg-positive" style={{ width: `${String(okPct)}%` }} />
+                          {data.summary24h.rejectedUpdates > 0 ? (
+                            <div
+                              className="bg-brand-orange"
+                              style={{ width: `${String(Math.max(1, 100 - okPct))}%` }}
+                            />
+                          ) : null}
+                        </>
+                      )
+                    })()}
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 font-mono text-[11px] text-content-tertiary">
+                    <span>
+                      {data.summary24h.latestAdmittedUpdates.toLocaleString('en-US')} latest ·{' '}
+                      {data.summary24h.revealAdmittedUpdates.toLocaleString('en-US')} reveal
+                    </span>
+                    <span>
+                      {data.summary24h.staleMarketClosedPolls.toLocaleString('en-US')} market-closed stale
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                    <span className="text-content-tertiary">24h Max 6-Feed Spread</span>
+                    <span className="tabular-nums text-content-primary">
+                      <strong>
+                        {data.summary24h.maxSpreadSeconds != null
+                          ? `${String(data.summary24h.maxSpreadSeconds)}s`
+                          : '—'}
+                      </strong>{' '}
+                      <span className="text-content-tertiary">
+                        / {String(data.thresholds.maxComponentDivergenceSeconds)}s limit
+                        {data.summary24h.maxLagSeconds != null
+                          ? ` · max lag ${String(data.summary24h.maxLagSeconds)}s`
+                          : ''}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                    <div
+                      className={
+                        data.summary24h.maxSpreadSeconds != null &&
+                        data.summary24h.maxSpreadSeconds > data.thresholds.maxComponentDivergenceSeconds
+                          ? 'h-full bg-brand-orange'
+                          : 'h-full bg-brand-peach'
+                      }
+                      style={{
+                        width: `${String(
+                          data.summary24h.maxSpreadSeconds != null &&
+                            data.thresholds.maxComponentDivergenceSeconds > 0
+                            ? Math.min(
+                                100,
+                                Math.round(
+                                  (data.summary24h.maxSpreadSeconds /
+                                    data.thresholds.maxComponentDivergenceSeconds) *
+                                    100,
+                                ),
+                              )
+                            : 0,
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Panel>
 
           <OracleHealthBlocks
             window1h={data.windows.window1h.timeline}
@@ -442,7 +577,13 @@ export function OraclePage() {
                             {formatUtcWithSeconds(upd.maxPublishTime)}
                           </td>
                           <td className="px-4 py-3.5 font-mono text-xs font-semibold tabular-nums text-content-primary">
-                            {upd.basketPrice ? `${formatPrice(upd.basketPrice)} plDXY` : '—'}
+                            {upd.basketPrice ? (
+                              <OraclePriceLink updateId={upd.id}>
+                                {formatPrice(upd.basketPrice)} plDXY
+                              </OraclePriceLink>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td className="px-4 py-3.5 font-mono text-xs tabular-nums text-content-secondary">
                             <span

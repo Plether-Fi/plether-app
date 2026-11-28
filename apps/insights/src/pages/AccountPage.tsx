@@ -28,7 +28,6 @@ import {
   protectionLifecycleTone,
 } from '../utils/orderProtections'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { WalletBalanceChart } from '../components/WalletBalanceChart'
@@ -358,81 +357,90 @@ function TradingAccountInspector({ address }: { address: string }) {
         </div>
       ) : null}
 
-      <section aria-labelledby="account-kpis-title" className="space-y-4">
+      <section aria-labelledby="account-kpis-title">
         <h2 id="account-kpis-title" className="sr-only">
           Trading Account headline metrics
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Net account equity"
-            loading={summaryQuery.isLoading}
-            unavailable={!ledger}
-            value={ledger ? formatAssets(ledger.netEquityAssets) : undefined}
-            tone="accent"
-            detail={
-              ledger
-                ? `Free collateral: ${formatCompactAssets(ledger.freeSettlementAssets)} · Pending orders: ${String(ledger.pendingOrderCount)}`
-                : 'Live CfdEngineAccountLens read'
-            }
-          />
-          <StatCard
-            label="Open position"
-            loading={summaryQuery.isLoading}
-            unavailable={!ledger}
-            value={
-              ledger
-                ? position
-                  ? `${position.side.toUpperCase()} · ${formatPlDxyQuantity(position.size)}`
-                  : 'Flat'
-                : undefined
-            }
-            tone={
-              position?.liquidatable
-                ? 'negative'
-                : position
-                  ? 'positive'
-                  : 'neutral'
-            }
-            detail={
-              position
-                ? `Entry ${formatPrice(position.entryPrice)} · Margin ${formatCompactAssets(position.marginAssets)}${position.liquidatable ? ' · LIQUIDATABLE' : ''}`
-                : ledger
-                  ? 'No active perpetual position'
-                  : 'Position size, entry & liquidation status'
-            }
-          />
-          <StatCard
-            label={`Realized PnL (${releaseVersion ?? 'current'})`}
-            loading={summaryQuery.isLoading}
-            unavailable={!perf}
-            value={perf ? <Pnl value={perf.realizedPnlAssets} /> : undefined}
-            tone={
-              perf
-                ? BigInt(perf.realizedPnlAssets) > 0n
-                  ? 'positive'
-                  : BigInt(perf.realizedPnlAssets) < 0n
-                    ? 'negative'
-                    : 'neutral'
-                : 'neutral'
-            }
-            detail={
-              perf
-                ? `${String(perf.totalTrades)} fills (${String(perf.opensCount)} open / ${String(perf.closesCount)} close / ${String(perf.liquidationsCount)} liq)`
-                : 'Release-scoped realized PnL'
-            }
-          />
-          <StatCard
-            label={`Trading volume (${releaseVersion ?? 'current'})`}
-            loading={summaryQuery.isLoading}
-            unavailable={!perf}
-            value={perf ? formatCompactAssets(perf.volumeAssets) : undefined}
-            detail={
-              perf
-                ? `${String(perf.activeDays)} active days · ${String(lpBalances.length)} attributed LP vault${lpBalances.length === 1 ? '' : 's'}`
-                : 'Notional volume & LP vault holdings'
-            }
-          />
-        </div>
+        <Panel className="overflow-hidden">
+          {summaryQuery.isLoading ? (
+            <div className="p-5">
+              <LoadingState rows={3} />
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-end justify-between gap-4 p-4 sm:p-6">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Net Account Equity
+                  </p>
+                  <p className="mt-1 font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                    {ledger ? formatAssets(ledger.netEquityAssets) : 'Unavailable'}
+                  </p>
+                  <p className="mt-1 font-mono text-xs text-content-tertiary">
+                    {ledger
+                      ? `Free collateral ${formatCompactAssets(ledger.freeSettlementAssets)} · Pending orders: ${String(ledger.pendingOrderCount)}`
+                      : 'Live CfdEngineAccountLens read'}
+                  </p>
+                </div>
+
+                <div className="text-left font-mono sm:text-right">
+                  <p className="text-xs text-content-tertiary">Open Position</p>
+                  <p
+                    className={`mt-1 text-xl font-bold tabular-nums ${
+                      position?.liquidatable
+                        ? 'text-brand-orange'
+                        : position
+                          ? 'text-positive'
+                          : 'text-content-secondary'
+                    }`}
+                  >
+                    {ledger
+                      ? position
+                        ? `${position.side.toUpperCase()} · ${formatPlDxyQuantity(position.size)}`
+                        : 'Flat'
+                      : 'Unavailable'}
+                  </p>
+                  <p className="mt-0.5 text-xs text-content-tertiary">
+                    {position
+                      ? `Entry ${formatPrice(position.entryPrice)} · Margin ${formatCompactAssets(position.marginAssets)}${position.liquidatable ? ' · LIQUIDATABLE' : ''}`
+                      : ledger
+                        ? 'No active perpetual position'
+                        : 'Position size, entry & liquidation status'}
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-1 divide-y divide-brand-border/15 border-t border-brand-border/20 bg-app-bg/35 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                <div className="px-4 py-3.5 sm:px-6">
+                  <dt className="text-xs text-content-tertiary">
+                    Realized PnL ({releaseVersion ?? 'current'})
+                  </dt>
+                  <dd className="mt-1 font-mono text-lg font-bold tabular-nums">
+                    {perf ? <Pnl value={perf.realizedPnlAssets} /> : <span className="text-sm font-normal text-content-tertiary">Unavailable</span>}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    {perf
+                      ? `${String(perf.totalTrades)} fills (${String(perf.opensCount)} open / ${String(perf.closesCount)} close / ${String(perf.liquidationsCount)} liq)`
+                      : 'Release-scoped realized PnL'}
+                  </p>
+                </div>
+                <div className="px-4 py-3.5 sm:px-6">
+                  <dt className="text-xs text-content-tertiary">
+                    Trading Volume ({releaseVersion ?? 'current'})
+                  </dt>
+                  <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-content-primary">
+                    {perf ? formatCompactAssets(perf.volumeAssets) : <span className="text-sm font-normal text-content-tertiary">Unavailable</span>}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    {perf
+                      ? `${String(perf.activeDays)} active days · ${String(lpBalances.length)} attributed LP vault${lpBalances.length === 1 ? '' : 's'}`
+                      : 'Notional volume & LP vault holdings'}
+                  </p>
+                </div>
+              </dl>
+            </>
+          )}
+        </Panel>
       </section>
 
       <div

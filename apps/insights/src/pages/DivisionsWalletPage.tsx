@@ -74,6 +74,45 @@ function FxSessionStrip({
   )
 }
 
+function LoadingInlineBadge({ label }: { label: string }) {
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="inline-flex items-center gap-1.5 border border-brand-peach/35 bg-brand-peach/10 px-2 py-0.5 font-mono text-[11px] font-medium text-brand-peach"
+    >
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-peach" aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
+function CutoffContextSkeleton({ mode }: { mode: 'live' | 'published' }) {
+  const labelPrefix = mode === 'live' ? 'snapshot' : 'cutoff'
+  return (
+    <div className="grid gap-4 lg:grid-cols-2" aria-busy="true">
+      <Panel>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-border/15 px-5 py-3">
+          <span className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">
+            {mode === 'live' ? 'Live equity accounting bridge' : 'Audited cutoff equity bridge'}
+          </span>
+          <LoadingInlineBadge label="Loading on-chain bridge…" />
+        </div>
+        <LoadingState rows={2} />
+      </Panel>
+      <Panel>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-border/15 px-5 py-3">
+          <span className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">
+            Position &amp; balance at {labelPrefix}
+          </span>
+          <LoadingInlineBadge label="Loading snapshot…" />
+        </div>
+        <LoadingState rows={2} />
+      </Panel>
+    </div>
+  )
+}
+
 function CutoffContextBlock({
   context,
   mode,
@@ -252,9 +291,11 @@ function TraderDetails({ address }: { address: string }) {
     live &&
     !current &&
     !awarded &&
+    (walletContext?.history.length ?? 0) === 0 &&
     !liveQuery.isError &&
     !publicationQuery.isLoading &&
-    !publicationQuery.isError
+    !publicationQuery.isError &&
+    !contextQuery.isLoading
 
   const liveProjection = computeLiveTierProjection(live?.standings, address)
   const isTraderOfTheWeek = Boolean(
@@ -309,6 +350,9 @@ function TraderDetails({ address }: { address: string }) {
   }
 
   const history = walletContext?.history ?? []
+  const isStandingsLoading = liveQuery.isLoading || publicationQuery.isLoading
+  const isContextLoading = contextQuery.isLoading
+  const isAnyLoading = isStandingsLoading || isContextLoading
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -331,6 +375,15 @@ function TraderDetails({ address }: { address: string }) {
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-peach">
               Plether Divisions · Trader
             </p>
+            {isAnyLoading ? (
+              <LoadingInlineBadge
+                label={
+                  isStandingsLoading
+                    ? 'Loading trader standings…'
+                    : 'Loading equity bridge & history…'
+                }
+              />
+            ) : null}
             {isTraderOfTheWeek ? (
               <StatusPill tone="live" label="Trader of the Week" />
             ) : null}
@@ -412,7 +465,13 @@ function TraderDetails({ address }: { address: string }) {
 
         {liveQuery.isLoading ? (
           <Panel>
-            <LoadingState />
+            <div className="flex items-center justify-between border-b border-brand-border/15 px-5 py-3">
+              <span className="text-xs font-medium text-content-secondary">
+                Loading live weekly rankings…
+              </span>
+              <LoadingInlineBadge label="Syncing" />
+            </div>
+            <LoadingState rows={3} />
           </Panel>
         ) : liveQuery.isError && !live ? (
           <ErrorState
@@ -489,6 +548,8 @@ function TraderDetails({ address }: { address: string }) {
 
             {walletContext?.liveWeek ? (
               <CutoffContextBlock context={walletContext.liveWeek} mode="live" />
+            ) : isContextLoading ? (
+              <CutoffContextSkeleton mode="live" />
             ) : null}
           </div>
         ) : (
@@ -521,7 +582,13 @@ function TraderDetails({ address }: { address: string }) {
 
         {publicationQuery.isLoading ? (
           <Panel>
-            <LoadingState />
+            <div className="flex items-center justify-between border-b border-brand-border/15 px-5 py-3">
+              <span className="text-xs font-medium text-content-secondary">
+                Loading last published week…
+              </span>
+              <LoadingInlineBadge label="Syncing" />
+            </div>
+            <LoadingState rows={3} />
           </Panel>
         ) : publicationQuery.isError && !publication ? (
           <ErrorState
@@ -592,6 +659,8 @@ function TraderDetails({ address }: { address: string }) {
 
             {walletContext?.publishedWeek ? (
               <CutoffContextBlock context={walletContext.publishedWeek} mode="published" />
+            ) : isContextLoading ? (
+              <CutoffContextSkeleton mode="published" />
             ) : null}
           </div>
         ) : (
@@ -667,6 +736,23 @@ function TraderDetails({ address }: { address: string }) {
                 ))}
               </tbody>
             </table>
+          </Panel>
+        </section>
+      ) : isContextLoading ? (
+        <section aria-labelledby="trader-history-title" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 id="trader-history-title" className="text-xl font-semibold">
+                Multi-week Divisions trajectory
+              </h2>
+              <p className="mt-1 text-xs text-content-tertiary">
+                Published weekly outcomes and tier progression across audited scoring windows
+              </p>
+            </div>
+            <LoadingInlineBadge label="Loading history…" />
+          </div>
+          <Panel>
+            <LoadingState rows={3} />
           </Panel>
         </section>
       ) : null}

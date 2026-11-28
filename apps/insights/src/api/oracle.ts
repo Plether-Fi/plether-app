@@ -252,6 +252,14 @@ export function isValidOracleUpdateId(value: string): boolean {
   return trimmed === 'latest' || (/^\d+$/.test(trimmed) && trimmed !== '0')
 }
 
+export function oracleUpdatePath(updateId?: string | null): string {
+  const trimmed = updateId?.trim()
+  if (trimmed && isValidOracleUpdateId(trimmed)) {
+    return `/oracle/updates/${trimmed.toLowerCase()}`
+  }
+  return '/oracle/updates/latest'
+}
+
 export async function fetchOracleUpdateDetail(
   id: string,
   signal?: AbortSignal,

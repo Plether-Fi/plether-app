@@ -13,6 +13,7 @@ import {
   normalizeAccountProtection,
   protectionLifecycleTone,
 } from '../utils/orderProtections'
+import { OraclePriceLink } from './OraclePriceLink'
 import { StatusPill, type StatusTone } from './StatusPill'
 import { Panel } from './ui'
 
@@ -460,7 +461,9 @@ export function OrderProtectionsChecklistPanel({
                   <div>
                     <dt className="text-content-tertiary">Trigger mark price</dt>
                     <dd className="mt-0.5 font-mono text-content-primary tabular-nums">
-                      {formatPrice(positionProtection.triggerMarkPrice)}
+                      <OraclePriceLink updateId={positionProtection.triggerOracleUpdateId}>
+                        {formatPrice(positionProtection.triggerMarkPrice)}
+                      </OraclePriceLink>
                     </dd>
                   </div>
                 ) : null}

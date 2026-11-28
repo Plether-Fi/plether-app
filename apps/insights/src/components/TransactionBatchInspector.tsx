@@ -9,6 +9,7 @@ import type {
 import { arbiscanLinkKey } from '../utils/chain'
 import { formatCompactAssets, formatPrice, formatUtc, shortAddress } from '../utils/format'
 import { ArbiscanButton } from './ActionButtons'
+import { OraclePriceLink } from './OraclePriceLink'
 import { StatusPill, type StatusTone } from './StatusPill'
 import { Panel } from './ui'
 
@@ -119,7 +120,13 @@ export function BatchFinalizationPanel({
           <Panel className="p-4">
             <p className="text-xs text-content-tertiary">Pyth oracle settlement</p>
             <p className="mt-1 font-mono text-base font-semibold tabular-nums text-content-primary">
-              {batchSummary.oraclePrice ? formatPrice(batchSummary.oraclePrice) : '—'}
+              {batchSummary.oraclePrice ? (
+                <OraclePriceLink updateId={batchSummary.oracleUpdateId}>
+                  {formatPrice(batchSummary.oraclePrice)} →
+                </OraclePriceLink>
+              ) : (
+                '—'
+              )}
             </p>
             <p className="mt-1 font-mono text-[11px] text-content-secondary">
               {batchSummary.oracleFrozen ? 'Oracle frozen' : 'Live mark'}
@@ -236,7 +243,12 @@ export function BatchFinalizationPanel({
                     <div>{order.executionPrice ? formatPrice(order.executionPrice) : '—'}</div>
                     {order.oraclePrice ? (
                       <div className="mt-0.5 text-[11px] text-content-tertiary">
-                        Oracle {formatPrice(order.oraclePrice)}
+                        Oracle{' '}
+                        <OraclePriceLink
+                          updateId={order.oracleUpdateId ?? batchSummary?.oracleUpdateId}
+                        >
+                          {formatPrice(order.oraclePrice)}
+                        </OraclePriceLink>
                       </div>
                     ) : null}
                   </td>

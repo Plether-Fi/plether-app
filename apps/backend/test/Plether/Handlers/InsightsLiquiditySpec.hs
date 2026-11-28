@@ -1,15 +1,25 @@
 module Plether.Handlers.InsightsLiquiditySpec (spec) where
 
 import Data.Aeson (object, (.=))
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Plether.Database.VaultPerformance (VaultPerformanceSnapshotRow (..))
 import Plether.Handlers.InsightsLiquidity
   ( LpSettlementObservationRow (..)
+  , OiDeltaBucketAgg (..)
+  , OrderBucketAgg (..)
+  , PoolEfficiencyBucket (..)
+  , PoolEfficiencySummary (..)
   , ReturnReportResidual (..)
   , SnapshotFreshnessSummary (..)
   , auditReturnReportResidual
+  , buildPoolEfficiencyAnalytics
   , classifySettlementReadiness
+  , computeAnnualizedYieldBps
+  , computeRatioBps
+  , computeRatioX100
+  , computeTakeRateBpsX100
   , decodeBitPositions
   , executionPathLabel
   , healthStateLabel
@@ -130,3 +140,64 @@ spec = describe "Plether.Handlers.InsightsLiquidity" $ do
     sharePriceDeltaBps 1010000000000000000 1000000000000000000 `shouldBe` Just 100
     sharePriceDeltaBps 995000000000000000 1000000000000000000 `shouldBe` Just (-50)
     sharePriceDeltaBps 1000000000000000000 0 `shouldBe` Nothing
+
+  it "computes pool turnover, OI utilization, net skew, take-rate, and annualized fee yield cleanly" $ do
+    computeRatioX100 200000000000000 800000000000 `shouldBe` Just 25000 -- 250.00x
+    computeRatioX100 100 0 `shouldBe` Nothing
+    computeRatioBps 600000 1000000 `shouldBe` Just 6000 -- 60.00%
+    computeTakeRateBpsX100 700000000 1000000000000 `shouldBe` Just 700 -- 7.00 bps
+    computeAnnualizedYieldBps 7000000000 7 1000000000000 `shouldBe` Just 3650 -- 36.50% APR
+
+  it "reconstructs 7d (6h) and 30d (daily) pool efficiency & open interest series accurately" $ do
+    let nowTs = 1795867200 :: Integer -- aligned UTC timestamp
+        bucket6h = 21600 :: Integer
+        end6h = ((nowTs `div` bucket6h) + 1) * bucket6h
+        lastBucketStart = end6h - bucket6h
+        snap =
+          (sampleSnapshot (nowTs - 3600) (Just True))
+            { vpsSeniorTotalAssets = 600000000000 -- 600k USDG
+            , vpsJuniorTotalAssets = 200000000000 -- 200k USDG -> 800k total pool
+            }
+        -- Prior OI: 200k plDXY long, 100k plDXY short @ raw price 1.00 (1e8)
+        priorOi = (200000000000000000000000, 100000000000000000000000)
+        -- Last 6h bucket adds +100k long, +50k short -> 300k long, 150k short -> 450k gross, +150k net skew
+        oiBuckets =
+          Map.singleton
+            lastBucketStart
+            (OiDeltaBucketAgg 100000000000000000000000 50000000000000000000000 (Just 100000000))
+        orderBuckets =
+          Map.singleton
+            lastBucketStart
+            (OrderBucketAgg 120 40000000000000 28000000000) -- 40M vol, 28k fees in 6h
+        windowTotals =
+          ( 160000000000000 -- 160M 24h vol -> 200.00x on 800k pool
+          , 800000000000000 -- 800M 7d vol
+          , 2400000000000000 -- 2.4B 30d vol
+          , 112000000000 -- 112k 24h fees
+          , 560000000000 -- 560k 7d fees -> 7.00 bps take rate
+          )
+        (summary, s7d, s30d) =
+          buildPoolEfficiencyAnalytics
+            nowTs
+            [snap]
+            orderBuckets
+            priorOi
+            oiBuckets
+            (Just 100000000)
+            windowTotals
+
+    length s7d `shouldBe` 28
+    length s30d `shouldBe` 30
+    pesPoolTvlAssets summary `shouldBe` Just 800000000000
+    pesTurnover24hX100 summary `shouldBe` Just 20000 -- 200.00x
+    pesEffectiveTakeRate7dBpsX100 summary `shouldBe` Just 700 -- 7.00 bps
+    pesCurrentLongOiAssets summary `shouldBe` 300000000000
+    pesCurrentShortOiAssets summary `shouldBe` 150000000000
+    pesCurrentGrossOiAssets summary `shouldBe` 450000000000
+    pesCurrentNetSkewAssets summary `shouldBe` 150000000000
+    pesGrossOiToPoolBps summary `shouldBe` Just 5625 -- 450k / 800k = 56.25%
+    pesNetSkewToPoolBps summary `shouldBe` Just 1875 -- 150k / 800k = 18.75%
+    pesNetSkewToJuniorBps summary `shouldBe` Just 7500 -- 150k / 200k = 75.00%
+    -- 6h bucket annualized daily turnover = 4 * 40M / 800k = 200.00x
+    pebAnnualizedTurnoverDailyX100 (last s7d) `shouldBe` Just 20000
+    pebGrossOiAssets (last s30d) `shouldBe` 450000000000

@@ -278,4 +278,26 @@ describe('Divisions trader navigation', () => {
       .filter((href) => href.includes('arbiscan.io'))
     expect(arbiscanHrefs).toHaveLength(1)
   })
+
+  it('shows clear loading indicators while standings or wallet context are loading', () => {
+    queries.live.mockReturnValue({ data: undefined, isLoading: true, isError: false })
+    queries.publication.mockReturnValue({ data: undefined, isLoading: true, isError: false })
+    walletContextQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false })
+
+    show()
+    expect(screen.getByText('Loading trader standings…')).toBeInTheDocument()
+    expect(screen.getByText('Loading live weekly rankings…')).toBeInTheDocument()
+    expect(screen.getByText('Loading last published week…')).toBeInTheDocument()
+    expect(screen.getByText('Loading history…')).toBeInTheDocument()
+  })
+
+  it('shows equity bridge, snapshot, and history skeletons when standings are cached but wallet context is still loading', () => {
+    walletContextQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false })
+
+    show()
+    expect(screen.getByText('Loading equity bridge & history…')).toBeInTheDocument()
+    expect(screen.getAllByText('Loading on-chain bridge…')).toHaveLength(2)
+    expect(screen.getAllByText('Loading snapshot…')).toHaveLength(2)
+    expect(screen.getByText('Loading history…')).toBeInTheDocument()
+  })
 })

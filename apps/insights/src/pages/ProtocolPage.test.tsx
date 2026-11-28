@@ -261,9 +261,13 @@ describe('ProtocolPage (Stage 4 Contracts, Parameters & Safety Controls)', () =>
     show()
 
     expect(screen.getByText('Parameter drift detected')).toBeInTheDocument()
-    expect(screen.getByText('3 / 3')).toBeInTheDocument()
+    expect(screen.getByText('3 / 3 bytecode verified')).toBeInTheDocument()
     expect(screen.getByText('1 drifted')).toBeInTheDocument()
-    expect(screen.getByText(/Last on-chain mark: 1\.05256/)).toBeInTheDocument()
+    expect(screen.getByText(/Last on-chain mark:/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '1.05256' })).toHaveAttribute(
+      'href',
+      '/oracle/updates/latest',
+    )
 
     const paramsTable = screen.getByRole('table', {
       name: /Live on-chain economic parameters/i,
@@ -359,7 +363,7 @@ describe('ProtocolPage (Stage 4 Contracts, Parameters & Safety Controls)', () =>
 
     expect(screen.getByText('Awaiting Stage 4 backend deploy')).toBeInTheDocument()
     expect(screen.getByText('Stage 4 backend deployment pending')).toBeInTheDocument()
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
+    expect(screen.getByText('Params unavailable')).toBeInTheDocument()
   })
 
   it('shows RPC unavailable state without faking verified counts when rpcAvailable is false', () => {

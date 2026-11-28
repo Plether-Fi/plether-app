@@ -1,5 +1,10 @@
 import { Link } from 'react-router-dom'
 import {
+  formatPoolBpsPercent,
+  formatTurnoverX100,
+  type PoolEfficiencySummary,
+} from '../api/liquidity'
+import {
   classifyLiquidationBuffer,
   formatDurationCompact,
   formatLeverageX100,
@@ -11,17 +16,20 @@ import {
   formatPrice,
   formatSignedAssets,
 } from '../utils/format'
+import { OraclePriceLink } from './OraclePriceLink'
 import { TraderIdentity } from './TraderIdentity'
 import { EmptyState, LoadingState, Panel, Pnl } from './ui'
 
 interface MarketExposurePulsePanelProps {
   data: GlobalMarketExposureResponse | undefined
+  efficiencySummary?: PoolEfficiencySummary | null
   isLoading: boolean
   isError: boolean
 }
 
 export function MarketExposurePulsePanel({
   data,
+  efficiencySummary,
   isLoading,
   isError,
 }: MarketExposurePulsePanelProps) {
@@ -41,14 +49,36 @@ export function MarketExposurePulsePanel({
             Real-time Long vs. Short open interest skew across active plDXY-PERP accounts
           </p>
         </div>
-        {data?.currentMarkPrice ? (
-          <span className="font-mono text-xs text-content-secondary">
-            Mark <strong className="text-content-primary">{formatPrice(data.currentMarkPrice)}</strong>
-            {summary?.avgLeverageX100 != null
-              ? ` · Avg lev ${formatLeverageX100(summary.avgLeverageX100)}`
-              : ''}
-          </span>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-content-secondary">
+          {data?.currentMarkPrice ? (
+            <span>
+              Mark{' '}
+              <OraclePriceLink className="font-semibold">
+                {formatPrice(data.currentMarkPrice)}
+              </OraclePriceLink>
+              {summary?.avgLeverageX100 != null
+                ? ` · Avg lev ${formatLeverageX100(summary.avgLeverageX100)}`
+                : ''}
+            </span>
+          ) : null}
+          {efficiencySummary?.turnover24hX100 != null ? (
+            <span>
+              24h Vol/Pool{' '}
+              <strong className="text-positive">
+                {formatTurnoverX100(efficiencySummary.turnover24hX100)}
+              </strong>
+              {efficiencySummary.grossOiToPoolBps != null
+                ? ` · OI/Pool ${formatPoolBpsPercent(efficiencySummary.grossOiToPoolBps)}`
+                : ''}
+            </span>
+          ) : null}
+          <Link
+            to="/liquidity#pool-efficiency"
+            className="font-semibold text-brand-peach hover:underline"
+          >
+            Pool turnover &amp; OI charts →
+          </Link>
+        </div>
       </div>
 
       <Panel>
@@ -172,7 +202,8 @@ export function MarketExposurePulsePanel({
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-xs tabular-nums text-content-secondary">
-                          {formatPrice(pos.entryPrice)} → {formatPrice(pos.markPrice)}
+                          {formatPrice(pos.entryPrice)} →{' '}
+                          <OraclePriceLink>{formatPrice(pos.markPrice)}</OraclePriceLink>
                         </td>
                         <td className={`whitespace-nowrap px-3 py-3 font-mono text-xs font-semibold tabular-nums ${liqToneClass}`}>
                           {liq.text}

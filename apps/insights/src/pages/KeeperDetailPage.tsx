@@ -9,7 +9,6 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -165,49 +164,80 @@ export function KeeperDetailPage() {
         />
       ) : data && keeper ? (
         <>
-          <section aria-labelledby="keeper-summary-title" className="space-y-3">
+          <section aria-labelledby="keeper-summary-title">
             <h2 id="keeper-summary-title" className="sr-only">
               Keeper 24h summary
             </h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard
-                label="Executions (24h)"
-                value={keeper.executions24h.toLocaleString('en-US')}
-                tone={keeper.executions24h > 0 ? 'positive' : undefined}
-                detail={
-                  keeper.shareBps != null
-                    ? `${formatRateBps(keeper.shareBps)} of 24h protocol executions`
-                    : 'Permissionless tx.from executions'
-                }
-              />
-              <StatCard
-                label="Live ETH balance"
-                unavailable={keeper.ethBalanceWei == null}
-                value={keeper.ethBalanceWei != null ? formatEthWei(keeper.ethBalanceWei) : undefined}
-                tone={lowEth ? 'warning' : 'positive'}
-                detail={lowEth ? 'Below 0.01 ETH gas runway threshold' : 'Live eth_getBalance read'}
-              />
-              <StatCard
-                label="Latency (p50 / p95)"
-                unavailable={latencyDisplay === undefined}
-                value={latencyDisplay}
-                tone="accent"
-                detail={
-                  latency && latency.sampleCount > 0
-                    ? `p99 ${latency.p99 != null ? `${String(latency.p99)}s` : '—'} · max ${latency.max != null ? `${String(latency.max)}s` : '—'} (${String(latency.sampleCount)} samples)`
-                    : 'Commit or trigger → confirmation'
-                }
-              />
-              <StatCard
-                label="Bounties earned (24h)"
-                value={formatCompactAssets(keeper.bountiesEarnedAssets)}
-                detail={
-                  keeper.lastActiveAt
-                    ? `Last active ${formatUtc(keeper.lastActiveAt)}`
-                    : 'No executions in last 24h'
-                }
-              />
-            </div>
+            <Panel className="overflow-hidden">
+              <div className="flex flex-wrap items-end justify-between gap-4 p-4 sm:p-6">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    24h Executions &amp; Fleet Share
+                  </p>
+                  <div className="flex flex-wrap items-baseline gap-3">
+                    <span
+                      className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                        keeper.executions24h > 0 ? 'text-positive' : 'text-content-primary'
+                      }`}
+                    >
+                      {keeper.executions24h.toLocaleString('en-US')}
+                    </span>
+                    {keeper.shareBps != null ? (
+                      <span className="font-mono text-sm text-content-secondary">
+                        {formatRateBps(keeper.shareBps)} of 24h protocol executions
+                      </span>
+                    ) : null}
+                  </div>
+                  {keeper.shareBps != null ? (
+                    <div className="h-2 max-w-md overflow-hidden border border-brand-border/20 bg-app-bg">
+                      <div
+                        className="h-full bg-positive"
+                        style={{ width: `${String(Math.min(100, keeper.shareBps / 100))}%` }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="text-left font-mono sm:text-right">
+                  <p className="text-xs text-content-tertiary">Live ETH Balance</p>
+                  <p
+                    className={`mt-1 text-2xl font-bold tabular-nums ${
+                      lowEth ? 'text-brand-yellow' : 'text-positive'
+                    }`}
+                  >
+                    {keeper.ethBalanceWei != null ? formatEthWei(keeper.ethBalanceWei) : 'Unavailable'}
+                  </p>
+                  <p className="mt-0.5 text-xs text-content-tertiary">
+                    {lowEth ? 'Below 0.01 ETH gas runway threshold' : 'Live eth_getBalance read'}
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-1 divide-y divide-brand-border/15 border-t border-brand-border/20 bg-app-bg/35 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                <div className="px-4 py-3.5 sm:px-6">
+                  <dt className="text-xs text-content-tertiary">Latency (p50 / p95)</dt>
+                  <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-brand-peach">
+                    {latencyDisplay ?? 'Unavailable'}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    {latency && latency.sampleCount > 0
+                      ? `p99 ${latency.p99 != null ? `${String(latency.p99)}s` : '—'} · max ${latency.max != null ? `${String(latency.max)}s` : '—'} (${String(latency.sampleCount)} samples)`
+                      : 'Commit or trigger → confirmation'}
+                  </p>
+                </div>
+                <div className="px-4 py-3.5 sm:px-6">
+                  <dt className="text-xs text-content-tertiary">Bounties earned (24h)</dt>
+                  <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-content-primary">
+                    {formatCompactAssets(keeper.bountiesEarnedAssets)}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    {keeper.lastActiveAt
+                      ? `Last active ${formatUtc(keeper.lastActiveAt)}`
+                      : 'No executions in last 24h'}
+                  </p>
+                </div>
+              </dl>
+            </Panel>
           </section>
 
           {/* Per-Role Breakdown */}

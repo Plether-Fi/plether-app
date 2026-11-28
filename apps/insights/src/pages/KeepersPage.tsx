@@ -12,7 +12,6 @@ import {
 import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -188,42 +187,110 @@ export function KeepersPage() {
         </div>
       ) : null}
 
-      <section aria-labelledby="keepers-summary-title" className="space-y-4">
-        <h2 id="keepers-summary-title" className="text-xl font-semibold">
+      <section aria-labelledby="keepers-summary-title">
+        <h2 id="keepers-summary-title" className="sr-only">
           Ecosystem summary
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Active keepers (24h)"
-            loading={keepersQuery.isLoading}
-            unavailable={!summary}
-            value={summary?.activeKeepers24h.toLocaleString('en-US')}
-            tone="positive"
-            detail="Unique on-chain tx.from executors detected"
-          />
-          <StatCard
-            label="Keeper executions (24h)"
-            loading={keepersQuery.isLoading}
-            unavailable={!summary}
-            value={summary?.executions24h.toLocaleString('en-US')}
-            detail="Orders, epochs, protections, liquidations & oracle updates"
-          />
-          <StatCard
-            label="Execution latency (p50 / p95)"
-            loading={keepersQuery.isLoading}
-            unavailable={latencyDisplay === undefined}
-            value={latencyDisplay}
-            tone="accent"
-            detail="Commit, trigger, or epoch boundary → confirmation"
-          />
-          <StatCard
-            label="Bounties paid (24h)"
-            loading={keepersQuery.isLoading}
-            unavailable={!summary}
-            value={summary ? formatCompactAssets(summary.bountiesPaid24hAssets) : undefined}
-            detail={`Liquidation & protection trigger payouts in ${chain.defaultAssetSymbol}`}
-          />
-        </div>
+        <Panel className="space-y-4 p-4 sm:p-6">
+          {keepersQuery.isLoading ? (
+            <LoadingState rows={3} />
+          ) : !summary ? (
+            <div className="font-mono text-xs text-content-tertiary">
+              Keeper fleet telemetry: <strong className="text-content-secondary">Unavailable</strong>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    24h Permissionless Keeper Executions
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-baseline gap-3">
+                    <span className="font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                      {summary.executions24h.toLocaleString('en-US')}
+                    </span>
+                    <span className="font-mono text-sm font-semibold text-positive">
+                      {summary.activeKeepers24h.toLocaleString('en-US')} active keeper
+                      {summary.activeKeepers24h === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                </div>
+
+                <dl className="flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs">
+                  <div>
+                    <dt className="text-content-tertiary">Latency (p50 / p95)</dt>
+                    <dd className="mt-0.5 text-base font-bold tabular-nums text-brand-peach">
+                      {latencyDisplay ?? 'Unavailable'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-content-tertiary">Bounties paid (24h)</dt>
+                    <dd className="mt-0.5 text-base font-bold tabular-nums text-content-primary">
+                      {formatCompactAssets(summary.bountiesPaid24hAssets)}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+
+              {/* Fleet Execution Concentration Bar */}
+              {(statusData?.keepers.length ?? 0) > 0 ? (
+                <div className="space-y-1.5 border-t border-brand-border/20 pt-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] text-content-tertiary">
+                    <span>24h execution share by detected keeper</span>
+                    <span>Orders, epochs, protections &amp; liquidations</span>
+                  </div>
+                  {(() => {
+                    const colors = ['#6EE7B7', '#FFB78B', '#7CC4FA', '#C4B5FD', '#FDE047']
+                    const topKeepers = (statusData?.keepers ?? []).slice(0, 5).filter((k) => (k.shareBps ?? 0) > 0)
+                    const assignedBps = topKeepers.reduce((sum, k) => sum + (k.shareBps ?? 0), 0)
+                    const remainderBps = Math.max(0, 10000 - assignedBps)
+                    return (
+                      <>
+                        <div className="flex h-2.5 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                          {topKeepers.map((k, idx) => (
+                            <div
+                              key={k.address}
+                              title={`${shortAddress(k.address)}: ${formatRateBps(k.shareBps)}`}
+                              style={{
+                                width: `${String((k.shareBps ?? 0) / 100)}%`,
+                                background: colors[idx % colors.length],
+                              }}
+                            />
+                          ))}
+                          {remainderBps > 0 ? (
+                            <div
+                              title={`Other / unattributed: ${formatRateBps(remainderBps)}`}
+                              className="bg-brand-border/30"
+                              style={{ width: `${String(remainderBps / 100)}%` }}
+                            />
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-content-secondary">
+                          {topKeepers.map((k, idx) => (
+                            <Link
+                              key={k.address}
+                              to={`/keepers/${k.address}`}
+                              className="inline-flex items-center gap-1.5 hover:text-brand-peach"
+                            >
+                              <span
+                                className="h-2 w-2"
+                                style={{ background: colors[idx % colors.length] }}
+                              />
+                              <span>{shortAddress(k.address)}</span>
+                              <span className="text-content-tertiary">
+                                {formatRateBps(k.shareBps)}
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      </>
+                    )
+                  })()}
+                </div>
+              ) : null}
+            </>
+          )}
+        </Panel>
       </section>
 
       <section aria-labelledby="keepers-detected-title" className="space-y-4">
