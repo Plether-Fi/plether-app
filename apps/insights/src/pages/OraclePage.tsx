@@ -116,12 +116,6 @@ export function OraclePage() {
           >
             Inspect latest update →
           </Link>
-          <Link to="/execution" className="text-brand-peach hover:underline">
-            Execution quality →
-          </Link>
-          <Link to="/infra" className="text-content-secondary hover:text-brand-peach hover:underline">
-            Infrastructure →
-          </Link>
         </div>
       </header>
 

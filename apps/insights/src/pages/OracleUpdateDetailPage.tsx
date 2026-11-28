@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom'
 import { InsightsApiError, isValidOracleUpdateId, useOracleUpdateDetail } from '../api'
 import { CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { OracleBasketPieChart } from '../components/OracleBasketPieChart'
 import { OraclePriceLink } from '../components/OraclePriceLink'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -132,7 +133,57 @@ export function OracleUpdateDetailPage() {
       : null
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Markets', to: '/execution' },
+          { label: 'Oracle', to: '/oracle' },
+          { label: data ? `Update #${data.update.id}` : id === 'latest' ? 'Latest Update' : `Update #${id}` },
+        ]}
+        rightSlot={
+          data ? (
+            <nav
+              aria-label="Adjacent oracle updates"
+              className="flex flex-wrap items-center gap-1.5 font-mono text-xs"
+            >
+              {data.navigation.previousId ? (
+                <Link
+                  to={`/oracle/updates/${data.navigation.previousId}`}
+                  className="border border-brand-border/35 bg-surface-panel px-2 py-1 text-content-secondary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
+                >
+                  ← Prev #{data.navigation.previousId}
+                </Link>
+              ) : (
+                <span className="border border-brand-border/20 px-2 py-1 text-content-tertiary opacity-50">
+                  ← Prev
+                </span>
+              )}
+
+              {data.navigation.nextId ? (
+                <>
+                  <Link
+                    to={`/oracle/updates/${data.navigation.nextId}`}
+                    className="border border-brand-border/35 bg-surface-panel px-2 py-1 text-content-secondary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
+                  >
+                    Next #{data.navigation.nextId} →
+                  </Link>
+                  <Link
+                    to="/oracle/updates/latest"
+                    className="border border-brand-peach/45 bg-brand-peach/10 px-2 py-1 font-semibold text-brand-peach transition-colors hover:bg-brand-peach/20"
+                  >
+                    Latest
+                  </Link>
+                </>
+              ) : (
+                <span className="border border-positive/40 bg-positive/10 px-2 py-1 font-semibold text-positive">
+                  Latest update
+                </span>
+              )}
+            </nav>
+          ) : undefined
+        }
+      />
+
       <DataFreshnessBanner
         tone={bannerTone}
         statusLabel={bannerLabel}
@@ -143,56 +194,6 @@ export function OracleUpdateDetailPage() {
         observedAt={data?.observedAt ?? protocol.observedAt}
         note="Signed 6-currency Pyth Hermes FX basket snapshot & component weight forensics"
       />
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          to="/oracle"
-          className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-brand-peach hover:underline"
-        >
-          ← Back to Oracle Health
-        </Link>
-
-        {data ? (
-          <nav
-            aria-label="Adjacent oracle updates"
-            className="flex flex-wrap items-center gap-2 font-mono text-xs"
-          >
-            {data.navigation.previousId ? (
-              <Link
-                to={`/oracle/updates/${data.navigation.previousId}`}
-                className="border border-brand-border/35 bg-surface-panel px-2.5 py-1.5 text-content-secondary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
-              >
-                ← Prev #{data.navigation.previousId}
-              </Link>
-            ) : (
-              <span className="border border-brand-border/20 px-2.5 py-1.5 text-content-tertiary opacity-50">
-                ← Prev
-              </span>
-            )}
-
-            {data.navigation.nextId ? (
-              <>
-                <Link
-                  to={`/oracle/updates/${data.navigation.nextId}`}
-                  className="border border-brand-border/35 bg-surface-panel px-2.5 py-1.5 text-content-secondary transition-colors hover:border-brand-peach/60 hover:text-brand-peach"
-                >
-                  Next #{data.navigation.nextId} →
-                </Link>
-                <Link
-                  to="/oracle/updates/latest"
-                  className="border border-brand-peach/45 bg-brand-peach/10 px-2.5 py-1.5 font-semibold text-brand-peach transition-colors hover:bg-brand-peach/20"
-                >
-                  Latest
-                </Link>
-              </>
-            ) : (
-              <span className="border border-positive/40 bg-positive/10 px-2.5 py-1.5 font-semibold text-positive">
-                Latest update
-              </span>
-            )}
-          </nav>
-        ) : null}
-      </div>
 
       {!isValid ? (
         <ErrorState

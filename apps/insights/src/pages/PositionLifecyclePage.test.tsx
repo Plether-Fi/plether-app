@@ -429,7 +429,11 @@ describe('PositionLifecyclePage', () => {
     expect(screen.getByText(/plDXY-PERP/)).toBeInTheDocument()
     expect(screen.getByText(/Captured 77\.10% of peak MFE/)).toBeInTheDocument()
     expect(screen.getByText(/#77 · ProtectionCreated/)).toBeInTheDocument()
-    expect(screen.getByText(/Back to @macro_fox/)).toBeInTheDocument()
+    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(within(breadcrumb).getByRole('link', { name: '@macro_fox' })).toHaveAttribute(
+      'href',
+      `/wallets/${testAccount}`,
+    )
     expect(container.textContent).not.toContain('$')
 
     // Verify split green/orange gradient in Price & Levels mode (Short: orange above entry, green below)

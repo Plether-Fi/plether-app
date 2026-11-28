@@ -860,14 +860,6 @@ export function LiquidityOpsPage() {
         <a href={vaultsAppUrl(chainId)} className="text-brand-peach hover:underline">
           Live TVL, share prices, return breakdown &amp; deposits on App ↗
         </a>
-        <div className="flex flex-wrap gap-4">
-          <Link to="/protocol" className="text-content-secondary hover:text-brand-peach">
-            Verify LP risk parameters →
-          </Link>
-          <Link to="/" className="text-content-secondary hover:text-brand-peach">
-            ← Back to Protocol Pulse
-          </Link>
-        </div>
       </div>
     </div>
   )

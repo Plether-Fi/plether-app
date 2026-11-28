@@ -13,6 +13,7 @@ import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OraclePriceLink } from '../components/OraclePriceLink'
+import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
 import { PositionLifecycleChart } from '../components/PositionLifecycleChart'
 import { ShareCardModal } from '../components/ShareCardModal'
@@ -59,9 +60,12 @@ export function PositionLifecyclePage() {
   if (!validAddress) {
     return (
       <div className="space-y-4">
-        <Link to="/" className="text-sm text-brand-peach hover:underline">
-          ← Protocol Pulse
-        </Link>
+        <PageBreadcrumbBar
+          items={[
+            { label: 'Markets', to: '/execution' },
+            { label: 'Position Lifecycle' },
+          ]}
+        />
         <ErrorState
           title="Invalid Trading Account address"
           message="Expected a 42-character hexadecimal Arbitrum address."
@@ -84,7 +88,15 @@ export function PositionLifecyclePage() {
   )
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Markets', to: '/execution' },
+          { label: traderLabel, to: `/wallets/${address.toLowerCase()}` },
+          { label: `Position ${positionId}` },
+        ]}
+      />
+
       <DataFreshnessBanner
         networkName={chain.name}
         isTestnet={chain.isTestnet}
@@ -102,7 +114,9 @@ export function PositionLifecyclePage() {
                 ? pos.liquidatable
                   ? 'degraded'
                   : 'live'
-                : 'unknown'
+                : pos
+                  ? 'ready'
+                  : 'unknown'
         }
         statusLabel={
           query.isLoading
@@ -119,15 +133,6 @@ export function PositionLifecyclePage() {
         }
         note="Position-level open-to-close forensics · MFE/MAE, leverage & liquidation proximity"
       />
-
-      <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <Link to={`/wallets/${address.toLowerCase()}`} className="text-brand-peach hover:underline">
-          ← Back to {traderLabel}
-        </Link>
-        <Link to="/execution" className="text-content-secondary hover:text-brand-peach">
-          Execution tape →
-        </Link>
-      </div>
 
       {query.isLoading ? (
         <Panel>

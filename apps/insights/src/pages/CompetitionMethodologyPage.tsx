@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { Panel } from '../components/ui'
 
 function Rule({ number, title, children }: { number: string; title: string; children: ReactNode }) {
@@ -13,7 +14,15 @@ function Rule({ number, title, children }: { number: string; title: string; chil
 
 export function CompetitionMethodologyPage() {
   return (
-    <article className="mx-auto max-w-4xl">
+    <div className="space-y-6">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Divisions', to: '/divisions' },
+          { label: 'Sept 2026 Archive', to: '/archive/september-2026' },
+          { label: 'Competition Rules' },
+        ]}
+      />
+      <article className="mx-auto max-w-4xl">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">Transparent by design</p>
       <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Competition methodology</h1>
       <p className="mt-4 max-w-3xl text-base leading-7 text-content-secondary">How Plether calculates standings and determines prize eligibility for the 2026 testnet trading competition.</p>
@@ -58,6 +67,7 @@ export function CompetitionMethodologyPage() {
       </div>
 
       <Link to="/archive/september-2026" className="mt-8 inline-flex border border-brand-orange bg-brand-orange px-5 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">View leaderboard</Link>
-    </article>
+      </article>
+    </div>
   )
 }

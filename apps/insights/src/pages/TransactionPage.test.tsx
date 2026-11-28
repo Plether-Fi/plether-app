@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InsightsApiError, type ProtocolTradeRecord, type TransactionDetailsResponse, type TransactionRouteState } from '../api'
@@ -180,7 +180,7 @@ describe('TransactionPage', () => {
   it('renders full execution breakdown, account link, executor, and switches between multiple events', () => {
     renderTx(`/tx/${sampleTxHash}?log=14`)
 
-    expect(screen.getByText('Verified execution receipt')).toBeInTheDocument()
+    expect(screen.queryByText('Verified execution receipt')).not.toBeInTheDocument()
     expect(screen.getByText(sampleTxHash)).toBeInTheDocument()
     expect(screen.getByText('Protocol fee assessed')).toBeInTheDocument()
     expect(screen.getByText('Gross VPI charge')).toBeInTheDocument()
@@ -245,9 +245,10 @@ describe('TransactionPage', () => {
       },
     })
 
-    expect(screen.getByText('Verified execution receipt')).toBeInTheDocument()
+    expect(screen.queryByText('Verified execution receipt')).not.toBeInTheDocument()
     expect(screen.getByText('Protocol fee assessed')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '← Back to Execution' })).toHaveAttribute(
+    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(within(breadcrumb).getByRole('link', { name: 'Execution' })).toHaveAttribute(
       'href',
       '/execution',
     )

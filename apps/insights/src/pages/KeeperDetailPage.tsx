@@ -9,6 +9,7 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -72,6 +73,24 @@ export function KeeperDetailPage() {
 
   return (
     <div className="space-y-6 sm:space-y-8">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'System', to: '/protocol' },
+          { label: 'Keepers', to: '/keepers' },
+          { label: validAddress ? shortAddress(normalized) : 'Invalid address' },
+        ]}
+        rightSlot={
+          validAddress ? (
+            <Link
+              to={`/wallets/${normalized}`}
+              className="font-mono text-xs text-content-secondary transition-colors hover:text-brand-peach hover:underline"
+            >
+              Wallet Ledger →
+            </Link>
+          ) : undefined
+        }
+      />
+
       <DataFreshnessBanner
         networkName={chain.name}
         isTestnet={chain.isTestnet}
@@ -82,25 +101,6 @@ export function KeeperDetailPage() {
         statusLabel={bannerLabel}
         note="Permissionless on-chain tx.from attribution + live eth_getBalance"
       />
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          to="/keepers"
-          className="text-sm font-semibold text-brand-peach hover:underline hover:underline-offset-4"
-        >
-          ← Back to Permissionless Keepers
-        </Link>
-        {validAddress ? (
-          <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
-            <Link
-              to={`/wallets/${normalized}`}
-              className="text-content-secondary hover:text-content-primary hover:underline"
-            >
-              Inspect as Trading Account →
-            </Link>
-          </div>
-        ) : null}
-      </div>
 
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex items-start gap-3.5">

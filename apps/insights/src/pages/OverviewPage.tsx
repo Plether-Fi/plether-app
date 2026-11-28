@@ -14,7 +14,6 @@ import { MarketExposurePulsePanel } from '../components/MarketExposurePulsePanel
 import { StatusPill } from '../components/StatusPill'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { EmptyState, Panel } from '../components/ui'
-import { WalletSearch } from '../components/WalletSearch'
 import { CurrentBadge } from '../divisions/CurrentBadge'
 import { useDivisions, useDivisionsStats, useLiveDivisionsSummary } from '../divisions/query'
 import { resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
@@ -101,49 +100,40 @@ export function OverviewPage() {
         note={`Settlement asset: ${assetSymbol}`}
       />
 
-      <section className="min-w-0 border border-brand-border/30 bg-surface-panel p-4 sm:p-8">
-        <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr] lg:items-end">
-          <div className="min-w-0">
+      <section className="min-w-0 border border-brand-border/30 bg-surface-panel p-5 sm:p-7">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0 max-w-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
               {chain.name} · Perps Analytics
             </p>
-            <h1 className="mt-2.5 text-2xl font-semibold tracking-tight sm:text-4xl">
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
               Plether Insights
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary sm:text-base">
-              Verifiable execution quality, LP settlement forensics, permissionless keeper activity,
-              sponsored AA health, AWS infrastructure telemetry, and public Trading Account audits.
+            <p className="mt-2.5 text-sm leading-6 text-content-secondary">
+              Verifiable execution quality, LP solvency &amp; settlement forensics, oracle health,
+              permissionless keepers, sponsored AA, and public Trading Account audits.
             </p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Link
-                to="/execution"
-                className="border border-brand-orange bg-brand-orange px-3 py-2 text-xs font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg sm:px-4 sm:text-sm"
-              >
-                Execution quality
-              </Link>
-              <Link
-                to="/liquidity"
-                className="border border-brand-border/40 px-3 py-2 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10 sm:px-4 sm:text-sm"
-              >
-                LP settlement ops
-              </Link>
-              <Link
-                to="/infra"
-                className="border border-brand-border/40 px-3 py-2 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10 sm:px-4 sm:text-sm"
-              >
-                AWS infra health
-              </Link>
-            </div>
           </div>
 
-          <div className="min-w-0 border border-brand-border/25 bg-app-bg p-3.5 sm:p-4">
-            <p className="text-xs font-medium text-content-secondary">
-              Inspect any Trading Account
-            </p>
-            <WalletSearch className="mt-2.5" />
-            <p className="mt-2 text-xs text-content-tertiary">
-              View live balance history, closed position receipts, LP requests, and shareable PnL cards.
-            </p>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Link
+              to="/execution"
+              className="border border-brand-orange bg-brand-orange px-3.5 py-2 text-xs font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg sm:text-sm"
+            >
+              Execution &amp; FAD
+            </Link>
+            <Link
+              to="/liquidity"
+              className="border border-brand-border/40 px-3.5 py-2 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10 sm:text-sm"
+            >
+              Solvency &amp; LP Ops
+            </Link>
+            <Link
+              to="/oracle"
+              className="border border-brand-border/40 px-3.5 py-2 text-xs font-semibold text-content-primary transition-colors hover:border-brand-peach hover:bg-brand-peach/10 sm:text-sm"
+            >
+              Oracle &amp; FX
+            </Link>
           </div>
         </div>
       </section>

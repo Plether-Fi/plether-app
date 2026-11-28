@@ -1,140 +1,23 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, NavLink, useLocation } from 'react-router-dom'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useInsightsStatus } from '../api'
 import { useLiveDivisionsSummary } from '../divisions/query'
+import {
+  NAV_PILLARS,
+  resolveActivePillar,
+  resolveSectionSubNav,
+} from '../navigation/routes'
 import { resolvePerpsChain } from '../utils/chain'
 import { formatUtc } from '../utils/format'
 import { GlobalSearch } from './GlobalSearch'
 
-const OPS_ROUTES = [
-  {
-    to: '/oracle',
-    label: 'Oracle',
-    description: 'Pyth 6-feed admission & value-guard health',
-  },
-  {
-    to: '/keepers',
-    label: 'Keepers',
-    description: 'Permissionless keeper fleet, latency & bounties',
-  },
-  {
-    to: '/trading-accounts',
-    label: 'Trading Accounts',
-    description: 'ZeroDev Kernel v4 smart wallets, ETH vs. sponsored gas & ops',
-  },
-  {
-    to: '/sponsored',
-    label: 'Sponsored',
-    description: 'ERC-4337 Paymaster runway & UserOp receipts',
-  },
-  {
-    to: '/infra',
-    label: 'Infra',
-    description: 'AWS ECS workers, RDS pool, Nitro RPC & bundler',
-  },
-] as const
-
-function navClass({ isActive }: { isActive: boolean }): string {
+function pillarLinkClass(isActive: boolean): string {
   return [
-    'whitespace-nowrap border px-2 py-1 text-xs font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:py-1.5 sm:text-[13px]',
+    'whitespace-nowrap border px-2.5 py-1.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-peach',
     isActive
       ? 'border-brand-orange bg-brand-orange text-content-primary'
-      : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary',
+      : 'border-transparent text-content-secondary hover:border-brand-orange/45 hover:bg-brand-orange/10 hover:text-content-primary',
   ].join(' ')
-}
-
-function OperationsDropdown({ align = 'left' }: { align?: 'left' | 'right' }) {
-  const location = useLocation()
-  const [openAtPath, setOpenAtPath] = useState<string | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const open = openAtPath === location.pathname
-
-  const activeOp = OPS_ROUTES.find(
-    (item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`),
-  )
-
-  useEffect(() => {
-    if (!open) return
-    function onPointerDown(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpenAtPath(null)
-      }
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpenAtPath(null)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open])
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => {
-          setOpenAtPath((prev) => (prev === location.pathname ? null : location.pathname))
-        }}
-        className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap border px-2 py-1 text-xs font-semibold transition-colors sm:py-1.5 sm:text-[13px] ${
-          activeOp
-            ? 'border-brand-orange bg-brand-orange text-content-primary'
-            : open
-              ? 'border-brand-orange/50 bg-brand-orange/15 text-content-primary'
-              : 'border-transparent text-content-secondary hover:border-brand-orange/50 hover:bg-brand-orange/15 hover:text-content-primary'
-        }`}
-      >
-        <span>{activeOp ? `Ops · ${activeOp.label}` : 'Operations'}</span>
-        <span aria-hidden="true" className="text-[10px] opacity-80">
-          {open ? '▴' : '▾'}
-        </span>
-      </button>
-
-      {open ? (
-        <div
-          role="menu"
-          aria-label="Operations pages"
-          className={`absolute top-full z-50 mt-1.5 w-[min(18rem,calc(100vw-1.5rem))] border border-brand-border/35 bg-surface-panel p-1.5 shadow-xl ${
-            align === 'right' ? 'right-0' : 'left-0'
-          }`}
-        >
-          {OPS_ROUTES.map((item) => {
-            const isActive =
-              location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                role="menuitem"
-                onClick={() => {
-                  setOpenAtPath(null)
-                }}
-                className={`block border px-3 py-2 transition-colors ${
-                  isActive
-                    ? 'border-brand-orange/60 bg-brand-orange/15 text-content-primary'
-                    : 'border-transparent text-content-secondary hover:border-brand-border/30 hover:bg-app-bg hover:text-content-primary'
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs font-semibold">
-                  <span>{item.label}</span>
-                  {isActive ? (
-                    <span className="font-mono text-[10px] text-brand-peach">Active</span>
-                  ) : null}
-                </div>
-                <p className="mt-0.5 text-[11px] leading-4 text-content-tertiary">
-                  {item.description}
-                </p>
-              </Link>
-            )
-          })}
-        </div>
-      ) : null}
-    </div>
-  )
 }
 
 function HeaderTelemetryPill() {
@@ -162,7 +45,7 @@ function HeaderTelemetryPill() {
     <Link
       to="/infra"
       title={tooltip || 'Protocol telemetry status'}
-      className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap border border-brand-border/30 bg-app-bg px-2 py-1.5 font-mono text-[11px] text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-content-primary xl:inline-flex"
+      className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap border border-brand-border/30 bg-app-bg px-2.5 py-1.5 font-mono text-[11px] text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-content-primary xl:inline-flex"
     >
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
       <span className="text-content-primary">{shortNetwork}</span>
@@ -170,17 +53,71 @@ function HeaderTelemetryPill() {
   )
 }
 
-function Header() {
+function SectionSubNav() {
+  const location = useLocation()
+  const { pillar, activeTab, show } = resolveSectionSubNav(location.pathname)
+
+  if (!show || pillar.tabs.length === 0) {
+    return null
+  }
+
   return (
-    <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel py-2 sm:py-3">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-2.5 gap-y-2 px-3 sm:gap-3 sm:px-6 lg:flex-nowrap lg:px-8">
-        <div className="flex min-w-0 shrink-0 items-center gap-3 xl:gap-5">
+    <div className="border-b border-brand-border/25 bg-surface-panel/55">
+      <nav
+        aria-label={`${pillar.label} sections`}
+        className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-3 sm:px-6 lg:px-8"
+      >
+        {pillar.tabs.map((tab) => {
+          const isCurrent = activeTab?.to === tab.to
+          return (
+            <Link
+              key={tab.to}
+              to={tab.to}
+              aria-current={isCurrent ? 'page' : undefined}
+              className={`relative shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+                isCurrent
+                  ? 'border-brand-orange text-content-primary'
+                  : 'border-transparent text-content-secondary hover:border-brand-border/50 hover:text-content-primary'
+              }`}
+            >
+              {tab.label}
+            </Link>
+          )
+        })}
+      </nav>
+    </div>
+  )
+}
+
+function Header() {
+  const location = useLocation()
+  const activePillar = resolveActivePillar(location.pathname)
+  const [drawerOpenAtPath, setDrawerOpenAtPath] = useState<string | null>(null)
+  const mobileOpen = drawerOpenAtPath === location.pathname
+
+  useEffect(() => {
+    if (!mobileOpen) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setDrawerOpenAtPath(null)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [mobileOpen])
+
+  return (
+    <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-2.5 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 shrink-0 items-center gap-4 xl:gap-6">
           <Link
             to="/"
             className="flex shrink-0 items-center gap-2 py-0.5 transition-opacity hover:opacity-90"
             aria-label="Plether Insights home"
           >
-            <img src="/logomark.svg" alt="" className="h-7 w-7 shrink-0 sm:h-7 sm:w-7" />
+            <img src="/logomark.svg" alt="" className="h-7 w-7 shrink-0" />
             <img src="/logotype.svg" alt="Plether" className="hidden h-5 w-auto sm:block" />
             <span className="whitespace-nowrap border-l border-brand-border/35 pl-2 text-sm font-semibold text-brand-peach">
               Insights
@@ -188,37 +125,113 @@ function Header() {
           </Link>
 
           <nav
-            className="hidden shrink-0 items-center gap-0.5 lg:flex"
+            className="hidden shrink-0 items-center gap-1 lg:flex"
             aria-label="Primary navigation"
           >
-            <NavLink to="/" end className={navClass}>Overview</NavLink>
-            <NavLink to="/execution" className={navClass}>Execution</NavLink>
-            <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
-            <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
-            <OperationsDropdown />
-            <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
-            <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
+            {NAV_PILLARS.map((pillar) => {
+              const isActive = activePillar.id === pillar.id
+              return (
+                <Link
+                  key={pillar.id}
+                  to={pillar.to}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={pillarLinkClass(isActive)}
+                >
+                  {pillar.label}
+                </Link>
+              )
+            })}
           </nav>
         </div>
 
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
-          <GlobalSearch className="w-full max-w-[195px] sm:w-44 xl:w-52" />
+          <GlobalSearch className="w-full max-w-[220px] sm:w-52 xl:w-60" />
           <HeaderTelemetryPill />
+          <button
+            type="button"
+            aria-label={mobileOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-nav-drawer"
+            onClick={() => {
+              setDrawerOpenAtPath((prev) => (prev === location.pathname ? null : location.pathname))
+            }}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center border border-brand-border/35 bg-app-bg font-mono text-sm text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach lg:hidden"
+          >
+            <span aria-hidden="true">{mobileOpen ? '✕' : '☰'}</span>
+          </button>
         </div>
-
-        <nav
-          className="flex w-full flex-wrap items-center gap-1 pb-0.5 lg:hidden"
-          aria-label="Mobile navigation"
-        >
-          <NavLink to="/" end className={navClass}>Overview</NavLink>
-          <NavLink to="/execution" className={navClass}>Execution</NavLink>
-          <NavLink to="/liquidity" className={navClass}>LP Ops</NavLink>
-          <NavLink to="/treasury" className={navClass}>Treasury</NavLink>
-          <OperationsDropdown align="left" />
-          <NavLink to="/protocol" className={navClass}>Protocol</NavLink>
-          <NavLink to="/divisions" className={navClass}>Divisions</NavLink>
-        </nav>
       </div>
+
+      {mobileOpen ? (
+        <nav
+          id="mobile-nav-drawer"
+          aria-label="Mobile navigation"
+          className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t border-brand-border/25 bg-surface-panel px-4 py-4 lg:hidden"
+        >
+          <div className="mx-auto max-w-7xl space-y-4">
+            {NAV_PILLARS.map((pillar) => {
+              const isActivePillar = activePillar.id === pillar.id
+              if (pillar.tabs.length === 0) {
+                return (
+                  <div key={pillar.id}>
+                    <Link
+                      to={pillar.to}
+                      onClick={() => {
+                        setDrawerOpenAtPath(null)
+                      }}
+                      className={`block border px-3 py-2 text-sm font-semibold transition-colors ${
+                        isActivePillar
+                          ? 'border-brand-orange bg-brand-orange text-content-primary'
+                          : 'border-brand-border/25 bg-app-bg text-content-primary hover:border-brand-peach'
+                      }`}
+                    >
+                      {pillar.label}
+                    </Link>
+                  </div>
+                )
+              }
+
+              return (
+                <div key={pillar.id} className="space-y-1.5">
+                  <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    {pillar.label}
+                  </p>
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    {pillar.tabs.map((tab) => {
+                      const isTabActive =
+                        location.pathname === tab.to || location.pathname.startsWith(`${tab.to}/`)
+                      return (
+                        <Link
+                          key={tab.to}
+                          to={tab.to}
+                          onClick={() => {
+                            setDrawerOpenAtPath(null)
+                          }}
+                          className={`block border px-3 py-2 transition-colors ${
+                            isTabActive
+                              ? 'border-brand-orange/60 bg-brand-orange/15 text-content-primary'
+                              : 'border-brand-border/20 bg-app-bg/60 text-content-secondary hover:border-brand-border/45 hover:text-content-primary'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            <span>{tab.label}</span>
+                            {isTabActive ? (
+                              <span className="font-mono text-[10px] text-brand-peach">Active</span>
+                            ) : null}
+                          </div>
+                          <p className="mt-0.5 text-[11px] leading-4 text-content-tertiary">
+                            {tab.description}
+                          </p>
+                        </Link>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </nav>
+      ) : null}
     </header>
   )
 }
@@ -240,10 +253,6 @@ function Footer() {
       <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-xs text-content-secondary sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span>© 2026 Plether</span>
-          <Link to="/results" className={linkClass}>Weekly results</Link>
-          <Link to="/methodology" className={linkClass}>Methodology</Link>
-          <Link to="/register" className={linkClass}>Link Discord</Link>
-          <Link to="/archive/september-2026" className={linkClass}>September archive</Link>
           <a href={chain.tradeAppUrl} className={linkClass}>
             Trade ({chain.shortName}) ↗
           </a>
@@ -274,7 +283,8 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen min-h-dvh flex-col overflow-x-clip bg-app-bg text-content-primary">
       <Header />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
+      <SectionSubNav />
+      <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-5 sm:px-6 sm:py-7 lg:px-8">
         {children}
       </main>
       <Footer />

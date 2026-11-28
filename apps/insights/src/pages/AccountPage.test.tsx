@@ -268,7 +268,9 @@ function renderAt(path: string) {
 describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
   it('renders live margin health, trades with PositionBreakdown receipts, protections, LP shares, and Divisions history', () => {
     renderAt(`/wallets/${testAccount}`)
-    expect(screen.getByText('@alice_fx')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '@alice_fx' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Account views' })).toBeInTheDocument()
     expect(screen.queryByText('Live Divisions standing')).not.toBeInTheDocument()
     expect(screen.getByText('LONG · 500.00 plDXY')).toBeInTheDocument()
     expect(screen.getByText('Wallet balance history')).toBeInTheDocument()
@@ -329,7 +331,7 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     })
     renderAt(`/wallets/${testAccount}`)
     expect(screen.getByText(/Connected backend does not serve Stage 3 Account Summary yet/i)).toBeInTheDocument()
-    expect(screen.getByText('@alice_fx')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '@alice_fx' })).toBeInTheDocument()
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
   })
 })

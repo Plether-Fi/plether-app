@@ -526,20 +526,6 @@ export function ExecutionPage() {
           )}
         </Panel>
       </section>
-
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-brand-border/20 pt-4 text-sm font-semibold">
-        <Link to="/keepers" className="text-brand-peach hover:underline">
-          Inspect permissionless on-chain keepers →
-        </Link>
-        <div className="flex flex-wrap gap-4">
-          <Link to="/divisions" className="text-content-secondary hover:text-brand-peach">
-            Live Divisions rankings →
-          </Link>
-          <Link to="/" className="text-content-secondary hover:text-brand-peach">
-            ← Back to Protocol Pulse
-          </Link>
-        </div>
-      </div>
     </div>
   )
 }

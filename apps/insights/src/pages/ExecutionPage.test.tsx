@@ -162,7 +162,7 @@ function show() {
 describe('ExecutionPage (Stage 2)', () => {
   it('renders canonical 1h/24h cohorts, latency stats, and filters the protocol trade tape', () => {
     show()
-    expect(screen.getByText('Execution pipeline healthy')).toBeInTheDocument()
+    expect(screen.queryByText('Execution pipeline healthy')).not.toBeInTheDocument()
     expect(screen.getAllByText('98.50%').length).toBeGreaterThanOrEqual(2)
     expect(
       screen.getByRole('img', {
