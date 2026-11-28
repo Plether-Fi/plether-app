@@ -207,29 +207,75 @@ function renderPill(x, y, label, bg, border, fg) {
   </g>`;
 }
 
-function fitStatFontSize(value, boxW, maxSize) {
-  const usableW = Math.max(80, boxW - 40);
+function fitStatFontSize(value, colW, maxSize) {
+  const usableW = Math.max(80, colW - 48);
   const charCount = Math.max(1, String(value).length);
   const fitted = Math.floor(usableW / (charCount * 0.64));
   return Math.min(maxSize, Math.max(14, fitted));
 }
 
-function renderStatBoxes(stats, y) {
-  const gap = 18;
+function renderMetricRibbon(items, y) {
   const totalW = 1080;
-  const count = stats.length;
-  const boxW = Math.floor((totalW - gap * (count - 1)) / count);
-  return stats
-    .map((stat, idx) => {
-      const x = 60 + idx * (boxW + gap);
-      const fontSize = fitStatFontSize(stat.value, boxW, 22);
+  const height = 96;
+  const count = items.length;
+  const colW = totalW / count;
+
+  const colsSvg = items
+    .map((item, idx) => {
+      const x = Math.round(60 + idx * colW);
+      const width = Math.round(colW);
+      const divider =
+        idx > 0
+          ? `<line x1="${String(x)}" y1="${String(y + 18)}" x2="${String(x)}" y2="${String(y + height - 18)}" stroke="#ffab96" stroke-opacity="0.2" stroke-width="1" />`
+          : '';
+      const labelSvg = `<text x="${String(x + 24)}" y="${String(y + 30)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="12" font-weight="700" letter-spacing="1.2">${escapeXml(item.label.toUpperCase())}</text>`;
+
+      if (item.renderVisual) {
+        return `<g>${divider}${labelSvg}${item.renderVisual(x + 24, y + 44, width - 48)}</g>`;
+      }
+
+      const fontSize = fitStatFontSize(item.value, width - (item.dotColor ? 24 : 0), 22);
+      const valueX = item.dotColor ? x + 44 : x + 24;
+      const dotSvg = item.dotColor
+        ? `<circle cx="${String(x + 29)}" cy="${String(y + 60)}" r="4.5" fill="${item.dotColor}" />`
+        : '';
       return `<g>
-        <rect x="${String(x)}" y="${String(y)}" width="${String(boxW)}" height="92" fill="#3b212d" fill-opacity="0.72" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
-        <text x="${String(x + 20)}" y="${String(y + 30)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="13" font-weight="700" letter-spacing="1.1">${escapeXml(stat.label.toUpperCase())}</text>
-        <text x="${String(x + 20)}" y="${String(y + 66)}" fill="${stat.accent ?? '#fff5f9'}" font-family="${MONO_FONT}" font-size="${String(fontSize)}" font-weight="700">${escapeXml(stat.value)}</text>
+        ${divider}
+        ${labelSvg}
+        ${dotSvg}
+        <text x="${String(valueX)}" y="${String(y + 68)}" fill="${item.accent ?? '#fff5f9'}" font-family="${MONO_FONT}" font-size="${String(fontSize)}" font-weight="700">${escapeXml(item.value)}</text>
       </g>`;
     })
     .join('');
+
+  return `<g>
+    <rect x="60" y="${String(y)}" width="${String(totalW)}" height="${String(height)}" fill="#3b212d" fill-opacity="0.36" />
+    <line x1="60" y1="${String(y)}" x2="1140" y2="${String(y)}" stroke="#ffab96" stroke-opacity="0.28" stroke-width="1" />
+    <line x1="60" y1="${String(y + height)}" x2="1140" y2="${String(y + height)}" stroke="#ffab96" stroke-opacity="0.16" stroke-width="1" />
+    ${colsSvg}
+  </g>`;
+}
+
+function renderFxSessionPips(activeDays, activeColor) {
+  const clamped = Math.max(0, Math.min(5, Math.round(Number(activeDays) || 0)));
+  const labels = ['M', 'T', 'W', 'T', 'F'];
+  return (x, y) => {
+    const pipW = 24;
+    const pipH = 22;
+    const gap = 6;
+    const pips = labels
+      .map((day, idx) => {
+        const px = x + idx * (pipW + gap);
+        const active = idx < clamped;
+        return `<g>
+          <rect x="${String(px)}" y="${String(y + 4)}" width="${String(pipW)}" height="${String(pipH)}" fill="${active ? activeColor : '#250917'}" fill-opacity="${active ? '0.2' : '0.6'}" stroke="${active ? activeColor : '#ffab96'}" stroke-opacity="${active ? '0.85' : '0.24'}" stroke-width="1.2" />
+          <text x="${String(px + pipW / 2)}" y="${String(y + 19)}" text-anchor="middle" fill="${active ? activeColor : '#aa98a0'}" font-family="${MONO_FONT}" font-size="11" font-weight="700">${day}</text>
+        </g>`;
+      })
+      .join('');
+    const textX = x + 5 * (pipW + gap) + 10;
+    return `${pips}<text x="${String(textX)}" y="${String(y + 21)}" fill="#fff5f9" font-family="${MONO_FONT}" font-size="20" font-weight="700">${String(clamped)} / 5</text>`;
+  };
 }
 
 function renderTierBadge(tier, cx, cy) {
@@ -547,7 +593,7 @@ export function buildDefaultOgSvg() {
     <text x="60" y="256" fill="#fff5f9" font-family="${SANS_FONT}" font-size="64" font-weight="700">Verifiable On-Chain</text>
     <text x="60" y="330" fill="#ffab96" font-family="${SANS_FONT}" font-size="64" font-weight="700">Perps &amp; LP Analytics</text>
     <text x="60" y="376" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="21" font-weight="500">Execution receipts, LP epoch settlement audits, trader profiles, and Divisions.</text>
-    ${renderStatBoxes(stats, 412)}
+    ${renderMetricRibbon(stats, 412)}
   `;
   return renderFrame({
     accentGlow: '#ff572d',
@@ -586,7 +632,7 @@ export function buildOgCardSvg(data) {
       <text x="60" y="220" fill="#aa98a0" font-family="${SANS_FONT}" font-size="16" font-weight="700" letter-spacing="1.4">REALIZED PNL</text>
       <text x="60" y="308" fill="${color}" font-family="${MONO_FONT}" font-size="72" font-weight="700">${escapeXml(pnl.text)}</text>
       ${roi ? `<text x="60" y="358" fill="${color}" font-family="${MONO_FONT}" font-size="24" font-weight="700">${escapeXml(roi)} on notional</text>` : ''}
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `;
     const footerRight = data.txHash
       ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
@@ -613,13 +659,9 @@ export function buildOgCardSvg(data) {
         ? formatPlDxyQty(data.sizeDelta)
         : 'Position Opened';
     const heroFontSize = heroText.length <= 15 ? 70 : heroText.length <= 20 ? 56 : 46;
-    const subParts = [];
-    if (data.price) subParts.push(`Entry @ ${formatPrice18(data.price)}`);
-    if (data.sizeDelta) subParts.push(formatPlDxyQty(data.sizeDelta));
     const stats = [
       { label: 'Entry price', value: data.price ? formatPrice18(data.price) : '—' },
       { label: 'Quantity opened', value: data.sizeDelta ? formatPlDxyQty(data.sizeDelta) : '—' },
-      { label: 'Notional', value: data.notionalAssets ? formatCompactUsdg(data.notionalAssets) : '—' },
       { label: 'Executed (UTC)', value: formatUtcShort(data.occurredAt) },
     ];
     const body = `
@@ -627,8 +669,8 @@ export function buildOgCardSvg(data) {
       ${renderPill(218, 134, `OPENED ${sideText}`, sideBg, `${sideFg}88`, sideFg)}
       <text x="60" y="220" fill="#aa98a0" font-family="${SANS_FONT}" font-size="16" font-weight="700" letter-spacing="1.4">${data.notionalAssets ? 'NOTIONAL EXPOSURE' : 'OPENED POSITION'}</text>
       <text x="60" y="308" fill="${sideFg}" font-family="${MONO_FONT}" font-size="${String(heroFontSize)}" font-weight="700">${escapeXml(heroText)}</text>
-      ${subParts.length > 0 ? `<text x="60" y="358" fill="#d8cbd0" font-family="${MONO_FONT}" font-size="22" font-weight="700">${escapeXml(subParts.join(' · '))}</text>` : ''}
-      ${renderStatBoxes(stats, 408)}
+      <text x="60" y="358" fill="#d8cbd0" font-family="${MONO_FONT}" font-size="20" font-weight="700">Verified on-chain perpetual fill</text>
+      ${renderMetricRibbon(stats, 412)}
     `;
     const footerRight = data.txHash
       ? `tx ${shortAddress(data.txHash)} · insights.plether.com`
@@ -651,11 +693,17 @@ export function buildOgCardSvg(data) {
     const roe = computeRoePercent(data.unrealizedPnlAssets, data.marginAssets);
     const sideUpper = String(data.side || 'open').toUpperCase();
     const sideFg = data.side === 'short' ? '#ff572d' : '#00ff99';
+    const healthColor = data.liquidatable ? '#ff572d' : '#00ff99';
     const stats = [
       { label: 'Position size', value: formatPlDxyQty(data.size) },
       { label: 'Entry price', value: formatPrice18(data.entryPrice) },
       { label: 'Margin posted', value: formatCompactUsdg(data.marginAssets) },
-      { label: 'Status', value: data.liquidatable ? 'Liquidatable' : 'Healthy', accent: data.liquidatable ? '#ff572d' : '#00ff99' },
+      {
+        label: 'Health',
+        value: data.liquidatable ? 'Liquidatable' : 'Healthy',
+        accent: healthColor,
+        dotColor: healthColor,
+      },
     ];
     const body = `
       ${renderPill(60, 134, data.market || 'plDXY-PERP', '#3b212d', '#ffab9666', '#fff5f9')}
@@ -663,7 +711,7 @@ export function buildOgCardSvg(data) {
       <text x="60" y="220" fill="#aa98a0" font-family="${SANS_FONT}" font-size="16" font-weight="700" letter-spacing="1.4">UNREALIZED PNL</text>
       <text x="60" y="308" fill="${color}" font-family="${MONO_FONT}" font-size="72" font-weight="700">${escapeXml(upnl.text)}</text>
       ${roe ? `<text x="60" y="358" fill="${color}" font-family="${MONO_FONT}" font-size="26" font-weight="700">${escapeXml(roe)} ROE</text>` : ''}
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `;
     return renderFrame({
       accentGlow: color,
@@ -685,12 +733,37 @@ export function buildOgCardSvg(data) {
       ? '#ff572d'
       : '#00ff99';
     const pnlText = data.weeklyPnlAssets ? formatSignedUsdg(data.weeklyPnlAssets).text : null;
+    const activeDays = Number(data.activeDays ?? 0);
+    const qualified = activeDays >= 1;
+    const thirdCol = data.tier
+      ? !data.provisional
+        ? {
+            label: 'Result audit',
+            value: data.rank !== null && data.rank !== undefined ? 'Verified & ranked' : 'Audited',
+            accent: '#00ff99',
+            dotColor: '#00ff99',
+          }
+        : {
+            label: 'Qualification',
+            value: qualified ? 'Qualified' : 'In progress',
+            accent: qualified ? '#00ff99' : '#ffab96',
+            dotColor: qualified ? '#00ff99' : '#ffab96',
+          }
+      : {
+          label: 'Division badge',
+          value: 'Pending Monday',
+          accent: tierPalette.primary,
+        };
     const stats = [
+      {
+        label: 'Active FX sessions',
+        value: `${String(activeDays)} / 5`,
+        renderVisual: renderFxSessionPips(activeDays, qualified ? '#00ff99' : '#ffab96'),
+      },
       pnlText
         ? { label: 'Weekly PnL', value: pnlText, accent: returnColor }
-        : { label: 'Status', value: data.provisional ? 'Provisional' : 'Published' },
-      { label: 'Active days', value: `${String(data.activeDays ?? 0)} / 5` },
-      { label: 'Tier standing', value: data.tier ?? 'Not yet awarded', accent: tierPalette.primary },
+        : { label: 'Scoring cutoff', value: 'Fri 21:00 UTC' },
+      thirdCol,
     ];
     const badgeTag = data.movement && data.movement !== 'unchanged'
       ? String(data.movement).toUpperCase()
@@ -705,7 +778,7 @@ export function buildOgCardSvg(data) {
       <text x="60" y="308" fill="#fff5f9" font-family="${MONO_FONT}" font-size="72" font-weight="700">${escapeXml(rankHeadline)}</text>
       <text x="60" y="358" fill="${returnColor}" font-family="${MONO_FONT}" font-size="28" font-weight="700">${escapeXml(returnLabel)} weekly return</text>
       ${renderTierBadge(data.tier, 990, 244)}
-      ${renderStatBoxes(stats, 408)}
+      ${renderMetricRibbon(stats, 412)}
     `;
     const eyebrow = data.tier ? 'Plether Divisions Badge' : 'Plether Divisions Live Standing';
     return renderFrame({
@@ -749,10 +822,9 @@ export function buildOgCardSvg(data) {
     ${data.tier ? renderPill(264, 132, `${String(data.tier).toUpperCase()} TIER`, `${accountTierPalette.primary}22`, `${accountTierPalette.primary}88`, accountTierPalette.primary) : ''}
     <text x="60" y="216" fill="#aa98a0" font-family="${SANS_FONT}" font-size="15" font-weight="700" letter-spacing="1.4">ALL-TIME REALIZED PNL</text>
     <text x="60" y="282" fill="${pnlColor}" font-family="${MONO_FONT}" font-size="${String(pnlFontSize)}" font-weight="700">${escapeXml(pnl.text)}</text>
-    <text x="60" y="328" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="17" font-weight="500">${escapeXml(sinceText ? `Life-long history since ${sinceText}` : 'Life-long on-chain perps performance')}</text>
-    ${effectiveBalance ? `<text x="60" y="362" fill="#aa98a0" font-family="${MONO_FONT}" font-size="14" font-weight="700">Current balance · ${escapeXml(formatCompactUsdg(effectiveBalance))}</text>` : ''}
+    <text x="60" y="330" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="17" font-weight="500">${escapeXml(sinceText ? `Life-long history since ${sinceText}` : 'Life-long on-chain perps performance')}</text>
     ${chart.svg}
-    ${renderStatBoxes(stats, 412)}
+    ${renderMetricRibbon(stats, 412)}
   `;
   return renderFrame({
     accentGlow: glowAccent,

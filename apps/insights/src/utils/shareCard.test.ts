@@ -36,7 +36,7 @@ describe('shareCard SVG & social helpers', () => {
     expect(svg).toContain('Arbitrum Sepolia · v2.0.0')
     expect(svg).toContain('26 Nov 2026, 12:00')
     expect(svg).not.toContain('26 Nov 2026, 12:00 UTC')
-    expect(svg).toContain('font-size="18" font-weight="700">26 Nov 2026, 12:00</text>')
+    expect(svg).toContain('font-size="19" font-weight="700">26 Nov 2026, 12:00</text>')
   })
 
   it('renders an opened-position transaction receipt card with notional, entry price, and X share link', () => {
@@ -87,7 +87,9 @@ describe('shareCard SVG & social helpers', () => {
     expect(svg).toContain('+29.67% weekly return')
     expect(svg.match(/\+29\.67%/g)).toHaveLength(1) // never duplicate weekly return
     expect(svg).toContain('PROMOTED')
+    expect(svg).toContain('ACTIVE FX SESSIONS')
     expect(svg).toContain('4 / 5')
+    expect(svg).not.toContain('TIER STANDING')
 
     const unrankedSvg = buildShareCardSvg({
       kind: 'division',
@@ -104,6 +106,9 @@ describe('shareCard SVG & social helpers', () => {
     expect(unrankedSvg).not.toContain('BADGE PENDING')
     expect(unrankedSvg).not.toContain('LIVE DIVISION')
     expect(unrankedSvg).not.toContain('stroke-dasharray')
+    expect(unrankedSvg).toContain('SCORING CUTOFF')
+    expect(unrankedSvg).toContain('Fri 21:00 UTC')
+    expect(unrankedSvg).toContain('Pending Monday')
   })
 
   it('renders an Open Position flex card with ROE and escapes XML characters in trader labels', () => {
