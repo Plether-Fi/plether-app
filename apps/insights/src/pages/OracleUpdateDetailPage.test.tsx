@@ -82,7 +82,7 @@ const MOCK_DETAIL: OracleUpdateDetailResponse = {
     {
       orderId: '9042',
       account: '0x1111111111111111111111111111111111111111',
-      side: 'bull',
+      side: 'long',
       status: 'Executed',
       txHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       executionPrice: '94587000',

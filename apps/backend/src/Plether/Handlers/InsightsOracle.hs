@@ -17,6 +17,7 @@ module Plether.Handlers.InsightsOracle
   , computeChangeFromBaseBps
   , computeDisplayDeltaBps
   , parseOracleUpdateIdParam
+  , settledOrderSideLabel
   ) where
 
 import Control.Applicative ((<|>))
@@ -1020,13 +1021,18 @@ fetchNeighborPayload conn isPrev maxPub pid = do
         :: IO (Maybe [(Integer, Maybe Integer, Integer)])
   pure (mRows >>= listToMaybe)
 
+settledOrderSideLabel :: Maybe Int -> Maybe Text
+settledOrderSideLabel (Just 0) = Just "long"
+settledOrderSideLabel (Just 1) = Just "short"
+settledOrderSideLabel _ = Nothing
+
 fetchOrdersSettledWithUpdate :: Connection -> Integer -> Text -> Integer -> Integer -> IO [SettledOrderRow]
 fetchOrdersSettledWithUpdate conn chainId router minPub maxPub = do
   mRows <-
     observeIo $
       query
         conn
-        "SELECT order_id::text, account, side, terminal_status, terminal_tx_hash, \
+        "SELECT order_id::text, COALESCE(account, ''), side, terminal_status, terminal_tx_hash, \
         \  execution_price::text, execution_oracle_price::text, commit_timestamp, terminal_timestamp \
         \FROM perps_orders \
         \WHERE chain_id = ? AND order_router = ? \
@@ -1034,9 +1040,9 @@ fetchOrdersSettledWithUpdate conn chainId router minPub maxPub = do
         \ORDER BY order_id DESC \
         \LIMIT 50"
         (chainId, router, minPub, maxPub)
-        :: IO (Maybe [(Text, Text, Maybe Text, Text, Maybe Text, Maybe Text, Maybe Text, Maybe Integer, Maybe Integer)])
+        :: IO (Maybe [(Text, Text, Maybe Int, Text, Maybe Text, Maybe Text, Maybe Text, Maybe Integer, Maybe Integer)])
   pure
-    [ SettledOrderRow oid acct side st txHash execP execOracleP cTs tTs
+    [ SettledOrderRow oid acct (settledOrderSideLabel side) st txHash execP execOracleP cTs tTs
     | (oid, acct, side, st, txHash, execP, execOracleP, cTs, tTs) <- fromMaybe [] mRows
     ]
 

@@ -741,8 +741,9 @@ export function OracleUpdateDetailPage() {
                     </thead>
                     <tbody>
                       {data.settledOrders.map((order) => {
-                        const isBull = order.side?.toLowerCase() === 'bull'
-                        const isBear = order.side?.toLowerCase() === 'bear'
+                        const sideLower = order.side?.toLowerCase()
+                        const isLong = sideLower === 'long' || sideLower === 'bull'
+                        const isShort = sideLower === 'short' || sideLower === 'bear'
                         return (
                           <tr
                             key={order.orderId}
@@ -752,19 +753,23 @@ export function OracleUpdateDetailPage() {
                               #{order.orderId}
                             </td>
                             <td className="px-4 py-3.5 font-mono text-xs">
-                              <Link
-                                to={`/wallets/${order.account}`}
-                                className="text-brand-peach hover:underline"
-                              >
-                                {shortAddress(order.account)}
-                              </Link>
+                              {order.account ? (
+                                <Link
+                                  to={`/wallets/${order.account}`}
+                                  className="text-brand-peach hover:underline"
+                                >
+                                  {shortAddress(order.account)}
+                                </Link>
+                              ) : (
+                                <span className="text-content-tertiary">—</span>
+                              )}
                             </td>
                             <td className="px-4 py-3.5 font-mono text-xs font-semibold uppercase">
                               <span
                                 className={
-                                  isBull
+                                  isLong
                                     ? 'text-positive'
-                                    : isBear
+                                    : isShort
                                       ? 'text-brand-orange'
                                       : 'text-content-secondary'
                                 }
