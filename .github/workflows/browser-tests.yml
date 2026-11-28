@@ -27,10 +27,10 @@ jobs:
       run:
         working-directory: apps/frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -48,7 +48,7 @@ jobs:
         run: echo "version=$(node -p "require('./node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright Chromium
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ubuntu-24.04-playwright-chromium-${{ steps.playwright-version.outputs.version }}
@@ -70,7 +70,7 @@ jobs:
         run: npm run test:e2e:privy-sdk -- --shard=2/2
       - name: Preserve results, traces and assertion failures
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: browser-${{ matrix.suite }}-${{ github.run_attempt }}
           path: apps/frontend/.test-results/
@@ -92,10 +92,10 @@ jobs:
       run:
         working-directory: apps/frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -118,7 +118,7 @@ jobs:
         run: echo "version=$(node -p "require('./node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright Chromium
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ubuntu-24.04-playwright-chromium-${{ steps.playwright-version.outputs.version }}
@@ -133,7 +133,7 @@ jobs:
         run: npm run test:storybook
       - name: Preserve results, traces and assertion failures
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: browser-storybook-${{ github.run_attempt }}
           path: apps/frontend/.test-results/

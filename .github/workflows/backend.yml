@@ -30,8 +30,8 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Test close assistance deployment controls
         working-directory: .
@@ -69,7 +69,7 @@ jobs:
         run: node --test scripts/candle-admin-task-identity.test.mjs
 
       - name: Set up Node for Alto RPC authentication tests
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 25.2.1
 
@@ -89,7 +89,7 @@ jobs:
           ./scripts/check-no-blockscout-runtime.sh
 
       - name: Setup Terraform for offline AA guard tests
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.16.1
           terraform_wrapper: false
@@ -139,7 +139,7 @@ jobs:
       run:
         working-directory: apps/backend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
@@ -148,7 +148,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
 
       - name: Cache GHC 9.4.8 toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /usr/local/.ghcup/ghc/9.4.8
           key: ubuntu-24.04-ghc-9.4.8-toolchain-v1
@@ -161,7 +161,7 @@ jobs:
           cabal-update: false
 
       - name: Cache cabal store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
@@ -169,13 +169,13 @@ jobs:
 
       - name: Cache Cabal package index
         id: cabal-index-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cabal/packages
           key: ubuntu-24.04-cabal-packages-${{ hashFiles('apps/backend/cabal.project.freeze') }}
 
       - name: Cache Haskell build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apps/backend/dist-newstyle
           key: ubuntu-24.04-ghc-9.4.8-dist-O0-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-${{ hashFiles('apps/backend/schema.sql', 'apps/backend/config/migrations/**', 'config/**', 'apps/backend/src/**', 'apps/backend/app/**', 'apps/backend/test/**', 'apps/backend/test-integration/**', 'apps/backend/test-aa-integration/**', 'apps/backend/test-support/**') }}
@@ -227,7 +227,7 @@ jobs:
           done
 
       - name: Upload compiled test binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-test-binaries
           path: apps/backend/ci-bin/
@@ -254,7 +254,7 @@ jobs:
       run:
         working-directory: apps/backend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
@@ -263,7 +263,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq5 libsecp256k1-1
 
       - name: Download compiled test binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backend-test-binaries
           path: apps/backend/ci-bin
@@ -304,7 +304,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
@@ -313,7 +313,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq5 libsecp256k1-1 postgresql-client
 
       - name: Download compiled test binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backend-test-binaries
           path: apps/backend/ci-bin
@@ -403,7 +403,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Ubuntu package mirror
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
@@ -412,7 +412,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq5 libsecp256k1-1 postgresql-client
 
       - name: Download compiled test binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backend-test-binaries
           path: apps/backend/ci-bin
