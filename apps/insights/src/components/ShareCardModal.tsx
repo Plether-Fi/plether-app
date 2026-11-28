@@ -60,6 +60,9 @@ export function ShareCardModal({
       ? window.location.origin
       : 'https://insights.plether.com'
   const canonicalCardUrl = (() => {
+    if (activeCard.data.kind === 'liquidity_efficiency') {
+      return `${pageOrigin}/liquidity`
+    }
     const account = activeCard.data.account.toLowerCase()
     if (activeCard.data.kind === 'trade' && activeCard.id.startsWith('trade-')) {
       const tradeId = activeCard.id.slice('trade-'.length)

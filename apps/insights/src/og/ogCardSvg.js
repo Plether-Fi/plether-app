@@ -793,6 +793,158 @@ export function buildOgCardSvg(data) {
     });
   }
 
+  if (data.kind === 'liquidity_efficiency') {
+    const parseAmt = (raw) => {
+      if (typeof raw !== 'string' || !/^-?\d+$/.test(raw)) return 0;
+      const n = Number(raw) / 1_000_000;
+      return Number.isFinite(n) ? n : 0;
+    };
+    const formatTurnover = (x100) => {
+      if (x100 == null || !Number.isFinite(Number(x100))) return '—';
+      const x = Number(x100) / 100;
+      if (x >= 100) return `${x.toFixed(0)}×`;
+      if (x >= 10) return `${x.toFixed(1)}×`;
+      return `${x.toFixed(2)}×`;
+    };
+    const formatBpsPct = (bps) =>
+      bps != null && Number.isFinite(Number(bps)) ? `${(Number(bps) / 100).toFixed(2)}%` : '—';
+
+    const primaryIs24h = data.turnover24hX100 != null;
+    const heroRatio = formatTurnover(primaryIs24h ? data.turnover24hX100 : data.turnover7dAvgDailyX100);
+    const heroLabel = primaryIs24h ? '24H VOLUME / POOL' : '7D AVG DAILY VOL / POOL';
+    const avg7dText =
+      data.turnover7dAvgDailyX100 != null ? `${formatTurnover(data.turnover7dAvgDailyX100)} / d` : '—';
+    const takeRateText =
+      data.effectiveTakeRate7dBpsX100 != null
+        ? `${(Number(data.effectiveTakeRate7dBpsX100) / 100).toFixed(2)} bps`
+        : '—';
+    const yieldText =
+      data.annualizedFeeYield7dBps != null
+        ? `${(Number(data.annualizedFeeYield7dBps) / 100).toFixed(2)}% APR`
+        : '—';
+
+    const grossOiPct = data.grossOiToPoolBps != null ? Number(data.grossOiToPoolBps) / 100 : null;
+    const oiBadgeTone =
+      grossOiPct == null
+        ? { bg: '#3b212d', border: '#ffab9666', fg: '#d8cbd0' }
+        : grossOiPct > 150
+          ? { bg: '#ff572d22', border: '#ff572d99', fg: '#ff572d' }
+          : grossOiPct > 100
+            ? { bg: '#f2cf7122', border: '#f2cf7199', fg: '#f2cf71' }
+            : { bg: '#00ff991f', border: '#00ff9988', fg: '#00ff99' };
+    const oiBadgeLabel =
+      grossOiPct != null ? `GROSS OI ${grossOiPct.toFixed(1)}% OF POOL` : 'OPEN INTEREST LIVE';
+
+    const longNum = parseAmt(data.currentLongOiAssets);
+    const shortNum = parseAmt(data.currentShortOiAssets);
+    const grossNum = Math.max(0, longNum + shortNum);
+    const longShare = grossNum > 0 ? Math.max(0.04, Math.min(0.96, longNum / grossNum)) : 0.5;
+    const netSkewNum = parseAmt(data.currentNetSkewAssets);
+    const skewDir = netSkewNum > 0 ? 'Long' : netSkewNum < 0 ? 'Short' : 'Balanced';
+    const skewLabel =
+      data.netSkewToPoolBps != null
+        ? `${netSkewNum >= 0 ? '+' : '−'}${(Number(data.netSkewToPoolBps) / 100).toFixed(2)}% ${skewDir}`
+        : skewDir;
+
+    const senNum = parseAmt(data.seniorTvlAssets);
+    const junNum = parseAmt(data.juniorTvlAssets);
+    const tvlSum = senNum + junNum;
+    const senShare = tvlSum > 0 ? Math.max(0.06, Math.min(0.94, senNum / tvlSum)) : 0.5;
+    const poolTvlText = data.poolTvlAssets ? formatCompactUsdg(data.poolTvlAssets) : '—';
+
+    const boxX = 540;
+    const boxY = 126;
+    const boxW = 600;
+    const boxH = 256;
+    const plotX = boxX + 24;
+    const plotY = boxY + 46;
+    const plotW = boxW - 48;
+    const plotH = 104;
+
+    const rawSeries = Array.isArray(data.turnoverSeriesX100)
+      ? data.turnoverSeriesX100.map((v) => (v != null && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) / 100 : 0))
+      : [];
+    const bars = rawSeries.length > 0 ? rawSeries.slice(-28) : [0.4, 0.8, 1.1, 0.9, 1.4, 1.2, 0.7];
+    const peakTurn = Math.max(1, ...bars);
+    const refOneY = plotY + plotH - (1 / (peakTurn * 1.12)) * plotH;
+    const stepX = plotW / bars.length;
+    const barW = Math.max(4, Math.min(18, stepX * 0.62));
+    const barsSvg = bars
+      .map((val, idx) => {
+        const h = Math.max(2, (val / (peakTurn * 1.12)) * plotH);
+        const bx = plotX + idx * stepX + (stepX - barW) / 2;
+        const by = plotY + plotH - h;
+        const isLast = idx === bars.length - 1;
+        return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${isLast ? '#ff572d' : '#ffab96'}" fill-opacity="${isLast ? '0.95' : '0.62'}" />`;
+      })
+      .join('');
+
+    const oiBarY = boxY + 206;
+    const oiLongW = Math.round(plotW * longShare);
+    const oiShortW = Math.max(0, plotW - oiLongW);
+    const oiHeaderRight = `${formatCompactUsdg(data.currentGrossOiAssets)} · ${skewLabel}`;
+
+    const visualPanelSvg = `<g>
+      <rect x="${String(boxX)}" y="${String(boxY)}" width="${String(boxW)}" height="${String(boxH)}" fill="#3b212d" fill-opacity="0.46" stroke="#ffab96" stroke-opacity="0.24" stroke-width="1" />
+      <text x="${String(plotX)}" y="${String(boxY + 28)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="12" font-weight="700" letter-spacing="1.3">DAILY TURNOVER VELOCITY (VOL / POOL)</text>
+      <text x="${String(plotX + plotW)}" y="${String(boxY + 28)}" text-anchor="end" fill="#ffab96" font-family="${MONO_FONT}" font-size="12" font-weight="700">Peak ${escapeXml(peakTurn.toFixed(2))}×</text>
+      <line x1="${String(plotX)}" y1="${refOneY.toFixed(1)}" x2="${String(plotX + plotW)}" y2="${refOneY.toFixed(1)}" stroke="#f2cf71" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="4 4" />
+      <text x="${String(plotX + plotW)}" y="${(refOneY - 4).toFixed(1)}" text-anchor="end" fill="#f2cf71" font-family="${MONO_FONT}" font-size="10" font-weight="700">1.0×/d</text>
+      <line x1="${String(plotX)}" y1="${String(plotY + plotH)}" x2="${String(plotX + plotW)}" y2="${String(plotY + plotH)}" stroke="#ffab96" stroke-opacity="0.2" stroke-width="1" />
+      ${barsSvg}
+      <line x1="${String(plotX)}" y1="${String(boxY + 170)}" x2="${String(plotX + plotW)}" y2="${String(boxY + 170)}" stroke="#ffab96" stroke-opacity="0.16" stroke-width="1" />
+      <text x="${String(plotX)}" y="${String(boxY + 194)}" fill="#aa98a0" font-family="${SANS_FONT}" font-size="12" font-weight="700" letter-spacing="1.2">OPEN INTEREST SPLIT</text>
+      <text x="${String(plotX + plotW)}" y="${String(boxY + 194)}" text-anchor="end" fill="#fff5f9" font-family="${MONO_FONT}" font-size="12" font-weight="700">${escapeXml(oiHeaderRight)}</text>
+      <rect x="${String(plotX)}" y="${String(oiBarY)}" width="${String(plotW)}" height="12" fill="#250917" stroke="#ffab96" stroke-opacity="0.22" stroke-width="0.8" />
+      <rect x="${String(plotX)}" y="${String(oiBarY)}" width="${String(oiLongW)}" height="12" fill="#00ff99" fill-opacity="0.85" />
+      <rect x="${String(plotX + oiLongW)}" y="${String(oiBarY)}" width="${String(oiShortW)}" height="12" fill="#ff572d" fill-opacity="0.85" />
+      <text x="${String(plotX)}" y="${String(oiBarY + 30)}" fill="#00ff99" font-family="${MONO_FONT}" font-size="12" font-weight="700">Long ${escapeXml(formatCompactUsdg(data.currentLongOiAssets))} (${String(Math.round(longShare * 100))}%)</text>
+      <text x="${String(plotX + plotW)}" y="${String(oiBarY + 30)}" text-anchor="end" fill="#ff572d" font-family="${MONO_FONT}" font-size="12" font-weight="700">Short ${escapeXml(formatCompactUsdg(data.currentShortOiAssets))} (${String(100 - Math.round(longShare * 100))}%)</text>
+    </g>`;
+
+    const renderPoolTvlVisual = (x, y, w) => {
+      const barW = Math.max(80, w);
+      const senW = Math.round(barW * senShare);
+      const junW = Math.max(0, barW - senW);
+      const fontSize = fitStatFontSize(poolTvlText, w + 48, 20);
+      return `
+        <text x="${String(x)}" y="${String(y + 16)}" fill="#fff5f9" font-family="${MONO_FONT}" font-size="${String(fontSize)}" font-weight="700">${escapeXml(poolTvlText)}</text>
+        <rect x="${String(x)}" y="${String(y + 27)}" width="${String(barW)}" height="5" fill="#250917" />
+        <rect x="${String(x)}" y="${String(y + 27)}" width="${String(senW)}" height="5" fill="#f2cf71" fill-opacity="0.85" />
+        <rect x="${String(x + senW)}" y="${String(y + 27)}" width="${String(junW)}" height="5" fill="#ffab96" fill-opacity="0.85" />
+      `;
+    };
+
+    const stats = [
+      { label: 'Pool TVL (Sr / Jr)', value: poolTvlText, renderVisual: renderPoolTvlVisual },
+      { label: '7d avg Vol / Pool', value: avg7dText, accent: '#ffab96' },
+      { label: '7d fee yield', value: yieldText, accent: '#00ff99' },
+      { label: '7d take rate', value: takeRateText },
+    ];
+
+    const subline = `24h Vol ${formatCompactUsdg(data.volume24hAssets)} · 7d Vol ${formatCompactUsdg(data.volume7dAssets)}`;
+    const body = `
+      ${renderPill(60, 132, 'LP POOL EFFICIENCY', '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(60 + pillWidth('LP POOL EFFICIENCY') + 12, 132, oiBadgeLabel, oiBadgeTone.bg, oiBadgeTone.border, oiBadgeTone.fg)}
+      <text x="60" y="218" fill="#aa98a0" font-family="${SANS_FONT}" font-size="15" font-weight="700" letter-spacing="1.4">${heroLabel}</text>
+      <text x="60" y="302" fill="#fff5f9" font-family="${MONO_FONT}" font-size="76" font-weight="700">${escapeXml(heroRatio)}</text>
+      <text x="60" y="346" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="16" font-weight="500">${escapeXml(subline)}</text>
+      <text x="60" y="372" fill="#aa98a0" font-family="${MONO_FONT}" font-size="13">OI / Pool ${escapeXml(formatBpsPct(data.grossOiToPoolBps))} · Net skew ${escapeXml(skewLabel)}</text>
+      ${visualPanelSvg}
+      ${renderMetricRibbon(stats, 412)}
+    `;
+    return renderFrame({
+      accentGlow: '#ff572d',
+      eyebrow: 'LP Pool Capital Efficiency',
+      networkTag,
+      footerLeftPrimary: 'Plether LP House Pool',
+      footerLeftSecondary: 'Senior & Junior Vaults',
+      footerAvatarAddress: null,
+      footerRight: 'insights.plether.com/liquidity',
+      bodySvg: body,
+    });
+  }
+
   // Trading account overview card (distinct from Divisions card — centers life-long balance curve)
   const pnl = data.realizedPnlAssets
     ? formatSignedUsdg(data.realizedPnlAssets)
@@ -1067,5 +1219,42 @@ export function selectDivisionOgCardData(account, livePayload, publishedPayload,
     movement: ref.movement ?? null,
     weekLabel: formatWeekLabel(pub?.week?.startsAt ?? summaryWeek?.weekStartsAt ?? summaryWeek?.weekStart),
     provisional: false,
+  };
+}
+
+export function selectLiquidityEfficiencyOgCardData(efficiencyPayload) {
+  const data = efficiencyPayload?.data ?? efficiencyPayload;
+  const summary = data?.summary;
+  if (!summary || typeof summary !== 'object') return null;
+
+  const series7d = Array.isArray(data.series7d) ? data.series7d : [];
+  const series30d = Array.isArray(data.series30d) ? data.series30d : [];
+  const chosenSeries = series7d.length > 0 ? series7d : series30d;
+  const turnoverSeriesX100 = chosenSeries.map((b) =>
+    typeof b?.annualizedTurnoverDailyX100 === 'number' ? b.annualizedTurnoverDailyX100 : null,
+  );
+
+  return {
+    kind: 'liquidity_efficiency',
+    networkName: networkLabelForChain(data.network?.chainId),
+    releaseVersion: data.network?.releaseVersion ?? null,
+    poolTvlAssets: summary.poolTvlAssets ?? null,
+    seniorTvlAssets: summary.seniorTvlAssets ?? null,
+    juniorTvlAssets: summary.juniorTvlAssets ?? null,
+    volume24hAssets: String(summary.volume24hAssets ?? '0'),
+    volume7dAssets: String(summary.volume7dAssets ?? '0'),
+    turnover24hX100: summary.turnover24hX100 ?? null,
+    turnover7dAvgDailyX100: summary.turnover7dAvgDailyX100 ?? null,
+    turnover30dAvgDailyX100: summary.turnover30dAvgDailyX100 ?? null,
+    effectiveTakeRate7dBpsX100: summary.effectiveTakeRate7dBpsX100 ?? null,
+    annualizedFeeYield7dBps: summary.annualizedFeeYield7dBps ?? null,
+    currentLongOiAssets: String(summary.currentLongOiAssets ?? '0'),
+    currentShortOiAssets: String(summary.currentShortOiAssets ?? '0'),
+    currentGrossOiAssets: String(summary.currentGrossOiAssets ?? '0'),
+    currentNetSkewAssets: String(summary.currentNetSkewAssets ?? '0'),
+    grossOiToPoolBps: summary.grossOiToPoolBps ?? null,
+    netSkewToPoolBps: summary.netSkewToPoolBps ?? null,
+    turnoverSeriesX100,
+    observedAt: data.observedAt ?? null,
   };
 }

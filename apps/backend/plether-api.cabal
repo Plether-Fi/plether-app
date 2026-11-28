@@ -437,6 +437,7 @@ test-suite plether-api-test
     other-modules:
         Plether.Passkeys.AuthSpec
         Plether.Handlers.PasskeyNamesSpec
+        Plether.Handlers.InsightsSqlSmokeSpec
         Plether.AA.PimlicoSpec
         Plether.AA.CloseAssistanceEvidenceSpec
         Plether.AA.GatewaySpec

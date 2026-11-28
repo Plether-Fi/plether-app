@@ -19,7 +19,8 @@ module Plether.Handlers.InsightsProtocol
   ) where
 
 import Control.Concurrent.Async (Concurrently (..), mapConcurrently, runConcurrently)
-import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Plether.Logging (field, logWarnEvery)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -1095,7 +1096,13 @@ observeIo action = do
     Left (err :: SomeException) ->
       case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err
-        Nothing -> pure Nothing
+        Nothing -> do
+          logWarnEvery
+            60
+            "insights.protocol.observe_io_failed"
+            "Suppressed non-async error in InsightsProtocol observer"
+            [field "error" (T.take 300 (T.pack (displayException err)))]
+          pure Nothing
 
 contractMetadata :: Text -> (Text, Text, Text)
 contractMetadata key = case key of

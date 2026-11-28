@@ -118,10 +118,10 @@ export function resolveRouteOgMeta(url) {
 
   if (pathname === '/liquidity' || pathname.startsWith('/liquidity/')) {
     return {
-      title: 'LP Epoch Settlement & Forensics — Plether Insights',
-      description: 'Real-time LP epoch settlement readiness, hourly snapshot freshness, and Junior vault return attribution audit.',
-      imageUrl: defaultImage,
-      imageAlt: 'Plether Insights — LP Epoch Settlement & Forensics',
+      title: 'LP Pool Efficiency, Settlements & Forensics — Plether Insights',
+      description: 'Live LP pool capital efficiency (Vol/Pool turnover), Open Interest utilization, Senior & Junior vault snapshots, and epoch settlement forensics.',
+      imageUrl: `${origin}/og/liquidity.png`,
+      imageAlt: 'Plether Insights — LP Pool Capital Efficiency & Forensics',
       canonicalUrl,
     };
   }
@@ -249,6 +249,9 @@ export function resolveRouteOgMeta(url) {
 }
 
 export function parseOgImageRoute(pathname) {
+  if (pathname === '/og/liquidity.png') {
+    return { kind: 'liquidity' };
+  }
   const walletMatch = pathname.match(/^\/og\/wallet\/(0x[0-9a-fA-F]{40})\.png$/);
   if (walletMatch && ADDRESS_RE.test(walletMatch[1])) {
     return { kind: 'wallet', account: walletMatch[1].toLowerCase() };

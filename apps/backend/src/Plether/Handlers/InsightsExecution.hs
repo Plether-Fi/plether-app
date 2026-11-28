@@ -7,6 +7,7 @@ module Plether.Handlers.InsightsExecution
   , KeeperOrderAggregateRow (..)
   , RawKeeperTx (..)
   , RecentTradeRow (..)
+  , FinalizedOrderRow (..)
   , getExecutionQualityResponse
   , getExecutionTradesResponse
   , getTransactionResponse
@@ -19,6 +20,8 @@ module Plether.Handlers.InsightsExecution
   , fetchProtectionQuality
   , fetchRecentTrades
   , fetchTransactionTrades
+  , fetchTransactionFinalizedOrders
+  , fetchOracleUpdateIdsForOrders
   , isValidTxHash
   , classifyTxKind
   , computeLatencyPercentiles

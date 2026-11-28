@@ -22,6 +22,11 @@ module Plether.Handlers.InsightsLiquidity
   , priorOiSizesSql
   , oiDeltaBucketsSql
   , latestBasketMarkSql
+  , fetchEfficiencyOrderBuckets
+  , fetchEfficiencyOrderWindowTotals
+  , fetchPriorOiSizes
+  , fetchOiDeltaBuckets
+  , fetchLatestBasketMark
   , fetchRecentReturnReports
   , executionPathLabel
   , healthStateLabel
