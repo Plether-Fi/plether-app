@@ -17,6 +17,7 @@ import Plether.Handlers.InsightsOracle
   , computeDisplayDeltaBps
   , computeEffectiveShareBps
   , parseOracleUpdateIdParam
+  , settledOrderSideLabel
   )
 import Test.Hspec
 
@@ -100,3 +101,9 @@ spec = describe "Plether.Handlers.InsightsOracle" $ do
     parseOracleUpdateIdParam "0" `shouldBe` Nothing
     parseOracleUpdateIdParam "-5" `shouldBe` Nothing
     parseOracleUpdateIdParam "abc" `shouldBe` Nothing
+
+  it "maps perps_orders integer side codes to long/short labels" $ do
+    settledOrderSideLabel (Just 0) `shouldBe` Just "long"
+    settledOrderSideLabel (Just 1) `shouldBe` Just "short"
+    settledOrderSideLabel (Just 2) `shouldBe` Nothing
+    settledOrderSideLabel Nothing `shouldBe` Nothing
