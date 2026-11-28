@@ -15,16 +15,16 @@ jobs:
     runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the deployed Core source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Plether-Fi/plether-core
           ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
           path: .ci-order-v3-core
           submodules: recursive
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -35,7 +35,7 @@ jobs:
         run: npm install -g npm@11.6.2
       - run: npm ci --no-audit --no-fund
         working-directory: apps/frontend
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf
         id: foundry
         continue-on-error: true
         with:
@@ -46,7 +46,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Cache pinned Core Solidity compiler and artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.svm
@@ -60,7 +60,7 @@ jobs:
         run: sudo python3 "$GITHUB_WORKSPACE/.github/scripts/configure-ubuntu-mirror.py"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
       - name: Cache GHC 9.4.8 toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /usr/local/.ghcup/ghc/9.4.8
           key: ubuntu-24.04-ghc-9.4.8-toolchain-v1
@@ -69,19 +69,19 @@ jobs:
           ghc-version: '9.4.8'
           cabal-version: 'latest'
           cabal-update: false
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cabal/store
           key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
           restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
       - name: Cache Cabal package index
         id: cabal-index-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cabal/packages
           key: ubuntu-24.04-cabal-packages-${{ hashFiles('apps/backend/cabal.project.freeze') }}
       - name: Cache Haskell build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apps/backend/dist-newstyle
           key: ubuntu-24.04-ghc-9.4.8-dist-O0-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-lib-${{ hashFiles('apps/backend/schema.sql', 'apps/backend/config/migrations/**', 'config/**', 'apps/backend/src/**') }}

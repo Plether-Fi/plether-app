@@ -159,12 +159,12 @@ jobs:
           fi
           echo "expected_aws_account_id=$EXPECTED_AWS_ACCOUNT_ID" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -991,10 +991,10 @@ jobs:
 
       - name: Login to ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Resolve backend image tags
         id: images
@@ -1027,7 +1027,7 @@ jobs:
 
       - name: Restore incremental Haskell Docker build cache
         if: steps.release_lookup.outputs.application_exists != 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/plether-dist-cache
           key: plether-backend-docker-dist-arm64-v1-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}-${{ github.sha }}
@@ -1041,7 +1041,7 @@ jobs:
       - name: Build and push application image
         id: application_build
         if: steps.release_lookup.outputs.application_exists != 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: apps/backend/Dockerfile
@@ -1061,7 +1061,7 @@ jobs:
       - name: Export incremental Haskell Docker build cache
         if: steps.release_lookup.outputs.application_exists != 'true'
         continue-on-error: true
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: apps/backend/Dockerfile
@@ -1084,7 +1084,7 @@ jobs:
       - name: Build and push log router image
         id: router_build
         if: steps.release_lookup.outputs.router_exists != 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: apps/backend/otel-log-router/Dockerfile
@@ -1174,7 +1174,7 @@ jobs:
           done
 
       - name: Retain verified release provenance
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: backend-release-${{ inputs.environment }}-${{ github.sha }}-${{ github.run_attempt }}
           path: |
@@ -1204,7 +1204,7 @@ jobs:
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1315,7 +1315,7 @@ jobs:
 
       - name: Check out reviewed image qualification policy
         if: steps.task-definition-status.outputs.exists == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -1333,7 +1333,7 @@ jobs:
 
       - name: Check out reviewed public AA deployment policy
         if: steps.task-definition-status.outputs.exists == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -1721,7 +1721,7 @@ jobs:
       - name: Update log router image
         if: steps.task-definition-status.outputs.exists == 'true'
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@138c24f321fdbdf7edee4a685519d253cae2cdea # v1
+        uses: aws-actions/amazon-ecs-render-task-definition@8d79160660ad39c402a16e5fc7cd2a32e8f7d6b7 # v1
         with:
           task-definition: task-def.json
           container-name: otel-log-router
@@ -1764,7 +1764,7 @@ jobs:
 
       - name: Deploy to ECS
         if: steps.task-definition-status.outputs.exists == 'true'
-        uses: aws-actions/amazon-ecs-deploy-task-definition@c465972ecbd160473f22e683363b422a5412a3de # v2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@a00d4d57ac0de1a99b39fe469f3d898d38717c2b # v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ matrix.service_name }}
