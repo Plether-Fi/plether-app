@@ -7,8 +7,20 @@ module Plether.Handlers.InsightsOracle
   ( AdmittedBucketAgg (..)
   , RejectionBucketAgg (..)
   , OracleHealthBucket (..)
+  , RecentUpdateRow (..)
+  , PayloadDetailRow (..)
+  , SettledOrderRow (..)
   , getOracleHealthResponse
   , getOracleUpdateDetailResponse
+  , fetchLatestPayload
+  , fetchRecentAdmittedUpdates
+  , fetchPayloadDetailRow
+  , fetchNeighborPayload
+  , fetchOrdersSettledWithUpdate
+  , fetchAdmittedBucketsPair
+  , fetchRejectionBucketsPair
+  , fetchRejectionBreakdown
+  , fetchRecentRejectionEvents
   , buildOracleHealthBuckets
   , classifyOracleSliceStatus
   , computeComponentConfidenceBps
@@ -22,7 +34,8 @@ module Plether.Handlers.InsightsOracle
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
-import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Plether.Logging (field, logWarnEvery)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -1029,7 +1042,7 @@ settledOrderSideLabel _ = Nothing
 fetchOrdersSettledWithUpdate :: Connection -> Integer -> Text -> Integer -> Integer -> IO [SettledOrderRow]
 fetchOrdersSettledWithUpdate conn chainId router minPub maxPub = do
   mRows <-
-    observeIo $
+    observeIoNamed "fetch_orders_settled_with_update" $
       query
         conn
         "SELECT order_id::text, COALESCE(account, ''), side, terminal_status, terminal_tx_hash, \
@@ -1327,14 +1340,25 @@ maximumMaybe [] = Nothing
 maximumMaybe xs = Just (maximum xs)
 
 observeIo :: IO a -> IO (Maybe a)
-observeIo action = do
+observeIo = observeIoNamed "generic"
+
+observeIoNamed :: Text -> IO a -> IO (Maybe a)
+observeIoNamed opName action = do
   res <- try action
   case res of
     Right val -> pure (Just val)
     Left (err :: SomeException) ->
       case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err
-        Nothing -> pure Nothing
+        Nothing -> do
+          logWarnEvery
+            60
+            ("insights.oracle." <> opName <> "_failed")
+            "Suppressed non-async error in InsightsOracle observer"
+            [ field "operation" opName
+            , field "error" (T.take 300 (T.pack (displayException err)))
+            ]
+          pure Nothing
 
 lookupText :: Text -> KM.KeyMap Value -> Maybe Text
 lookupText k obj = case KM.lookup (Key.fromText k) obj of

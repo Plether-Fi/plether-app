@@ -274,6 +274,7 @@ jobs:
           ./ci-bin/plether-api-test
         env:
           PASSKEY_NAMES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/passkey_names_test
+          INSIGHTS_SQL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/passkey_names_test
 
   perps-critical-path-integration:
     name: Perps critical path integration

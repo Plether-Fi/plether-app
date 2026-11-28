@@ -2,6 +2,7 @@ import {
   buildDefaultOgSvg,
   buildOgCardSvg,
   selectDivisionOgCardData,
+  selectLiquidityEfficiencyOgCardData,
   selectWalletOgCardData,
 } from '../src/og/ogCardSvg.js';
 import {
@@ -92,6 +93,7 @@ function resolvePublicApiCacheTtl(method, pathname) {
   if (
     apiPath === '/liquidity/settlements' ||
     apiPath === '/liquidity/forensics' ||
+    apiPath === '/liquidity/efficiency' ||
     /^\/liquidity\/epochs\/\d+$/.test(apiPath)
   ) {
     return API_CACHE_TTLS.liquidity;
@@ -579,6 +581,13 @@ async function handleOgImageRequest(request, env, ctx, url, ogRoute) {
       publishedPayload = null;
     }
     cardData = selectDivisionOgCardData(ogRoute.account, livePayload, publishedPayload, summaryPayload);
+  } else if (ogRoute.kind === 'liquidity') {
+    const efficiencyPayload = await fetchBackendJsonForOg(
+      env,
+      backendOrigin,
+      `${API_PREFIX}/liquidity/efficiency`,
+    );
+    cardData = selectLiquidityEfficiencyOgCardData(efficiencyPayload);
   }
 
   if (!cardData) {

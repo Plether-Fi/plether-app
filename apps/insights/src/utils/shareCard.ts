@@ -113,6 +113,30 @@ export interface PositionLifecycleShareCardData {
   durationLabel: string
 }
 
+export interface LiquidityEfficiencyShareCardData {
+  kind: 'liquidity_efficiency'
+  networkName: string
+  releaseVersion?: string | null
+  poolTvlAssets?: string | null
+  seniorTvlAssets?: string | null
+  juniorTvlAssets?: string | null
+  volume24hAssets: string
+  volume7dAssets: string
+  turnover24hX100?: number | null
+  turnover7dAvgDailyX100?: number | null
+  turnover30dAvgDailyX100?: number | null
+  effectiveTakeRate7dBpsX100?: number | null
+  annualizedFeeYield7dBps?: number | null
+  currentLongOiAssets: string
+  currentShortOiAssets: string
+  currentGrossOiAssets: string
+  currentNetSkewAssets: string
+  grossOiToPoolBps?: number | null
+  netSkewToPoolBps?: number | null
+  turnoverSeriesX100?: (number | null)[]
+  observedAt?: string | null
+}
+
 export type ShareCardData =
   | TradeShareCardData
   | OpenTradeShareCardData
@@ -120,6 +144,7 @@ export type ShareCardData =
   | PositionLifecycleShareCardData
   | DivisionShareCardData
   | AccountShareCardData
+  | LiquidityEfficiencyShareCardData
 
 const TIER_COLORS: Record<string, { primary: string; secondary: string; glow: string }> = {
   iron: { primary: '#FFAB96', secondary: '#F2CF71', glow: '#FFAB96' },
@@ -486,8 +511,16 @@ function renderFrame(
   account: string,
   footerRight: string,
   bodySvg: string,
+  protocolFooterSubtitle?: string,
 ): string {
   const networkTag = releaseVersion ? `${networkName} · ${releaseVersion}` : networkName
+  const footerLeftSvg = protocolFooterSubtitle
+    ? `${renderPletherLogo(60, 558, 0.12)}
+  <text x="96" y="576" fill="#fff5f9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700">${escapeXml(traderLabel)}</text>
+  <text x="${String(96 + Math.min(400, traderLabel.length * 10.5 + 22))}" y="576" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">${escapeXml(protocolFooterSubtitle)}</text>`
+    : `<g transform="translate(60, 558)">${buildAddressAvatarInnerSvg(account)}</g>
+  <text x="96" y="576" fill="#fff5f9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700">${escapeXml(traderLabel)}</text>
+  <text x="${String(96 + Math.min(400, traderLabel.length * 11 + 24))}" y="576" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">${escapeXml(shortAddress(account))}</text>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(SHARE_CARD_WIDTH)}" height="${String(SHARE_CARD_HEIGHT)}" viewBox="0 0 ${String(SHARE_CARD_WIDTH)} ${String(SHARE_CARD_HEIGHT)}">
   <defs>
     <linearGradient id="bg-grad" x1="0" y1="0" x2="1" y2="1">
@@ -517,9 +550,7 @@ function renderFrame(
   ${bodySvg}
 
   <line x1="60" y1="538" x2="1140" y2="538" stroke="#ffab96" stroke-opacity="0.24" stroke-width="1" />
-  <g transform="translate(60, 558)">${buildAddressAvatarInnerSvg(account)}</g>
-  <text x="96" y="576" fill="#fff5f9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700">${escapeXml(traderLabel)}</text>
-  <text x="${String(96 + Math.min(400, traderLabel.length * 11 + 24))}" y="576" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">${escapeXml(shortAddress(account))}</text>
+  ${footerLeftSvg}
   <text x="1140" y="576" text-anchor="end" fill="#ffab96" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" font-weight="600">${escapeXml(footerRight)}</text>
 </svg>`
 }
@@ -719,6 +750,157 @@ export function buildShareCardSvg(data: ShareCardData): string {
     return renderFrame(tierPalette.glow, eyebrow, data.networkName, undefined, data.traderLabel, data.account, 'insights.plether.com/divisions', body)
   }
 
+  if (data.kind === 'liquidity_efficiency') {
+    const parseAmt = (raw: string | null | undefined): number => {
+      if (!raw || !/^-?\d+$/.test(raw)) return 0
+      const n = Number(raw) / 1_000_000
+      return Number.isFinite(n) ? n : 0
+    }
+    const formatTurnover = (x100: number | null | undefined): string => {
+      if (x100 == null || !Number.isFinite(x100)) return '—'
+      const x = x100 / 100
+      if (x >= 100) return `${x.toFixed(0)}×`
+      if (x >= 10) return `${x.toFixed(1)}×`
+      return `${x.toFixed(2)}×`
+    }
+    const formatBpsPct = (bps: number | null | undefined): string =>
+      bps != null && Number.isFinite(bps) ? `${(bps / 100).toFixed(2)}%` : '—'
+
+    const primaryIs24h = data.turnover24hX100 != null
+    const heroRatio = formatTurnover(primaryIs24h ? data.turnover24hX100 : data.turnover7dAvgDailyX100)
+    const heroLabel = primaryIs24h ? '24H VOLUME / POOL' : '7D AVG DAILY VOL / POOL'
+    const avg7dText = data.turnover7dAvgDailyX100 != null ? `${formatTurnover(data.turnover7dAvgDailyX100)} / d` : '—'
+    const takeRateText =
+      data.effectiveTakeRate7dBpsX100 != null
+        ? `${(data.effectiveTakeRate7dBpsX100 / 100).toFixed(2)} bps`
+        : '—'
+    const yieldText =
+      data.annualizedFeeYield7dBps != null
+        ? `${(data.annualizedFeeYield7dBps / 100).toFixed(2)}% APR`
+        : '—'
+
+    const grossOiPct = data.grossOiToPoolBps != null ? data.grossOiToPoolBps / 100 : null
+    const oiBadgeTone =
+      grossOiPct == null
+        ? { bg: '#3b212d', border: '#ffab9666', fg: '#d8cbd0' }
+        : grossOiPct > 150
+          ? { bg: '#ff572d22', border: '#ff572d99', fg: '#ff572d' }
+          : grossOiPct > 100
+            ? { bg: '#f2cf7122', border: '#f2cf7199', fg: '#f2cf71' }
+            : { bg: '#00ff991f', border: '#00ff9988', fg: '#00ff99' }
+    const oiBadgeLabel =
+      grossOiPct != null ? `OI ${grossOiPct.toFixed(1)}% OF POOL` : 'OI LIVE'
+
+    const longNum = parseAmt(data.currentLongOiAssets)
+    const shortNum = parseAmt(data.currentShortOiAssets)
+    const grossNum = Math.max(0, longNum + shortNum)
+    const longShare = grossNum > 0 ? Math.max(0.04, Math.min(0.96, longNum / grossNum)) : 0.5
+    const netSkewNum = parseAmt(data.currentNetSkewAssets)
+    const skewDir = netSkewNum > 0 ? 'Long' : netSkewNum < 0 ? 'Short' : 'Balanced'
+    const skewLabel =
+      data.netSkewToPoolBps != null
+        ? `${netSkewNum >= 0 ? '+' : '−'}${(data.netSkewToPoolBps / 100).toFixed(2)}% ${skewDir}`
+        : skewDir
+
+    const senNum = parseAmt(data.seniorTvlAssets)
+    const junNum = parseAmt(data.juniorTvlAssets)
+    const tvlSum = senNum + junNum
+    const senShare = tvlSum > 0 ? Math.max(0.06, Math.min(0.94, senNum / tvlSum)) : 0.5
+    const poolTvlText = data.poolTvlAssets ? formatCompactAssets(data.poolTvlAssets) : '—'
+
+    // Right visual panel: 7d turnover bars + Open Interest Long/Short split
+    const boxX = 540
+    const boxY = 126
+    const boxW = 600
+    const boxH = 256
+    const plotX = boxX + 24
+    const plotY = boxY + 46
+    const plotW = boxW - 48
+    const plotH = 104
+
+    const rawSeries = (data.turnoverSeriesX100 ?? []).map((v) => (v != null && Number.isFinite(v) && v >= 0 ? v / 100 : 0))
+    const bars = rawSeries.length > 0 ? rawSeries.slice(-28) : [0.4, 0.8, 1.1, 0.9, 1.4, 1.2, 0.7]
+    const peakTurn = Math.max(1, ...bars)
+    const refOneY = plotY + plotH - (1 / (peakTurn * 1.12)) * plotH
+    const stepX = plotW / bars.length
+    const barW = Math.max(4, Math.min(18, stepX * 0.62))
+    const barsSvg = bars
+      .map((val, idx) => {
+        const h = Math.max(2, (val / (peakTurn * 1.12)) * plotH)
+        const bx = plotX + idx * stepX + (stepX - barW) / 2
+        const by = plotY + plotH - h
+        const isLast = idx === bars.length - 1
+        return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${isLast ? '#ff572d' : '#ffab96'}" fill-opacity="${isLast ? '0.95' : '0.62'}" />`
+      })
+      .join('')
+
+    const oiBarY = boxY + 206
+    const oiLongW = Math.round(plotW * longShare)
+    const oiShortW = Math.max(0, plotW - oiLongW)
+    const oiHeaderRight = `${formatCompactAssets(data.currentGrossOiAssets)} · ${skewLabel}`
+
+    const visualPanelSvg = `<g>
+      <rect x="${String(boxX)}" y="${String(boxY)}" width="${String(boxW)}" height="${String(boxH)}" fill="#3b212d" fill-opacity="0.46" stroke="#ffab96" stroke-opacity="0.24" stroke-width="1" />
+      <text x="${String(plotX)}" y="${String(boxY + 28)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" font-weight="700" letter-spacing="1.3">DAILY TURNOVER VELOCITY (VOL / POOL)</text>
+      <text x="${String(plotX + plotW)}" y="${String(boxY + 28)}" text-anchor="end" fill="#ffab96" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">Peak ${escapeXml(peakTurn.toFixed(2))}×</text>
+      <line x1="${String(plotX)}" y1="${refOneY.toFixed(1)}" x2="${String(plotX + plotW)}" y2="${refOneY.toFixed(1)}" stroke="#f2cf71" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="4 4" />
+      <text x="${String(plotX + plotW)}" y="${(refOneY - 4).toFixed(1)}" text-anchor="end" fill="#f2cf71" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="700">1.0×/d</text>
+      <line x1="${String(plotX)}" y1="${String(plotY + plotH)}" x2="${String(plotX + plotW)}" y2="${String(plotY + plotH)}" stroke="#ffab96" stroke-opacity="0.2" stroke-width="1" />
+      ${barsSvg}
+      <line x1="${String(plotX)}" y1="${String(boxY + 170)}" x2="${String(plotX + plotW)}" y2="${String(boxY + 170)}" stroke="#ffab96" stroke-opacity="0.16" stroke-width="1" />
+      <text x="${String(plotX)}" y="${String(boxY + 194)}" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" font-weight="700" letter-spacing="1.2">OPEN INTEREST SPLIT</text>
+      <text x="${String(plotX + plotW)}" y="${String(boxY + 194)}" text-anchor="end" fill="#fff5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">${escapeXml(oiHeaderRight)}</text>
+      <rect x="${String(plotX)}" y="${String(oiBarY)}" width="${String(plotW)}" height="12" fill="#250917" stroke="#ffab96" stroke-opacity="0.22" stroke-width="0.8" />
+      <rect x="${String(plotX)}" y="${String(oiBarY)}" width="${String(oiLongW)}" height="12" fill="#00ff99" fill-opacity="0.85" />
+      <rect x="${String(plotX + oiLongW)}" y="${String(oiBarY)}" width="${String(oiShortW)}" height="12" fill="#ff572d" fill-opacity="0.85" />
+      <text x="${String(plotX)}" y="${String(oiBarY + 30)}" fill="#00ff99" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">Long ${escapeXml(formatCompactAssets(data.currentLongOiAssets))} (${String(Math.round(longShare * 100))}%)</text>
+      <text x="${String(plotX + plotW)}" y="${String(oiBarY + 30)}" text-anchor="end" fill="#ff572d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">Short ${escapeXml(formatCompactAssets(data.currentShortOiAssets))} (${String(100 - Math.round(longShare * 100))}%)</text>
+    </g>`
+
+    const renderPoolTvlVisual = (x: number, y: number, w: number): string => {
+      const barW = Math.max(80, w)
+      const senW = Math.round(barW * senShare)
+      const junW = Math.max(0, barW - senW)
+      const fontSize = fitStatFontSize(poolTvlText, w + 48, 20)
+      return `
+        <text x="${String(x)}" y="${String(y + 16)}" fill="#fff5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${String(fontSize)}" font-weight="700">${escapeXml(poolTvlText)}</text>
+        <rect x="${String(x)}" y="${String(y + 27)}" width="${String(barW)}" height="5" fill="#250917" />
+        <rect x="${String(x)}" y="${String(y + 27)}" width="${String(senW)}" height="5" fill="#f2cf71" fill-opacity="0.85" />
+        <rect x="${String(x + senW)}" y="${String(y + 27)}" width="${String(junW)}" height="5" fill="#ffab96" fill-opacity="0.85" />
+      `
+    }
+
+    const stats: RibbonItem[] = [
+      { label: 'Pool TVL (Sr / Jr)', value: poolTvlText, renderVisual: renderPoolTvlVisual },
+      { label: '7d avg Vol / Pool', value: avg7dText, accent: '#ffab96' },
+      { label: '7d fee yield', value: yieldText, accent: '#00ff99' },
+      { label: '7d take rate', value: takeRateText },
+    ]
+
+    const subline = `24h Vol ${formatCompactAssets(data.volume24hAssets)} · 7d Vol ${formatCompactAssets(data.volume7dAssets)}`
+    const body = `
+      ${renderPill(60, 132, 'HOUSE POOL', '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(60 + pillWidth('HOUSE POOL') + 12, 132, oiBadgeLabel, oiBadgeTone.bg, oiBadgeTone.border, oiBadgeTone.fg)}
+      <text x="60" y="218" fill="#aa98a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="600" letter-spacing="1.4">${heroLabel}</text>
+      <text x="60" y="302" fill="#fff5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="78" font-weight="800">${escapeXml(heroRatio)}</text>
+      <text x="60" y="346" fill="#d8cbd0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="500">${escapeXml(subline)}</text>
+      <text x="60" y="372" fill="#aa98a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">OI / Pool ${escapeXml(formatBpsPct(data.grossOiToPoolBps))} · Net skew ${escapeXml(skewLabel)}</text>
+      ${visualPanelSvg}
+      ${renderMetricRibbon(stats, 412)}
+    `
+    return renderFrame(
+      '#ff572d',
+      'LP Pool Capital Efficiency',
+      data.networkName,
+      data.releaseVersion,
+      'Plether LP House Pool',
+      '',
+      'insights.plether.com/liquidity',
+      body,
+      'Senior & Junior Vaults',
+    )
+  }
+
   // Account overview card (distinct from Divisions card — centers life-long balance curve)
   const pnl = data.realizedPnlAssets ? formatSignedUsdg(data.realizedPnlAssets) : { text: 'Unavailable', tone: 'neutral' as const }
   const pnlColor = toneHex(pnl.tone)
@@ -756,13 +938,31 @@ export function svgToDataUrl(svg: string): string {
 }
 
 export function shareCardFilename(data: ShareCardData): string {
+  if (data.kind === 'liquidity_efficiency') {
+    return 'plether-liquidity-efficiency.png'
+  }
   const safeTrader = data.traderLabel.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() || shortAddress(data.account)
   return `plether-${data.kind}-${safeTrader}.png`
 }
 
 export function buildShareTweetUrl(data: ShareCardData, pageUrl: string): string {
   let headline: string
-  if (data.kind === 'trade') {
+  if (data.kind === 'liquidity_efficiency') {
+    const turn24 = data.turnover24hX100 != null ? `${(data.turnover24hX100 / 100).toFixed(2)}x` : null
+    const turn7 = data.turnover7dAvgDailyX100 != null ? `${(data.turnover7dAvgDailyX100 / 100).toFixed(2)}x/d` : null
+    const oiPct = data.grossOiToPoolBps != null ? `${(data.grossOiToPoolBps / 100).toFixed(1)}%` : null
+    const apr = data.annualizedFeeYield7dBps != null ? `${(data.annualizedFeeYield7dBps / 100).toFixed(1)}% APR` : null
+    const parts = [
+      turn24 ? `${turn24} 24h Vol/Pool` : null,
+      turn7 ? `${turn7} 7d avg` : null,
+      oiPct ? `${oiPct} OI/Pool` : null,
+      apr ? `${apr} 7d fee yield` : null,
+    ].filter((p): p is string => Boolean(p))
+    headline =
+      parts.length > 0
+        ? `Plether LP Pool Capital Efficiency: ${parts.join(' · ')} on Plether Insights.`
+        : 'Live LP Pool Capital Efficiency & Open Interest on Plether Insights.'
+  } else if (data.kind === 'trade') {
     const pnl = formatSignedUsdg(data.realizedPnlAssets).text
     headline = `Closed ${data.side ? data.side.toUpperCase() + ' ' : ''}${data.market} on Plether: ${pnl} realized PnL.`
   } else if (data.kind === 'open_trade') {

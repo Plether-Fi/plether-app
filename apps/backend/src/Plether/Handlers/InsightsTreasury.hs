@@ -20,7 +20,8 @@ module Plether.Handlers.InsightsTreasury
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
-import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import qualified Plether.Logging as Log
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -1096,7 +1097,13 @@ observeIo action = do
     Left (err :: SomeException) ->
       case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err
-        Nothing -> pure Nothing
+        Nothing -> do
+          Log.logWarnEvery
+            60
+            "insights.treasury.observe_io_failed"
+            "Suppressed non-async error in InsightsTreasury observer"
+            [Log.field "error" (T.take 300 (T.pack (displayException err)))]
+          pure Nothing
 
 isoTimestamp :: Integer -> Text
 isoTimestamp =

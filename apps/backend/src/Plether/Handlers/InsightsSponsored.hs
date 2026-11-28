@@ -22,7 +22,8 @@ module Plether.Handlers.InsightsSponsored
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
-import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import qualified Plether.Logging as Log
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -1353,7 +1354,13 @@ observeIo action = do
     Left (err :: SomeException) ->
       case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err
-        Nothing -> pure Nothing
+        Nothing -> do
+          Log.logWarnEvery
+            60
+            "insights.sponsored.observe_io_failed"
+            "Suppressed non-async error in InsightsSponsored observer"
+            [Log.field "error" (T.take 300 (T.pack (displayException err)))]
+          pure Nothing
 
 formatUtcIso :: UTCTime -> Text
 formatUtcIso = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"

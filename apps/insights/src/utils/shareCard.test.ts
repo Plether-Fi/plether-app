@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { buildOgCardSvg, selectLiquidityEfficiencyOgCardData } from '../og/ogCardSvg.js'
+import { parseOgImageRoute, resolveRouteOgMeta } from '../og/ogMeta.js'
 import {
   SHARE_CARD_HEIGHT,
   SHARE_CARD_WIDTH,
@@ -224,5 +226,82 @@ describe('shareCard SVG & social helpers', () => {
     expect(url).toContain('https://x.com/intent/tweet?')
     expect(url).toContain('Closed+LONG+plDXY-PERP+lifecycle')
     expect(url).toContain('7.4x+max+lev')
+  })
+
+  it('renders LP Pool Capital Efficiency share card, server OG card, and /og/liquidity.png route meta', () => {
+    const effData = {
+      kind: 'liquidity_efficiency' as const,
+      networkName: 'Arbitrum Sepolia',
+      releaseVersion: 'v2.0.0',
+      poolTvlAssets: '266324039691594',
+      seniorTvlAssets: '40098400866815',
+      juniorTvlAssets: '226225638824779',
+      volume24hAssets: '176322889629990',
+      volume7dAssets: '1968245457410846',
+      turnover24hX100: 66,
+      turnover7dAvgDailyX100: 117,
+      turnover30dAvgDailyX100: 104,
+      effectiveTakeRate7dBpsX100: 1252,
+      annualizedFeeYield7dBps: 5344,
+      currentLongOiAssets: '119554364913940',
+      currentShortOiAssets: '105460606838158',
+      currentGrossOiAssets: '225014971752098',
+      currentNetSkewAssets: '14093758075782',
+      grossOiToPoolBps: 8449,
+      netSkewToPoolBps: 529,
+      turnoverSeriesX100: [72, 118, 165, 262, 109, 66],
+      observedAt: '2026-11-28T14:21:14Z',
+    }
+    const svg = buildShareCardSvg(effData)
+    expect(svg).toContain('HOUSE POOL')
+    expect(svg).toContain('OI 84.5% OF POOL')
+    expect(svg).toContain('0.66×')
+    expect(svg).toContain('1.17× / d')
+    expect(svg).toContain('53.44% APR')
+    expect(svg).toContain('12.52 bps')
+    expect(svg).toContain('Plether LP House Pool')
+    expect(svg).toContain('insights.plether.com/liquidity')
+    expect(svg).not.toContain('$')
+    expect(shareCardFilename(effData)).toBe('plether-liquidity-efficiency.png')
+    const tweetUrl = buildShareTweetUrl(effData, 'https://insights.plether.com/liquidity')
+    expect(tweetUrl).toContain('0.66x+24h+Vol%2FPool')
+    expect(tweetUrl).toContain('84.5%25+OI%2FPool')
+
+    const ogData = selectLiquidityEfficiencyOgCardData({
+      data: {
+        network: { chainId: 421614, releaseVersion: 'v2.0.0' },
+        observedAt: effData.observedAt,
+        summary: {
+          poolTvlAssets: effData.poolTvlAssets,
+          seniorTvlAssets: effData.seniorTvlAssets,
+          juniorTvlAssets: effData.juniorTvlAssets,
+          volume24hAssets: effData.volume24hAssets,
+          volume7dAssets: effData.volume7dAssets,
+          turnover24hX100: effData.turnover24hX100,
+          turnover7dAvgDailyX100: effData.turnover7dAvgDailyX100,
+          turnover30dAvgDailyX100: effData.turnover30dAvgDailyX100,
+          effectiveTakeRate7dBpsX100: effData.effectiveTakeRate7dBpsX100,
+          annualizedFeeYield7dBps: effData.annualizedFeeYield7dBps,
+          currentLongOiAssets: effData.currentLongOiAssets,
+          currentShortOiAssets: effData.currentShortOiAssets,
+          currentGrossOiAssets: effData.currentGrossOiAssets,
+          currentNetSkewAssets: effData.currentNetSkewAssets,
+          grossOiToPoolBps: effData.grossOiToPoolBps,
+          netSkewToPoolBps: effData.netSkewToPoolBps,
+        },
+        series7d: [{ annualizedTurnoverDailyX100: 165 }, { annualizedTurnoverDailyX100: 66 }],
+      },
+    })
+    expect(ogData).not.toBeNull()
+    const ogSvg = buildOgCardSvg(ogData)
+    expect(ogSvg).toContain('HOUSE POOL')
+    expect(ogSvg).toContain('OI 84.5% OF POOL')
+    expect(ogSvg).toContain('0.66×')
+    expect(ogSvg).toContain('53.44% APR')
+    expect(ogSvg).not.toContain('$')
+
+    expect(parseOgImageRoute('/og/liquidity.png')).toEqual({ kind: 'liquidity' })
+    const meta = resolveRouteOgMeta(new URL('https://insights.plether.com/liquidity'))
+    expect(meta.imageUrl).toBe('https://insights.plether.com/og/liquidity.png')
   })
 })

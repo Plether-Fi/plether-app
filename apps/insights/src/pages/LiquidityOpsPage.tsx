@@ -15,6 +15,7 @@ import {
   SettlementContinuityStrip,
 } from '../components/LiquidityVisuals'
 import { PoolEfficiencySection } from '../components/PoolEfficiencySection'
+import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -206,6 +207,39 @@ export function LiquidityOpsPage() {
   const fresh7d = forensics?.snapshotFreshness.window7d ?? null
   const activityIndexer = forensics?.vaultIndexers.activity ?? null
   const depositAttr = forensics?.vaultIndexers.depositAttribution ?? null
+  const efficiency = efficiencyQuery.data ?? null
+
+  const efficiencyShareCards: ShareCardOption[] = efficiency
+    ? [
+        {
+          id: 'liquidity-efficiency',
+          label: 'Pool Capital Efficiency',
+          data: {
+            kind: 'liquidity_efficiency',
+            networkName: chain.name,
+            releaseVersion,
+            poolTvlAssets: efficiency.summary.poolTvlAssets,
+            seniorTvlAssets: efficiency.summary.seniorTvlAssets,
+            juniorTvlAssets: efficiency.summary.juniorTvlAssets,
+            volume24hAssets: efficiency.summary.volume24hAssets,
+            volume7dAssets: efficiency.summary.volume7dAssets,
+            turnover24hX100: efficiency.summary.turnover24hX100,
+            turnover7dAvgDailyX100: efficiency.summary.turnover7dAvgDailyX100,
+            turnover30dAvgDailyX100: efficiency.summary.turnover30dAvgDailyX100,
+            effectiveTakeRate7dBpsX100: efficiency.summary.effectiveTakeRate7dBpsX100,
+            annualizedFeeYield7dBps: efficiency.summary.annualizedFeeYield7dBps,
+            currentLongOiAssets: efficiency.summary.currentLongOiAssets,
+            currentShortOiAssets: efficiency.summary.currentShortOiAssets,
+            currentGrossOiAssets: efficiency.summary.currentGrossOiAssets,
+            currentNetSkewAssets: efficiency.summary.currentNetSkewAssets,
+            grossOiToPoolBps: efficiency.summary.grossOiToPoolBps,
+            netSkewToPoolBps: efficiency.summary.netSkewToPoolBps,
+            turnoverSeriesX100: efficiency.series7d.map((b) => b.annualizedTurnoverDailyX100),
+            observedAt: efficiency.observedAt,
+          },
+        },
+      ]
+    : []
 
   return (
     <div className="space-y-8">
@@ -224,18 +258,28 @@ export function LiquidityOpsPage() {
         }
       />
 
-      <header className="max-w-3xl space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
-          LP Settlement Engine &amp; Risk Forensics
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Epoch Settlements, Attribution Audit &amp; Pool Forensics
-        </h1>
-        <p className="text-sm leading-6 text-content-secondary">
-          Deep settlement and accounting telemetry complementing the main app’s Vaults page—
-          auditing hourly epoch execution, decoded settlement bitmasks, trace-attribution
-          residuals, stale-mark snapshot coverage, and vault indexer lag.
-        </p>
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="max-w-3xl space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">
+            LP Settlement Engine &amp; Risk Forensics
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            Epoch Settlements, Attribution Audit &amp; Pool Forensics
+          </h1>
+          <p className="text-sm leading-6 text-content-secondary">
+            Deep settlement and accounting telemetry complementing the main app’s Vaults page—
+            auditing hourly epoch execution, decoded settlement bitmasks, trace-attribution
+            residuals, stale-mark snapshot coverage, and vault indexer lag.
+          </p>
+        </div>
+        {efficiencyShareCards.length > 0 ? (
+          <div className="shrink-0">
+            <ShareCardModal
+              cards={efficiencyShareCards}
+              triggerLabel="Share pool card"
+            />
+          </div>
+        ) : null}
       </header>
 
       {awaitingDeploy ? (

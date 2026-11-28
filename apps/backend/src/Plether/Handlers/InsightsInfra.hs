@@ -13,7 +13,8 @@ module Plether.Handlers.InsightsInfra
 
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
 import Control.Concurrent.MVar (MVar, modifyMVar, readMVar)
-import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Plether.Logging (field, logWarnEvery)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Either (isRight)
 import Data.IORef (newIORef)
@@ -976,7 +977,13 @@ observeIo action = do
     Left (err :: SomeException) ->
       case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err
-        Nothing -> pure Nothing
+        Nothing -> do
+          logWarnEvery
+            60
+            "insights.infra.observe_io_failed"
+            "Suppressed non-async error in InsightsInfra observer"
+            [field "error" (T.take 300 (T.pack (displayException err)))]
+          pure Nothing
 
 formatUtcIso :: UTCTime -> Text
 formatUtcIso = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"

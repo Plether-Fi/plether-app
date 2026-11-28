@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { ShareCardModal, type ShareCardOption } from '../../../insights/src/components/ShareCardModal'
-import { buildDefaultOgSvg } from '../../../insights/src/og/ogCardSvg.js'
+import { buildDefaultOgSvg, buildOgCardSvg } from '../../../insights/src/og/ogCardSvg.js'
 import {
   buildShareCardSvg,
   svgToDataUrl,
@@ -223,6 +223,33 @@ const LIFECYCLE_LIQUIDATED: ShareCardData = {
   durationLabel: '41m',
 }
 
+const LIQUIDITY_EFFICIENCY: ShareCardData = {
+  kind: 'liquidity_efficiency',
+  networkName: 'Arbitrum Sepolia',
+  releaseVersion: 'v2.0.0',
+  poolTvlAssets: '266324039691594',
+  seniorTvlAssets: '40098400866815',
+  juniorTvlAssets: '226225638824779',
+  volume24hAssets: '176322889629990',
+  volume7dAssets: '1968245457410846',
+  turnover24hX100: 66,
+  turnover7dAvgDailyX100: 117,
+  turnover30dAvgDailyX100: 104,
+  effectiveTakeRate7dBpsX100: 1252,
+  annualizedFeeYield7dBps: 5344,
+  currentLongOiAssets: '119554364913940',
+  currentShortOiAssets: '105460606838158',
+  currentGrossOiAssets: '225014971752098',
+  currentNetSkewAssets: '14093758075782',
+  grossOiToPoolBps: 8449,
+  netSkewToPoolBps: 529,
+  turnoverSeriesX100: [
+    72, 118, 165, 134, 98, 210, 184, 152, 88, 145, 232, 194, 128, 112, 167, 262, 171, 71, 29, 71,
+    109, 66,
+  ],
+  observedAt: '2026-11-28T14:21:14Z',
+}
+
 function entryFor(
   id: string,
   category: string,
@@ -325,6 +352,20 @@ const ALL_ENTRIES: GalleryEntry[] = [
     'High-drawdown excursion micro-bar and 0.00% (Liq) buffer treatment',
     LIFECYCLE_LIQUIDATED,
   ),
+  entryFor(
+    'liquidity-efficiency',
+    'Liquidity Pool',
+    'LP Pool Capital Efficiency — Vol / Pool & Open Interest',
+    'Daily Vol/Pool turnover velocity bar strip, Long/Short OI split, Senior/Junior TVL micro-bar, and 7d fee APR ribbon',
+    LIQUIDITY_EFFICIENCY,
+  ),
+  {
+    id: 'og-liquidity',
+    category: 'Default OG',
+    title: 'Server OG Card — /og/liquidity.png (ogCardSvg.js)',
+    subtitle: 'Server-rendered 1200×630 Open Graph card for insights.plether.com/liquidity',
+    svg: buildOgCardSvg(LIQUIDITY_EFFICIENCY as unknown as Record<string, unknown>),
+  },
   {
     id: 'og-default',
     category: 'Default OG',
