@@ -33,8 +33,8 @@ jobs:
       run:
         working-directory: apps/backend/return-attribution
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -63,8 +63,8 @@ jobs:
       run:
         working-directory: apps/backend/protection-worker
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -78,7 +78,7 @@ jobs:
     name: Credential hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Reject committed Alchemy endpoint credentials
         working-directory: .
@@ -103,12 +103,12 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -131,7 +131,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Cache ESLint and TypeScript incremental build info
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             apps/frontend/.eslintcache
@@ -161,12 +161,12 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -221,12 +221,12 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -245,7 +245,7 @@ jobs:
       - name: Install pinned local EVM for AA execution regressions
         id: foundry
         continue-on-error: true
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf
         with:
           version: v1.5.1
 
@@ -257,7 +257,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Cache GHC 9.4.8 toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /usr/local/.ghcup/ghc/9.4.8
           key: ubuntu-24.04-ghc-9.4.8-toolchain-v1
@@ -283,19 +283,19 @@ jobs:
         working-directory: apps/frontend
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
       - name: Install pinned local EVM for Core regressions
         id: foundry
         continue-on-error: true
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf
         with:
           version: v1.5.1
 
@@ -307,7 +307,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Fetch the deployed Core lifecycle source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Plether-Fi/plether-core
           ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
@@ -316,7 +316,7 @@ jobs:
           persist-credentials: false
 
       - name: Cache pinned Core Solidity compiler and artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.svm
@@ -362,10 +362,10 @@ jobs:
         working-directory: apps/insights
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 25.2.1
           cache: npm
@@ -378,7 +378,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Cache ESLint and TypeScript incremental build info
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             apps/insights/.eslintcache
