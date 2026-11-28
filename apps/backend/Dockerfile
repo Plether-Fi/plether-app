@@ -67,20 +67,20 @@ RUN --mount=type=cache,id=plether-backend-dist-newstyle,target=/build/dist-newst
 FROM scratch AS distcache-export
 COPY --from=distcache-export-prep /export/dist-newstyle /dist-newstyle
 
-FROM node:22-bookworm-slim AS oracle-worker
+FROM node:26-bookworm-slim AS oracle-worker
 
 WORKDIR /oracle
 COPY apps/backend/oracle-worker/package.json apps/backend/oracle-worker/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/frontend/scripts/perps-oracle-worker.mjs scripts/perps-oracle-worker.mjs
 
-FROM node:22-bookworm-slim AS protection-worker
+FROM node:26-bookworm-slim AS protection-worker
 WORKDIR /protection
 COPY apps/backend/protection-worker/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/backend/protection-worker/ ./
 
-FROM node:22-bookworm-slim AS return-attribution
+FROM node:26-bookworm-slim AS return-attribution
 WORKDIR /return-attribution
 COPY apps/backend/return-attribution/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
