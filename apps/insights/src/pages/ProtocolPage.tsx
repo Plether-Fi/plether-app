@@ -461,7 +461,7 @@ export function ProtocolPage() {
 
   const stateSummary = data ? deriveProtocolStateSummary(data.safety) : null
 
-  const verifiedPillTone: StatusTone = !data || !data.rpcAvailable
+  const verifiedPillTone: StatusTone = !data?.rpcAvailable
     ? 'unknown'
     : data.verification.mismatchCount > 0
       ? 'blocked'
@@ -469,7 +469,7 @@ export function ProtocolPage() {
         ? 'degraded'
         : 'live'
 
-  const driftPillTone: StatusTone = !data || !data.rpcAvailable
+  const driftPillTone: StatusTone = !data?.rpcAvailable
     ? 'unknown'
     : data.verification.driftedParameters > 0
       ? 'degraded'
@@ -549,7 +549,7 @@ export function ProtocolPage() {
               <StatusPill
                 tone={verifiedPillTone}
                 label={
-                  data && data.rpcAvailable
+                  data?.rpcAvailable
                     ? `${String(data.verification.verifiedCount)} / ${String(data.verification.totalContracts)} bytecode verified`
                     : data
                       ? `${String(data.verification.totalContracts)} pinned · RPC unreachable`
@@ -573,7 +573,7 @@ export function ProtocolPage() {
               <StatusPill
                 tone={driftPillTone}
                 label={
-                  data && data.rpcAvailable
+                  data?.rpcAvailable
                     ? `${String(data.verification.driftedParameters)} drifted`
                     : 'Params unavailable'
                 }
