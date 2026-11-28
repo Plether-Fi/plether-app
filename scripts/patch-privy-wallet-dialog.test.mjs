@@ -23,7 +23,7 @@ function withoutAccountClose(source) {
 function fixture(t) {
   const directory = mkdtempSync(resolve(tmpdir(), 'plether-privy-ui-'))
   t.after(() => { rmSync(directory, { recursive: true, force: true }) })
-  writeFileSync(resolve(directory, 'package.json'), JSON.stringify({ name: '@privy-io/react-auth', version: '3.51.2' }))
+  writeFileSync(resolve(directory, 'package.json'), JSON.stringify({ name: '@privy-io/react-auth', version: '3.52.1' }))
   for (const filename of filenames) {
     mkdirSync(dirname(resolve(directory, filename)), { recursive: true })
     writeFileSync(resolve(directory, filename), source(filename))
@@ -62,7 +62,7 @@ test('upgrades the previous complete picker-only extension', () => {
     const previous = withoutAccountClose(patched)
       .replace(',accountActions:privyAccountActions', '')
       .replace('t("div",{children:[e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h}),privyAccountActions]})', 'e(Lr,{onClose:u,onLinkNewWallet:()=>c(!0),assets:p,networks:h})')
-      .replace('e.jsxs("div",{children:[e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})', 'e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})')
+      .replace('e.jsxs("div",{children:[e.jsx(Lt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})', 'e.jsx(Lt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})')
       .replace('    /** Plether: settings inside the native connected-wallet dialog. */\n    accountActions?: React.ReactNode;\n', '')
       .replace(', accountActions }: WalletsDialogProps)', ' }: WalletsDialogProps)')
     assert.equal(preparePrivyDialogSource(filename, previous), patched)
@@ -85,14 +85,14 @@ test('is idempotent across every runtime and declaration format', t => {
   const directory = fixture(t)
   patchPrivyWalletDialog(directory)
   const patched = filenames.map(filename => readFileSync(resolve(directory, filename), 'utf8'))
-  assert.deepEqual(patchPrivyWalletDialog(directory), { version: '3.51.2', changedFiles: 0 })
+  assert.deepEqual(patchPrivyWalletDialog(directory), { version: '3.52.1', changedFiles: 0 })
   assert.deepEqual(filenames.map(filename => readFileSync(resolve(directory, filename), 'utf8')), patched)
 })
 
 test('rejects SDK version drift before changing files', t => {
   const directory = fixture(t)
-  writeFileSync(resolve(directory, 'package.json'), JSON.stringify({ name: '@privy-io/react-auth', version: '3.52.0' }))
-  assert.throws(() => patchPrivyWalletDialog(directory), /Expected @privy-io\/react-auth 3.51.2/)
+  writeFileSync(resolve(directory, 'package.json'), JSON.stringify({ name: '@privy-io/react-auth', version: '3.53.0' }))
+  assert.throws(() => patchPrivyWalletDialog(directory), /Expected @privy-io\/react-auth 3.52.1/)
   assert.equal(readFileSync(resolve(directory, filenames[0]), 'utf8'), source(filenames[0]))
 })
 

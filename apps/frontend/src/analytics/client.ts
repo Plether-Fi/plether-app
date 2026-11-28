@@ -225,7 +225,7 @@ export function createAnalyticsConfig(
     capture_dead_clicks: false,
     capture_exceptions: false,
     before_send: (event) => {
-      if (event?.event !== '$exception') return event
+      if (event.event !== '$exception') return event
       // Do not attach arbitrary SDK/browser context (URLs, referrers, etc.) to
       // sanitized exceptions. Retain only grouping, release and session fields.
       // `token` is the SDK's public project ingestion key, not a wallet/RPC
