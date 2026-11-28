@@ -36,7 +36,7 @@ const aaBindings = {
   policyEvaluator: 'cfdOrderPolicyEvaluator', positionProtectionBook: 'positionProtectionBook',
 }
 const otherContracts = ['perpsPublicLens', 'settlementMonitorLensSidecar', 'orderRouterAdmin', 'cfdEngineAdmin', 'cfdEnginePlanner', 'cfdEnginePlanningReader',
-  'terminalNavBookV2', 'housePoolRedemptionMathSidecar', 'cfdEngineProtocolLens', 'cfdEngineOpenQuoter', 'cfdClosePreview',
+  'terminalNavBookV2', 'housePoolRedemptionMathSidecar', 'cfdEngineProtocolLens', 'cfdEngineOpenQuoter', 'cfdOrderAdmissionValidator', 'cfdClosePreview',
   'orderRouterExecutionSidecar', 'orderRecoverySidecar', 'orderRouterLiquidationBatchSidecar', 'emergencyPauseCoordinator']
 
 export function settlementContract(manifest) {
@@ -130,7 +130,7 @@ export function prepareRelease(manifest, profile, sourceManifestSha256) {
   }
   const backendEnv = Object.fromEntries(Object.entries(terraform).map(([key, value]) => [key.toUpperCase(), value]))
   return {
-    'arbitrum-sepolia-v2.0.0.json': appRelease,
+    'arbitrum-sepolia-v2.1.0.json': appRelease,
     'perps-aa-manifest.json': aaManifest,
     'perps-core.tfvars.json': terraform,
     'perps-backend.env.json': backendEnv,

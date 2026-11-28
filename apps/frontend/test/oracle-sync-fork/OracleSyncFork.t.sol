@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity 0.8.35;
+pragma solidity 0.8.39;
 
 interface Vm {
     function envString(string calldata) external returns (string memory);
@@ -51,16 +51,16 @@ contract SeparatePythState {
 
 contract OracleSyncForkTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256('hevm cheat code')))));
-    Router constant router = Router(address(bytes20(hex'918663d6da8cb33b325a04c4a5e8c51d42f3b444')));
+    Router constant router = Router(address(bytes20(hex'B4c7548ba764e22107964637e31558af724c1c3E')));
 
     function test_V2RefreshValidatesAcceptedBasketWhilePythStorageStaysOld() public {
         vm.createSelectFork(vm.envString('ARB_SEPOLIA_RPC_URL'));
         Oracle oracle = Oracle(router.pletherOracle());
         Engine engine = Engine(router.engine());
-        require(address(oracle) == address(bytes20(hex'4f2c62a0e03657f52c633c19c11f88d8f0897bb2')), 'unexpected v2 oracle');
-        require(address(engine) == address(bytes20(hex'ca18a6783d7542f9d2f28f4f259772b74c4d6baa')), 'unexpected v2 engine');
-        require(address(oracle).codehash == hex'1ecb1ca760e7ba51d958697eeefe06ff7ba1a3ad162b3e7978af3df30393bc13', 'oracle runtime changed');
-        require(address(router).codehash == hex'6c65de67ef2824572537e3641a71100100c49d909b196c43e5d271312534d3cf', 'router runtime changed');
+        require(address(oracle) == address(bytes20(hex'3BAc571AF4f9F6535696F82460EFE56A348C91B2')), 'unexpected v2 oracle');
+        require(address(engine) == address(bytes20(hex'a3C43242F4E0a7C9a21Bd7dE48376D2f0779CaA6')), 'unexpected v2 engine');
+        require(address(oracle).codehash == hex'3d4209085377ed55a9abb72b9ea85b4a5236401877e422c8a949771a5b5b73d6', 'oracle runtime changed');
+        require(address(router).codehash == hex'a46e0b1b93d3d2bf95330517b9504e447edc7d27d6d7cf15000b45dd67df33db', 'router runtime changed');
         address pyth = oracle.pyth();
         bytes32[] memory ids = new bytes32[](6);
         Price[] memory prices = new Price[](6);

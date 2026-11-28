@@ -11,14 +11,14 @@ const hash = v => typeof v === 'string' && /^0x[0-9a-f]{64}$/i.test(v)
 const address = v => typeof v === 'string' && /^0x[0-9a-f]{40}$/i.test(v)
 const quantity = v => typeof v === 'string' && /^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(v)
 const proof = (value, code) => { if (!value) throw new Error(code) }
-const token = '0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d'
-const clearinghouse = '0xb5b851f627d6df3cf3f096e23e20a58884d7b89a'
+const token = '0x66705F56f2c88C9474d021D9C6AFE134205a63CE'
+const clearinghouse = '0x11BeF9BAB445C0E1F5b0280EE7E20498e3FC9D63'
 const chainId = 421614
 const literal = v => `'${String(v).replaceAll("'", "''")}'`
 
 export async function verifyMarginNonceConflict(row, replacementHash, providers) {
   proof(row.tx_status === 'submitted' && ['pending','recovery'].includes(row.status) && hash(row.tx_hash) && hash(replacementHash) && !eq(row.tx_hash,replacementHash), 'INTENT_NOT_SUBMITTED')
-  proof(address(row.address) && address(row.signer) && eq(row.token_address,token) && eq(row.clearinghouse,clearinghouse) && Number(row.chain_id) === chainId && row.release_id === 'v2.0.0' && BigInt(row.amount) === 100_000_000_000n, 'INVALID_FUNDING_SCOPE')
+  proof(address(row.address) && address(row.signer) && eq(row.token_address,token) && eq(row.clearinghouse,clearinghouse) && Number(row.chain_id) === chainId && row.release_id === 'v2.1.0' && BigInt(row.amount) === 100_000_000_000n, 'INVALID_FUNDING_SCOPE')
   proof(['mint','approval','deposit'].includes(row.phase) && typeof row.raw_tx === 'string' && /^0x02[0-9a-f]+$/i.test(row.raw_tx) && row.raw_tx.length <= 4096 && eq(keccak256(row.raw_tx),row.tx_hash), 'INVALID_SIGNED_INTENT')
   const tx = parseTransaction(row.raw_tx)
   const sender = await recoverTransactionAddress({serializedTransaction:row.raw_tx})

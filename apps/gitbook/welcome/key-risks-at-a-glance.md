@@ -19,7 +19,7 @@ Before you open a position or deposit into a vault, know what Plether's safeguar
 ### Five things traders must accept
 
 1. **Orders are delayed, binding and non-cancellable.** Once confirmed onchain, an order enters a global first-in, first-out queue and settles against a post-commit oracle price.
-2. **Liquidation is full, not partial.** If position equity falls to or below maintenance—or if carry or VPI reserves go uncovered—the entire position can be liquidated. Maintenance rises to **3.00%** during FX market-close windows.
+2. **Liquidation is full, not partial.** If position equity falls to or below maintenance—or if carry or VPI reserves go uncovered—the entire position can be liquidated. Maintenance rises to **2.00%** during FX market-close windows.
 3. **Carry accrues continuously—even on weekends.** Both LONG USD and SHORT USD can pay carry at the same time. Carry consumes active position margin first, then free USDG, so it can pull a quiet position closer to liquidation.
 4. **Profits can temporarily become a trader claim.** If pool free cash cannot cover a full payout immediately, the entire payout is recorded as a senior trader claim until pool cash covers all outstanding claims.
 5. **Take profit / stop loss is not a guaranteed fill price.** Triggered exits queue a market-style close order (uncapped slippage in the current web interface) and remain paused while the FX oracle is frozen over weekends.
@@ -34,7 +34,7 @@ Before you open a position or deposit into a vault, know what Plether's safeguar
 
 ### Shared platform risks
 
-* **Testnet & pre-audit status:** The active deployment is **Core v2.0.0 on Arbitrum Sepolia** using **MockUSDG** (no real-world value). Plether Perps completed a pre-audit security consultation, not a formal production audit.
+* **Testnet & pre-audit status:** The active deployment is **Core v2.1.0 on Arbitrum Sepolia** using **MockUSDG** (no real-world value). Plether Perps completed a pre-audit security consultation, not a formal production audit.
 * **Smart accounts & infrastructure:** Core perps contracts are non-upgradeable, while the testnet Trading Account uses an upgradeable `SimpleAccount` proxy (testnet-only). Execution relies on Pyth FX feeds, keepers, the self-hosted bundler/paymaster, and Arbitrum Sepolia finality.
 * **Governance:** Risk-sensitive parameter changes use a **72-hour timelock**; emergency pauses can take effect immediately.
 

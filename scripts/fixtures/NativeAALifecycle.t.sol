@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity 0.8.35;
+pragma solidity 0.8.39;
 import {BasePerpTest} from "./BasePerpTest.sol";
 import {PositionProtectionTypes} from "@plether/perps/interfaces/PositionProtectionTypes.sol";
 import {IPositionProtectionBook} from "@plether/perps/interfaces/IPositionProtectionBook.sol";
@@ -209,7 +209,7 @@ contract NativeAALifecycleTest is BasePerpTest {
         request.clientOrderId = keccak256("offline-native-protected-open");
         request.bounds.allowedExecutionModes = 1;
         request.bounds.submitBy = uint64(block.timestamp + 120);
-        request.bounds.executionWindowSeconds = 60;
+        request.bounds.executionWindowSeconds = uint32(router.maxExecutionWindowSeconds());
         request.bounds.expectedConfigHash = router.lifecycleBook().currentExecutionConfigHash();
         request.bounds.maxExecutionBountyAssets = 10e6;
         request.bounds.maxExecutionNotionalAssets = 20_000e6;

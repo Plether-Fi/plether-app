@@ -274,6 +274,18 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       const code = argNumber(args)
       return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${codeSuffix(code)}.`
     }
+    case 'OrderRouter__ImpossibleExecutionRequest':
+      return 'The order request cannot satisfy its execution bounds at any valid price. Refresh and review a fresh order.'
+    case 'CfdOrderPolicyEvaluator__SlippageToleranceTooTight':
+      return 'Slippage tolerance is too tight for an opening order. Increase max slippage to at least 0.25% and try again.'
+    case 'CfdEngine__PendingOrdersExist':
+      return 'Wait for pending orders to finish before settling your claim.'
+    case 'HousePool__UnassignedAssetsUnderbacked':
+      return 'The pool cannot cover unassigned LP assets right now. Try again after the next settlement.'
+    case 'PletherOracle__InvalidBatchCacheTimes':
+      return 'Oracle batch cache timestamps were invalid. Retry execution.'
+    case 'TrancheVault__ShareSupplyLimitExceeded':
+      return 'This deposit exceeds the vault share supply limit. Try a smaller amount.'
     case 'CfdEngineLens__QuoteSearchLimitExceeded':
       return 'The maximum size quote exceeded its search limit. Retry or enter a quantity manually.'
     case 'PerpsMaxOpenQuoter__InvalidPreview':

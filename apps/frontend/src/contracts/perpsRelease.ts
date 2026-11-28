@@ -50,7 +50,7 @@ export function parsePerpsReleaseConfiguration(value: unknown): PerpsReleaseConf
   }))
   const expectedContracts = ['settlementToken', 'perpsPublicLens', 'marginClearinghouse', 'orderRouter', 'orderRouterAdmin', 'cfdEngine',
     'cfdEnginePlanner', 'cfdEnginePlanningReader', 'cfdEngineSettlementSidecar', 'cfdEngineAdmin', 'housePool', 'seniorVault', 'juniorVault',
-    'pletherOracle', 'cfdEngineLens', 'cfdEngineAccountLens', 'orderLifecycleBook', 'cfdOrderPolicyEvaluator', 'positionProtectionBook',
+    'pletherOracle', 'cfdEngineLens', 'cfdEngineAccountLens', 'orderLifecycleBook', 'cfdOrderAdmissionValidator', 'cfdOrderPolicyEvaluator', 'positionProtectionBook',
     'terminalNavBookV2', 'housePoolRedemptionMathSidecar', 'cfdEngineProtocolLens', 'cfdEngineOpenQuoter', 'cfdClosePreview',
     'orderRouterExecutionSidecar', 'orderRecoverySidecar', 'orderRouterLiquidationBatchSidecar', 'settlementMonitorLens',
     'settlementMonitorLensSidecar', 'emergencyPauseCoordinator']

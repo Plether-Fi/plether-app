@@ -1,4 +1,4 @@
-// Reviewed against the pinned Core v2.0.0 release; see ../DIAGRAM_REVIEW.md.
+// Reviewed against the pinned Core v2.1.0 release; see ../DIAGRAM_REVIEW.md.
 const how = name => `how-plether-works/${name}.md`
 const trade = name => `trading-on-plether-perps/${name}.md`
 const step = (title, body = '', tone = 'neutral') => ({ title, body, tone })
@@ -102,9 +102,9 @@ export const diagrams = [
       lanes(lane('Price gain', 'success', step('Withhold action costs', 'Any residual price payout is funded in full or recorded as a claim.'), step('Credit the right bucket', 'Open remainder: PnL pledge. No position: settlement.')), lane('Price loss', 'danger', step('Net claim, then pledge', 'The terminal cap limits collection.'), step('Settle costs separately', 'Fees, VPI and unpaid carry use eligible action funds, including safely released margin.'))),
       note('A net action rebate is limited by available cash. An unpaid rebate is waived; it does not become a trader claim.')], ['close', 'risk', 'claim', 'currentCarry', 'currentCloseFunding']),
   spec('weekly-market-state-schedule', how('market-states-and-oracle-closures'), 'The FX weekend, in New York time', 'MARKET CALENDAR',
-    'Regular weekly phases in America/New_York: open until Friday 16:30, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:15. UTC offsets change with US daylight saving.', [
+    'Regular weekly phases in America/New_York: open until Friday 16:50, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:05. UTC offsets change with US daylight saving.', [
       { type: 'scheduleBar' },
-      flow(step('Open', 'Sunday 17:15 → Friday 16:30', 'success'), step('Close-only · live oracle', 'Friday 16:30 → 17:00 · 30 minutes', 'warning'), step('Close-only · frozen oracle', 'Friday 17:00 → Sunday 17:00', 'danger'), step('Close-only · live oracle', 'Sunday 17:00 → 17:15 · 15 minutes', 'warning'), step('Open again', 'Sunday 17:15, if no override applies.', 'success')),
+      flow(step('Open', 'Sunday 17:05 → Friday 16:50', 'success'), step('Close-only · live oracle', 'Friday 16:50 → 17:00 · 10 minutes', 'warning'), step('Close-only · frozen oracle', 'Friday 17:00 → Sunday 17:00', 'danger'), step('Close-only · live oracle', 'Sunday 17:00 → 17:05 · 5 minutes', 'warning'), step('Open again', 'Sunday 17:05, if no override applies.', 'success')),
       note('17:00 New York = 21:00 UTC in daylight time, 22:00 UTC in standard time. Sequence is not drawn to a time scale; closure-day overrides and oracle policy still apply.')], ['calendar']),
   spec('frozen-close-collection-priority', how('market-states-and-oracle-closures'), 'Where frozen-close spread sits', 'CLOSE ACTION COSTS',
     'Frozen-close spread is an action charge, not a price change. Recovery follows execution fee, carry left unpaid after initial collection, and positive VPI; unrecovered spread is waived.', [
@@ -128,11 +128,11 @@ export const diagrams = [
       flow(step('Collect carry first', 'Active position margin first, then eligible free USDG.'), step('Settle the close', 'Unpaid carry joins fees, VPI and spread. Remaining price losses and action charges use their respective backing.')),
       note('Do not treat a displayed price change as net profit or a guarantee of immediately withdrawable USDG.')], ['close', 'currentCarry', 'currentCloseFunding']),
   collection('protocol-close-collection-order', how('trading-costs-fees-carry-and-vpi'), 'How close obligations are funded', 'Execution fees, unpaid carry, positive VPI and frozen spread draw from action-charge sources only; partial closes cannot waive unpaid charges, while full closes waive uncollectible action charges.'),
-  spec('margin-reduces-future-carry', how('trading-costs-fees-carry-and-vpi'), 'More pledge, less borrowed backing', 'CARRY',
-    'For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.', [
+  spec('margin-reduces-future-carry', how('trading-costs-fees-carry-and-vpi'), 'Margin protects health, not carry', 'CARRY',
+    'Carry accrues at a flat annual rate on full maximum-profit exposure, independently of assigned margin or pool utilization. Adding assigned PnL pledge raises price equity without lowering future carry.', [
       { type: 'borrowBar' },
-      flow(step('Add assigned PnL pledge', 'Increase the margin backing this position.', 'accent'), step('Reduce the borrow base', 'Borrow base = max(maximum profit − pledge, 0).'), step('Lower future carry', 'At the same carry-index growth, less borrowed backing accrues less carry.', 'success')),
-      note('Holding other conditions equal. Adding margin first realizes accrued carry from active margin, then free USDG. Future carry can consume the new margin too.')], ['risk', 'currentCarry']),
+      flow(step('Add assigned PnL pledge', 'Increase the margin backing this position.', 'accent'), step('Raise price-risk equity', 'Larger margin increases the buffer above maintenance and liquidation.', 'success'), step('Keep carry basis unchanged', 'Flat carry still accrues on full maximum-profit exposure at the configured base rate.')),
+      note('Adding margin first realizes accrued carry from active margin, then eligible free USDG. Future carry can consume the new margin too.')], ['risk', 'currentCarry']),
   spec('senior-junior-waterfall-rules', 'liquidity-provider-quickstart.md', 'Three rules for LP returns', 'SENIOR & JUNIOR',
     'Losses go through Junior before Senior; revenue restores Senior impairment before reaching Junior; the coupon transfers available Junior principal to Senior.', [
       { type: 'waterfallBars' },
@@ -163,7 +163,7 @@ export const diagrams = [
       flow(step('Choose an eligible amount', 'Use Withdrawable, not total collateral or unrealized profit.'), step('Verify the recipient', 'Check the Trading Account and displayed owner wallet.'), step('Prepare and sign', 'Authorize the sponsored withdrawal.', 'accent'), step('Confirm receipt', 'After successful execution, check owner-wallet USDG.', 'success')),
       note('The contract rechecks balances and account health. An estimate or wallet signature alone does not complete a withdrawal.')], ['accounts', 'aa']),
   positionFlow('open-increase-position-lifecycle', trade('open-or-increase-a-position'), 'Open or increase a position', 'Choose direction, quantity, leverage and execution protections.', 'Create the position or increase its size and update its backing.'),
-  sponsor('open-increase-sponsored-submission', trade('open-or-increase-a-position'), 'Authorize an opening order', 'Opens and increases reserve submitted margin plus a 0.01–0.20 USDG opening execution reward until executed or cleared.'),
+  sponsor('open-increase-sponsored-submission', trade('open-or-increase-a-position'), 'Authorize an opening order', 'Opens and increases reserve submitted margin plus a 0.01–0.25 USDG opening execution reward until executed or cleared.'),
   spec('account-health-reading-order', trade('read-your-position-and-account-health'), 'Read account health in context', 'ACCOUNT CHECKLIST',
     'Recommended reading order, not a calculation or state transition: market regime, position, equity and margin, liquidation context, pending obligations and spendable balances.', [
       { type: 'checklist', steps: [step('Market state', 'Check oracle availability and close-only restrictions.'), step('Current position', 'Confirm side, size and entry price.'), step('Equity and margin', 'Compare equity after margin-first carry projection with maintenance. USDG balance is separate.'), step('Liquidation context', 'Treat liquidation price as an estimate, not a guarantee.'), step('Pending obligations', 'Check any uncovered carry, orders, TP/SL and reserved funds.'), step('Spendable balances', 'Available to Trade and Withdrawable have different checks.')] }], ['risk', 'accounts', 'currentCarry']),
@@ -194,17 +194,17 @@ export const diagrams = [
 ]
 
 export const evidence = {
-  index: ['config/perps/arbitrum-sepolia-v2.0.0.json', 'apps/backend/src/Plether/Pyth/Basket.hs:71-164', 'apps/frontend/src/utils/perps.ts:13,110-113'],
+  index: ['config/perps/arbitrum-sepolia-v2.1.0.json', 'apps/backend/src/Plether/Pyth/Basket.hs:71-164', 'apps/frontend/src/utils/perps.ts:13,110-113'],
   lpEpochs: ['docs/runbooks/lp-settlement-keeper.md:6-10', 'apps/frontend/src/pages/Vaults.tsx:2678-2705,3620,4245-4289'],
-  currentCarry: ['https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol#L95-L128', 'https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L608-L638'],
-  currentCloseFunding: ['https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L785-L815', 'https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/libraries/CfdEnginePlanLib.sol#L1036-L1133'],
-  currentCloseReward: ['https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/CfdEngine.sol#L612-L625', 'https://github.com/Plether-Fi/plether-core/blob/1209ca8a5b94a4fb6323c7c4585846ed93db3932/packages/perps/src/PositionProtectionBook.sol#L207-L212', 'apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty'],
+  currentCarry: ['https://github.com/Plether-Fi/plether-core/blob/d5ef9725f72f5e131272da27004266d8a3d51e50/packages/perps/src/libraries/MarginClearinghouseAccountingLib.sol', 'https://github.com/Plether-Fi/plether-core/blob/d5ef9725f72f5e131272da27004266d8a3d51e50/packages/perps/src/libraries/PositionRiskAccountingLib.sol#L43-L79'],
+  currentCloseFunding: ['https://github.com/Plether-Fi/plether-core/blob/d5ef9725f72f5e131272da27004266d8a3d51e50/packages/perps/src/libraries/CfdEnginePlanLib.sol'],
+  currentCloseReward: ['https://github.com/Plether-Fi/plether-core/blob/d5ef9725f72f5e131272da27004266d8a3d51e50/packages/perps/src/CfdEngine.sol', 'https://github.com/Plether-Fi/plether-core/blob/d5ef9725f72f5e131272da27004266d8a3d51e50/packages/perps/src/PositionProtectionBook.sol', 'apps/frontend/src/contracts/preparePerpsOrderV3.ts:closeBounty'],
   calendar: ['packages/perps/src/libraries/MarketCalendarLib.sol:marketStatus,newYorkMarketBoundary'],
-  orders: ['packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds', 'packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch', 'packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy'],
+  orders: ['packages/perps/src/OrderV3Types.sol:TerminalReason,PendingReason,ExecutionBounds', 'packages/perps/src/OrderRouterExecutionSidecar.sol:executeOrder,executeOrderBatch', 'packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy'],
   close: ['packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap'],
-  settlement: ['packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc'],
+  settlement: ['packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadAssets'],
   claim: ['packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts'],
-  risk: ['packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState'],
+  risk: ['packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeCurrentCarryIndex,computeIndexedCarryAssets,buildExactPriceRiskState'],
   waterfall: ['packages/perps/src/libraries/HousePoolWaterfallAccountingLib.sol:absorbLoss,distributeRevenue,paySeniorCoupon'],
   accounts: ['packages/perps/src/MarginClearinghouse.sol', 'packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw', 'https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/actions.ts'],
   aa: ['https://github.com/Plether-Fi/plether-core/blob/e35cf0e0e9b880e07812e36321dee98bd299dcbd/packages/perps-aa-client/src/orchestrator.ts', 'apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel', 'apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx'],

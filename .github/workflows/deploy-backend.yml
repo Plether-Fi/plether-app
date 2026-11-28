@@ -1583,7 +1583,7 @@ jobs:
         if: matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
         env:
           CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
-          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.0.0.json' }}
+          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.1.0.json' }}
         run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json "deployment-policy/$RELEASE_MANIFEST" "$CLOSE_ASSISTANCE_MODE"
 
       - name: Configure liquidation worker reliability controls
@@ -1623,7 +1623,7 @@ jobs:
         if: steps.task-definition-status.outputs.exists == 'true'
         env:
           TARGET_ENV: ${{ matrix.environment }}
-          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.0.0.json' }}
+          RELEASE_MANIFEST: ${{ matrix.environment == 'mainnet' && (vars.MAINNET_PERPS_CORE_MANIFEST || 'config/perps/arbitrum-one-v1.json') || 'config/perps/arbitrum-sepolia-v2.1.0.json' }}
         run: |
           aws ecs describe-task-definition \
             --task-definition "plether-$TARGET_ENV" \

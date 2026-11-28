@@ -1,44 +1,22 @@
 const CARRY_INDEX_SCALE = 10n ** 18n
-const BPS = 10_000n
-const SECONDS_PER_YEAR = 365n * 24n * 60n * 60n
 
-/** Mirrors PositionRiskAccountingLib's integer rounding using one onchain snapshot. */
+/** Mirrors PositionRiskAccountingLib's flat-carry integer rounding using one onchain snapshot. */
 export function calculatePendingCarryAssets({
   unsettledCarryAssets,
-  borrowBaseAssets,
+  maxProfitAssets,
   lastCarryIndex,
-  sideCarryIndex,
-  sideCarryTimestamp,
-  sideBorrowBaseAssets,
-  poolAssets,
-  baseCarryBps,
-  blockTimestamp,
+  currentCarryIndex,
 }: {
   unsettledCarryAssets?: bigint
-  borrowBaseAssets?: bigint
+  maxProfitAssets?: bigint
   lastCarryIndex?: bigint
-  sideCarryIndex?: bigint
-  sideCarryTimestamp?: bigint
-  sideBorrowBaseAssets?: bigint
-  poolAssets?: bigint
-  baseCarryBps?: bigint
-  blockTimestamp?: bigint
+  currentCarryIndex?: bigint
 }): bigint | undefined {
   if (
-    unsettledCarryAssets === undefined || borrowBaseAssets === undefined ||
-    lastCarryIndex === undefined || sideCarryIndex === undefined ||
-    sideCarryTimestamp === undefined || sideBorrowBaseAssets === undefined ||
-    poolAssets === undefined || baseCarryBps === undefined || blockTimestamp === undefined
+    unsettledCarryAssets === undefined || maxProfitAssets === undefined ||
+    lastCarryIndex === undefined || currentCarryIndex === undefined
   ) return undefined
 
-  const rawUtilizationBps = sideBorrowBaseAssets === 0n
-    ? 0n
-    : poolAssets === 0n ? BPS : sideBorrowBaseAssets * BPS / poolAssets
-  const utilizationBps = rawUtilizationBps > BPS ? BPS : rawUtilizationBps
-  const elapsed = blockTimestamp > sideCarryTimestamp ? blockTimestamp - sideCarryTimestamp : 0n
-  const currentIndex = sideCarryIndex +
-    baseCarryBps * utilizationBps * CARRY_INDEX_SCALE * elapsed / (SECONDS_PER_YEAR * BPS * BPS)
-  const indexDelta = currentIndex > lastCarryIndex ? currentIndex - lastCarryIndex : 0n
-
-  return unsettledCarryAssets + borrowBaseAssets * indexDelta / CARRY_INDEX_SCALE
+  const indexDelta = currentCarryIndex > lastCarryIndex ? currentCarryIndex - lastCarryIndex : 0n
+  return unsettledCarryAssets + maxProfitAssets * indexDelta / CARRY_INDEX_SCALE
 }

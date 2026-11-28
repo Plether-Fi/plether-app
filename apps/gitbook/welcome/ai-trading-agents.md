@@ -18,8 +18,8 @@ The same separation holds under stress: liquidations settle against the external
 
 Every trade faces the shared USDG liquidity pool backed by Senior and Junior LP tranches:
 
-* **Explicit, calculable costs:** `0.04%` protocol execution fee, quadratic VPI (`vpiFactor = 0.01`), `0.01–0.20 USDG` opening execution reward (`0 USDG` on reductions and closes), `0.20 USDG` TP/SL trigger bounty, `0.10%` liquidation charge (`50%` keeper / `50%` LPs, min `1.00 USDG`) and `50 bps` frozen-close spread during `oracleFrozen`. Every parameter is readable onchain.
-* **Carry instead of unpredictable peer-to-peer funding:** Conventional funding flips sign with crowd positioning. Plether's carry is a transparent utilization-scaled cost (`baseCarryBps = 5.00%` APR max × side utilization) paid on LP-financed payout capacity — always a cost, never a sign-flipping payment your model must forecast.
+* **Explicit, calculable costs:** `0.04%` protocol execution fee, quadratic VPI (`vpiFactor = 0.01`), `0.01–0.25 USDG` opening execution reward (`0 USDG` on reductions and closes), `0.25 USDG` TP/SL trigger bounty, `0.10%` liquidation charge (`50%` keeper / `50%` LPs, min `1.00 USDG`) and `50 bps` frozen-close spread during `oracleFrozen`. Every parameter is readable onchain.
+* **Carry instead of unpredictable peer-to-peer funding:** Conventional funding flips sign with crowd positioning. Plether's carry is a flat annual cost (`baseCarryBps = 5.00%` APR) on full bounded maximum-profit exposure, independent of pool utilization or margin — always a predictable cost, never a sign-flipping payment your model must forecast.
 * **Bounded solvency (`0.00–2.00`) & no counterparty ADL:** Every position has a finite worst-case payout, and pre-trade admission checks `maxLiability + 0.25% buffer <= effective pool backing` in O(1). Profitable positions are never forcibly trimmed by another trader's default.
 * **Lifetime VPI clamp:** Closing rebates can offset previously paid VPI on that position down to `0` (`charges − rebates >= 0`), preventing rebate-only extraction. Agents seeking LP economics supply capital through the Senior or Junior vaults instead. See [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
 
@@ -39,7 +39,7 @@ Per-order bounds compose cleanly with smart-account or session-key policies: the
 
 Plether exposes read-only HTTP endpoints alongside direct onchain Arbitrum Sepolia contract reads and writes:
 
-* **Direct onchain interaction (trading, LPing, keepers):** Autonomous agents submit transactions directly to the pinned Core v2.0.0 Arbitrum Sepolia contracts listed in [Deployments & live parameters](../reference/deployments-and-parameters.md) using a funded wallet (ETH for gas, plus Pyth update fees if self-finalizing).
+* **Direct onchain interaction (trading, LPing, keepers):** Autonomous agents submit transactions directly to the pinned Core v2.1.0 Arbitrum Sepolia contracts listed in [Deployments & live parameters](../reference/deployments-and-parameters.md) using a funded wallet (ETH for gas, plus Pyth update fees if self-finalizing).
 * **Important scope note on gas sponsorship & faucet:** The gas-sponsored AA gateway (`/api/perps/v1/aa/rpc`) and the MockUSDG faucet are **web-application paths** subject to web-origin policy and per-account/per-IP limits. Programmatic agents should plan to fund their own wallet with Arbitrum Sepolia ETH and MockUSDG rather than depending on web sponsorship.
 * **Read-only public Perps REST endpoints** (indexed state, candles, order tracking and cached Pyth payloads):
   * `GET /api/perps/basket/latest`, `/api/perps/basket/history`, `/api/perps/basket/candles`, `/api/perps/basket/candles/current` — current and historical `plDXY` basket observations and OHLC candles
@@ -53,6 +53,6 @@ All indexed REST responses are convenience views — always verify balances, pos
 
 ## What to build
 
-Plether's focused USDG-settled six-currency dollar basket fits systematic macro agents, automated USD-exposure hedging agents (accounting for basket basis risk) and risk-management agents monitoring health, carry utilization and weekly FX close-only windows. Design around delayed binding execution and Friday 16:30 – Sunday 17:15 America/New_York close-only schedules from day one.
+Plether's focused USDG-settled six-currency dollar basket fits systematic macro agents, automated USD-exposure hedging agents (accounting for basket basis risk) and risk-management agents monitoring health, pool capacity and weekly FX close-only windows. Design around delayed binding execution and Friday 16:50 – Sunday 17:05 America/New_York close-only schedules from day one.
 
 Continue with [Understanding the Plether Dollar Index](understanding-the-plether-dollar-index.md), [Keepers and permissionless execution](../how-plether-works/keepers-and-permissionless-execution.md) and the contract-level integration spec in [Working with AI Agents](https://github.com/Plether-Fi/plether-core/blob/master/packages/perps/WORKING_WITH_AI_AGENTS.md).

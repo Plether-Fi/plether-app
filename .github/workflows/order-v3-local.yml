@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Plether-Fi/plether-core
-          ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
+          ref: d5ef9725f72f5e131272da27004266d8a3d51e50
           path: .ci-order-v3-core
           submodules: recursive
           persist-credentials: false

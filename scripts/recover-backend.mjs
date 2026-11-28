@@ -287,7 +287,7 @@ async function main() {
     expectedConfigurationSha256: process.env.EXPECTED_CONFIGURATION_SHA256,
     confirmation: process.env.CONFIRMATION, operatorNote: process.env.OPERATOR_NOTE,
   }
-  const core = readJson('config/perps/arbitrum-sepolia-v2.0.0.json')
+  const core = readJson('config/perps/arbitrum-sepolia-v2.1.0.json')
   const catalog = readJson('config/operations/backend-recovery-releases.json')
   if (mode === 'inspect') {
     assert.ok(Object.hasOwn(SERVICES, input.service))

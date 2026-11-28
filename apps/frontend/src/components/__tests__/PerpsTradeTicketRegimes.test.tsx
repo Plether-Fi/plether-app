@@ -726,7 +726,7 @@ describe('perps ticket oracle regime matrix', () => {
 
     const preview = commitPreviewQueries()
     expect(preview.getByText('~0.0100%')).toBeInTheDocument()
-    expect(preview.getByText('0.1%')).toBeInTheDocument()
+    expect(preview.getByText('0.25%')).toBeInTheDocument()
     expect(preview.queryByText('Waived')).not.toBeInTheDocument()
     expect(preview.queryByText('Estimated frozen close spread')).not.toBeInTheDocument()
 
@@ -1128,7 +1128,7 @@ describe('perps ticket oracle regime matrix', () => {
     }))
 
     expect(within(dialog).getByText('Exact')).toBeInTheDocument()
-    expect(within(dialog).queryByText('0.1%')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('0.25%')).not.toBeInTheDocument()
     expect(
       within(dialog).getByText('Execution limit')
         .closest('div')?.querySelector('dd')?.textContent

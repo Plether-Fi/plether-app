@@ -8,7 +8,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 import { createOracleWakeupReceiver, createOracleWorker, loadOracleFeeds, resolveMarkRefreshGasLimit, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
 
-const release = JSON.parse(readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
+const release = JSON.parse(readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.1.0.json', import.meta.url), 'utf8'))
 const feeds = { pyth: `0x${'11'.repeat(20)}`, feedIds: Array.from({ length: 6 }, (_, i) => `0x${String(i + 1).padStart(64, '0')}`) }
 const healthErrorAbi = parseAbi([
   'error PletherOracle__NoAcceptedBasket()',

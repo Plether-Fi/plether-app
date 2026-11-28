@@ -4,7 +4,7 @@ A Plether trade has **one** oracle-derived[^oracle] execution price, surrounded 
 
 ![Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price.](../.gitbook/assets/diagrams/trading-price-and-settlement-costs.svg)
 
-## Cost summary (Core v2.0.0)
+## Cost summary (Core v2.1.0)
 
 | Item | Current live setting | When it applies | Economic destination |
 | --- | --- | --- | --- |
@@ -12,10 +12,10 @@ A Plether trade has **one** oracle-derived[^oracle] execution price, surrounded 
 | **Protocol execution fee** | **`0.04%`** (`4 bps`) of executed contract notional | Successful open, increase, reduction or voluntary close | Protocol treasury (when cash-credited) |
 | **Virtual Price Impact (VPI)** | Quadratic curve (`vpiFactor = 0.01`, `maxSkew = 40%`) | Successful position-size change | Trader ↔ liquidity pool (LPs[^lp]) |
 | **Frozen-close spread** | **`0.50%`** (`50 bps`) of reduced contract notional | Voluntary reduction/close during `oracleFrozen` | **100% liquidity pool (LPs)** |
-| **Cost of carry** | Up to **`5.00%` APR** (`baseCarryBps = 500`) × side utilization | Continuously on LP-backed borrow base | **100% liquidity pool (LPs)** |
-| **Opening execution reward** | **`0.01%`** (`1 bp`), clamped **`0.01–0.20 USDG`** | Opens and increases only (reserved at commit) | Executing/cleanup keeper[^keeper] (or treasury if liquidated first) |
+| **Cost of carry** | Flat **`5.00%` APR** (`baseCarryBps = 500`) | Continuously on full maximum-profit exposure | **100% liquidity pool (LPs)** |
+| **Opening execution reward** | **`0.01%`** (`1 bp`), clamped **`0.01–0.25 USDG`** | Opens and increases only (reserved at commit) | Executing/cleanup keeper[^keeper] (or treasury if liquidated first) |
 | **Close execution reward** | **`0 USDG`** | Reductions & full closes (including TP/SL closes) | None |
-| **TP/SL trigger reserve** | **`0.20 USDG`** | Armed TP/SL protection | Keeper triggering the protection |
+| **TP/SL trigger reserve** | **`0.25 USDG`** | Armed TP/SL protection | Keeper triggering the protection |
 | **Liquidation charge** | **`0.10%`** (`10 bps`), min **`1.00 USDG`** | Successful liquidation | **`50%` keeper** (min `0.50 USDG`) / **`50%` LPs** / **`0%` protocol** |
 | **Oracle confidence shift** | **`0.25×`** raw basket confidence | Opens, live/FAD[^fad] closes and liquidations | Embedded in fill price (not a separate fee) |
 
@@ -72,20 +72,18 @@ For `10,000 USDG` reduced contract notional, the spread is `50 USDG`. It applies
 
 ## Cost of carry
 
-Plether has **no peer-to-peer funding rate**. Instead, **carry[^carry]** compensates LPs for the portion of a position's bounded maximum payout backed by pool capital — so **both LONG USD and SHORT USD can pay carry at the same time**.
+Plether has **no peer-to-peer funding rate**. Instead, **carry[^carry]** is a flat annual fee paid to LPs on a position's full bounded maximum-profit exposure, independent of assigned margin, pool utilization, or direction — so **both LONG USD and SHORT USD pay carry at the same flat rate**.
 
 ```text
-Borrow base         = max(Position max bounded profit − Assigned position margin, 0)
-Side utilization    = min(Total same-side borrow base ÷ Pool assets, 100%)
-Effective side rate = Base carry rate (5.00% APR max) × Side utilization
-Position carry      ≈ Borrow base × Effective side rate × elapsed time ÷ 365 days
+Max bounded profit  = size × (2.00 − entry price) [LONG]  or  size × entry price [SHORT]
+Position carry      = Max bounded profit × Base carry rate (5.00% APR) × elapsed time ÷ 365 days
 ```
 
-* **Illustrative example:** With `25,000 USDG` max profit and `5,000 USDG` position margin (`Borrow base = 20,000 USDG`), `50%` side utilization and `5.00%` base rate (`2.50%` effective APR), 30 days of carry is `20,000 × 2.50% × 30 ÷ 365 ≈ 41.10 USDG`. If position margin covers 100% of max profit (`Borrow base = 0`), carry is `0`.
-* **Accrues continuously:** Follow wall-clock time 24/7 — including while a close is pending, during FAD, during weekend `oracleFrozen` closures and during stale periods.
-* **Checkpoints before state changes:** Realizes before increases, reductions, margin edits, deposits, withdrawals or parameter changes, collecting from **active position margin first, then eligible free USDG** (never from trader claims). Reducing position margin via carry lowers price equity immediately; adding position margin (**Add margin**) lowers future borrow base and future carry.
+* **Illustrative example:** With `25,000 USDG` max profit and `5.00%` flat base rate, 30 days of carry is `25,000 × 5.00% × 30 ÷ 365 ≈ 102.74 USDG`, regardless of assigned position margin or pool utilization.
+* **Accrues continuously:** Follows wall-clock time 24/7 — including while a close is pending, during FAD, during weekend `oracleFrozen` closures and during stale periods.
+* **Checkpoints before state changes:** Realizes before increases, reductions, margin edits, deposits, withdrawals or parameter changes, collecting from **active position margin first, then eligible free USDG** (never from trader claims). Reducing position margin via carry lowers price equity immediately; adding position margin (**Add margin**) raises price-loss backing without lowering future carry.
 
-![For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
+![Carry accrues at a flat annual rate on full maximum-profit exposure, independently of assigned margin or pool utilization. Adding assigned PnL pledge raises price equity without lowering future carry.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
 
 ## Putting it together: opens, closes and liquidations
 
@@ -102,8 +100,8 @@ Position carry      ≈ Borrow base × Effective side rate × elapsed time ÷ 36
 
 ## The order execution reward
 
-* **Opens and increases:** Reserve `1 bp` (`0.01%`) of commit notional clamped to **`0.01–0.20 USDG`** from free USDG. Paid to the keeper on execution, terminal failure or expiry cleanup — or forfeited to the protocol treasury if liquidation clears the order first.
-* **Reductions and full closes (including TP/SL closes):** **`0 USDG`** execution reward in every outcome. (TP/SL separately reserves `0.20 USDG` to compensate the keeper that triggers the protection.)
+* **Opens and increases:** Reserve `1 bp` (`0.01%`) of commit notional clamped to **`0.01–0.25 USDG`** from free USDG. Paid to the keeper on execution, terminal failure or expiry cleanup — or forfeited to the protocol treasury if liquidation clears the order first.
+* **Reductions and full closes (including TP/SL closes):** **`0 USDG`** execution reward in every outcome. (TP/SL separately reserves `0.25 USDG` to compensate the keeper that triggers the protection.)
 
 ## Oracle confidence adjustment
 

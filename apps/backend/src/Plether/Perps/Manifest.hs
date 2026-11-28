@@ -23,6 +23,8 @@ module Plether.Perps.Manifest
   , seniorVaultCodeHash
   , juniorVaultAddress
   , juniorVaultCodeHash
+  , cfdOrderAdmissionValidatorAddress
+  , cfdOrderAdmissionValidatorCodeHash
   , cfdOrderPolicyEvaluatorAddress
   , cfdOrderPolicyEvaluatorCodeHash
   , orderLifecycleBookAddress
@@ -122,6 +124,12 @@ juniorVaultAddress = $(manifestText ["contracts", "juniorVault", "address"])
 
 juniorVaultCodeHash :: Text
 juniorVaultCodeHash = $(manifestText ["contracts", "juniorVault", "runtimeCodeHash"])
+
+cfdOrderAdmissionValidatorAddress :: Text
+cfdOrderAdmissionValidatorAddress = $(manifestText ["contracts", "cfdOrderAdmissionValidator", "address"])
+
+cfdOrderAdmissionValidatorCodeHash :: Text
+cfdOrderAdmissionValidatorCodeHash = $(manifestText ["contracts", "cfdOrderAdmissionValidator", "runtimeCodeHash"])
 
 cfdOrderPolicyEvaluatorAddress :: Text
 cfdOrderPolicyEvaluatorAddress = $(manifestText ["contracts", "cfdOrderPolicyEvaluator", "address"])

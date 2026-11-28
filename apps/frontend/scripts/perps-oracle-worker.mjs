@@ -30,9 +30,9 @@ export function resolveMarkRefreshGasLimit(estimatedGas) {
 }
 
 const DEFAULT_SEPOLIA_ADDRESSES = {
-  orderRouter: '0x918663d6da8cb33b325a04c4a5e8c51d42f3b444',
-  pletherOracle: '0x4f2c62a0e03657f52c633c19c11f88d8f0897bb2',
-  perpsPublicLens: '0xe1c9c8d3c068c49d933396c9591a55126f29d10e',
+  orderRouter: '0xB4c7548ba764e22107964637e31558af724c1c3E',
+  pletherOracle: '0x3BAc571AF4f9F6535696F82460EFE56A348C91B2',
+  perpsPublicLens: '0x3763AE4124B6b9d6E5caCFAd3b4f1d27f4b44f44',
 }
 
 function resolveRuntimeTarget() {

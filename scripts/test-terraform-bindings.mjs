@@ -30,7 +30,7 @@ try {
     const module = join(tree, 'infra/terraform')
     mkdirSync(join(module, 'tests'), { recursive: true })
     mkdirSync(join(tree, 'config/perps'), { recursive: true })
-    copyFileSync(join(source, 'tests/fixtures/deployed-core.json'), join(tree, 'config/perps/arbitrum-sepolia-v2.0.0.json'))
+    copyFileSync(join(source, 'tests/fixtures/deployed-core.json'), join(tree, 'config/perps/arbitrum-sepolia-v2.1.0.json'))
     copyFileSync(join(root, 'config/rpc-log-range-policy.json'), join(tree, 'config/rpc-log-range-policy.json'))
     if (scope === 'guard-unit') {
       // Execute the entire actual target guard, with only its AA activation

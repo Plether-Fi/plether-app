@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="997" viewBox="0 0 640 997" role="img" aria-labelledby="weekly-market-state-schedule-title weekly-market-state-schedule-desc" focusable="false">
 <title id="weekly-market-state-schedule-title">The FX weekend, in New York time</title>
-<desc id="weekly-market-state-schedule-desc">Regular weekly phases in America/New_York: open until Friday 16:30, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:15. UTC offsets change with US daylight saving. 17:00 New York = 21:00 UTC in daylight time, 22:00 UTC in standard time. Sequence is not drawn to a time scale; closure-day overrides and oracle policy still apply.</desc>
+<desc id="weekly-market-state-schedule-desc">Regular weekly phases in America/New_York: open until Friday 16:50, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:05. UTC offsets change with US daylight saving. 17:00 New York = 21:00 UTC in daylight time, 22:00 UTC in standard time. Sequence is not drawn to a time scale; closure-day overrides and oracle policy still apply.</desc>
 <style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
 <rect width="640" height="997" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · MARKET CALENDAR</text>
@@ -12,30 +12,30 @@
 <rect x="52" y="216" width="122" height="46" rx="6" fill="#00FF99" stroke="none"/>
 <text x="113" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="118" text-anchor="middle">Open</text>
 <rect x="178" y="216" width="72" height="46" rx="6" fill="#F7D977" stroke="none"/>
-<text x="214" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="68" text-anchor="middle">30m</text>
+<text x="214" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="68" text-anchor="middle">10m</text>
 <rect x="254" y="216" width="162" height="46" rx="6" fill="#FF512F" stroke="none"/>
 <text x="335" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="158" text-anchor="middle">Frozen</text>
 <rect x="420" y="216" width="72" height="46" rx="6" fill="#F7D977" stroke="none"/>
-<text x="456" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="68" text-anchor="middle">15m</text>
+<text x="456" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="68" text-anchor="middle">5m</text>
 <rect x="496" y="216" width="92" height="46" rx="6" fill="#00FF99" stroke="none"/>
 <text x="542" y="248" font-size="22" font-weight="700" fill="#250917" data-max-width="88" text-anchor="middle">Open</text>
 <path d="M176 264 L176 278" stroke="#F7D977" stroke-width="2" fill="none"/>
 <path d="M252 264 L252 310" stroke="#FF512F" stroke-width="2" fill="none"/>
 <path d="M418 264 L418 278" stroke="#FF512F" stroke-width="2" fill="none"/>
 <path d="M494 264 L494 310" stroke="#00FF99" stroke-width="2" fill="none"/>
-<text x="176" y="302" font-size="22" font-weight="700" fill="#F7D977" data-max-width="130" text-anchor="middle">Fri 16:30</text>
+<text x="176" y="302" font-size="22" font-weight="700" fill="#F7D977" data-max-width="130" text-anchor="middle">Fri 16:50</text>
 <text x="252" y="334" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="130" text-anchor="middle">Fri 17:00</text>
 <text x="418" y="302" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="130" text-anchor="middle">Sun 17:00</text>
-<text x="480" y="334" font-size="22" font-weight="700" fill="#00FF99" data-max-width="130" text-anchor="middle">Sun 17:15</text>
+<text x="480" y="334" font-size="22" font-weight="700" fill="#00FF99" data-max-width="130" text-anchor="middle">Sun 17:05</text>
 <circle cx="47" cy="395" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
 <circle cx="47" cy="395" r="5" fill="#00FF99"/>
 <text x="78" y="404" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">Open</text>
-<text x="78" y="437" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sunday 17:15 → Friday 16:30</text>
+<text x="78" y="437" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sunday 17:05 → Friday 16:50</text>
 <path d="M47 414 V461 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 <circle cx="47" cy="484" r="13" fill="#3B212D" stroke="#F7D977" stroke-width="2.5"/>
 <circle cx="47" cy="484" r="5" fill="#F7D977"/>
 <text x="78" y="493" font-size="24" font-weight="700" fill="#F7D977" data-max-width="530">Close-only · live oracle</text>
-<text x="78" y="526" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Friday 16:30 → 17:00 · 30 minutes</text>
+<text x="78" y="526" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Friday 16:50 → 17:00 · 10 minutes</text>
 <path d="M47 503 V550 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 <circle cx="47" cy="573" r="13" fill="#3B212D" stroke="#FF512F" stroke-width="2.5"/>
 <circle cx="47" cy="573" r="5" fill="#FF512F"/>
@@ -45,12 +45,12 @@
 <circle cx="47" cy="662" r="13" fill="#3B212D" stroke="#F7D977" stroke-width="2.5"/>
 <circle cx="47" cy="662" r="5" fill="#F7D977"/>
 <text x="78" y="671" font-size="24" font-weight="700" fill="#F7D977" data-max-width="530">Close-only · live oracle</text>
-<text x="78" y="704" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sunday 17:00 → 17:15 · 15 minutes</text>
+<text x="78" y="704" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sunday 17:00 → 17:05 · 5 minutes</text>
 <path d="M47 681 V728 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 <circle cx="47" cy="751" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
 <circle cx="47" cy="751" r="5" fill="#00FF99"/>
 <text x="78" y="760" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">Open again</text>
-<text x="78" y="793" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sunday 17:15, if no override applies.</text>
+<text x="78" y="793" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Sunday 17:05, if no override applies.</text>
 <rect x="32" y="817" width="576" height="148" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
 <rect x="36" y="827" width="5" height="128" rx="3" fill="#FF512F" stroke="none"/>
 <text x="56" y="851" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">17:00 New York = 21:00 UTC in daylight time,</text>

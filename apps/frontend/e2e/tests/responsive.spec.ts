@@ -2,7 +2,7 @@ import type { Locator, Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { expect, test } from '../fixtures/wallet'
 
-const release = JSON.parse(readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
+const release = JSON.parse(readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.1.0.json', import.meta.url), 'utf8'))
 const isPreparedRelease = release.release.phase === 'prepared'
 const perpsHeading = isPreparedRelease
   ? `${release.settlementToken.symbol} perps are being prepared`

@@ -71,7 +71,7 @@ export function migrateDiagramEvidence(text, sourceUrl) {
 }
 
 export function migrateSources(directory, record) {
-  const { release } = readJson(path.join(directory, 'config/perps/arbitrum-sepolia-v2.0.0.json'))
+  const { release } = readJson(path.join(directory, 'config/perps/arbitrum-sepolia-v2.1.0.json'))
   assert.ok(['deployed', 'seeded', 'active'].includes(release.phase), 'Registry migration documentation requires verified deployed evidence')
   const edit = (file, change) => {
     const target = path.join(directory, file)

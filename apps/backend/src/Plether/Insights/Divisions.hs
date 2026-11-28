@@ -39,8 +39,10 @@ divisionReleaseForWeek start
   | start < firstWeekStart || (start-firstWeekStart) `mod` weekSeconds /= 0 = Nothing
   | start < 1793566800 = Just $ DivisionRelease
       "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8" "v1.3.1" "USDC"
-  | otherwise = Just $ DivisionRelease
+  | start < 1795986000 = Just $ DivisionRelease
       "0x918663d6da8cb33b325a04c4a5e8c51d42f3b444" "v2.0.0" "USDG"
+  | otherwise = Just $ DivisionRelease
+      "0xb4c7548ba764e22107964637e31558af724c1c3e" "v2.1.0" "USDG"
 
 publicationTime :: Integer -> Integer
 publicationTime start = start + weekSeconds + 3 * 3600

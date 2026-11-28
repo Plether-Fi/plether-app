@@ -1233,6 +1233,50 @@
     },
     {
       "type": "function",
+      "name": "consumePositionCarry",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "lossAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "recipient",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "includeProtected",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "marginConsumedAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "freeSettlementConsumedAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "uncoveredAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "consumeSettlementLoss",
       "inputs": [
         {
@@ -1359,6 +1403,25 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "eligiblePositionMarginAssets",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1705,6 +1768,16 @@
               "name": "freeSettlementAssets",
               "type": "uint256",
               "internalType": "uint256"
+            },
+            {
+              "name": "protectedPledgeAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "protectedReleasedAssets",
+              "type": "uint256",
+              "internalType": "uint256"
             }
           ]
         }
@@ -1733,6 +1806,24 @@
     {
       "type": "function",
       "name": "lockPositionMargin",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amountAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "lockPositionTopUp",
       "inputs": [
         {
           "name": "account",
@@ -1899,6 +1990,30 @@
       "outputs": [
         {
           "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "protectedTopUps",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pledgedAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "releasedAssets",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -2074,6 +2189,19 @@
           "internalType": "uint256"
         }
       ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "releaseProtectedTopUp",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
       "stateMutability": "nonpayable"
     },
     {
@@ -2661,6 +2789,31 @@
     },
     {
       "type": "event",
+      "name": "ProtectedTopUpUpdated",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "pledgedAssets",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "releasedAssets",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "ReservationConsumed",
       "inputs": [
         {
@@ -3137,6 +3290,11 @@
             },
             {
               "name": "basketMaxConfidenceRatioBps",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "minOrderSettlementDelay",
               "type": "uint256",
               "internalType": "uint256"
             },
@@ -5431,6 +5589,11 @@
     },
     {
       "type": "error",
+      "name": "OrderRouter__ImpossibleExecutionRequest",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "OrderRouter__InsufficientFreeEquity",
       "inputs": []
     },
@@ -5936,6 +6099,25 @@
               "internalType": "bytes32"
             }
           ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "closeRequiresFullExit",
+      "inputs": [
+        {
+          "name": "orderId",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -6878,6 +7060,61 @@
     },
     {
       "type": "function",
+      "name": "recordCommitment",
+      "inputs": [
+        {
+          "name": "orderId",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "effects",
+          "type": "tuple",
+          "internalType": "struct CfdEnginePlanTypes.CloseCommitment",
+          "components": [
+            {
+              "name": "carryCollectedAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "carryOutstandingAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "bountyFromFreeAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "settlementBeforeAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "settlementAfterAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "freeSettlementAfterAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "isClose",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "registerPending",
       "inputs": [
         {
@@ -7217,6 +7454,42 @@
               "internalType": "bytes32"
             }
           ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "unexpiredCloseLots",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "longLots",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "shortLots",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "unexpiredOpenLots",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "longLots",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "shortLots",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -9058,7 +9331,7 @@
               "internalType": "uint64"
             },
             {
-              "name": "positionBorrowBaseAssets",
+              "name": "carryIndex",
               "type": "uint256",
               "internalType": "uint256"
             },
@@ -9091,16 +9364,6 @@
                   "name": "totalMargin",
                   "type": "uint256",
                   "internalType": "uint256"
-                },
-                {
-                  "name": "borrowBaseAssets",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "carryIndex",
-                  "type": "uint256",
-                  "internalType": "uint256"
                 }
               ]
             },
@@ -9126,16 +9389,6 @@
                 },
                 {
                   "name": "totalMargin",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "borrowBaseAssets",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "carryIndex",
                   "type": "uint256",
                   "internalType": "uint256"
                 }
@@ -9241,12 +9494,32 @@
               "internalType": "uint256"
             },
             {
+              "name": "protectedPositionMarginAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "protectedReleasedMarginAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
               "name": "unsettledCarryAssets",
               "type": "uint256",
               "internalType": "uint256"
             },
             {
               "name": "totalTraderClaimBalanceAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalPositiveVpiAccruedAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalNegativeVpiAccruedAssets",
               "type": "uint256",
               "internalType": "uint256"
             },
@@ -10068,7 +10341,7 @@
               "internalType": "uint64"
             },
             {
-              "name": "positionBorrowBaseAssets",
+              "name": "carryIndex",
               "type": "uint256",
               "internalType": "uint256"
             },
@@ -10101,16 +10374,6 @@
                   "name": "totalMargin",
                   "type": "uint256",
                   "internalType": "uint256"
-                },
-                {
-                  "name": "borrowBaseAssets",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "carryIndex",
-                  "type": "uint256",
-                  "internalType": "uint256"
                 }
               ]
             },
@@ -10136,16 +10399,6 @@
                 },
                 {
                   "name": "totalMargin",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "borrowBaseAssets",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "carryIndex",
                   "type": "uint256",
                   "internalType": "uint256"
                 }
@@ -10251,12 +10504,32 @@
               "internalType": "uint256"
             },
             {
+              "name": "protectedPositionMarginAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "protectedReleasedMarginAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
               "name": "unsettledCarryAssets",
               "type": "uint256",
               "internalType": "uint256"
             },
             {
               "name": "totalTraderClaimBalanceAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalPositiveVpiAccruedAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalNegativeVpiAccruedAssets",
               "type": "uint256",
               "internalType": "uint256"
             },
@@ -10830,6 +11103,138 @@
       "stateMutability": "pure"
     },
     {
+      "type": "function",
+      "name": "validateOpenCommit",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "request",
+          "type": "tuple",
+          "internalType": "struct OrderV3Types.OrderRequest",
+          "components": [
+            {
+              "name": "clientOrderId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "side",
+              "type": "uint8",
+              "internalType": "enum CfdTypes.Side"
+            },
+            {
+              "name": "sizeDelta",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "marginDelta",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "targetPrice",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "isClose",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "bounds",
+              "type": "tuple",
+              "internalType": "struct OrderV3Types.ExecutionBounds",
+              "components": [
+                {
+                  "name": "submitBy",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "executionWindowSeconds",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "allowedExecutionModes",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "expectedConfigHash",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                },
+                {
+                  "name": "maxExecutionBountyAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "maxExecutionNotionalAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "maxGrossAccountDebitAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "maxActionChargeAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "maxExplicitFeesAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "maxPostPositionSize",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "minPostSettlementBalanceAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "minPostPositionEquityAssets",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "maxPostLeverageBps",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "commitPrice",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "executionBountyAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "view"
+    },
+    {
       "type": "error",
       "name": "CfdEngine__TypedOrderFailure",
       "inputs": [
@@ -10932,6 +11337,33 @@
           "name": "orderId",
           "type": "uint64",
           "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "CfdOrderPolicyEvaluator__SlippageToleranceTooTight",
+      "inputs": [
+        {
+          "name": "targetPrice",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "requiredBound",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OrderRouter__PredictableOpenInvalid",
+      "inputs": [
+        {
+          "name": "code",
+          "type": "uint8",
+          "internalType": "uint8"
         }
       ]
     }
@@ -11107,6 +11539,23 @@
               "name": "fadRunwaySeconds",
               "type": "uint256",
               "internalType": "uint256"
+            },
+            {
+              "name": "marketClosures",
+              "type": "tuple[]",
+              "internalType": "struct ICfdEngineAdminHost.MarketClosure[]",
+              "components": [
+                {
+                  "name": "startTime",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "endTime",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             }
           ]
         }
@@ -11219,6 +11668,11 @@
               "name": "settlementBufferBps",
               "type": "uint256",
               "internalType": "uint256"
+            },
+            {
+              "name": "minOpenSlippageToleranceBps",
+              "type": "uint256",
+              "internalType": "uint256"
             }
           ]
         }
@@ -11235,6 +11689,32 @@
     },
     {
       "type": "function",
+      "name": "carryIndex",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "carryTimestamp",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "checkWithdraw",
       "inputs": [
         {
@@ -11248,7 +11728,7 @@
     },
     {
       "type": "function",
-      "name": "checkpointCarryIndexes",
+      "name": "checkpointCarryIndex",
       "inputs": [],
       "outputs": [],
       "stateMutability": "nonpayable"
@@ -11305,6 +11785,19 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "currentCarryIndex",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -11496,6 +11989,56 @@
     },
     {
       "type": "function",
+      "name": "marketClosureCount",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "marketClosures",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "startTime",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "endTime",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "minOpenSlippageToleranceBps",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "orderRouter",
       "inputs": [],
       "outputs": [
@@ -11607,7 +12150,7 @@
       ],
       "outputs": [
         {
-          "name": "borrowBaseAssets",
+          "name": "maxProfitAssets",
           "type": "uint256",
           "internalType": "uint256"
         },
@@ -11858,10 +12401,23 @@
     },
     {
       "type": "function",
+      "name": "releaseProtectedTopUp",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "renounceOwnership",
       "inputs": [],
       "outputs": [],
-      "stateMutability": "nonpayable"
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -12315,63 +12871,6 @@
     },
     {
       "type": "function",
-      "name": "sideBorrowBaseAssets",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "sideCarryIndex",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "sideCarryTimestamp",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint64",
-          "internalType": "uint64"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "sides",
       "inputs": [
         {
@@ -12474,6 +12973,32 @@
     },
     {
       "type": "function",
+      "name": "totalNegativeVpiAccruedAssets",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalPositiveVpiAccruedAssets",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "totalTraderClaimBalanceAssets",
       "inputs": [],
       "outputs": [
@@ -12553,6 +13078,24 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "vpiAccountingSnapshot",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "positiveVpiAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "negativeVpiAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "event",
@@ -13072,6 +13615,11 @@
     {
       "type": "error",
       "name": "CfdEngine__PartialCloseUnhealthy",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "CfdEngine__PendingOrdersExist",
       "inputs": []
     },
     {
@@ -14052,6 +14600,24 @@
     {
       "type": "function",
       "name": "payOut",
+      "inputs": [
+        {
+          "name": "recipient",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "payOutTraderClaim",
       "inputs": [
         {
           "name": "recipient",
@@ -15186,6 +15752,11 @@
     },
     {
       "type": "error",
+      "name": "HousePool__UnassignedAssetsUnderbacked",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "HousePool__Unauthorized",
       "inputs": []
     },
@@ -15337,6 +15908,11 @@
             },
             {
               "name": "basketMaxConfidenceRatioBps",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "minOrderSettlementDelay",
               "type": "uint256",
               "internalType": "uint256"
             },
@@ -15790,6 +16366,19 @@
     },
     {
       "type": "function",
+      "name": "minOrderSettlementDelay",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "orderExecutionStalenessLimit",
       "inputs": [],
       "outputs": [
@@ -15945,6 +16534,11 @@
               "name": "oldestPublishTime",
               "type": "uint64",
               "internalType": "uint64"
+            },
+            {
+              "name": "componentPublishTimes",
+              "type": "uint256[]",
+              "internalType": "uint256[]"
             }
           ]
         }
@@ -16036,6 +16630,11 @@
               "name": "oldestPublishTime",
               "type": "uint64",
               "internalType": "uint64"
+            },
+            {
+              "name": "componentPublishTimes",
+              "type": "uint256[]",
+              "internalType": "uint256[]"
             }
           ]
         }
@@ -16558,6 +17157,11 @@
     },
     {
       "type": "error",
+      "name": "PletherOracle__InvalidBatchCacheTimes",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "PletherOracle__InvalidConfidenceConfig",
       "inputs": []
     },
@@ -16876,6 +17480,19 @@
           "name": "liquidatable",
           "type": "bool",
           "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "orderAdmissionValidator",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract ICfdOrderAdmissionValidator"
         }
       ],
       "stateMutability": "view"
@@ -17330,6 +17947,50 @@
     },
     {
       "type": "function",
+      "name": "previewOpenCommitRevertCode",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "side",
+          "type": "uint8",
+          "internalType": "enum CfdTypes.Side"
+        },
+        {
+          "name": "sizeDelta",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "marginDelta",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "executionBountyAssets",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "code",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "previewOpenFailurePolicyCategory",
       "inputs": [
         {
@@ -17402,6 +18063,172 @@
           "name": "code",
           "type": "uint8",
           "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "previewOpenWithEligibleEquity",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "side",
+          "type": "uint8",
+          "internalType": "enum CfdTypes.Side"
+        },
+        {
+          "name": "sizeDelta",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "marginDelta",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "preview",
+          "type": "tuple",
+          "internalType": "struct ICfdEngineTypes.OpenPreview",
+          "components": [
+            {
+              "name": "valid",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "invalidReason",
+              "type": "uint8",
+              "internalType": "enum CfdEnginePlanTypes.OpenRevertCode"
+            },
+            {
+              "name": "failureCategory",
+              "type": "uint8",
+              "internalType": "enum CfdEnginePlanTypes.OpenFailurePolicyCategory"
+            },
+            {
+              "name": "executionPrice",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "sizeDelta",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "notionalAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "marginDeltaAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "vpiAssets",
+              "type": "int256",
+              "internalType": "int256"
+            },
+            {
+              "name": "executionFeeAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "tradeCostAssets",
+              "type": "int256",
+              "internalType": "int256"
+            },
+            {
+              "name": "poolRebatePayoutAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "pendingCarryAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "initialMarginRequirementAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "maintenanceMarginAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "postSize",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "postMarginAssets",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "postEntryPrice",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "postVpiAccrued",
+              "type": "int256",
+              "internalType": "int256"
+            },
+            {
+              "name": "postUnrealizedPnlAssets",
+              "type": "int256",
+              "internalType": "int256"
+            },
+            {
+              "name": "postEquityAssets",
+              "type": "int256",
+              "internalType": "int256"
+            },
+            {
+              "name": "postHealthBps",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "postLiquidatable",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "hasLiquidationPrice",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "liquidationPrice",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "postEligibleEquityAssets",
+          "type": "int256",
+          "internalType": "int256"
         }
       ],
       "stateMutability": "view"
@@ -17726,6 +18553,11 @@
               "name": "limitingReason",
               "type": "uint8",
               "internalType": "enum CfdEnginePlanTypes.OpenRevertCode"
+            },
+            {
+              "name": "postEligibleEquityAssets",
+              "type": "int256",
+              "internalType": "int256"
             }
           ]
         }
@@ -21052,7 +21884,7 @@
           "internalType": "uint256"
         }
       ],
-      "stateMutability": "pure"
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -22907,6 +23739,11 @@
     },
     {
       "type": "error",
+      "name": "TrancheVault__ShareSupplyLimitExceeded",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TrancheVault__TerminallyWiped",
       "inputs": []
     },
@@ -24306,6 +25143,11 @@
     {
       "type": "error",
       "name": "OrderRouter__GlobalQueueCorrupt",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "OrderRouter__ImpossibleExecutionRequest",
       "inputs": []
     },
     {

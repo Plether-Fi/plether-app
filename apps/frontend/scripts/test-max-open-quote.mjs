@@ -16,7 +16,7 @@ Usage:
 
 Environment:
   ARB_SEPOLIA_RPC_URL  Required Arbitrum Sepolia archive RPC URL.
-  MAX_OPEN_BLOCK      Optional block; defaults to 326380770.
+  MAX_OPEN_BLOCK      Optional block; defaults to 333358907.
   MAX_OPEN_ACCOUNT    Optional funded sample; defaults to the public operator\'s
                       0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc account.
 
@@ -29,9 +29,9 @@ const rpc = process.env.ARB_SEPOLIA_RPC_URL
 assert.ok(rpc, 'Set ARB_SEPOLIA_RPC_URL to an Arbitrum Sepolia archive RPC')
 const account = process.env.MAX_OPEN_ACCOUNT ?? '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
 assert.ok(isAddress(account), 'MAX_OPEN_ACCOUNT must be an address')
-const blockNumber = BigInt(process.env.MAX_OPEN_BLOCK ?? '326380770')
+const blockNumber = BigInt(process.env.MAX_OPEN_BLOCK ?? '333358907')
 const root = new URL('../../../', import.meta.url)
-const manifest = JSON.parse(await readFile(new URL('config/perps/arbitrum-sepolia-v2.0.0.json', root), 'utf8'))
+const manifest = JSON.parse(await readFile(new URL('config/perps/arbitrum-sepolia-v2.1.0.json', root), 'utf8'))
 assert.ok(blockNumber >= BigInt(manifest.release.deploymentBlock), 'Block predates the pinned deployment')
 const at = name => manifest.contracts[name].address
 

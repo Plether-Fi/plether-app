@@ -223,7 +223,12 @@ describe('protocol API formatters and health helpers', () => {
   it('builds pinned GitHub source links for protocol contracts and commits', () => {
     const commit = '1209ca8a5b94a4fb6323c7c4585846ed93db3932'
 
-    expect(Object.keys(PROTOCOL_CONTRACT_SOURCE_PATHS)).toHaveLength(29)
+    expect(Object.keys(PROTOCOL_CONTRACT_SOURCE_PATHS)).toHaveLength(30)
+    expect(protocolContractGitHubUrl({ key: 'cfdOrderAdmissionValidator' }, commit)).toEqual({
+      url: `https://github.com/Plether-Fi/plether-core/blob/${commit}/packages/perps/src/CfdOrderAdmissionValidator.sol`,
+      path: 'packages/perps/src/CfdOrderAdmissionValidator.sol',
+      ref: commit,
+    })
     expect(protocolContractGitHubUrl({ key: 'cfdEngine' }, commit)).toEqual({
       url: `https://github.com/Plether-Fi/plether-core/blob/${commit}/packages/perps/src/CfdEngine.sol`,
       path: 'packages/perps/src/CfdEngine.sol',

@@ -81,17 +81,21 @@ validateLatestPublishTimes fetchedAt maxAge publishTimes = do
 
 validateRevealWindow
   :: Integer -- commit time
+  -> Integer -- minimum order settlement delay
   -> Integer -- order settlement window
   -> [Integer]
   -> Either Text (Integer, Integer)
-validateRevealWindow commitTime settlementWindow publishTimes = do
-  let minAllowed = commitTime + 1
-      maxAllowed = commitTime + settlementWindow
-  (minimumTs, maximumTs) <- validatePublishTimes publishTimes
-  if minimumTs < minAllowed
-    then Left "payload publish time is before the reveal window"
-    else if minimumTs > minAllowed
-      then Left "payload publish time is after the first reveal tick"
-      else if maximumTs > maxAllowed
-        then Left "payload publish time is after the reveal window"
-        else Right (minimumTs, maximumTs)
+validateRevealWindow commitTime minSettlementDelay settlementWindow publishTimes = do
+  if minSettlementDelay <= 0 || minSettlementDelay > settlementWindow
+    then Left "invalid order settlement delay policy"
+    else do
+      let minAllowed = commitTime + minSettlementDelay
+          maxAllowed = commitTime + settlementWindow
+      (minimumTs, maximumTs) <- validatePublishTimes publishTimes
+      if minimumTs < minAllowed
+        then Left "payload publish time is before the reveal window"
+        else if minimumTs > minAllowed
+          then Left "payload publish time is after the first reveal tick"
+          else if maximumTs > maxAllowed
+            then Left "payload publish time is after the reveal window"
+            else Right (minimumTs, maximumTs)

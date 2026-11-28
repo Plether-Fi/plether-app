@@ -91,7 +91,7 @@ jobs:
             echo "default_chain_id=421614" >> "$GITHUB_OUTPUT"
             echo "perps_aa_manifest_url=/perps-aa-manifest.json" >> "$GITHUB_OUTPUT"
             echo "domain=app.sepolia.plether.com" >> "$GITHUB_OUTPUT"
-            echo "core_manifest=config/perps/arbitrum-sepolia-v2.0.0.json" >> "$GITHUB_OUTPUT"
+            echo "core_manifest=config/perps/arbitrum-sepolia-v2.1.0.json" >> "$GITHUB_OUTPUT"
           else
             echo "project=plether" >> "$GITHUB_OUTPUT"
             echo "directory=dist" >> "$GITHUB_OUTPUT"

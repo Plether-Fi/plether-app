@@ -31,7 +31,7 @@ Plether never fills an order in the same block it is submitted:
 1. You review the trade preview and sign the sponsored commitment.
 2. The order joins a global **first-in, first-out (FIFO)** queue. Once confirmed onchain, it is **binding and cannot be cancelled**.
 3. A permissionless keeper finalizes the order using the **first eligible Pyth observation published after commitment** (or bounded frozen-market rules during weekend FX closures).
-4. If the price stays within your acceptable-price limit and passes risk checks, the trade executes; otherwise it fails cleanly or expires after 60 seconds.
+4. If the price stays within your acceptable-price limit and passes risk checks, the trade executes; otherwise it fails cleanly or expires after 30 seconds.
 
 This prevents queued orders from becoming free options and keeps keepers from cherry-picking favorable prices. See [Oracle & execution model](../how-plether-works/oracle-and-execution-model.md) and [How orders execute](../how-plether-works/how-orders-execute.md).
 
@@ -43,7 +43,7 @@ This prevents queued orders from becoming free options and keeps keepers from ch
 | **Execution fee** | Protocol fee (`0.04%` of executed contract notional) on size changes |
 | **Virtual Price Impact (VPI)** | Separate USDG charge when adding to pool skew, or a bounded rebate when reducing skew |
 | **Carry** | Continuous time-based cost for LP-backed payout capacity—not trader-to-trader funding; both LONG and SHORT can pay carry at once, including over weekends |
-| **Execution reward** | Small USDG bounty (`0.01–0.20 USDG`) reserved on **opens and increases** for the keeper; **reductions and closes have zero execution reward** |
+| **Execution reward** | Small USDG bounty (`0.01–0.25 USDG`) reserved on **opens and increases** for the keeper; **reductions and closes have zero execution reward** |
 
 If position equity reaches or falls below **maintenance margin** (or if carry or VPI reserves go uncovered), a keeper can execute a **full liquidation**. See [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md) and [Margin, leverage and liquidation](../how-plether-works/margin-leverage-and-liquidation.md).
 
@@ -72,8 +72,8 @@ Global FX closes from Friday **17:00** to Sunday **17:00** New York time (includ
 
 | Market state | What is allowed |
 | --- | --- |
-| **Open** (Sun 17:15 – Fri 16:30 NY) | Normal opens, increases, closes, liquidations, and LP actions |
-| **Close-only · live oracle** (Fri 16:30–17:00 & Sun 17:00–17:15 NY) | New risk blocked; maintenance margin rises to `3.00%`; closes and liquidations use live pricing |
+| **Open** (Sun 17:05 – Fri 16:50 NY) | Normal opens, increases, closes, liquidations, and LP actions |
+| **Close-only · live oracle** (Fri 16:50–17:00 & Sun 17:00–17:05 NY) | New risk blocked; maintenance margin rises to `2.00%`; closes and liquidations use live pricing |
 | **Close-only · oracle frozen** (Fri 17:00 – Sun 17:00 NY) | New risk, new LP deposits, and new TP/SL triggers blocked; voluntary closes use bounded frozen pricing + `0.50%` LP-owned spread; carry continues |
 | **Paused / Degraded** | New risk (and in degraded mode, new LP deposits and withdrawal funding) blocked while risk-reducing closes and liquidations stay available |
 

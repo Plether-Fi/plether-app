@@ -27,13 +27,13 @@ Keepers provide **liveness**, not pricing discretion. Contracts enforce:
 
 The web app routes execution and expiry cleanup to Plether's keepers so traders never pay ETH; direct permissionless callers can always invoke the same contracts with their own tooling.
 
-## Keeper incentives and operating costs (Core v2.0.0)
+## Keeper incentives and operating costs (Core v2.1.0)
 
 | Action | Keeper reward | Operator costs |
 | --- | --- | --- |
-| **Execute or clean up an open / increase** | `1 bp` of commit notional, clamped **`0.01–0.20 USDG`**[^usdg] (credited to caller's Margin Account) | Network gas + Pyth update fee (for priced execution) |
+| **Execute or clean up an open / increase** | `1 bp` of commit notional, clamped **`0.01–0.25 USDG`**[^usdg] (credited to caller's Margin Account) | Network gas + Pyth update fee (for priced execution) |
 | **Execute or clean up a reduction / close** | **`0 USDG`** (including TP/SL closes) | Network gas + Pyth update fee |
-| **Trigger an armed TP/SL protection** | **`0.20 USDG`** | Network gas + Pyth update fee |
+| **Trigger an armed TP/SL protection** | **`0.25 USDG`** | Network gas + Pyth update fee |
 | **Liquidate an unhealthy account** | **`50%`** of collected `0.10%` liquidation charge (min **`0.50 USDG`**; remaining `50%` goes to LPs, `0%` to protocol) | Network gas + Pyth update fee |
 | **Settle hourly LP epoch** | No direct USDG bounty (protocol liveness maintenance) | Network gas + Pyth update fee (when fresh mark needed) |
 
@@ -44,11 +44,11 @@ Rewards are never guaranteed profit — gas spikes, reverts or keeper races can 
 * **Hermes API access** is an offchain dependency (`PYTH_HERMES_URL`, optionally `PYTH_API_KEY`) that fetches signed 6-feed Pyth payloads. Contracts verify Pyth's cryptographic signatures regardless of which Hermes-compatible server supplied the bytes (you may point `PYTH_HERMES_URL` at Pyth's hosted endpoint, a third-party provider or a self-hosted Hermes instance).
 * **Onchain Pyth update fees** are paid in native ETH inside the transaction alongside network gas. Review Pyth's [Hermes guidance](https://docs.pyth.network/price-feeds/core/how-pyth-works/hermes) and [current onchain fees](https://docs.pyth.network/price-feeds/core/current-fees).
 
-## Running the Core v2.0.0 reference workers
+## Running the Core v2.1.0 reference workers
 
-### Single-source manifest verification (30 contracts)
+### Single-source manifest verification (31 contracts)
 
-In Core v2.0.0, `plether-keeper`, `plether-liquidation-worker` and `protection-worker` no longer rely on ad-hoc per-contract address environment variables. Instead, the checked-in **schema-4 release manifest** (`config/perps/arbitrum-sepolia-v2.0.0.json`, pinning all **30 contract addresses and runtime bytecode hashes** plus `deploymentBlock: 323658447`) is embedded at compile time (Haskell `Plether.Perps.Manifest`) or loaded directly (Node.js workers), and startup audits RPC chain ID (`421614`), bytecode hashes and contract bindings fail-closed. See [Deployments & live parameters](../reference/deployments-and-parameters.md).
+In Core v2.1.0, `plether-keeper`, `plether-liquidation-worker` and `protection-worker` no longer rely on ad-hoc per-contract address environment variables. Instead, the checked-in **schema-4 release manifest** (`config/perps/arbitrum-sepolia-v2.1.0.json`, pinning all **31 contract addresses and runtime bytecode hashes** plus `deploymentBlock: 333192048`) is embedded at compile time (Haskell `Plether.Perps.Manifest`) or loaded directly (Node.js workers), and startup audits RPC chain ID (`421614`), bytecode hashes and contract bindings fail-closed. See [Deployments & live parameters](../reference/deployments-and-parameters.md).
 
 ### 1. Shared configuration (Haskell workers)
 
@@ -112,7 +112,7 @@ cabal run plether-liquidation-worker
 
 ### 5. Run the TP/SL protection worker (Node.js)
 
-[`apps/backend/protection-worker/main.mjs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/protection-worker/main.mjs) runs independently of the Haskell workers using the same `DATABASE_URL`, `PERPS_RPC_URL` and Core v2.0.0 manifest:
+[`apps/backend/protection-worker/main.mjs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/protection-worker/main.mjs) runs independently of the Haskell workers using the same `DATABASE_URL`, `PERPS_RPC_URL` and Core v2.1.0 manifest:
 
 * **Observe-only by default:** `PROTECTION_WORKER_EXECUTION_ENABLED=false` (never signs transactions unless explicitly enabled with a dedicated funded `PROTECTION_WORKER_PRIVATE_KEY`).
 * **Operational behavior:** Indexes `PositionProtectionBook` events **12 confirmations behind head** (with reorg rollback/replay), evaluates up to 50 candidates every **`5 seconds`**, requires fresh cached Pyth payloads (max `15s` old), submits one simulated transaction per action (no fee-bumping), and automatically retries **only** latched `Expired` close attempts (other failure reasons require operator review).

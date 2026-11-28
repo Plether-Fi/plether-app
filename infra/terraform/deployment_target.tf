@@ -1,7 +1,7 @@
 variable "perps_release_manifest_path" {
   type        = string
   default     = ""
-  description = "Path (relative to infra/terraform) to the canonical schema-4 Perps release manifest JSON. Defaults to ../../config/perps/arbitrum-sepolia-v2.0.0.json on Sepolia; required on mainnet whenever Perps or native AA bindings are configured."
+  description = "Path (relative to infra/terraform) to the canonical schema-4 Perps release manifest JSON. Defaults to ../../config/perps/arbitrum-sepolia-v2.1.0.json on Sepolia; required on mainnet whenever Perps or native AA bindings are configured."
 
   validation {
     condition     = var.perps_release_manifest_path == "" || can(regex("^(\\.\\./)+config/perps/[A-Za-z0-9_.-]+\\.json$", var.perps_release_manifest_path))
@@ -13,13 +13,13 @@ locals {
   # Preserve existing resource identity and Terraform state addresses.
   deployment_name            = var.environment
   expected_perps_chain_id    = var.environment == "mainnet" ? "42161" : "421614"
-  sepolia_core               = jsondecode(file("${path.module}/../../config/perps/arbitrum-sepolia-v2.0.0.json"))
-  effective_manifest_relpath = var.perps_release_manifest_path != "" ? var.perps_release_manifest_path : (var.environment == "sepolia" ? "../../config/perps/arbitrum-sepolia-v2.0.0.json" : "")
+  sepolia_core               = jsondecode(file("${path.module}/../../config/perps/arbitrum-sepolia-v2.1.0.json"))
+  effective_manifest_relpath = var.perps_release_manifest_path != "" ? var.perps_release_manifest_path : (var.environment == "sepolia" ? "../../config/perps/arbitrum-sepolia-v2.1.0.json" : "")
   active_core                = local.effective_manifest_relpath != "" ? jsondecode(file("${path.module}/${local.effective_manifest_relpath}")) : null
   runtime_perps_release_manifest_path = (
     local.effective_manifest_relpath != ""
     ? "/app/config/perps/${basename(local.effective_manifest_relpath)}"
-    : "/app/config/perps/arbitrum-sepolia-v2.0.0.json"
+    : "/app/config/perps/arbitrum-sepolia-v2.1.0.json"
   )
 }
 resource "terraform_data" "deployment_target_guard" {

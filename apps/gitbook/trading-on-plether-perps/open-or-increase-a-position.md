@@ -20,7 +20,7 @@ Each Trading Account holds **one live direction at a time**. To flip from LONG U
 ### Before you start
 
 * Confirm **Market State** is `Open` (new risk is blocked during close-only, `oracleFrozen`, degraded mode, and router pause).
-* Confirm **Available to Trade** covers submitted margin, the opening execution reward (`1 bp`, `0.01–0.20 USDG`), and any accrued carry on an existing position.
+* Confirm **Available to Trade** covers submitted margin, the opening execution reward (`1 bp`, `0.01–0.25 USDG`), and any accrued carry on an existing position.
 * **Active TP/SL blocks discretionary orders.** If your existing position has untriggered TP/SL, remove it in the **TP/SL** tab and wait for confirmation before increasing. You can attach new TP/SL directly in the trade ticket only when opening from zero; see [Take profit and stop loss](take-profit-and-stop-loss.md).
 
 ### 1. Choose direction and order quantity
@@ -38,9 +38,9 @@ Enter the **Order quantity** to add in `plDXY` contracts (typed values must be m
 
 ### 2. Set leverage and review margin
 
-Move the **Leverage** slider (`1x` to `33x` normally; `Margin Call Simulator` unlocks testing closer to onchain `0.20%` initial-margin boundaries—see [Margin, leverage and liquidation](../how-plether-works/margin-leverage-and-liquidation.md#margin-call-simulator)).
+Move the **Leverage** slider (`1x` to `33x` normally; `Margin Call Simulator` unlocks testing closer to onchain `0.30%` initial-margin boundaries—see [Margin, leverage and liquidation](../how-plether-works/margin-leverage-and-liquidation.md#margin-call-simulator)).
 
-For the same Order quantity, lower leverage assigns more **position margin**, increases your price-loss buffer, and reduces your LP-backed **borrow base** for future carry.
+For the same Order quantity, lower leverage assigns more **position margin** and increases your price-loss buffer (flat carry accrues on full maximum-profit exposure).
 
 When an open or increase executes:
 
@@ -76,7 +76,7 @@ Expand **Execution protections** to inspect the signed Order V3 safety bounds:
 
 * **Client order ID** (prevents duplicate submissions on retry)
 * **Deadline (`submitBy`)** — `120 seconds` from review block (signing requires at least `45s` left; submission requires `30s`)
-* **Execution window** — `60 seconds` after onchain commitment
+* **Execution window** — `30 seconds` after onchain commitment
 * **Pinned regime** (`Live`) and **Maximum execution reward**
 
 #### How an increase averages entry price
@@ -101,7 +101,7 @@ Once the commitment confirms onchain:
 * The order joins the global FIFO queue and **cannot be cancelled**.
 * A keeper executes it automatically against the first eligible Pyth observation strictly after commitment (no same-block execution).
 
-Track pending commitments under **Open Orders** (`Pending`, `Pending reveal`, or `Expired` while awaiting keeper cleanup) and final outcomes in **Order History** (`Executed` or `Failed`). If an order fails or expires (after 60 seconds), committed margin is released and the opening execution reward is paid to the processing keeper; failed orders are never retried automatically. See [Why is my order pending or failed?](why-is-my-order-pending-or-failed.md).
+Track pending commitments under **Open Orders** (`Pending`, `Pending reveal`, or `Expired` while awaiting keeper cleanup) and final outcomes in **Order History** (`Executed` or `Failed`). If an order fails or expires (after 30 seconds), committed margin is released and the opening execution reward is paid to the processing keeper; failed orders are never retried automatically. See [Why is my order pending or failed?](why-is-my-order-pending-or-failed.md).
 
 ### 6. Verify your executed position
 

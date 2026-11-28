@@ -395,8 +395,10 @@ async function reviewPerpsOrderWithContext(
     blockTimestamp,
   } = context
   const submitBy = blockTimestamp + 120n
-  const executionWindowSeconds = 60
-  if (context.maxExecutionWindowSeconds < 60n) throw new Error("The deployment cannot support the reviewed execution window")
+  if (context.maxExecutionWindowSeconds <= 0n || context.maxExecutionWindowSeconds > 0xffff_ffffn) {
+    throw new Error('The deployment cannot support the reviewed execution window')
+  }
+  const executionWindowSeconds = Number(context.maxExecutionWindowSeconds)
   const targetPrice = getPerpsTargetPrice({
     direction: input.direction,
     isClose: input.isClose,

@@ -1,5 +1,5 @@
 import { zeroAddress, type Address } from 'viem'
-import release from '../../../../config/perps/arbitrum-sepolia-v2.0.0.json'
+import release from '../../../../config/perps/arbitrum-sepolia-v2.1.0.json'
 import { parsePerpsReleaseConfiguration, settlementTokenContract } from './perpsRelease'
 
 export const PERPS_RELEASE = parsePerpsReleaseConfiguration(release)
@@ -37,6 +37,7 @@ export const PERPS_ARBITRUM_SEPOLIA = {
   cfdEngineAccountLens: contractAddress('cfdEngineAccountLens'),
   cfdEngineLens: contractAddress('cfdEngineLens'),
   cfdEngineOpenQuoter: contractAddress('cfdEngineOpenQuoter'),
+  cfdOrderAdmissionValidator: contractAddress('cfdOrderAdmissionValidator'),
   policyEvaluator: contractAddress('cfdOrderPolicyEvaluator'),
   cfdClosePreview: contractAddress('cfdClosePreview'),
   orderRouterExecutionSidecar: contractAddress('orderRouterExecutionSidecar'),

@@ -231,7 +231,7 @@ export function quantizedDxyExposureFromContractNotional(
 function applyBps(price: bigint, bps: number, mode: 'up' | 'down'): bigint {
   const bpsInt = BigInt(Math.round(bps * 100))
   const denominator = 10_000n
-  if (mode === 'up') return (price * (denominator + bpsInt)) / denominator
+  if (mode === 'up') return (price * (denominator + bpsInt) + (denominator - 1n)) / denominator
   return (price * (denominator - bpsInt)) / denominator
 }
 

@@ -1110,6 +1110,7 @@ contractMetadata key = case key of
   "cfdClosePreview" -> ("CfdClosePreview", "core", "Previews exact close settlement, VPI, carry, and net account change.")
   "orderRouter" -> ("OrderRouter", "orders", "Public entry point for committing, executing, and liquidating bounded V3 orders.")
   "orderLifecycleBook" -> ("OrderLifecycleBook", "orders", "Stores signed V3 order intents, terminal outcomes, and execution config hash.")
+  "cfdOrderAdmissionValidator" -> ("CfdOrderAdmissionValidator", "orders", "Validates pre-trade open/increase admission constraints and slippage tolerance bands.")
   "cfdOrderPolicyEvaluator" -> ("CfdOrderPolicyEvaluator", "orders", "Enforces bounded execution constraints (price, leverage, fees, and min equity).")
   "positionProtectionBook" -> ("PositionProtectionBook", "orders", "Manages armed on-chain take-profit and stop-loss protection triggers.")
   "orderRouterExecutionSidecar" -> ("OrderRouterExecutionSidecar", "orders", "Delegate execution helper for OrderRouter fills.")
@@ -1161,11 +1162,18 @@ canonicalReleaseHistory activeVersion activeBlock =
       , "summary" .= ("Hardened LP epoch settlement math, Senior/Junior async vaults, and expanded execution policy controls." :: Text)
       ]
   , object
+      [ "version" .= ("v2.0.0" :: Text)
+      , "status" .= (if activeVersion == "v2.0.0" then "active" else "superseded" :: Text)
+      , "date" .= ("2026-10-28" :: Text)
+      , "deploymentBlock" .= ("323658447" :: Text)
+      , "summary" .= ("Schema-4 USDG settlement migration, bounded V3 signed order intents, PositionProtectionBook TP/SL triggers, and 30-contract runtime code-hash pinning." :: Text)
+      ]
+  , object
       [ "version" .= activeVersion
       , "status" .= ("active" :: Text)
-      , "date" .= ("2026-10-28" :: Text)
+      , "date" .= ("2026-11-27" :: Text)
       , "deploymentBlock" .= show activeBlock
-      , "summary" .= ("Schema-4 USDG settlement migration, bounded V3 signed order intents, PositionProtectionBook TP/SL triggers, and 30-contract runtime code-hash pinning." :: Text)
+      , "summary" .= ("Flat global carry accounting, CfdOrderAdmissionValidator 31-contract pinning, 30s execution window, 2s min settlement delay, 0.25% min open slippage, and 10m/5m FAD shoulders." :: Text)
       ]
   ]
 

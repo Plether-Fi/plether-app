@@ -33,12 +33,12 @@ spec = describe "bounded V2 release configuration" $ do
     B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
       `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
 
-  it "accepts the exact deployed v2.0.0 graph" $
+  it "accepts the exact deployed v2.1.0 graph" $
     validatePerpsV2ReleaseConfig 421614 perpsV2OrderRouter
       (Just perpsV2OrderLifecycleBook)
-      "0xca18a6783d7542f9d2f28f4f259772b74c4d6baa"
-      "0xb5b851f627d6df3cf3f096e23e20a58884d7b89a"
-      "0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e"
+      "0xa3C43242F4E0a7C9a21Bd7dE48376D2f0779CaA6"
+      "0x11BeF9BAB445C0E1F5b0280EE7E20498e3FC9D63"
+      "0x23735f88637cbf329ca1C4f49B96953d25A24b4a"
       perpsV2DeploymentBlock `shouldBe` Right ()
 
   it "rejects prepared pins independently of the selected deployed release" $
@@ -49,7 +49,7 @@ spec = describe "bounded V2 release configuration" $ do
       `shouldBe` Left "Perps release is prepared; deployment is required"
 
   it "starts volume at the first whole minute after deployment" $
-    perpsV2VolumeHistoryStartTimestamp `shouldBe` 1793185200
+    perpsV2VolumeHistoryStartTimestamp `shouldBe` 1795796760
 
   it "accepts a complete deployed release and case-insensitive address spellings" $ do
     validateInput deployedPins (Just $ prcpLifecycleBook deployedPins) `shouldBe` Right ()
@@ -81,7 +81,7 @@ spec = describe "bounded V2 release configuration" $ do
 
   it "accepts an indexer bound to the new deployment boundary" $
     validatePerpsIndexerReleaseConfig 421614 defaultPerpsAddresses
-      "0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e" perpsV2DeploymentBlock
+      "0x23735f88637cbf329ca1C4f49B96953d25A24b4a" perpsV2DeploymentBlock
       `shouldBe` Right ()
 
   it "rejects an indexer bound to prepared pins before startup" $

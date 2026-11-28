@@ -1,20 +1,25 @@
 # V3 order timing
 
-The current consumer configuration is `arbitrum-sepolia-v2.0.0.json`, schema 4,
-order interface 3. It pins Core source `1209ca8a5b94a4fb6323c7c4585846ed93db3932`
-and deployment block 323658447. The release uses six-decimal MockUSDG and includes
-the engine planning reader. Historical v1.3.1 evidence is archived; the token-neutral
-ABI and signed fields retain interface 3, configuration V5, digest V6 and receipt
-V5 labels while remaining incompatible with the historical deployment.
+The current consumer configuration is `arbitrum-sepolia-v2.1.0.json`, schema 4,
+order interface 3. It pins Core source `d5ef9725f72f5e131272da27004266d8a3d51e50`
+and deployment block 333192048. The release uses six-decimal MockUSDG and includes
+the engine planning reader and order admission validator. Historical v1.3.1 and
+v2.0.0 evidence is archived; the token-neutral ABI and signed fields retain
+interface 3, configuration V5, digest V6 and receipt V5 labels while remaining
+incompatible with prior deployments.
 
 Confirmation fixes `submitBy = confirmationBlock.timestamp + 120` and
-`executionWindowSeconds = 60`. The existing 45-second signing and 30-second
-submission guards apply to `submitBy`. The API caps both stub and final
-sponsorship by that signed submission bound. It never extends signed calldata.
-The contract stores `executionDeadline = commitTimestamp + executionWindowSeconds`;
+`executionWindowSeconds = min(maxExecutionWindowSeconds, 60)` (30 seconds on
+Core v2.1.0, where `maxExecutionWindowSeconds = 30`). The existing 45-second
+signing and 30-second submission guards apply to `submitBy`. The API caps both
+stub and final sponsorship by that signed submission bound. It never extends
+signed calldata. The contract stores `executionDeadline = commitTimestamp + executionWindowSeconds`;
 keepers and pending-order UI read `orderTiming`, including after finalization.
-Historical oracle prices remain anchored to commitment, independently of either
-client approval time or sponsorship expiry.
+Historical oracle prices remain anchored to commitment using the on-chain
+`PletherOracle.minOrderSettlementDelay()` (2 seconds on Core v2.1.0),
+independently of either client approval time or sponsorship expiry. Opening and
+increasing orders enforce the on-chain `minOpenSlippageToleranceBps` floor
+(25 bps / 0.25% on Core v2.1.0) with ceiling rounding on the short upper bound.
 
 The app persists V3 requests in a distinct operation journal namespace, retaining
 both signed fields and the exact UserOperation. Recovery keeps ambiguous signed
@@ -24,8 +29,8 @@ deployment integration does not offer V2 compatibility or import old journals.
 
 Before app deployment (Core is already active):
 
-1. Review the checked-in v2.0.0 manifest, ABI provenance and runtime verification
-   in `config/perps/evidence/v2.0.0`. Recheck reciprocal bindings and
+1. Review the checked-in v2.1.0 manifest, ABI provenance and runtime verification
+   in `config/perps/evidence/v2.1.0`. Recheck reciprocal bindings and
    `INTENT_TYPEHASH` before enabling AA execution.
 2. Deploy the matching frontend, backend, workers and infrastructure bindings
    together after the database migration and AA configuration review. Include `orderInterfaceVersion: 3` in the
@@ -63,7 +68,7 @@ provenance is retained in `config/perps-aa-client-release-v0.1.0.json`.
 ## Local end-to-end proof
 
 The SDK runtime sources are identical between the recorded artifact commit and
-the v2.0.0 Core source. Contract CI and local end-to-end checks use the v2.0.0
+the v2.1.0 Core source. Contract CI and local end-to-end checks use the v2.1.0
 source commit and enforce that SDK source equivalence. The artifact is not relabeled.
 
 With Node, Foundry, GHC 9.4.8, Cabal, libpq and libsecp256k1 installed, run
@@ -85,8 +90,8 @@ wallet extension, KMS, or the production bundler service.
 
 Coverage includes 75 seconds in wallet approval, commitment one second before
 `submitBy`, lost submission acknowledgement, restored journal recovery after
-sponsorship expiry, execution within the full 60-second committed window with
-one owner signature, exact replay/conflicting terms, late approval safe expiry,
-committed expiry, historical-price rejection, and protected opens. CI runs the
-same non-skipping harness in `order-v3-local.yml`. Database integration is
-verified separately by the existing PostgreSQL CI job.
+sponsorship expiry, execution within the full committed window (30 seconds on
+Core v2.1.0) with one owner signature, exact replay/conflicting terms, late
+approval safe expiry, committed expiry, historical-price rejection, and
+protected opens. CI runs the same non-skipping harness in `order-v3-local.yml`.
+Database integration is verified separately by the existing PostgreSQL CI job.

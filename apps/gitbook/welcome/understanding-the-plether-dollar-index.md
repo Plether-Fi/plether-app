@@ -6,7 +6,7 @@ The Plether Dollar Index (`plDXY`) is **DXY-inspired**[^dxy], not a raw tracker 
 
 ## What is inside the basket?
 
-On the active Core v2.0.0 oracle (`PletherOracle`), each component is normalized to `foreign currency per USD` (`FX/USD`, inverting feeds quoted as `USD/FX`) against a fixed 8-decimal reference base price:
+On the active Core v2.1.0 oracle (`PletherOracle`), each component is normalized to `foreign currency per USD` (`FX/USD`, inverting feeds quoted as `USD/FX`) against a fixed 8-decimal reference base price:
 
 | Currency | Pyth feed | Inverted | Reference coefficient | Reference base price (`FX/USD`) |
 | --- | --- | --- | --- | --- |
@@ -81,7 +81,7 @@ The charted `plDXY` mark is the neutral oracle level. Your actual fill and USDG 
 * Virtual Price Impact (VPI)
 * Your acceptable-price limit (Execution limit)
 * The `0.04%` protocol execution fee and any accrued carry
-* Opening-order execution rewards (`0.01–0.20 USDG`; `0` on closes)
+* Opening-order execution rewards (`0.01–0.25 USDG`; `0` on closes)
 
 Never read a charted index level as a guaranteed fill price.
 

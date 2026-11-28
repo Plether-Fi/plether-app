@@ -53,7 +53,8 @@ import Plether.Database.Schema
   )
 import Plether.Ethereum.Client (EthClient, RpcClientOptions (..), RpcError (..), newClientWithOptions)
 import Plether.Ethereum.Contracts.Perps
-  ( orderSettlementWindow
+  ( minOrderSettlementDelay
+  , orderSettlementWindow
   , parsePythUpdateData
   , parseUniquePythUpdateData
   )
@@ -529,14 +530,15 @@ revealLoop providerGate manager ethClient pool cfg = do
           [(pkorCommitTime order, pkorOrderId order, CanonicalPrefetch) | order <- pending]
             <> [(commitTime, orderId, ProvisionalPrefetch) | (commitTime, orderId) <- take 20 provisional]
     if null candidates then pure [] else do
+      delayResult <- minOrderSettlementDelay ethClient $ cfgPerpsPletherOracle cfg
       settlement <- orderSettlementWindow ethClient $ cfgPerpsPletherOracle cfg
-      case settlement of
-        Left _ -> do
+      case (delayResult, settlement) of
+        (Right minDelay, Right window) | minDelay > 0 && minDelay <= window -> pure
+          [ ((commitTime + minDelay, window), priority, fetchReveal active commitTime orderId minDelay window)
+          | (commitTime, orderId, priority) <- candidates ]
+        _ -> do
           logWarnEvery 30 "reveal_queue_load_failed" "Could not verify the historical-price settlement window" []
           pure []
-        Right window -> pure
-          [ ((commitTime + 1, window), priority, fetchReveal active commitTime orderId window)
-          | (commitTime, orderId, priority) <- candidates ]
 
   loadHints = do
     result <- try @SomeException $ timeout 250_000 $
@@ -556,8 +558,8 @@ revealLoop providerGate manager ethClient pool cfg = do
       Right (Just ()) -> pure ()
       _ -> logWarnEvery 30 "reveal_payload_wakeup_failed" "Price payload is cached; keeper polling will discover it" []
 
-  fetchReveal active commitTime orderId window = do
-    let firstTick = commitTime + 1
+  fetchReveal active commitTime orderId minDelay window = do
+    let firstTick = commitTime + minDelay
         lastTick = commitTime + window
     cached <- withDb pool $ \conn -> getPythUpdatePayloadForWindow conn firstTick lastTick
     case cached of
@@ -569,7 +571,7 @@ revealLoop providerGate manager ethClient pool cfg = do
           Left err -> do
             logWarnEvery 30 "reveal_payload_backfill_fetch_failed" "Historical reveal price unavailable" [field "order_id" orderId]
             pure $ Left err
-          Right update -> case validateRevealWindow commitTime window (hbuPublishTimes update) of
+          Right update -> case validateRevealWindow commitTime minDelay window (hbuPublishTimes update) of
             Left err -> do
               recordOracleAdmissionBestEffort pool "reveal" "rejected" Nothing Nothing err
               pure $ Left err

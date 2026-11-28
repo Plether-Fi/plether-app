@@ -6,17 +6,17 @@ import { execFileSync, spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const read = path => readFileSync(new URL(path, root), 'utf8')
 test('v2 release pins Terraform while defaults remain unbound', () => {
-  const release = JSON.parse(read('config/perps/arbitrum-sepolia-v2.0.0.json'))
+  const release = JSON.parse(read('config/perps/arbitrum-sepolia-v2.1.0.json'))
   assert.equal(release.schemaVersion, 4)
-  assert.equal(release.release.version, 'v2.0.0')
-  assert.equal(release.release.deploymentBlock, 323658447)
+  assert.equal(release.release.version, 'v2.1.0')
+  assert.equal(release.release.deploymentBlock, 333192048)
   const guards = read('infra/terraform/deployment_target.tf')
-  assert.ok(guards.includes('config/perps/arbitrum-sepolia-v2.0.0.json'))
+  assert.ok(guards.includes('config/perps/arbitrum-sepolia-v2.1.0.json'))
   assert.ok(guards.includes('contains(["active", "seeded", "deployed"], try(local.active_core.release.phase, ""))'))
   assert.ok(guards.includes('var.environment != "mainnet" || try(local.active_core.settlementToken.isMock, true) == false'))
   const variables = read('infra/terraform/variables.tf')
   for (const [name, contract] of Object.entries(terraformBindings)) {
-    assert.match(release.contracts[contract].address, /^0x[0-9a-f]{40}$/)
+    assert.match(release.contracts[contract].address, /^0x[0-9a-fA-F]{40}$/)
     assert.ok(guards.includes('lower(var.' + name + ') == try(lower(local.active_core.contracts.' + contract + '.address), "")'))
     assert.match(variables, new RegExp('variable "' + name + '" \\{[^}]*default\\s*= ""', 's'))
   }

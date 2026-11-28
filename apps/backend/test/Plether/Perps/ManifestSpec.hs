@@ -28,9 +28,10 @@ spec = describe "USDG release binding" $ do
   it "rejects missing contract pins and unsupported metadata" $ do
     releaseIsDeployed (set "contracts" (object []) root) `shouldSatisfy` isLeft
     releaseIsDeployed (set "settlementToken" (object ["symbol" .= ("USDC" :: String)]) root) `shouldSatisfy` isLeft
-  it "embeds the deployed v2.0.0 identity and permits worker startup" $ do
+  it "embeds the deployed v2.1.0 identity and permits worker startup" $ do
     Manifest.releaseIsDeployed `shouldBe` True
-    Manifest.releaseDeploymentBlock `shouldBe` 323658447
-    Manifest.releaseVersion `shouldBe` "v2.0.0"
-    Manifest.settlementTokenAddress `shouldBe` "0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d"
+    Manifest.releaseDeploymentBlock `shouldBe` 333192048
+    Manifest.releaseVersion `shouldBe` "v2.1.0"
+    Manifest.settlementTokenAddress `shouldBe` "0x66705F56f2c88C9474d021D9C6AFE134205a63CE"
+    Manifest.cfdOrderAdmissionValidatorAddress `shouldBe` "0x6F6eBb24C49a449e0Ec14208D883d0e4938b4a58"
     Manifest.requireDeployedRelease

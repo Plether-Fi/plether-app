@@ -1,7 +1,7 @@
 import { test, expect, waitForPageLoad } from '../fixtures/wallet'
 import { readFileSync } from 'node:fs'
 
-const release = JSON.parse(readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
+const release = JSON.parse(readFileSync(new URL('../../../../config/perps/arbitrum-sepolia-v2.1.0.json', import.meta.url), 'utf8'))
 
 const perpsHeading = release.release.phase === 'prepared'
   ? `${release.settlementToken.symbol} perps are being prepared`

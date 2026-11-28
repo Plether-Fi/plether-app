@@ -33,7 +33,7 @@ COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/schema.sql schema.sql
 COPY apps/backend/config/migrations/ config/migrations/
-ARG PLETHER_PERPS_RELEASE_MANIFEST=config/perps/arbitrum-sepolia-v2.0.0.json
+ARG PLETHER_PERPS_RELEASE_MANIFEST=config/perps/arbitrum-sepolia-v2.1.0.json
 ENV PLETHER_PERPS_RELEASE_MANIFEST=${PLETHER_PERPS_RELEASE_MANIFEST}
 COPY config/perps/ config/perps/
 COPY config/rpc-log-range-policy.json config/rpc-log-range-policy.json

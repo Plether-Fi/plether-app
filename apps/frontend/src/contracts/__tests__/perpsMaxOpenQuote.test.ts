@@ -11,7 +11,7 @@ const input = {
   oraclePrice: 98_000_000n, selectedMaxLeverageBps: 100_000,
 }
 const quote: PerpsMaxOpenQuote = {
-  maxSizeDelta: 900n * 10n ** 18n, limitingReason: 9,
+  maxSizeDelta: 900n * 10n ** 18n, limitingReason: 9, postEligibleEquityAssets: 98_847_200n,
   preview: {
     valid: true, invalidReason: 0, failureCategory: 0, executionPrice: input.oraclePrice,
     sizeDelta: 900n * 10n ** 18n, notionalAssets: 882_000_000n, marginDeltaAssets: 99_400_000n,

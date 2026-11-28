@@ -57,7 +57,7 @@ LP returns appear inside **Share price** — there is no separate yield to harve
 | **New deposits paused / Hourly processing paused** | Independent pause controls for new requests vs hourly settlement |
 | **New withdrawal funding** | Whether current conditions allow allocating new USDG to waiting withdrawals |
 
-* **Delayed settings changes:** Lists any queued governance changes. On Core v2.0.0, changes to pool risk settings, Junior fee settings, engine settings and router settings require a **`72-hour` timelock** before taking effect.
+* **Delayed settings changes:** Lists any queued governance changes. On Core v2.1.0, changes to pool risk settings, Junior fee settings, engine settings and router settings require a **`72-hour` timelock** before taking effect.
 
 If required onchain data is unavailable, metrics display `Unavailable` or `--` and action previews disable safely — never interpret missing data as zero.
 
