@@ -3,11 +3,11 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Privy 3.51.2 exposes no slots for its native wallet picker's description,
+// Privy 3.52.1 exposes no slots for its native wallet picker's description,
 // account actions, or public close action. Keep all dialogs SDK-owned.
 // Verify the entire upstream files before writing; an SDK upgrade must update
 // this reviewed patch instead of silently dropping the email-wallet action.
-const VERSION = '3.51.2'
+const VERSION = '3.52.1'
 const closeHookName = 'usePletherWalletPickerClose'
 const typePatches = [
   ['type WalletsDialogProps = {\n    networks?', 'type WalletsDialogProps = {\n    /** Plether: email action in the native external-wallet picker. */\n    connectionDescription?: (close: () => void) => React.ReactNode;\n    networks?'],
@@ -16,7 +16,7 @@ const typePatches = [
 ]
 const plans = {
   'dist/esm/ui.mjs': {
-    sha256: '920daa38c49b14884813d304042176f01d946fbeddaebc0af6ae20d1ce5821be',
+    sha256: 'da56268de980741887f105a09adfa5b0ad59afd0caacdc846a938938b6224967',
     patches: [
       ['const Ar=({networks:r,assets:i})=>', 'const Ar=({networks:r,assets:i,connectionDescription:privyConnectionDescription})=>'],
       ['e(_e,{onConnect:u,onBack:()=>c(!1),onClose:u})', 'e(_e,{onConnect:u,onBack:()=>c(!1),onClose:u,customDescription:privyConnectionDescription?.(u)})'],
@@ -24,15 +24,15 @@ const plans = {
     ],
   },
   'dist/cjs/ui.js': {
-    sha256: 'af0213e71be2cb766b6e6965886481938f923039496f3cf413432f102d9d987f',
+    sha256: 'eacfa5ef4c6ea33d94625fc950dd55ad28d9d8e334579d407f29fd1e2b3788a2',
     patches: [
       ['exports.WalletsDialog=({networks:t,assets:n})=>', 'exports.WalletsDialog=({networks:t,assets:n,connectionDescription:privyConnectionDescription})=>'],
       ['e.jsx(k.i,{onConnect:x,onBack:()=>h(!1),onClose:x})', 'e.jsx(k.i,{onConnect:x,onBack:()=>h(!1),onClose:x,customDescription:privyConnectionDescription?.(x)})'],
       ['//# sourceMappingURL=ui.js.map', `exports.${closeHookName}=function ${closeHookName}(){const{closePrivyModal:close}=C.usePrivyInternal();return s.useCallback(async()=>{await close({shouldCallAuthOnSuccess:!1})},[close])};\n//# sourceMappingURL=ui.js.map`],
     ],
   },
-  'dist/dts/ui.d.ts': { sha256: 'dedb955f5423bf11a296ead17826b804bd7e16dd5022684a3fdff9141d1a6151', patches: typePatches },
-  'dist/dts/ui.d.mts': { sha256: '9f512183125d85207151d64bbea127e11a69edddd5e1c5c3e84eb3ffce7043fa', patches: typePatches },
+  'dist/dts/ui.d.ts': { sha256: '96edb9ac493d08432c1a6836361d54a7ad2f41b488cfa6694eeaf3bbf3343f30', patches: typePatches },
+  'dist/dts/ui.d.mts': { sha256: 'fb24ce736fd1d2d0f620626bcf3967715f36193263235c39119158ee5dd4a978', patches: typePatches },
 }
 
 // Apply account actions after the original connection-picker extension. Strip
@@ -45,7 +45,7 @@ const accountActionPatches = {
   ],
   'dist/cjs/ui.js': [
     ['connectionDescription:privyConnectionDescription})=>', 'connectionDescription:privyConnectionDescription,accountActions:privyAccountActions})=>'],
-    ['e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})', 'e.jsxs("div",{children:[e.jsx(zt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})'],
+    ['e.jsx(Lt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p})', 'e.jsxs("div",{children:[e.jsx(Lt,{onClose:x,onLinkNewWallet:()=>h(!0),assets:u,networks:p}),privyAccountActions]})'],
   ],
 }
 const accountActionTypePatches = [

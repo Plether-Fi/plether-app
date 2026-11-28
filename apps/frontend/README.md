@@ -193,7 +193,7 @@ app JWKS endpoint with ES256, issuer, audience and expiry checks. API responses
 are never cached. Missing authentication/configuration or a failed save remains
 visible in the wallet modal; there is no browser-only persistence fallback.
 
-Privy 3.51.2 does not expose native-picker description/account-action slots or a
+Privy 3.52.1 does not expose native-picker description/account-action slots or a
 public connection-modal close hook. Both apps' `postinstall` runs
 `scripts/patch-privy-wallet-dialog.mjs` to add these UI extension points.
 The patch checks the exact SDK version and complete upstream file checksums,
