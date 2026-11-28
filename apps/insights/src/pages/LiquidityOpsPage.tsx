@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   InsightsApiError,
+  useLiquidityEfficiency,
   useLiquidityForensics,
   useLiquiditySettlements,
   type DecodedMask,
@@ -13,6 +14,7 @@ import {
   ResidualAccuracyMeter,
   SettlementContinuityStrip,
 } from '../components/LiquidityVisuals'
+import { PoolEfficiencySection } from '../components/PoolEfficiencySection'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -159,6 +161,7 @@ export function LiquidityOpsPage() {
   const protocol = useProtocolContext()
   const settlementsQuery = useLiquiditySettlements()
   const forensicsQuery = useLiquidityForensics()
+  const efficiencyQuery = useLiquidityEfficiency()
 
   const settlements = settlementsQuery.data
   const forensics = forensicsQuery.data
@@ -376,6 +379,14 @@ export function LiquidityOpsPage() {
           )}
         </Panel>
       </section>
+
+      <PoolEfficiencySection
+        data={efficiencyQuery.data}
+        isLoading={efficiencyQuery.isLoading}
+        isError={efficiencyQuery.isError}
+        error={efficiencyQuery.error}
+        onRetry={() => void efficiencyQuery.refetch()}
+      />
 
       <section aria-labelledby="settlement-masks-title" className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">

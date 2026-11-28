@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InsightsApiError } from '../api/client'
@@ -8,12 +8,14 @@ import { LiquidityOpsPage } from './LiquidityOpsPage'
 const protocolContext = vi.hoisted(() => vi.fn())
 const settlementsQuery = vi.hoisted(() => vi.fn())
 const forensicsQuery = vi.hoisted(() => vi.fn())
+const efficiencyQuery = vi.hoisted(() => vi.fn())
 
 vi.mock('../hooks/useProtocolContext', () => ({ useProtocolContext: protocolContext }))
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   useLiquiditySettlements: settlementsQuery,
   useLiquidityForensics: forensicsQuery,
+  useLiquidityEfficiency: efficiencyQuery,
 }))
 
 beforeEach(() => {
@@ -140,6 +142,98 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   })
+  efficiencyQuery.mockReturnValue({
+    data: {
+      network: { chainId: 421614, releaseVersion: 'v2.0.0', settlementAssetSymbol: 'USDG' },
+      observedAt: '2026-11-26T12:00:00Z',
+      summary: {
+        poolTvlAssets: '820000000000',
+        seniorTvlAssets: '620000000000',
+        juniorTvlAssets: '200000000000',
+        volume24hAssets: '208460000000000',
+        volume7dAssets: '1240000000000000',
+        volume30dAssets: '4100000000000000',
+        fees24hAssets: '142500000000',
+        fees7dAssets: '842000000000',
+        turnover24hX100: 25422,
+        turnover7dAvgDailyX100: 21600,
+        turnover30dAvgDailyX100: 16667,
+        effectiveTakeRate7dBpsX100: 679,
+        annualizedFeeYield7dBps: 53540,
+        currentLongOiAssets: '380000000000',
+        currentShortOiAssets: '260000000000',
+        currentGrossOiAssets: '640000000000',
+        currentNetSkewAssets: '120000000000',
+        grossOiToPoolBps: 7805,
+        netSkewToPoolBps: 1463,
+        netSkewToJuniorBps: 6000,
+      },
+      series7d: [
+        {
+          bucketStart: '2026-11-26T00:00:00Z',
+          bucketEnd: '2026-11-26T06:00:00Z',
+          volumeAssets: '52000000000000',
+          feesAssets: '35000000000',
+          tradesCount: 310,
+          poolTvlAssets: '820000000000',
+          seniorTvlAssets: '620000000000',
+          juniorTvlAssets: '200000000000',
+          turnoverX100: 6341,
+          annualizedTurnoverDailyX100: 25366,
+          takeRateBpsX100: 673,
+          longOiAssets: '340000000000',
+          shortOiAssets: '250000000000',
+          grossOiAssets: '590000000000',
+          netSkewAssets: '90000000000',
+          grossOiToPoolBps: 7195,
+          netSkewToPoolBps: 1098,
+        },
+        {
+          bucketStart: '2026-11-26T06:00:00Z',
+          bucketEnd: '2026-11-26T12:00:00Z',
+          volumeAssets: '58000000000000',
+          feesAssets: '39000000000',
+          tradesCount: 345,
+          poolTvlAssets: '820000000000',
+          seniorTvlAssets: '620000000000',
+          juniorTvlAssets: '200000000000',
+          turnoverX100: 7073,
+          annualizedTurnoverDailyX100: 28293,
+          takeRateBpsX100: 672,
+          longOiAssets: '380000000000',
+          shortOiAssets: '260000000000',
+          grossOiAssets: '640000000000',
+          netSkewAssets: '120000000000',
+          grossOiToPoolBps: 7805,
+          netSkewToPoolBps: 1463,
+        },
+      ],
+      series30d: [
+        {
+          bucketStart: '2026-11-25T00:00:00Z',
+          bucketEnd: '2026-11-26T00:00:00Z',
+          volumeAssets: '185000000000000',
+          feesAssets: '125000000000',
+          tradesCount: 1120,
+          poolTvlAssets: '820000000000',
+          seniorTvlAssets: '620000000000',
+          juniorTvlAssets: '200000000000',
+          turnoverX100: 22561,
+          annualizedTurnoverDailyX100: 22561,
+          takeRateBpsX100: 676,
+          longOiAssets: '360000000000',
+          shortOiAssets: '240000000000',
+          grossOiAssets: '600000000000',
+          netSkewAssets: '120000000000',
+          grossOiToPoolBps: 7317,
+          netSkewToPoolBps: 1463,
+        },
+      ],
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  })
 })
 
 function show() {
@@ -168,6 +262,20 @@ describe('LiquidityOpsPage (Stage 1 LP Ops)', () => {
     expect(within(auditTable).getByText('100.00%')).toBeInTheDocument()
     expect(within(auditTable).getByText('+0.2997%')).toBeInTheDocument()
     expect(screen.getByText('Epoch settlement continuity')).toBeInTheDocument()
+    expect(screen.getByText('Pool Capital Efficiency & Open Interest')).toBeInTheDocument()
+    expect(screen.getByText('254.2×')).toBeInTheDocument()
+    expect(screen.getByText('78.0%')).toBeInTheDocument()
+    expect(screen.getByText('60.0%')).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: /Pool turnover multiple and traded volume over time/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: /Open interest and HousePool skew over time/i }),
+    ).toBeInTheDocument()
+
+    // Toggle to 30D daily view
+    fireEvent.click(screen.getByRole('button', { name: '30D' }))
+    expect(screen.getByRole('button', { name: '30D' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('highlights active blocker/fault bitmasks and unexplained residuals', () => {
@@ -215,6 +323,7 @@ describe('LiquidityOpsPage (Stage 1 LP Ops)', () => {
     const notFound = new InsightsApiError('Not found', 404)
     settlementsQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: notFound })
     forensicsQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: notFound })
+    efficiencyQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: notFound })
     show()
     expect(screen.getByText(/Connected backend does not serve Stage 1 LP endpoints yet/i)).toBeInTheDocument()
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2)

@@ -4,6 +4,7 @@ import {
   infraHealthLabel,
   infraHealthTone,
   useInsightsStatus,
+  useLiquidityEfficiency,
   useMarketExposure,
   useOverview,
 } from '../api'
@@ -27,6 +28,7 @@ export function OverviewPage() {
   const statusQuery = useInsightsStatus()
   const overviewQuery = useOverview()
   const marketExposureQuery = useMarketExposure()
+  const efficiencyQuery = useLiquidityEfficiency()
   const liveQuery = useLiveDivisionsSummary()
   const publicationQuery = useDivisions()
   const statsQuery = useDivisionsStats()
@@ -445,6 +447,7 @@ export function OverviewPage() {
 
       <MarketExposurePulsePanel
         data={marketExposureQuery.data}
+        efficiencySummary={efficiencyQuery.data?.summary ?? null}
         isLoading={marketExposureQuery.isLoading}
         isError={marketExposureQuery.isError}
       />

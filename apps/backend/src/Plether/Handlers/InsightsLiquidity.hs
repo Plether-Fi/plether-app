@@ -7,6 +7,16 @@ module Plether.Handlers.InsightsLiquidity
   , getLiquiditySettlementsResponse
   , getLiquidityForensicsResponse
   , getLiquidityEpochResponse
+  , getLiquidityEfficiencyResponse
+  , PoolEfficiencyBucket (..)
+  , PoolEfficiencySummary (..)
+  , OrderBucketAgg (..)
+  , OiDeltaBucketAgg (..)
+  , buildPoolEfficiencyAnalytics
+  , computeRatioX100
+  , computeRatioBps
+  , computeTakeRateBpsX100
+  , computeAnnualizedYieldBps
   , fetchRecentReturnReports
   , executionPathLabel
   , healthStateLabel
@@ -24,6 +34,8 @@ import Data.Bits (testBit)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isRight)
 import Data.Int (Int64)
+import Data.List (foldl')
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing, listToMaybe)
 import Data.Scientific (toRealFloat)
 import Data.Text (Text)
@@ -194,6 +206,11 @@ liquidityForensicsCache =
 liquidityEpochCache :: SingleFlightCache Integer (Either ApiError (ApiResponse Value))
 liquidityEpochCache =
   unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (30 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE liquidityEfficiencyCache #-}
+liquidityEfficiencyCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+liquidityEfficiencyCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
 
 getLiquiditySettlementsResponse
   :: DbPool
@@ -390,6 +407,488 @@ computeLiquidityForensicsResponse pool cfg = do
                 , "depositAttribution" .= (depositAttrStateToJson now <$> mAttrState)
                 ]
           ]
+
+data OrderBucketAgg = OrderBucketAgg
+  { obaTradesCount :: Int
+  , obaVolumeAssets :: Integer
+  , obaFeesAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data OiDeltaBucketAgg = OiDeltaBucketAgg
+  { odbLongSizeDelta :: Integer
+  , odbShortSizeDelta :: Integer
+  , odbLastRawPrice :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+data PoolEfficiencyBucket = PoolEfficiencyBucket
+  { pebBucketStart :: Integer
+  , pebBucketEnd :: Integer
+  , pebVolumeAssets :: Integer
+  , pebFeesAssets :: Integer
+  , pebTradesCount :: Int
+  , pebPoolTvlAssets :: Maybe Integer
+  , pebSeniorTvlAssets :: Maybe Integer
+  , pebJuniorTvlAssets :: Maybe Integer
+  , pebTurnoverX100 :: Maybe Int
+  , pebAnnualizedTurnoverDailyX100 :: Maybe Int
+  , pebTakeRateBpsX100 :: Maybe Int
+  , pebLongOiAssets :: Integer
+  , pebShortOiAssets :: Integer
+  , pebGrossOiAssets :: Integer
+  , pebNetSkewAssets :: Integer
+  , pebGrossOiToPoolBps :: Maybe Int
+  , pebNetSkewToPoolBps :: Maybe Int
+  }
+  deriving stock (Eq, Show)
+
+data PoolEfficiencySummary = PoolEfficiencySummary
+  { pesPoolTvlAssets :: Maybe Integer
+  , pesSeniorTvlAssets :: Maybe Integer
+  , pesJuniorTvlAssets :: Maybe Integer
+  , pesVolume24hAssets :: Integer
+  , pesVolume7dAssets :: Integer
+  , pesVolume30dAssets :: Integer
+  , pesFees24hAssets :: Integer
+  , pesFees7dAssets :: Integer
+  , pesTurnover24hX100 :: Maybe Int
+  , pesTurnover7dAvgDailyX100 :: Maybe Int
+  , pesTurnover30dAvgDailyX100 :: Maybe Int
+  , pesEffectiveTakeRate7dBpsX100 :: Maybe Int
+  , pesAnnualizedFeeYield7dBps :: Maybe Int
+  , pesCurrentLongOiAssets :: Integer
+  , pesCurrentShortOiAssets :: Integer
+  , pesCurrentGrossOiAssets :: Integer
+  , pesCurrentNetSkewAssets :: Integer
+  , pesGrossOiToPoolBps :: Maybe Int
+  , pesNetSkewToPoolBps :: Maybe Int
+  , pesNetSkewToJuniorBps :: Maybe Int
+  }
+  deriving stock (Eq, Show)
+
+computeRatioX100 :: Integer -> Integer -> Maybe Int
+computeRatioX100 num denom
+  | denom <= 0 = Nothing
+  | otherwise = Just $ fromInteger ((num * 100 + denom `div` 2) `div` denom)
+
+computeRatioBps :: Integer -> Integer -> Maybe Int
+computeRatioBps num denom
+  | denom <= 0 = Nothing
+  | otherwise = Just $ fromInteger ((num * 10000 + denom `div` 2) `div` denom)
+
+computeTakeRateBpsX100 :: Integer -> Integer -> Maybe Int
+computeTakeRateBpsX100 fees volume
+  | volume <= 0 = Nothing
+  | otherwise = Just $ fromInteger ((fees * 1000000 + volume `div` 2) `div` volume)
+
+computeAnnualizedYieldBps :: Integer -> Integer -> Integer -> Maybe Int
+computeAnnualizedYieldBps fees windowDays avgPool
+  | avgPool <= 0 || windowDays <= 0 = Nothing
+  | otherwise =
+      let denom = avgPool * windowDays
+       in Just $ fromInteger ((fees * 365 * 10000 + denom `div` 2) `div` denom)
+
+normalizeEfficiencyRawMark :: Integer -> Integer
+normalizeEfficiencyRawMark raw
+  | raw > 200000000 =
+      let scaled = raw `div` 10000000000
+       in if scaled > 0 && scaled <= 200000000 then scaled else 100000000
+  | raw > 0 = raw
+  | otherwise = 100000000
+
+efficiencyNotionalFromSize :: Integer -> Integer -> Integer
+efficiencyNotionalFromSize size rawPrice
+  | size <= 0 || rawPrice <= 0 = 0
+  | otherwise =
+      let clamped = min 200000000 rawPrice
+       in (size * clamped) `div` 100000000000000000000
+
+resolvePoolSnapshotAt :: [VaultPerformanceSnapshotRow] -> Integer -> Maybe (Integer, Integer, Integer)
+resolvePoolSnapshotAt [] _ = Nothing
+resolvePoolSnapshotAt snaps targetTs =
+  let earlier = filter (\s -> vpsEpochTimestamp s <= targetTs) snaps
+      chosen = case reverse earlier of
+        s : _ -> Just s
+        [] -> case snaps of
+          firstSnap : _ | vpsEpochTimestamp firstSnap - targetTs <= 86400 -> Just firstSnap
+          _ -> Nothing
+   in fmap
+        (\s -> (max 0 (vpsSeniorTotalAssets s + vpsJuniorTotalAssets s), max 0 (vpsSeniorTotalAssets s), max 0 (vpsJuniorTotalAssets s)))
+        chosen
+
+buildPoolEfficiencyAnalytics
+  :: Integer
+  -> [VaultPerformanceSnapshotRow]
+  -> Map.Map Integer OrderBucketAgg
+  -> (Integer, Integer)
+  -> Map.Map Integer OiDeltaBucketAgg
+  -> Maybe Integer
+  -> (Integer, Integer, Integer, Integer, Integer)
+  -> (PoolEfficiencySummary, [PoolEfficiencyBucket], [PoolEfficiencyBucket])
+buildPoolEfficiencyAnalytics now snaps orderBuckets6h (priorLongSize, priorShortSize) oiBuckets6h mFallbackMark (vol24h, vol7d, vol30d, fees24h, fees7d) =
+  let bucket6h = 21600 :: Integer
+      daySec = 86400 :: Integer
+      end6h = ((now `div` bucket6h) + 1) * bucket6h
+      start7d = end6h - 28 * bucket6h
+      start30d = ((now `div` daySec) - 29) * daySec
+      startAll = min start30d start7d
+      all6hStarts = takeWhile (< end6h) [startAll, startAll + bucket6h ..]
+      initialMark = fromMaybe 100000000 (normalizeEfficiencyRawMark <$> mFallbackMark)
+
+      step6h (curLong, curShort, stepMark, acc) bStart =
+        let bEnd = bStart + bucket6h
+            ord = Map.findWithDefault (OrderBucketAgg 0 0 0) bStart orderBuckets6h
+            oiD = Map.findWithDefault (OiDeltaBucketAgg 0 0 Nothing) bStart oiBuckets6h
+            nextLong = max 0 (curLong + odbLongSizeDelta oiD)
+            nextShort = max 0 (curShort + odbShortSizeDelta oiD)
+            nextMark = maybe stepMark normalizeEfficiencyRawMark (odbLastRawPrice oiD)
+            longOi = efficiencyNotionalFromSize nextLong nextMark
+            shortOi = efficiencyNotionalFromSize nextShort nextMark
+            grossOi = longOi + shortOi
+            netSkew = longOi - shortOi
+            mPool = resolvePoolSnapshotAt snaps bEnd
+            mPoolTvl = (\(t, _, _) -> t) <$> mPool
+            mSenTvl = (\(_, s, _) -> s) <$> mPool
+            mJunTvl = (\(_, _, j) -> j) <$> mPool
+            bucket =
+              PoolEfficiencyBucket
+                { pebBucketStart = bStart
+                , pebBucketEnd = bEnd
+                , pebVolumeAssets = obaVolumeAssets ord
+                , pebFeesAssets = obaFeesAssets ord
+                , pebTradesCount = obaTradesCount ord
+                , pebPoolTvlAssets = mPoolTvl
+                , pebSeniorTvlAssets = mSenTvl
+                , pebJuniorTvlAssets = mJunTvl
+                , pebTurnoverX100 = mPoolTvl >>= computeRatioX100 (obaVolumeAssets ord)
+                , pebAnnualizedTurnoverDailyX100 = mPoolTvl >>= computeRatioX100 (obaVolumeAssets ord * 4)
+                , pebTakeRateBpsX100 = computeTakeRateBpsX100 (obaFeesAssets ord) (obaVolumeAssets ord)
+                , pebLongOiAssets = longOi
+                , pebShortOiAssets = shortOi
+                , pebGrossOiAssets = grossOi
+                , pebNetSkewAssets = netSkew
+                , pebGrossOiToPoolBps = mPoolTvl >>= computeRatioBps grossOi
+                , pebNetSkewToPoolBps = mPoolTvl >>= computeRatioBps (abs netSkew)
+                }
+         in (nextLong, nextShort, nextMark, bucket : acc)
+
+      (finalLongSize, finalShortSize, finalMark, rev6h) =
+        foldl' step6h (max 0 priorLongSize, max 0 priorShortSize, initialMark, []) all6hStarts
+      all6h = reverse rev6h
+      series7d = filter (\b -> pebBucketStart b >= start7d) all6h
+
+      dayStarts = [start30d + fromIntegral i * daySec | i <- [0 .. 29 :: Int]]
+      byDayMap =
+        Map.fromListWith
+          (\new old -> old <> new)
+          [( (pebBucketStart b `div` daySec) * daySec, [b] ) | b <- all6h]
+
+      buildDayBucket dStart =
+        let dEnd = dStart + daySec
+            sub = Map.findWithDefault [] dStart byDayMap
+            volSum = sum (map pebVolumeAssets sub)
+            feeSum = sum (map pebFeesAssets sub)
+            trdSum = sum (map pebTradesCount sub)
+            mLast = case reverse sub of
+              x : _ -> Just x
+              [] -> Nothing
+            mPool = resolvePoolSnapshotAt snaps dEnd
+            mPoolTvl = (\(t, _, _) -> t) <$> mPool
+            mSenTvl = (\(_, s, _) -> s) <$> mPool
+            mJunTvl = (\(_, _, j) -> j) <$> mPool
+            longOi = maybe 0 pebLongOiAssets mLast
+            shortOi = maybe 0 pebShortOiAssets mLast
+            grossOi = longOi + shortOi
+            netSkew = longOi - shortOi
+            turnover = mPoolTvl >>= computeRatioX100 volSum
+         in PoolEfficiencyBucket
+              { pebBucketStart = dStart
+              , pebBucketEnd = dEnd
+              , pebVolumeAssets = volSum
+              , pebFeesAssets = feeSum
+              , pebTradesCount = trdSum
+              , pebPoolTvlAssets = mPoolTvl
+              , pebSeniorTvlAssets = mSenTvl
+              , pebJuniorTvlAssets = mJunTvl
+              , pebTurnoverX100 = turnover
+              , pebAnnualizedTurnoverDailyX100 = turnover
+              , pebTakeRateBpsX100 = computeTakeRateBpsX100 feeSum volSum
+              , pebLongOiAssets = longOi
+              , pebShortOiAssets = shortOi
+              , pebGrossOiAssets = grossOi
+              , pebNetSkewAssets = netSkew
+              , pebGrossOiToPoolBps = mPoolTvl >>= computeRatioBps grossOi
+              , pebNetSkewToPoolBps = mPoolTvl >>= computeRatioBps (abs netSkew)
+              }
+
+      series30d = map buildDayBucket dayStarts
+
+      mLatestPool = resolvePoolSnapshotAt snaps now
+      mCurPoolTvl = (\(t, _, _) -> t) <$> mLatestPool
+      mCurSenTvl = (\(_, s, _) -> s) <$> mLatestPool
+      mCurJunTvl = (\(_, _, j) -> j) <$> mLatestPool
+
+      avgPoolOf bs =
+        let vals = [t | b <- bs, Just t <- [pebPoolTvlAssets b], t > 0]
+         in if null vals then mCurPoolTvl else Just (sum vals `div` fromIntegral (length vals))
+
+      mAvgPool7d = avgPoolOf series7d
+      mAvgPool30d = avgPoolOf series30d
+
+      curMark = maybe finalMark normalizeEfficiencyRawMark mFallbackMark
+      curLongOi = efficiencyNotionalFromSize finalLongSize curMark
+      curShortOi = efficiencyNotionalFromSize finalShortSize curMark
+      curGrossOi = curLongOi + curShortOi
+      curNetSkew = curLongOi - curShortOi
+
+      summary =
+        PoolEfficiencySummary
+          { pesPoolTvlAssets = mCurPoolTvl
+          , pesSeniorTvlAssets = mCurSenTvl
+          , pesJuniorTvlAssets = mCurJunTvl
+          , pesVolume24hAssets = vol24h
+          , pesVolume7dAssets = vol7d
+          , pesVolume30dAssets = vol30d
+          , pesFees24hAssets = fees24h
+          , pesFees7dAssets = fees7d
+          , pesTurnover24hX100 = mCurPoolTvl >>= computeRatioX100 vol24h
+          , pesTurnover7dAvgDailyX100 = mAvgPool7d >>= \p -> computeRatioX100 vol7d (p * 7)
+          , pesTurnover30dAvgDailyX100 = mAvgPool30d >>= \p -> computeRatioX100 vol30d (p * 30)
+          , pesEffectiveTakeRate7dBpsX100 = computeTakeRateBpsX100 fees7d vol7d
+          , pesAnnualizedFeeYield7dBps = mAvgPool7d >>= computeAnnualizedYieldBps fees7d 7
+          , pesCurrentLongOiAssets = curLongOi
+          , pesCurrentShortOiAssets = curShortOi
+          , pesCurrentGrossOiAssets = curGrossOi
+          , pesCurrentNetSkewAssets = curNetSkew
+          , pesGrossOiToPoolBps = mCurPoolTvl >>= computeRatioBps curGrossOi
+          , pesNetSkewToPoolBps = mCurPoolTvl >>= computeRatioBps (abs curNetSkew)
+          , pesNetSkewToJuniorBps = mCurJunTvl >>= computeRatioBps (abs curNetSkew)
+          }
+   in (summary, series7d, series30d)
+
+getLiquidityEfficiencyResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getLiquidityEfficiencyResponse pool cfg =
+  snd
+    <$> runSingleFlightCache
+      liquidityEfficiencyCache
+      ()
+      isRight
+      (computeLiquidityEfficiencyResponse pool cfg)
+
+computeLiquidityEfficiencyResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeLiquidityEfficiencyResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
+      router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
+      housePool = T.toLower $ T.strip $ cfgVaultHistoryHousePoolAddress cfg
+      seniorVault = T.toLower $ T.strip $ cfgVaultHistorySeniorVaultAddress cfg
+      juniorVault = T.toLower $ T.strip $ cfgVaultHistoryJuniorVaultAddress cfg
+      bucket6h = 21600 :: Integer
+      daySec = 86400 :: Integer
+      end6h = ((now `div` bucket6h) + 1) * bucket6h
+      start7d = end6h - 28 * bucket6h
+      start30d = ((now `div` daySec) - 29) * daySec
+      startAll = min start30d start7d
+      since24h = now - daySec
+      since7d = now - 7 * daySec
+      since30d = now - 30 * daySec
+
+  (snaps, orderBuckets, windowTotals, priorOi, oiBuckets, mLatestMark) <- withDb pool $ \conn ->
+    withReadSnapshot conn $ do
+      s <- getVaultPerformanceSnapshots conn chainId housePool seniorVault juniorVault 721
+      oBuckets <- fetchEfficiencyOrderBuckets conn chainId router startAll
+      wTotals <- fetchEfficiencyOrderWindowTotals conn chainId router since24h since7d since30d
+      pOi <- fetchPriorOiSizes conn chainId router startAll
+      oDeltas <- fetchOiDeltaBuckets conn chainId router startAll
+      mMark <- fetchLatestBasketMark conn
+      pure (s, oBuckets, wTotals, pOi, oDeltas, mMark)
+
+  let (summary, series7d, series30d) =
+        buildPoolEfficiencyAnalytics now snaps orderBuckets priorOi oiBuckets mLatestMark windowTotals
+      latestBlock = case reverse snaps of
+        s : _ -> vpsBlockNumber s
+        [] -> 0
+
+  pure $
+    Right $
+      mkResponse latestBlock chainId $
+        object
+          [ "network" .= networkMetaJson cfg
+          , "observedAt" .= isoTimestamp now
+          , "summary" .= efficiencySummaryToJson summary
+          , "series7d" .= map efficiencyBucketToJson series7d
+          , "series30d" .= map efficiencyBucketToJson series30d
+          ]
+
+efficiencySummaryToJson :: PoolEfficiencySummary -> Value
+efficiencySummaryToJson PoolEfficiencySummary {..} =
+  object
+    [ "poolTvlAssets" .= (show <$> pesPoolTvlAssets)
+    , "seniorTvlAssets" .= (show <$> pesSeniorTvlAssets)
+    , "juniorTvlAssets" .= (show <$> pesJuniorTvlAssets)
+    , "volume24hAssets" .= show pesVolume24hAssets
+    , "volume7dAssets" .= show pesVolume7dAssets
+    , "volume30dAssets" .= show pesVolume30dAssets
+    , "fees24hAssets" .= show pesFees24hAssets
+    , "fees7dAssets" .= show pesFees7dAssets
+    , "turnover24hX100" .= pesTurnover24hX100
+    , "turnover7dAvgDailyX100" .= pesTurnover7dAvgDailyX100
+    , "turnover30dAvgDailyX100" .= pesTurnover30dAvgDailyX100
+    , "effectiveTakeRate7dBpsX100" .= pesEffectiveTakeRate7dBpsX100
+    , "annualizedFeeYield7dBps" .= pesAnnualizedFeeYield7dBps
+    , "currentLongOiAssets" .= show pesCurrentLongOiAssets
+    , "currentShortOiAssets" .= show pesCurrentShortOiAssets
+    , "currentGrossOiAssets" .= show pesCurrentGrossOiAssets
+    , "currentNetSkewAssets" .= show pesCurrentNetSkewAssets
+    , "grossOiToPoolBps" .= pesGrossOiToPoolBps
+    , "netSkewToPoolBps" .= pesNetSkewToPoolBps
+    , "netSkewToJuniorBps" .= pesNetSkewToJuniorBps
+    ]
+
+efficiencyBucketToJson :: PoolEfficiencyBucket -> Value
+efficiencyBucketToJson PoolEfficiencyBucket {..} =
+  object
+    [ "bucketStart" .= isoTimestamp pebBucketStart
+    , "bucketEnd" .= isoTimestamp pebBucketEnd
+    , "volumeAssets" .= show pebVolumeAssets
+    , "feesAssets" .= show pebFeesAssets
+    , "tradesCount" .= pebTradesCount
+    , "poolTvlAssets" .= (show <$> pebPoolTvlAssets)
+    , "seniorTvlAssets" .= (show <$> pebSeniorTvlAssets)
+    , "juniorTvlAssets" .= (show <$> pebJuniorTvlAssets)
+    , "turnoverX100" .= pebTurnoverX100
+    , "annualizedTurnoverDailyX100" .= pebAnnualizedTurnoverDailyX100
+    , "takeRateBpsX100" .= pebTakeRateBpsX100
+    , "longOiAssets" .= show pebLongOiAssets
+    , "shortOiAssets" .= show pebShortOiAssets
+    , "grossOiAssets" .= show pebGrossOiAssets
+    , "netSkewAssets" .= show pebNetSkewAssets
+    , "grossOiToPoolBps" .= pebGrossOiToPoolBps
+    , "netSkewToPoolBps" .= pebNetSkewToPoolBps
+    ]
+
+parseIntText :: Text -> Integer
+parseIntText = fromMaybe 0 . readMaybe . T.unpack . T.strip
+
+fetchEfficiencyOrderBuckets :: Connection -> Integer -> Text -> Integer -> IO (Map.Map Integer OrderBucketAgg)
+fetchEfficiencyOrderBuckets conn chainId router sinceUnix = do
+  rows <-
+    query
+      conn
+      "SELECT \
+      \  (FLOOR(terminal_timestamp / 21600) * 21600)::BIGINT, \
+      \  COUNT(*)::INT, \
+      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+      \  COALESCE(SUM( \
+      \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
+      \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
+      \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-?[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
+      \  ), 0)::TEXT \
+      \FROM perps_orders \
+      \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+      \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ? \
+      \GROUP BY 1 \
+      \ORDER BY 1 ASC"
+      (chainId, router, sinceUnix)
+      :: IO [(Integer, Int, Text, Text)]
+  pure $
+    Map.fromList
+      [ (ts, OrderBucketAgg cnt (parseIntText volT) (parseIntText feeT))
+      | (ts, cnt, volT, feeT) <- rows
+      ]
+
+fetchEfficiencyOrderWindowTotals :: Connection -> Integer -> Text -> Integer -> Integer -> Integer -> IO (Integer, Integer, Integer, Integer, Integer)
+fetchEfficiencyOrderWindowTotals conn chainId router since24h since7d since30d = do
+  rows <-
+    query
+      conn
+      "SELECT \
+      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+      \  COALESCE(SUM( \
+      \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
+      \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
+      \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-?[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
+      \  ) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+      \  COALESCE(SUM( \
+      \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
+      \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
+      \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-?[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
+      \  ) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT \
+      \FROM perps_orders \
+      \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+      \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ?"
+      (since24h, since7d, since30d, since24h, since7d, chainId, router, since30d)
+      :: IO [(Text, Text, Text, Text, Text)]
+  pure $ case rows of
+    (v24, v7, v30, f24, f7) : _ ->
+      (parseIntText v24, parseIntText v7, parseIntText v30, parseIntText f24, parseIntText f7)
+    [] -> (0, 0, 0, 0, 0)
+
+fetchPriorOiSizes :: Connection -> Integer -> Text -> Integer -> IO (Integer, Integer)
+fetchPriorOiSizes conn chainId router beforeUnix = do
+  rows <-
+    query
+      conn
+      "SELECT \
+      \  COALESCE(SUM(CASE WHEN side = 0 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
+      \  COALESCE(SUM(CASE WHEN side = 1 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT \
+      \FROM perps_account_activity \
+      \WHERE chain_id = ? AND release_router = ? \
+      \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+      \  AND side IN (0, 1) \
+      \  AND timestamp < ?"
+      (chainId, router, beforeUnix)
+      :: IO [(Text, Text)]
+  pure $ case rows of
+    (lT, sT) : _ -> (parseIntText lT, parseIntText sT)
+    [] -> (0, 0)
+
+fetchOiDeltaBuckets :: Connection -> Integer -> Text -> Integer -> IO (Map.Map Integer OiDeltaBucketAgg)
+fetchOiDeltaBuckets conn chainId router sinceUnix = do
+  rows <-
+    query
+      conn
+      "SELECT \
+      \  (FLOOR(timestamp / 21600) * 21600)::BIGINT, \
+      \  COALESCE(SUM(CASE WHEN side = 0 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
+      \  COALESCE(SUM(CASE WHEN side = 1 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
+      \  (ARRAY_AGG(price::TEXT ORDER BY block_number DESC, log_index DESC) FILTER (WHERE price IS NOT NULL AND price > 0))[1] \
+      \FROM perps_account_activity \
+      \WHERE chain_id = ? AND release_router = ? \
+      \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+      \  AND side IN (0, 1) \
+      \  AND timestamp >= ? \
+      \GROUP BY 1 \
+      \ORDER BY 1 ASC"
+      (chainId, router, sinceUnix)
+      :: IO [(Integer, Text, Text, Maybe Text)]
+  pure $
+    Map.fromList
+      [ (ts, OiDeltaBucketAgg (parseIntText lT) (parseIntText sT) (mPT >>= readMaybe . T.unpack . T.strip))
+      | (ts, lT, sT, mPT) <- rows
+      ]
+
+fetchLatestBasketMark :: Connection -> IO (Maybe Integer)
+fetchLatestBasketMark conn = do
+  rows <-
+    query_
+      conn
+      "SELECT basket_price::TEXT FROM perps_pyth_update_payloads \
+      \WHERE basket_price IS NOT NULL \
+      \ORDER BY max_publish_time DESC, id DESC LIMIT 1"
+      :: IO [Only Text]
+  pure $ case rows of
+    Only t : _ -> readMaybe (T.unpack (T.strip t))
+    [] -> Nothing
 
 executionPathLabel :: Int -> Text
 executionPathLabel = \case

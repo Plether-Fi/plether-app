@@ -9,6 +9,7 @@ import { publishWeek } from '../divisions/engine'
 const statusQuery = vi.hoisted(() => vi.fn())
 const overviewQuery = vi.hoisted(() => vi.fn())
 const marketExposureQuery = vi.hoisted(() => vi.fn())
+const efficiencyQuery = vi.hoisted(() => vi.fn())
 const liveQuery = vi.hoisted(() => vi.fn())
 const publicationQuery = vi.hoisted(() => vi.fn())
 const statsQuery = vi.hoisted(() => vi.fn())
@@ -20,6 +21,7 @@ vi.mock('../api', async () => {
     useInsightsStatus: statusQuery,
     useOverview: overviewQuery,
     useMarketExposure: marketExposureQuery,
+    useLiquidityEfficiency: efficiencyQuery,
   }
 })
 vi.mock('../divisions/query', () => ({
@@ -48,6 +50,12 @@ beforeEach(() => {
     data: undefined,
     isLoading: false,
     isError: false,
+  })
+  efficiencyQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
   })
   statsQuery.mockReturnValue({ data: { registeredWallets: 88 }, isLoading: false, isError: false })
   publicationQuery.mockReturnValue({ data: publishWeek(input(0, [account(1)]), null), isLoading: false, isError: false })

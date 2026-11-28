@@ -282,10 +282,94 @@ function shouldRetryEndpoint(failureCount: number, error: Error): boolean {
   return failureCount < 2
 }
 
+export interface PoolEfficiencyBucket {
+  bucketStart: string
+  bucketEnd: string
+  volumeAssets: string
+  feesAssets: string
+  tradesCount: number
+  poolTvlAssets: string | null
+  seniorTvlAssets: string | null
+  juniorTvlAssets: string | null
+  turnoverX100: number | null
+  annualizedTurnoverDailyX100: number | null
+  takeRateBpsX100: number | null
+  longOiAssets: string
+  shortOiAssets: string
+  grossOiAssets: string
+  netSkewAssets: string
+  grossOiToPoolBps: number | null
+  netSkewToPoolBps: number | null
+}
+
+export interface PoolEfficiencySummary {
+  poolTvlAssets: string | null
+  seniorTvlAssets: string | null
+  juniorTvlAssets: string | null
+  volume24hAssets: string
+  volume7dAssets: string
+  volume30dAssets: string
+  fees24hAssets: string
+  fees7dAssets: string
+  turnover24hX100: number | null
+  turnover7dAvgDailyX100: number | null
+  turnover30dAvgDailyX100: number | null
+  effectiveTakeRate7dBpsX100: number | null
+  annualizedFeeYield7dBps: number | null
+  currentLongOiAssets: string
+  currentShortOiAssets: string
+  currentGrossOiAssets: string
+  currentNetSkewAssets: string
+  grossOiToPoolBps: number | null
+  netSkewToPoolBps: number | null
+  netSkewToJuniorBps: number | null
+}
+
+export interface LiquidityEfficiencyResponse {
+  network: LiquidityNetworkMeta
+  observedAt: string
+  summary: PoolEfficiencySummary
+  series7d: PoolEfficiencyBucket[]
+  series30d: PoolEfficiencyBucket[]
+}
+
+export function getLiquidityEfficiency(signal?: AbortSignal): Promise<LiquidityEfficiencyResponse> {
+  return fetchInsightsJson<LiquidityEfficiencyResponse>('/liquidity/efficiency', signal)
+}
+
+export function formatTurnoverX100(x100: number | null | undefined): string {
+  if (x100 == null || !Number.isFinite(x100)) return '—'
+  const val = x100 / 100
+  if (val >= 100) return `${val.toFixed(1)}×`
+  return `${val.toFixed(2)}×`
+}
+
+export function formatPoolBpsPercent(bps: number | null | undefined, digits = 1): string {
+  if (bps == null || !Number.isFinite(bps)) return '—'
+  return `${(bps / 100).toFixed(digits)}%`
+}
+
+export function formatTakeRateBpsX100(bpsX100: number | null | undefined): string {
+  if (bpsX100 == null || !Number.isFinite(bpsX100)) return '—'
+  return `${(bpsX100 / 100).toFixed(2)} bps`
+}
+
 export const liquidityKeys = {
   settlements: ['insights', 'liquidity', 'settlements'] as const,
   forensics: ['insights', 'liquidity', 'forensics'] as const,
+  efficiency: ['insights', 'liquidity', 'efficiency'] as const,
   epoch: (epoch: string | number) => ['insights', 'liquidity', 'epoch', String(epoch)] as const,
+}
+
+export function useLiquidityEfficiency() {
+  return useQuery({
+    queryKey: liquidityKeys.efficiency,
+    queryFn: ({ signal }) => getLiquidityEfficiency(signal),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    retry: shouldRetryEndpoint,
+  })
 }
 
 export function useLiquiditySettlements() {
