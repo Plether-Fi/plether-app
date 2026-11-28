@@ -163,6 +163,7 @@ export function OraclePage() {
                   {data.live.basketPrice ? (
                     <OraclePriceLink
                       updateId={data.live.latestUpdateId}
+                      preserveColor
                       className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
                         data.regime === 'Live'
                           ? 'text-positive'

@@ -118,7 +118,17 @@ export function BatchFinalizationPanel({
           </Panel>
 
           <Panel className="p-4">
-            <p className="text-xs text-content-tertiary">Pyth oracle settlement</p>
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-xs text-content-tertiary">Pyth oracle settlement</p>
+              {batchSummary.oraclePrice || batchSummary.oracleUpdateId ? (
+                <OraclePriceLink
+                  updateId={batchSummary.oracleUpdateId}
+                  className="font-mono text-[11px] font-semibold"
+                >
+                  {batchSummary.oracleUpdateId ? `#${batchSummary.oracleUpdateId} →` : 'Inspect →'}
+                </OraclePriceLink>
+              ) : null}
+            </div>
             <p className="mt-1 font-mono text-base font-semibold tabular-nums text-content-primary">
               {batchSummary.oraclePrice ? (
                 <OraclePriceLink updateId={batchSummary.oracleUpdateId}>
@@ -246,7 +256,6 @@ export function BatchFinalizationPanel({
                         Oracle{' '}
                         <OraclePriceLink
                           updateId={order.oracleUpdateId ?? batchSummary?.oracleUpdateId}
-                          className="text-content-secondary"
                         >
                           {formatPrice(order.oraclePrice)}
                         </OraclePriceLink>

@@ -45,7 +45,7 @@ export function MarketExposurePulsePanel({
         {data?.currentMarkPrice ? (
           <span className="font-mono text-xs text-content-secondary">
             Mark{' '}
-            <OraclePriceLink className="font-semibold text-content-primary">
+            <OraclePriceLink className="font-semibold">
               {formatPrice(data.currentMarkPrice)}
             </OraclePriceLink>
             {summary?.avgLeverageX100 != null
@@ -177,9 +177,7 @@ export function MarketExposurePulsePanel({
                         </td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-xs tabular-nums text-content-secondary">
                           {formatPrice(pos.entryPrice)} →{' '}
-                          <OraclePriceLink className="text-content-primary">
-                            {formatPrice(pos.markPrice)}
-                          </OraclePriceLink>
+                          <OraclePriceLink>{formatPrice(pos.markPrice)}</OraclePriceLink>
                         </td>
                         <td className={`whitespace-nowrap px-3 py-3 font-mono text-xs font-semibold tabular-nums ${liqToneClass}`}>
                           {liq.text}

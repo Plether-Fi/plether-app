@@ -144,11 +144,7 @@ export function ActivePositionRiskStrip({
             {formatLeverageX100(exposure.effectiveLeverageX100)}
           </span>
           <span className="font-mono text-[11px] text-content-secondary">
-            Mark{' '}
-            <OraclePriceLink className="text-content-primary">
-              {formatPrice(exposure.markPrice)}
-            </OraclePriceLink>{' '}
-            · Liq{' '}
+            Mark <OraclePriceLink>{formatPrice(exposure.markPrice)}</OraclePriceLink> · Liq{' '}
             {exposure.liquidationPrice ? formatPrice(exposure.liquidationPrice) : 'Out of range'}
           </span>
         </div>

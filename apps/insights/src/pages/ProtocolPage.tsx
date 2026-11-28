@@ -1071,7 +1071,7 @@ export function ProtocolPage() {
                     data.safety.lastMarkPrice ? (
                       <>
                         Last on-chain mark:{' '}
-                        <OraclePriceLink className="font-mono font-semibold text-content-primary">
+                        <OraclePriceLink className="font-mono font-semibold">
                           {formatPrice(data.safety.lastMarkPrice)}
                         </OraclePriceLink>
                         {data.safety.lastMarkTime ? ` · ${formatUtc(data.safety.lastMarkTime)}` : ''}
