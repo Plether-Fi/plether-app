@@ -17,6 +17,11 @@ module Plether.Handlers.InsightsLiquidity
   , computeRatioBps
   , computeTakeRateBpsX100
   , computeAnnualizedYieldBps
+  , efficiencyOrderBucketsSql
+  , efficiencyOrderWindowTotalsSql
+  , priorOiSizesSql
+  , oiDeltaBucketsSql
+  , latestBasketMarkSql
   , fetchRecentReturnReports
   , executionPathLabel
   , healthStateLabel
@@ -42,7 +47,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), Query, query, query_)
 import Database.PostgreSQL.Simple.FromField (ResultError (ConversionFailed), returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field, fieldWith)
 import Database.PostgreSQL.Simple.Transaction
@@ -777,25 +782,29 @@ efficiencyBucketToJson PoolEfficiencyBucket {..} =
 parseIntText :: Text -> Integer
 parseIntText = fromMaybe 0 . readMaybe . T.unpack . T.strip
 
+efficiencyOrderBucketsSql :: Query
+efficiencyOrderBucketsSql =
+  "SELECT \
+  \  ((terminal_timestamp / 21600) * 21600)::BIGINT, \
+  \  COUNT(*)::INT, \
+  \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
+  \  COALESCE(SUM( \
+  \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
+  \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
+  \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-{0,1}[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
+  \  ), 0)::TEXT \
+  \FROM perps_orders \
+  \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+  \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ? \
+  \GROUP BY 1 \
+  \ORDER BY 1 ASC"
+
 fetchEfficiencyOrderBuckets :: Connection -> Integer -> Text -> Integer -> IO (Map.Map Integer OrderBucketAgg)
 fetchEfficiencyOrderBuckets conn chainId router sinceUnix = do
   rows <-
     query
       conn
-      "SELECT \
-      \  (FLOOR(terminal_timestamp / 21600) * 21600)::BIGINT, \
-      \  COUNT(*)::INT, \
-      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END), 0)::TEXT, \
-      \  COALESCE(SUM( \
-      \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
-      \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
-      \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-?[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
-      \  ), 0)::TEXT \
-      \FROM perps_orders \
-      \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-      \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ? \
-      \GROUP BY 1 \
-      \ORDER BY 1 ASC"
+      efficiencyOrderBucketsSql
       (chainId, router, sinceUnix)
       :: IO [(Integer, Int, Text, Text)]
   pure $
@@ -804,28 +813,32 @@ fetchEfficiencyOrderBuckets conn chainId router sinceUnix = do
       | (ts, cnt, volT, feeT) <- rows
       ]
 
+efficiencyOrderWindowTotalsSql :: Query
+efficiencyOrderWindowTotalsSql =
+  "SELECT \
+  \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+  \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+  \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+  \  COALESCE(SUM( \
+  \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
+  \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
+  \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-{0,1}[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
+  \  ) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
+  \  COALESCE(SUM( \
+  \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
+  \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
+  \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-{0,1}[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
+  \  ) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT \
+  \FROM perps_orders \
+  \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
+  \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ?"
+
 fetchEfficiencyOrderWindowTotals :: Connection -> Integer -> Text -> Integer -> Integer -> Integer -> IO (Integer, Integer, Integer, Integer, Integer)
 fetchEfficiencyOrderWindowTotals conn chainId router since24h since7d since30d = do
   rows <-
     query
       conn
-      "SELECT \
-      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
-      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
-      \  COALESCE(SUM(CASE WHEN receipt_economics->>'executionNotionalAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionNotionalAssets')::NUMERIC ELSE 0 END) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
-      \  COALESCE(SUM( \
-      \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
-      \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
-      \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-?[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
-      \  ) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT, \
-      \  COALESCE(SUM( \
-      \    (CASE WHEN receipt_economics->>'executionFeeAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'executionFeeAssets')::NUMERIC ELSE 0 END) + \
-      \    (CASE WHEN receipt_economics->>'vpiAssets' ~ '^[0-9]+$' THEN (receipt_economics->>'vpiAssets')::NUMERIC ELSE 0 END) + \
-      \    (CASE WHEN receipt_economics->>'carryAssets' ~ '^-?[0-9]+$' THEN GREATEST(0, (receipt_economics->>'carryAssets')::NUMERIC) ELSE 0 END) \
-      \  ) FILTER (WHERE terminal_timestamp >= ?), 0)::TEXT \
-      \FROM perps_orders \
-      \WHERE chain_id = ? AND order_router = ? AND terminal_status = 'Executed' \
-      \  AND terminal_timestamp IS NOT NULL AND terminal_timestamp >= ?"
+      efficiencyOrderWindowTotalsSql
       (since24h, since7d, since30d, since24h, since7d, chainId, router, since30d)
       :: IO [(Text, Text, Text, Text, Text)]
   pure $ case rows of
@@ -833,42 +846,50 @@ fetchEfficiencyOrderWindowTotals conn chainId router since24h since7d since30d =
       (parseIntText v24, parseIntText v7, parseIntText v30, parseIntText f24, parseIntText f7)
     [] -> (0, 0, 0, 0, 0)
 
+priorOiSizesSql :: Query
+priorOiSizesSql =
+  "SELECT \
+  \  COALESCE(SUM(CASE WHEN side = 0 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
+  \  COALESCE(SUM(CASE WHEN side = 1 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT \
+  \FROM perps_account_activity \
+  \WHERE chain_id = ? AND release_router = ? \
+  \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+  \  AND side IN (0, 1) \
+  \  AND timestamp < ?"
+
 fetchPriorOiSizes :: Connection -> Integer -> Text -> Integer -> IO (Integer, Integer)
 fetchPriorOiSizes conn chainId router beforeUnix = do
   rows <-
     query
       conn
-      "SELECT \
-      \  COALESCE(SUM(CASE WHEN side = 0 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
-      \  COALESCE(SUM(CASE WHEN side = 1 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT \
-      \FROM perps_account_activity \
-      \WHERE chain_id = ? AND release_router = ? \
-      \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
-      \  AND side IN (0, 1) \
-      \  AND timestamp < ?"
+      priorOiSizesSql
       (chainId, router, beforeUnix)
       :: IO [(Text, Text)]
   pure $ case rows of
     (lT, sT) : _ -> (parseIntText lT, parseIntText sT)
     [] -> (0, 0)
 
+oiDeltaBucketsSql :: Query
+oiDeltaBucketsSql =
+  "SELECT \
+  \  ((timestamp / 21600) * 21600)::BIGINT, \
+  \  COALESCE(SUM(CASE WHEN side = 0 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
+  \  COALESCE(SUM(CASE WHEN side = 1 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
+  \  (ARRAY_AGG(price::TEXT ORDER BY block_number DESC, log_index DESC) FILTER (WHERE price IS NOT NULL AND price > 0))[1] \
+  \FROM perps_account_activity \
+  \WHERE chain_id = ? AND release_router = ? \
+  \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
+  \  AND side IN (0, 1) \
+  \  AND timestamp >= ? \
+  \GROUP BY 1 \
+  \ORDER BY 1 ASC"
+
 fetchOiDeltaBuckets :: Connection -> Integer -> Text -> Integer -> IO (Map.Map Integer OiDeltaBucketAgg)
 fetchOiDeltaBuckets conn chainId router sinceUnix = do
   rows <-
     query
       conn
-      "SELECT \
-      \  (FLOOR(timestamp / 21600) * 21600)::BIGINT, \
-      \  COALESCE(SUM(CASE WHEN side = 0 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
-      \  COALESCE(SUM(CASE WHEN side = 1 THEN (CASE WHEN activity_type = 'Open' THEN COALESCE(size_delta, 0) ELSE -COALESCE(size_delta, 0) END) ELSE 0 END), 0)::TEXT, \
-      \  (ARRAY_AGG(price::TEXT ORDER BY block_number DESC, log_index DESC) FILTER (WHERE price IS NOT NULL AND price > 0))[1] \
-      \FROM perps_account_activity \
-      \WHERE chain_id = ? AND release_router = ? \
-      \  AND activity_type IN ('Open', 'Close', 'Liquidated') \
-      \  AND side IN (0, 1) \
-      \  AND timestamp >= ? \
-      \GROUP BY 1 \
-      \ORDER BY 1 ASC"
+      oiDeltaBucketsSql
       (chainId, router, sinceUnix)
       :: IO [(Integer, Text, Text, Maybe Text)]
   pure $
@@ -877,14 +898,18 @@ fetchOiDeltaBuckets conn chainId router sinceUnix = do
       | (ts, lT, sT, mPT) <- rows
       ]
 
+latestBasketMarkSql :: Query
+latestBasketMarkSql =
+  "SELECT basket_price::TEXT FROM perps_pyth_update_payloads \
+  \WHERE basket_price IS NOT NULL \
+  \ORDER BY max_publish_time DESC, id DESC LIMIT 1"
+
 fetchLatestBasketMark :: Connection -> IO (Maybe Integer)
 fetchLatestBasketMark conn = do
   rows <-
     query_
       conn
-      "SELECT basket_price::TEXT FROM perps_pyth_update_payloads \
-      \WHERE basket_price IS NOT NULL \
-      \ORDER BY max_publish_time DESC, id DESC LIMIT 1"
+      latestBasketMarkSql
       :: IO [Only Text]
   pure $ case rows of
     Only t : _ -> readMaybe (T.unpack (T.strip t))
