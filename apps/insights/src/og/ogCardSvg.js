@@ -833,7 +833,7 @@ export function buildOgCardSvg(data) {
             ? { bg: '#f2cf7122', border: '#f2cf7199', fg: '#f2cf71' }
             : { bg: '#00ff991f', border: '#00ff9988', fg: '#00ff99' };
     const oiBadgeLabel =
-      grossOiPct != null ? `GROSS OI ${grossOiPct.toFixed(1)}% OF POOL` : 'OPEN INTEREST LIVE';
+      grossOiPct != null ? `OI ${grossOiPct.toFixed(1)}% OF POOL` : 'OI LIVE';
 
     const longNum = parseAmt(data.currentLongOiAssets);
     const shortNum = parseAmt(data.currentShortOiAssets);
@@ -924,8 +924,8 @@ export function buildOgCardSvg(data) {
 
     const subline = `24h Vol ${formatCompactUsdg(data.volume24hAssets)} · 7d Vol ${formatCompactUsdg(data.volume7dAssets)}`;
     const body = `
-      ${renderPill(60, 132, 'LP POOL EFFICIENCY', '#3b212d', '#ffab9666', '#fff5f9')}
-      ${renderPill(60 + pillWidth('LP POOL EFFICIENCY') + 12, 132, oiBadgeLabel, oiBadgeTone.bg, oiBadgeTone.border, oiBadgeTone.fg)}
+      ${renderPill(60, 132, 'HOUSE POOL', '#3b212d', '#ffab9666', '#fff5f9')}
+      ${renderPill(60 + pillWidth('HOUSE POOL') + 12, 132, oiBadgeLabel, oiBadgeTone.bg, oiBadgeTone.border, oiBadgeTone.fg)}
       <text x="60" y="218" fill="#aa98a0" font-family="${SANS_FONT}" font-size="15" font-weight="700" letter-spacing="1.4">${heroLabel}</text>
       <text x="60" y="302" fill="#fff5f9" font-family="${MONO_FONT}" font-size="76" font-weight="700">${escapeXml(heroRatio)}</text>
       <text x="60" y="346" fill="#d8cbd0" font-family="${SANS_FONT}" font-size="16" font-weight="500">${escapeXml(subline)}</text>

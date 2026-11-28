@@ -253,8 +253,8 @@ describe('shareCard SVG & social helpers', () => {
       observedAt: '2026-11-28T14:21:14Z',
     }
     const svg = buildShareCardSvg(effData)
-    expect(svg).toContain('LP POOL EFFICIENCY')
-    expect(svg).toContain('GROSS OI 84.5% OF POOL')
+    expect(svg).toContain('HOUSE POOL')
+    expect(svg).toContain('OI 84.5% OF POOL')
     expect(svg).toContain('0.66×')
     expect(svg).toContain('1.17× / d')
     expect(svg).toContain('53.44% APR')
@@ -294,7 +294,8 @@ describe('shareCard SVG & social helpers', () => {
     })
     expect(ogData).not.toBeNull()
     const ogSvg = buildOgCardSvg(ogData)
-    expect(ogSvg).toContain('LP POOL EFFICIENCY')
+    expect(ogSvg).toContain('HOUSE POOL')
+    expect(ogSvg).toContain('OI 84.5% OF POOL')
     expect(ogSvg).toContain('0.66×')
     expect(ogSvg).toContain('53.44% APR')
     expect(ogSvg).not.toContain('$')
