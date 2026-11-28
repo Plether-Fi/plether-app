@@ -596,21 +596,13 @@ export function OrderTimingTimelinePanel({
                 <span className="whitespace-nowrap tabular-nums">
                   {oraclePrice ? (
                     <OraclePriceLink updateId={oracleUpdateId} className="font-semibold">
-                      {formatPrice(oraclePrice)} plDXY
+                      {formatPrice(oraclePrice)} plDXY →
                     </OraclePriceLink>
                   ) : (
                     <span className="text-content-secondary">—</span>
                   )}
                 </span>
               </div>
-              {oraclePrice || oracleUpdateId ? (
-                <div className="flex items-center justify-between gap-2">
-                  <span className="whitespace-nowrap">Publication</span>
-                  <OraclePriceLink updateId={oracleUpdateId} className="whitespace-nowrap font-semibold">
-                    {oracleUpdateId ? `#${oracleUpdateId} →` : 'Inspect update →'}
-                  </OraclePriceLink>
-                </div>
-              ) : null}
             </div>
           </div>
 
