@@ -6,11 +6,13 @@ import {
   transactionPath,
   useExecutionQuality,
   useExecutionTrades,
+  useMarketFadRisk,
   type ProtocolTradeRecord,
   type TransactionRouteState,
 } from '../api'
 import { ArbiscanButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { FadLiquidationWatchlistSection } from '../components/FadLiquidationWatchlistSection'
 import { TraderIdentity } from '../components/TraderIdentity'
 import {
   ExecutionLatencyWhisker,
@@ -46,6 +48,7 @@ export function ExecutionPage() {
   const protocol = useProtocolContext()
   const qualityQuery = useExecutionQuality()
   const tradesQuery = useExecutionTrades(30)
+  const fadRiskQuery = useMarketFadRisk()
   const [tradeFilter, setTradeFilter] = useState<TradeTypeFilter>('all')
 
   const quality = qualityQuery.data
@@ -232,6 +235,14 @@ export function ExecutionPage() {
           )}
         </Panel>
       </section>
+
+      <FadLiquidationWatchlistSection
+        data={fadRiskQuery.data}
+        isLoading={fadRiskQuery.isLoading}
+        isError={fadRiskQuery.isError}
+        error={fadRiskQuery.error}
+        onRetry={() => void fadRiskQuery.refetch()}
+      />
 
       <section aria-labelledby="cohorts-title" className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">

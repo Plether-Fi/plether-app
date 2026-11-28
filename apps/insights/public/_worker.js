@@ -81,6 +81,7 @@ function resolvePublicApiCacheTtl(method, pathname) {
     apiPath === '/oracle/health' ||
     /^\/oracle\/updates\/(latest|\d+)$/.test(apiPath) ||
     apiPath === '/market/exposure' ||
+    apiPath === '/market/fad-risk' ||
     apiPath === '/trading-accounts/overview' ||
     /^\/trading-accounts\/0x[0-9a-fA-F]{40}$/.test(apiPath) ||
     apiPath === '/treasury/overview' ||
@@ -92,6 +93,8 @@ function resolvePublicApiCacheTtl(method, pathname) {
   if (
     apiPath === '/liquidity/settlements' ||
     apiPath === '/liquidity/forensics' ||
+    apiPath === '/liquidity/efficiency' ||
+    apiPath === '/liquidity/solvency' ||
     /^\/liquidity\/epochs\/\d+$/.test(apiPath)
   ) {
     return API_CACHE_TTLS.liquidity;

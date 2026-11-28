@@ -1,5 +1,11 @@
 import { Link } from 'react-router-dom'
-import { InsightsApiError, formatRateBps, useOracleHealth } from '../api'
+import {
+  InsightsApiError,
+  formatDurationCompact,
+  formatRateBps,
+  useMarketFadRisk,
+  useOracleHealth,
+} from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OracleHealthBlocks } from '../components/OracleHealthBlocks'
 import { OraclePriceLink } from '../components/OraclePriceLink'
@@ -47,7 +53,9 @@ function formatReasonLabel(code: string): string {
 export function OraclePage() {
   const protocol = useProtocolContext()
   const oracleQuery = useOracleHealth()
+  const fadRiskQuery = useMarketFadRisk()
   const data = oracleQuery.data
+  const fadData = fadRiskQuery.data
   const awaitingDeploy =
     oracleQuery.error instanceof InsightsApiError && oracleQuery.error.status === 404
 
@@ -314,6 +322,77 @@ export function OraclePage() {
                 </div>
               </div>
             </div>
+
+            {/* On-Chain Mark Parity & Open/Close Policy Flags */}
+            {data.live.onChainMarkPrice || data.live.openPolicy || data.live.closePolicy ? (
+              <div className="mt-5 grid gap-3 border-t border-brand-border/20 pt-4 sm:grid-cols-3">
+                <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                    On-Chain Mark vs. Hermes
+                  </p>
+                  <p className="mt-1 font-mono text-xs font-semibold tabular-nums text-content-primary">
+                    {data.live.onChainMarkPrice ? formatPrice(data.live.onChainMarkPrice) : '—'}
+                    {(() => {
+                      if (!data.live.onChainMarkPrice || !data.live.basketPrice) return null
+                      const onChain = Number(data.live.onChainMarkPrice)
+                      const hermes = Number(data.live.basketPrice)
+                      if (!Number.isFinite(onChain) || !Number.isFinite(hermes) || hermes <= 0) {
+                        return null
+                      }
+                      const diffBps = Math.round((Math.abs(onChain - hermes) / hermes) * 10_000)
+                      return (
+                        <span
+                          className={`ml-2 font-normal ${
+                            diffBps > 20 ? 'text-brand-yellow' : 'text-positive'
+                          }`}
+                        >
+                          ({String(diffBps)} bps drift)
+                        </span>
+                      )
+                    })()}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] text-content-tertiary">
+                    {data.live.onChainMarkTime
+                      ? `Cached ${formatUtc(data.live.onChainMarkTime)}`
+                      : 'CfdEngine cached mark'}
+                  </p>
+                </div>
+
+                <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                    Open Order Policy
+                  </p>
+                  <p className="mt-1 font-mono text-xs font-semibold text-content-primary">
+                    {data.live.openPolicy
+                      ? data.live.openPolicy.closeOnly
+                        ? 'Close-only (opens blocked)'
+                        : `Open allowed · ≤${String(data.live.openPolicy.maxStalenessSeconds)}s`
+                      : '—'}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] text-content-tertiary">
+                    {data.live.openPolicy
+                      ? `FAD: ${data.live.openPolicy.isFadWindow ? 'Yes' : 'No'} · Stored mark: ${data.live.openPolicy.requireStoredMark ? 'Req' : 'Opt'}`
+                      : 'PletherOracle.getOrderPolicy(open)'}
+                  </p>
+                </div>
+
+                <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                    Close Order Policy
+                  </p>
+                  <p className="mt-1 font-mono text-xs font-semibold text-content-primary">
+                    {data.live.closePolicy
+                      ? `Close allowed · ≤${String(data.live.closePolicy.maxStalenessSeconds)}s`
+                      : '—'}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] text-content-tertiary">
+                    {data.live.closePolicy
+                      ? `Frozen: ${data.live.closePolicy.oracleFrozen ? 'Yes' : 'No'} · Any stored mark: ${data.live.closePolicy.allowAnyStoredMark ? 'Yes' : 'No'}`
+                      : 'PletherOracle.getOrderPolicy(close)'}
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </Panel>
 
           <OracleHealthBlocks
@@ -321,6 +400,175 @@ export function OraclePage() {
             window24h={data.windows.window24h.timeline}
             divergenceLimitSeconds={data.thresholds.maxComponentDivergenceSeconds}
           />
+
+          {/* Upcoming FX Freeze & FAD Calendar */}
+          {fadData ? (
+            <section id="fx-calendar" aria-labelledby="fx-calendar-title" className="space-y-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <div>
+                  <h2 id="fx-calendar-title" className="text-xl font-semibold">
+                    Upcoming FX Freeze &amp; FAD Calendar
+                  </h2>
+                  <p className="mt-1 text-xs text-content-tertiary">
+                    Derived from on-chain{' '}
+                    <code className="font-mono text-[11px]">MarketCalendarLib</code> (17:00 New York{' '}
+                    {fadData.calendar.isNewYorkDst ? 'EDT · 21:00 UTC' : 'EST · 22:00 UTC'}) plus{' '}
+                    <code className="font-mono text-[11px]">CfdEngine.marketClosures[]</code>
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill
+                    tone={
+                      fadData.calendar.oracleFrozen
+                        ? 'blocked'
+                        : fadData.calendar.fadWindow
+                          ? 'degraded'
+                          : 'live'
+                    }
+                    label={
+                      fadData.calendar.fadWindow
+                        ? fadData.calendar.oracleFrozen
+                          ? 'FX Market Frozen'
+                          : 'FAD Runway Active'
+                        : fadData.calendar.secondsUntilNextFad != null
+                          ? `Next FAD in ${formatDurationCompact(fadData.calendar.secondsUntilNextFad)}`
+                          : 'FX Market Live'
+                    }
+                  />
+                  {fadData.summary.endangeredCount > 0 ? (
+                    <Link
+                      to="/execution#fad-watchlist"
+                      className="border border-brand-orange/45 bg-brand-orange/15 px-2.5 py-0.5 font-mono text-xs font-semibold text-brand-orange transition-colors hover:bg-brand-orange/25"
+                    >
+                      {String(fadData.summary.endangeredCount)} endangered at FAD →
+                    </Link>
+                  ) : (
+                    <Link
+                      to="/execution#fad-watchlist"
+                      className="font-mono text-xs font-semibold text-brand-peach hover:underline"
+                    >
+                      FAD Watchlist →
+                    </Link>
+                  )}
+                </div>
+              </div>
+
+              <Panel className="overflow-hidden">
+                <div className="grid gap-3 border-b border-brand-border/20 p-4 sm:grid-cols-2 lg:grid-cols-4 sm:p-5">
+                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                      Next FAD Start (3.00% Margin)
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-brand-peach">
+                      {fadData.calendar.nextFadStartsAtUtc
+                        ? formatUtc(fadData.calendar.nextFadStartsAtUtc)
+                        : '—'}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                      {fadData.calendar.fadWindow
+                        ? 'Currently active'
+                        : fadData.calendar.secondsUntilNextFad != null
+                          ? `In ${formatDurationCompact(fadData.calendar.secondsUntilNextFad)}`
+                          : '—'}
+                    </p>
+                  </div>
+
+                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                      Next Oracle Freeze
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
+                      {fadData.calendar.nextFreezeStartsAtUtc
+                        ? formatUtc(fadData.calendar.nextFreezeStartsAtUtc)
+                        : '—'}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                      {fadData.calendar.oracleFrozen
+                        ? 'Frozen now'
+                        : fadData.calendar.secondsUntilNextFreeze != null
+                          ? `In ${formatDurationCompact(fadData.calendar.secondsUntilNextFreeze)}`
+                          : '—'}
+                    </p>
+                  </div>
+
+                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                      Next Market Reopen
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-positive">
+                      {fadData.calendar.nextReopenAtUtc
+                        ? formatUtc(fadData.calendar.nextReopenAtUtc)
+                        : '—'}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                      FAD ends +5m after reopen
+                    </p>
+                  </div>
+
+                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                      Holiday Runway &amp; Closures
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
+                      {String(fadData.calendar.scheduledClosures.length)} scheduled
+                    </p>
+                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                      Runway: {formatDurationCompact(fadData.calendar.fadRunwaySeconds)}
+                    </p>
+                  </div>
+                </div>
+
+                {fadData.calendar.upcomingWindows.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[680px] text-left text-xs">
+                      <caption className="sr-only">
+                        Upcoming 14-day FX freeze and FAD schedule
+                      </caption>
+                      <thead className="border-b border-brand-border/20 bg-app-bg/40 font-mono text-[11px] text-content-secondary">
+                        <tr>
+                          <th scope="col" className="py-2.5 pl-5 pr-3">Window</th>
+                          <th scope="col" className="px-3 py-2.5">FAD Starts</th>
+                          <th scope="col" className="px-3 py-2.5">Oracle Freezes</th>
+                          <th scope="col" className="px-3 py-2.5">Oracle Reopens</th>
+                          <th scope="col" className="py-2.5 pl-3 pr-5 text-right">FAD Ends</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-brand-border/15 font-mono tabular-nums">
+                        {fadData.calendar.upcomingWindows.map((win) => (
+                          <tr key={`${win.kind}-${String(win.fadStartsAt)}`}>
+                            <td className="py-2.5 pl-5 pr-3">
+                              <span
+                                className={`mr-2 inline-block border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  win.kind === 'scheduled_closure'
+                                    ? 'border-brand-yellow/45 bg-brand-yellow/10 text-brand-yellow'
+                                    : 'border-brand-border/30 bg-app-bg text-content-secondary'
+                                }`}
+                              >
+                                {win.kind === 'scheduled_closure' ? 'Holiday' : 'Weekend'}
+                              </span>
+                              <span className="font-sans text-content-primary">{win.label}</span>
+                            </td>
+                            <td className="px-3 py-2.5 text-brand-peach">
+                              {formatUtc(win.fadStartsAtUtc)}
+                            </td>
+                            <td className="px-3 py-2.5 text-content-primary">
+                              {formatUtc(win.freezeStartsAtUtc)}
+                            </td>
+                            <td className="px-3 py-2.5 text-positive">
+                              {formatUtc(win.freezeEndsAtUtc)}
+                            </td>
+                            <td className="py-2.5 pl-3 pr-5 text-right text-content-secondary">
+                              {formatUtc(win.fadEndsAtUtc)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </Panel>
+            </section>
+          ) : null}
 
           <section aria-labelledby="oracle-guards-title" className="space-y-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">

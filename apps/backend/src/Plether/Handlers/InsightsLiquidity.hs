@@ -8,6 +8,19 @@ module Plether.Handlers.InsightsLiquidity
   , getLiquidityForensicsResponse
   , getLiquidityEpochResponse
   , getLiquidityEfficiencyResponse
+  , getLiquiditySolvencyResponse
+  , TerminalNavSnapshot (..)
+  , VpiAccountingSnapshot (..)
+  , SettlementHealthSnapshot (..)
+  , PoolSolvencyDerived (..)
+  , decodeTerminalNavSnapshot
+  , decodeVpiAccountingSnapshot
+  , decodeSettlementHealth
+  , computePoolSolvencyDerived
+  , operationalBlockerLabel
+  , warningFlagLabel
+  , criticalFaultLabel
+  , dependencyLabel
   , PoolEfficiencyBucket (..)
   , PoolEfficiencySummary (..)
   , OrderBucketAgg (..)
@@ -32,10 +45,13 @@ module Plether.Handlers.InsightsLiquidity
   , sharePriceDeltaBps
   ) where
 
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.Bits (testBit)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isRight)
 import Data.Int (Int64)
@@ -76,9 +92,14 @@ import Plether.Database.VaultPerformance
   ( VaultPerformanceSnapshotRow (..)
   , getVaultPerformanceSnapshots
   )
+import Plether.Ethereum.Abi (decodeBool, decodeInt256, decodeUint256, selector)
+import Plether.Ethereum.Client (EthClient, ethBlockNumber)
+import qualified Plether.Ethereum.Multicall as Multicall
+import qualified Plether.Logging as Log
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 data LpSettlementObservationRow = LpSettlementObservationRow
@@ -215,6 +236,11 @@ liquidityEpochCache =
 {-# NOINLINE liquidityEfficiencyCache #-}
 liquidityEfficiencyCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
 liquidityEfficiencyCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE liquiditySolvencyCache #-}
+liquiditySolvencyCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+liquiditySolvencyCache =
   unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
 
 getLiquiditySettlementsResponse
@@ -1037,12 +1063,79 @@ networkMetaJson cfg =
     , "settlementAssetSymbol" .= ("USDG" :: Text)
     ]
 
-maskJson :: Integer -> Value
-maskJson mask =
-  object
-    [ "raw" .= show mask
-    , "activeBits" .= decodeBitPositions mask
-    ]
+maskJsonWith :: (Int -> Text) -> Integer -> Value
+maskJsonWith labelFn mask =
+  let bits = decodeBitPositions mask
+   in object
+        [ "raw" .= show mask
+        , "activeBits" .= bits
+        , "labels" .= map labelFn bits
+        ]
+
+operationalBlockerLabel :: Int -> Text
+operationalBlockerLabel = \case
+  0 -> "Withdrawals Not Live"
+  1 -> "Cached Mark Stale"
+  2 -> "Engine Degraded"
+  3 -> "Required Oracle Invalid"
+  4 -> "Oracle Before Epoch Boundary"
+  5 -> "Required Dependency Unknown"
+  6 -> "LP Epoch Settlement Paused"
+  n -> "Operational Blocker #" <> T.pack (show n)
+
+warningFlagLabel :: Int -> Text
+warningFlagLabel = \case
+  0 -> "No Matured Work"
+  1 -> "Additions Still Open"
+  2 -> "Pool Paused"
+  3 -> "Router Admin Paused"
+  4 -> "Oracle Frozen"
+  5 -> "Terminal Deficit"
+  6 -> "No Free Cash"
+  7 -> "Matured Senior Precedence"
+  8 -> "Observation Can Still Shrink"
+  n -> "Warning #" <> T.pack (show n)
+
+criticalFaultLabel :: Int -> Text
+criticalFaultLabel = \case
+  0 -> "Binding Mismatch"
+  1 -> "Request Window Mismatch"
+  2 -> "Request Window Formula"
+  3 -> "Queue Endpoint"
+  4 -> "Observed Epoch State"
+  5 -> "NAV Cap Mismatch"
+  6 -> "NAV Lots Mismatch"
+  7 -> "NAV Entry Basis Mismatch"
+  8 -> "NAV Active Empty Mismatch"
+  9 -> "NAV Mark Domain"
+  10 -> "NAV Snapshot Mismatch"
+  11 -> "Pool Custody Deficit"
+  12 -> "Pool Asset Boundary Mismatch"
+  13 -> "Senior Asset Escrow Deficit"
+  14 -> "Senior Share Escrow Deficit"
+  15 -> "Junior Asset Escrow Deficit"
+  16 -> "Junior Share Escrow Deficit"
+  17 -> "Senior Seed Floor"
+  18 -> "Junior Seed Floor"
+  19 -> "Senior Reservation Exceeds Escrow"
+  20 -> "Future Cached Mark"
+  21 -> "Arithmetic Domain"
+  n -> "Critical Fault #" <> T.pack (show n)
+
+dependencyLabel :: Int -> Text
+dependencyLabel = \case
+  0 -> "Router"
+  1 -> "Engine"
+  2 -> "HousePool"
+  3 -> "Clearinghouse"
+  4 -> "TerminalNavBook"
+  5 -> "EngineProtocolLens"
+  6 -> "SeniorVault"
+  7 -> "JuniorVault"
+  8 -> "Oracle"
+  9 -> "Pyth"
+  10 -> "PoolAccountingPreview"
+  n -> "Dependency #" <> T.pack (show n)
 
 observationToJson :: LpSettlementObservationRow -> Value
 observationToJson row@LpSettlementObservationRow {..} =
@@ -1058,10 +1151,10 @@ observationToJson row@LpSettlementObservationRow {..} =
     , "paused" .= lsorPaused
     , "masks"
         .= object
-          [ "operationalBlocker" .= maskJson lsorOperationalBlockerMask
-          , "warning" .= maskJson lsorWarningMask
-          , "dependencyFailure" .= maskJson lsorDependencyFailureMask
-          , "criticalFault" .= maskJson lsorCriticalFaultMask
+          [ "operationalBlocker" .= maskJsonWith operationalBlockerLabel lsorOperationalBlockerMask
+          , "warning" .= maskJsonWith warningFlagLabel lsorWarningMask
+          , "dependencyFailure" .= maskJsonWith dependencyLabel lsorDependencyFailureMask
+          , "criticalFault" .= maskJsonWith criticalFaultLabel lsorCriticalFaultMask
           ]
     ]
 
@@ -1418,3 +1511,496 @@ formatUtcTime = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
 
 isoTimestamp :: Integer -> Text
 isoTimestamp = formatUtcTime . posixSecondsToUTCTime . fromIntegral
+
+-- ---------------------------------------------------------------------------
+-- Live Protocol Solvency, LP Waterfall & Custody Parity (/liquidity/solvency)
+-- ---------------------------------------------------------------------------
+
+data TerminalNavSnapshot = TerminalNavSnapshot
+  { tnsMarkPrice :: Integer
+  , tnsMarkTime :: Integer
+  , tnsTerminalLpPriceDeltaAssets :: Integer
+  , tnsTotalTraderClaimsAssets :: Integer
+  , tnsMaxDirectionalLiabilityAssets :: Integer
+  , tnsBookVersion :: Integer
+  , tnsHasOpenPositions :: Bool
+  , tnsDegradedMode :: Bool
+  }
+  deriving stock (Eq, Show)
+
+data VpiAccountingSnapshot = VpiAccountingSnapshot
+  { vasPositiveVpiAssets :: Integer
+  , vasNegativeVpiAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data SettlementHealthSnapshot = SettlementHealthSnapshot
+  { shsHealthState :: Integer
+  , shsCriticalFaultMask :: Integer
+  , shsDependencyFailureMask :: Integer
+  , shsBookCapPrice :: Integer
+  , shsEngineCapPrice :: Integer
+  , shsBookActiveCurveCount :: Integer
+  , shsBookTotalLots :: Integer
+  , shsBookTotalEntryCostAssetAtoms :: Integer
+  , shsBookTotalEffectiveCapAssetAtoms :: Integer
+  , shsEngineLongOpenInterest :: Integer
+  , shsEngineShortOpenInterest :: Integer
+  , shsEngineLongEntryNotional :: Integer
+  , shsEngineShortEntryNotional :: Integer
+  , shsSizeQuantum :: Integer
+  , shsPoolRawAssets :: Integer
+  , shsPoolAccountedAssets :: Integer
+  , shsPoolCustodyDeficitAssets :: Integer
+  , shsPoolCustodySurplusAssets :: Integer
+  , shsSeniorRequiredAssetEscrow :: Integer
+  , shsSeniorActualAssetEscrow :: Integer
+  , shsSeniorRequiredShareEscrow :: Integer
+  , shsSeniorActualShareEscrow :: Integer
+  , shsJuniorRequiredAssetEscrow :: Integer
+  , shsJuniorActualAssetEscrow :: Integer
+  , shsJuniorRequiredShareEscrow :: Integer
+  , shsJuniorActualShareEscrow :: Integer
+  , shsSeniorPrincipalAssets :: Integer
+  , shsSeniorHighWaterMarkAssets :: Integer
+  , shsSeniorImpairmentAssets :: Integer
+  , shsSeniorPrincipalAboveHwmAssets :: Integer
+  , shsProtectedSeniorExposureAssets :: Integer
+  }
+  deriving stock (Eq, Show)
+
+data PoolSolvencyDerived = PoolSolvencyDerived
+  { psdEffectiveSolvencyAssets :: Maybe Integer
+  , psdSolvencyCoverageBps :: Maybe Int
+  , psdFreeLiquidityShareBps :: Maybe Int
+  , psdWithdrawalReserveAssets :: Maybe Integer
+  , psdSeniorHwmCoverageBps :: Maybe Int
+  , psdNetVpiAccruedAssets :: Maybe Integer
+  , psdCustodyBalanced :: Maybe Bool
+  , psdSeniorEscrowBalanced :: Maybe Bool
+  , psdJuniorEscrowBalanced :: Maybe Bool
+  , psdNavBookCapMatchesEngine :: Maybe Bool
+  , psdPendingPoolConfigTimelockActive :: Bool
+  , psdSecondsUntilPoolConfigActivation :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+solvencyWordAt :: ByteString -> Int -> ByteString
+solvencyWordAt bytes idx = BS.take 32 (BS.drop (idx * 32) bytes)
+
+decodeSingleUint32 :: ByteString -> Maybe Integer
+decodeSingleUint32 bytes
+  | BS.length bytes < 32 = Nothing
+  | otherwise = Just (decodeUint256 (BS.take 32 bytes))
+
+decodeSingleBool32 :: ByteString -> Maybe Bool
+decodeSingleBool32 bytes
+  | BS.length bytes < 32 = Nothing
+  | otherwise = Just (decodeBool (BS.take 32 bytes))
+
+-- | Decode CfdEngine.terminalNavSnapshot() (8 ABI words; word 2 is signed int256).
+decodeTerminalNavSnapshot :: ByteString -> Maybe TerminalNavSnapshot
+decodeTerminalNavSnapshot bytes
+  | BS.length bytes < 8 * 32 = Nothing
+  | otherwise =
+      Just
+        TerminalNavSnapshot
+          { tnsMarkPrice = decodeUint256 (solvencyWordAt bytes 0)
+          , tnsMarkTime = decodeUint256 (solvencyWordAt bytes 1)
+          , tnsTerminalLpPriceDeltaAssets = decodeInt256 (solvencyWordAt bytes 2)
+          , tnsTotalTraderClaimsAssets = decodeUint256 (solvencyWordAt bytes 3)
+          , tnsMaxDirectionalLiabilityAssets = decodeUint256 (solvencyWordAt bytes 4)
+          , tnsBookVersion = decodeUint256 (solvencyWordAt bytes 5)
+          , tnsHasOpenPositions = decodeBool (solvencyWordAt bytes 6)
+          , tnsDegradedMode = decodeBool (solvencyWordAt bytes 7)
+          }
+
+-- | Decode CfdEngine.vpiAccountingSnapshot() (2 ABI words).
+decodeVpiAccountingSnapshot :: ByteString -> Maybe VpiAccountingSnapshot
+decodeVpiAccountingSnapshot bytes
+  | BS.length bytes < 2 * 32 = Nothing
+  | otherwise =
+      Just
+        VpiAccountingSnapshot
+          { vasPositiveVpiAssets = decodeUint256 (solvencyWordAt bytes 0)
+          , vasNegativeVpiAssets = decodeUint256 (solvencyWordAt bytes 1)
+          }
+
+-- | Decode SettlementMonitorLens.getSettlementHealth() (31 static ABI words).
+decodeSettlementHealth :: ByteString -> Maybe SettlementHealthSnapshot
+decodeSettlementHealth bytes
+  | BS.length bytes < 31 * 32 = Nothing
+  | otherwise =
+      let w = decodeUint256 . solvencyWordAt bytes
+       in Just
+            SettlementHealthSnapshot
+              { shsHealthState = w 0
+              , shsCriticalFaultMask = w 1
+              , shsDependencyFailureMask = w 2
+              , shsBookCapPrice = w 3
+              , shsEngineCapPrice = w 4
+              , shsBookActiveCurveCount = w 5
+              , shsBookTotalLots = w 6
+              , shsBookTotalEntryCostAssetAtoms = w 7
+              , shsBookTotalEffectiveCapAssetAtoms = w 8
+              , shsEngineLongOpenInterest = w 9
+              , shsEngineShortOpenInterest = w 10
+              , shsEngineLongEntryNotional = w 11
+              , shsEngineShortEntryNotional = w 12
+              , shsSizeQuantum = w 13
+              , shsPoolRawAssets = w 14
+              , shsPoolAccountedAssets = w 15
+              , shsPoolCustodyDeficitAssets = w 16
+              , shsPoolCustodySurplusAssets = w 17
+              , shsSeniorRequiredAssetEscrow = w 18
+              , shsSeniorActualAssetEscrow = w 19
+              , shsSeniorRequiredShareEscrow = w 20
+              , shsSeniorActualShareEscrow = w 21
+              , shsJuniorRequiredAssetEscrow = w 22
+              , shsJuniorActualAssetEscrow = w 23
+              , shsJuniorRequiredShareEscrow = w 24
+              , shsJuniorActualShareEscrow = w 25
+              , shsSeniorPrincipalAssets = w 26
+              , shsSeniorHighWaterMarkAssets = w 27
+              , shsSeniorImpairmentAssets = w 28
+              , shsSeniorPrincipalAboveHwmAssets = w 29
+              , shsProtectedSeniorExposureAssets = w 30
+              }
+
+computePoolSolvencyDerived
+  :: Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe TerminalNavSnapshot
+  -> Maybe VpiAccountingSnapshot
+  -> Maybe SettlementHealthSnapshot
+  -> PoolSolvencyDerived
+computePoolSolvencyDerived now mPoolAssets mFreeAssets mSeniorPrincipal mSeniorHwm mConfigActivation mNav mVpi mHealth =
+  let mClaims = tnsTotalTraderClaimsAssets <$> mNav
+      mMaxLiab = tnsMaxDirectionalLiabilityAssets <$> mNav
+      effSolvency = (\p c -> max 0 (p - c)) <$> mPoolAssets <*> mClaims
+      solvCov = case (mPoolAssets, mMaxLiab) of
+        (Just p, Just l) | l > 0 -> computeRatioBps p l
+        _ -> Nothing
+      freeShare = case (mFreeAssets, mPoolAssets) of
+        (Just f, Just p) -> computeRatioBps f p
+        _ -> Nothing
+      withdrawReserve = (\p f -> max 0 (p - f)) <$> mPoolAssets <*> mFreeAssets
+      hwmCov = case (mSeniorPrincipal, mSeniorHwm) of
+        (Just sp, Just hwm) -> computeRatioBps sp hwm
+        _ -> Nothing
+      netVpi = (\v -> vasPositiveVpiAssets v - vasNegativeVpiAssets v) <$> mVpi
+      custodyOk = (\h -> shsPoolCustodyDeficitAssets h == 0) <$> mHealth
+      seniorEscrowOk =
+        (\h -> shsSeniorActualAssetEscrow h >= shsSeniorRequiredAssetEscrow h && shsSeniorActualShareEscrow h >= shsSeniorRequiredShareEscrow h)
+          <$> mHealth
+      juniorEscrowOk =
+        (\h -> shsJuniorActualAssetEscrow h >= shsJuniorRequiredAssetEscrow h && shsJuniorActualShareEscrow h >= shsJuniorRequiredShareEscrow h)
+          <$> mHealth
+      navCapMatch = (\h -> shsBookCapPrice h == shsEngineCapPrice h) <$> mHealth
+      timelockActive = maybe False (\t -> t > now) mConfigActivation
+      secsUntilActivation =
+        case mConfigActivation of
+          Just t | t > now -> Just (t - now)
+          _ -> Nothing
+   in PoolSolvencyDerived
+        { psdEffectiveSolvencyAssets = effSolvency
+        , psdSolvencyCoverageBps = solvCov
+        , psdFreeLiquidityShareBps = freeShare
+        , psdWithdrawalReserveAssets = withdrawReserve
+        , psdSeniorHwmCoverageBps = hwmCov
+        , psdNetVpiAccruedAssets = netVpi
+        , psdCustodyBalanced = custodyOk
+        , psdSeniorEscrowBalanced = seniorEscrowOk
+        , psdJuniorEscrowBalanced = juniorEscrowOk
+        , psdNavBookCapMatchesEngine = navCapMatch
+        , psdPendingPoolConfigTimelockActive = timelockActive
+        , psdSecondsUntilPoolConfigActivation = secsUntilActivation
+        }
+
+observeSolvencyIo :: Text -> IO a -> IO (Maybe a)
+observeSolvencyIo opName action = do
+  result <- try action
+  case result of
+    Right val -> pure (Just val)
+    Left (err :: SomeException) ->
+      case fromException @SomeAsyncException err of
+        Just asyncErr -> throwIO asyncErr
+        Nothing -> do
+          Log.logWarnEvery
+            60
+            ("insights_liquidity_solvency_" <> opName)
+            "Insights liquidity solvency RPC read degraded"
+            [ Log.field "operation" opName
+            , Log.field "error" (T.pack (show err))
+            ]
+          pure Nothing
+
+getLiquiditySolvencyResponse
+  :: EthClient
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getLiquiditySolvencyResponse client cfg =
+  snd
+    <$> runSingleFlightCache
+      liquiditySolvencyCache
+      ()
+      isRight
+      (computeLiquiditySolvencyResponse client cfg)
+
+computeLiquiditySolvencyResponse
+  :: EthClient
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeLiquiditySolvencyResponse client cfg = do
+  now <- floor <$> getPOSIXTime
+  let chainId = cfgPerpsChainId cfg
+      engine = Manifest.cfdEngineAddress
+      housePool = Manifest.housePoolAddress
+      seniorVault = Manifest.seniorVaultAddress
+      juniorVault = Manifest.juniorVaultAddress
+      monitor = Manifest.settlementMonitorLensAddress
+      mk target sig =
+        Multicall.Call
+          { Multicall.callTarget = target
+          , Multicall.callAllowFailure = True
+          , Multicall.callCalldata = selector sig
+          }
+      calls =
+        [ mk engine "terminalNavSnapshot()"
+        , mk engine "vpiAccountingSnapshot()"
+        , mk engine "carryIndex()"
+        , mk engine "carryTimestamp()"
+        , mk housePool "totalAssets()"
+        , mk housePool "rawAssets()"
+        , mk housePool "excessAssets()"
+        , mk housePool "terminalDeficitAssets()"
+        , mk housePool "isSeniorImpairedAfterPendingDepositReconcile()"
+        , mk housePool "getSettlementFreeAssets()"
+        , mk housePool "getMaxSeniorWithdraw()"
+        , mk housePool "getMaxJuniorWithdraw()"
+        , mk housePool "getSeniorDepositCapacity()"
+        , mk housePool "areSeniorDepositReservationsWithinLimits()"
+        , mk housePool "seniorPrincipal()"
+        , mk housePool "juniorPrincipal()"
+        , mk housePool "seniorHighWaterMark()"
+        , mk housePool "unassignedAssets()"
+        , mk housePool "pendingRecapitalizationAssets()"
+        , mk housePool "pendingTradingRevenueAssets()"
+        , mk housePool "reservedSeniorDepositAssets()"
+        , mk housePool "canIncreaseRisk()"
+        , mk housePool "canAcceptOrdinaryDeposits()"
+        , mk housePool "canSettleDepositEntries()"
+        , mk housePool "seniorRateBps()"
+        , mk housePool "seniorFrozenLpFeeBps()"
+        , mk housePool "juniorFrozenLpFeeBps()"
+        , mk housePool "poolConfigActivationTime()"
+        , mk seniorVault "pendingDepositEscrowAssets()"
+        , mk seniorVault "pendingRedeemEscrowShares()"
+        , mk seniorVault "depositClaimEscrowShares()"
+        , mk seniorVault "withdrawalEscrowAssets()"
+        , mk juniorVault "pendingDepositEscrowAssets()"
+        , mk juniorVault "pendingRedeemEscrowShares()"
+        , mk juniorVault "depositClaimEscrowShares()"
+        , mk juniorVault "withdrawalEscrowAssets()"
+        , mk monitor "getSettlementHealth()"
+        ]
+  mBlock <- timeout 3000000 $ observeSolvencyIo "eth_blockNumber" (ethBlockNumber client)
+  case mBlock of
+    Just (Just (Right blockNum)) -> do
+      mResults <- timeout 5000000 $ observeSolvencyIo "multicall_solvency" (Multicall.multicallAtBlock client calls blockNum)
+      case mResults of
+        Just (Just (Right rs))
+          | length rs == length calls -> do
+              let at i = rs !! i
+                  decWith f i =
+                    let r = at i
+                     in if Multicall.resultSuccess r then f (Multicall.resultData r) else Nothing
+                  decU = decWith decodeSingleUint32
+                  decB = decWith decodeSingleBool32
+                  mNav = decWith decodeTerminalNavSnapshot 0
+                  mVpi = decWith decodeVpiAccountingSnapshot 1
+                  mCarryIndex = decU 2
+                  mCarryTs = decU 3
+                  mPoolTotalAssets = decU 4
+                  mPoolRawAssets = decU 5
+                  mExcessAssets = decU 6
+                  mTerminalDeficit = decU 7
+                  mSeniorImpaired = decB 8
+                  mFreeAssets = decU 9
+                  mMaxSeniorWithdraw = decU 10
+                  mMaxJuniorWithdraw = decU 11
+                  mSeniorDepositCap = decU 12
+                  mSeniorReservationsOk = decB 13
+                  mSeniorPrincipal = decU 14
+                  mJuniorPrincipal = decU 15
+                  mSeniorHwm = decU 16
+                  mUnassigned = decU 17
+                  mPendingRecap = decU 18
+                  mPendingTradingRev = decU 19
+                  mReservedSeniorDep = decU 20
+                  mCanIncreaseRisk = decB 21
+                  mCanAcceptOrdinary = decB 22
+                  mCanSettleDeposits = decB 23
+                  mSeniorRateBps = decU 24
+                  mSeniorFrozenFeeBps = decU 25
+                  mJuniorFrozenFeeBps = decU 26
+                  mConfigActivation = decU 27
+                  mSenPendDep = decU 28
+                  mSenPendRed = decU 29
+                  mSenClaimShares = decU 30
+                  mSenWithdrawEscrow = decU 31
+                  mJunPendDep = decU 32
+                  mJunPendRed = decU 33
+                  mJunClaimShares = decU 34
+                  mJunWithdrawEscrow = decU 35
+                  mHealth = decWith decodeSettlementHealth 36
+                  derived =
+                    computePoolSolvencyDerived
+                      now
+                      mPoolTotalAssets
+                      mFreeAssets
+                      mSeniorPrincipal
+                      mSeniorHwm
+                      mConfigActivation
+                      mNav
+                      mVpi
+                      mHealth
+                  strM = fmap show
+              pure $
+                Right $
+                  mkResponse blockNum chainId $
+                    object
+                      [ "network" .= networkMetaJson cfg
+                      , "observedAt" .= isoTimestamp now
+                      , "observedBlock" .= show blockNum
+                      , "solvency"
+                          .= object
+                            [ "poolTotalAssets" .= strM mPoolTotalAssets
+                            , "poolRawAssets" .= strM mPoolRawAssets
+                            , "excessAssets" .= strM mExcessAssets
+                            , "terminalDeficitAssets" .= strM mTerminalDeficit
+                            , "freeSettlementAssets" .= strM mFreeAssets
+                            , "withdrawalReserveAssets" .= strM (psdWithdrawalReserveAssets derived)
+                            , "effectiveSolvencyAssets" .= strM (psdEffectiveSolvencyAssets derived)
+                            , "solvencyCoverageBps" .= psdSolvencyCoverageBps derived
+                            , "freeLiquidityShareBps" .= psdFreeLiquidityShareBps derived
+                            , "maxDirectionalLiabilityAssets" .= strM (tnsMaxDirectionalLiabilityAssets <$> mNav)
+                            , "totalTraderClaimsAssets" .= strM (tnsTotalTraderClaimsAssets <$> mNav)
+                            , "terminalLpPriceDeltaAssets" .= strM (tnsTerminalLpPriceDeltaAssets <$> mNav)
+                            , "markPrice" .= strM (tnsMarkPrice <$> mNav)
+                            , "markTime" .= (tnsMarkTime <$> mNav)
+                            , "bookVersion" .= (tnsBookVersion <$> mNav)
+                            , "hasOpenPositions" .= (tnsHasOpenPositions <$> mNav)
+                            , "degradedMode" .= (tnsDegradedMode <$> mNav)
+                            , "seniorImpaired" .= mSeniorImpaired
+                            , "canIncreaseRisk" .= mCanIncreaseRisk
+                            , "canAcceptOrdinaryDeposits" .= mCanAcceptOrdinary
+                            , "canSettleDepositEntries" .= mCanSettleDeposits
+                            , "seniorReservationsWithinLimits" .= mSeniorReservationsOk
+                            ]
+                      , "waterfall"
+                          .= object
+                            [ "seniorPrincipalAssets" .= strM mSeniorPrincipal
+                            , "juniorPrincipalAssets" .= strM mJuniorPrincipal
+                            , "seniorHighWaterMarkAssets" .= strM mSeniorHwm
+                            , "seniorHwmCoverageBps" .= psdSeniorHwmCoverageBps derived
+                            , "seniorImpairmentAssets" .= strM (shsSeniorImpairmentAssets <$> mHealth)
+                            , "protectedSeniorExposureAssets" .= strM (shsProtectedSeniorExposureAssets <$> mHealth)
+                            , "maxSeniorWithdrawAssets" .= strM mMaxSeniorWithdraw
+                            , "maxJuniorWithdrawAssets" .= strM mMaxJuniorWithdraw
+                            , "seniorDepositCapacityAssets" .= strM mSeniorDepositCap
+                            , "reservedSeniorDepositAssets" .= strM mReservedSeniorDep
+                            , "unassignedAssets" .= strM mUnassigned
+                            , "pendingRecapitalizationAssets" .= strM mPendingRecap
+                            , "pendingTradingRevenueAssets" .= strM mPendingTradingRev
+                            , "positiveVpiAssets" .= strM (vasPositiveVpiAssets <$> mVpi)
+                            , "negativeVpiAssets" .= strM (vasNegativeVpiAssets <$> mVpi)
+                            , "netVpiAccruedAssets" .= strM (psdNetVpiAccruedAssets derived)
+                            , "carryIndex" .= strM mCarryIndex
+                            , "carryTimestamp" .= mCarryTs
+                            ]
+                      , "policy"
+                          .= object
+                            [ "seniorRateBps" .= mSeniorRateBps
+                            , "seniorFrozenLpFeeBps" .= mSeniorFrozenFeeBps
+                            , "juniorFrozenLpFeeBps" .= mJuniorFrozenFeeBps
+                            , "poolConfigActivationTime" .= mConfigActivation
+                            , "pendingPoolConfigTimelockActive" .= psdPendingPoolConfigTimelockActive derived
+                            , "secondsUntilPoolConfigActivation" .= psdSecondsUntilPoolConfigActivation derived
+                            ]
+                      , "vaultEscrows"
+                          .= object
+                            [ "senior"
+                                .= object
+                                  [ "pendingDepositAssets" .= strM mSenPendDep
+                                  , "pendingRedeemShares" .= strM mSenPendRed
+                                  , "depositClaimShares" .= strM mSenClaimShares
+                                  , "withdrawalEscrowAssets" .= strM mSenWithdrawEscrow
+                                  ]
+                            , "junior"
+                                .= object
+                                  [ "pendingDepositAssets" .= strM mJunPendDep
+                                  , "pendingRedeemShares" .= strM mJunPendRed
+                                  , "depositClaimShares" .= strM mJunClaimShares
+                                  , "withdrawalEscrowAssets" .= strM mJunWithdrawEscrow
+                                  ]
+                            ]
+                      , "custodyAudit" .= (settlementHealthToJson derived <$> mHealth)
+                      ]
+        _ -> pure $ Left $ E.rpcError "Failed to read live protocol solvency snapshot from RPC"
+    _ -> pure $ Left $ E.rpcError "Failed to read latest block number for solvency snapshot"
+
+settlementHealthToJson :: PoolSolvencyDerived -> SettlementHealthSnapshot -> Value
+settlementHealthToJson derived SettlementHealthSnapshot {..} =
+  object
+    [ "healthState" .= healthStateLabel (Just shsHealthState)
+    , "healthStateCode" .= shsHealthState
+    , "criticalFaults" .= maskJsonWith criticalFaultLabel shsCriticalFaultMask
+    , "dependencyFailures" .= maskJsonWith dependencyLabel shsDependencyFailureMask
+    , "custodyBalanced" .= psdCustodyBalanced derived
+    , "seniorEscrowBalanced" .= psdSeniorEscrowBalanced derived
+    , "juniorEscrowBalanced" .= psdJuniorEscrowBalanced derived
+    , "navBookCapMatchesEngine" .= psdNavBookCapMatchesEngine derived
+    , "pool"
+        .= object
+          [ "rawAssets" .= show shsPoolRawAssets
+          , "accountedAssets" .= show shsPoolAccountedAssets
+          , "custodyDeficitAssets" .= show shsPoolCustodyDeficitAssets
+          , "custodySurplusAssets" .= show shsPoolCustodySurplusAssets
+          ]
+    , "escrowAudit"
+        .= object
+          [ "senior"
+              .= object
+                [ "requiredAssetEscrow" .= show shsSeniorRequiredAssetEscrow
+                , "actualAssetEscrow" .= show shsSeniorActualAssetEscrow
+                , "requiredShareEscrow" .= show shsSeniorRequiredShareEscrow
+                , "actualShareEscrow" .= show shsSeniorActualShareEscrow
+                ]
+          , "junior"
+              .= object
+                [ "requiredAssetEscrow" .= show shsJuniorRequiredAssetEscrow
+                , "actualAssetEscrow" .= show shsJuniorActualAssetEscrow
+                , "requiredShareEscrow" .= show shsJuniorRequiredShareEscrow
+                , "actualShareEscrow" .= show shsJuniorActualShareEscrow
+                ]
+          ]
+    , "navBookParity"
+        .= object
+          [ "bookCapPrice" .= show shsBookCapPrice
+          , "engineCapPrice" .= show shsEngineCapPrice
+          , "bookActiveCurveCount" .= shsBookActiveCurveCount
+          , "bookTotalLots" .= show shsBookTotalLots
+          , "bookTotalEntryCostAssetAtoms" .= show shsBookTotalEntryCostAssetAtoms
+          , "bookTotalEffectiveCapAssetAtoms" .= show shsBookTotalEffectiveCapAssetAtoms
+          , "engineLongOpenInterest" .= show shsEngineLongOpenInterest
+          , "engineShortOpenInterest" .= show shsEngineShortOpenInterest
+          , "engineLongEntryNotional" .= show shsEngineLongEntryNotional
+          , "engineShortEntryNotional" .= show shsEngineShortEntryNotional
+          , "sizeQuantum" .= show shsSizeQuantum
+          ]
+    ]

@@ -142,6 +142,10 @@ import Plether.Handlers.InsightsLiquidity
   , getLiquidityEpochResponse
   , getLiquidityForensicsResponse
   , getLiquiditySettlementsResponse
+  , getLiquiditySolvencyResponse
+  )
+import Plether.Handlers.InsightsFadRisk
+  ( getMarketFadRiskResponse
   )
 import Plether.Handlers.InsightsOracle
   ( getOracleHealthResponse
@@ -647,6 +651,9 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
       Just pool -> liftIO (getLiquidityEfficiencyResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
+  get "/api/insights/v1/liquidity/solvency" $
+    liftIO (getLiquiditySolvencyResponse perpsClient cfg) >>= handleResult
+
   get "/api/insights/v1/liquidity/epochs/:epoch" $ do
     rawEpoch <- pathParam "epoch"
     case parseStrictUnsignedInteger rawEpoch of
@@ -786,6 +793,13 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
     case mPool of
       Just pool ->
         liftIO (getMarketExposureResponse pool (Just perpsClient) cfg)
+          >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/market/fad-risk" $ do
+    case mPool of
+      Just pool ->
+        liftIO (getMarketFadRiskResponse pool perpsClient cfg)
           >>= handleResult
       Nothing -> insightsUnavailable
 

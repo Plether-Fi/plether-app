@@ -474,3 +474,146 @@ export function describeDirectionalBias(longShareBps: number | null | undefined)
   if (longShareBps <= 4000) return { label: 'Short biased', tone: 'negative' }
   return { label: 'Balanced', tone: 'neutral' }
 }
+
+export type FadDangerStatus =
+  | 'liquidatable_now'
+  | 'would_liquidate_at_fad'
+  | 'critical'
+  | 'at_risk'
+  | 'safe'
+
+export type MarketCalendarRegime = 'live' | 'fad_runway' | 'frozen' | 'scheduled_closure'
+
+export interface ScheduledMarketClosure {
+  startTime: number
+  startTimeUtc: string
+  endTime: number
+  endTimeUtc: string
+}
+
+export interface UpcomingMarketWindow {
+  kind: 'weekend' | 'scheduled_closure'
+  label: string
+  fadStartsAt: number
+  fadStartsAtUtc: string
+  freezeStartsAt: number
+  freezeStartsAtUtc: string
+  freezeEndsAt: number
+  freezeEndsAtUtc: string
+  fadEndsAt: number
+  fadEndsAtUtc: string
+}
+
+export interface MarketCalendarSnapshot {
+  regime: MarketCalendarRegime
+  fadWindow: boolean
+  oracleFrozen: boolean
+  isNewYorkDst: boolean
+  nextFadStartsAt: number | null
+  nextFadStartsAtUtc: string | null
+  nextFreezeStartsAt: number | null
+  nextFreezeStartsAtUtc: string | null
+  nextReopenAt: number | null
+  nextReopenAtUtc: string | null
+  currentFadEndsAt: number | null
+  currentFadEndsAtUtc: string | null
+  secondsUntilNextFad: number | null
+  secondsUntilNextFreeze: number | null
+  fadRunwaySeconds: number
+  scheduledClosures: ScheduledMarketClosure[]
+  upcomingWindows: UpcomingMarketWindow[]
+}
+
+export interface FadRiskThresholds {
+  maintenanceMarginBps: number
+  fadMarginBps: number
+  maxFadLeverageX100: number
+  baseCarryBps: number
+  fadMaxStaleness: number | null
+  engineMarkStalenessLimit: number | null
+}
+
+export interface FadRiskSummary {
+  totalOpenPositions: number
+  liquidatableNowCount: number
+  wouldLiquidateCount: number
+  criticalCount: number
+  atRiskCount: number
+  safeCount: number
+  endangeredCount: number
+  immediateLiquidationNotionalAssets: string
+  immediateLiquidationLongNotionalAssets: string
+  immediateLiquidationShortNotionalAssets: string
+  totalEndangeredNotionalAssets: string
+  endangeredLongNotionalAssets: string
+  endangeredShortNotionalAssets: string
+  totalMarginTopUpNeededAssets: string
+}
+
+export interface FadPositionRiskRecord {
+  account: string
+  discordUsername: string | null
+  side: 'long' | 'short'
+  size: string
+  notionalAssets: string
+  marginAssets: string
+  traderClaimAssets: string
+  unrealizedPnlAssets: string
+  currentEquityAssets: string
+  projectedCarryToFadAssets: string
+  projectedEquityAtFadAssets: string
+  normalRequiredMarginAssets: string
+  fadRequiredMarginAssets: string
+  fadMarginBufferAssets: string
+  marginNeededToSurviveAssets: string
+  effectiveLeverageX100: number
+  entryPrice: string
+  markPrice: string
+  normalLiquidationPrice: string | null
+  fadLiquidationPrice: string | null
+  distanceToFadLiquidationBps: number | null
+  liquidatableNow: boolean
+  dangerStatus: FadDangerStatus
+}
+
+export interface MarketFadRiskResponse {
+  network: LiquidityNetworkMeta
+  observedAt: string
+  observedBlock: string
+  markPrice: string
+  accountsScanned: number
+  calendar: MarketCalendarSnapshot
+  thresholds: FadRiskThresholds
+  summary: FadRiskSummary
+  positions: FadPositionRiskRecord[]
+}
+
+export function getMarketFadRisk(signal?: AbortSignal): Promise<MarketFadRiskResponse> {
+  return fetchPositionsJson<MarketFadRiskResponse>('/market/fad-risk', signal)
+}
+
+export const fadRiskKeys = {
+  all: ['insights', 'market', 'fad-risk'] as const,
+}
+
+export function useMarketFadRisk() {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
+  const hasSeededData = queryClient.getQueryData(fadRiskKeys.all) !== undefined
+  return useQuery({
+    queryKey: fadRiskKeys.all,
+    queryFn: ({ signal }) => getMarketFadRisk(signal),
+    enabled: !staticPreview || hasSeededData,
+    staleTime: staticPreview ? Infinity : 15_000,
+    refetchInterval: staticPreview ? false : 15_000,
+    refetchOnMount: !staticPreview,
+    refetchOnWindowFocus: !staticPreview,
+    refetchIntervalInBackground: false,
+    retry(failureCount, error) {
+      if (error instanceof InsightsApiError && (error.status === 404 || error.status === 400)) {
+        return false
+      }
+      return failureCount < 2
+    },
+  })
+}

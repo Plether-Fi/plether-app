@@ -208,6 +208,14 @@ describe('OraclePage', () => {
             }),
           )
         }
+        if (url.includes('/market/fad-risk')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ error: { message: 'Not found' } }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          )
+        }
         return Promise.resolve(
           new Response(JSON.stringify({ data: {} }), {
             status: 200,

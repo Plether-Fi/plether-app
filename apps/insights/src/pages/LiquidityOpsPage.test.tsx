@@ -9,6 +9,7 @@ const protocolContext = vi.hoisted(() => vi.fn())
 const settlementsQuery = vi.hoisted(() => vi.fn())
 const forensicsQuery = vi.hoisted(() => vi.fn())
 const efficiencyQuery = vi.hoisted(() => vi.fn())
+const solvencyQuery = vi.hoisted(() => vi.fn())
 
 vi.mock('../hooks/useProtocolContext', () => ({ useProtocolContext: protocolContext }))
 vi.mock('../api', async (importOriginal) => ({
@@ -16,9 +17,17 @@ vi.mock('../api', async (importOriginal) => ({
   useLiquiditySettlements: settlementsQuery,
   useLiquidityForensics: forensicsQuery,
   useLiquidityEfficiency: efficiencyQuery,
+  useLiquiditySolvency: solvencyQuery,
 }))
 
 beforeEach(() => {
+  solvencyQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })
   protocolContext.mockReturnValue({
     chainId: 421614,
     chain: resolvePerpsChain(421614),
