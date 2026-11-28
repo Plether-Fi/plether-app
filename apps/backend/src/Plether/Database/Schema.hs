@@ -656,17 +656,6 @@ ensureBasketSnapshotSchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_admitted_latest \
     \ON perps_pyth_update_payloads(max_publish_time DESC) \
     \WHERE source = 'backend_hermes_latest_v2'"
-  _ <- execute_ conn
-    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_basket_latest \
-    \ON perps_pyth_update_payloads(max_publish_time DESC, id DESC) \
-    \WHERE basket_price IS NOT NULL"
-  _ <- execute_ conn
-    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_fetched_at \
-    \ON perps_pyth_update_payloads(fetched_at DESC) \
-    \INCLUDE (min_publish_time, max_publish_time, source)"
-  _ <- execute_ conn
-    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_max_pub \
-    \ON perps_pyth_update_payloads(max_publish_time DESC)"
   ensureOracleAdmissionEventsSchema conn
   pure ()
 
@@ -746,6 +735,17 @@ ensurePairedPythPayloadSchema conn = withTransaction conn $ do
     \ALTER TABLE perps_pyth_update_payloads ADD CONSTRAINT pyth_payload_basket_pair \
     \CHECK ((basket_price IS NULL) = (component_prices IS NULL)); \
     \END IF; END $$"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_basket_latest \
+    \ON perps_pyth_update_payloads(max_publish_time DESC, id DESC) \
+    \WHERE basket_price IS NOT NULL"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_fetched_at \
+    \ON perps_pyth_update_payloads(fetched_at DESC) \
+    \INCLUDE (min_publish_time, max_publish_time, source)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_max_pub \
+    \ON perps_pyth_update_payloads(max_publish_time DESC)"
   pure ()
 
 insertBasketSnapshot
