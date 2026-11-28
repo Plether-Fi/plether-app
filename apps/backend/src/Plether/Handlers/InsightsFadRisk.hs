@@ -46,6 +46,7 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
   , getAccountLedgerSnapshotCall
   )
 import qualified Plether.Ethereum.Multicall as Multicall
+import Plether.Handlers.InsightsLiquidity (latestBasketMarkSql)
 import Plether.Handlers.InsightsPositions
   ( computeLeverageX100
   , computeNotionalAssets
@@ -530,7 +531,7 @@ fetchCandidateAccountsFromDb
   -> Text
   -> IO ([Text], Map.Map Text Text, Maybe Integer)
 fetchCandidateAccountsFromDb pool chainId router engineLower = do
-  mResult <- observeFadIo "db_open_accounts" $ withDb pool $ \conn ->
+  mAccts <- observeFadIo "db_open_accounts" $ withDb pool $ \conn ->
     withReadSnapshot conn $ do
       acctRows <-
         query
@@ -538,26 +539,25 @@ fetchCandidateAccountsFromDb pool chainId router engineLower = do
           openAccountsForFadRiskSql
           (chainId, router, chainId, engineLower, maxAccountsScanned)
           :: IO [Only Text]
-      let accts = nub [T.toLower (T.strip (fromOnly r)) | r <- acctRows, not (T.null (T.strip (fromOnly r)))]
-      handleMap <-
-        if null accts
-          then pure Map.empty
-          else do
-            hRows <-
-              query
-                conn
-                "SELECT trading_account, discord_username FROM insights_divisions_links WHERE trading_account IN ?"
-                (Only (In accts))
-                :: IO [(Text, Text)]
-            pure $ Map.fromList [(T.toLower a, T.strip h) | (a, h) <- hRows, not (T.null (T.strip h))]
-      markRows <-
-        query_
-          conn
-          "SELECT basket_price::TEXT FROM perps_pyth_update_payloads WHERE basket_price IS NOT NULL ORDER BY publish_time DESC LIMIT 1"
-          :: IO [Only Text]
-      let mMark = listToMaybe markRows >>= readMaybe . T.unpack . T.strip . fromOnly
-      pure (accts, handleMap, mMark)
-  pure (fromMaybe ([], Map.empty, Nothing) mResult)
+      pure $ nub [T.toLower (T.strip (fromOnly r)) | r <- acctRows, not (T.null (T.strip (fromOnly r)))]
+  let accts = fromMaybe [] mAccts
+  mHandles <-
+    if null accts
+      then pure (Just Map.empty)
+      else observeFadIo "db_discord_handles" $ withDb pool $ \conn ->
+        withReadSnapshot conn $ do
+          hRows <-
+            query
+              conn
+              "SELECT trading_account, discord_username FROM insights_divisions_links WHERE trading_account IN ?"
+              (Only (In accts))
+              :: IO [(Text, Text)]
+          pure $ Map.fromList [(T.toLower a, T.strip h) | (a, h) <- hRows, not (T.null (T.strip h))]
+  mMark <- observeFadIo "db_latest_basket_mark" $ withDb pool $ \conn ->
+    withReadSnapshot conn $ do
+      markRows <- query_ conn latestBasketMarkSql :: IO [Only Text]
+      pure (listToMaybe markRows >>= readMaybe . T.unpack . T.strip . fromOnly)
+  pure (accts, fromMaybe Map.empty mHandles, fromMaybe Nothing mMark)
 
 fetchAccountSnapshotsBatched
   :: EthClient
