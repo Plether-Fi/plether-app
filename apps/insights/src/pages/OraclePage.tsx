@@ -325,8 +325,8 @@ export function OraclePage() {
 
             {/* On-Chain Mark Parity & Open/Close Policy Flags */}
             {data.live.onChainMarkPrice || data.live.openPolicy || data.live.closePolicy ? (
-              <div className="mt-5 grid gap-3 border-t border-brand-border/20 pt-4 sm:grid-cols-3">
-                <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+              <div className="mt-5 grid gap-4 border-t border-brand-border/20 pt-4 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-brand-border/15">
+                <div className="sm:pr-4">
                   <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
                     On-Chain Mark vs. Hermes
                   </p>
@@ -358,7 +358,7 @@ export function OraclePage() {
                   </p>
                 </div>
 
-                <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                <div className="sm:px-4">
                   <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
                     Open Order Policy
                   </p>
@@ -376,7 +376,7 @@ export function OraclePage() {
                   </p>
                 </div>
 
-                <div className="border border-brand-border/20 bg-app-bg/55 p-3">
+                <div className="sm:pl-4">
                   <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
                     Close Order Policy
                   </p>
@@ -454,68 +454,60 @@ export function OraclePage() {
               </div>
 
               <Panel className="overflow-hidden">
-                <div className="grid gap-3 border-b border-brand-border/20 p-4 sm:grid-cols-2 lg:grid-cols-4 sm:p-5">
-                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
+                <div className="grid gap-5 border-b border-brand-border/20 p-5 lg:grid-cols-12 lg:items-center">
+                  <div className="space-y-1.5 lg:col-span-5 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                    <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-peach">
                       Next FAD Start (3.00% Margin)
                     </p>
-                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-brand-peach">
+                    <p className="font-mono text-xl font-bold tabular-nums text-content-primary sm:text-2xl">
                       {fadData.calendar.nextFadStartsAtUtc
                         ? formatUtc(fadData.calendar.nextFadStartsAtUtc)
                         : '—'}
                     </p>
-                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
+                    <p className="font-mono text-xs text-content-tertiary">
                       {fadData.calendar.fadWindow
                         ? 'Currently active'
                         : fadData.calendar.secondsUntilNextFad != null
-                          ? `In ${formatDurationCompact(fadData.calendar.secondsUntilNextFad)}`
+                          ? `Activates in ${formatDurationCompact(fadData.calendar.secondsUntilNextFad)}`
                           : '—'}
                     </p>
                   </div>
 
-                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
-                      Next Oracle Freeze
-                    </p>
-                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
-                      {fadData.calendar.nextFreezeStartsAtUtc
-                        ? formatUtc(fadData.calendar.nextFreezeStartsAtUtc)
-                        : '—'}
-                    </p>
-                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
-                      {fadData.calendar.oracleFrozen
-                        ? 'Frozen now'
-                        : fadData.calendar.secondsUntilNextFreeze != null
-                          ? `In ${formatDurationCompact(fadData.calendar.secondsUntilNextFreeze)}`
-                          : '—'}
-                    </p>
-                  </div>
-
-                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
-                      Next Market Reopen
-                    </p>
-                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-positive">
-                      {fadData.calendar.nextReopenAtUtc
-                        ? formatUtc(fadData.calendar.nextReopenAtUtc)
-                        : '—'}
-                    </p>
-                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
-                      FAD ends +5m after reopen
-                    </p>
-                  </div>
-
-                  <div className="border border-brand-border/20 bg-app-bg/55 p-3">
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-content-tertiary">
-                      Holiday Runway &amp; Closures
-                    </p>
-                    <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
-                      {String(fadData.calendar.scheduledClosures.length)} scheduled
-                    </p>
-                    <p className="mt-0.5 font-mono text-[11px] text-content-tertiary">
-                      Runway: {formatDurationCompact(fadData.calendar.fadRunwaySeconds)}
-                    </p>
-                  </div>
+                  <dl className="divide-y divide-brand-border/15 font-mono text-xs lg:col-span-7">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 pb-2">
+                      <dt className="text-content-tertiary">Next Oracle Freeze</dt>
+                      <dd className="tabular-nums text-content-primary">
+                        <strong>
+                          {fadData.calendar.nextFreezeStartsAtUtc
+                            ? formatUtc(fadData.calendar.nextFreezeStartsAtUtc)
+                            : '—'}
+                        </strong>
+                        {fadData.calendar.oracleFrozen
+                          ? ' · Frozen now'
+                          : fadData.calendar.secondsUntilNextFreeze != null
+                            ? ` · in ${formatDurationCompact(fadData.calendar.secondsUntilNextFreeze)}`
+                            : ''}
+                      </dd>
+                    </div>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 py-2">
+                      <dt className="text-content-tertiary">Next Market Reopen</dt>
+                      <dd className="tabular-nums text-positive">
+                        <strong>
+                          {fadData.calendar.nextReopenAtUtc
+                            ? formatUtc(fadData.calendar.nextReopenAtUtc)
+                            : '—'}
+                        </strong>{' '}
+                        <span className="text-content-tertiary">(FAD ends +5m after)</span>
+                      </dd>
+                    </div>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 pt-2">
+                      <dt className="text-content-tertiary">Governance Holiday Closures</dt>
+                      <dd className="tabular-nums text-content-primary">
+                        {String(fadData.calendar.scheduledClosures.length)} scheduled · Runway{' '}
+                        {formatDurationCompact(fadData.calendar.fadRunwaySeconds)}
+                      </dd>
+                    </div>
+                  </dl>
                 </div>
 
                 {fadData.calendar.upcomingWindows.length > 0 ? (

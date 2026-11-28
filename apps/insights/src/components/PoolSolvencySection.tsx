@@ -44,7 +44,7 @@ function formatSharesCompact(raw: string | null | undefined): string {
   return val.toFixed(2)
 }
 
-function ParityCheckCard({
+function ParityAuditRow({
   title,
   passed,
   primary,
@@ -58,23 +58,39 @@ function ParityCheckCard({
   const tone: StatusTone =
     passed === true ? 'live' : passed === false ? 'blocked' : 'unknown'
   const label = passed === true ? 'Verified' : passed === false ? 'Mismatch' : 'Unavailable'
+  const glyph = passed === true ? '✓' : passed === false ? '✕' : '○'
+  const glyphClass =
+    passed === true
+      ? 'border-positive/40 bg-positive/10 text-positive'
+      : passed === false
+        ? 'border-brand-orange/45 bg-brand-orange/15 text-brand-orange'
+        : 'border-brand-border/30 bg-app-bg text-content-tertiary'
+
   return (
-    <div
-      className={`border p-3.5 ${
-        passed === false
-          ? 'border-brand-orange/45 bg-brand-orange/[0.06]'
-          : 'border-brand-border/20 bg-app-bg/55'
+    <li
+      className={`flex flex-col justify-between gap-3 px-5 py-3.5 sm:flex-row sm:items-center ${
+        passed === false ? 'bg-brand-orange/[0.05]' : ''
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <h4 className="text-xs font-semibold text-content-primary">{title}</h4>
+      <div className="flex min-w-0 items-start gap-3">
+        <span
+          className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-xs font-bold ${glyphClass}`}
+          aria-hidden="true"
+        >
+          {glyph}
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-content-primary">{title}</p>
+          <p className="mt-0.5 font-mono text-xs tabular-nums text-content-secondary">{primary}</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-3 sm:justify-end">
+        <span className="font-mono text-[11px] tabular-nums text-content-tertiary">
+          {secondary}
+        </span>
         <StatusPill tone={tone} label={label} />
       </div>
-      <p className="mt-2 font-mono text-xs font-semibold tabular-nums text-content-primary">
-        {primary}
-      </p>
-      <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">{secondary}</p>
-    </div>
+    </li>
   )
 }
 
@@ -115,18 +131,17 @@ export function PoolSolvencySection({
           ? 'live'
           : 'unknown'
 
-  const overallLabel =
-    isDegraded
-      ? 'Degraded Mode'
-      : terminalDeficit > 0
-        ? 'Terminal Deficit'
-        : hasCriticalFaults || hasCustodyIssue
-          ? 'Custody Alert'
-          : isSeniorImpaired
-            ? 'Senior Impaired'
-            : solv
-              ? 'Solvency Healthy'
-              : 'Loading'
+  const overallLabel = isDegraded
+    ? 'Degraded Mode'
+    : terminalDeficit > 0
+      ? 'Terminal Deficit'
+      : hasCriticalFaults || hasCustodyIssue
+        ? 'Custody Alert'
+        : isSeniorImpaired
+          ? 'Senior Impaired'
+          : solv
+            ? 'Solvency Healthy'
+            : 'Loading'
 
   const poolTotalNum = Math.max(0, parseAssetsNum(solv?.poolTotalAssets))
   const maxLiabNum = Math.max(0, parseAssetsNum(solv?.maxDirectionalLiabilityAssets))
@@ -140,7 +155,8 @@ export function PoolSolvencySection({
   const headroomPct = Math.max(0, 100 - liabPct - claimsPct)
 
   const freePct = poolTotalNum > 0 ? Math.min(100, (freeNum / poolTotalNum) * 100) : 0
-  const reservePct = poolTotalNum > 0 ? Math.min(100 - freePct, (reserveNum / poolTotalNum) * 100) : 0
+  const reservePct =
+    poolTotalNum > 0 ? Math.min(100 - freePct, (reserveNum / poolTotalNum) * 100) : 0
 
   const terminalDeltaNum = parseAssetsNum(solv?.terminalLpPriceDeltaAssets)
   const netVpiNum = parseAssetsNum(wf?.netVpiAccruedAssets)
@@ -203,188 +219,154 @@ export function PoolSolvencySection({
         />
       ) : (
         <div className="space-y-4">
-          {/* 1. Solvency & Worst-Case Liability Envelope */}
-          <Panel className="space-y-5 p-5">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                  HousePool Assets
-                </p>
-                <p className="mt-1.5 font-mono text-xl font-bold tabular-nums text-content-primary">
-                  {formatCompactAssets(solv.poolTotalAssets)}
-                </p>
-                <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Excess: {formatCompactAssets(solv.excessAssets)}
-                </p>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                  Solvency Coverage
-                </p>
-                <p
-                  className={`mt-1.5 font-mono text-xl font-bold tabular-nums ${
-                    solv.solvencyCoverageBps != null && solv.solvencyCoverageBps < 12_000
-                      ? 'text-brand-orange'
-                      : 'text-positive'
-                  }`}
-                >
-                  {maxLiabNum === 0
-                    ? '∞'
-                    : formatCoverageMultiple(solv.solvencyCoverageBps)}
-                </p>
-                <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  {maxLiabNum === 0
-                    ? 'No open directional liability'
-                    : `${formatPoolBpsPercent(solv.solvencyCoverageBps, 0)} of worst-case`}
-                </p>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                  Max Directional Liab.
-                </p>
-                <p className="mt-1.5 font-mono text-xl font-bold tabular-nums text-brand-peach">
-                  {formatCompactAssets(solv.maxDirectionalLiabilityAssets)}
-                </p>
-                <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Book v{solv.bookVersion != null ? String(solv.bookVersion) : '—'} ·{' '}
-                  {solv.hasOpenPositions ? 'Open OI' : 'Flat'}
-                </p>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                  Senior Trader Claims
-                </p>
-                <p className="mt-1.5 font-mono text-xl font-bold tabular-nums text-content-primary">
-                  {formatCompactAssets(solv.totalTraderClaimsAssets)}
-                </p>
-                <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Eff. Solvency: {formatCompactAssets(solv.effectiveSolvencyAssets)}
-                </p>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                  Free Settlement Cash
-                </p>
-                <p className="mt-1.5 font-mono text-xl font-bold tabular-nums text-positive">
-                  {formatCompactAssets(solv.freeSettlementAssets)}
-                </p>
-                <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  {formatPoolBpsPercent(solv.freeLiquidityShareBps, 1)} of physical pool
-                </p>
-              </div>
-            </div>
-
-            {/* Dual Proportional Envelope Bars */}
-            <div className="grid gap-4 border-t border-brand-border/15 pt-4 lg:grid-cols-2">
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
-                  <span className="text-content-secondary">
-                    Worst-Case Liability Envelope vs. Pool Backing
-                  </span>
-                  <span className="tabular-nums text-content-tertiary">
-                    Headroom {headroomPct.toFixed(1)}%
+          {/* 1. Asymmetric 12-Col Solvency & Worst-Case Liability Envelope */}
+          <Panel className="p-5 sm:p-6">
+            <div className="grid gap-6 lg:grid-cols-12 lg:items-center">
+              {/* Left Focal Hero: Solvency Coverage & Physical Pool Backing */}
+              <div className="space-y-3 lg:col-span-5 lg:border-r lg:border-brand-border/20 lg:pr-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                    Solvency Coverage
+                  </p>
+                  <span className="font-mono text-xs text-content-tertiary">
+                    Book v{solv.bookVersion != null ? String(solv.bookVersion) : '—'} ·{' '}
+                    {solv.hasOpenPositions ? 'Open OI' : 'Flat'}
                   </span>
                 </div>
-                <div
-                  className="flex h-3 w-full overflow-hidden border border-brand-border/25 bg-app-bg"
-                  role="img"
-                  aria-label="HousePool worst-case liability envelope breakdown"
-                >
-                  {liabPct > 0 ? (
-                    <div
-                      className="h-full bg-brand-peach"
-                      style={{ width: `${liabPct.toFixed(2)}%` }}
-                      title={`Max Directional Liability: ${formatCompactAssets(solv.maxDirectionalLiabilityAssets)}`}
-                    />
-                  ) : null}
-                  {claimsPct > 0 ? (
-                    <div
-                      className="h-full bg-[#C4B5FD]"
-                      style={{ width: `${claimsPct.toFixed(2)}%` }}
-                      title={`Senior Trader Claims: ${formatCompactAssets(solv.totalTraderClaimsAssets)}`}
-                    />
-                  ) : null}
-                  {headroomPct > 0 ? (
-                    <div
-                      className="h-full bg-positive/55"
-                      style={{ width: `${headroomPct.toFixed(2)}%` }}
-                      title={`Unencumbered Solvency Headroom: ${headroomPct.toFixed(1)}%`}
-                    />
-                  ) : null}
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span
+                    className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                      solv.solvencyCoverageBps != null && solv.solvencyCoverageBps < 12_000
+                        ? 'text-brand-orange'
+                        : 'text-positive'
+                    }`}
+                  >
+                    {maxLiabNum === 0 ? '∞' : formatCoverageMultiple(solv.solvencyCoverageBps)}
+                  </span>
+                  <span className="font-mono text-xs tabular-nums text-content-secondary">
+                    {maxLiabNum === 0
+                      ? 'No open directional liability'
+                      : `${formatPoolBpsPercent(solv.solvencyCoverageBps, 0)} of worst-case liability`}
+                  </span>
                 </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-content-tertiary">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 bg-brand-peach" />
-                    Max Liability ({liabPct.toFixed(1)}%)
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-brand-border/15 pt-2.5 font-mono text-xs tabular-nums text-content-tertiary">
+                  <span>
+                    Pool{' '}
+                    <strong className="text-content-primary">
+                      {formatCompactAssets(solv.poolTotalAssets)}
+                    </strong>
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 bg-[#C4B5FD]" />
-                    Trader Claims ({claimsPct.toFixed(1)}%)
+                  <span>
+                    Excess{' '}
+                    <strong className="text-content-primary">
+                      {formatCompactAssets(solv.excessAssets)}
+                    </strong>
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 bg-positive/70" />
-                    Solvency Headroom ({headroomPct.toFixed(1)}%)
+                  <span>
+                    Eff. Solvency{' '}
+                    <strong className="text-content-primary">
+                      {formatCompactAssets(solv.effectiveSolvencyAssets)}
+                    </strong>
                   </span>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
-                  <span className="text-content-secondary">
-                    Settlement Cash Availability
-                  </span>
-                  <span className="tabular-nums text-content-tertiary">
-                    Free {freePct.toFixed(1)}% · Reserved {reservePct.toFixed(1)}%
-                  </span>
+              {/* Right Column: Dual Stacked Proportional Envelopes */}
+              <div className="space-y-4 lg:col-span-7">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                    <span className="text-content-secondary">
+                      Worst-Case Liability vs. Pool Backing
+                    </span>
+                    <span className="tabular-nums text-content-tertiary">
+                      Max Liab{' '}
+                      <strong className="text-brand-peach">
+                        {formatCompactAssets(solv.maxDirectionalLiabilityAssets)}
+                      </strong>{' '}
+                      · Claims{' '}
+                      <strong className="text-content-primary">
+                        {formatCompactAssets(solv.totalTraderClaimsAssets)}
+                      </strong>{' '}
+                      · Headroom {headroomPct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div
+                    className="flex h-2.5 w-full overflow-hidden border border-brand-border/25 bg-app-bg"
+                    role="img"
+                    aria-label="HousePool worst-case liability envelope breakdown"
+                  >
+                    {liabPct > 0 ? (
+                      <div
+                        className="h-full bg-brand-peach"
+                        style={{ width: `${liabPct.toFixed(2)}%` }}
+                        title={`Max Directional Liability: ${formatCompactAssets(solv.maxDirectionalLiabilityAssets)}`}
+                      />
+                    ) : null}
+                    {claimsPct > 0 ? (
+                      <div
+                        className="h-full bg-[#C4B5FD]"
+                        style={{ width: `${claimsPct.toFixed(2)}%` }}
+                        title={`Senior Trader Claims: ${formatCompactAssets(solv.totalTraderClaimsAssets)}`}
+                      />
+                    ) : null}
+                    {headroomPct > 0 ? (
+                      <div
+                        className="h-full bg-positive/60"
+                        style={{ width: `${headroomPct.toFixed(2)}%` }}
+                        title={`Unencumbered Solvency Headroom: ${headroomPct.toFixed(1)}%`}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-                <div
-                  className="flex h-3 w-full overflow-hidden border border-brand-border/25 bg-app-bg"
-                  role="img"
-                  aria-label="HousePool free settlement cash versus reserve"
-                >
-                  {freePct > 0 ? (
-                    <div
-                      className="h-full bg-positive/75"
-                      style={{ width: `${freePct.toFixed(2)}%` }}
-                      title={`Free Settlement Cash: ${formatCompactAssets(solv.freeSettlementAssets)}`}
-                    />
-                  ) : null}
-                  {reservePct > 0 ? (
-                    <div
-                      className="h-full bg-brand-yellow/65"
-                      style={{ width: `${reservePct.toFixed(2)}%` }}
-                      title={`Engine & Withdrawal Reserves: ${formatCompactAssets(solv.withdrawalReserveAssets)}`}
-                    />
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-content-tertiary">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 bg-positive/75" />
-                    Free Cash ({formatCompactAssets(solv.freeSettlementAssets)})
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 bg-brand-yellow/75" />
-                    Reserves ({formatCompactAssets(solv.withdrawalReserveAssets)})
-                  </span>
+
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                    <span className="text-content-secondary">Settlement Cash Availability</span>
+                    <span className="tabular-nums text-content-tertiary">
+                      Free{' '}
+                      <strong className="text-positive">
+                        {formatCompactAssets(solv.freeSettlementAssets)}
+                      </strong>{' '}
+                      ({formatPoolBpsPercent(solv.freeLiquidityShareBps, 1)}) · Reserved{' '}
+                      <strong className="text-content-primary">
+                        {formatCompactAssets(solv.withdrawalReserveAssets)}
+                      </strong>
+                    </span>
+                  </div>
+                  <div
+                    className="flex h-2.5 w-full overflow-hidden border border-brand-border/25 bg-app-bg"
+                    role="img"
+                    aria-label="HousePool free settlement cash versus reserve"
+                  >
+                    {freePct > 0 ? (
+                      <div
+                        className="h-full bg-positive/75"
+                        style={{ width: `${freePct.toFixed(2)}%` }}
+                        title={`Free Settlement Cash: ${formatCompactAssets(solv.freeSettlementAssets)}`}
+                      />
+                    ) : null}
+                    {reservePct > 0 ? (
+                      <div
+                        className="h-full bg-brand-yellow/65"
+                        style={{ width: `${reservePct.toFixed(2)}%` }}
+                        title={`Engine & Withdrawal Reserves: ${formatCompactAssets(solv.withdrawalReserveAssets)}`}
+                      />
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>
           </Panel>
 
-          {/* 2. LP Waterfall, Withdrawal Headroom & Policy Strip */}
-          <Panel className="p-5">
-            <div className="flex flex-wrap items-baseline justify-between gap-2 pb-4">
+          {/* 2. Two-Column Hairline-Divided Waterfall & Policy Ledger (Zero Nested Boxes) */}
+          <Panel className="overflow-hidden">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-brand-border/20 px-5 py-3.5">
               <div>
                 <h3 className="text-sm font-semibold text-content-primary">
                   LP Waterfall, Withdrawal Headroom &amp; Fee Policy
                 </h3>
                 <p className="mt-0.5 text-xs text-content-tertiary">
-                  Live Senior/Junior principal buffers, instant redemption headroom, VPI balance,
-                  and protocol LP rates
+                  Live tranche principals, instant withdrawal headroom, VPI balance, and LP rates
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-content-tertiary">
@@ -420,133 +402,133 @@ export function PoolSolvencySection({
               </div>
             </div>
 
-            <dl className="grid gap-3 border-t border-brand-border/15 pt-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Max Senior Withdraw
-                </dt>
-                <dd className="mt-1 font-mono text-base font-semibold tabular-nums text-content-primary">
-                  {formatCompactAssets(wf.maxSeniorWithdrawAssets)}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Principal: {formatCompactAssets(wf.seniorPrincipalAssets)}
-                </dd>
-              </div>
+            <div className="grid lg:grid-cols-2 lg:divide-x lg:divide-brand-border/20">
+              <dl className="divide-y divide-brand-border/15 px-5 py-2 font-mono text-xs">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Senior Principal vs. HWM</dt>
+                  <dd className="text-right tabular-nums">
+                    <strong className="text-content-primary">
+                      {formatCompactAssets(wf.seniorPrincipalAssets)}
+                    </strong>{' '}
+                    <span
+                      className={
+                        wf.seniorHwmCoverageBps != null && wf.seniorHwmCoverageBps < 10_000
+                          ? 'text-brand-orange'
+                          : 'text-positive'
+                      }
+                    >
+                      ({formatPoolBpsPercent(wf.seniorHwmCoverageBps, 2)} of{' '}
+                      {formatCompactAssets(wf.seniorHighWaterMarkAssets)})
+                    </span>
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Max Senior Withdraw</dt>
+                  <dd className="font-semibold tabular-nums text-content-primary">
+                    {formatCompactAssets(wf.maxSeniorWithdrawAssets)}
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Junior Principal (First-Loss)</dt>
+                  <dd className="font-semibold tabular-nums text-content-primary">
+                    {formatCompactAssets(wf.juniorPrincipalAssets)}
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Max Junior Withdraw</dt>
+                  <dd className="font-semibold tabular-nums text-content-primary">
+                    {formatCompactAssets(wf.maxJuniorWithdrawAssets)}
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Senior Deposit Capacity</dt>
+                  <dd className="text-right tabular-nums">
+                    <strong className="text-brand-peach">
+                      {formatCompactAssets(wf.seniorDepositCapacityAssets)}
+                    </strong>{' '}
+                    <span className="text-content-tertiary">
+                      (res. {formatCompactAssets(wf.reservedSeniorDepositAssets)})
+                    </span>
+                  </dd>
+                </div>
+              </dl>
 
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Max Junior Withdraw
-                </dt>
-                <dd className="mt-1 font-mono text-base font-semibold tabular-nums text-content-primary">
-                  {formatCompactAssets(wf.maxJuniorWithdrawAssets)}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  First-loss buffer: {formatCompactAssets(wf.juniorPrincipalAssets)}
-                </dd>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Senior Deposit Capacity
-                </dt>
-                <dd className="mt-1 font-mono text-base font-semibold tabular-nums text-brand-peach">
-                  {formatCompactAssets(wf.seniorDepositCapacityAssets)}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Reserved: {formatCompactAssets(wf.reservedSeniorDepositAssets)}
-                </dd>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Senior vs. High-Water Mark
-                </dt>
-                <dd
-                  className={`mt-1 font-mono text-base font-semibold tabular-nums ${
-                    wf.seniorHwmCoverageBps != null && wf.seniorHwmCoverageBps < 10_000
-                      ? 'text-brand-orange'
-                      : 'text-positive'
-                  }`}
-                >
-                  {formatPoolBpsPercent(wf.seniorHwmCoverageBps, 2)}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  HWM: {formatCompactAssets(wf.seniorHighWaterMarkAssets)}
-                </dd>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Terminal LP Price Delta
-                </dt>
-                <dd
-                  className={`mt-1 font-mono text-base font-semibold tabular-nums ${
-                    terminalDeltaNum > 0
-                      ? 'text-positive'
-                      : terminalDeltaNum < 0
-                        ? 'text-brand-orange'
-                        : 'text-content-primary'
-                  }`}
-                >
-                  {solv.terminalLpPriceDeltaAssets != null
-                    ? formatSignedAssets(solv.terminalLpPriceDeltaAssets)
-                    : '—'}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Canonical unrealized LP PnL
-                </dd>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Net VPI Pool Balance
-                </dt>
-                <dd
-                  className={`mt-1 font-mono text-base font-semibold tabular-nums ${
-                    netVpiNum >= 0 ? 'text-positive' : 'text-brand-yellow'
-                  }`}
-                >
-                  {wf.netVpiAccruedAssets != null
-                    ? formatSignedAssets(wf.netVpiAccruedAssets)
-                    : '—'}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  +{formatCompactAssets(wf.positiveVpiAssets)} / −
-                  {formatCompactAssets(wf.negativeVpiAssets)}
-                </dd>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Pending Revenue &amp; Recap
-                </dt>
-                <dd className="mt-1 font-mono text-base font-semibold tabular-nums text-content-primary">
-                  {formatCompactAssets(wf.pendingTradingRevenueAssets)}
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Recap: {formatCompactAssets(wf.pendingRecapitalizationAssets)} · Unassigned:{' '}
-                  {formatCompactAssets(wf.unassignedAssets)}
-                </dd>
-              </div>
-
-              <div className="border border-brand-border/20 bg-app-bg/50 p-3.5">
-                <dt className="font-mono text-[11px] text-content-tertiary">
-                  Live LP Rates &amp; Frozen Fees
-                </dt>
-                <dd className="mt-1 font-mono text-base font-semibold tabular-nums text-content-primary">
-                  {formatBpsRate(policy.seniorRateBps)} Senior APR
-                </dd>
-                <dd className="mt-0.5 font-mono text-[11px] tabular-nums text-content-tertiary">
-                  Frozen fee: Sen {formatBpsRate(policy.seniorFrozenLpFeeBps)} · Jun{' '}
-                  {formatBpsRate(policy.juniorFrozenLpFeeBps)}
-                </dd>
-              </div>
-            </dl>
+              <dl className="divide-y divide-brand-border/15 border-t border-brand-border/20 px-5 py-2 font-mono text-xs lg:border-t-0">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Terminal LP Price Delta</dt>
+                  <dd
+                    className={`font-semibold tabular-nums ${
+                      terminalDeltaNum > 0
+                        ? 'text-positive'
+                        : terminalDeltaNum < 0
+                          ? 'text-brand-orange'
+                          : 'text-content-primary'
+                    }`}
+                  >
+                    {solv.terminalLpPriceDeltaAssets != null
+                      ? formatSignedAssets(solv.terminalLpPriceDeltaAssets)
+                      : '—'}
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Net VPI Pool Balance</dt>
+                  <dd className="text-right tabular-nums">
+                    <strong className={netVpiNum >= 0 ? 'text-positive' : 'text-brand-yellow'}>
+                      {wf.netVpiAccruedAssets != null
+                        ? formatSignedAssets(wf.netVpiAccruedAssets)
+                        : '—'}
+                    </strong>{' '}
+                    <span className="text-content-tertiary">
+                      (+{formatCompactAssets(wf.positiveVpiAssets)} / −
+                      {formatCompactAssets(wf.negativeVpiAssets)})
+                    </span>
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Pending Trading Revenue</dt>
+                  <dd className="text-right tabular-nums">
+                    <strong className="text-content-primary">
+                      {formatCompactAssets(wf.pendingTradingRevenueAssets)}
+                    </strong>{' '}
+                    <span className="text-content-tertiary">
+                      · Recap {formatCompactAssets(wf.pendingRecapitalizationAssets)} · Unassigned{' '}
+                      {formatCompactAssets(wf.unassignedAssets)}
+                    </span>
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Senior Coupon &amp; Frozen LP Fees</dt>
+                  <dd className="text-right tabular-nums">
+                    <strong className="text-content-primary">
+                      {formatBpsRate(policy.seniorRateBps)} Senior APR
+                    </strong>{' '}
+                    <span className="text-content-tertiary">
+                      · Sen {formatBpsRate(policy.seniorFrozenLpFeeBps)} · Jun{' '}
+                      {formatBpsRate(policy.juniorFrozenLpFeeBps)}
+                    </span>
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+                  <dt className="text-content-tertiary">Pool Config Timelock</dt>
+                  <dd
+                    className={`font-semibold tabular-nums ${
+                      policy.pendingPoolConfigTimelockActive
+                        ? 'text-brand-yellow'
+                        : 'text-content-secondary'
+                    }`}
+                  >
+                    {policy.pendingPoolConfigTimelockActive
+                      ? `Pending change in ${formatDurationCompact(policy.secondsUntilPoolConfigActivation)}`
+                      : 'No pending change'}
+                  </dd>
+                </div>
+              </dl>
+            </div>
           </Panel>
 
-          {/* 3. Live Custody & Invariant Parity Audit */}
-          <Panel className="space-y-4 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* 3. Live Custody & Invariant Parity Checklist (Matches Oracle Admission Guard Checklist) */}
+          <Panel className="overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-border/20 px-5 py-3.5">
               <div>
                 <h3 className="text-sm font-semibold text-content-primary">
                   Live Custody &amp; Invariant Parity Audit
@@ -575,36 +557,39 @@ export function PoolSolvencySection({
 
             {audit ? (
               <>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <ParityCheckCard
-                    title="Pool ERC-20 Custody"
+                <ul
+                  className="divide-y divide-brand-border/15"
+                  aria-label="Live custody and invariant parity checks"
+                >
+                  <ParityAuditRow
+                    title="Pool ERC-20 Custody Parity"
                     passed={audit.custodyBalanced}
-                    primary={`Raw ${formatCompactAssets(audit.pool.rawAssets)} · Acct ${formatCompactAssets(audit.pool.accountedAssets)}`}
+                    primary={`Raw ${formatCompactAssets(audit.pool.rawAssets)} vs. Accounted ${formatCompactAssets(audit.pool.accountedAssets)}`}
                     secondary={`Deficit ${formatCompactAssets(audit.pool.custodyDeficitAssets)} · Surplus ${formatCompactAssets(audit.pool.custodySurplusAssets)}`}
                   />
-                  <ParityCheckCard
+                  <ParityAuditRow
                     title="Senior Vault Escrows"
                     passed={audit.seniorEscrowBalanced}
                     primary={`Assets ${formatCompactAssets(audit.escrowAudit.senior.actualAssetEscrow)} / ${formatCompactAssets(audit.escrowAudit.senior.requiredAssetEscrow)}`}
                     secondary={`Pending dep ${formatCompactAssets(data.vaultEscrows.senior.pendingDepositAssets)} · Claim sh ${formatSharesCompact(data.vaultEscrows.senior.depositClaimShares)}`}
                   />
-                  <ParityCheckCard
+                  <ParityAuditRow
                     title="Junior Vault Escrows"
                     passed={audit.juniorEscrowBalanced}
                     primary={`Assets ${formatCompactAssets(audit.escrowAudit.junior.actualAssetEscrow)} / ${formatCompactAssets(audit.escrowAudit.junior.requiredAssetEscrow)}`}
                     secondary={`Pending dep ${formatCompactAssets(data.vaultEscrows.junior.pendingDepositAssets)} · Claim sh ${formatSharesCompact(data.vaultEscrows.junior.depositClaimShares)}`}
                   />
-                  <ParityCheckCard
-                    title="NAV Book ↔ Engine Cap"
+                  <ParityAuditRow
+                    title="TerminalNavBookV2 ↔ CfdEngine Cap Parity"
                     passed={audit.navBookCapMatchesEngine}
                     primary={`${String(audit.navBookParity.bookActiveCurveCount)} active curves · Cap ${(Number(audit.navBookParity.bookCapPrice) / 1e8).toFixed(2)}`}
                     secondary={`Critical faults: ${String(audit.criticalFaults.activeBits.length)} · Dep errors: ${String(audit.dependencyFailures.activeBits.length)}`}
                   />
-                </div>
+                </ul>
 
                 {(audit.criticalFaults.labels && audit.criticalFaults.labels.length > 0) ||
                 (audit.dependencyFailures.labels && audit.dependencyFailures.labels.length > 0) ? (
-                  <div className="flex flex-wrap items-center gap-2 border-t border-brand-border/15 pt-3">
+                  <div className="flex flex-wrap items-center gap-2 border-t border-brand-border/20 bg-brand-orange/[0.04] px-5 py-3">
                     <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-brand-orange">
                       Active Monitor Flags:
                     </span>
@@ -628,10 +613,12 @@ export function PoolSolvencySection({
                 ) : null}
               </>
             ) : (
-              <EmptyState
-                title="SettlementMonitorLens health audit unavailable"
-                message="getSettlementHealth() did not return a snapshot on this block."
-              />
+              <div className="p-5">
+                <EmptyState
+                  title="SettlementMonitorLens health audit unavailable"
+                  message="getSettlementHealth() did not return a snapshot on this block."
+                />
+              </div>
             )}
           </Panel>
         </div>

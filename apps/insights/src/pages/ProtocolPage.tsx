@@ -1194,8 +1194,8 @@ export function ProtocolPage() {
                   </Link>
                 </div>
 
-                <dl className="mt-4 grid gap-3 border-t border-brand-border/15 pt-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="border border-brand-border/20 bg-app-bg p-3">
+                <dl className="mt-4 grid gap-4 border-t border-brand-border/15 pt-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-brand-border/15">
+                  <div className="lg:pr-4">
                     <dt className="font-mono text-[11px] text-content-tertiary">
                       Solvency Coverage
                     </dt>
@@ -1207,7 +1207,7 @@ export function ProtocolPage() {
                           : '—'}
                     </dd>
                   </div>
-                  <div className="border border-brand-border/20 bg-app-bg p-3">
+                  <div className="lg:px-4">
                     <dt className="font-mono text-[11px] text-content-tertiary">
                       Free Settlement Cash
                     </dt>
@@ -1218,7 +1218,7 @@ export function ProtocolPage() {
                       </span>
                     </dd>
                   </div>
-                  <div className="border border-brand-border/20 bg-app-bg p-3">
+                  <div className="lg:px-4">
                     <dt className="font-mono text-[11px] text-content-tertiary">
                       Terminal Deficit / Senior
                     </dt>
@@ -1233,7 +1233,7 @@ export function ProtocolPage() {
                       </span>
                     </dd>
                   </div>
-                  <div className="border border-brand-border/20 bg-app-bg p-3">
+                  <div className="lg:pl-4">
                     <dt className="font-mono text-[11px] text-content-tertiary">
                       Pool Config Timelock
                     </dt>

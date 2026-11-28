@@ -187,107 +187,124 @@ export function FadLiquidationWatchlistSection({
         />
       ) : (
         <Panel className="overflow-hidden">
-          {/* Top Cascade Summary Strip */}
-          <div className="grid gap-4 border-b border-brand-border/20 p-5 sm:grid-cols-2 lg:grid-cols-4">
-            <div
-              className={`border p-3.5 ${
-                immediateCount > 0
-                  ? 'border-brand-orange/45 bg-brand-orange/[0.06]'
-                  : 'border-brand-border/20 bg-app-bg/55'
-              }`}
-            >
-              <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                Would Liquidate at FAD
-              </p>
-              <p
-                className={`mt-1.5 font-mono text-xl font-bold tabular-nums ${
-                  immediateCount > 0 ? 'text-brand-orange' : 'text-positive'
-                }`}
-              >
-                {String(immediateCount)} position{immediateCount === 1 ? '' : 's'}
-              </p>
-              <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                {formatCompactAssets(summary.immediateLiquidationNotionalAssets)} notional
-                {summary.liquidatableNowCount > 0
-                  ? ` (${String(summary.liquidatableNowCount)} now)`
-                  : ''}
-              </p>
-            </div>
-
-            <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-              <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                All Endangered (&le;1.5% buf)
-              </p>
-              <p
-                className={`mt-1.5 font-mono text-xl font-bold tabular-nums ${
-                  summary.endangeredCount > 0 ? 'text-brand-yellow' : 'text-positive'
-                }`}
-              >
-                {String(summary.endangeredCount)} / {String(summary.totalOpenPositions)} open
-              </p>
-              <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                {formatCompactAssets(summary.totalEndangeredNotionalAssets)} total notional
-              </p>
-            </div>
-
-            <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-              <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                Total Margin Top-Up Needed
-              </p>
-              <p className="mt-1.5 font-mono text-xl font-bold tabular-nums text-brand-peach">
-                {formatCompactAssets(summary.totalMarginTopUpNeededAssets)}
-              </p>
-              <p className="mt-1 font-mono text-[11px] tabular-nums text-content-tertiary">
-                Mark {formatPrice(data.markPrice)} · Carry {formatBpsPct(thresholds.baseCarryBps)}{' '}
-                APR
-              </p>
-            </div>
-
-            <div className="border border-brand-border/20 bg-app-bg/55 p-3.5">
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-content-tertiary">
-                  Cascade Skew
+          {/* Asymmetric 12-Col Risk Strip (No Nested Card Boxes) */}
+          <div className="grid gap-5 border-b border-brand-border/20 p-5 lg:grid-cols-12 lg:items-center">
+            {/* Left Hero: Immediate FAD Liquidation Exposure */}
+            <div className="space-y-3 lg:col-span-6 lg:border-r lg:border-brand-border/20 lg:pr-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+                  Would Liquidate at FAD
                 </p>
-                <span className="font-mono text-[10px] text-content-tertiary">
-                  {immediateTotalNum > 0 ? 'Immediate liqs' : 'Endangered OI'}
+                <span className="font-mono text-xs tabular-nums text-content-tertiary">
+                  Mark {formatPrice(data.markPrice)} · Carry {formatBpsPct(thresholds.baseCarryBps)}{' '}
+                  APR
                 </span>
               </div>
-              {skewTotalNum > 0 ? (
-                <>
-                  <div className="mt-2.5 flex h-2.5 w-full overflow-hidden border border-brand-border/25 bg-app-bg">
-                    {skewLongPct > 0 ? (
-                      <div
-                        className="h-full bg-positive/80"
-                        style={{ width: `${skewLongPct.toFixed(1)}%` }}
-                      />
-                    ) : null}
-                    {skewShortPct > 0 ? (
-                      <div
-                        className="h-full bg-brand-orange/80"
-                        style={{ width: `${skewShortPct.toFixed(1)}%` }}
-                      />
-                    ) : null}
-                  </div>
-                  <div className="mt-2 flex items-center justify-between font-mono text-[11px] tabular-nums">
-                    <span className="text-positive">
-                      L {formatCompactAssets(String(Math.round(skewLongNum)))}
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span
+                  className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                    immediateCount > 0 ? 'text-brand-orange' : 'text-positive'
+                  }`}
+                >
+                  {String(immediateCount)} position{immediateCount === 1 ? '' : 's'}
+                </span>
+                <span className="font-mono text-sm font-semibold tabular-nums text-content-secondary">
+                  {formatCompactAssets(summary.immediateLiquidationNotionalAssets)} notional
+                  {summary.liquidatableNowCount > 0
+                    ? ` (${String(summary.liquidatableNowCount)} now)`
+                    : ''}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-brand-border/15 pt-2.5 font-mono text-xs tabular-nums text-content-tertiary">
+                <span>
+                  <strong
+                    className={
+                      summary.endangeredCount > 0 ? 'text-brand-yellow' : 'text-positive'
+                    }
+                  >
+                    {String(summary.endangeredCount)} / {String(summary.totalOpenPositions)}
+                  </strong>{' '}
+                  open endangered (&le;1.5% buf)
+                </span>
+                <span>
+                  <strong className="text-content-primary">
+                    {formatCompactAssets(summary.totalEndangeredNotionalAssets)}
+                  </strong>{' '}
+                  total endangered OI
+                </span>
+              </div>
+            </div>
+
+            {/* Right Column: Cascade Skew Bar + Hairline-Divided Key Figures */}
+            <div className="space-y-4 lg:col-span-6">
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 font-mono text-xs">
+                  <span className="text-content-tertiary">
+                    Cascade Skew ({immediateTotalNum > 0 ? 'Immediate liqs' : 'Endangered OI'})
+                  </span>
+                  {skewTotalNum > 0 ? (
+                    <span className="tabular-nums">
+                      <strong className="text-positive">
+                        L {formatCompactAssets(String(Math.round(skewLongNum)))}
+                      </strong>
+                      <span className="mx-1.5 text-content-tertiary">·</span>
+                      <strong className="text-brand-orange">
+                        S {formatCompactAssets(String(Math.round(skewShortNum)))}
+                      </strong>
                     </span>
-                    <span className="text-brand-orange">
-                      S {formatCompactAssets(String(Math.round(skewShortNum)))}
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <p className="mt-2 font-mono text-xs text-positive">
-                  Zero FAD cascade exposure at current mark
-                </p>
-              )}
+                  ) : (
+                    <span className="text-positive">Zero cascade exposure</span>
+                  )}
+                </div>
+                <div className="flex h-2 w-full overflow-hidden border border-brand-border/20 bg-app-bg">
+                  {skewTotalNum > 0 ? (
+                    <>
+                      {skewLongPct > 0 ? (
+                        <div
+                          className="h-full bg-positive/80"
+                          style={{ width: `${skewLongPct.toFixed(1)}%` }}
+                        />
+                      ) : null}
+                      {skewShortPct > 0 ? (
+                        <div
+                          className="h-full bg-brand-orange/80"
+                          style={{ width: `${skewShortPct.toFixed(1)}%` }}
+                        />
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="h-full w-full bg-positive/25" />
+                  )}
+                </div>
+              </div>
+
+              <dl className="divide-y divide-brand-border/15 border-t border-brand-border/15 font-mono text-xs">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 py-2">
+                  <dt className="text-content-tertiary">Total margin top-up needed</dt>
+                  <dd className="font-semibold tabular-nums text-brand-peach">
+                    {formatCompactAssets(summary.totalMarginTopUpNeededAssets)}
+                  </dd>
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 pt-2">
+                  <dt className="text-content-tertiary">Next FAD start / freeze</dt>
+                  <dd className="tabular-nums text-content-primary">
+                    {cal.nextFadStartsAtUtc ? formatUtc(cal.nextFadStartsAtUtc) : '—'}
+                    {cal.nextFreezeStartsAtUtc
+                      ? ` → freeze ${formatUtc(cal.nextFreezeStartsAtUtc)}`
+                      : ''}
+                  </dd>
+                </div>
+              </dl>
             </div>
           </div>
 
           {/* Filter Tabs & Search Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-brand-border/20 bg-app-bg/40 px-5 py-3">
-            <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filter FAD watchlist">
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              role="tablist"
+              aria-label="Filter FAD watchlist"
+            >
               {filterTabs.map((tab) => {
                 const active = filter === tab.id
                 return (
