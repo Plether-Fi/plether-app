@@ -36,6 +36,12 @@ import Network.Wai.Middleware.Cors
   , cors
   , simpleCorsResourcePolicy
   )
+import Network.Wai.Middleware.Gzip
+  ( GzipFiles (GzipCompress)
+  , GzipSettings (..)
+  , defaultGzipSettings
+  , gzip
+  )
 import Plether.Cache
   ( AppCache (cacheBasketLatest, cachePerpsMarketStats, cachePrivyVerifier)
   , runSingleFlightCache
@@ -119,6 +125,7 @@ import Plether.Handlers.Insights
   , getDivisionsCurrentResponse
   , getDivisionsHistoryResponse
   , getDivisionsLiveResponse
+  , getDivisionsLiveSummaryResponse
   , getDivisionsStatsResponse
   )
 import Plether.Handlers.InsightsExecution
@@ -311,6 +318,7 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
               _ -> status status400 >> json (Aeson.object ["error" .= ("Invalid diagnostic" :: Text)])
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
+  middleware $ gzip defaultGzipSettings {gzipFiles = GzipCompress}
 
   case if deployed then mPool else Nothing of
     Just pool -> do
@@ -608,6 +616,11 @@ appWithReleaseAndKernelAa deployed kernelAa cache client perpsClient cfg mPool m
   get "/api/insights/v1/divisions/live" $
     case mPool of
       Just pool -> liftIO (getDivisionsLiveResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/live/summary" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsLiveSummaryResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
   get "/api/insights/v1/divisions/wallets/:address" $ do

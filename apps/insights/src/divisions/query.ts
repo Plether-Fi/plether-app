@@ -127,6 +127,25 @@ export interface LiveDivisions {
   standings?: LiveStanding[]
 }
 
+export interface LiveDivisionsSummary {
+  status: 'pending' | 'ready'
+  scoringRelease?: ScoringRelease
+  weekStartsAt: string
+  snapshotAt?: string
+  snapshotBlock?: string
+  walletCount?: number
+  topStandings?: LiveStanding[]
+}
+
+function isValidLiveStanding(row: unknown): row is LiveStanding {
+  return typeof row === 'object' && row !== null
+    && 'address' in row && typeof row.address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(row.address)
+    && (!('discordUsername' in row) || row.discordUsername === null || typeof row.discordUsername === 'string' && row.discordUsername.length > 0)
+    && 'rank' in row && (row.rank === null || typeof row.rank === 'number' && Number.isSafeInteger(row.rank) && row.rank > 0)
+    && 'weeklyReturnBps' in row && (row.weeklyReturnBps === null || typeof row.weeklyReturnBps === 'number' && Number.isSafeInteger(row.weeklyReturnBps))
+    && 'activeDays' in row && typeof row.activeDays === 'number' && Number.isSafeInteger(row.activeDays) && row.activeDays >= 0
+}
+
 export async function getLiveDivisions(signal?: AbortSignal): Promise<LiveDivisions> {
   const response = await fetch('/api/insights/v1/divisions/live', { signal, headers: { Accept: 'application/json' } })
   if (!response.ok) throw new Error(`Live Divisions are unavailable (${String(response.status)})`)
@@ -144,12 +163,7 @@ export async function getLiveDivisions(signal?: AbortSignal): Promise<LiveDivisi
     || !/^\d+$/.test(data.snapshotBlock) || !('walletCount' in data) || typeof data.walletCount !== 'number'
     || !Number.isSafeInteger(data.walletCount) || data.walletCount < 0 || !('standings' in data)
     || !Array.isArray(data.standings) || data.standings.length !== data.walletCount
-    || !data.standings.every((row: unknown) => typeof row === 'object' && row !== null
-      && 'address' in row && typeof row.address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(row.address)
-      && (!('discordUsername' in row) || row.discordUsername === null || typeof row.discordUsername === 'string' && row.discordUsername.length > 0)
-      && 'rank' in row && (row.rank === null || typeof row.rank === 'number' && Number.isSafeInteger(row.rank) && row.rank > 0)
-      && 'weeklyReturnBps' in row && (row.weeklyReturnBps === null || typeof row.weeklyReturnBps === 'number' && Number.isSafeInteger(row.weeklyReturnBps))
-      && 'activeDays' in row && typeof row.activeDays === 'number' && Number.isSafeInteger(row.activeDays) && row.activeDays >= 0)) {
+    || !data.standings.every(isValidLiveStanding)) {
     throw new Error('Live Divisions response is invalid')
   }
   return data as LiveDivisions
@@ -157,4 +171,44 @@ export async function getLiveDivisions(signal?: AbortSignal): Promise<LiveDivisi
 
 export function useLiveDivisions() {
   return useQuery({ queryKey: ['insights', 'divisions', 'live'], queryFn: ({ signal }) => getLiveDivisions(signal), staleTime: 30_000, refetchInterval: 60_000 })
+}
+
+export async function getLiveDivisionsSummary(signal?: AbortSignal): Promise<LiveDivisionsSummary> {
+  const response = await fetch('/api/insights/v1/divisions/live/summary', { signal, headers: { Accept: 'application/json' } })
+  if (response.status === 404) {
+    const full = await getLiveDivisions(signal)
+    return {
+      status: full.status,
+      scoringRelease: full.scoringRelease,
+      weekStartsAt: full.weekStartsAt,
+      snapshotAt: full.snapshotAt,
+      snapshotBlock: full.snapshotBlock,
+      walletCount: full.walletCount,
+      topStandings: full.standings?.slice(0, 5),
+    }
+  }
+  if (!response.ok) throw new Error(`Live Divisions summary is unavailable (${String(response.status)})`)
+  const body: unknown = await response.json().catch(() => { throw new Error('Live Divisions summary response is invalid') })
+  if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('Live Divisions summary response is invalid')
+  const data = body.data
+  if (typeof data !== 'object' || data === null || !('status' in data) || !('weekStartsAt' in data)
+    || typeof data.weekStartsAt !== 'string' || !Number.isFinite(Date.parse(data.weekStartsAt))) {
+    throw new Error('Live Divisions summary response is invalid')
+  }
+  if ('scoringRelease' in data && !isScoringRelease(data.scoringRelease)) throw new Error('Live Divisions summary response is invalid')
+  if (data.status === 'pending') return data as LiveDivisionsSummary
+  if (data.status !== 'ready' || !('snapshotAt' in data) || typeof data.snapshotAt !== 'string'
+    || !Number.isFinite(Date.parse(data.snapshotAt)) || !('snapshotBlock' in data) || typeof data.snapshotBlock !== 'string'
+    || !/^\d+$/.test(data.snapshotBlock) || !('walletCount' in data) || typeof data.walletCount !== 'number'
+    || !Number.isSafeInteger(data.walletCount) || data.walletCount < 0
+    || ('topStandings' in data && (!Array.isArray(data.topStandings)
+      || data.topStandings.length > Math.min(5, data.walletCount)
+      || !data.topStandings.every(isValidLiveStanding)))) {
+    throw new Error('Live Divisions summary response is invalid')
+  }
+  return data as LiveDivisionsSummary
+}
+
+export function useLiveDivisionsSummary() {
+  return useQuery({ queryKey: ['insights', 'divisions', 'live', 'summary'], queryFn: ({ signal }) => getLiveDivisionsSummary(signal), staleTime: 30_000, refetchInterval: 60_000 })
 }

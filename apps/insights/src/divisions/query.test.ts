@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDivisions, getDivisionsHistory, getDivisionsStats, getLiveDivisions, getTradedWallets } from './query'
+import { getDivisions, getDivisionsHistory, getDivisionsStats, getLiveDivisions, getLiveDivisionsSummary, getTradedWallets } from './query'
 import { publishWeek } from './engine'
 import { input } from '../test/divisions'
 
@@ -105,6 +105,65 @@ describe('live Divisions rankings', () => {
       status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '321', walletCount: 2, standings: [],
     } })))
     await expect(getLiveDivisions()).rejects.toThrow('Live Divisions response is invalid')
+  })
+})
+
+describe('live Divisions lightweight summary', () => {
+  it('reads metadata and top-5 standings from /divisions/live/summary', async () => {
+    const data = {
+      status: 'ready',
+      weekStartsAt: '2026-10-18T21:00:00Z',
+      snapshotAt: '2026-10-19T12:00:00Z',
+      snapshotBlock: '321',
+      walletCount: 420,
+      topStandings: [
+        { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 250, activeDays: 3, discordUsername: 'alice' },
+      ],
+    }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await getLiveDivisionsSummary()).toEqual(data)
+    expect(fetcher).toHaveBeenCalledWith('/api/insights/v1/divisions/live/summary', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+
+  it('falls back to /divisions/live sliced to top 5 when summary returns 404', async () => {
+    const full = {
+      status: 'ready',
+      weekStartsAt: '2026-10-18T21:00:00Z',
+      snapshotAt: '2026-10-19T12:00:00Z',
+      snapshotBlock: '321',
+      walletCount: 6,
+      standings: Array.from({ length: 6 }, (_, i) => ({
+        address: `0x${String(i + 1).padStart(40, '0')}`,
+        rank: i + 1,
+        weeklyReturnBps: 100 - i,
+        activeDays: 2,
+        discordUsername: null,
+      })),
+    }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response('', { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ data: full }))
+    vi.stubGlobal('fetch', fetcher)
+    const res = await getLiveDivisionsSummary()
+    expect(res.walletCount).toBe(6)
+    expect(res.topStandings).toHaveLength(5)
+    expect(res.topStandings?.[0]?.rank).toBe(1)
+  })
+
+  it('rejects topStandings exceeding 5 rows or walletCount', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: {
+      status: 'ready',
+      weekStartsAt: '2026-10-18T21:00:00Z',
+      snapshotAt: '2026-10-19T12:00:00Z',
+      snapshotBlock: '321',
+      walletCount: 1,
+      topStandings: [
+        { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 10, activeDays: 1 },
+        { address: '0x0000000000000000000000000000000000000002', rank: 2, weeklyReturnBps: 5, activeDays: 1 },
+      ],
+    } })))
+    await expect(getLiveDivisionsSummary()).rejects.toThrow('Live Divisions summary response is invalid')
   })
 })
 

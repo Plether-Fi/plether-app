@@ -1,10 +1,10 @@
 import { useInsightsStatus } from '../api'
-import { useLiveDivisions } from '../divisions/query'
+import { useLiveDivisionsSummary } from '../divisions/query'
 import { resolvePerpsChain } from '../utils/chain'
 
 export function useProtocolContext() {
   const statusQuery = useInsightsStatus()
-  const liveQuery = useLiveDivisions()
+  const liveQuery = useLiveDivisionsSummary()
   const live = liveQuery.data?.status === 'ready' ? liveQuery.data : null
   const chainId = statusQuery.data?.chainId ?? null
   const chain = resolvePerpsChain(chainId)
