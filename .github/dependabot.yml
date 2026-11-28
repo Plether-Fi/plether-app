@@ -5,14 +5,24 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    ignore:
+      # Upgraded atomically across apps/frontend, apps/insights, and
+      # scripts/patch-privy-wallet-dialog.mjs (postinstall enforces one pinned version + hashes).
+      - dependency-name: "@privy-io/react-auth"
     groups:
       dev-dependencies:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
       web3:
         patterns:
           - "viem"
           - "wagmi"
           - "@web3modal/*"
+        update-types:
+          - minor
+          - patch
       production-minor-patch:
         dependency-type: production
         update-types:
@@ -23,6 +33,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    ignore:
+      # Upgraded atomically across apps/frontend, apps/insights, and
+      # scripts/patch-privy-wallet-dialog.mjs (postinstall enforces one pinned version + hashes).
+      - dependency-name: "@privy-io/react-auth"
     groups:
       insights-dependencies:
         patterns:
