@@ -6,6 +6,7 @@ import {
   useInsightsStatus,
   useLiquidityEfficiency,
   useMarketExposure,
+  useMarketFadRisk,
   useOverview,
 } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
@@ -29,6 +30,7 @@ export function OverviewPage() {
   const overviewQuery = useOverview()
   const marketExposureQuery = useMarketExposure()
   const efficiencyQuery = useLiquidityEfficiency()
+  const fadRiskQuery = useMarketFadRisk()
   const liveQuery = useLiveDivisionsSummary()
   const publicationQuery = useDivisions()
   const statsQuery = useDivisionsStats()
@@ -448,6 +450,7 @@ export function OverviewPage() {
       <MarketExposurePulsePanel
         data={marketExposureQuery.data}
         efficiencySummary={efficiencyQuery.data?.summary ?? null}
+        fadRiskSummary={fadRiskQuery.data?.summary ?? null}
         isLoading={marketExposureQuery.isLoading}
         isError={marketExposureQuery.isError}
       />

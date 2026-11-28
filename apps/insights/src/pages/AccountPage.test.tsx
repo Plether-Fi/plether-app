@@ -8,6 +8,7 @@ import { AccountPage } from './AccountPage'
 const protocolContext = vi.hoisted(() => vi.fn())
 const walletSummaryQuery = vi.hoisted(() => vi.fn())
 const walletExposureQuery = vi.hoisted(() => vi.fn())
+const fadRiskQuery = vi.hoisted(() => vi.fn())
 const liveDivisionsQuery = vi.hoisted(() => vi.fn())
 const divisionsQuery = vi.hoisted(() => vi.fn())
 
@@ -16,6 +17,7 @@ vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   useWalletSummary: walletSummaryQuery,
   useWalletExposure: walletExposureQuery,
+  useMarketFadRisk: fadRiskQuery,
 }))
 vi.mock('../divisions/query', () => ({
   useLiveDivisions: liveDivisionsQuery,
@@ -25,6 +27,13 @@ vi.mock('../divisions/query', () => ({
 const testAccount = `0x${'a'.repeat(40)}`
 
 beforeEach(() => {
+  fadRiskQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })
   walletExposureQuery.mockReturnValue({
     data: undefined,
     isLoading: false,

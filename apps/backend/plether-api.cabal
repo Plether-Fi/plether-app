@@ -160,6 +160,7 @@ library
         Plether.Perps.Release
         Plether.Perps.Workers
         Plether.Perps.Manifest
+        Plether.Perps.MarketCalendar
         Plether.Perps.IndexerFormat
         Plether.Perps.Manifest.Embed
         Plether.Perps.IndexerOptions
@@ -178,6 +179,7 @@ library
         Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
         Plether.Handlers.InsightsExecution
+        Plether.Handlers.InsightsFadRisk
         Plether.Handlers.InsightsInfra
         Plether.Handlers.InsightsLiquidity
         Plether.Handlers.InsightsOracle
@@ -481,6 +483,7 @@ test-suite plether-api-test
         Plether.Indexer.EventsSpec
         Plether.Handlers.InsightsRegistrationSpec
         Plether.Handlers.InsightsExecutionSpec
+        Plether.Handlers.InsightsFadRiskSpec
         Plether.Handlers.InsightsInfraSpec
         Plether.Handlers.InsightsLiquiditySpec
         Plether.Handlers.InsightsOracleSpec
@@ -517,6 +520,7 @@ test-suite plether-api-test
         Plether.Perps.IndexerOptionsSpec
         Plether.Perps.ReleaseSpec
         Plether.Perps.ManifestSpec
+        Plether.Perps.MarketCalendarSpec
         Plether.Perps.ActivationSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.ObservationSpec

@@ -4,6 +4,7 @@ import {
   useLiquidityEfficiency,
   useLiquidityForensics,
   useLiquiditySettlements,
+  useLiquiditySolvency,
   type DecodedMask,
   type LpSettlementObservation,
   type SnapshotFreshnessWindow,
@@ -15,6 +16,7 @@ import {
   SettlementContinuityStrip,
 } from '../components/LiquidityVisuals'
 import { PoolEfficiencySection } from '../components/PoolEfficiencySection'
+import { PoolSolvencySection } from '../components/PoolSolvencySection'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -96,15 +98,33 @@ function MaskCard({
         />
       </div>
       <p className="mt-1.5 text-xs leading-5 text-content-secondary">{description}</p>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-brand-border/15 pt-2.5 font-mono text-xs">
-        <span className="text-content-tertiary">Raw: {mask.raw}</span>
-        {active ? (
-          <span className="text-brand-peach">
-            Bits: {mask.activeBits.map((bit) => `#${String(bit)}`).join(', ')}
-          </span>
-        ) : (
-          <span className="text-positive">0 active bits</span>
-        )}
+      <div className="mt-3 space-y-2 border-t border-brand-border/15 pt-2.5 font-mono text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-content-tertiary">Raw: {mask.raw}</span>
+          {active ? (
+            <span className="text-brand-peach">
+              Bits: {mask.activeBits.map((bit) => `#${String(bit)}`).join(', ')}
+            </span>
+          ) : (
+            <span className="text-positive">0 active bits</span>
+          )}
+        </div>
+        {active && mask.labels && mask.labels.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {mask.labels.map((label) => (
+              <span
+                key={label}
+                className={`border px-1.5 py-0.5 text-[10px] font-semibold ${
+                  severity === 'warning'
+                    ? 'border-brand-yellow/40 bg-brand-yellow/10 text-brand-yellow'
+                    : 'border-brand-orange/40 bg-brand-orange/10 text-brand-orange'
+                }`}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -162,6 +182,7 @@ export function LiquidityOpsPage() {
   const settlementsQuery = useLiquiditySettlements()
   const forensicsQuery = useLiquidityForensics()
   const efficiencyQuery = useLiquidityEfficiency()
+  const solvencyQuery = useLiquiditySolvency()
 
   const settlements = settlementsQuery.data
   const forensics = forensicsQuery.data
@@ -386,6 +407,14 @@ export function LiquidityOpsPage() {
         isError={efficiencyQuery.isError}
         error={efficiencyQuery.error}
         onRetry={() => void efficiencyQuery.refetch()}
+      />
+
+      <PoolSolvencySection
+        data={solvencyQuery.data}
+        isLoading={solvencyQuery.isLoading}
+        isError={solvencyQuery.isError}
+        error={solvencyQuery.error}
+        onRetry={() => void solvencyQuery.refetch()}
       />
 
       <section aria-labelledby="settlement-masks-title" className="space-y-4">

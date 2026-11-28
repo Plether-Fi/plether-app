@@ -7,11 +7,13 @@ import { ProtocolPage } from './ProtocolPage'
 
 const protocolContext = vi.hoisted(() => vi.fn())
 const manifestQuery = vi.hoisted(() => vi.fn())
+const solvencyQuery = vi.hoisted(() => vi.fn())
 
 vi.mock('../hooks/useProtocolContext', () => ({ useProtocolContext: protocolContext }))
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   useProtocolManifest: manifestQuery,
+  useLiquiditySolvency: solvencyQuery,
 }))
 
 const sampleManifest: ProtocolManifestResponse = {
@@ -244,6 +246,13 @@ beforeEach(() => {
     data: sampleManifest,
     isLoading: false,
     isError: false,
+    refetch: vi.fn(),
+  })
+  solvencyQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
     refetch: vi.fn(),
   })
 })

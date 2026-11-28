@@ -4,9 +4,11 @@ import {
   InsightsApiError,
   accountActivityToProtocolTrade,
   enrichBalanceHistory,
+  formatDurationCompact,
   formatPlDxyQuantity,
   formatVaultShares,
   transactionPath,
+  useMarketFadRisk,
   useWalletExposure,
   useWalletSummary,
   type AccountActivityRecord,
@@ -83,6 +85,7 @@ function TradingAccountInspector({ address }: { address: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const summaryQuery = useWalletSummary(address, 50)
   const exposureQuery = useWalletExposure(address)
+  const fadRiskQuery = useMarketFadRisk()
   const liveQuery = useLiveDivisions()
   const publicationQuery = useDivisions()
   const activeTab = parseTabParam(searchParams.get('tab'))
@@ -110,6 +113,12 @@ function TradingAccountInspector({ address }: { address: string }) {
 
   const ledger = summary?.ledger ?? null
   const position = ledger?.hasPosition ? ledger.position : null
+  const walletFadRisk =
+    fadRiskQuery.data?.positions.find(
+      (p) => p.account.toLowerCase() === address.toLowerCase(),
+    ) ?? null
+  const fadCalendar = fadRiskQuery.data?.calendar ?? null
+  const fadThresholds = fadRiskQuery.data?.thresholds ?? null
   const perf = summary?.performance ?? null
   const protections = summary?.protections.items ?? []
   const lpBalances = summary?.lp.balances ?? []
@@ -442,6 +451,75 @@ function TradingAccountInspector({ address }: { address: string }) {
           )}
         </Panel>
       </section>
+
+      {walletFadRisk && walletFadRisk.dangerStatus !== 'safe' && fadCalendar && fadThresholds ? (
+        <div
+          role="alert"
+          className={`border px-4 py-3.5 text-sm sm:px-5 ${
+            walletFadRisk.dangerStatus === 'liquidatable_now' ||
+            walletFadRisk.dangerStatus === 'would_liquidate_at_fad'
+              ? 'border-brand-orange/55 bg-brand-orange/10 text-content-primary'
+              : 'border-brand-yellow/45 bg-brand-yellow/10 text-content-primary'
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill
+                  tone={
+                    walletFadRisk.dangerStatus === 'liquidatable_now' ||
+                    walletFadRisk.dangerStatus === 'would_liquidate_at_fad'
+                      ? 'blocked'
+                      : 'degraded'
+                  }
+                  label={
+                    walletFadRisk.dangerStatus === 'liquidatable_now'
+                      ? 'Liquidatable Now'
+                      : walletFadRisk.dangerStatus === 'would_liquidate_at_fad'
+                        ? 'Would Liquidate at FAD'
+                        : walletFadRisk.dangerStatus === 'critical'
+                          ? 'FAD Critical (≤0.5%)'
+                          : 'FAD At Risk (≤1.5%)'
+                  }
+                />
+                <strong className="text-sm font-semibold">
+                  {fadCalendar.fadWindow
+                    ? 'FAD elevated margin window is active'
+                    : fadCalendar.secondsUntilNextFad != null
+                      ? `Next FAD window starts in ${formatDurationCompact(fadCalendar.secondsUntilNextFad)}`
+                      : 'Upcoming FAD elevated margin window'}
+                </strong>
+              </div>
+              <p className="font-mono text-xs text-content-secondary">
+                Projected equity at FAD{' '}
+                <strong className="text-content-primary">
+                  {formatCompactAssets(walletFadRisk.projectedEquityAtFadAssets)}
+                </strong>{' '}
+                vs. {(fadThresholds.fadMarginBps / 100).toFixed(2)}% required{' '}
+                <strong className="text-content-primary">
+                  {formatCompactAssets(walletFadRisk.fadRequiredMarginAssets)}
+                </strong>
+                {Number(walletFadRisk.marginNeededToSurviveAssets) > 0 ? (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <strong className="text-brand-orange">
+                      Add &ge; {formatCompactAssets(walletFadRisk.marginNeededToSurviveAssets)} to
+                      survive FAD
+                    </strong>
+                  </>
+                ) : null}
+              </p>
+            </div>
+            <Link
+              to="/execution#fad-watchlist"
+              className="shrink-0 font-mono text-xs font-semibold text-brand-peach hover:underline"
+            >
+              View FAD Watchlist →
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       <div
         role="tablist"

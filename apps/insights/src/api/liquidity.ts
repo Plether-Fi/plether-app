@@ -13,6 +13,7 @@ export interface LiquidityNetworkMeta {
 export interface DecodedMask {
   raw: string
   activeBits: number[]
+  labels?: string[]
 }
 
 export type SettlementReadiness =
@@ -354,11 +355,153 @@ export function formatTakeRateBpsX100(bpsX100: number | null | undefined): strin
   return `${(bpsX100 / 100).toFixed(2)} bps`
 }
 
+export interface LiquiditySolvencySnapshot {
+  poolTotalAssets: string | null
+  poolRawAssets: string | null
+  excessAssets: string | null
+  terminalDeficitAssets: string | null
+  freeSettlementAssets: string | null
+  withdrawalReserveAssets: string | null
+  effectiveSolvencyAssets: string | null
+  solvencyCoverageBps: number | null
+  freeLiquidityShareBps: number | null
+  maxDirectionalLiabilityAssets: string | null
+  totalTraderClaimsAssets: string | null
+  terminalLpPriceDeltaAssets: string | null
+  markPrice: string | null
+  markTime: number | null
+  bookVersion: number | null
+  hasOpenPositions: boolean | null
+  degradedMode: boolean | null
+  seniorImpaired: boolean | null
+  canIncreaseRisk: boolean | null
+  canAcceptOrdinaryDeposits: boolean | null
+  canSettleDepositEntries: boolean | null
+  seniorReservationsWithinLimits: boolean | null
+}
+
+export interface LiquidityWaterfallSnapshot {
+  seniorPrincipalAssets: string | null
+  juniorPrincipalAssets: string | null
+  seniorHighWaterMarkAssets: string | null
+  seniorHwmCoverageBps: number | null
+  seniorImpairmentAssets: string | null
+  protectedSeniorExposureAssets: string | null
+  maxSeniorWithdrawAssets: string | null
+  maxJuniorWithdrawAssets: string | null
+  seniorDepositCapacityAssets: string | null
+  reservedSeniorDepositAssets: string | null
+  unassignedAssets: string | null
+  pendingRecapitalizationAssets: string | null
+  pendingTradingRevenueAssets: string | null
+  positiveVpiAssets: string | null
+  negativeVpiAssets: string | null
+  netVpiAccruedAssets: string | null
+  carryIndex: string | null
+  carryTimestamp: number | null
+}
+
+export interface LiquidityPolicySnapshot {
+  seniorRateBps: number | null
+  seniorFrozenLpFeeBps: number | null
+  juniorFrozenLpFeeBps: number | null
+  poolConfigActivationTime: number | null
+  pendingPoolConfigTimelockActive: boolean
+  secondsUntilPoolConfigActivation: number | null
+}
+
+export interface TrancheVaultEscrowSnapshot {
+  pendingDepositAssets: string | null
+  pendingRedeemShares: string | null
+  depositClaimShares: string | null
+  withdrawalEscrowAssets: string | null
+}
+
+export interface SettlementCustodyAudit {
+  healthState: 'healthy' | 'degraded' | 'faulted' | 'unknown'
+  healthStateCode: number
+  criticalFaults: DecodedMask
+  dependencyFailures: DecodedMask
+  custodyBalanced: boolean | null
+  seniorEscrowBalanced: boolean | null
+  juniorEscrowBalanced: boolean | null
+  navBookCapMatchesEngine: boolean | null
+  pool: {
+    rawAssets: string
+    accountedAssets: string
+    custodyDeficitAssets: string
+    custodySurplusAssets: string
+  }
+  escrowAudit: {
+    senior: {
+      requiredAssetEscrow: string
+      actualAssetEscrow: string
+      requiredShareEscrow: string
+      actualShareEscrow: string
+    }
+    junior: {
+      requiredAssetEscrow: string
+      actualAssetEscrow: string
+      requiredShareEscrow: string
+      actualShareEscrow: string
+    }
+  }
+  navBookParity: {
+    bookCapPrice: string
+    engineCapPrice: string
+    bookActiveCurveCount: number
+    bookTotalLots: string
+    bookTotalEntryCostAssetAtoms: string
+    bookTotalEffectiveCapAssetAtoms: string
+    engineLongOpenInterest: string
+    engineShortOpenInterest: string
+    engineLongEntryNotional: string
+    engineShortEntryNotional: string
+    sizeQuantum: string
+  }
+}
+
+export interface LiquiditySolvencyResponse {
+  network: LiquidityNetworkMeta
+  observedAt: string
+  observedBlock: string
+  solvency: LiquiditySolvencySnapshot
+  waterfall: LiquidityWaterfallSnapshot
+  policy: LiquidityPolicySnapshot
+  vaultEscrows: {
+    senior: TrancheVaultEscrowSnapshot
+    junior: TrancheVaultEscrowSnapshot
+  }
+  custodyAudit: SettlementCustodyAudit | null
+}
+
+export function getLiquiditySolvency(signal?: AbortSignal): Promise<LiquiditySolvencyResponse> {
+  return fetchInsightsJson<LiquiditySolvencyResponse>('/liquidity/solvency', signal)
+}
+
 export const liquidityKeys = {
   settlements: ['insights', 'liquidity', 'settlements'] as const,
   forensics: ['insights', 'liquidity', 'forensics'] as const,
   efficiency: ['insights', 'liquidity', 'efficiency'] as const,
+  solvency: ['insights', 'liquidity', 'solvency'] as const,
   epoch: (epoch: string | number) => ['insights', 'liquidity', 'epoch', String(epoch)] as const,
+}
+
+export function useLiquiditySolvency() {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
+  const hasSeededData = queryClient.getQueryData(liquidityKeys.solvency) !== undefined
+  return useQuery({
+    queryKey: liquidityKeys.solvency,
+    queryFn: ({ signal }) => getLiquiditySolvency(signal),
+    enabled: !staticPreview || hasSeededData,
+    staleTime: staticPreview ? Infinity : 15_000,
+    refetchInterval: staticPreview ? false : 15_000,
+    refetchOnMount: !staticPreview,
+    refetchOnWindowFocus: !staticPreview,
+    refetchIntervalInBackground: false,
+    retry: shouldRetryEndpoint,
+  })
 }
 
 export function useLiquidityEfficiency() {

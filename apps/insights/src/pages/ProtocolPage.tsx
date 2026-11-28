@@ -5,6 +5,8 @@ import {
   PROTOCOL_CORE_GITHUB_REPO,
   deriveProtocolHealthBanner,
   deriveProtocolStateSummary,
+  formatDurationCompact,
+  formatPoolBpsPercent,
   formatProtocolParamValue,
   parameterImpactHint,
   protocolCommitGitHubUrl,
@@ -12,6 +14,7 @@ import {
   protocolTreeGitHubUrl,
   resolveParameterRange,
   shortHash,
+  useLiquiditySolvency,
   useProtocolManifest,
   type ProtocolContractCategory,
   type ProtocolContractRecord,
@@ -372,6 +375,8 @@ function ContractRow({
 export function ProtocolPage() {
   const ctx = useProtocolContext()
   const manifestQuery = useProtocolManifest()
+  const solvencyQuery = useLiquiditySolvency()
+  const solvency = solvencyQuery.data
 
   const [paramFilter, setParamFilter] = useState<ParamFilter>('all')
   const [driftOnly, setDriftOnly] = useState(false)
@@ -1141,6 +1146,106 @@ export function ProtocolPage() {
                 />
               </div>
             </Panel>
+
+            {solvency ? (
+              <Panel className="p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-content-primary">
+                        Solvency &amp; Custody Health
+                      </h3>
+                      <StatusPill
+                        tone={
+                          solvency.solvency.degradedMode === true ||
+                          Number(solvency.solvency.terminalDeficitAssets ?? '0') > 0 ||
+                          solvency.custodyAudit?.custodyBalanced === false
+                            ? 'blocked'
+                            : solvency.solvency.seniorImpaired === true ||
+                                solvency.policy.pendingPoolConfigTimelockActive
+                              ? 'degraded'
+                              : 'live'
+                        }
+                        label={
+                          solvency.custodyAudit?.custodyBalanced === false
+                            ? 'Custody Deficit'
+                            : solvency.solvency.degradedMode === true
+                              ? 'Degraded Mode'
+                              : 'Custody & Solvency Verified'
+                        }
+                      />
+                      {solvency.policy.pendingPoolConfigTimelockActive ? (
+                        <StatusPill
+                          tone="degraded"
+                          label={`72h Config Timelock · ${formatDurationCompact(solvency.policy.secondsUntilPoolConfigActivation)}`}
+                        />
+                      ) : null}
+                    </div>
+                    <p className="text-xs text-content-tertiary">
+                      Live HousePool solvency coverage, free withdrawal liquidity, and
+                      SettlementMonitorLens custody parity
+                    </p>
+                  </div>
+                  <Link
+                    to="/liquidity#solvency"
+                    className="font-mono text-xs font-semibold text-brand-peach hover:underline"
+                  >
+                    Full solvency &amp; waterfall audit →
+                  </Link>
+                </div>
+
+                <dl className="mt-4 grid gap-4 border-t border-brand-border/15 pt-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-brand-border/15">
+                  <div className="lg:pr-4">
+                    <dt className="font-mono text-[11px] text-content-tertiary">
+                      Solvency Coverage
+                    </dt>
+                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums text-positive">
+                      {solvency.solvency.maxDirectionalLiabilityAssets === '0'
+                        ? '∞ (No Open Liab.)'
+                        : solvency.solvency.solvencyCoverageBps != null
+                          ? `${(solvency.solvency.solvencyCoverageBps / 10_000).toFixed(2)}× (${formatPoolBpsPercent(solvency.solvency.solvencyCoverageBps, 0)})`
+                          : '—'}
+                    </dd>
+                  </div>
+                  <div className="lg:px-4">
+                    <dt className="font-mono text-[11px] text-content-tertiary">
+                      Free Settlement Cash
+                    </dt>
+                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
+                      {formatCompactAssets(solvency.solvency.freeSettlementAssets)}{' '}
+                      <span className="text-[11px] font-normal text-content-tertiary">
+                        ({formatPoolBpsPercent(solvency.solvency.freeLiquidityShareBps, 1)})
+                      </span>
+                    </dd>
+                  </div>
+                  <div className="lg:px-4">
+                    <dt className="font-mono text-[11px] text-content-tertiary">
+                      Terminal Deficit / Senior
+                    </dt>
+                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
+                      {formatCompactAssets(solvency.solvency.terminalDeficitAssets)} ·{' '}
+                      <span
+                        className={
+                          solvency.solvency.seniorImpaired ? 'text-brand-orange' : 'text-positive'
+                        }
+                      >
+                        {solvency.solvency.seniorImpaired ? 'Impaired' : 'Unimpaired'}
+                      </span>
+                    </dd>
+                  </div>
+                  <div className="lg:pl-4">
+                    <dt className="font-mono text-[11px] text-content-tertiary">
+                      Pool Config Timelock
+                    </dt>
+                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums text-content-primary">
+                      {solvency.policy.pendingPoolConfigTimelockActive
+                        ? `Activates in ${formatDurationCompact(solvency.policy.secondsUntilPoolConfigActivation)}`
+                        : 'No pending change'}
+                    </dd>
+                  </div>
+                </dl>
+              </Panel>
+            ) : null}
           </section>
 
           <section aria-labelledby="parameters-title" className="space-y-3">

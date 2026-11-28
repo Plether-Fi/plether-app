@@ -1,37 +1,51 @@
 module Plether.Handlers.InsightsLiquiditySpec (spec) where
 
 import Data.Aeson (object, (.=))
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple.Types (Query (..))
 import Plether.Database.VaultPerformance (VaultPerformanceSnapshotRow (..))
+import Plether.Ethereum.Abi (encodeUint256)
 import Plether.Handlers.InsightsLiquidity
   ( LpSettlementObservationRow (..)
   , OiDeltaBucketAgg (..)
   , OrderBucketAgg (..)
   , PoolEfficiencyBucket (..)
   , PoolEfficiencySummary (..)
+  , PoolSolvencyDerived (..)
   , ReturnReportResidual (..)
+  , SettlementHealthSnapshot (..)
   , SnapshotFreshnessSummary (..)
+  , TerminalNavSnapshot (..)
+  , VpiAccountingSnapshot (..)
   , auditReturnReportResidual
   , buildPoolEfficiencyAnalytics
   , classifySettlementReadiness
   , computeAnnualizedYieldBps
+  , computePoolSolvencyDerived
   , computeRatioBps
   , computeRatioX100
   , computeTakeRateBpsX100
+  , criticalFaultLabel
   , decodeBitPositions
+  , decodeSettlementHealth
+  , decodeTerminalNavSnapshot
+  , decodeVpiAccountingSnapshot
+  , dependencyLabel
   , efficiencyOrderBucketsSql
   , efficiencyOrderWindowTotalsSql
   , executionPathLabel
   , healthStateLabel
   , latestBasketMarkSql
   , oiDeltaBucketsSql
+  , operationalBlockerLabel
   , priorOiSizesSql
   , sharePriceDeltaBps
   , summarizeSnapshotFreshness
+  , warningFlagLabel
   )
 import Test.Hspec
 
@@ -216,3 +230,68 @@ spec = describe "Plether.Handlers.InsightsLiquidity" $ do
     countPlaceholders priorOiSizesSql `shouldBe` 3
     countPlaceholders oiDeltaBucketsSql `shouldBe` 3
     countPlaceholders latestBasketMarkSql `shouldBe` 0
+
+  it "decodes signed TerminalNavSnapshot, VpiAccountingSnapshot, and 31-word SettlementHealth" $ do
+    -- Signed int256(-25_000_000) in two's complement = 2^256 - 25_000_000
+    let negDelta = (2 ^ (256 :: Int)) - 25000000
+        navBytes =
+          BS.concat
+            [ encodeUint256 101234567 -- markPrice
+            , encodeUint256 1795900000 -- markTime
+            , encodeUint256 negDelta -- terminalLpPriceDeltaAssets = -25 USDG
+            , encodeUint256 50000000000 -- totalTraderClaims = 50k
+            , encodeUint256 200000000000 -- maxDirectionalLiability = 200k
+            , encodeUint256 42 -- bookVersion
+            , encodeUint256 1 -- hasOpenPositions = True
+            , encodeUint256 0 -- degradedMode = False
+            ]
+        vpiBytes = BS.concat [encodeUint256 12000000000, encodeUint256 4500000000]
+        healthWords =
+          [ 1, 0, 0 -- Healthy, 0 critical, 0 dep failures
+          , 200000000, 200000000 -- bookCap == engineCap
+          , 3, 1000, 100, 200, 10, 20, 30, 40, 1 -- curves/lots/OI
+          , 1000000000000, 1000000000000, 0, 0 -- raw == accounted, 0 deficit
+          , 100, 100, 200, 200 -- senior escrows balanced
+          , 300, 300, 400, 400 -- junior escrows balanced
+          , 600000000000, 600000000000, 0, 0, 600000000000 -- senior principal/hwm/impairment
+          ]
+        healthBytes = BS.concat (map encodeUint256 healthWords)
+
+    case (decodeTerminalNavSnapshot navBytes, decodeVpiAccountingSnapshot vpiBytes, decodeSettlementHealth healthBytes) of
+      (Just nav, Just vpi, Just health) -> do
+        tnsTerminalLpPriceDeltaAssets nav `shouldBe` (-25000000)
+        tnsHasOpenPositions nav `shouldBe` True
+        tnsDegradedMode nav `shouldBe` False
+        vasPositiveVpiAssets vpi `shouldBe` 12000000000
+        shsHealthState health `shouldBe` 1
+        shsPoolCustodyDeficitAssets health `shouldBe` 0
+
+        let derived =
+              computePoolSolvencyDerived
+                1795900000
+                (Just 1000000000000) -- 1M pool
+                (Just 750000000000) -- 750k free
+                (Just 600000000000) -- 600k senior principal
+                (Just 600000000000) -- 600k senior HWM
+                (Just 1795903600) -- 1h timelock active
+                (Just nav)
+                (Just vpi)
+                (Just health)
+        psdEffectiveSolvencyAssets derived `shouldBe` Just 950000000000
+        psdSolvencyCoverageBps derived `shouldBe` Just 50000 -- 5.00x = 500%
+        psdFreeLiquidityShareBps derived `shouldBe` Just 7500 -- 75%
+        psdSeniorHwmCoverageBps derived `shouldBe` Just 10000 -- 100%
+        psdNetVpiAccruedAssets derived `shouldBe` Just 7500000000
+        psdCustodyBalanced derived `shouldBe` Just True
+        psdSeniorEscrowBalanced derived `shouldBe` Just True
+        psdJuniorEscrowBalanced derived `shouldBe` Just True
+        psdNavBookCapMatchesEngine derived `shouldBe` Just True
+        psdPendingPoolConfigTimelockActive derived `shouldBe` True
+        psdSecondsUntilPoolConfigActivation derived `shouldBe` Just 3600
+      _ -> expectationFailure "expected valid solvency ABI payloads to decode"
+
+  it "maps SettlementMonitorLens bitmask indices to human-readable labels" $ do
+    operationalBlockerLabel 2 `shouldBe` "Engine Degraded"
+    warningFlagLabel 4 `shouldBe` "Oracle Frozen"
+    criticalFaultLabel 11 `shouldBe` "Pool Custody Deficit"
+    dependencyLabel 8 `shouldBe` "Oracle"

@@ -9,6 +9,7 @@ import {
   formatDurationCompact,
   formatLeverageX100,
   positionPath,
+  type FadRiskSummary,
   type GlobalMarketExposureResponse,
 } from '../api/positions'
 import {
@@ -23,6 +24,7 @@ import { EmptyState, LoadingState, Panel, Pnl } from './ui'
 interface MarketExposurePulsePanelProps {
   data: GlobalMarketExposureResponse | undefined
   efficiencySummary?: PoolEfficiencySummary | null
+  fadRiskSummary?: FadRiskSummary | null
   isLoading: boolean
   isError: boolean
 }
@@ -30,6 +32,7 @@ interface MarketExposurePulsePanelProps {
 export function MarketExposurePulsePanel({
   data,
   efficiencySummary,
+  fadRiskSummary,
   isLoading,
   isError,
 }: MarketExposurePulsePanelProps) {
@@ -37,6 +40,8 @@ export function MarketExposurePulsePanel({
   const positions = data?.positions ?? []
   const longPct = summary?.longShareBps != null ? summary.longShareBps / 100 : null
   const shortPct = summary?.shortShareBps != null ? summary.shortShareBps / 100 : null
+  const immediateFadCount =
+    (fadRiskSummary?.liquidatableNowCount ?? 0) + (fadRiskSummary?.wouldLiquidateCount ?? 0)
 
   return (
     <section aria-labelledby="pulse-market-exposure-title" className="space-y-3">
@@ -71,6 +76,15 @@ export function MarketExposurePulsePanel({
                 ? ` · OI/Pool ${formatPoolBpsPercent(efficiencySummary.grossOiToPoolBps)}`
                 : ''}
             </span>
+          ) : null}
+          {immediateFadCount > 0 && fadRiskSummary ? (
+            <Link
+              to="/execution#fad-watchlist"
+              className="border border-brand-orange/45 bg-brand-orange/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-brand-orange transition-colors hover:bg-brand-orange/25"
+            >
+              FAD risk: {String(immediateFadCount)} pos (
+              {formatCompactAssets(fadRiskSummary.immediateLiquidationNotionalAssets)})
+            </Link>
           ) : null}
           <Link
             to="/liquidity#pool-efficiency"

@@ -8,15 +8,24 @@ import { ExecutionPage } from './ExecutionPage'
 const protocolContext = vi.hoisted(() => vi.fn())
 const qualityQuery = vi.hoisted(() => vi.fn())
 const tradesQuery = vi.hoisted(() => vi.fn())
+const fadRiskQuery = vi.hoisted(() => vi.fn())
 
 vi.mock('../hooks/useProtocolContext', () => ({ useProtocolContext: protocolContext }))
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   useExecutionQuality: qualityQuery,
   useExecutionTrades: tradesQuery,
+  useMarketFadRisk: fadRiskQuery,
 }))
 
 beforeEach(() => {
+  fadRiskQuery.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })
   protocolContext.mockReturnValue({
     chainId: 421614,
     chain: resolvePerpsChain(421614),
