@@ -27,6 +27,7 @@ import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySc
 import Plether.Database.VaultActivity (ensureVaultActivitySchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
+import Plether.Handlers.InsightsExecution (ensureTxSenderCacheTable)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
 import Plether.Handlers.DivisionsRegistration (ensureDivisionsSchema, loadDiscordConfig)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
@@ -137,6 +138,7 @@ main = do
               withDb pool ensureVaultPerformanceSchema
               withDb pool ensureVaultActivitySchema
               withDb pool ensureAaSponsorshipSchema
+              withDb pool ensureTxSenderCacheTable
             for_ kernelAa $ \_ -> withDb pool $ \conn -> do
               when canaryApiMode $ requireKernelMarginFundingSchema conn
               ensureKernelOperationSchema conn

@@ -11,7 +11,12 @@ import Plether.Handlers.InsightsOracle
   , RejectionBucketAgg (..)
   , buildOracleHealthBuckets
   , classifyOracleSliceStatus
+  , computeChangeFromBaseBps
   , computeComponentConfidenceBps
+  , computeComponentContribution
+  , computeDisplayDeltaBps
+  , computeEffectiveShareBps
+  , parseOracleUpdateIdParam
   )
 import Test.Hspec
 
@@ -65,3 +70,33 @@ spec = describe "Plether.Handlers.InsightsOracle" $ do
     computeComponentConfidenceBps 117500000 117500 `shouldBe` Just 10
     computeComponentConfidenceBps 100000000 0 `shouldBe` Just 0
     computeComponentConfidenceBps 0 100 `shouldBe` Nothing
+
+  it "computes DXY basket component contribution, effective share, and drift vs base" $ do
+    -- At basePrice, EUR/USD (5760 bps) contributes exactly 57_600_000 (0.57600000)
+    computeComponentContribution 117500000 5760 117500000 `shouldBe` Just 57600000
+    -- If EUR/USD moves +10% above base, contribution rises by 10%
+    computeComponentContribution 129250000 5760 117500000 `shouldBe` Just 63360000
+    computeComponentContribution 0 5760 117500000 `shouldBe` Nothing
+    -- Effective share bps out of total basket contribution
+    computeEffectiveShareBps 57600000 100000000 `shouldBe` Just 5760
+    computeEffectiveShareBps 63360000 105760000 `shouldBe` Just 5991
+    computeEffectiveShareBps 57600000 0 `shouldBe` Nothing
+    -- Change vs base price in signed bps
+    computeChangeFromBaseBps 117500000 117500000 `shouldBe` Just 0
+    computeChangeFromBaseBps 129250000 117500000 `shouldBe` Just 1000
+    computeChangeFromBaseBps 105750000 117500000 `shouldBe` Just (-1000)
+    computeChangeFromBaseBps 0 117500000 `shouldBe` Nothing
+
+  it "computes display plDXY price delta in basis points across updates" $ do
+    -- raw 100_000_000 -> display 100_000_000; raw 99_000_000 -> display 101_000_000 (+100 bps)
+    computeDisplayDeltaBps 99000000 100000000 `shouldBe` Just 100
+    computeDisplayDeltaBps 101000000 100000000 `shouldBe` Just (-100)
+    computeDisplayDeltaBps 200000000 100000000 `shouldBe` Nothing
+
+  it "parses oracle update id path parameter safely" $ do
+    parseOracleUpdateIdParam "latest" `shouldBe` Just Nothing
+    parseOracleUpdateIdParam " LATEST " `shouldBe` Just Nothing
+    parseOracleUpdateIdParam "42105" `shouldBe` Just (Just 42105)
+    parseOracleUpdateIdParam "0" `shouldBe` Nothing
+    parseOracleUpdateIdParam "-5" `shouldBe` Nothing
+    parseOracleUpdateIdParam "abc" `shouldBe` Nothing

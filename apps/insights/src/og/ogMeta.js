@@ -136,6 +136,19 @@ export function resolveRouteOgMeta(url) {
     };
   }
 
+  const oracleUpdateMatch = pathname.match(/^\/oracle\/updates\/(latest|\d+)\/?$/i);
+  if (oracleUpdateMatch) {
+    const updateId = oracleUpdateMatch[1].toLowerCase();
+    const label = updateId === 'latest' ? 'Latest Update' : `Update #${updateId}`;
+    return {
+      title: `Oracle Price ${label} — Plether Insights`,
+      description: `Detailed 6-currency Pyth FX basket weights, effective value share pie chart, admission guard verification, and settled orders for oracle price ${label.toLowerCase()}.`,
+      imageUrl: defaultImage,
+      imageAlt: `Plether Insights — Oracle Price ${label}`,
+      canonicalUrl: `${origin}/oracle/updates/${updateId}`,
+    };
+  }
+
   if (pathname === '/oracle' || pathname.startsWith('/oracle/')) {
     return {
       title: 'Oracle Admission & Value-Guard Health — Plether Insights',

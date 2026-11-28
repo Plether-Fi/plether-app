@@ -46,19 +46,19 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
-import Plether.AA.Kernel (KernelProfile (..))
 import Plether.AA.KernelGateway (KernelGatewayConfig (..), KernelSponsorshipConfig (..), kernelScope)
 import Plether.Cache (SingleFlightCache, newRefreshingSingleFlightCache, runSingleFlightCache)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.KernelOperation (KernelScope (..))
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeCall, encodeUint256)
-import Plether.Ethereum.Client (CallParams (..), EthClient, ethBlockNumber, ethCallAtBlock)
+import Plether.Ethereum.Client (EthClient)
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
-  , getAccountLedgerSnapshotAtBlock
+  , decodeAccountLedgerSnapshot
+  , getAccountLedgerSnapshotCall
   )
-import Plether.Ethereum.Rpc (ethGetBalance)
+import qualified Plether.Ethereum.Multicall as Multicall
 import qualified Plether.Perps.Manifest as Manifest
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import System.IO.Unsafe (unsafePerformIO)
@@ -344,129 +344,138 @@ computeTreasuryOverviewResponse pool client cfg mKernel = do
           , "treasuryMovements" .= map movementToJson movements
           ]
 
+-- | Fetch all on-chain treasury policy & balances in at most 2 atomic
+-- Multicall3 calls (down from 15-17 RPCs across 5 sequential waterfalls).
 fetchOnChainTreasuryState :: EthClient -> Maybe Text -> IO OnChainTreasuryState
 fetchOnChainTreasuryState client manifestTreasury = do
-  mBlock <- timeout 1500000 $ observeIo $ ethBlockNumber client
-  case mBlock of
-    Just (Just (Right blk)) -> do
-      let engine = Manifest.cfdEngineAddress
-          jrVault = Manifest.juniorVaultAddress
-          srVault = Manifest.seniorVaultAddress
-          token = Manifest.settlementTokenAddress
-          accountLens = Manifest.cfdEngineAccountLensAddress
-          callAt target calldata = do
-            res <- timeout 1500000 $ observeIo $ ethCallAtBlock client (CallParams target calldata) blk
-            pure $ case res of
-              Just (Just (Right bytes)) -> Just bytes
-              _ -> Nothing
-          callNoArg target sig = callAt target (encodeCall sig [])
-
-      (mLiveTreasuryBytes, mPendingBytes, mLockedBytes, mExecFeeBytes, mRiskBytes, mMaintAprBytes, mMaintRecipBytes, mPendingMaintSharesBytes) <-
-        runConcurrently $
-          (,,,,,,,)
-            <$> Concurrently (callNoArg engine "protocolTreasury()")
-            <*> Concurrently (callNoArg engine "pendingProtocolTreasury()")
-            <*> Concurrently (callNoArg engine "protocolTreasuryLockedUntil()")
-            <*> Concurrently (callNoArg engine "executionFeeBps()")
-            <*> Concurrently (callNoArg engine "riskParams()")
-            <*> Concurrently (callNoArg jrVault "maintenanceFeeAprBps()")
-            <*> Concurrently (callNoArg jrVault "maintenanceFeeRecipient()")
-            <*> Concurrently (callNoArg jrVault "pendingMaintenanceFeeShares()")
-
-      let mOnChainTreasury = mLiveTreasuryBytes >>= decodeAddressWord
-          (mTreasuryAddr, addrSource) = case mOnChainTreasury of
-            Just a -> (Just a, "onchain" :: Text)
-            Nothing -> (manifestTreasury, maybe "unavailable" (const "manifest") manifestTreasury)
-          mPendingRot = mPendingBytes >>= decodePendingTreasury
-          mLockedRaw = mLockedBytes >>= decodeSingleUint
-          mLockedUntil = mLockedRaw >>= (\t -> if t > 0 then Just t else Nothing)
-          mExecFeeBps = mExecFeeBytes >>= decodeSingleUint
-          (mKeeperShareBps, mProtShareBps) = maybe (Nothing, Nothing) id (mRiskBytes >>= decodeRiskProtocolShareBps)
-          mMaintAprBps = mMaintAprBytes >>= decodeSingleUint
-          mMaintRecip = mMaintRecipBytes >>= decodeAddressWord
-          mPendingMaintShares = mPendingMaintSharesBytes >>= decodeSingleUint
-
-      mPendingMaintAssets <- case mPendingMaintShares of
-        Just sh | sh > 0 -> do
-          mBytes <- callAt jrVault (encodeCall "convertToAssets(uint256)" [encodeUint256 sh])
-          pure (mBytes >>= decodeSingleUint)
-        Just 0 -> pure (Just 0)
-        _ -> pure Nothing
-
-      (mSnap, mWalletUsdg, mWalletEth, mJrShares, mSrShares) <- case mTreasuryAddr of
-        Nothing -> pure (Nothing, Nothing, Nothing, Nothing, Nothing)
-        Just addr ->
-          runConcurrently $
-            (,,,,)
-              <$> Concurrently
-                ( do
-                    r <- timeout 2500000 $ observeIo $ getAccountLedgerSnapshotAtBlock client accountLens addr blk
-                    pure $ case r of
-                      Just (Just (Right snap)) -> Just snap
-                      _ -> Nothing
-                )
-              <*> Concurrently
-                ( do
-                    b <- callAt token (encodeCall "balanceOf(address)" [encodeAddress addr])
-                    pure (b >>= decodeSingleUint)
-                )
-              <*> Concurrently
-                ( do
-                    r <- timeout 2500000 $ observeIo $ ethGetBalance client addr
-                    pure $ case r of
-                      Just (Just (Right wei)) -> Just wei
-                      _ -> Nothing
-                )
-              <*> Concurrently
-                ( do
-                    b <- callAt jrVault (encodeCall "balanceOf(address)" [encodeAddress addr])
-                    pure (b >>= decodeSingleUint)
-                )
-              <*> Concurrently
-                ( do
-                    b <- callAt srVault (encodeCall "balanceOf(address)" [encodeAddress addr])
-                    pure (b >>= decodeSingleUint)
-                )
-
-      (mJrAssets, mSrAssets) <-
-        runConcurrently $
-          (,)
-            <$> Concurrently
-              ( case mJrShares of
-                  Just sh | sh > 0 -> (>>= decodeSingleUint) <$> callAt jrVault (encodeCall "convertToAssets(uint256)" [encodeUint256 sh])
-                  Just 0 -> pure (Just 0)
-                  _ -> pure Nothing
-              )
-            <*> Concurrently
-              ( case mSrShares of
-                  Just sh | sh > 0 -> (>>= decodeSingleUint) <$> callAt srVault (encodeCall "convertToAssets(uint256)" [encodeUint256 sh])
-                  Just 0 -> pure (Just 0)
-                  _ -> pure Nothing
-              )
-
-      pure
-        OnChainTreasuryState
-          { octRpcAvailable = True
-          , octBlockNumber = blk
-          , octTreasuryAddress = mTreasuryAddr
-          , octAddressSource = addrSource
-          , octPendingRotation = mPendingRot
-          , octLockedUntil = mLockedUntil
-          , octExecutionFeeBps = mExecFeeBps
-          , octLiquidationProtocolShareBps = mProtShareBps
-          , octLiquidationKeeperShareBps = mKeeperShareBps
-          , octMaintenanceFeeAprBps = mMaintAprBps
-          , octMaintenanceFeeRecipient = mMaintRecip
-          , octPendingMaintenanceFeeShares = mPendingMaintShares
-          , octPendingMaintenanceFeeAssets = mPendingMaintAssets
-          , octClearinghouseSnapshot = mSnap
-          , octWalletUsdgBalance = mWalletUsdg
-          , octWalletEthBalanceWei = mWalletEth
-          , octJuniorVaultShares = mJrShares
-          , octJuniorVaultAssets = mJrAssets
-          , octSeniorVaultShares = mSrShares
-          , octSeniorVaultAssets = mSrAssets
+  let engine = Manifest.cfdEngineAddress
+      jrVault = Manifest.juniorVaultAddress
+      srVault = Manifest.seniorVaultAddress
+      token = Manifest.settlementTokenAddress
+      accountLens = Manifest.cfdEngineAccountLensAddress
+      mk target calldata =
+        Multicall.Call
+          { Multicall.callTarget = target
+          , Multicall.callAllowFailure = True
+          , Multicall.callCalldata = calldata
           }
+      mkNoArg target sig = mk target (encodeCall sig [])
+      decBytes r = if Multicall.resultSuccess r then Just (Multicall.resultData r) else Nothing
+      decU r = decBytes r >>= decodeSingleUint
+      balanceCallsFor addr =
+        [ mk accountLens (getAccountLedgerSnapshotCall addr)
+        , mk token (encodeCall "balanceOf(address)" [encodeAddress addr])
+        , mk Multicall.multicallAddress (encodeCall "getEthBalance(address)" [encodeAddress addr])
+        , mk jrVault (encodeCall "balanceOf(address)" [encodeAddress addr])
+        , mk srVault (encodeCall "balanceOf(address)" [encodeAddress addr])
+        ]
+      round1BaseCalls =
+        [ mkNoArg Multicall.multicallAddress "getBlockNumber()"
+        , mkNoArg engine "protocolTreasury()"
+        , mkNoArg engine "pendingProtocolTreasury()"
+        , mkNoArg engine "protocolTreasuryLockedUntil()"
+        , mkNoArg engine "executionFeeBps()"
+        , mkNoArg engine "riskParams()"
+        , mkNoArg jrVault "maintenanceFeeAprBps()"
+        , mkNoArg jrVault "maintenanceFeeRecipient()"
+        , mkNoArg jrVault "pendingMaintenanceFeeShares()"
+        ]
+      round1Calls = round1BaseCalls ++ maybe [] balanceCallsFor manifestTreasury
+
+  mRound1 <- timeout 3000000 $ observeIo $ Multicall.multicall client round1Calls
+  case mRound1 of
+    Just (Just (Right (rBlk : rLiveTr : rPend : rLock : rExecFee : rRisk : rMaintApr : rMaintRecip : rPendMaintSh : restBal)))
+      | Just blk <- decU rBlk -> do
+          let mOnChainTreasury = decBytes rLiveTr >>= decodeAddressWord
+              (mTreasuryAddr, addrSource) = case mOnChainTreasury of
+                Just a -> (Just a, "onchain" :: Text)
+                Nothing -> (manifestTreasury, maybe "unavailable" (const "manifest") manifestTreasury)
+              mPendingRot = decBytes rPend >>= decodePendingTreasury
+              mLockedRaw = decU rLock
+              mLockedUntil = mLockedRaw >>= (\t -> if t > 0 then Just t else Nothing)
+              mExecFeeBps = decU rExecFee
+              (mKeeperShareBps, mProtShareBps) = maybe (Nothing, Nothing) id (decBytes rRisk >>= decodeRiskProtocolShareBps)
+              mMaintAprBps = decU rMaintApr
+              mMaintRecip = decBytes rMaintRecip >>= decodeAddressWord
+              mPendingMaintShares = decU rPendMaintSh
+
+              parseBalanceTuple [bSnap, bUsdg, bEth, bJr, bSr] =
+                ( decBytes bSnap >>= either (const Nothing) Just . decodeAccountLedgerSnapshot
+                , decU bUsdg
+                , decU bEth
+                , decU bJr
+                , decU bSr
+                )
+              parseBalanceTuple _ = (Nothing, Nothing, Nothing, Nothing, Nothing)
+
+              speculativeMatched =
+                case (mTreasuryAddr, manifestTreasury) of
+                  (Just eff, Just man) -> T.toLower eff == T.toLower man && length restBal == 5
+                  _ -> False
+
+          (mSnap, mWalletUsdg, mWalletEth, mJrShares, mSrShares) <-
+            if speculativeMatched
+              then pure (parseBalanceTuple restBal)
+              else case mTreasuryAddr of
+                Nothing -> pure (Nothing, Nothing, Nothing, Nothing, Nothing)
+                Just addr -> do
+                  mBal <- timeout 2500000 $ observeIo $ Multicall.multicallAtBlock client (balanceCallsFor addr) blk
+                  pure $ case mBal of
+                    Just (Just (Right rs)) -> parseBalanceTuple rs
+                    _ -> (Nothing, Nothing, Nothing, Nothing, Nothing)
+
+          -- Round 2: batch all non-zero convertToAssets calls in 1 single Multicall3
+          let convSpecs :: [(Text, Text, Integer)]
+              convSpecs =
+                [ ("maint", jrVault, sh) | Just sh <- [mPendingMaintShares], sh > 0 ]
+                  ++ [ ("jr", jrVault, sh) | Just sh <- [mJrShares], sh > 0 ]
+                  ++ [ ("sr", srVault, sh) | Just sh <- [mSrShares], sh > 0 ]
+          convMap <-
+            if null convSpecs
+              then pure Map.empty
+              else do
+                let cCalls =
+                      [ mk vAddr (encodeCall "convertToAssets(uint256)" [encodeUint256 sh])
+                      | (_, vAddr, sh) <- convSpecs
+                      ]
+                mConv <- timeout 2500000 $ observeIo $ Multicall.multicallAtBlock client cCalls blk
+                pure $ case mConv of
+                  Just (Just (Right rs)) | length rs == length convSpecs ->
+                    Map.fromList
+                      [ (k, val)
+                      | ((k, _, _), r) <- zip convSpecs rs
+                      , Just val <- [decU r]
+                      ]
+                  _ -> Map.empty
+
+          let resolveConverted k mSh = case mSh of
+                Just 0 -> Just 0
+                Just sh | sh > 0 -> Map.lookup k convMap
+                _ -> Nothing
+
+          pure
+            OnChainTreasuryState
+              { octRpcAvailable = True
+              , octBlockNumber = blk
+              , octTreasuryAddress = mTreasuryAddr
+              , octAddressSource = addrSource
+              , octPendingRotation = mPendingRot
+              , octLockedUntil = mLockedUntil
+              , octExecutionFeeBps = mExecFeeBps
+              , octLiquidationProtocolShareBps = mProtShareBps
+              , octLiquidationKeeperShareBps = mKeeperShareBps
+              , octMaintenanceFeeAprBps = mMaintAprBps
+              , octMaintenanceFeeRecipient = mMaintRecip
+              , octPendingMaintenanceFeeShares = mPendingMaintShares
+              , octPendingMaintenanceFeeAssets = resolveConverted "maint" mPendingMaintShares
+              , octClearinghouseSnapshot = mSnap
+              , octWalletUsdgBalance = mWalletUsdg
+              , octWalletEthBalanceWei = mWalletEth
+              , octJuniorVaultShares = mJrShares
+              , octJuniorVaultAssets = resolveConverted "jr" mJrShares
+              , octSeniorVaultShares = mSrShares
+              , octSeniorVaultAssets = resolveConverted "sr" mSrShares
+              }
     _ ->
       pure
         OnChainTreasuryState
@@ -747,7 +756,7 @@ fetchCloseAssistanceTelemetry pool chainId router seriesStart = do
         \FROM aa_close_assistance g \
         \JOIN aa_sponsorship_authorizations a USING (digest) \
         \WHERE g.chain_id = ? AND g.router = ? AND g.verified \
-        \  AND a.settled_at IS NOT NULL AND EXTRACT(EPOCH FROM a.settled_at) >= ? \
+        \  AND a.settled_at IS NOT NULL AND a.settled_at >= to_timestamp(?) \
         \GROUP BY day_unix"
         (chainId, router, seriesStart)
         :: IO [(Integer, Text)]
@@ -798,7 +807,7 @@ fetchSponsoredGasTelemetry pool mKernel seriesStart =
             \  COALESCE(SUM(actual_gas_cost), 0)::TEXT \
             \FROM aa_kernel_sponsorships \
             \WHERE deployment = ? AND chain_id = ? AND entry_point = ? AND paymaster = ? \
-            \  AND status = 'settled' AND settled_at IS NOT NULL AND EXTRACT(EPOCH FROM settled_at) >= ? \
+            \  AND status = 'settled' AND settled_at IS NOT NULL AND settled_at >= to_timestamp(?) \
             \GROUP BY day_unix"
             (ksDeployment, ksChainId, ksEntryPoint, paymaster, seriesStart)
             :: IO [(Integer, Text)]
@@ -827,7 +836,7 @@ fetchSponsoredGasTelemetry pool mKernel seriesStart =
             \  ((FLOOR(EXTRACT(EPOCH FROM finalized_at))::BIGINT / 86400) * 86400)::BIGINT AS day_unix, \
             \  COALESCE(SUM(actual_gas_cost_wei), 0)::TEXT \
             \FROM aa_user_operation_events \
-            \WHERE EXTRACT(EPOCH FROM finalized_at) >= ? \
+            \WHERE finalized_at >= to_timestamp(?) \
             \GROUP BY day_unix"
             (Only seriesStart)
             :: IO [(Integer, Text)]
@@ -858,7 +867,7 @@ fetchTreasuryMovements conn chainId router tokenAddr treasuryAddr = do
       conn
       "SELECT activity_type, COALESCE(amount_assets, 0)::TEXT, tx_hash, block_number, timestamp \
       \FROM perps_account_activity \
-      \WHERE chain_id = ? AND release_router = ? AND LOWER(account) = ? \
+      \WHERE chain_id = ? AND release_router = ? AND account = ? \
       \  AND activity_type IN ('Deposit', 'Withdraw') \
       \ORDER BY block_number DESC, log_index DESC \
       \LIMIT 25"
@@ -867,13 +876,21 @@ fetchTreasuryMovements conn chainId router tokenAddr treasuryAddr = do
   transferRows <-
     query
       conn
-      "SELECT LOWER(from_address), LOWER(to_address), amount::TEXT, tx_hash, block_number, timestamp \
-      \FROM perps_asset_transfers \
-      \WHERE chain_id = ? AND release_router = ? AND LOWER(token_address) = ? \
-      \  AND (LOWER(from_address) = ? OR LOWER(to_address) = ?) \
+      "SELECT from_address, to_address, amount::TEXT, tx_hash, block_number, timestamp \
+      \FROM ( \
+      \  (SELECT from_address, to_address, amount, tx_hash, block_number, log_index, timestamp \
+      \   FROM perps_asset_transfers \
+      \   WHERE chain_id = ? AND release_router = ? AND token_address = ? AND from_address = ? \
+      \   ORDER BY block_number DESC, log_index DESC LIMIT 25) \
+      \  UNION ALL \
+      \  (SELECT from_address, to_address, amount, tx_hash, block_number, log_index, timestamp \
+      \   FROM perps_asset_transfers \
+      \   WHERE chain_id = ? AND release_router = ? AND token_address = ? AND to_address = ? AND from_address <> ? \
+      \   ORDER BY block_number DESC, log_index DESC LIMIT 25) \
+      \) combined \
       \ORDER BY block_number DESC, log_index DESC \
       \LIMIT 25"
-      (chainId, router, tokenAddr, treasuryAddr, treasuryAddr)
+      (chainId, router, tokenAddr, treasuryAddr, chainId, router, tokenAddr, treasuryAddr, treasuryAddr)
       :: IO [(Text, Text, Text, Text, Integer, Integer)]
   let clearingMovs =
         [ TreasuryMovementRow

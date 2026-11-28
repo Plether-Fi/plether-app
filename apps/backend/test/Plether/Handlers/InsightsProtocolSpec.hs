@@ -11,7 +11,10 @@ import Plether.Handlers.InsightsProtocol
   , LiveEngineRiskParams (..)
   , LiveProtocolStatus (..)
   , ManifestContractSpec (..)
+  , ProtocolTvlSummary (..)
   , classifyParameterDrift
+  , computeProtocolTvl
+  , computeTvlShareBps
   , decodeEngineRiskParams
   , decodeProtocolStatus
   , decodeSingleBool
@@ -117,3 +120,49 @@ spec = describe "Plether.Handlers.InsightsProtocol" $ do
     Map.lookup "initialMarginBps" economics `shouldBe` Just "20"
     Map.lookup "executionFeeBps" economics `shouldBe` Just "4"
     extractManifestContracts (object ["contracts" .= object []]) `shouldBe` []
+
+  it "aggregates disjoint protocol contract and Kernel v4 trading account TVL without double counting" $ do
+    let hp = ManifestContractSpec "housePool" "0x0000000000000000000000000000000000000001" "0x01"
+        sr = ManifestContractSpec "seniorVault" "0x0000000000000000000000000000000000000002" "0x02"
+        jr = ManifestContractSpec "juniorVault" "0x0000000000000000000000000000000000000003" "0x03"
+        ch = ManifestContractSpec "marginClearinghouse" "0x0000000000000000000000000000000000000004" "0x04"
+        eng = ManifestContractSpec "cfdEngine" "0x0000000000000000000000000000000000000005" "0x05"
+        kernelA = "0x1111111111111111111111111111111111111111"
+        kernelB = "0x2222222222222222222222222222222222222222"
+        -- Duplicate kernelA (mixed case) and accidental overlap with housePool must be ignored
+        summary =
+          computeProtocolTvl
+            [ (hp, Just 500_000_000_000)
+            , (sr, Just 100_000_000_000)
+            , (jr, Just 50_000_000_000)
+            , (ch, Just 200_000_000_000)
+            , (eng, Just 5_000_000_000)
+            ]
+            True
+            [ (kernelA, Just 100_000_000_000)
+            , ("0x1111111111111111111111111111111111111111", Just 999_000_000_000)
+            , (kernelB, Just 45_000_000_000)
+            , ("0x0000000000000000000000000000000000000001", Just 500_000_000_000)
+            ]
+    ptsLpVaultsTvlAssets summary `shouldBe` 650_000_000_000
+    ptsMarginClearinghouseAssets summary `shouldBe` 200_000_000_000
+    ptsOtherContractsAssets summary `shouldBe` 5_000_000_000
+    ptsProtocolContractsTvlAssets summary `shouldBe` 855_000_000_000
+    ptsKernelTradingAccountsAssets summary `shouldBe` 145_000_000_000
+    ptsTotalTraderMarginAssets summary `shouldBe` 345_000_000_000
+    ptsTotalTvlAssets summary `shouldBe` 1_000_000_000_000
+    ptsKernelAccountsTracked summary `shouldBe` 2
+    ptsKernelAccountsFunded summary `shouldBe` 2
+    ptsIsComplete summary `shouldBe` True
+    computeTvlShareBps 650_000_000_000 1_000_000_000_000 `shouldBe` Just 6500
+    computeTvlShareBps 145_000_000_000 1_000_000_000_000 `shouldBe` Just 1450
+    computeTvlShareBps 100 0 `shouldBe` Nothing
+
+  it "marks TVL incomplete when any balance read or Kernel account discovery fails" $ do
+    let hp = ManifestContractSpec "housePool" "0x0000000000000000000000000000000000000001" "0x01"
+        partial = computeProtocolTvl [(hp, Just 100_000_000)] True [("0x1111111111111111111111111111111111111111", Nothing)]
+        noDb = computeProtocolTvl [(hp, Just 100_000_000)] False []
+    ptsIsComplete partial `shouldBe` False
+    ptsKernelAccountsFailedReads partial `shouldBe` 1
+    ptsIsComplete noDb `shouldBe` False
+    ptsKernelAccountsAvailable noDb `shouldBe` False

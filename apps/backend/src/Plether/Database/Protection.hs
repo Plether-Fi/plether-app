@@ -18,4 +18,16 @@ protectionSchema = fromString $(do
   if null statements then fail "Protection schema marker missing" else lift $ unlines statements)
 
 ensureProtectionSchema :: Connection -> IO ()
-ensureProtectionSchema conn = void $ execute_ conn protectionSchema
+ensureProtectionSchema conn = do
+  void $ execute_ conn protectionSchema
+  void $
+    execute_
+      conn
+      "CREATE INDEX IF NOT EXISTS idx_perps_protection_events_parent_order \
+      \ON perps_protection_events (chain_id, book, (snapshot->>'parentOrderId'), protection_id, block_number DESC, log_index DESC) \
+      \WHERE snapshot ? 'parentOrderId'"
+  void $
+    execute_
+      conn
+      "CREATE INDEX IF NOT EXISTS idx_perps_protection_events_account_block \
+      \ON perps_protection_events (chain_id, book, account, block_number ASC, log_index ASC)"

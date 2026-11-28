@@ -18,6 +18,7 @@ module Plether.Handlers.Insights
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Either (isRight)
 import Data.Maybe (catMaybes)
 import Data.Int (Int64)
 import Data.Text (Text)
@@ -32,7 +33,14 @@ import Database.PostgreSQL.Simple.Transaction
   , TransactionMode (..)
   , withTransactionMode
   )
+import Plether.Cache
+  ( SingleFlightCache
+  , newConcurrentRefreshingSingleFlightCache
+  , newRefreshingSingleFlightCache
+  , runSingleFlightCache
+  )
 import Plether.Config (Config (..))
+import System.IO.Unsafe (unsafePerformIO)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Insights
   ( CompetitionRow (..)
@@ -65,11 +73,58 @@ import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
 
+{-# NOINLINE currentCompetitionCache #-}
+currentCompetitionCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+currentCompetitionCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (60 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE competitionLeaderboardCache #-}
+competitionLeaderboardCache :: SingleFlightCache (Text, Maybe Text, Int, Int) (Either ApiError (ApiResponse Value))
+competitionLeaderboardCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 128 (20 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE insightsStatusCache #-}
+insightsStatusCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+insightsStatusCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsTradersCache #-}
+divisionsTradersCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsTradersCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsCurrentCache #-}
+divisionsCurrentCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsCurrentCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (60 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE divisionsHistoryCache #-}
+divisionsHistoryCache :: SingleFlightCache (Maybe Int) (Either ApiError (ApiResponse Value))
+divisionsHistoryCache =
+  unsafePerformIO (newConcurrentRefreshingSingleFlightCache 64 (60 * 1000000000) (600 * 1000000000))
+
+{-# NOINLINE divisionsStatsCache #-}
+divisionsStatsCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsStatsCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (30 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsLiveCache #-}
+divisionsLiveCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsLiveCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
 getCurrentCompetitionResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getCurrentCompetitionResponse pool cfg = do
+getCurrentCompetitionResponse pool cfg =
+  snd <$> runSingleFlightCache currentCompetitionCache () isRight (computeCurrentCompetitionResponse pool cfg)
+
+computeCurrentCompetitionResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeCurrentCompetitionResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   competition <- withDb pool $ \conn ->
     getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
@@ -93,10 +148,27 @@ getCompetitionLeaderboardResponse
   -> Int
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
-getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedOffset = do
-  now <- floor <$> getPOSIXTime
+getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedOffset =
   let pageLimit = clampLimit requestedLimit
       pageOffset = max 0 requestedOffset
+      normalizedSearch = fmap (T.toLower . T.strip) search
+   in snd
+        <$> runSingleFlightCache
+          competitionLeaderboardCache
+          (slug, normalizedSearch, pageLimit, pageOffset)
+          isRight
+          (computeCompetitionLeaderboardResponse pool cfg slug search pageLimit pageOffset)
+
+computeCompetitionLeaderboardResponse
+  :: DbPool
+  -> Config
+  -> Text
+  -> Maybe Text
+  -> Int
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+computeCompetitionLeaderboardResponse pool cfg slug search pageLimit pageOffset = do
+  now <- floor <$> getPOSIXTime
   result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     competition <- getCompetitionBySlug conn slug
     rows <- case competition of
@@ -170,7 +242,14 @@ getInsightsDataStatusResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getInsightsDataStatusResponse pool cfg = do
+getInsightsDataStatusResponse pool cfg =
+  snd <$> runSingleFlightCache insightsStatusCache () isRight (computeInsightsDataStatusResponse pool cfg)
+
+computeInsightsDataStatusResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeInsightsDataStatusResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     competition <- getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
@@ -199,7 +278,14 @@ getDivisionsTradersResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
-getDivisionsTradersResponse pool cfg = do
+getDivisionsTradersResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsTradersCache () isRight (computeDivisionsTradersResponse pool cfg)
+
+computeDivisionsTradersResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsTradersResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     bindings <- query conn
@@ -251,7 +337,11 @@ getDivisionsTradersResponse pool cfg = do
 -- Finalized badges have no live-snapshot freshness limit: an awarded tier
 -- remains current throughout the following week and across worker restarts.
 getDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-getDivisionsCurrentResponse pool cfg = do
+getDivisionsCurrentResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsCurrentCache () isRight (computeDivisionsCurrentResponse pool cfg)
+
+computeDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsCurrentResponse pool cfg = do
   rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
     (cfgPerpsChainId cfg, Nothing :: Maybe Int, Nothing :: Maybe Int)
   pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
@@ -263,7 +353,11 @@ getDivisionsCurrentResponse pool cfg = do
 -- A week selects its pinned contract release. Cursors span the canonical
 -- timeline across upgrades; callers cannot choose an alternative result.
 getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
-getDivisionsHistoryResponse pool cfg week = do
+getDivisionsHistoryResponse pool cfg week =
+  snd <$> runSingleFlightCache divisionsHistoryCache week isRight (computeDivisionsHistoryResponse pool cfg week)
+
+computeDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
+computeDivisionsHistoryResponse pool cfg week = do
   rows <- withDb pool $ \conn -> query conn divisionsPublicationsQuery
     (cfgPerpsChainId cfg, week, week)
   pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
@@ -282,58 +376,60 @@ getDivisionsHistoryResponse pool cfg week = do
 -- verified. Count those completed registrations independently of trading activity.
 getDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsStatsResponse pool cfg = do
-  counts <- withDb pool $ \conn -> query_ conn
-    "SELECT COUNT(*) FROM insights_divisions_links"
-  pure $ case counts :: [Only Integer] of
-    [Only count] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $
-      object ["registeredWallets" .= count]
-    _ -> Left $ E.internalError "Divisions registration count is unavailable"
+  snd <$> runSingleFlightCache divisionsStatsCache () isRight (do
+    counts <- withDb pool $ \conn -> query_ conn
+      "SELECT COUNT(*) FROM insights_divisions_links"
+    pure $ case counts :: [Only Integer] of
+      [Only count] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $
+        object ["registeredWallets" .= count]
+      _ -> Left $ E.internalError "Divisions registration count is unavailable")
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsLiveResponse pool cfg = do
-  now <- floor <$> getPOSIXTime
-  let weekStart = divisionWeekStart now
-  rows <- withDb pool $ \conn -> query conn
-    "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
-    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
-    \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
-    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
-    \EXTRACT(EPOCH FROM s.captured_at)::BIGINT,w.release_router,w.release_version,w.asset_symbol \
-    \FROM divisions_live_snapshots s JOIN divisions_weeks w \
-    \ON w.chain_id=s.chain_id AND w.week_start=s.week_start AND w.release_router=s.release_router \
-    \WHERE s.chain_id=? AND s.week_start=? \
-    \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
-    \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
-    \AND i.release_router=s.release_router AND i.indexer_name IN \
-    \('perps-history-costs-v1:' || s.release_router, \
-    \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
-    \AND i.last_indexed_block_hash IS NOT NULL \
-    \AND (i.last_indexed_block>s.snapshot_block OR \
-    \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
-    \LIMIT 1"
-    (cfgPerpsChainId cfg, weekStart)
-  pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
-    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
-      [ "status" .= ("pending" :: Text)
-      , "weekStartsAt" .= isoTimestamp weekStart
-      , "generatedAt" .= isoTimestamp now
-      ]
-    (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt, release, version, asset) : _ ->
-      case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
-        Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
-        Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
-          [ "status" .= ("ready" :: Text)
-          , "weekStartsAt" .= isoTimestamp weekStart
-          , "snapshotAt" .= isoTimestamp timestamp
-          , "snapshotBlock" .= show block
-          , "snapshotBlockHash" .= blockHash
-          , "capturedAt" .= isoTimestamp capturedAt
-          , "walletCount" .= walletCount
-          , "releaseRouter" .= release
-          , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
-          , "standings" .= standings
-          , "provisional" .= True
-          ]
+  snd <$> runSingleFlightCache divisionsLiveCache () isRight (do
+    now <- floor <$> getPOSIXTime
+    let weekStart = divisionWeekStart now
+    rows <- withDb pool $ \conn -> query conn
+      "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
+      \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
+      \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
+      \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
+      \EXTRACT(EPOCH FROM s.captured_at)::BIGINT,w.release_router,w.release_version,w.asset_symbol \
+      \FROM divisions_live_snapshots s JOIN divisions_weeks w \
+      \ON w.chain_id=s.chain_id AND w.week_start=s.week_start AND w.release_router=s.release_router \
+      \WHERE s.chain_id=? AND s.week_start=? \
+      \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
+      \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
+      \AND i.release_router=s.release_router AND i.indexer_name IN \
+      \('perps-history-costs-v1:' || s.release_router, \
+      \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
+      \AND i.last_indexed_block_hash IS NOT NULL \
+      \AND (i.last_indexed_block>s.snapshot_block OR \
+      \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
+      \LIMIT 1"
+      (cfgPerpsChainId cfg, weekStart)
+    pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
+      [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+        [ "status" .= ("pending" :: Text)
+        , "weekStartsAt" .= isoTimestamp weekStart
+        , "generatedAt" .= isoTimestamp now
+        ]
+      (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt, release, version, asset) : _ ->
+        case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
+          Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
+          Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+            [ "status" .= ("ready" :: Text)
+            , "weekStartsAt" .= isoTimestamp weekStart
+            , "snapshotAt" .= isoTimestamp timestamp
+            , "snapshotBlock" .= show block
+            , "snapshotBlockHash" .= blockHash
+            , "capturedAt" .= isoTimestamp capturedAt
+            , "walletCount" .= walletCount
+            , "releaseRouter" .= release
+            , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
+            , "standings" .= standings
+            , "provisional" .= True
+            ])
 
 withInsightsReadSnapshot :: Connection -> IO value -> IO value
 withInsightsReadSnapshot =

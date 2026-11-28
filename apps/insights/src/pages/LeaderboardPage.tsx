@@ -233,7 +233,7 @@ export function LeaderboardPage() {
                   setLivePage(0)
                 }}
                 placeholder="Search wallet or @handle"
-                className="w-full border border-brand-border/35 bg-app-bg px-3 py-1.5 text-xs placeholder:text-content-tertiary focus:border-brand-peach/70 focus:outline-none"
+                className="w-full border border-brand-border/35 bg-app-bg px-3 py-1.5 text-base placeholder:text-xs placeholder:text-content-tertiary focus:border-brand-peach/70 focus:outline-none sm:text-xs"
               />
             </div>
           </div>
@@ -305,14 +305,14 @@ export function LeaderboardPage() {
                               unavailable={query.isError && !publication}
                             />
                           </td>
-                          <td className="px-4 py-3.5 font-mono text-xs">
-                            <div className="inline-flex items-center gap-2">
+                          <td className="whitespace-nowrap px-4 py-3.5 font-mono text-xs">
+                            <div className="inline-flex items-center gap-2 whitespace-nowrap">
                               <AddressAvatar address={row.address} size={18} />
                               <Link
                                 to={`/divisions/wallets/${row.address}`}
                                 title={row.address}
                                 aria-label={`View trader ${row.address}`}
-                                className="text-brand-peach hover:underline focus-visible:underline"
+                                className="whitespace-nowrap text-brand-peach hover:underline focus-visible:underline"
                               >
                                 {shortAddress(row.address)}
                               </Link>

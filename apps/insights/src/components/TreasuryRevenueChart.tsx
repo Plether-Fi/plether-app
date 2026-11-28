@@ -28,7 +28,7 @@ export function TreasuryRevenueChart({ series }: TreasuryRevenueChartProps) {
   const [range, setRange] = useState<'7d' | '30d'>('30d')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [chartBoxRef, measuredWidth] = useContainerWidth(760)
-  const width = Math.max(320, measuredWidth)
+  const width = Math.max(240, measuredWidth)
 
   const visible = range === '7d' ? series.slice(-7) : series
   const activeIdx =

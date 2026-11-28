@@ -8,10 +8,13 @@ import Plether.Handlers.InsightsExecution
   , KeeperOrderAggregateRow (..)
   , LatencyStats (..)
   , OrderReliabilityBucket (..)
+  , ProtocolLatencyBenchmark (..)
   , RawKeeperTx (..)
   , aggregateKeepers
+  , buildLatencyBenchmark
   , buildTimelineBuckets
   , classifyTxKind
+  , computeLatencyPercentileRank
   , computeLatencyPercentiles
   , extractTxFrom
   , isValidTxHash
@@ -146,3 +149,20 @@ spec = describe "Plether.Handlers.InsightsExecution" $ do
         kaLatencyP50Seconds secondK `shouldBe` Just 4
         kaBountiesEarnedAssets secondK `shouldBe` 44550000
       _ -> expectationFailure "Expected two merged keeper aggregates"
+
+  it "computes mid-rank empirical latency percentiles and signed stage benchmarks" $ do
+    computeLatencyPercentileRank [] 2 `shouldBe` Nothing
+    let samples = [1, 2, 2, 2, 2, 3, 5]
+    computeLatencyPercentileRank samples 1 `shouldBe` Just 7
+    computeLatencyPercentileRank samples 2 `shouldBe` Just 43
+    computeLatencyPercentileRank samples 3 `shouldBe` Just 79
+    computeLatencyPercentileRank samples 5 `shouldBe` Just 93
+    computeLatencyPercentileRank samples 25 `shouldBe` Just 99
+    let bench = buildLatencyBenchmark "7d" samples [-1, 0, 1, 1, 2] [1, 1, 2, 2, 3]
+    plbWindowLabel bench `shouldBe` "7d"
+    plbSampleCount bench `shouldBe` 7
+    plbMinSeconds bench `shouldBe` Just 1
+    plbP50Seconds bench `shouldBe` Just 2
+    plbP95Seconds bench `shouldBe` Just 5
+    plbP50CommitToOracleSeconds bench `shouldBe` Just 1
+    plbP50OracleToFinalizeSeconds bench `shouldBe` Just 2

@@ -18,6 +18,7 @@ import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
+import { OrderTimingTimelinePanel } from '../components/OrderTimingTimeline'
 import { ShareCardModal } from '../components/ShareCardModal'
 import { StatCard } from '../components/StatCard'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
@@ -140,6 +141,7 @@ export function TransactionPage() {
   const finalizedOrders = txData?.finalizedOrders ?? []
   const protocolEvents = txData?.protocolEvents ?? []
   const batchSummary = txData?.batchSummary ?? null
+  const latencyBenchmark = txData?.latencyBenchmark ?? null
   const lpSettlement = txData?.lpSettlement ?? null
   const hasAnyProtocolData =
     events.length > 0 || finalizedOrders.length > 0 || protocolEvents.length > 0 || lpSettlement != null
@@ -299,6 +301,19 @@ export function TransactionPage() {
         </Panel>
 
         {lpSettlement ? <TxLpSettlementPanel settlement={lpSettlement} /> : null}
+        {finalizedOrders.length > 0 ? (
+          <OrderTimingTimelinePanel
+            finalizedOrders={finalizedOrders}
+            activeOrderId={null}
+            batchSummary={batchSummary}
+            latencyBenchmark={latencyBenchmark}
+            fallbackFinalizedAt={occurredAt}
+            fallbackFinalizedBlock={blockNumber}
+            txHash={normalizedHash}
+            chainId={chainId}
+            excludeExternalKeys={claimedExternalKeys}
+          />
+        ) : null}
         {firstProtectedOrder?.orderProtections ? (
           <OrderProtectionsChecklistPanel
             protections={firstProtectedOrder.orderProtections}
@@ -631,7 +646,11 @@ export function TransactionPage() {
           unavailable={notional === null && !selectedEvent.amountAssets}
           detail={
             selectedEvent.latencySeconds != null
-              ? `Commit → fill: ${String(selectedEvent.latencySeconds)}s`
+              ? `Commit → fill: ${String(selectedEvent.latencySeconds)}s${
+                  matchedFinalizedOrder?.latencyPercentile != null
+                    ? ` (P${String(matchedFinalizedOrder.latencyPercentile)})`
+                    : ''
+                }`
               : 'Settled in USDG'
           }
         />
@@ -665,6 +684,20 @@ export function TransactionPage() {
           />
         )}
       </div>
+
+      {finalizedOrders.length > 0 ? (
+        <OrderTimingTimelinePanel
+          finalizedOrders={finalizedOrders}
+          activeOrderId={effectiveOrderId}
+          batchSummary={batchSummary}
+          latencyBenchmark={latencyBenchmark}
+          fallbackFinalizedAt={occurredAt}
+          fallbackFinalizedBlock={blockNumber}
+          txHash={normalizedHash}
+          chainId={chainId}
+          excludeExternalKeys={claimedExternalKeys}
+        />
+      ) : null}
 
       {selectedOrderProtections ? (
         <OrderProtectionsChecklistPanel

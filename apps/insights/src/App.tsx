@@ -15,6 +15,7 @@ import { LiquidityEpochPage } from './pages/LiquidityEpochPage'
 import { LiquidityOpsPage } from './pages/LiquidityOpsPage'
 import { MethodologyPage } from './pages/MethodologyPage'
 import { OraclePage } from './pages/OraclePage'
+import { OracleUpdateDetailPage } from './pages/OracleUpdateDetailPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { PositionLifecyclePage } from './pages/PositionLifecyclePage'
 import { ProtocolPage } from './pages/ProtocolPage'
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/" element={<OverviewPage />} />
           <Route path="/execution" element={<ExecutionPage />} />
           <Route path="/oracle" element={<OraclePage />} />
+          <Route path="/oracle/updates/:id" element={<OracleUpdateDetailPage />} />
           <Route path="/liquidity" element={<LiquidityOpsPage />} />
           <Route path="/liquidity/epochs/:epoch" element={<LiquidityEpochPage />} />
           <Route path="/keepers" element={<KeepersPage />} />
