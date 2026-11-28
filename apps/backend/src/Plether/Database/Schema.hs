@@ -4617,10 +4617,6 @@ ensurePerpsHistorySchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_type_time \
     \ON perps_account_activity(chain_id, release_router, activity_type, timestamp DESC)"
   _ <- execute_ conn
-    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_trades_recent \
-    \ON perps_account_activity(chain_id, release_router, block_number DESC, log_index DESC) \
-    \WHERE activity_type IN ('Open', 'Close', 'Liquidated')"
-  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_asset_transfers (\
     \chain_id BIGINT NOT NULL,\
     \release_router TEXT NOT NULL,\

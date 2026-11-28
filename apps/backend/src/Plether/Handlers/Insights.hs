@@ -375,67 +375,61 @@ computeDivisionsHistoryResponse pool cfg week = do
 -- Links are inserted only after Discord, wallet ownership and consent are
 -- verified. Count those completed registrations independently of trading activity.
 getDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-getDivisionsStatsResponse pool cfg =
-  snd <$> runSingleFlightCache divisionsStatsCache () isRight (computeDivisionsStatsResponse pool cfg)
-
-computeDivisionsStatsResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-computeDivisionsStatsResponse pool cfg = do
-  counts <- withDb pool $ \conn -> query_ conn
-    "SELECT COUNT(*) FROM insights_divisions_links"
-  pure $ case counts :: [Only Integer] of
-    [Only count] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $
-      object ["registeredWallets" .= count]
-    _ -> Left $ E.internalError "Divisions registration count is unavailable"
+getDivisionsStatsResponse pool cfg = do
+  snd <$> runSingleFlightCache divisionsStatsCache () isRight (do
+    counts <- withDb pool $ \conn -> query_ conn
+      "SELECT COUNT(*) FROM insights_divisions_links"
+    pure $ case counts :: [Only Integer] of
+      [Only count] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $
+        object ["registeredWallets" .= count]
+      _ -> Left $ E.internalError "Divisions registration count is unavailable")
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-getDivisionsLiveResponse pool cfg =
-  snd <$> runSingleFlightCache divisionsLiveCache () isRight (computeDivisionsLiveResponse pool cfg)
-
-computeDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
-computeDivisionsLiveResponse pool cfg = do
-  now <- floor <$> getPOSIXTime
-  let weekStart = divisionWeekStart now
-  rows <- withDb pool $ \conn -> query conn
-    "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
-    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
-    \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
-    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
-    \EXTRACT(EPOCH FROM s.captured_at)::BIGINT,w.release_router,w.release_version,w.asset_symbol \
-    \FROM divisions_live_snapshots s JOIN divisions_weeks w \
-    \ON w.chain_id=s.chain_id AND w.week_start=s.week_start AND w.release_router=s.release_router \
-    \WHERE s.chain_id=? AND s.week_start=? \
-    \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
-    \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
-    \AND i.release_router=s.release_router AND i.indexer_name IN \
-    \('perps-history-costs-v1:' || s.release_router, \
-    \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
-    \AND i.last_indexed_block_hash IS NOT NULL \
-    \AND (i.last_indexed_block>s.snapshot_block OR \
-    \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
-    \LIMIT 1"
-    (cfgPerpsChainId cfg, weekStart)
-  pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
-    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
-      [ "status" .= ("pending" :: Text)
-      , "weekStartsAt" .= isoTimestamp weekStart
-      , "generatedAt" .= isoTimestamp now
-      ]
-    (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt, release, version, asset) : _ ->
-      case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
-        Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
-        Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
-          [ "status" .= ("ready" :: Text)
-          , "weekStartsAt" .= isoTimestamp weekStart
-          , "snapshotAt" .= isoTimestamp timestamp
-          , "snapshotBlock" .= show block
-          , "snapshotBlockHash" .= blockHash
-          , "capturedAt" .= isoTimestamp capturedAt
-          , "walletCount" .= walletCount
-          , "releaseRouter" .= release
-          , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
-          , "standings" .= standings
-          , "provisional" .= True
-          ]
+getDivisionsLiveResponse pool cfg = do
+  snd <$> runSingleFlightCache divisionsLiveCache () isRight (do
+    now <- floor <$> getPOSIXTime
+    let weekStart = divisionWeekStart now
+    rows <- withDb pool $ \conn -> query conn
+      "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
+      \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
+      \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
+      \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
+      \EXTRACT(EPOCH FROM s.captured_at)::BIGINT,w.release_router,w.release_version,w.asset_symbol \
+      \FROM divisions_live_snapshots s JOIN divisions_weeks w \
+      \ON w.chain_id=s.chain_id AND w.week_start=s.week_start AND w.release_router=s.release_router \
+      \WHERE s.chain_id=? AND s.week_start=? \
+      \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
+      \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
+      \AND i.release_router=s.release_router AND i.indexer_name IN \
+      \('perps-history-costs-v1:' || s.release_router, \
+      \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
+      \AND i.last_indexed_block_hash IS NOT NULL \
+      \AND (i.last_indexed_block>s.snapshot_block OR \
+      \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
+      \LIMIT 1"
+      (cfgPerpsChainId cfg, weekStart)
+    pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
+      [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+        [ "status" .= ("pending" :: Text)
+        , "weekStartsAt" .= isoTimestamp weekStart
+        , "generatedAt" .= isoTimestamp now
+        ]
+      (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt, release, version, asset) : _ ->
+        case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
+          Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
+          Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+            [ "status" .= ("ready" :: Text)
+            , "weekStartsAt" .= isoTimestamp weekStart
+            , "snapshotAt" .= isoTimestamp timestamp
+            , "snapshotBlock" .= show block
+            , "snapshotBlockHash" .= blockHash
+            , "capturedAt" .= isoTimestamp capturedAt
+            , "walletCount" .= walletCount
+            , "releaseRouter" .= release
+            , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
+            , "standings" .= standings
+            , "provisional" .= True
+            ])
 
 withInsightsReadSnapshot :: Connection -> IO value -> IO value
 withInsightsReadSnapshot =

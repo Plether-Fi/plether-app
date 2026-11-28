@@ -1,5 +1,6 @@
 module Plether.Database
   ( DbPool
+  , dbPoolMaxConnections
   , newDbPool
   , destroyDbPool
   , dbPoolObservation
@@ -26,6 +27,9 @@ dbPoolObservation (DbPool _ observation) = observation
 destroyDbPool :: DbPool -> IO ()
 destroyDbPool (DbPool pool _) = destroyAllResources pool
 
+dbPoolMaxConnections :: Int
+dbPoolMaxConnections = 16
+
 newDbPool :: Text -> IO DbPool
 newDbPool connStr = DbPool <$> newPool poolConfig <*> newObservation getMonotonicTimeNSec
   where
@@ -40,8 +44,8 @@ newDbPool connStr = DbPool <$> newPool poolConfig <*> newObservation getMonotoni
     poolConfig = defaultPoolConfig
       connect
       (close . fst)
-      60.0   -- idle timeout (seconds)
-      16     -- max connections
+      60.0                  -- idle timeout (seconds)
+      dbPoolMaxConnections  -- max connections
 
 withDb :: HasCallStack => DbPool -> (Connection -> IO a) -> IO a
 withDb (DbPool pool observation) action =

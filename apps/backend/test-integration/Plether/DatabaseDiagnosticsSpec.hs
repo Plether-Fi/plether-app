@@ -102,17 +102,17 @@ databaseDiagnosticsSpec url = before_ assertDedicatedDatabase $ describe "databa
       entered <- newEmptyMVar
       release <- newEmptyMVar
       let hold = withDb pool $ \_ -> putMVar entered () >> readMVar release
-      bracket (replicateM 10 $ async hold) (mapM_ cancel) $ \holders -> do
-        replicateM_ 10 $ takeMVar entered
+      bracket (replicateM dbPoolMaxConnections $ async hold) (mapM_ cancel) $ \holders -> do
+        replicateM_ dbPoolMaxConnections $ takeMVar entered
         withAsync (withDb pool $ \_ -> pure ()) $ \waiter -> do
           snapshot <- waitUntil ((== 1) . psWaiting) $ readPoolSnapshot $ dbPoolObservation pool
-          length (psActive snapshot) `shouldBe` 10
+          length (psActive snapshot) `shouldBe` dbPoolMaxConnections
           map acSource (psActive snapshot) `shouldSatisfy`
             all (T.isPrefixOf "Plether.DatabaseDiagnosticsSpec:")
           blocking <- readBlockingSnapshot observer $ map acBackendPid $ psActive snapshot
           case blocking of
             Object value -> case KeyMap.lookup "sessions" value of
-              Just (Array sessions) -> length sessions `shouldBe` 10
+              Just (Array sessions) -> length sessions `shouldBe` dbPoolMaxConnections
               _ -> expectationFailure "Missing session evidence"
             _ -> expectationFailure "Missing blocking snapshot"
           putMVar release ()
