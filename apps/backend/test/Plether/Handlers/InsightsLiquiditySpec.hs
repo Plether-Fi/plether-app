@@ -1,9 +1,11 @@
 module Plether.Handlers.InsightsLiquiditySpec (spec) where
 
 import Data.Aeson (object, (.=))
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Database.PostgreSQL.Simple.Types (Query (..))
 import Plether.Database.VaultPerformance (VaultPerformanceSnapshotRow (..))
 import Plether.Handlers.InsightsLiquidity
   ( LpSettlementObservationRow (..)
@@ -21,8 +23,13 @@ import Plether.Handlers.InsightsLiquidity
   , computeRatioX100
   , computeTakeRateBpsX100
   , decodeBitPositions
+  , efficiencyOrderBucketsSql
+  , efficiencyOrderWindowTotalsSql
   , executionPathLabel
   , healthStateLabel
+  , latestBasketMarkSql
+  , oiDeltaBucketsSql
+  , priorOiSizesSql
   , sharePriceDeltaBps
   , summarizeSnapshotFreshness
   )
@@ -201,3 +208,11 @@ spec = describe "Plether.Handlers.InsightsLiquidity" $ do
     -- 6h bucket annualized daily turnover = 4 * 40M / 800k = 200.00x
     pebAnnualizedTurnoverDailyX100 (last s7d) `shouldBe` Just 20000
     pebGrossOiAssets (last s30d) `shouldBe` 450000000000
+
+  it "uses exact postgresql-simple parameter placeholder counts in efficiency SQL queries" $ do
+    let countPlaceholders (Query bs) = BS8.count '?' bs
+    countPlaceholders efficiencyOrderBucketsSql `shouldBe` 3
+    countPlaceholders efficiencyOrderWindowTotalsSql `shouldBe` 8
+    countPlaceholders priorOiSizesSql `shouldBe` 3
+    countPlaceholders oiDeltaBucketsSql `shouldBe` 3
+    countPlaceholders latestBasketMarkSql `shouldBe` 0
