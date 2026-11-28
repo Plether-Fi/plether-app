@@ -5,7 +5,7 @@
 ### Audit and release status
 
 * **Pre-audit consultation:** Plether Perps completed an external pre-audit security consultation on an earlier code snapshot.
-* **Formal production audit:** **Not yet completed.** Treat the active **Core v2.0.0** deployment on Arbitrum Sepolia (using **MockUSDG**) strictly as a test environment.
+* **Formal production audit:** **Not yet completed.** Treat the active **Core v2.1.0** deployment on Arbitrum Sepolia (using **MockUSDG**) strictly as a test environment.
 * **What to verify before mainnet:** Every production release must be evaluated against its exact source commit, verified onchain bytecode, oracle configuration, parameter values, admin addresses, and final audit report scope.
 
 ### Immutability boundaries

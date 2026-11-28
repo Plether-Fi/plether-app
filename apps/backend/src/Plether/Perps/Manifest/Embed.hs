@@ -24,8 +24,8 @@ import System.Environment (lookupEnv)
 manifestRoot :: Q Value
 manifestRoot = do
   mOverride <- runIO $ lookupEnv "PLETHER_PERPS_RELEASE_MANIFEST"
-  let defaultRepoPath = "../../config/perps/arbitrum-sepolia-v2.0.0.json"
-      defaultDockerPath = "config/perps/arbitrum-sepolia-v2.0.0.json"
+  let defaultRepoPath = "../../config/perps/arbitrum-sepolia-v2.1.0.json"
+      defaultDockerPath = "config/perps/arbitrum-sepolia-v2.1.0.json"
   path <- runIO $ case mOverride of
     Just configured | not (null configured) -> makeAbsolute configured
     _ -> do
@@ -79,7 +79,7 @@ releaseIsDeployed root = do
     String value | value `elem` ["deployed", "seeded", "active"] -> Right True
     _ -> Left "Invalid perps release phase"
   contracts <- fieldAt root ["contracts"]
-  forM_ ["settlementToken", "marginClearinghouse", "cfdEngine", "terminalNavBookV2", "cfdEnginePlanner", "cfdEnginePlanningReader", "cfdEngineSettlementSidecar", "cfdEngineAdmin", "housePoolRedemptionMathSidecar", "housePool", "cfdEngineProtocolLens", "seniorVault", "juniorVault", "cfdEngineAccountLens", "cfdEngineLens", "cfdEngineOpenQuoter", "cfdOrderPolicyEvaluator", "cfdClosePreview", "orderRouterExecutionSidecar", "orderRecoverySidecar", "pletherOracle", "orderRouterLiquidationBatchSidecar", "orderLifecycleBook", "orderRouter", "orderRouterAdmin", "positionProtectionBook", "perpsPublicLens", "settlementMonitorLens", "settlementMonitorLensSidecar", "emergencyPauseCoordinator"] $ \name -> do
+  forM_ ["settlementToken", "marginClearinghouse", "cfdEngine", "terminalNavBookV2", "cfdEnginePlanner", "cfdEnginePlanningReader", "cfdEngineSettlementSidecar", "cfdEngineAdmin", "housePoolRedemptionMathSidecar", "housePool", "cfdEngineProtocolLens", "seniorVault", "juniorVault", "cfdEngineAccountLens", "cfdEngineLens", "cfdEngineOpenQuoter", "cfdOrderAdmissionValidator", "cfdOrderPolicyEvaluator", "cfdClosePreview", "orderRouterExecutionSidecar", "orderRecoverySidecar", "pletherOracle", "orderRouterLiquidationBatchSidecar", "orderLifecycleBook", "orderRouter", "orderRouterAdmin", "positionProtectionBook", "perpsPublicLens", "settlementMonitorLens", "settlementMonitorLensSidecar", "emergencyPauseCoordinator"] $ \name -> do
     _ <- fieldAt root ["contracts", name, "address"]
     pure ()
   case contracts of

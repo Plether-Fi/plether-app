@@ -60,24 +60,30 @@ spec = do
         `shouldSatisfy` isLeft
 
   describe "validateRevealWindow" $ do
-    it "accepts payloads starting at T+1 and ending inside T+15" $ do
-      validateRevealWindow 100 15 [101, 102, 103, 104, 105, 106]
+    it "accepts payloads starting at T+1 and ending inside T+15 when delay is 1s" $ do
+      validateRevealWindow 100 1 15 [101, 102, 103, 104, 105, 106]
         `shouldBe` Right (101, 106)
 
-    it "rejects payloads before T+1" $ do
-      validateRevealWindow 100 15 [100, 101, 102, 103, 104, 105]
+    it "accepts payloads starting at T+2 and rejects T+1 when delay is 2s (v2.1.0)" $ do
+      validateRevealWindow 100 2 15 [102, 103, 104, 105, 106, 107]
+        `shouldBe` Right (102, 107)
+      validateRevealWindow 100 2 15 [101, 102, 103, 104, 105, 106]
+        `shouldSatisfy` isLeft
+
+    it "rejects payloads before T+delay" $ do
+      validateRevealWindow 100 1 15 [100, 101, 102, 103, 104, 105]
         `shouldSatisfy` isLeft
 
     it "rejects later in-window payloads that are not the first post-commit tick" $ do
-      validateRevealWindow 100 15 [102, 103, 104, 105, 106]
+      validateRevealWindow 100 1 15 [102, 103, 104, 105, 106]
         `shouldSatisfy` isLeft
 
     it "rejects the order 61 failure shape: a later tick inside the settlement window" $ do
-      validateRevealWindow 1_782_120_343 15 (replicate 6 1_782_120_346)
+      validateRevealWindow 1_782_120_343 1 15 (replicate 6 1_782_120_346)
         `shouldSatisfy` isLeft
 
     it "rejects payloads after T+15" $ do
-      validateRevealWindow 100 15 [111, 112, 113, 114, 115, 116]
+      validateRevealWindow 100 1 15 [111, 112, 113, 114, 115, 116]
         `shouldSatisfy` isLeft
 
 isLeft :: Either a b -> Bool

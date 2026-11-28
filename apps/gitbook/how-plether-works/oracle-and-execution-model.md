@@ -35,7 +35,7 @@ This shift is built into the execution price — not charged as a separate USDG 
 
 Traders commit binding, non-cancellable orders before the fill price is known. During live and FAD-only sessions, a keeper submits proof of the **first eligible Pyth observation strictly after commitment** (`executionBlock > commitBlock` and `publishTime > commitTimestamp`) inside the settlement window. Keepers cannot skip ahead to a later, more favorable price.
 
-**Pricing time and finalization time are separate:** A keeper can finalize an order later while it remains within its `60-second` execution deadline, still proving that exact historical post-commit tick. Retries never reprice an order to the latest market quote. See [How orders execute](how-orders-execute.md).
+**Pricing time and finalization time are separate:** A keeper can finalize an order later while it remains within its `30-second` execution deadline, still proving that exact historical post-commit tick. Retries never reprice an order to the latest market quote. See [How orders execute](how-orders-execute.md).
 
 ## When oracle data is stale, wide or unavailable
 
@@ -44,7 +44,7 @@ Traders commit binding, non-cancellable orders before the fill price is known. D
 | **Historical Pyth payload temporarily unavailable** | Keeper attempt reverts; order stays **Pending** for retry on the required historical tick |
 | **Stale data, confidence `> 0.10%` or timestamp divergence `> 5s`** | Observation rejected; order stays **Pending** |
 | **Valid execution price crosses your Execution limit** | Terminal failure (`Slippage exceeded`); removed from queue |
-| **Order exceeds `60-second` execution deadline** | Eligible for keeper cleanup (`Expired`); committed opening margin released |
+| **Order exceeds `30-second` execution deadline** | Eligible for keeper cleanup (`Expired`); committed opening margin released |
 
 A reverted keeper transaction is **not** a failed order — always check onchain status in **Open Orders** and **Order History** (see [Why is my order pending or failed?](../trading-on-plether-perps/why-is-my-order-pending-or-failed.md)). Remember that a pending close leaves your full position exposed to PnL, carry and liquidation until it actually executes.
 

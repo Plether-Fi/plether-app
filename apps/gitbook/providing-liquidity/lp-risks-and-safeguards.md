@@ -30,7 +30,7 @@ The liquidity pool is the USDG[^usdg] counterparty to Plether Perps[^perps]. LP[
 ## Tranche-specific principal risk
 
 * **Senior Vault (`psLP`):** Last-loss inside the LP stack, but still loses principal (and can be wiped out) once Junior reaches zero. Its target coupon comes strictly from available Junior principal — unpaid coupon never accrues as debt.
-* **Junior Vault (`pjLP`):** First-loss and subordinated for withdrawals. Junior can be wiped to zero while Senior stays whole. If governance activates a nonzero **Annual vault fee** (`0%` on active v2.0.0; subject to a `72-hour` timelock), newly issued `pjLP` fee shares dilute existing holders.
+* **Junior Vault (`pjLP`):** First-loss and subordinated for withdrawals. Junior can be wiped to zero while Senior stays whole. If governance activates a nonzero **Annual vault fee** (`0%` on active v2.1.0; subject to a `72-hour` timelock), newly issued `pjLP` fee shares dilute existing holders.
 * **Terminal wipeout:** A tranche with outstanding shares and zero accounting assets cannot be silently revived by ordinary deposits; recovery requires waterfall revenue or explicit recapitalization.
 
 See [Choose Senior or Junior](choose-senior-or-junior.md) and [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).

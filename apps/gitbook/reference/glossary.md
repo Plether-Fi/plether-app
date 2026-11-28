@@ -19,7 +19,7 @@ A–Z reference for terms used across Plether Perps DEX and LP Vaults.
 
 ### C
 
-* **Carry (Cost of carry):** Continuous time-based fee paid to LPs on a position's LP-backed borrow base, scaled by same-side pool utilization. Not trader-to-trader funding—both LONG USD and SHORT USD can pay carry simultaneously, including over weekends. Collected from active position margin first, then free USDG.
+* **Carry (Cost of carry):** Continuous flat annual fee (`baseCarryBps = 5.00%`) paid to LPs on a position's full bounded maximum-profit exposure, independent of assigned margin or pool utilization. Not trader-to-trader funding—both LONG USD and SHORT USD pay carry simultaneously, including over weekends. Collected from active position margin first, then free USDG.
 * **Close-only:** Market state where new opens and increases are blocked while reductions, closes, liquidations, and margin additions remain available. Covers both the live-oracle FAD shoulders and the weekend `oracleFrozen` window.
 * **Contract notional:** `position quantity × raw basket price (B)`. Used onchain for margin requirements, leverage, execution fees, frozen-close spreads, and liquidation charges. Distinct from **Order exposure** (`position quantity × displayed price D`).
 
@@ -33,13 +33,13 @@ A–Z reference for terms used across Plether Perps DEX and LP Vaults.
 
 * **Effective backing:** `max(physical pool assets − aggregate trader claims, 0)`. Used to verify pool solvency before admitting new risk.
 * **ERC-4626:** Ethereum tokenized-vault standard used by Plether's Senior (`psLP`) and Junior (`pjLP`) LP vaults (with asynchronous hourly request queues).
-* **Execution fee:** Protocol fee charged on executed contract notional (`0.04%` in Core v2.0.0), designated for the protocol treasury when cash-credited.
+* **Execution fee:** Protocol fee charged on executed contract notional (`0.04%` in Core v2.1.0), designated for the protocol treasury when cash-credited.
 * **Execution limit:** The worst confidence-adjusted oracle price a trader accepts for an order. Bounds execution price only—not fees, VPI, carry, or frozen-close spread.
-* **Execution reward:** USDG bounty reserved on **opening and increasing** orders (`1 bp`, clamped `0.01–0.20 USDG`) to compensate the keeper who finalizes or cleans up the order. Reductions and closes have **zero** execution reward.
+* **Execution reward:** USDG bounty reserved on **opening and increasing** orders (`1 bp`, clamped `0.01–0.25 USDG`) to compensate the keeper who finalizes or cleans up the order. Reductions and closes have **zero** execution reward.
 
 ### F
 
-* **FAD (Friday Afternoon Deleverage):** Scheduled weekly close-only window around the FX weekend closure (Friday 16:30 NY – Sunday 17:15 NY) and configured holiday closures. Blocks new risk and raises the maintenance margin requirement to `3.00%`.
+* **FAD (Friday Afternoon Deleverage):** Scheduled weekly close-only window around the FX weekend closure (Friday 16:50 NY – Sunday 17:05 NY) and configured holiday closures. Blocks new risk and raises the maintenance margin requirement to `2.00%`.
 * **FIFO (First in, first out):** Global order execution queue where earlier committed orders must resolve (execute, fail, expire, or be cleared by liquidation) before later orders can execute.
 * **Frozen-close spread:** Fixed LP-owned fee (`0.50%` of reduced contract notional) charged on voluntary reductions and closes executed while `oracleFrozen` is active. Does not apply during live/FAD windows or to liquidations.
 
@@ -83,7 +83,7 @@ A–Z reference for terms used across Plether Perps DEX and LP Vaults.
 * **Plether Trading Account:** Deterministic smart-account address (`SimpleAccount` v0.8 on testnet) derived from your owner wallet that owns your Perps positions, orders, Margin Account, TP/SL records, and trader claims.
 * **PnL (Profit and loss):** Directional financial gain or loss from index price movement, before fees, VPI, carry, and spreads.
 * **Position equity:** `position margin after accrued carry + same-account trader claim + exact unrealized price PnL`. Used to determine price-liquidation eligibility. Excludes free USDG, pending-order funds, and dedicated reserves.
-* **Position margin (PnL pledge):** USDG explicitly assigned to back an open position's price losses and reduce its LP-backed borrow base.
+* **Position margin (PnL pledge):** USDG explicitly assigned to back an open position's price losses and increase liquidation headroom.
 * **Pyth:** Decentralized oracle network supplying the six signed FX price feeds used to construct the Plether Dollar Index.
 
 ### R

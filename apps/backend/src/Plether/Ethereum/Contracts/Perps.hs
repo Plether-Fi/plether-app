@@ -42,6 +42,8 @@ module Plether.Ethereum.Contracts.Perps
   , getPositionSizeAtBlock
   , decodePositionSize
   , maxExecutionWindowSeconds
+  , minOrderSettlementDelay
+  , minOrderSettlementDelayAtBlock
   , orderSettlementWindow
   , orderSettlementWindowAtBlock
   , orderExecutionStalenessLimit
@@ -586,6 +588,16 @@ decodePositionSize bytes
 maxExecutionWindowSeconds :: EthClient -> Text -> IO (Either RpcError Integer)
 maxExecutionWindowSeconds client orderRouter = do
   result <- ethCall client (CallParams orderRouter (encodeCall "maxExecutionWindowSeconds()" []))
+  pure $ fmap decodeUint256 result
+
+minOrderSettlementDelay :: EthClient -> Text -> IO (Either RpcError Integer)
+minOrderSettlementDelay client oracle = do
+  result <- ethCall client (CallParams oracle (encodeCall "minOrderSettlementDelay()" []))
+  pure $ fmap decodeUint256 result
+
+minOrderSettlementDelayAtBlock :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+minOrderSettlementDelayAtBlock client oracle blockNumber = do
+  result <- ethCallAtBlock client (CallParams oracle (encodeCall "minOrderSettlementDelay()" [])) blockNumber
   pure $ fmap decodeUint256 result
 
 orderSettlementWindow :: EthClient -> Text -> IO (Either RpcError Integer)

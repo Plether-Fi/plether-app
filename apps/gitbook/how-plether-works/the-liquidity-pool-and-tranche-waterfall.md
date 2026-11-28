@@ -26,7 +26,7 @@ Both tranches underwrite the same pool and the same bounded `[0.00, 2.00]` `plDX
 | **Loss order** | After Junior principal reaches zero | First loss |
 | **Recovery order** | Restored to its high-water mark first | Residual upside only after Senior is restored |
 | **Withdrawal priority** | Phase 1 (before Junior) | Phase 2 (after Senior backlog clears, capped by `80%` max Senior-share covenant) |
-| **Annual maintenance fee** | None | `0%` on Core v2.0.0 (configurable with `72-hour` timelock; paid via share dilution when nonzero) |
+| **Annual maintenance fee** | None | `0%` on Core v2.1.0 (configurable with `72-hour` timelock; paid via share dilution when nonzero) |
 | **Frozen-oracle exit fee** | `0.25%` (`25 bps`, retained in Senior) | `0.75%` (`75 bps`, retained in Junior) |
 | **Principal & return guarantee** | None — can lose value or be wiped | None — can lose value or be wiped first |
 
@@ -96,7 +96,7 @@ Junior cap = min(Remaining free LP USDG, Junior principal, max(Junior principal 
 ```
 
 * If any matured Senior withdrawal backlog remains, **zero** Junior withdrawals fund in that cycle.
-* Once matured Senior demand is cleared, Junior does **not** reserve dormant Senior principal — instead it enforces the live `maxSeniorShareBps` covenant (`80%` on Core v2.0.0; `maxSeniorExposureAssets = 40,000,000 USDG`).
+* Once matured Senior demand is cleared, Junior does **not** reserve dormant Senior principal — instead it enforces the live `maxSeniorShareBps` covenant (`80%` on Core v2.1.0; `maxSeniorExposureAssets = 40,000,000 USDG`).
 
 **Example (illustrative `75%` cap):** With `1,000,000 USDG` physical assets, `700,000 USDG` reserves (`Free = 300,000`), `Senior = 600,000`, `Junior = 400,000` and no matured Senior backlog, required Junior backing is `600,000 × (25% ÷ 75%) = 200,000 USDG`. Senior cap is `300,000 USDG` and Junior cap is `min(300,000, 400,000, 200,000) = 200,000 USDG`.
 
@@ -130,7 +130,7 @@ Plether uses the *larger* of LONG and SHORT maximum payouts (not their sum) beca
 * **Degraded mode (latched):** Triggered if a realized terminal event leaves effective backing below remaining open-position liability. Blocks new trader risk, new LP deposits and new LP withdrawal USDG allocation (closes, liquidations, margin additions and already-funded claims remain open). Even after solvency recovers, the protocol owner must explicitly clear degraded mode before new withdrawal funding resumes.
 * **Senior impairment & wipeout:** Whenever `Senior principal < Senior high-water mark`, ordinary deposits into both tranches halt and future LP gains restore Senior first. A tranche with shares outstanding and zero assets is terminally wiped and cannot be silently revived by ordinary deposits.
 
-**Governance notice:** On Core v2.0.0, changes to pool risk parameters, Junior fee settings, engine settings and router settings require a **`72-hour` timelock**.
+**Governance notice:** On Core v2.1.0, changes to pool risk parameters, Junior fee settings, engine settings and router settings require a **`72-hour` timelock**.
 
 | Check | Question answered |
 | --- | --- |

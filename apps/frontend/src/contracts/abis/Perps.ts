@@ -1707,6 +1707,11 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     "type": "error",
+    "name": "OrderRouter__ImpossibleExecutionRequest",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OrderRouter__InsufficientFreeEquity",
     "inputs": []
   },
@@ -3466,6 +3471,30 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
         "type": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "CfdOrderPolicyEvaluator__SlippageToleranceTooTight",
+    "inputs": [
+      {
+        "name": "targetPrice",
+        "type": "uint256"
+      },
+      {
+        "name": "requiredBound",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OrderRouter__PredictableOpenInvalid",
+    "inputs": [
+      {
+        "name": "code",
+        "type": "uint8"
+      }
+    ]
   }
 ] as const
 
@@ -3500,12 +3529,48 @@ export const PERPS_CFD_ENGINE_ABI = [
   },
   {
     "type": "function",
+    "name": "carryIndex",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "carryTimestamp",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "clearinghouse",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "currentCarryIndex",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -3548,6 +3613,18 @@ export const PERPS_CFD_ENGINE_ABI = [
   },
   {
     "type": "function",
+    "name": "minOpenSlippageToleranceBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pool",
     "inputs": [],
     "outputs": [
@@ -3569,7 +3646,7 @@ export const PERPS_CFD_ENGINE_ABI = [
     ],
     "outputs": [
       {
-        "name": "borrowBaseAssets",
+        "name": "maxProfitAssets",
         "type": "uint256"
       },
       {
@@ -3709,57 +3786,6 @@ export const PERPS_CFD_ENGINE_ABI = [
       {
         "name": "",
         "type": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sideBorrowBaseAssets",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sideCarryIndex",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sideCarryTimestamp",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -4058,6 +4084,11 @@ export const PERPS_CFD_ENGINE_ABI = [
   {
     "type": "error",
     "name": "CfdEngine__PartialCloseUnhealthy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__PendingOrdersExist",
     "inputs": []
   },
   {
@@ -4582,6 +4613,11 @@ export const PERPS_HOUSE_POOL_ABI = [
   },
   {
     "type": "error",
+    "name": "HousePool__UnassignedAssetsUnderbacked",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "HousePool__Unauthorized",
     "inputs": []
   },
@@ -4792,6 +4828,18 @@ export const PERPS_PLETHER_ORACLE_ABI = [
   },
   {
     "type": "function",
+    "name": "minOrderSettlementDelay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "orderSettlementWindow",
     "inputs": [],
     "outputs": [
@@ -4914,6 +4962,11 @@ export const PERPS_PLETHER_ORACLE_ABI = [
         "type": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PletherOracle__InvalidBatchCacheTimes",
+    "inputs": []
   },
   {
     "type": "error",
@@ -5149,6 +5202,18 @@ export const PERPS_PLETHER_ORACLE_ABI = [
 ] as const
 
 export const PERPS_CFD_ENGINE_LENS_ABI = [
+  {
+    "type": "function",
+    "name": "orderAdmissionValidator",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
   {
     "type": "function",
     "name": "previewClose",
@@ -5715,6 +5780,10 @@ export const PERPS_CFD_ENGINE_LENS_ABI = [
           {
             "name": "limitingReason",
             "type": "uint8"
+          },
+          {
+            "name": "postEligibleEquityAssets",
+            "type": "int256"
           }
         ]
       }
@@ -7183,6 +7252,11 @@ export const PERPS_POSITION_PROTECTION_BOOK_ABI = [
   {
     "type": "error",
     "name": "OrderRouter__GlobalQueueCorrupt",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OrderRouter__ImpossibleExecutionRequest",
     "inputs": []
   },
   {

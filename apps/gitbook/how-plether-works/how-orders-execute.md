@@ -23,7 +23,7 @@ For oracle confidence and staleness rules, see [Oracle & execution model](oracle
 
 ## 1. Preview the order
 
-Before commitment, **Commit Preview** snapshots the estimated result from current state, including direction, **Order exposure**, **Order quantity**, margin, leverage, **Execution limit**, adverse oracle confidence spread, **Estimated fee** (`0.04%`), **VPI: Pay / Receive**[^vpi], opening execution reward (`0.01–0.20 USDG` on opens/increases; `0` on closes), **Liquidation price** and **Execution protections** (including `submitBy` validity and the `60-second` execution deadline).
+Before commitment, **Commit Preview** snapshots the estimated result from current state, including direction, **Order exposure**, **Order quantity**, margin, leverage, **Execution limit**, adverse oracle confidence spread, **Estimated fee** (`0.04%`), **VPI: Pay / Receive**[^vpi], opening execution reward (`0.01–0.25 USDG` on opens/increases; `0` on closes), **Liquidation price** and **Execution protections** (including `submitBy` validity and the `30-second` execution deadline).
 
 On voluntary reductions and closes, the close preview also projects **Commitment carry**, **USDG after execution**, **Trader claim after execution**, **Position VPI balance**, and — if `oracleFrozen` is active — **Assessed / Paid / Waived spread** (`assessed = paid + waived`).
 
@@ -51,7 +51,7 @@ An explicit full close with no earlier pending orders uses your exact live posit
 
 Confirming **Confirm Commit** submits your signed sponsored operation. Order V3 pins `submitBy = confirmationBlock + 120s` (with `45s` sign and `30s` relay client guards) and `executionWindowSeconds = 60s` (`executionDeadline = commitTimestamp + 60s`).
 
-* **Opens & increases:** Immediately reserve submitted opening margin plus the opening execution reward (`1 bp`, clamped `0.01–0.20 USDG`).
+* **Opens & increases:** Immediately reserve submitted opening margin plus the opening execution reward (`1 bp`, clamped `0.01–0.25 USDG`).
 * **Reductions & closes (including TP/SL closes):** Reserve **zero** execution reward and no new margin; they reserve only the requested position quantity against overlapping closes and checkpoint accrued carry (from active position margin first, then eligible free USDG).
 
 **Committed orders cannot be cancelled or repriced.** Allowing cancellation after seeing the next oracle tick would create a free option against the liquidity pool. A committed order leaves the queue only through execution, terminal failure, expiry cleanup or account liquidation.
@@ -71,7 +71,7 @@ During live and FAD-only sessions, execution requires:
 
 At the contract level, `executeOrder`, `executeOrderBatch` and `expireOrder` are permissionless — any address with ETH for gas and Pyth fees can call them. In the sponsored web application, Plether's keeper handles all execution and expired-order cleanup so your owner wallet never pays ETH or manually finalizes trades.
 
-* **Opens and increases:** The reserved opening execution reward (`0.01–0.20 USDG`) is credited to the keeper's Margin Account on execution, terminal failure or expiry cleanup (or forfeited to the protocol treasury if liquidation clears the order first).
+* **Opens and increases:** The reserved opening execution reward (`0.01–0.25 USDG`) is credited to the keeper's Margin Account on execution, terminal failure or expiry cleanup (or forfeited to the protocol treasury if liquidation clears the order first).
 * **Reductions and full closes:** Pay **zero** USDG execution reward in every outcome.
 
 ## Acceptable-price protection
@@ -104,7 +104,7 @@ Plether separates **price-loss collection** from **action-charge funding**:
 
 During `oracleFrozen`, voluntary closes assess a fixed **`50 bps` (`0.50%`)** spread on reduced notional (`100%` LP-owned; timelocked with a `72-hour` notice, capped onchain at `10.00%`). Execution-time market state controls whether the spread applies — committing during live hours and filling after freeze activates it, and vice versa.
 
-## Order outcomes and `60-second` expiry
+## Order outcomes and `30-second` expiry
 
 | Outcome | What happens |
 | --- | --- |

@@ -12,8 +12,8 @@ const project = resolve(root, 'apps/frontend/contracts/max-open')
 const outputPath = resolve(root, 'apps/frontend/src/contracts/generated/perpsMaxOpenQuoter.ts')
 const check = process.argv.includes('--check')
 assert.ok(process.argv.slice(2).every(arg => arg === '--check'), 'Usage: node scripts/generate-perps-max-open-quoter.mjs [--check]')
-const compilerVersion = '0.8.35+commit.47b9dedd'
-const svmCompiler = resolve(homedir(), '.svm/0.8.35/solc-0.8.35')
+const compilerVersion = '0.8.39+commit.ce47f2c8'
+const svmCompiler = resolve(homedir(), '.svm/0.8.39/solc-0.8.39')
 const solc = process.env.SOLC_BINARY ?? (existsSync(svmCompiler) ? svmCompiler : 'solc')
 assert.ok(execFileSync(solc, ['--version'], { encoding: 'utf8' }).includes(`Version: ${compilerVersion}`),
   `Use solc ${compilerVersion}; set SOLC_BINARY to its executable`)

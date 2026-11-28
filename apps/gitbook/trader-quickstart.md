@@ -80,7 +80,7 @@ A permissionless keeper finalizes the order automatically using the first eligib
 
 Once status reaches **Executed**, open **Position** to verify direction, exposure, **Order quantity**, entry price, leverage, liquidation price, unrealized PnL, and **Cost of carry**. Carry accrues continuously while open—see [Read your position and account health](trading-on-plether-perps/read-your-position-and-account-health.md).
 
-If an order **fails** or **expires** (after 60 seconds), it is never retried automatically; see [Why is my order pending or failed?](trading-on-plether-perps/why-is-my-order-pending-or-failed.md).
+If an order **fails** or **expires** (after 30 seconds), it is never retried automatically; see [Why is my order pending or failed?](trading-on-plether-perps/why-is-my-order-pending-or-failed.md).
 
 ### 6. Close when you are ready
 

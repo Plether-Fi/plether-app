@@ -355,8 +355,10 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
   return debouncedValue
 }
-const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
-const DEFAULT_LIVE_SLIPPAGE = 0.1
+const OPEN_SLIPPAGE_OPTIONS = [0.25, 0.5, 1, Infinity]
+const CLOSE_SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
+const MIN_OPEN_SLIPPAGE_PERCENT = 0.25
+const DEFAULT_LIVE_SLIPPAGE = 0.25
 const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0
 const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
 const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
@@ -366,7 +368,7 @@ const ASSETS_UNIT = 1_000_000n
 const PREVIEW_ASSETS_DECIMALS = 1
 const OPEN_BOUNTY_BPS_RAW = 1n
 const MIN_OPEN_BOUNTY_ASSETS_RAW = 10_000n
-const MAX_OPEN_BOUNTY_ASSETS_RAW = 200_000n
+const MAX_OPEN_BOUNTY_ASSETS_RAW = 250_000n
 const SUMMARY_CLOSE_DUST_ASSETS_RAW = 10_000n
 const ORACLE_PRICE_FRESH_SECONDS = 60
 const DEFAULT_MAX_LEVERAGE = 33
@@ -1882,7 +1884,6 @@ export function PerpsTradeTicket({
   const [restoredDraftNotice, setRestoredDraftNotice] = useState<string>()
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
-  const slippageOptions = SLIPPAGE_OPTIONS
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
@@ -2910,9 +2911,13 @@ export function PerpsTradeTicket({
     : undefined
   const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
   const protocolExecutionFeeRaw = executionFeeAssetsRaw(contractNotionalAssets, executionFeeBpsRaw)
+  const slippageOptions = isReducingCurrentPosition ? CLOSE_SLIPPAGE_OPTIONS : OPEN_SLIPPAGE_OPTIONS
+  const effectiveSlippage = isReducingCurrentPosition
+    ? Math.max(slippage, 0)
+    : Math.max(slippage, MIN_OPEN_SLIPPAGE_PERCENT)
   const slippageNumber = isOracleFrozenClose
     ? DEFAULT_ORACLE_FROZEN_SLIPPAGE
-    : isReviewOpen && reviewSnapshot ? reviewSnapshot.slippagePercent : Math.max(slippage, 0)
+    : isReviewOpen && reviewSnapshot ? reviewSnapshot.slippagePercent : effectiveSlippage
   const previewPrice = oraclePriceRaw
     ? displayDxyPriceNumber(oraclePriceRaw)
     : enableLiveTrading
@@ -4976,9 +4981,9 @@ export function PerpsTradeTicket({
                         <button
                           key={option.toString()}
                           type="button"
-                          aria-pressed={slippage === option}
+                          aria-pressed={effectiveSlippage === option}
                           className={`${PRESET_BUTTON_CLASS} !min-w-min !px-0 flex-1 cursor-pointer ${
-                            slippage === option
+                            effectiveSlippage === option
                               ? PRESET_BUTTON_SELECTED_CLASS
                               : PRESET_BUTTON_UNSELECTED_CLASS
                           }`}

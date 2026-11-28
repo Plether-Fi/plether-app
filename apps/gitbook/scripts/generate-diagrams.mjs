@@ -197,9 +197,9 @@ export function renderDiagram(spec) {
     const barY = y + 54
     const segs = [
       { w: 122, color: P.green, label: 'Open', text: P.plum },
-      { w: 72, color: P.yellow, label: '30m', text: P.plum },
+      { w: 72, color: P.yellow, label: '10m', text: P.plum },
       { w: 162, color: P.orange, label: 'Frozen', text: P.plum },
-      { w: 72, color: P.yellow, label: '15m', text: P.plum },
+      { w: 72, color: P.yellow, label: '5m', text: P.plum },
       { w: 92, color: P.green, label: 'Open', text: P.plum },
     ]
     let sx = padX
@@ -219,10 +219,10 @@ export function renderDiagram(spec) {
     line(t3, barY + 48, t3, barY + 62, P.orange, 2)
     line(t4, barY + 48, t4, barY + 94, P.green, 2)
 
-    text('Fri 16:30', t1, barY + 64, 130, 22, P.yellow, 700, 'middle')
+    text('Fri 16:50', t1, barY + 64, 130, 22, P.yellow, 700, 'middle')
     text('Fri 17:00', t2, barY + 96, 130, 22, P.peach, 700, 'middle')
     text('Sun 17:00', t3, barY + 64, 130, 22, P.peach, 700, 'middle')
-    text('Sun 17:15', t4 - 14, barY + 96, 130, 22, P.green, 700, 'middle')
+    text('Sun 17:05', t4 - 14, barY + 96, 130, 22, P.green, 700, 'middle')
 
     y += boxH + 22
   }
@@ -266,14 +266,14 @@ export function renderDiagram(spec) {
     y += boxH + 22
   }
 
-  // Bespoke visual 5: Before / After stacked horizontal bar for borrow-base carry reduction
+  // Bespoke visual 5: Before / After bars showing flat carry vs increased margin buffer
   function renderBorrowBar() {
     const boxH = 264
     rect(M, y, INNER, boxH, P.panel, 12, P.gray, 1.5)
     const padX = M + 20
     const barW = INNER - 40 // 536
 
-    text('Same max profit — more margin shrinks carry', padX, y + 14, barW, 22, P.cream, 700)
+    text('More margin raises equity; flat carry stays same', padX, y + 14, barW, 22, P.cream, 700)
 
     // Before row
     text('Before adding margin', padX, y + 54, barW, 22, P.mutedInk, 700)
@@ -281,15 +281,15 @@ export function renderDiagram(spec) {
     rect(padX, y1, 136, 44, P.green, 8)
     text('Margin', padX + 68, y1 + 8, 124, 22, P.plum, 700, 'middle')
     rect(padX + 142, y1, barW - 142, 44, P.yellow, 8)
-    text('Borrow base (pays carry)', padX + 142 + (barW - 142) / 2, y1 + 8, barW - 154, 22, P.plum, 700, 'middle')
+    text('Flat carry on full max profit', padX + 142 + (barW - 142) / 2, y1 + 8, barW - 154, 22, P.plum, 700, 'middle')
 
     // After row
     text('After adding position margin', padX, y + 152, barW, 22, P.green, 700)
     const y2 = y + 186
-    rect(padX, y2, 316, 44, P.green, 8)
-    text('Larger position margin', padX + 158, y2 + 8, 300, 22, P.plum, 700, 'middle')
-    rect(padX + 322, y2, barW - 322, 44, P.yellow, 8)
-    text('Smaller carry', padX + 322 + (barW - 322) / 2, y2 + 8, barW - 332, 22, P.plum, 700, 'middle')
+    rect(padX, y2, 260, 44, P.green, 8)
+    text('Larger margin buffer', padX + 130, y2 + 8, 244, 22, P.plum, 700, 'middle')
+    rect(padX + 266, y2, barW - 266, 44, P.yellow, 8)
+    text('Same flat carry', padX + 266 + (barW - 266) / 2, y2 + 8, barW - 276, 22, P.plum, 700, 'middle')
 
     y += boxH + 22
   }
@@ -422,8 +422,8 @@ async function save(file, content) {
 async function main() {
   const ids = new Set(diagrams.map(d => d.id))
   if (ids.size !== 33 || diagrams.length !== 33) throw new Error('Expected 33 unique diagrams')
-  const release = JSON.parse(await fs.readFile(path.resolve(root, '../../config/perps/arbitrum-sepolia-v2.0.0.json'), 'utf8')).release
-  const reviewedCommit = '1209ca8a5b94a4fb6323c7c4585846ed93db3932'
+  const release = JSON.parse(await fs.readFile(path.resolve(root, '../../config/perps/arbitrum-sepolia-v2.1.0.json'), 'utf8')).release
+  const reviewedCommit = 'd5ef9725f72f5e131272da27004266d8a3d51e50'
   if (release.sourceCommit !== reviewedCommit) throw new Error('Contract release changed: review diagram content and DIAGRAM_REVIEW.md')
   await fs.mkdir(out, { recursive: true })
   const docs = new Map()

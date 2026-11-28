@@ -29,7 +29,8 @@ the latest published week. Empty published weeks remain browsable.
 
 Each week has one persisted contract assignment in `divisions_weeks`, keyed by
 chain and week. October 11, 18 and 25 use Core v1.3.1 (mock USDC); November 1
-onward uses Core v2.0.0 (USDG). Append future cutovers only at week boundaries;
+through November 22 use Core v2.0.0 (USDG); November 29 onward uses Core v2.1.0
+(USDG). Append future cutovers only at week boundaries;
 startup rejects any change to an existing assignment. Results show the assigned
 version as read-only text. The API ignores legacy `releaseRouter` selectors;
 old frontend bookmarks redirect to the same week without the selector.

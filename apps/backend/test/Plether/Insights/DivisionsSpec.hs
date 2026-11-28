@@ -16,11 +16,15 @@ spec :: Spec
 spec = describe "Divisions publication" $ do
   it "fixes one contract per week and switches only at the scheduled boundary" $ do
     let cutover = 1793566800
+        cutoverV21 = 1795986000
         old = DivisionRelease "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8" "v1.3.1" "USDC"
-        new = DivisionRelease "0x918663d6da8cb33b325a04c4a5e8c51d42f3b444" "v2.0.0" "USDG"
+        v20 = DivisionRelease "0x918663d6da8cb33b325a04c4a5e8c51d42f3b444" "v2.0.0" "USDG"
+        v21 = DivisionRelease "0xb4c7548ba764e22107964637e31558af724c1c3e" "v2.1.0" "USDG"
     divisionReleaseForWeek (cutover - weekSeconds) `shouldBe` Just old
-    divisionReleaseForWeek cutover `shouldBe` Just new
-    divisionReleaseForWeek (cutover + weekSeconds) `shouldBe` Just new
+    divisionReleaseForWeek cutover `shouldBe` Just v20
+    divisionReleaseForWeek (cutoverV21 - weekSeconds) `shouldBe` Just v20
+    divisionReleaseForWeek cutoverV21 `shouldBe` Just v21
+    divisionReleaseForWeek (cutoverV21 + weekSeconds) `shouldBe` Just v21
     divisionReleaseForWeek (cutover - 1) `shouldBe` Nothing
     divisionReleaseForWeek (firstWeekStart - weekSeconds) `shouldBe` Nothing
     divisionWeekStart (cutover - 1) `shouldBe` cutover - weekSeconds

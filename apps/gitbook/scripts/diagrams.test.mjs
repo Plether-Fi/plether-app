@@ -83,7 +83,7 @@ test('dark-plum cards use positive green accents and keep low-contrast orange ou
 })
 test('calendar uses New York DST-aware boundaries and labels its non-scaled sequence', () => {
   const value = content('weekly-market-state-schedule')
-  for (const token of ['16:30', '17:00', '17:15', '30 minutes', '15 minutes', 'daylight time', 'standard time', 'not drawn to a time scale']) assert.ok(value.includes(token), token)
+  for (const token of ['16:50', '17:00', '17:05', '10 minutes', '5 minutes', 'daylight time', 'standard time', 'not drawn to a time scale']) assert.ok(value.includes(token), token)
 })
 test('order failure is not a transition after successful execution', () => {
   const terminal = get('sponsorship-vs-order-failure-lifecycles').blocks.find(b => b.type === 'lanes').items[1]

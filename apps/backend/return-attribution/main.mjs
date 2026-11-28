@@ -13,7 +13,7 @@ function failure(error) {
   return { error: error.name, ...(error instanceof AttributionError ? { reason: error.message } : {}) }
 }
 async function main() {
-  const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? (fs.existsSync('/app/config/perps/arbitrum-sepolia-v2.0.0.json') ? '/app/config/perps/arbitrum-sepolia-v2.0.0.json' : new URL('../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url))))
+  const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? (fs.existsSync('/app/config/perps/arbitrum-sepolia-v2.1.0.json') ? '/app/config/perps/arbitrum-sepolia-v2.1.0.json' : new URL('../../../config/perps/arbitrum-sepolia-v2.1.0.json', import.meta.url))))
   const expected = JSON.parse(process.env.VAULT_RETURN_DEPLOYMENT ?? '{}')
   for (const [name, address] of Object.entries(expected)) {
     if (release.contracts[name]?.address.toLowerCase() !== address.toLowerCase()) throw new AttributionError('Vault history deployment does not match attribution release')

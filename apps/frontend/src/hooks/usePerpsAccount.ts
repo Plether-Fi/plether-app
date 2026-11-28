@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { multicall3Abi, zeroAddress } from 'viem'
-import { arbitrumSepolia } from 'viem/chains'
+import { zeroAddress } from 'viem'
 import { parsePositionProtection } from '../contracts/positionProtection'
 import { useReadContracts } from 'wagmi'
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_ABI,
   PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
-  PERPS_HOUSE_POOL_ABI,
   PERPS_MARGIN_CLEARINGHOUSE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
   PERPS_ORDER_ROUTER_ABI,
@@ -28,20 +26,6 @@ interface ContractResult {
 const PERPS_DYNAMIC_REFETCH_INTERVAL_MS = 2_000
 const PERPS_CONFIG_STALE_TIME_MS = 5 * 60_000
 const PERPS_CONFIG_GC_TIME_MS = Number.POSITIVE_INFINITY
-
-function sideCarryContracts(side: bigint) {
-  const engine = {
-    chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-    address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
-    abi: PERPS_CFD_ENGINE_ABI,
-    args: [side],
-  } as const
-  return [
-    { ...engine, functionName: 'sideCarryIndex' },
-    { ...engine, functionName: 'sideCarryTimestamp' },
-    { ...engine, functionName: 'sideBorrowBaseAssets' },
-  ] as const
-}
 
 export interface PerpsPendingOrder {
   orderId: bigint
@@ -165,23 +149,15 @@ function readBigInt(value: unknown, index: number, key: string): bigint | undefi
 }
 
 function readPendingCarryAssets(data: readonly ContractResult[] | undefined): bigint | undefined {
-  const side = readBigInt(readResult(data, 9), 4, 'side')
-  if (side !== 0n && side !== 1n) return undefined
-  const sideOffset = side === 0n ? 16 : 19
   const carryState = readResult(data, 11)
 
   // netEquityAssets is price-risk equity, not carry-adjusted account equity.
   // Subtracting it from settlement would incorrectly label free collateral as carry.
   return calculatePendingCarryAssets({
-    borrowBaseAssets: readBigInt(carryState, 0, 'borrowBaseAssets'),
+    maxProfitAssets: readBigInt(carryState, 0, 'maxProfitAssets'),
     lastCarryIndex: readBigInt(carryState, 1, 'lastCarryIndex'),
     unsettledCarryAssets: readResult(data, 12) as bigint | undefined,
-    baseCarryBps: readBigInt(readResult(data, 13), 5, 'baseCarryBps'),
-    poolAssets: readResult(data, 14) as bigint | undefined,
-    blockTimestamp: readResult(data, 15) as bigint | undefined,
-    sideCarryIndex: readResult(data, sideOffset) as bigint | undefined,
-    sideCarryTimestamp: readResult(data, sideOffset + 1) as bigint | undefined,
-    sideBorrowBaseAssets: readResult(data, sideOffset + 2) as bigint | undefined,
+    currentCarryIndex: readResult(data, 14) as bigint | undefined,
   })
 }
 
@@ -310,18 +286,10 @@ export function usePerpsAccount(markPrice?: bigint) {
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.housePool,
-        abi: PERPS_HOUSE_POOL_ABI,
-        functionName: 'totalAssets',
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'currentCarryIndex',
       },
-      {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: arbitrumSepolia.contracts.multicall3.address,
-        abi: multicall3Abi,
-        functionName: 'getCurrentBlockTimestamp',
-      },
-      ...sideCarryContracts(0n),
-      ...sideCarryContracts(1n),
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
@@ -502,7 +470,7 @@ export function usePerpsAccount(markPrice?: bigint) {
 
   const freshAccount = useMemo(() => {
     const accountView = readResult(dynamicContractData, 0)
-    const accountMarkPrice = readResult(dynamicContractData, 23) as bigint | undefined
+    const accountMarkPrice = readResult(dynamicContractData, 16) as bigint | undefined
     const position = parsePosition(readResult(dynamicContractData, 1), accountMarkPrice)
     const tradingAccountAssets = readResult(dynamicContractData, 3) as bigint | undefined
     const ownerWalletAssets = readResult(dynamicContractData, 4) as bigint | undefined
@@ -527,8 +495,8 @@ export function usePerpsAccount(markPrice?: bigint) {
       : readBigInt(riskParams, 2, 'maintMarginBps')
     const vpiAccrued = readBigInt(enginePosition, 6, 'vpiAccrued')
     const pendingCarryAssets = readPendingCarryAssets(dynamicContractData)
-    const entryCostAssetAtoms = readResult(dynamicContractData, 22) as bigint | undefined
-    const vpiReserveAssets = readResult(dynamicContractData, 24) as bigint | undefined
+    const entryCostAssetAtoms = readResult(dynamicContractData, 15) as bigint | undefined
+    const vpiReserveAssets = readResult(dynamicContractData, 17) as bigint | undefined
     const snapshotCurrent = !snapshotInvalidated && !dynamicContractsError
     const riskReady = snapshotCurrent && accountView !== undefined && accountLedgerSnapshot !== undefined &&
       accountMarkPrice !== undefined && accountMarkPrice > 0n && capPrice !== undefined && isFadWindow !== undefined &&

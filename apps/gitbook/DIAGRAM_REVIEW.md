@@ -1,6 +1,13 @@
 # GitBook diagram review
 
-Reviewed against **Plether Core v2.0.0** (`config/perps/arbitrum-sepolia-v2.0.0.json`, commit `1209ca8a5b94a4fb6323c7c4585846ed93db3932`, active Arbitrum Sepolia MockUSDG deployment). Covers all **33** diagram assets and their synchronized article references.
+Reviewed against **Plether Core v2.1.0** (`config/perps/arbitrum-sepolia-v2.1.0.json`, commit `d5ef9725f72f5e131272da27004266d8a3d51e50`, active Arbitrum Sepolia MockUSDG deployment). Covers all **33** diagram assets and their synchronized article references.
+
+## Core v2.1.0 review & update — 2026-11-28
+
+* **Pinned contract release updated:** Migrated `generate-diagrams.mjs` to active `config/perps/arbitrum-sepolia-v2.1.0.json` (`d5ef9725f72f5e131272da27004266d8a3d51e50`, 31 contracts including `cfdOrderAdmissionValidator`, schema version 4, MockUSDG).
+* **Updated `weekly-market-state-schedule.svg`:** New York live-oracle FAD shoulders updated to `10 minutes` before Friday 17:00 (`Fri 16:50–17:00`) and `5 minutes` after Sunday 17:00 (`Sun 17:00–17:05`).
+* **Updated `margin-reduces-future-carry.svg` (filename retained for link stability):** Updated to reflect Core v2.1.0 flat carry on full maximum-profit exposure (`baseCarryBps = 5.00%`, independent of assigned margin or pool utilization); adding position margin raises price equity without reducing future carry.
+* **Updated `open-increase-sponsored-submission.svg`:** Updated opening execution reward clamp to `0.01–0.25 USDG`.
 
 ## Full Core v2.0.0 review & expansion — 2026-11-20
 
@@ -18,7 +25,7 @@ Reviewed against **Plether Core v2.0.0** (`config/perps/arbitrum-sepolia-v2.0.0.
 
 ## Source of truth
 
-* **Core Perps contracts:** `Plether-Fi/plether-core`, release **v2.0.0**, commit `1209ca8a5b94a4fb6323c7c4585846ed93db3932` (`config/perps/arbitrum-sepolia-v2.0.0.json`, deployment block `323658447`).
+* **Core Perps contracts:** `Plether-Fi/plether-core`, release **v2.1.0**, commit `d5ef9725f72f5e131272da27004266d8a3d51e50` (`config/perps/arbitrum-sepolia-v2.1.0.json`, deployment block `333192048`).
 * **AA client & web integration:** `@plether-fi/perps-aa-client@0.4.0` (`e35cf0e0e9b880e07812e36321dee98bd299dcbd`), `apps/frontend/src/utils/sponsoredOperation.ts`, `apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx`, `apps/frontend/src/pages/Vaults.tsx`.
 
 Each of the 33 records in [the manifest](.gitbook/assets/diagrams/diagram-manifest.json) lists its article, SVG, accessible description and reviewed source functions. `diagram-catalog.mjs` is the editable content source. Regeneration fails whenever the pinned contract commit changes so a visual rebuild cannot silently masquerade as a new semantic review.
@@ -27,11 +34,11 @@ Each of the 33 records in [the manifest](.gitbook/assets/diagrams/diagram-manife
 
 | Area | Verified invariant | Primary release source |
 | --- | --- | --- |
-| Weekly calendar | America/New_York DST-aware schedule: Fri 16:30–17:00 live close-only (30m), Fri 17:00–Sun 17:00 frozen, Sun 17:00–17:15 live close-only (15m). Non-scaled timeline. | `MarketCalendarLib.marketStatus`, `newYorkMarketBoundary` |
-| Order lifecycle & failures | Sponsored commit confirmation ≠ execution. Unexpected engine/receipt rollbacks stay pending; only terminal reasons fail an order. Executed and Failed are alternatives. | `OrderV2Types.PendingReason`, `TerminalReason`; `OrderRouterV2ExecutionSidecar` |
+| Weekly calendar | America/New_York DST-aware schedule: Fri 16:50–17:00 live close-only (10m), Fri 17:00–Sun 17:00 frozen, Sun 17:00–17:05 live close-only (5m). Non-scaled timeline. | `MarketCalendarLib.marketStatus`, `newYorkMarketBoundary` |
+| Order lifecycle & failures | Sponsored commit confirmation ≠ execution. Unexpected engine/receipt rollbacks stay pending; only terminal reasons fail an order. Executed and Failed are alternatives. | `OrderV3Types.PendingReason`, `TerminalReason`; `OrderRouterExecutionSidecar` |
 | Sponsorship & AA v2 | Native paymaster data is prepared before owner signing; first-time Trading Account deployment waits for Arbitrum Sepolia `safe` confirmation. | `@plether-fi/perps-aa-client@0.4.0`, `SponsoredOperationRecovery.tsx` |
-| Close accounting & carry | Carry collects from active position margin first, then eligible free USDG. Price losses net same-account claims before collectible pledge; action charges use separate sources (full close only waives uncollectible charges). | `MarginClearinghouseAccountingLib`, `CfdEnginePlanLib`, `CfdEngineSettlementSidecar` |
-| Close execution reward | Reductions and full closes (including TP/SL closes) reserve and pay `0 USDG` execution reward; opens reserve `0.01–0.20 USDG`; TP/SL reserves `0.20 USDG` trigger reward. | `CfdEngine.reserveCloseOrderExecutionBounty`, `PositionProtectionBook` |
+| Close accounting & carry | Flat carry accrues on full maximum-profit exposure at `baseCarryBps` and collects from active position margin first, then eligible free USDG. Price losses net same-account claims before collectible pledge; action charges use separate sources (full close only waives uncollectible charges). | `MarginClearinghouseAccountingLib`, `PositionRiskAccountingLib`, `CfdEnginePlanLib`, `CfdEngineSettlementSidecar` |
+| Close execution reward | Reductions and full closes (including TP/SL closes) reserve and pay `0 USDG` execution reward; opens reserve `0.01–0.25 USDG`; TP/SL reserves `0.25 USDG` trigger reward. | `CfdEngine.reserveCloseOrderExecutionBounty`, `PositionProtectionBook` |
 | Payouts & claims | Residual price payouts are all-or-nothing after existing claims; funded payouts credit PnL pledge if open or free USDG if flat; unpaid action rebates are waived. | `CfdEngine._payOrRecordTraderClaim`, `_settleTraderClaimBalance` |
 | LP waterfall & epochs | Junior absorbs first loss; gains restore Senior high-water mark first; target coupon capped by Junior principal. Hourly settlement runs Senior withdraw → Junior withdraw → Junior deposit → Senior deposit. | `HousePoolWaterfallAccountingLib`, `docs/runbooks/lp-settlement-keeper.md` |
 

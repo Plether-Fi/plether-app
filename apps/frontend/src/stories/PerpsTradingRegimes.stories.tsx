@@ -251,7 +251,7 @@ export const LiveMarketClose: Story = {
   play: async ({ canvasElement }) => {
     const canvas = await expandPreview(canvasElement)
     await expect(canvas.getByText('~0.0200%')).toBeInTheDocument()
-    await expect(canvas.getByText('0.1%')).toBeInTheDocument()
+    await expect(canvas.getByText('0.25%')).toBeInTheDocument()
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
     await expect(canvas.queryByText('Estimated frozen close spread')).not.toBeInTheDocument()
   },
@@ -265,7 +265,7 @@ export const FadOnlyClose: Story = {
   play: async ({ canvasElement }) => {
     const canvas = await expandPreview(canvasElement)
     await expect(canvas.getByText('~0.0200%')).toBeInTheDocument()
-    await expect(canvas.getByText('0.1%')).toBeInTheDocument()
+    await expect(canvas.getByText('0.25%')).toBeInTheDocument()
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
     await expect(canvas.queryByText('Estimated frozen close spread')).not.toBeInTheDocument()
   },

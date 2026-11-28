@@ -111,13 +111,14 @@ spec = describe "Plether.Handlers.InsightsProtocol" $ do
     verifyRuntimeCodeHash expectedHash Null
       `shouldBe` ContractCodeCheck Nothing Nothing
 
-  it "extracts all 30 contracts and economics from the embedded release manifest" $ do
+  it "extracts all 31 contracts and economics from the embedded release manifest" $ do
     let contracts = extractManifestContracts Manifest.manifestValue
         economics = extractManifestEconomics Manifest.manifestValue
-    length contracts `shouldSatisfy` (>= 30)
+    length contracts `shouldSatisfy` (>= 31)
     any (\c -> mcsKey c == "cfdEngine") contracts `shouldBe` True
+    any (\c -> mcsKey c == "cfdOrderAdmissionValidator") contracts `shouldBe` True
     any (\c -> mcsKey c == "emergencyPauseCoordinator") contracts `shouldBe` True
-    Map.lookup "initialMarginBps" economics `shouldBe` Just "20"
+    Map.lookup "initialMarginBps" economics `shouldBe` Just "30"
     Map.lookup "executionFeeBps" economics `shouldBe` Just "4"
     extractManifestContracts (object ["contracts" .= object []]) `shouldBe` []
 

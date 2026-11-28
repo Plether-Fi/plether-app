@@ -30,9 +30,14 @@ function evidence(kind = 'Open', shape = 'order') {
   const signatures = {
     order: 'updateOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool))',
     batch: 'updateBatchOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool),(bool,uint64,uint256,uint256,uint64,uint64))',
+    batchV210: 'updateBatchOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool),(bool,uint64,uint256,uint256,uint64,uint64,uint256[]))',
     liquidation: 'updateLiquidationBatchPrice(address,bytes[])',
   }
-  const quote = shape === 'liquidation' ? [101n, 99n, 100n, 7n, 0n] : [1n, 101n, 100n, 7n, 0n, 60n, 0n, 0n, 0n, ...(shape === 'batch' ? Array(6).fill(0n) : [])]
+  const quote = shape === 'liquidation'
+    ? [101n, 99n, 100n, 7n, 0n]
+    : shape === 'batchV210'
+      ? [1n, 101n, 100n, 7n, 0n, 60n, 0n, 0n, 0n, 320n, 1n, 1000n, 100n, 1n, 999n, 1001n, 224n, 0n]
+      : [1n, 101n, 100n, 7n, 0n, 60n, 0n, 0n, 0n, ...(shape === 'batch' ? Array(6).fill(0n) : [])]
   return {
     trace: { type: 'CALL', calls: [
       { type: 'CALL', from: c.orderRouter.address, to: c.pletherOracle.address, input: topic(signatures[shape]).slice(0, 10), output: data(quote) },
@@ -41,7 +46,7 @@ function evidence(kind = 'Open', shape = 'order') {
     logs: [{ address: c.cfdEngine.address, topics: [TOPICS[kind.toLowerCase()], data([10n])], data: data([0n, 10n ** 20n, 101n, 0n]), logIndex: '0x3' }],
   }
 }
-for (const [kind, shape] of [['Open', 'order'], ['Close', 'batch'], ['Liquidation', 'liquidation']]) {
+for (const [kind, shape] of [['Open', 'order'], ['Close', 'batch'], ['Close', 'batchV210'], ['Liquidation', 'liquidation']]) {
   test(`${kind} decodes the pinned settlement ABI and ${shape} oracle return shape`, () => {
     const e = evidence(kind, shape), [action] = decodeActions(e.trace, e.logs, release)
     assert.equal(action.kind, kind); assert.equal(action.markPrice, 100n); assert.equal(action.logIndex, 3)
@@ -100,6 +105,17 @@ test('the actual hourly LP settlement proves the entire previously unexplained v
   const contributionPp = Number(BigInt(e.expectedValuationChangeUsdg) * 10n ** 21n * 100n)
     / Number((BigInt(e.supplyBeforeFlow) + 1000n) * BigInt(e.periodStartDilutedSharePrice))
   assert.ok(Math.abs(contributionPp - 0.0004483698100118797) < 1e-15)
+})
+test('LP timing evidence accepts v2.1.0 checkpointCarryIndex() selector', () => {
+  const manifest = deployedRelease()
+  const e = lpFixture()
+  eachCall(e.trace, node => {
+    if (node.to === manifest.contracts.cfdEngine.address && node.input?.slice(0, 10) === topic('checkpointCarryIndexes()').slice(0, 10)) {
+      node.input = topic('checkpointCarryIndex()').slice(0, 10)
+    }
+  })
+  const [boundary] = decodeLpValuations(e.trace, e.logs, manifest)
+  assert.equal(boundary.logIndex, 2)
 })
 test('LP timing evidence rejects mismatched receipts, missing NAV and nested engine mutations', () => {
   const manifest = deployedRelease()

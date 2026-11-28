@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.35;
+pragma solidity 0.8.39;
 
 import {FullPrecisionMath} from "./FullPrecisionMath.sol";
 
-/// @dev Mirrors the canonical v2.0.0 lens ABI. The artifact generator checks
+/// @dev Mirrors the canonical v2.1.0 lens ABI. The artifact generator checks
 ///      both tuple layouts against the generated consumer ABI before compiling.
 interface IPerpsMaxOpenLens {
     struct OpenPreview {
@@ -37,6 +37,7 @@ interface IPerpsMaxOpenLens {
         uint256 maxSizeDelta;
         OpenPreview preview;
         uint8 limitingReason;
+        int256 postEligibleEquityAssets;
     }
 
     function quoteMaxOpen(address account, uint8 side, uint256 marginDelta, uint256 oraclePrice)

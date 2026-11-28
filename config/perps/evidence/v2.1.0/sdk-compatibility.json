@@ -1,0 +1,8 @@
+{
+  "package": "@plether-fi/perps-aa-client",
+  "version": "0.4.0",
+  "artifactSourceCommit": "e35cf0e0e9b880e07812e36321dee98bd299dcbd",
+  "protocolSourceCommit": "d5ef9725f72f5e131272da27004266d8a3d51e50",
+  "runtimeSourcePath": "packages/perps-aa-client/src",
+  "runtimeSourceTree": "0b2a4a44ba3a2a5b3194a0ed3497dc5b868084b7"
+}

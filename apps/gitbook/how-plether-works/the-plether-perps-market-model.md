@@ -43,7 +43,7 @@ Plether executes trades via a binding **commit-first, price-later** pipeline:
 
 1. Deposit USDG into your Trading Account's Margin Account.
 2. Authorize a sponsored LONG USD or SHORT USD commit in your owner wallet.
-3. **Opens and increases** reserve submitted margin and an opening execution reward (`0.01–0.20 USDG`). **Reductions and full closes** (including TP/SL closes) reserve **zero** execution reward and no new margin; carry still checkpoints from active position margin first, then eligible free USDG.
+3. **Opens and increases** reserve submitted margin and an opening execution reward (`0.01–0.25 USDG`). **Reductions and full closes** (including TP/SL closes) reserve **zero** execution reward and no new margin; carry still checkpoints from active position margin first, then eligible free USDG.
 4. The binding order enters the global FIFO queue (committed orders cannot be cancelled or repriced).
 5. A keeper[^keeper] finalizes it using the first eligible post-commit Pyth basket observation (during live or FAD-only[^fad] sessions, with the `0.25×` adverse confidence shift) or the validated frozen basket (for voluntary closes during `oracleFrozen`, unshifted plus the `50 bps` frozen-close spread).
 6. If execution-limit and risk checks pass, the engine updates the position and settles balances.

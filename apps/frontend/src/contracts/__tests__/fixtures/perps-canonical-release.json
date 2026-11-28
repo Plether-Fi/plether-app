@@ -143,6 +143,10 @@
     "cfdEnginePlanningReader": {
       "address": "0x000000000000000000000000000000000000001e",
       "runtimeCodeHash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "cfdOrderAdmissionValidator": {
+      "address": "0x000000000000000000000000000000000000001f",
+      "runtimeCodeHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   },
   "settlementToken": {

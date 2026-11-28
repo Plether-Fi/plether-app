@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="779" viewBox="0 0 640 779" role="img" aria-labelledby="open-increase-sponsored-submission-title open-increase-sponsored-submission-desc" focusable="false">
 <title id="open-increase-sponsored-submission-title">Authorize an opening order</title>
-<desc id="open-increase-sponsored-submission-desc">Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution. Opens and increases reserve submitted margin plus a 0.01–0.20 USDG opening execution reward until executed or cleared.</desc>
+<desc id="open-increase-sponsored-submission-desc">Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution. Opens and increases reserve submitted margin plus a 0.01–0.25 USDG opening execution reward until executed or cleared.</desc>
 <style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
 <rect width="640" height="779" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · SPONSORED TRANSACTIONS</text>
@@ -35,6 +35,6 @@
 <rect x="32" y="629" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
 <rect x="36" y="639" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
 <text x="56" y="663" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Opens and increases reserve submitted margin</text>
-<text x="56" y="693" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">plus a 0.01–0.20 USDG opening execution</text>
+<text x="56" y="693" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">plus a 0.01–0.25 USDG opening execution</text>
 <text x="56" y="723" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">reward until executed or cleared.</text>
 </svg>

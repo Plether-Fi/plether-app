@@ -9,7 +9,7 @@ const require = createRequire(process.env.FAUCET_NODE_PACKAGE ?? new URL('../../
 const { keccak256, encodeFunctionData, parseAbi } = require('viem')
 const { privateKeyToAccount } = require('viem/accounts')
 const account = privateKeyToAccount(`0x${'1'.repeat(64)}`) // Public test fixture.
-const token='0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d', clearinghouse='0xb5b851f627d6df3cf3f096e23e20a58884d7b89a'
+const token='0x66705F56f2c88C9474d021D9C6AFE134205a63CE', clearinghouse='0x11BeF9BAB445C0E1F5b0280EE7E20498e3FC9D63'
 const beneficiary=`0x${'2'.repeat(40)}`, replacement=`0x${'a'.repeat(64)}`, blockHash=`0x${'b'.repeat(64)}`
 async function fixture(phase='mint') {
   const fn={mint:'mint',approval:'approve',deposit:'depositFor'}[phase]
@@ -17,7 +17,7 @@ async function fixture(phase='mint') {
   const target=phase==='deposit' ? clearinghouse : token
   const calldata=encodeFunctionData({abi:parseAbi([`function ${fn}(address,uint256)`]),functionName:fn,args:[recipient,100_000_000_000n]})
   const raw=await account.signTransaction({chainId:421614,nonce:12,type:'eip1559',to:target,data:calldata,gas:100000n,maxFeePerGas:1n,maxPriorityFeePerGas:0n,value:0n})
-  return {claim_id:'a6415ba2-5668-4ba5-a058-f627bd1b938d',address:beneficiary,token_address:token,clearinghouse,chain_id:421614,release_id:'v2.0.0',amount:'100000000000',phase,status:'recovery',signer:account.address.toLowerCase(),nonce:'12',target,calldata,tx_hash:keccak256(raw),raw_tx:raw,tx_status:'submitted'}
+  return {claim_id:'a6415ba2-5668-4ba5-a058-f627bd1b938d',address:beneficiary,token_address:token,clearinghouse,chain_id:421614,release_id:'v2.1.0',amount:'100000000000',phase,status:'recovery',signer:account.address.toLowerCase(),nonce:'12',target,calldata,tx_hash:keccak256(raw),raw_tx:raw,tx_status:'submitted'}
 }
 function provider(overrides={}) { return async (method,params) => {
   const values={eth_chainId:'0x66eee',eth_getTransactionReceipt:params[0]===replacement ? {transactionHash:replacement,from:account.address,blockHash,blockNumber:'0x64',status:'0x1',logs:[]} : null,
@@ -54,7 +54,7 @@ test('database repair is atomic, preserves phase, and fences concurrent finaliza
   try {
     sql(`INSERT INTO testnet_faucet_claims(address,token_address) VALUES ('${beneficiary}','${token}');
       INSERT INTO testnet_margin_funding(id,owner_address,address,token_address,chain_id,clearinghouse,signer,release_id,amount,phase,status)
-      VALUES ('${row.claim_id}','${beneficiary}','${beneficiary}','${token}',421614,'${clearinghouse}','${row.signer}','v2.0.0',100000000000,'deposit','recovery');
+      VALUES ('${row.claim_id}','${beneficiary}','${beneficiary}','${token}',421614,'${clearinghouse}','${row.signer}','v2.1.0',100000000000,'deposit','recovery');
       INSERT INTO testnet_margin_funding_transactions(claim_id,phase,attempt,signer,nonce,target,calldata,tx_hash,raw_tx)
       VALUES ('${row.claim_id}','deposit',1,'${row.signer}',12,'${row.target}','${row.calldata}','${row.tx_hash}','${row.raw_tx}');`)
     assert.match(sql(marginRecoverySql(row,verified)),/"recovered" : 1/)

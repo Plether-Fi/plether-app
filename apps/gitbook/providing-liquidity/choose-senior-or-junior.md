@@ -18,7 +18,7 @@ Both vaults are claims on the **same liquidity pool**, not separate strategies. 
 | **Loss order** | Absorbs losses only after Junior reaches zero | Absorbs pool losses first |
 | **Recovery order** | Restored to its protected high-water mark first | Receives residual revenue only after Senior is restored |
 | **Withdrawal priority** | Matured Senior requests funded first | Funded after matured Senior demand, subject to the `80%` max Senior-share cap |
-| **Annual maintenance fee** | None (**Zero fees**) | Live rate shown in UI (`0%` on the active v2.0.0 deployment; configurable with a `72-hour` timelock; paid by share issuance when nonzero) |
+| **Annual maintenance fee** | None (**Zero fees**) | Live rate shown in UI (`0%` on the active v2.1.0 deployment; configurable with a `72-hour` timelock; paid by share issuance when nonzero) |
 | **Can principal fall or be wiped?** | Yes (after Junior is exhausted) | Yes (before Senior is impaired) |
 | **Is return guaranteed?** | No | No |
 

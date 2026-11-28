@@ -2,18 +2,19 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import publicManifest from '../../../public/perps-aa-manifest.json'
-import release from '../../../../../config/perps/arbitrum-sepolia-v2.0.0.json'
+import release from '../../../../../config/perps/arbitrum-sepolia-v2.1.0.json'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK, PERPS_RELEASE, PERPS_RELEASE_IS_DEPLOYED } from '../perpsAddresses'
 
 const root = path.resolve(process.cwd(), '../..')
-describe('v2.0.0 canonical release', () => {
+describe('v2.1.0 canonical release', () => {
   it('selects the complete deployed MockUSDG graph', () => {
     expect(PERPS_RELEASE_IS_DEPLOYED).toBe(true)
-    expect(PERPS_RELEASE.release.version).toBe('v2.0.0')
-    expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(323658447)
-    expect(PERPS_ARBITRUM_SEPOLIA.settlementToken).toBe('0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d')
+    expect(PERPS_RELEASE.release.version).toBe('v2.1.0')
+    expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(333192048)
+    expect(PERPS_ARBITRUM_SEPOLIA.settlementToken).toBe('0x66705F56f2c88C9474d021D9C6AFE134205a63CE')
     expect(PERPS_ARBITRUM_SEPOLIA.cfdEnginePlanningReader).toBe(release.contracts.cfdEnginePlanningReader.address)
-    expect(Object.keys(PERPS_RELEASE.contracts)).toHaveLength(30)
+    expect(PERPS_ARBITRUM_SEPOLIA.cfdOrderAdmissionValidator).toBe(release.contracts.cfdOrderAdmissionValidator.address)
+    expect(Object.keys(PERPS_RELEASE.contracts)).toHaveLength(31)
     for (const [key, pin] of Object.entries(release.contracts)) {
       expect(PERPS_RELEASE.contracts[key]).toMatchObject({ address: pin.address, runtimeCodeHash: pin.runtimeCodeHash })
     }
@@ -31,7 +32,7 @@ describe('v2.0.0 canonical release', () => {
     expect(historical.release.version).toBe('v1.3.1')
     expect(historical.release.sourceCommit).toBe('cf86189bcca4813f39d6405a338b77176783eb42')
     const registry = readFileSync(path.join(root, 'apps/frontend/src/contracts/perpsAddresses.ts'), 'utf8')
-    expect(registry).toContain('arbitrum-sepolia-v2.0.0.json')
+    expect(registry).toContain('arbitrum-sepolia-v2.1.0.json')
     expect(registry).not.toContain('arbitrum-sepolia-v3.json')
   })
 })

@@ -25,11 +25,12 @@ export const addressTopic = value => ('0x' + value.slice(-40)).toLowerCase()
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
 const selector = signature => topic(signature).slice(0, 10)
 const ORACLE_CALLS = new Map([
-  ['updateOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool))', [9, 1]],
-  ['updateBatchOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool),(bool,uint64,uint256,uint256,uint64,uint64))', [15, 1]],
-  ['updatePrice(address,bytes[],uint8)', [8, 0]],
-  ['updateLiquidationPrice(address,bytes[],address)', [8, 0]],
-  ['updateLiquidationBatchPrice(address,bytes[])', [5, 0]],
+  ['updateOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool))', [9, 1, true]],
+  ['updateBatchOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool),(bool,uint64,uint256,uint256,uint64,uint64))', [15, 1, true]],
+  ['updateBatchOrderExecutionPrice(address,bytes[],(uint64,uint256,uint8,bool,bool),(bool,uint64,uint256,uint256,uint64,uint64,uint256[]))', [10, 1, false]],
+  ['updatePrice(address,bytes[],uint8)', [8, 0, true]],
+  ['updateLiquidationPrice(address,bytes[],address)', [8, 0, true]],
+  ['updateLiquidationBatchPrice(address,bytes[])', [5, 0, true]],
 ].map(([signature, shape]) => [selector(signature), shape]))
 const kindForTopic = value => value === TOPICS.open ? 'Open' : value === TOPICS.close ? 'Close' : value === TOPICS.liquidation ? 'Liquidation' : undefined
 const PAY_OUT = selector('payOut(address,uint256)')
@@ -71,8 +72,9 @@ export function decodeActions(trace, receiptLogs, release) {
     if (node.type === 'CALL' && same(node.from, router) && same(node.to, oracle) && node.output) {
       const shape = ORACLE_CALLS.get(node.input?.slice(0, 10))
       if (shape) {
-        const [length, offset] = shape
-        const output = words(node.output, length)
+        const [length, offset, exact] = shape
+        const output = exact ? words(node.output, length) : words(node.output)
+        if (!exact && output.length < length) throw new AttributionError('Malformed ABI evidence')
         if (!offset || output[0] === 1n) {
           const q = output.slice(offset)
           quotes.push(length === 5 ? { prices: [q[0], q[1]], mark: q[2], time: q[3] }
@@ -163,7 +165,7 @@ export function decodeLpValuations(trace, receiptLogs, release) {
   const junior = release.contracts.juniorVault.address
   const settle = selector('settleLpEpoch(uint256,uint256)')
   const nav = selector('terminalNavSnapshot()')
-  const checkpoint = selector('checkpointCarryIndexes()')
+  const checkpoints = new Set([selector('checkpointCarryIndexes()'), selector('checkpointCarryIndex()')])
   const deposit = selector('finalizeDepositEpochFromPool(uint256,uint256)')
   const redeem = selector('fundRedeemEpoch(uint256,uint256,uint256)')
   const flows = []
@@ -185,7 +187,7 @@ export function decodeLpValuations(trace, receiptLogs, release) {
             const pnl = value[2] >= 2n ** 255n ? value[2] - 2n ** 256n : value[2]
             if (terminal !== undefined && terminal !== pnl) throw new AttributionError('Terminal NAV changed inside LP settlement')
             terminal = pnl
-          } else if (child.type === 'CALL' && id !== checkpoint) throw new AttributionError('Unexpected engine mutation inside LP settlement')
+          } else if (child.type === 'CALL' && !checkpoints.has(id)) throw new AttributionError('Unexpected engine mutation inside LP settlement')
         }
         if (child.type === 'CALL' && same(child.from, pool) && same(child.to, junior) && [deposit, redeem].includes(id)) {
           if (terminal === undefined) throw new AttributionError('Capital flow has no preceding terminal NAV evidence')

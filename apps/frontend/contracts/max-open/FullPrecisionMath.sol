@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.35;
+pragma solidity 0.8.39;
 
 // Adapted from OpenZeppelin Contracts v5.5.0 Math.mulDiv (MIT), originally
 // Remco Bloemen https://xn--2-umb.com/21/muldiv and Uniswap Labs (MIT).

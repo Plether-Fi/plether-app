@@ -402,7 +402,7 @@ computeOverviewResponse pool client manager cfg mKernel = do
               .= object
                 [ "releaseVersion" .= Manifest.releaseVersion
                 , "deploymentBlock" .= T.pack (show Manifest.releaseDeploymentBlock)
-                , "pinnedContracts" .= (30 :: Int)
+                , "pinnedContracts" .= (31 :: Int)
                 ]
           , "infra"
               .= object

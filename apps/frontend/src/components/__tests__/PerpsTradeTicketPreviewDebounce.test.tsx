@@ -392,7 +392,7 @@ describe('Perps trade preview debounce', () => {
   it('passes selected leverage to Max and updates a filled maximum when leverage changes', async () => {
     wagmiMocks.maxQuote.mockImplementation(({ selectedMaxLeverageBps }: { selectedMaxLeverageBps: number }) => ({
       quote: { maxSizeDelta: BigInt(selectedMaxLeverageBps) * 10n ** 17n, preview: { valid: true } },
-      marginDelta: 999_800_000n, isPending: false, isFetching: false,
+      marginDelta: 999_750_000n, isPending: false, isFetching: false,
     }))
     render(<PerpsTradeTicket enableLiveTrading initialLeverage={10} oraclePriceRaw={100_000_000n}
       oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)

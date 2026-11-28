@@ -44,7 +44,7 @@ Plether actions can pause or fail at different stages — account deployment, ga
 Common blockers include:
 
 * **Active TP/SL protection:** An active TP/SL record can block discretionary orders. Remove untriggered protection in the **TP/SL** tab and wait for confirmation first. Triggered or latched exits cannot be removed while unresolved (see [Take profit and stop loss](take-profit-and-stop-loss.md#understand-every-protection-state)).
-* **Account or size checks:** Insufficient **Available to Trade** (must cover opening margin plus the `0.01–0.20 USDG` opening execution reward), order below the `1,000 USDG` minimum notional, leverage exceeding the initial-margin limit (`33x` normal UI cap / `416x` simulator cap), opposing position already open, or `5` pending orders already active.
+* **Account or size checks:** Insufficient **Available to Trade** (must cover opening margin plus the `0.01–0.25 USDG` opening execution reward), order below the `1,000 USDG` minimum notional, leverage exceeding the initial-margin limit (`33x` normal UI cap / `294x` simulator cap), opposing position already open, or `5` pending orders already active.
 * **Market or pool limits:** `40%` net-pool skew[^skew] cap reached, pool solvency capacity reached, **FAD close-only**, **Oracle frozen**, **Degraded** mode or paused risk commitments.
 
 A reverted commit rolls back atomically with no order or reservation created.
@@ -63,7 +63,7 @@ See [Why is my order pending or failed?](why-is-my-order-pending-or-failed.md) f
 
 * **Why it stays Pending:** Earlier global FIFO orders, waiting for the first post-commit Pyth tick (`block > commitBlock`, `publishTime > commitTime`), transient Hermes/oracle validation errors (confidence above `0.10%` or timestamp spread above `5s`), an unexpected engine/receipt rollback (which **stays Pending** rather than automatically becoming terminal) or a close-only block on an opening order.
 * **Terminal failures:** **Expiry** (`> 60s`), **Slippage exceeded**, **Engine rejected** or **Account liquidated**.
-* **Execution rewards:** Opening orders pay their reserved `0.01–0.20 USDG` reward to the keeper on execution, terminal failure or expiry cleanup (or forfeit it to the protocol treasury on liquidation). Reductions and closes reserve and pay **zero** execution reward.
+* **Execution rewards:** Opening orders pay their reserved `0.01–0.25 USDG` reward to the keeper on execution, terminal failure or expiry cleanup (or forfeit it to the protocol treasury on liquidation). Reductions and closes reserve and pay **zero** execution reward.
 * **Confirmed operation, unchanged position:** Check *which* step confirmed — a confirmed commit only creates a Pending order; only `OrderExecuted` changes the position.
 
 ## Deposits, adding margin and withdrawals
@@ -79,7 +79,7 @@ See [Your Margin Account](your-margin-account.md).
 
 * **Execution price differs from preview:** Previews reflect current state; execution uses the later FIFO post-commit Pyth observation plus the `0.25×` adverse confidence shift during live/FAD (or the unshifted validated price plus the separate `50 bps` spread during `oracleFrozen`).
 * **Realized result differs from Unrealized PnL:** Realized settlement also includes the `0.04%` execution fee, signed VPI, carry, execution-price confidence shift and any frozen-close spread. Compare against the **Close Preview** and close reconciliation details rather than Unrealized PnL[^pnl] alone (see [How PnL is calculated](../how-plether-works/how-pnl-is-calculated.md) and [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md)).
-* **Liquidation price or health changed:** Price health equals `position margin (after projected carry) + same-account trader claim + exact PnL` compared against maintenance margin (`0.10%` live, `3.00%` during FAD). **Free Margin Account USDG and committed opening margin do not raise price equity or move your price liquidation threshold.** Actual liquidation also uses the adverse confidence-adjusted price, so liquidation can trigger slightly before the central displayed mark reaches the estimate. **Not in range** means the threshold lies outside Plether's bounded `[0, 2.00]` range.
+* **Liquidation price or health changed:** Price health equals `position margin (after projected carry) + same-account trader claim + exact PnL` compared against maintenance margin (`0.10%` live, `2.00%` during FAD). **Free Margin Account USDG and committed opening margin do not raise price equity or move your price liquidation threshold.** Actual liquidation also uses the adverse confidence-adjusted price, so liquidation can trigger slightly before the central displayed mark reaches the estimate. **Not in range** means the threshold lies outside Plether's bounded `[0, 2.00]` range.
 * **Close pending while health is falling:** A pending close does **not** reduce exposure or pause liquidation, and carry collected at commitment may have already lowered position margin. To strengthen price health immediately, use **Add margin** (not just Deposit, which only covers carry). If liquidation executes before the close, the position is closed, all pending orders fail, opening execution rewards are forfeited to the protocol treasury and committed opening margin is released (never backing price loss, though released free USDG can cover unpaid carry, VPI clawback or liquidation charges).
 
 ## TP/SL protection issues
@@ -100,7 +100,7 @@ Check the **TP/SL** tab and linked close order (see [Take profit and stop loss](
 | Market state | Trader effect |
 | --- | --- |
 | **Open** | Opens, increases, reductions and closes active under normal rules |
-| **FAD close-only** | Opens blocked; closes use live post-commit pricing, `3.00%` FAD maintenance margin and no frozen spread |
+| **FAD close-only** | Opens blocked; closes use live post-commit pricing, `2.00%` FAD maintenance margin and no frozen spread |
 | **Oracle frozen** | Opens blocked; voluntary closes use the validated frozen basket (up to `3-day` staleness), signed VPI and `50 bps` spread |
 | **Degraded** | Opens and open-position withdrawals blocked; deposits, margin additions, closes, liquidations and flat-account withdrawals remain available |
 | **Risk commitments paused** | New opens blocked; closes and existing queue execution remain available onchain |

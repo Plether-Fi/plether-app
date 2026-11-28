@@ -2,7 +2,7 @@
 
 > **Always verify the network, token and contract addresses before signing any transaction.**
 
-The active Plether Perps DEX release is **Core v2.0.0** on **Arbitrum Sepolia**.
+The active Plether Perps DEX release is **Core v2.1.0** on **Arbitrum Sepolia**.
 
 > **Mainnet vs. testnet web apps**
 >
@@ -13,12 +13,12 @@ The active Plether Perps DEX release is **Core v2.0.0** on **Arbitrum Sepolia**.
 
 | Field | Value |
 | --- | --- |
-| **Release version** | `v2.0.0` (schema 4, order interface 3) |
+| **Release version** | `v2.1.0` (schema 4, order interface 3) |
 | **Network** | Arbitrum Sepolia (`chainId: 421614`) |
-| **Release date** | `2026-10-28` (`phase: active`) |
-| **Deployment block** | `323658447` (`2026-10-28 10:59:08 UTC`) |
-| **Core source commit** | `1209ca8a5b94a4fb6323c7c4585846ed93db3932` |
-| **AA manifest version** | `perps-aa-arbitrum-sepolia-usdg-200-v2` |
+| **Release date** | `2026-11-27` (`phase: active`) |
+| **Deployment block** | `333192048` (`2026-11-27 16:25:29 UTC`) |
+| **Core source commit** | `d5ef9725f72f5e131272da27004266d8a3d51e50` |
+| **AA manifest version** | `perps-aa-arbitrum-sepolia-usdg-210-v2` |
 | **Settlement token** | Mock USDG (`USDG`, 6 decimals, mock test token; no EIP-3009) |
 
 You can also inspect the active contracts and your connected Owner Wallet / Trading Account addresses at any time via the **Build** link in the application footer.
@@ -27,18 +27,19 @@ You can also inspect the active contracts and your connected Owner Wallet / Trad
 
 | Contract | Role | Address |
 | --- | --- | --- |
-| **MockUSDG (`settlementToken`)** | 6-decimal test margin & settlement token | `0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d` |
-| **MarginClearinghouse** | Holds trader Margin Account balances & reserves | `0xb5b851f627d6df3cf3f096e23e20a58884d7b89a` |
-| **CfdEngine** | Core positions, margin, carry, VPI & claims | `0xca18a6783d7542f9d2f28f4f259772b74c4d6baa` |
-| **HousePool** | Shared USDG liquidity pool & tranche waterfall | `0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e` |
-| **SeniorVault (`psLP`)** | Senior LP ERC-4626/async tranche vault (9 decimals) | `0x5dc42ba5a1e8dd3e1b6868d10f66a9bf8fb5b83d` |
-| **JuniorVault (`pjLP`)** | Junior LP ERC-4626/async tranche vault (9 decimals) | `0x4a8b67184a1e3224c11a191cc69f22c50eef734e` |
-| **PletherOracle** | 6-feed Pyth FX basket oracle | `0x4f2c62a0e03657f52c633c19c11f88d8f0897bb2` |
-| **OrderRouter** | Delayed FIFO order commitment & execution | `0x918663d6da8cb33b325a04c4a5e8c51d42f3b444` |
-| **OrderLifecycleBook** | Order timing, status & receipt storage | `0x327d5fd04e17d96dd5c4f845a0b4256a9e19645c` |
-| **PositionProtectionBook** | Onchain TP/SL records & trigger accounting | `0x81e3b03cf29865b6c0f85925839567e2bc61073d` |
-| **CfdClosePreview** | Onchain close-settlement preview helper | `0xb5ec32b9fa4a749f89648848cc702831cc803237` |
-| **EmergencyPauseCoordinator** | Coordinated emergency pause control | `0x736ead1f7a23f980e9fb51f023822c53d739ca2c` |
+| **MockUSDG (`settlementToken`)** | 6-decimal test margin & settlement token | `0x66705F56f2c88C9474d021D9C6AFE134205a63CE` |
+| **MarginClearinghouse** | Holds trader Margin Account balances & reserves | `0x11BeF9BAB445C0E1F5b0280EE7E20498e3FC9D63` |
+| **CfdEngine** | Core positions, margin, carry, VPI & claims | `0xa3C43242F4E0a7C9a21Bd7dE48376D2f0779CaA6` |
+| **HousePool** | Shared USDG liquidity pool & tranche waterfall | `0x23735f88637cbf329ca1C4f49B96953d25A24b4a` |
+| **SeniorVault (`psLP`)** | Senior LP ERC-4626/async tranche vault (9 decimals) | `0xCac0AeB2b8d7874e33b5CD7f6eF7c2f85d98469F` |
+| **JuniorVault (`pjLP`)** | Junior LP ERC-4626/async tranche vault (9 decimals) | `0xe69d0d809b8CdaD43074C2B92B0e4C0969364277` |
+| **PletherOracle** | 6-feed Pyth FX basket oracle | `0x3BAc571AF4f9F6535696F82460EFE56A348C91B2` |
+| **OrderRouter** | Delayed FIFO order commitment & execution | `0xB4c7548ba764e22107964637e31558af724c1c3E` |
+| **OrderLifecycleBook** | Order timing, status & receipt storage | `0x194cd4822c70a2851d5B14abC96018BE41a5a5f0` |
+| **CfdOrderAdmissionValidator** | Pre-trade open admission & slippage band validator | `0x6F6eBb24C49a449e0Ec14208D883d0e4938b4a58` |
+| **PositionProtectionBook** | Onchain TP/SL records & trigger accounting | `0xc7C8ED1cb968F124D4faF01655AdEC222EaEFf02` |
+| **CfdClosePreview** | Onchain close-settlement preview helper | `0x2EAD91843fD8e161204B68CF518335BfFD514C58` |
+| **EmergencyPauseCoordinator** | Coordinated emergency pause control | `0x59bb4dd58F9dd146F61A4aF8F7311ab2f4793056` |
 | **Pyth** | External Pyth Network contract on Arbitrum Sepolia | `0x0B73614636C855Bf23F342F307FB981A3e47f42B` |
 
 ### Account Abstraction (gas-sponsorship) infrastructure
@@ -72,7 +73,7 @@ Each deployed `PletherOracle` fixes six Pyth FX feeds, their quote inversions, r
 | **Position size (`plDXY`)** | `18` decimals | Canonical lot quantum: **`100 plDXY`** (`10^20` raw units) |
 | **LP Vault shares (`psLP`, `pjLP`)** | `9` decimals | Virtual shares offset: `1,000` |
 
-### Deployment-time economic & risk parameters (Core v2.0.0)
+### Deployment-time economic & risk parameters (Core v2.1.0)
 
 > Risk parameters (other than the immutable `0.00–2.00` settlement range) can be updated via **72-hour timelocked** governance. Always treat live onchain reads and the in-app preview as authoritative.
 
@@ -80,12 +81,14 @@ Each deployed `PletherOracle` fixes six Pyth FX feeds, their quote inversions, r
 
 | Parameter | Deployment Value | Notes |
 | --- | --- | --- |
-| **Initial margin rate** | `0.20%` (`20 bps`) | UI caps normal leverage at **`33x`** (aligned with 3% FAD margin); Margin Call Simulator unlocks up to `416x` (`20 + 4 bps`) |
+| **Initial margin rate** | `0.30%` (`30 bps`) | Protocol ceiling `333x`; UI caps normal leverage conservatively |
 | **Maintenance margin rate (live)** | `0.10%` (`10 bps`) | Liquidatable when `positionEquity ≤ maintenanceMargin` |
-| **Market-close (FAD) margin rate** | `3.00%` (`300 bps`) | Active Fri 16:30 NY – Sun 17:15 NY and closure-day overrides |
+| **Market-close (FAD) margin rate** | `2.00%` (`200 bps`) | Active Fri 16:50 NY – Sun 17:05 NY and closure-day overrides |
 | **Minimum open notional** | `1,000 USDG` | Enforced on open/increase execution |
+| **Minimum open slippage tolerance** | `0.25%` (`25 bps`) | Floor on finite open/increase slippage (`Infinity` / `Market` still allowed) |
 | **Max pending orders per account** | `5` | Active queue entries per Trading Account |
-| **Order execution window** | `60 seconds` | Order V3 review `submitBy`: `120s` (45s sign guard / 30s submit guard) |
+| **Order execution window** | `30 seconds` | Order V3 review `submitBy`: `120s` (45s sign guard / 30s submit guard) |
+| **Minimum order settlement delay** | `2 seconds` | Post-commit oracle observations must publish at least `2s` after commit |
 | **Liquidation charge** | `0.10%` (`10 bps`, min `1.00 USDG`) | Split **50% keeper** (min `0.50 USDG`) / **50% LP pool** / **0% protocol** |
 
 #### Fees, VPI, carry & oracle policy
@@ -93,15 +96,15 @@ Each deployed `PletherOracle` fixes six Pyth FX feeds, their quote inversions, r
 | Parameter | Deployment Value | Notes |
 | --- | --- | --- |
 | **Protocol execution fee** | `0.04%` (`4 bps`) | Charged on executed contract notional (treasury-designated when cash-credited) |
-| **Open / increase execution reward** | `0.01%` (`1 bp`), clamped `0.01–0.20 USDG` | Paid to order finalizer / cleaner |
+| **Open / increase execution reward** | `0.01%` (`1 bp`), clamped `0.01–0.25 USDG` | Paid to order finalizer / cleaner |
 | **Reduce / close execution reward** | `0 USDG` | Applies to voluntary closes and TP/SL closes |
-| **TP/SL trigger reward** | `0.20 USDG` | Reserved from free USDG when protection is created |
-| **Base annualized carry rate** | `5.00%` (`500 bps`) | Scaled linearly by same-side utilization (`0–100%`) |
+| **TP/SL trigger reward** | `0.25 USDG` | Reserved from free USDG when protection is created |
+| **Base annualized carry rate** | `5.00%` (`500 bps`) | Flat annual rate on full maximum-profit exposure (independent of margin or utilization) |
 | **VPI factor (`k`)** | `0.01` (`1e16` WAD) | Quadratic skew curve |
 | **Max directional skew ratio** | `40%` (`4e17` WAD) | Caps net directional exposure relative to pool depth |
 | **Settlement solvency buffer** | `0.25%` (`25 bps`) | Applied to post-trade worst-case directional liability |
 | **Frozen-close spread** | `0.50%` (`50 bps`) | Voluntary closes during `oracleFrozen` only; 100% LP-owned |
-| **Max basket confidence ratio** | `0.10%` (`10 bps`) | Observations with wider uncertainty are rejected |
+| **Max basket confidence ratio** | `0.25%` (`25 bps`) | Observations with wider uncertainty are rejected |
 | **Adverse confidence multiplier** | `0.25×` (`2,500 bps`) | Applied to opens, live/FAD closes, and liquidations; waived on frozen voluntary closes |
 | **Max component publish-time divergence** | `5 seconds` | All 6 Pyth FX feeds must align within 5s |
 | **Max frozen oracle staleness** | `3 days` (`259,200s`) | Bounds stale pricing during FX closures |

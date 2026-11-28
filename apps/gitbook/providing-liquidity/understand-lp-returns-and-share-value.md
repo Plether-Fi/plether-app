@@ -33,7 +33,7 @@ Because Senior and Junior have separate supplies and principals, their share pri
 * Realized and marked trader profits owed by the pool
 * Negative VPI rebates paid to traders who reduce directional skew
 * Bad debt when a trader's uncovered price loss exceeds their collateral and same-account claim
-* For Junior specifically: target coupon transfers to Senior, and share dilution if a nonzero **Annual vault fee** is configured (`0%` on the active v2.0.0 deployment; changes require a `72-hour` timelock)
+* For Junior specifically: target coupon transfers to Senior, and share dilution if a nonzero **Annual vault fee** is configured (`0%` on the active v2.1.0 deployment; changes require a `72-hour` timelock)
 * Oracle, smart-contract, USDG or operational failures
 
 ## What is *not* LP revenue
@@ -41,7 +41,7 @@ Because Senior and Junior have separate supplies and principals, their share pri
 | Item | Actual destination or treatment |
 | --- | --- |
 | **Protocol execution fee (`0.04%`)** | Protocol treasury |
-| **Opening execution reward (`0.01–0.20 USDG`)** | Executing or cleanup keeper (or treasury if forfeited on liquidation) |
+| **Opening execution reward (`0.01–0.25 USDG`)** | Executing or cleanup keeper (or treasury if forfeited on liquidation) |
 | **Liquidation keeper share (`50%`, min `0.50 USDG`)** | Executing liquidator |
 | **Released trader margin** | Returned to the trader |
 | **New LP deposits or recapitalization** | New capital exchanged for shares, not yield |

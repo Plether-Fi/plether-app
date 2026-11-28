@@ -46,7 +46,7 @@ Select **`Get USDG`** in the top banner, then **`Get 100,000 USDG`**. Plether pa
 
 ### Reservations while orders are pending
 
-* **Open or increase:** Reserves submitted order margin + opening execution reward (`1 bp`, `0.01–0.20 USDG`) from **Available to Trade**. On execution, committed margin enters position margin; on terminal failure or expiry cleanup, committed margin returns to free USDG while the opening reward pays the processing keeper.
+* **Open or increase:** Reserves submitted order margin + opening execution reward (`1 bp`, `0.01–0.25 USDG`) from **Available to Trade**. On execution, committed margin enters position margin; on terminal failure or expiry cleanup, committed margin returns to free USDG while the opening reward pays the processing keeper.
 * **Reduce or close (including TP/SL closes):** Reserves **zero** execution reward and no new margin; commitment still checkpoints carry from active position margin first, then free USDG.
 * **Liquidation cleanup:** Clears pending orders, releases committed-order margin (it does not back price losses), and forfeits pending opening execution rewards to the protocol treasury.
 

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 // Historical deployed scenarios supply validated fixtures at their runtime
-// boundaries. Compile the selected v2.0.0 manifest without replacing its deployment pins.
+// boundaries. Compile the selected v2.1.0 manifest without replacing its deployment pins.
 // Prepared-profile guards are exercised explicitly alongside deployed scenarios.
 const backend = fileURLToPath(new URL('../apps/backend/', import.meta.url))
 // Compile with full parallelism before running the test suite serially (-j1).

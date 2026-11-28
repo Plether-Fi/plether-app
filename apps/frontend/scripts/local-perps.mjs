@@ -17,7 +17,7 @@ const client = createPublicClient({ chain: arbitrumSepolia, transport: http(rpcU
 const wallet = createWalletClient({ chain: arbitrumSepolia, transport: http(rpcUrl) })
 const rpc = (method, params = []) => client.request({ method, params })
 if (!(await rpc('web3_clientVersion')).toLowerCase().includes('anvil') || await client.getChainId() !== 421614) throw new Error('Expected isolated Anvil fork on port 18545')
-const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/arbitrum-sepolia-v2.0.0.json', 'utf8'))
+const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/arbitrum-sepolia-v2.1.0.json', 'utf8'))
 const manifest = JSON.parse(fs.readFileSync('public/perps-aa-manifest.json', 'utf8'))
 const token = settlementContract(release)
 const addresses = Object.fromEntries(Object.entries(release.contracts).map(([k, v]) => [k, v.address]))
@@ -98,19 +98,17 @@ async function state() {
     readSnapshot('perpsPublicLens', 'getProtocolStatus'), readSnapshot('perpsPublicLens', 'getPosition', [trader]), readSnapshot('perpsPublicLens', 'getTraderAccount', [trader]), readSnapshot('positionProtectionBook', 'activePositionProtectionId', [trader]),
     Promise.all([readSnapshot('orderRouter', 'positionProtectionTriggerBountyAssets'), Promise.resolve(0n)]), readSnapshot('orderRouter', 'getAccountReservations', [trader]),
   ])
-  const [ledger, carryState, unsettledCarryAssets, riskParams, poolAssets, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseAssets] = await Promise.all([
+  const [ledger, carryState, unsettledCarryAssets, currentCarryIndex] = await Promise.all([
     readSnapshot('cfdEngineAccountLens', 'getAccountLedgerSnapshot', [trader]),
     readSnapshot('cfdEngine', 'positionCarryState', [trader]), readSnapshot('cfdEngine', 'unsettledCarryAssets', [trader]),
-    readSnapshot('cfdEngine', 'riskParams'), readSnapshot('housePool', 'totalAssets'),
-    ...['sideCarryIndex', 'sideCarryTimestamp', 'sideBorrowBaseAssets'].map(name => readSnapshot('cfdEngine', name, [position.side])),
+    readSnapshot('cfdEngine', 'currentCarryIndex'),
   ])
   const [{ calculatePendingCarryAssets }, { projectCarry }] = await Promise.all([
     vite.ssrLoadModule('/src/utils/perpsCarry.ts'), vite.ssrLoadModule('/src/utils/perpsRisk.ts'),
   ])
   const pendingCarryAssets = calculatePendingCarryAssets({
-    borrowBaseAssets: carryState.borrowBaseAssets ?? carryState[0], lastCarryIndex: carryState.lastCarryIndex ?? carryState[1],
-    unsettledCarryAssets, baseCarryBps: riskParams.baseCarryBps ?? riskParams[5], poolAssets,
-    blockTimestamp: block.timestamp, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseAssets,
+    maxProfitAssets: carryState.maxProfitAssets ?? carryState[0], lastCarryIndex: carryState.lastCarryIndex ?? carryState[1],
+    unsettledCarryAssets, currentCarryIndex,
   })
   const availableFreeSettlementAssets = pendingCarryAssets === undefined ? undefined : projectCarry(position.marginAssets, ledger.freeSettlementAssets, pendingCarryAssets).freeSettlementAssets
   if (activeId) lastProtectionId = activeId

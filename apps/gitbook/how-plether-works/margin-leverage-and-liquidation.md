@@ -31,10 +31,10 @@ Margin requirements and leverage use `N`, whereas directional PnL[^pnl] uses `Δ
 
 ## Initial margin
 
-Initial margin governs opening or increasing exposure (`initialMarginBps = 0.20%` on Core v2.0.0; normal UI cap `33x`, Margin Call Simulator cap `416x`):
+Initial margin governs opening or increasing exposure (`initialMarginBps = 0.30%` on Core v2.1.0):
 
 ```text
-Initial requirement = max(N × 0.20%, minimum liquidation charge floor)
+Initial requirement = max(N × 0.30%, minimum liquidation charge floor)
 ```
 
 Both assigned position margin and post-trade position equity (after execution fee, VPI and carry) must meet the initial requirement, pass the `1,000 USDG` minimum open notional, stay within the `40%` skew cap and pass pool solvency.
@@ -47,10 +47,10 @@ Maintenance margin determines whether an open position stays alive:
 Maintenance margin = N × active maintenance margin rate
 ```
 
-Active Core v2.0.0 rates:
+Active Core v2.1.0 rates:
 
 * **Live market:** `0.10%` (`10 bps`)
-* **FAD close-only window (market-close regime):** `3.00%` (`300 bps`)
+* **FAD close-only window (market-close regime):** `2.00%` (`200 bps`)
 
 Price liquidation triggers as soon as:
 
@@ -58,7 +58,7 @@ Price liquidation triggers as soon as:
 Position equity <= Maintenance margin
 ```
 
-Equality counts (`<=`, not `<`). Crossing into a FAD window raises maintenance from `0.10%` to `3.00%` immediately — a high-leverage position can become liquidatable without any move in `plDXY`.
+Equality counts (`<=`, not `<`). Crossing into a FAD window raises maintenance from `0.10%` to `2.00%` immediately — a high-leverage position can become liquidatable without any move in `plDXY`.
 
 ## Position leverage and equity leverage
 
@@ -78,7 +78,7 @@ If position equity hits zero or negative, treat the account as critically underc
 ## Depositing USDG vs adding position margin
 
 * **Depositing USDG** adds to **free Margin Account USDG** (and checkpoints carry from active position margin first, then eligible free USDG). It provides carry fallback and buying power, but does **not** raise price equity or move your liquidation price.
-* **Adding position margin** (**Edit Position Margin → Add margin**) checkpoints carry first, then moves free USDG into **Position margin** — immediately raising price equity, lowering Position leverage and shrinking your LP[^lp]-financed borrow base (reducing future carry). Future carry can still draw down the added margin first.
+* **Adding position margin** (**Edit Position Margin → Add margin**) checkpoints carry first, then moves free USDG into **Position margin** — immediately raising price equity and lowering Position leverage (flat carry on full maximum-profit exposure is unchanged). Future carry can still draw down the added margin first.
 * **Direct margin removal is not supported:** Releasing assigned position margin requires reducing or closing the position.
 
 ![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
@@ -115,7 +115,7 @@ There is no onchain margin call or grace period. Once liquidatable, any permissi
 2. Deletes the **entire position** (Plether never partially liquidates) without trading through an AMM[^amm] or order book.
 3. Settles price loss against same-account trader claim first, then position margin (any excess price loss becomes LP bad debt).
 4. Collects non-price terminal charges in order (**VPI clawback → remaining carry → liquidation charge**) from dedicated VPI reserve, remaining margin and free USDG.
-   * **Liquidation charge (Core v2.0.0):** **`0.10%`** of notional (minimum **`1.00 USDG`**), split **`50%` to the keeper** (min `0.50 USDG`), **`50%` to the liquidity pool LPs** and **`0%` to the protocol treasury**.
+   * **Liquidation charge (Core v2.1.0):** **`0.10%`** of notional (minimum **`1.00 USDG`**), split **`50%` to the keeper** (min `0.50 USDG`), **`50%` to the liquidity pool LPs** and **`0%` to the protocol treasury**.
    * Liquidation charges **no** voluntary execution fee, **no** new closing VPI and **no** frozen-close spread (even during `oracleFrozen`).
 5. Preserves any remaining positive residual for the trader (or records an unfunded fresh payout as a trader claim).
 6. Fails and clears all pending orders for the account: **reserved opening execution rewards are forfeited to the protocol treasury**, while committed opening margin is released to free USDG (never backing price losses, though free USDG can cover separate non-price liquidation charges if needed).
@@ -131,7 +131,7 @@ There is no onchain margin call or grace period. Once liquidatable, any permissi
 
 ## Margin Call Simulator
 
-**Margin Call Simulator** removes the normal `33x` UI leverage cap so advanced users can test closer to onchain bounds. Its entry cap equals `floor(10,000 / max(activeMaintenanceBps, initialMarginBps + executionFeeBps))` — **`416x`** under current `20 bps` initial margin and `4 bps` execution fee (and lower whenever FAD `300 bps` applies).
+**Margin Call Simulator** removes the normal UI leverage cap so advanced users can test closer to onchain bounds. Its entry cap equals `floor(10,000 / max(activeMaintenanceBps, initialMarginBps + executionFeeBps))` — **`294x`** under current `30 bps` initial margin and `4 bps` execution fee (and lower whenever FAD `200 bps` applies).
 
 Despite the name, there is still **no margin call or grace period** — liquidation remains full and immediate, and tiny price ticks, VPI, carry or fees can liquidate an extreme-leverage position almost instantly. Treat it strictly as a testing control.
 

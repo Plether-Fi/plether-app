@@ -9,7 +9,7 @@ The **Current Position** panel shows your live market exposure and price perform
 Before trusting any valuation or liquidation estimate, verify:
 
 * **Market banner** (`Open`, `Close-only`, `Closed`, `Degraded`, or `Paused`) and oracle freshness dot (`updated … ago`).
-* Whether a **FAD close-only** window is active (maintenance margin jumps from `0.10%` to **`3.00%`**, which can make an account liquidatable without any price move).
+* Whether a **FAD close-only** window is active (maintenance margin jumps from `0.10%` to **`2.00%`**, which can make an account liquidatable without any price move).
 * Whether **Open Orders** holds pending orders that have not executed yet.
 
 ### 2. Read the Current Position panel
@@ -49,7 +49,7 @@ It excludes pending carry, future close fees, close VPI, and any frozen-close sp
 Click the pencil icon beside **Leverage** to open **Edit Position Margin**.
 
 * **Depositing USDG** adds free funds (`Available to Trade`)—it provides a fallback for carry beyond active margin, but does **not** move your price-liquidation threshold.
-* **Add Margin** moves free USDG into **Position margin** (after checkpointing carry from existing margin first). This immediately increases price-loss backing, lowers displayed leverage, and shrinks your future carry borrow base.
+* **Add Margin** moves free USDG into **Position margin** (after checkpointing carry from existing margin first). This immediately increases price-loss backing and lowers displayed leverage (flat carry on full maximum-profit exposure is unchanged).
 * Direct margin removal is not supported; position margin unlocks proportionally when you reduce or fully close. Adding margin bypasses the FIFO queue and works even when the oracle is stale or frozen.
 
 ![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
@@ -93,7 +93,7 @@ Because `1,500` active margin absorbs the `40 USDG` carry, free USDG stays `969.
 
 ### Practical monitoring checklist
 
-1. Check the market state banner, oracle freshness, and upcoming Friday 16:30 NY close-only transition.
+1. Check the market state banner, oracle freshness, and upcoming Friday 16:50 NY close-only transition.
 2. Compare **Position equity** against **Maintenance margin** and check for any **Liquidatable** banner.
 3. Watch **Cost of carry** even during quiet or closed markets.
 4. Keep **Available to Trade** and **Withdrawable** distinct; remember **only opening/increasing orders** reserve a keeper execution reward.

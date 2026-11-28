@@ -1,7 +1,7 @@
-The current perps backend embeds Core v2.0.0 from
-`config/perps/arbitrum-sepolia-v2.0.0.json`: six-decimal MockUSDG, all 30 contract
+The current perps backend embeds Core v2.1.0 from
+`config/perps/arbitrum-sepolia-v2.1.0.json`: six-decimal MockUSDG, all 31 contract
 pins, and fresh indexing boundaries. Workers and startup binding checks use this
-same release. `infra/terraform/sepolia-core-v2.0.0.tfvars.json` supplies matching
+same release. `infra/terraform/sepolia-core-v2.1.0.tfvars.json` supplies matching
 environment bindings. Deploying requires the settlement-assets database migration
 and release-isolated history. AA sponsorship and close-assistance issuance remain
 disabled until separately configured. See `docs/runbooks/perps-mock-usdg.md`.
@@ -367,10 +367,10 @@ RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
-PERPS_SETTLEMENT_TOKEN=0x4b44312d1f94d3d79a36a875691d768dd6c0575f \
-PERPS_ORDER_ROUTER=0x9b9ddc783780a14e4930dbbcd94d6356a82725e8 \
-PERPS_ORDER_LIFECYCLE_BOOK=0x519f57a34fb440c42bfd2d8328d2f80349af3872 \
-PERPS_MARGIN_CLEARINGHOUSE=0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7 \
+PERPS_SETTLEMENT_TOKEN=0x66705f56f2c88c9474d021d9c6afe134205a63ce \
+PERPS_ORDER_ROUTER=0xb4c7548ba764e22107964637e31558af724c1c3e \
+PERPS_ORDER_LIFECYCLE_BOOK=0x194cd4822c70a2851d5b14abc96018be41a5a5f0 \
+PERPS_MARGIN_CLEARINGHOUSE=0x11bef9bab445c0e1f5b0280ee7e20498e3fc9d63 \
 INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-insights-worker

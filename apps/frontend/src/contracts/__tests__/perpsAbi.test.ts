@@ -42,7 +42,7 @@ describe('canonical perps consumer ABIs', () => {
     expect(provenance.kind).toBe('compiled-source-abis')
     expect(provenance.deployed).toBe(false)
     for (const contract of Object.values(provenance.contracts)) {
-      expect(contract.compilerVersion).toMatch(/^0\.8\.35\+/)
+      expect(contract.compilerVersion).toMatch(/^0\.8\.39\+/)
       expect(contract.sourceSha256).toMatch(/^[a-f0-9]{64}$/)
       expect(contract.validation).toContain('runtime deployment not verified')
       expect(contract).not.toHaveProperty('runtimeCodeHash')

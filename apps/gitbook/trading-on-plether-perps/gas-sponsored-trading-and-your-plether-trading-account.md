@@ -4,7 +4,7 @@ Plether Perps uses a dedicated ERC-4337 smart account for trading — your **Ple
 
 Plether sponsors network gas for eligible Trading Account operations, subject to availability and policy limits. There is no direct owner-wallet trading route or self-funded Trading Account fallback in the web application.
 
-> Gas sponsorship covers **network gas only**. Protocol execution fees (`0.04%`), VPI[^vpi], carry[^carry], opening-order execution rewards (`0.01–0.20 USDG`), TP/SL trigger reserves (`0.20 USDG`) and the `50 bps`[^bps] frozen-close spread remain USDG[^usdg] costs. **Vault LP actions** are separate: they execute directly from your owner wallet and require Arbitrum Sepolia ETH for gas.
+> Gas sponsorship covers **network gas only**. Protocol execution fees (`0.04%`), VPI[^vpi], carry[^carry], opening-order execution rewards (`0.01–0.25 USDG`), TP/SL trigger reserves (`0.25 USDG`) and the `50 bps`[^bps] frozen-close spread remain USDG[^usdg] costs. **Vault LP actions** are separate: they execute directly from your owner wallet and require Arbitrum Sepolia ETH for gas.
 
 ## Sign-in methods, owner wallet and Trading Account
 
@@ -54,8 +54,8 @@ Gas sponsorship covers the operation that **commits** an order or sets a TP/SL r
 In the sponsored web interface:
 
 * Your wallet is never asked to finalize an order or clean up an expired order, and never pays native gas or Pyth update fees for keeper processing.
-* **Opens and increases** reserve an opening-order execution reward (`1 bp`, clamped `0.01–0.20 USDG`) paid to the keeper that executes, terminally fails or cleans up the order (or forfeited to the protocol treasury if liquidation clears it first).
-* **Reductions and full closes** (including TP/SL closes) have **zero USDG execution reward**. Committing a close reserves no execution reward, though carry still checkpoints from active position margin first, then eligible free USDG, and TP/SL separately reserves `0.20 USDG` for triggering the protection.
+* **Opens and increases** reserve an opening-order execution reward (`1 bp`, clamped `0.01–0.25 USDG`) paid to the keeper that executes, terminally fails or cleans up the order (or forfeited to the protocol treasury if liquidation clears it first).
+* **Reductions and full closes** (including TP/SL closes) have **zero USDG execution reward**. Committing a close reserves no execution reward, though carry still checkpoints from active position margin first, then eligible free USDG, and TP/SL separately reserves `0.25 USDG` for triggering the protection.
 * Expired rows under **Open Orders** display **Keeper cleanup in progress** / **Keeper processing** rather than a manual **Clean Up** button.
 
 ## What you sign

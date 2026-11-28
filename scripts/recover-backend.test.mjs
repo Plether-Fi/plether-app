@@ -13,8 +13,11 @@ import {
 import { terraformBindings } from './prepare-perps-release.mjs'
 
 const root = new URL('../', import.meta.url)
-const core = JSON.parse(fs.readFileSync(new URL('config/perps/arbitrum-sepolia-v2.0.0.json', root)))
-const catalog = JSON.parse(fs.readFileSync(new URL('config/operations/backend-recovery-releases.json', root)))
+const core = JSON.parse(fs.readFileSync(new URL('config/perps/arbitrum-sepolia-v2.1.0.json', root)))
+const historicalCore = JSON.parse(fs.readFileSync(new URL('config/perps/arbitrum-sepolia-v2.0.0.json', root)))
+const checkedInCatalog = JSON.parse(fs.readFileSync(new URL('config/operations/backend-recovery-releases.json', root)))
+const catalog = structuredClone(checkedInCatalog)
+catalog.releases[0].coreManifestSha256 = core.release.manifestSha256
 const serviceName = 'plether-aa-reconciler'
 const arn = `arn:aws:ecs:${REGION}:${ACCOUNT}:task-definition/plether-sepolia-aa-reconciler:67`
 const clone = value => structuredClone(value)
@@ -266,7 +269,9 @@ test('CLI policy refusals never print raw input values or task assertion diffs',
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret))
 })
 
-test('CLI preflight emits the reviewed catalog/input fingerprint without any AWS operation', () => {
+test('CLI preflight refuses historical v2.0.0 catalog entries against the active v2.1.0 Core release', () => {
+  assert.equal(qualifiedRelease(checkedInCatalog, 'sepolia-recovery-2026-11-17', serviceName, historicalCore).sourceCommit, '0713acef754f1413352bcf1ece9d350ee717dd17')
+  assert.throws(() => qualifiedRelease(checkedInCatalog, 'sepolia-recovery-2026-11-17', serviceName, core), /another Core deployment/)
   const value = input()
   const result = spawnSync(process.execPath, ['scripts/recover-backend.mjs', 'fingerprint'], {
     cwd: root,
@@ -279,6 +284,6 @@ test('CLI preflight emits the reviewed catalog/input fingerprint without any AWS
     },
     encoding: 'utf8',
   })
-  assert.equal(result.status, 0, result.stderr)
-  assert.equal(result.stdout.trim(), `Dispatch input fingerprint: sha256:${inputFingerprint(value, release())}`)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Backend image recovery refused/)
 })

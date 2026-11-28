@@ -30,7 +30,7 @@ Stop losses at or beyond the estimated **liquidation price** are rejected. Saved
 
 1. Configure a new opening order in the trade ticket (available only when flat and `Reduce only` is unchecked).
 2. Check **Take profit / stop loss** and enter one or both trigger levels.
-3. Review the opening order, trigger prices, and the additional **trigger reserve** (`0.20 USDG` in Core v2.0.0).
+3. Review the opening order, trigger prices, and the additional **trigger reserve** (`0.25 USDG` in Core v2.1.0).
 4. Authorize the sponsored operation. Attached triggers show **Waiting for position** in the **TP/SL** tab until the opening order fills, then switch to **Active**.
 
 If the opening order fails or expires, inspect both **Order History** and the **TP/SL** tab—no triggers activate without a filled position.
@@ -52,7 +52,7 @@ Once status reaches **Close queued** or **Close delayed**, TP/SL can no longer b
 
 ### Trigger reserve and sponsorship
 
-Creating TP/SL reserves **`0.20 USDG`** (Core v2.0.0 `positionProtectionTriggerBountyAssets`) from **Available to Trade** (free USDG—adding position margin does not fund this reserve). That reserve pays the protection keeper that submits the trigger transaction. The resulting close order itself has **`0 USDG`** keeper execution reward.
+Creating TP/SL reserves **`0.25 USDG`** (Core v2.1.0 `positionProtectionTriggerBountyAssets`) from **Available to Trade** (free USDG—adding position margin does not fund this reserve). That reserve pays the protection keeper that submits the trigger transaction. The resulting close order itself has **`0 USDG`** keeper execution reward.
 
 Creating, editing, and removing TP/SL are **gas-sponsored** operations (and removing/cancelling TP/SL remains sponsored even if new protection sponsorship is paused).
 
@@ -78,7 +78,7 @@ If a triggered close order fails (for example, expires during queue congestion),
 
 ![Close delayed with a binding trigger and a queue-related retry delay](../.gitbook/assets/screenshots/storybook-perps-position-protection--latched.png)
 
-* **Expired close retries:** The protection worker automatically retries expired latched closes once account pending orders clear, oracle data is usable (including bounded frozen pricing if the market froze after latching), and FIFO queue capacity fits within the 60-second execution window.
+* **Expired close retries:** The protection worker automatically retries expired latched closes once account pending orders clear, oracle data is usable (including bounded frozen pricing if the market froze after latching), and FIFO queue capacity fits within the 30-second execution window.
 * **Non-expiry failures:** Failures other than expiry display **`Operator review required`** and are **not** auto-retried; contact support with your protection reference, close order ID, and transaction hash.
 
 ### Automatic execution status & operational realities
@@ -88,7 +88,7 @@ The **Automatic execution status** panel displays the protection worker's latest
 * **Trigger rules:** Requires a fresh oracle observation with `publishTime > armedAt` and `blockNumber > armedBlock` (same-block triggers are rejected). Transient price wicks that revert before inclusion do not trigger.
 * **Worker timing:** The reference protection worker indexes new records **12 blocks behind head**, polls every **5 seconds**, processes up to 50 candidates per pass, submits **1 transaction at a time**, and does not automatically fee-bump a dropped transaction.
 * **Market freezes:** New armed triggers pause during `oracleFrozen` (the market can gap across your trigger or into liquidation when FX reopens). Already-latched expired closes can still retry under frozen-close rules (`0.50%` frozen-close spread).
-* **Liquidation precedence:** TP/SL never suspends liquidation (including the 3.00% FAD margin jump before Friday close) and does not guarantee immediate cash settlement if pool liquidity triggers a [trader claim](check-and-settle-a-trader-claim.md).
+* **Liquidation precedence:** TP/SL never suspends liquidation (including the 2.00% FAD margin jump before Friday close) and does not guarantee immediate cash settlement if pool liquidity triggers a [trader claim](check-and-settle-a-trader-claim.md).
 
 ### Inspecting TP/SL activity
 

@@ -1,44 +1,45 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="961" viewBox="0 0 640 961" role="img" aria-labelledby="margin-reduces-future-carry-title margin-reduces-future-carry-desc" focusable="false">
-<title id="margin-reduces-future-carry-title">More pledge, less borrowed backing</title>
-<desc id="margin-reduces-future-carry-desc">For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth. Holding other conditions equal. Adding margin first realizes accrued carry from active margin, then free USDG. Future carry can consume the new margin too.</desc>
+<title id="margin-reduces-future-carry-title">Margin protects health, not carry</title>
+<desc id="margin-reduces-future-carry-desc">Carry accrues at a flat annual rate on full maximum-profit exposure, independently of assigned margin or pool utilization. Adding assigned PnL pledge raises price equity without lowering future carry. Adding margin first realizes accrued carry from active margin, then eligible free USDG. Future carry can consume the new margin too.</desc>
 <style>text{font-family:'Uncut Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif}</style>
 <rect width="640" height="961" rx="16" fill="#250917" stroke="#3B212D" stroke-width="2"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#FFAB96" data-max-width="576">PLETHER · CARRY</text>
-<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">More pledge, less borrowed</text>
-<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">backing</text>
+<text x="32" y="106" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">Margin protects health, not</text>
+<text x="32" y="150" font-size="34" font-weight="700" fill="#FFF5F9" data-max-width="576">carry</text>
 <path d="M32 180 L608 180" stroke="#3B212D" stroke-width="2" fill="none"/>
 <path d="M32 180 h72" stroke="#FF512F" stroke-width="4" stroke-linecap="round" fill="none"/>
 <rect x="32" y="206" width="576" height="264" rx="12" fill="#3B212D" stroke="#9A8890" stroke-width="1.5"/>
-<text x="52" y="242" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="536">Same max profit — more margin shrinks carry</text>
+<text x="52" y="242" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="536">More margin raises equity; flat carry stays</text>
+<text x="52" y="272" font-size="22" font-weight="700" fill="#FFF5F9" data-max-width="536">same</text>
 <text x="52" y="282" font-size="22" font-weight="700" fill="#D8CBD0" data-max-width="536">Before adding margin</text>
 <rect x="52" y="294" width="136" height="44" rx="8" fill="#00FF99" stroke="none"/>
 <text x="120" y="324" font-size="22" font-weight="700" fill="#250917" data-max-width="124" text-anchor="middle">Margin</text>
 <rect x="194" y="294" width="394" height="44" rx="8" fill="#F7D977" stroke="none"/>
-<text x="391" y="324" font-size="22" font-weight="700" fill="#250917" data-max-width="382" text-anchor="middle">Borrow base (pays carry)</text>
+<text x="391" y="324" font-size="22" font-weight="700" fill="#250917" data-max-width="382" text-anchor="middle">Flat carry on full max profit</text>
 <text x="52" y="380" font-size="22" font-weight="700" fill="#00FF99" data-max-width="536">After adding position margin</text>
-<rect x="52" y="392" width="316" height="44" rx="8" fill="#00FF99" stroke="none"/>
-<text x="210" y="422" font-size="22" font-weight="700" fill="#250917" data-max-width="300" text-anchor="middle">Larger position margin</text>
-<rect x="374" y="392" width="214" height="44" rx="8" fill="#F7D977" stroke="none"/>
-<text x="481" y="422" font-size="22" font-weight="700" fill="#250917" data-max-width="204" text-anchor="middle">Smaller carry</text>
+<rect x="52" y="392" width="260" height="44" rx="8" fill="#00FF99" stroke="none"/>
+<text x="182" y="422" font-size="22" font-weight="700" fill="#250917" data-max-width="244" text-anchor="middle">Larger margin buffer</text>
+<rect x="318" y="392" width="270" height="44" rx="8" fill="#F7D977" stroke="none"/>
+<text x="453" y="422" font-size="22" font-weight="700" fill="#250917" data-max-width="260" text-anchor="middle">Same flat carry</text>
 <circle cx="47" cy="507" r="13" fill="#3B212D" stroke="#FFAB96" stroke-width="2.5"/>
 <circle cx="47" cy="507" r="5" fill="#FFAB96"/>
 <text x="78" y="516" font-size="24" font-weight="700" fill="#FFAB96" data-max-width="530">Add assigned PnL pledge</text>
 <text x="78" y="549" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Increase the margin backing this position.</text>
 <path d="M47 526 V573 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="596" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
-<circle cx="47" cy="596" r="5" fill="#9A8890"/>
-<text x="78" y="605" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Reduce the borrow base</text>
-<text x="78" y="638" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Borrow base = max(maximum profit − pledge, 0).</text>
-<path d="M47 615 V662 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<circle cx="47" cy="685" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
-<circle cx="47" cy="685" r="5" fill="#00FF99"/>
-<text x="78" y="694" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">Lower future carry</text>
-<text x="78" y="727" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">At the same carry-index growth, less borrowed</text>
-<text x="78" y="757" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">backing accrues less carry.</text>
-<rect x="32" y="781" width="576" height="148" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
-<rect x="36" y="791" width="5" height="128" rx="3" fill="#FF512F" stroke="none"/>
-<text x="56" y="815" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Holding other conditions equal. Adding margin</text>
-<text x="56" y="845" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">first realizes accrued carry from active</text>
-<text x="56" y="875" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">margin, then free USDG. Future carry can</text>
-<text x="56" y="905" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">consume the new margin too.</text>
+<circle cx="47" cy="596" r="13" fill="#3B212D" stroke="#00FF99" stroke-width="2.5"/>
+<circle cx="47" cy="596" r="5" fill="#00FF99"/>
+<text x="78" y="605" font-size="24" font-weight="700" fill="#00FF99" data-max-width="530">Raise price-risk equity</text>
+<text x="78" y="638" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Larger margin increases the buffer above</text>
+<text x="78" y="668" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">maintenance and liquidation.</text>
+<path d="M47 615 V692 m-6 -6 6 6 6 -6" stroke="#9A8890" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<circle cx="47" cy="715" r="13" fill="#3B212D" stroke="#9A8890" stroke-width="2.5"/>
+<circle cx="47" cy="715" r="5" fill="#9A8890"/>
+<text x="78" y="724" font-size="24" font-weight="700" fill="#FFF5F9" data-max-width="530">Keep carry basis unchanged</text>
+<text x="78" y="757" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">Flat carry still accrues on full maximum-profit</text>
+<text x="78" y="787" font-size="22" font-weight="400" fill="#D8CBD0" data-max-width="530">exposure at the configured base rate.</text>
+<rect x="32" y="811" width="576" height="118" rx="10" fill="#3B212D" stroke="#9A8890" stroke-width="1"/>
+<rect x="36" y="821" width="5" height="98" rx="3" fill="#FF512F" stroke="none"/>
+<text x="56" y="845" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Adding margin first realizes accrued carry</text>
+<text x="56" y="875" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">from active margin, then eligible free USDG.</text>
+<text x="56" y="905" font-size="22" font-weight="400" fill="#FFF5F9" data-max-width="532">Future carry can consume the new margin too.</text>
 </svg>

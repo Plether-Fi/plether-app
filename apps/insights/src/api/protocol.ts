@@ -174,6 +174,7 @@ export const PROTOCOL_CONTRACT_SOURCE_PATHS: Readonly<Record<string, string>> = 
   cfdClosePreview: 'packages/perps/src/CfdClosePreview.sol',
   orderRouter: 'packages/perps/src/OrderRouter.sol',
   orderLifecycleBook: 'packages/perps/src/OrderLifecycleBook.sol',
+  cfdOrderAdmissionValidator: 'packages/perps/src/CfdOrderAdmissionValidator.sol',
   cfdOrderPolicyEvaluator: 'packages/perps/src/CfdOrderPolicyEvaluator.sol',
   positionProtectionBook: 'packages/perps/src/PositionProtectionBook.sol',
   orderRouterExecutionSidecar: 'packages/perps/src/OrderRouterExecutionSidecar.sol',

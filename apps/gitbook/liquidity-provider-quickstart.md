@@ -30,7 +30,7 @@ Both tranches back the exact same market, but occupy different layers of the los
 | --- | --- | --- |
 | **Return model** | Target coupon funded from available Junior value | Residual pool trading revenue after Senior obligations |
 | **Loss priority** | Absorbs losses only after Junior is exhausted | Absorbs losses first |
-| **Withdrawal priority** | Matured requests funded before Junior | Funded after Senior, subject to free cash and the Senior-share cap (`80%` in v2.0.0) |
+| **Withdrawal priority** | Matured requests funded before Junior | Funded after Senior, subject to free cash and the Senior-share cap (`80%` in v2.1.0) |
 | **Main risk** | Coupon can pause; principal can be impaired if Junior is wiped out | First-loss capital; can be wiped out before Senior takes a loss |
 
 ![Losses go through Junior before Senior; revenue restores Senior impairment before reaching Junior; the coupon transfers available Junior principal to Senior.](.gitbook/assets/diagrams/senior-junior-waterfall-rules.svg)

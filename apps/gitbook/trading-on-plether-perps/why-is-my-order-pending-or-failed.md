@@ -4,7 +4,7 @@ An action can fail **before** an order exists (during sponsorship, signing or on
 
 ![Sponsored transaction success and order execution are different lifecycles. Transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
 
-A sponsored commit is **Confirmed** once it lands onchain and creates an order ID in Plether's global FIFO[^fifo] queue. For **opens and increases**, committed margin and the opening execution reward (`0.01–0.20 USDG`) are reserved while the order is **Pending**. For **reductions and closes**, no execution reward or new margin is reserved, though the requested position quantity is reserved against overlapping closes.
+A sponsored commit is **Confirmed** once it lands onchain and creates an order ID in Plether's global FIFO[^fifo] queue. For **opens and increases**, committed margin and the opening execution reward (`0.01–0.25 USDG`) are reserved while the order is **Pending**. For **reductions and closes**, no execution reward or new margin is reserved, though the requested position quantity is reserved against overlapping closes.
 
 Committed orders cannot be cancelled, resized or repriced. A **Failed** order is terminal and cannot execute later.
 
@@ -20,7 +20,7 @@ Committed orders cannot be cancelled, resized or repriced. A **Failed** order is
 | **Failed onchain** | No | The included commit call reverted; no order or reservation remains |
 | Order listed under **Open Orders** | Yes | Commitment succeeded and the order is **Pending** in FIFO |
 | **Keeper execution attempt failed** | Yes, usually still Pending | A keeper's execution attempt reverted; the keeper can retry |
-| **Expired** under **Open Orders** | Yes, awaiting cleanup | The 60-second execution window passed; awaiting keeper[^keeper] cleanup |
+| **Expired** under **Open Orders** | Yes, awaiting cleanup | The 30-second execution window passed; awaiting keeper[^keeper] cleanup |
 | **Order failed** / **Expired / Cleaned up** in **Order History** | No longer active | An onchain `OrderFailed` event terminally closed the order |
 | **Executed** | No longer active | The trade completed and updated your position |
 
@@ -67,7 +67,7 @@ For pricing details behind oracle delays, see [Oracle & execution model](../how-
 
 ## What remains reserved while Pending
 
-* **Open or increase:** Submitted order margin and the opening execution reward (`0.01–0.20 USDG`) leave **Available to Trade**. Committed opening margin creates no live exposure and does **not** back price losses on an existing position.
+* **Open or increase:** Submitted order margin and the opening execution reward (`0.01–0.25 USDG`) leave **Available to Trade**. Committed opening margin creates no live exposure and does **not** back price losses on an existing position.
 * **Reduce or close:** Reserves **zero** execution reward and no new margin, only the requested position quantity against further closes. Committing checkpoints accrued carry (from active position margin first, then eligible free USDG), which can reduce position margin while the position stays fully exposed until execution. **A pending close provides no liquidation protection.**
 
 ## Expired orders and keeper cleanup
@@ -89,7 +89,7 @@ An order becomes expired onchain once `block.timestamp > executionDeadline` (`co
 
 ## Opening-order reservation outcomes
 
-| Outcome | Committed opening margin | Opening execution reward (`0.01–0.20 USDG`) |
+| Outcome | Committed opening margin | Opening execution reward (`0.01–0.25 USDG`) |
 | --- | --- | --- |
 | **Pending** | Reserved | Reserved |
 | **Executed** | Becomes active position margin | Paid to executing keeper |

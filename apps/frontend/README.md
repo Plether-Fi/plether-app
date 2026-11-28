@@ -1,6 +1,6 @@
 # Plether Frontend
 
-Current perps source selects Core v2.0.0 and the checksum-pinned SDK 0.4.0.
+Current perps source selects Core v2.1.0 and the checksum-pinned SDK 0.4.0.
 See `../../config/perps/ORDER_V3_TIMING.md` for provenance. The public AA manifest
 binds the new MockUSDG market to the reviewed existing paymaster. Backend
 readiness remains authoritative for sponsored funding and order submission.
@@ -247,7 +247,7 @@ Partial percentages round down to 100 plDXY increments and fill a fixed quantity
 Max keeps automatic sizing. Reductions use the size remaining after pending close
 orders, with exact full closes preserved.
 
-The generated ABI and bytecode use Solidity 0.8.35 with pinned settings. Foundry
+The generated ABI and bytecode use Solidity 0.8.39 with pinned settings. Foundry
 is needed to rebuild or verify this artifact, but normal frontend builds consume
 the checked-in artifact without requiring a compiler:
 
@@ -414,7 +414,7 @@ AGPL-3.0-only
 
 ### Preparing a MockUSDG perps release
 
-The frontend selects `config/perps/arbitrum-sepolia-v2.0.0.json`: canonical schema 4,
+The frontend selects `config/perps/arbitrum-sepolia-v2.1.0.json`: canonical schema 4,
 order interface 3 and six-decimal MockUSDG metadata, with the complete deployed
 contract graph. AA trading/funding requires a separately configured paymaster
 and backend rollout. Spot remains separately configured. Historical USDC manifests are archived evidence; current perps

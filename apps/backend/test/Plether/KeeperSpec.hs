@@ -246,15 +246,19 @@ spec = do
 
   describe "isOrderRevealReady" $ do
     it "accepts publish times starting at the first post-commit tick" $ do
-      isOrderRevealReady 15 [101, 102, 103, 104, 105, 106] (order 1 100)
+      isOrderRevealReady 1 15 [101, 102, 103, 104, 105, 106] (order 1 100)
+        `shouldBe` True
+      isOrderRevealReady 2 15 [102, 103, 104, 105, 106, 107] (order 1 100)
         `shouldBe` True
 
     it "rejects publish times before the order reveal window" $ do
-      isOrderRevealReady 15 [101, 102, 103, 104, 105, 106] (order 1 101)
+      isOrderRevealReady 1 15 [101, 102, 103, 104, 105, 106] (order 1 101)
+        `shouldBe` False
+      isOrderRevealReady 2 15 [101, 102, 103, 104, 105, 106] (order 1 100)
         `shouldBe` False
 
     it "rejects later in-window payloads because Pyth unique parsing expects the first tick" $ do
-      isOrderRevealReady 15 [103, 103, 103, 103, 103, 103] (order 1 100)
+      isOrderRevealReady 1 15 [103, 103, 103, 103, 103, 103] (order 1 100)
         `shouldBe` False
 
   describe "isFrozenClosePayloadReady" $ do
@@ -320,6 +324,7 @@ spec = do
             selectBatchCandidates
               110
               11
+              1
               15
               [101, 102, 103, 104, 105, 106]
               20
@@ -331,6 +336,7 @@ spec = do
             selectBatchCandidates
               120
               11
+              1
               15
               [101, 102, 103, 104, 105, 106]
               20
@@ -342,6 +348,7 @@ spec = do
             selectBatchCandidates
               110
               10
+              1
               15
               [101, 102, 103, 104, 105, 106]
               20
@@ -353,6 +360,7 @@ spec = do
             selectBatchCandidates
               110
               11
+              1
               15
               [101, 102, 103, 104, 105, 106]
               1

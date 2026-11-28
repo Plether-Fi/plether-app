@@ -875,6 +875,11 @@ export const TRANCHE_VAULT_READ_ABI = [
   },
   {
     "type": "error",
+    "name": "TrancheVault__ShareSupplyLimitExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TrancheVault__TerminallyWiped",
     "inputs": []
   },

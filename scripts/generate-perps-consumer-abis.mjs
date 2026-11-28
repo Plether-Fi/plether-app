@@ -116,13 +116,14 @@ const consumers =
       "positionEntryCostAssetAtoms",
       "positionCarryState",
       "unsettledCarryAssets",
-      "sideCarryIndex",
-      "sideCarryTimestamp",
-      "sideBorrowBaseAssets",
+      "carryIndex",
+      "carryTimestamp",
+      "currentCarryIndex",
       "sides",
       "riskParams",
       "CAP_PRICE",
       "settlementBufferBps",
+      "minOpenSlippageToleranceBps",
       "totalTraderClaimBalanceAssets",
       "lastMarkPrice",
       "clearinghouse",
@@ -160,6 +161,7 @@ const consumers =
     "contract": "PletherOracle",
     "functions": [
       "getUpdateFee",
+      "minOrderSettlementDelay",
       "orderSettlementWindow",
       "getLatestPrice",
       "claimableEth",
@@ -171,6 +173,7 @@ const consumers =
   "PERPS_CFD_ENGINE_LENS_ABI": {
     "contract": "CfdEngineLens",
     "functions": [
+      "orderAdmissionValidator",
       "quoteMaxOpen",
       "previewOpen",
       "previewOpenRevertCode",

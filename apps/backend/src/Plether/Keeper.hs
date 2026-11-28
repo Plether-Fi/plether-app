@@ -2176,17 +2176,20 @@ processQueueHead cfg conn client dryRun observeCost = do
     [] -> pure KeeperIdle
     headOrder : _ -> do
       latestBlockResult <- ethBlockNumber client
-      (settlementWindowResult, chainNowResult) <- case latestBlockResult of
-        Left err -> pure (Left err, Left err)
+      (minDelayResult, settlementWindowResult, chainNowResult) <- case latestBlockResult of
+        Left err -> pure (Left err, Left err, Left err)
         Right blockNumber -> runConcurrently $
-          (,) <$> Concurrently (Perps.orderSettlementWindowAtBlock client (cfgPerpsPletherOracle cfg) blockNumber)
-              <*> Concurrently (ethBlockTimestamp client blockNumber)
-      case (settlementWindowResult, chainNowResult, latestBlockResult) of
-        (Right settlementWindow, Right chainNow, Right latestBlock) ->
-          decideExecution cfg conn client dryRun observeCost pending headOrder settlementWindow chainNow latestBlock
+          (,,) <$> Concurrently (Perps.minOrderSettlementDelayAtBlock client (cfgPerpsPletherOracle cfg) blockNumber)
+               <*> Concurrently (Perps.orderSettlementWindowAtBlock client (cfgPerpsPletherOracle cfg) blockNumber)
+               <*> Concurrently (ethBlockTimestamp client blockNumber)
+      case (minDelayResult, settlementWindowResult, chainNowResult, latestBlockResult) of
+        (Right minSettlementDelay, Right settlementWindow, Right chainNow, Right latestBlock)
+          | minSettlementDelay > 0 && minSettlementDelay <= settlementWindow ->
+              decideExecution cfg conn client dryRun observeCost pending headOrder minSettlementDelay settlementWindow chainNow latestBlock
         _ -> do
           let errors =
-                [ either (Just . rpcErrorText) (const Nothing) settlementWindowResult
+                [ either (Just . rpcErrorText) (const Nothing) minDelayResult
+                , either (Just . rpcErrorText) (const Nothing) settlementWindowResult
                 , either (Just . rpcErrorText) (const Nothing) chainNowResult
                 , either (Just . rpcErrorText) (const Nothing) latestBlockResult
                 ]
@@ -2212,8 +2215,9 @@ decideExecution
   -> Integer
   -> Integer
   -> Integer
+  -> Integer
   -> IO ()
-decideExecution cfg conn client dryRun observeCost pending headOrder settlementWindow chainNow latestBlock = do
+decideExecution cfg conn client dryRun observeCost pending headOrder minSettlementDelay settlementWindow chainNow latestBlock = do
   freshHeadResult <- refreshPendingOrder cfg client latestBlock headOrder
   case freshHeadResult of
     Left err -> do
@@ -2239,7 +2243,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
             ]
       | isOrderPastValidUntil chainNow fpoValidUntil ->
           submitIntent cfg conn client dryRun observeCost [(pkorOrderId freshHead, fpoValidUntil)] $ CleanupExpired freshHead
-      | chainNow < pkorCommitTime freshHead + 1 ->
+      | chainNow < pkorCommitTime freshHead + minSettlementDelay ->
           logInfoEvery
             300
             "keeper_waiting_for_reveal_window"
@@ -2273,7 +2277,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
       mPayload <-
         getPythUpdatePayloadForWindow
           conn
-          (pkorCommitTime freshHead + 1)
+          (pkorCommitTime freshHead + minSettlementDelay)
           (pkorCommitTime freshHead + settlementWindow)
       case mPayload of
         Nothing ->
@@ -2295,7 +2299,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
                 , field "error" err
                 ]
             Right (publishTimes, updateData) ->
-              case validateRevealWindow (pkorCommitTime freshHead) settlementWindow publishTimes of
+              case validateRevealWindow (pkorCommitTime freshHead) minSettlementDelay settlementWindow publishTimes of
                 Left err -> do
                   logWarnEvery
                     60
@@ -2322,6 +2326,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
                         selectBatchCandidates
                           chainNow
                           latestBlock
+                          minSettlementDelay
                           settlementWindow
                           publishTimes
                           (cfgKeeperMaxBatchSize cfg)
@@ -3002,10 +3007,10 @@ isOrderPastValidUntil :: Integer -> Integer -> Bool
 isOrderPastValidUntil chainNow validUntil =
   validUntil > 0 && chainNow > validUntil
 
-isOrderRevealReady :: Integer -> [Integer] -> PerpsKeeperOrderRow -> Bool
-isOrderRevealReady settlementWindow publishTimes order =
+isOrderRevealReady :: Integer -> Integer -> [Integer] -> PerpsKeeperOrderRow -> Bool
+isOrderRevealReady minSettlementDelay settlementWindow publishTimes order =
   either (const False) (const True) $
-    validateRevealWindow (pkorCommitTime order) settlementWindow publishTimes
+    validateRevealWindow (pkorCommitTime order) minSettlementDelay settlementWindow publishTimes
 
 isFrozenClosePayloadReady :: Integer -> Integer -> Integer -> [Integer] -> Bool
 isFrozenClosePayloadReady chainNow maxStaleness maxDivergence publishTimes =
@@ -3022,12 +3027,13 @@ isSameBlockMevGuardError err =
 selectBatchCandidates
   :: Integer -- chain now
   -> Integer -- current block
+  -> Integer -- minimum order settlement delay
   -> Integer -- settlement window
   -> [Integer] -- payload publish times
   -> Int -- max batch size
   -> [FreshPendingOrder]
   -> [PerpsKeeperOrderRow]
-selectBatchCandidates chainNow currentBlock settlementWindow publishTimes maxBatchSize =
+selectBatchCandidates chainNow currentBlock minSettlementDelay settlementWindow publishTimes maxBatchSize =
   map fpoOrder
     . take maxBatchSize
     . takeWhile isReady
@@ -3035,7 +3041,7 @@ selectBatchCandidates chainNow currentBlock settlementWindow publishTimes maxBat
     isReady FreshPendingOrder {..} =
       isPastCommitBlock currentBlock fpoOrder
         && ( isOrderPastValidUntil chainNow fpoValidUntil
-              || isOrderRevealReady settlementWindow publishTimes fpoOrder
+              || isOrderRevealReady minSettlementDelay settlementWindow publishTimes fpoOrder
            )
 
 isPastCommitBlock :: Integer -> PerpsKeeperOrderRow -> Bool
