@@ -7,6 +7,7 @@ module Plether.Handlers.Insights
   , getDivisionsCurrentResponse
   , getDivisionsHistoryResponse
   , getDivisionsLiveResponse
+  , getDivisionsLiveSummaryResponse
   , getDivisionsStatsResponse
   , competitionRowToJson
   , leaderboardRowToJson
@@ -111,6 +112,11 @@ divisionsStatsCache =
 {-# NOINLINE divisionsLiveCache #-}
 divisionsLiveCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
 divisionsLiveCache =
+  unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
+
+{-# NOINLINE divisionsLiveSummaryCache #-}
+divisionsLiveSummaryCache :: SingleFlightCache () (Either ApiError (ApiResponse Value))
+divisionsLiveSummaryCache =
   unsafePerformIO (newRefreshingSingleFlightCache 1 (15 * 1000000000) (300 * 1000000000))
 
 getCurrentCompetitionResponse
@@ -428,6 +434,62 @@ getDivisionsLiveResponse pool cfg = do
             , "releaseRouter" .= release
             , "scoringRelease" .= object ["router" .= release,"version" .= version,"assetSymbol" .= asset]
             , "standings" .= standings
+            , "provisional" .= True
+            ])
+
+-- | Lightweight live Divisions metadata + top-5 standings for global chrome
+-- (Header/Footer/useProtocolContext) and the Overview top-leaders table. Avoids
+-- unnesting and transferring the full ~1 MB standings JSONB array on every page
+-- load.
+getDivisionsLiveSummaryResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsLiveSummaryResponse pool cfg =
+  snd <$> runSingleFlightCache divisionsLiveSummaryCache () isRight (do
+    now <- floor <$> getPOSIXTime
+    let weekStart = divisionWeekStart now
+    rows <- withDb pool $ \conn -> query conn
+      "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
+      \(SELECT COALESCE( \
+      \  jsonb_agg(picked.elem || jsonb_build_object('discordUsername', l.discord_username) ORDER BY idx), \
+      \  '[]'::jsonb \
+      \)::text \
+      \ FROM generate_series(0, 4) AS idx \
+      \ CROSS JOIN LATERAL (SELECT s.standings->idx AS elem) picked \
+      \ LEFT JOIN insights_divisions_links l ON l.trading_account = picked.elem->>'address' \
+      \ WHERE picked.elem IS NOT NULL), \
+      \EXTRACT(EPOCH FROM s.captured_at)::BIGINT, w.release_router, w.release_version, w.asset_symbol \
+      \FROM divisions_live_snapshots s JOIN divisions_weeks w \
+      \ON w.chain_id = s.chain_id AND w.week_start = s.week_start AND w.release_router = s.release_router \
+      \WHERE s.chain_id = ? AND s.week_start = ? \
+      \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
+      \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = s.chain_id \
+      \AND i.release_router = s.release_router AND i.indexer_name IN \
+      \('perps-history-costs-v1:' || s.release_router, \
+      \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
+      \AND i.last_indexed_block_hash IS NOT NULL \
+      \AND (i.last_indexed_block > s.snapshot_block OR \
+      \(i.last_indexed_block = s.snapshot_block AND LOWER(i.last_indexed_block_hash) = LOWER(s.snapshot_hash)))) \
+      \LIMIT 1"
+      (cfgPerpsChainId cfg, weekStart)
+    pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer, Text, Text, Text)]) of
+      [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+        [ "status" .= ("pending" :: Text)
+        , "weekStartsAt" .= isoTimestamp weekStart
+        , "generatedAt" .= isoTimestamp now
+        ]
+      (block, blockHash, timestamp, walletCount, encodedTopStandings, capturedAt, release, version, asset) : _ ->
+        case Aeson.decodeStrict' (TE.encodeUtf8 encodedTopStandings) of
+          Nothing -> Left $ E.internalError "Divisions live summary is invalid"
+          Just (topStandings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+            [ "status" .= ("ready" :: Text)
+            , "weekStartsAt" .= isoTimestamp weekStart
+            , "snapshotAt" .= isoTimestamp timestamp
+            , "snapshotBlock" .= show block
+            , "snapshotBlockHash" .= blockHash
+            , "capturedAt" .= isoTimestamp capturedAt
+            , "walletCount" .= walletCount
+            , "releaseRouter" .= release
+            , "scoringRelease" .= object ["router" .= release, "version" .= version, "assetSymbol" .= asset]
+            , "topStandings" .= topStandings
             , "provisional" .= True
             ])
 

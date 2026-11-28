@@ -134,6 +134,7 @@ describe('Cloudflare Pages Worker', () => {
     ['/api/insights/v1/divisions/stats', 15],
     ['/api/insights/v1/divisions/traders', 15],
     ['/api/insights/v1/divisions/live', 15],
+    ['/api/insights/v1/divisions/live/summary', 15],
     ['/api/insights/v1/divisions/current', 15],
     ['/api/insights/v1/divisions/history?week=1791752400', 15],
     ['/api/insights/v1/competitions/summer-2026/leaderboard?limit=50', 15],

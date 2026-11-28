@@ -15,7 +15,7 @@ vi.mock('../api', () => ({
 }))
 
 vi.mock('../divisions/query', () => ({
-  useLiveDivisions: () => ({ data: undefined }),
+  useLiveDivisionsSummary: () => ({ data: undefined }),
 }))
 
 describe('Layout navigation', () => {

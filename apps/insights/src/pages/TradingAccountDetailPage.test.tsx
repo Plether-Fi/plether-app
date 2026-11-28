@@ -24,7 +24,7 @@ vi.mock('../api', async (importOriginal) => {
 })
 
 vi.mock('../divisions/query', () => ({
-  useLiveDivisions: () => ({ data: undefined }),
+  useLiveDivisionsSummary: () => ({ data: undefined }),
 }))
 
 const SAMPLE_DETAIL: TradingAccountDetailResponse = {
