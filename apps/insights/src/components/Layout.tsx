@@ -13,7 +13,7 @@ import { GlobalSearch } from './GlobalSearch'
 
 function pillarLinkClass(isActive: boolean): string {
   return [
-    'whitespace-nowrap border px-2.5 py-1.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-peach',
+    'whitespace-nowrap border px-3.5 py-2 text-sm font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-peach',
     isActive
       ? 'border-brand-orange bg-brand-orange text-content-primary'
       : 'border-transparent text-content-secondary hover:border-brand-orange/45 hover:bg-brand-orange/10 hover:text-content-primary',
@@ -45,9 +45,9 @@ function HeaderTelemetryPill() {
     <Link
       to="/infra"
       title={tooltip || 'Protocol telemetry status'}
-      className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap border border-brand-border/30 bg-app-bg px-2.5 py-1.5 font-mono text-[11px] text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-content-primary xl:inline-flex"
+      className="hidden shrink-0 items-center gap-2 whitespace-nowrap border border-brand-border/35 bg-app-bg px-3 py-2 font-mono text-xs leading-5 text-content-secondary transition-colors hover:border-brand-peach/50 hover:text-content-primary xl:inline-flex"
     >
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+      <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
       <span className="text-content-primary">{shortNetwork}</span>
     </Link>
   )
@@ -62,10 +62,10 @@ function SectionSubNav() {
   }
 
   return (
-    <div className="border-b border-brand-border/25 bg-surface-panel/55">
+    <div className="border-b border-brand-border/30 bg-surface-panel/70">
       <nav
         aria-label={`${pillar.label} sections`}
-        className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-3 sm:px-6 lg:px-8"
+        className="mx-auto flex max-w-7xl items-center gap-2 overflow-x-auto px-3 sm:px-6 lg:px-8"
       >
         {pillar.tabs.map((tab) => {
           const isCurrent = activeTab?.to === tab.to
@@ -74,10 +74,10 @@ function SectionSubNav() {
               key={tab.to}
               to={tab.to}
               aria-current={isCurrent ? 'page' : undefined}
-              className={`relative shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+              className={`relative shrink-0 whitespace-nowrap border-b-2 px-3.5 py-3 text-[13px] font-semibold transition-colors sm:text-sm ${
                 isCurrent
                   ? 'border-brand-orange text-content-primary'
-                  : 'border-transparent text-content-secondary hover:border-brand-border/50 hover:text-content-primary'
+                  : 'border-transparent text-content-secondary hover:border-brand-border/60 hover:text-content-primary'
               }`}
             >
               {tab.label}
@@ -110,22 +110,22 @@ function Header() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-brand-border/30 bg-surface-panel">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-2.5 sm:px-6 lg:px-8">
-        <div className="flex min-w-0 shrink-0 items-center gap-4 xl:gap-6">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-3 py-3 sm:px-6 sm:py-3.5 lg:px-8">
+        <div className="flex min-w-0 shrink-0 items-center gap-6 xl:gap-8">
           <Link
             to="/"
-            className="flex shrink-0 items-center gap-2 py-0.5 transition-opacity hover:opacity-90"
+            className="flex shrink-0 items-center gap-2.5 py-0.5 transition-opacity hover:opacity-90"
             aria-label="Plether Insights home"
           >
             <img src="/logomark.svg" alt="" className="h-7 w-7 shrink-0" />
             <img src="/logotype.svg" alt="Plether" className="hidden h-5 w-auto sm:block" />
-            <span className="whitespace-nowrap border-l border-brand-border/35 pl-2 text-sm font-semibold text-brand-peach">
+            <span className="whitespace-nowrap border-l border-brand-border/35 pl-2.5 text-[15px] font-semibold text-brand-peach">
               Insights
             </span>
           </Link>
 
           <nav
-            className="hidden shrink-0 items-center gap-1 lg:flex"
+            className="hidden shrink-0 items-center gap-1.5 lg:flex"
             aria-label="Primary navigation"
           >
             {NAV_PILLARS.map((pillar) => {
@@ -144,8 +144,8 @@ function Header() {
           </nav>
         </div>
 
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
-          <GlobalSearch className="w-full max-w-[220px] sm:w-52 xl:w-60" />
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2.5 sm:flex-none">
+          <GlobalSearch className="w-full max-w-[230px] sm:w-56 xl:w-64" />
           <HeaderTelemetryPill />
           <button
             type="button"
@@ -155,7 +155,7 @@ function Header() {
             onClick={() => {
               setDrawerOpenAtPath((prev) => (prev === location.pathname ? null : location.pathname))
             }}
-            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center border border-brand-border/35 bg-app-bg font-mono text-sm text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach lg:hidden"
+            className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center border border-brand-border/35 bg-app-bg font-mono text-base text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach lg:hidden"
           >
             <span aria-hidden="true">{mobileOpen ? '✕' : '☰'}</span>
           </button>

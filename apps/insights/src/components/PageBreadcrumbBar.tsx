@@ -17,13 +17,13 @@ export interface PageBreadcrumbBarProps {
  */
 export function PageBreadcrumbBar({ items, rightSlot }: PageBreadcrumbBarProps) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-brand-border/20 pb-3.5 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 border-b border-brand-border/25 pb-4 text-[13px]">
       <nav aria-label="Breadcrumb" className="min-w-0">
-        <ol className="flex flex-wrap items-center gap-1.5 font-mono">
+        <ol className="flex flex-wrap items-center gap-2 font-mono">
           {items.map((item, idx) => {
             const isLast = idx === items.length - 1
             return (
-              <li key={`${item.label}-${String(idx)}`} className="inline-flex items-center gap-1.5">
+              <li key={`${item.label}-${String(idx)}`} className="inline-flex items-center gap-2">
                 {idx > 0 ? (
                   <span aria-hidden="true" className="text-content-tertiary/70 select-none">
                     ›
@@ -75,7 +75,7 @@ export function BreadcrumbActionLink({
   return (
     <Link
       to={to}
-      className="inline-flex h-6 items-center gap-1.5 border border-brand-border/35 bg-app-bg px-2.5 font-mono text-[11px] font-semibold leading-none text-content-secondary transition-colors hover:border-brand-peach/70 hover:bg-surface-panel hover:text-brand-peach"
+      className="inline-flex h-7 items-center gap-1.5 border border-brand-border/35 bg-app-bg px-3 font-mono text-xs font-semibold leading-none text-content-secondary transition-colors hover:border-brand-peach/70 hover:bg-surface-panel hover:text-brand-peach"
     >
       {children}
     </Link>
@@ -106,7 +106,7 @@ export function WalletPerspectiveSwitcher({
 
   return (
     <div
-      className="inline-flex items-center border border-brand-border/25 bg-app-bg p-0.5 font-mono text-[11px]"
+      className="inline-flex items-center border border-brand-border/30 bg-app-bg p-0.5 font-mono text-xs"
       role="navigation"
       aria-label="Account views"
     >
@@ -116,7 +116,7 @@ export function WalletPerspectiveSwitcher({
           <span
             key={item.id}
             aria-current="page"
-            className="bg-brand-orange/20 px-2 py-0.5 font-semibold text-brand-peach"
+            className="bg-brand-orange/20 px-2.5 py-1 font-semibold text-brand-peach"
           >
             {item.label}
           </span>
@@ -124,7 +124,7 @@ export function WalletPerspectiveSwitcher({
           <Link
             key={item.id}
             to={item.to}
-            className="px-2 py-0.5 text-content-secondary transition-colors hover:text-content-primary"
+            className="px-2.5 py-1 text-content-secondary transition-colors hover:text-content-primary"
           >
             {item.label}
           </Link>
