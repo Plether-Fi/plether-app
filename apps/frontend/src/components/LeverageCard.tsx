@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useLayoutEffect, useRef } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { InfoTooltip } from './ui'
@@ -28,22 +28,14 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const [selectedSide, setSelectedSide] = useState<TokenSide>('BULL')
   const [collateralAmount, setCollateralAmount] = useState('')
   const [targetLeverage, setTargetLeverage] = useState(2)
-  const [trackedTxId, setTrackedTxId] = useState<string | null>(null)
 
   const operationKey = `leverage-open-${selectedSide}`
 
   const activeTransactionId = activeOperations[operationKey]
-  const currentTxId = activeTransactionId || trackedTxId
-  const currentTx = currentTxId
-    ? transactions.find(t => t.id === currentTxId)
+  const currentTx = activeTransactionId
+    ? transactions.find(t => t.id === activeTransactionId)
     : null
   const isRunning = currentTx?.status === 'pending' || currentTx?.status === 'confirming'
-
-  useEffect(() => {
-    if (activeTransactionId && activeTransactionId !== trackedTxId) {
-      setTrackedTxId(activeTransactionId)
-    }
-  }, [activeTransactionId, trackedTxId])
 
   const { data: protocolData } = useProtocolStatus()
   const prices = protocolData?.data.prices
@@ -79,16 +71,19 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
     onPositionOpened?.()
     setCollateralAmount('')
     setTargetLeverage(2)
-    setTrackedTxId(null)
   }, [refetchBalances, onPositionOpened])
 
+  const handleOpenPositionRef = useRef<(() => void) | null>(null)
   const handleOpenPosition = useCallback(() => {
     if (collateralBigInt <= 0n || previewLoading || expectedCollateralTokens <= 0n) return
 
     void transactionManager.executeOpenLeverage(selectedSide, collateralBigInt, contractLeverage, slippageBps, minCollateralOut, {
-      onRetry: handleOpenPosition,
+      onRetry: () => { handleOpenPositionRef.current?.() },
     }).then(handleOpenSuccess)
   }, [collateralBigInt, previewLoading, expectedCollateralTokens, selectedSide, contractLeverage, slippageBps, minCollateralOut, handleOpenSuccess])
+  useLayoutEffect(() => {
+    handleOpenPositionRef.current = handleOpenPosition
+  }, [handleOpenPosition])
 
   const getButtonText = () => {
     if (isRunning) return 'Processing...'

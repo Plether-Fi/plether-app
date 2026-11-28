@@ -48,8 +48,7 @@ export function closeAssistanceManifest(manifest: PerpsAaDeploymentManifest, con
   }) as PerpsAaDeploymentManifestV2
 }
 
-export function buildSponsoredCloseAction(manifest: PerpsAaDeploymentManifest, account: Address, request: PerpsOrderRequestV3, funding: SponsoredCloseFunding): PerpsActionPlan {
-  void manifest; void account; void request; void funding
+export function buildSponsoredCloseAction(_manifest: PerpsAaDeploymentManifest, _account: Address, _request: PerpsOrderRequestV3, _funding: SponsoredCloseFunding): PerpsActionPlan {
   throw new Error('Close assistance is retired for v1.3.0; submit an ordinary pledge-backed close.')
 }
 

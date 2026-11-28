@@ -10,7 +10,7 @@ import { useWalletActions } from '../../wallet/useWalletActions'
 
 const SponsoredOperationHistoryButton = lazy(() => import('../SponsoredOperationActivity').then((module) => ({ default: module.SponsoredOperationHistoryButton })))
 
-const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id]
 const WALLET_BUTTON_CLASS =
   'group inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-2 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] sm:gap-2 sm:px-4'
 const SWITCH_NETWORK_BUTTON_CLASS =

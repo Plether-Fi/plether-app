@@ -49,7 +49,6 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
 
   useEffect(() => {
     if (isSuccess) {
-      setAmount('')
       reset()
       onClose()
     }
@@ -62,6 +61,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
     const deadline = getDeadline(60)
 
     if (action === 'add') {
+      setAmount('')
       onClose()
       void addCollateral(amountBigInt, maxSlippageBps)
     } else {

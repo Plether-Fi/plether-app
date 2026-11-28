@@ -25,7 +25,7 @@ export function deriveCloseMarginReleased(
   const index = finals.findIndex(log => log.args.orderId === order.orderId)
   if (index < 0) return undefined
   const final = finals.at(index)
-  if (!final || final.args.account.toLowerCase() !== order.account.toLowerCase()
+  if (final?.args.account.toLowerCase() !== order.account.toLowerCase()
     || final.args.receipt.status !== 2
     || (order.receiptHash !== undefined && final.args.receiptHash.toLowerCase() !== order.receiptHash.toLowerCase())) return undefined
   const previousIndex = finals[index - 1]?.logIndex ?? -1

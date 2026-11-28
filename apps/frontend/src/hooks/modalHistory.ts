@@ -45,6 +45,7 @@ export class ModalHistory {
     // against the old route index and skip a modal entry in the wrong direction.
     const history = window.history
     for (const method of ['pushState', 'replaceState'] as const) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- invoked via .apply(history, args) and restored verbatim
       const original = history[method]
       const wrapped = (...args: Parameters<History['pushState']>) => {
         original.apply(history, args)

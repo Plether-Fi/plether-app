@@ -61,8 +61,8 @@ import {
 } from '../hooks'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 import { calculateSeniorDepositUsage } from '../utils/seniorDepositUsage'
+import { VAULT_TRANCHES as TRANCHES, type TrancheDefinition, type TrancheId } from './vaultTranches'
 
-type TrancheId = 'senior' | 'junior'
 type DetailSectionId = 'overview' | 'market-exposure' | 'performance' | 'position' | 'activity'
 type ActionMode = 'deposit' | 'withdraw'
 type DataStatus = 'live' | 'partial' | 'syncing' | 'unavailable'
@@ -111,31 +111,6 @@ function useStickyHeaderHeight() {
   }, [])
 
   return height
-}
-
-interface TrancheDefinition {
-  id: TrancheId
-  name: string
-  token: string
-  eyebrow: string
-  shortDescription: string
-  description: string
-  returnModel: string
-  lossPriority: string
-  withdrawalPriority: string
-  upside: string
-  primaryRisk: string
-  riskLabel: string
-  riskVariant: 'info' | 'warning'
-  targetReturn: string
-  valueClassName: string
-  barClassName: string
-  featureItems: {
-    label: string
-    text: string
-  }[]
-  riskItems: string[]
-  address: Address
 }
 
 interface ContractResult {
@@ -378,87 +353,8 @@ const EXPLORER_TX_BASE_URL = 'https://sepolia.arbiscan.io/tx'
 const DEPOSIT_PROBE_ACCOUNT = '0x000000000000000000000000000000000000dEaD' as Address
 const WAD = 10n ** 18n
 
-const TRANCHES: Record<TrancheId, TrancheDefinition> = {
-  senior: {
-    id: 'senior',
-    name: 'Senior Vault',
-    token: 'psLP',
-    eyebrow: 'More protected option',
-    shortDescription: 'A targeted return with first priority when withdrawal funds are allocated.',
-    description:
-      'Senior gives up some upside for greater protection. It receives a targeted return funded by Junior, recovers prior losses before Junior receives new earnings, and takes losses only after Junior is exhausted.',
-    returnModel: 'Targeted return funded by Junior',
-    lossPriority: 'Second loss, after Junior',
-    withdrawalPriority: 'Senior withdrawals are funded before Junior',
-    upside: 'Targeted return and recovery priority',
-    primaryRisk: 'The targeted return can stop and the vault can still lose value',
-    riskLabel: 'Lower relative risk',
-    riskVariant: 'info',
-    targetReturn: 'Target return',
-    valueClassName: 'text-brand-peach',
-    barClassName: 'bg-brand-peach',
-    featureItems: [
-      {
-        label: 'Loss order',
-        text: 'Junior absorbs realized losses before Senior',
-      },
-      {
-        label: 'Return',
-        text: 'Receives its targeted return when funds are available; prior losses are recovered before Junior receives new earnings',
-      },
-      {
-        label: 'Withdrawals',
-        text: `Senior withdrawals are funded before Junior whenever ${PERPS_SETTLEMENT_TOKEN_LABEL} is available`,
-      },
-    ],
-    riskItems: [
-      'The targeted return is not guaranteed and is limited by available Junior capital.',
-      'Losses can reach Senior after Junior is fully exhausted.',
-      'Amounts owed to traders are paid before either vault can withdraw.',
-      'Positive share value does not guarantee immediate withdrawal liquidity.',
-    ],
-    address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
-  },
-  junior: {
-    id: 'junior',
-    name: 'Junior Vault',
-    token: 'pjLP',
-    eyebrow: 'Higher-risk option',
-    shortDescription: 'Takes losses first in exchange for more variable return potential.',
-    description:
-      'Junior funds the Senior targeted return and absorbs losses from the shared trading pool first. In exchange, it receives the trading earnings left after Senior is paid, including a share of fees from forced position closures.',
-    returnModel: 'Variable return from trading activity',
-    lossPriority: 'First loss',
-    withdrawalPriority: 'Available after Senior withdrawals and the required safety buffer',
-    upside: 'Variable return from trading activity',
-    primaryRisk: 'Can lose some or all of its value before Senior begins taking losses',
-    riskLabel: 'Higher relative risk',
-    riskVariant: 'warning',
-    targetReturn: 'Variable return',
-    valueClassName: 'text-brand-orange',
-    barClassName: 'bg-brand-orange',
-    featureItems: [
-      {
-        label: 'Loss order',
-        text: 'Absorbs realized losses first, protecting Senior',
-      },
-      {
-        label: 'Return',
-        text: 'Receives remaining trading revenue and the vault share of liquidation charges after Senior obligations',
-      },
-      {
-        label: 'Withdrawals',
-        text: 'Junior withdrawals use the cash remaining after Senior withdrawals and the required safety buffer; they may take longer',
-      },
-    ],
-    riskItems: [
-      'Junior funds the Senior targeted return from its own capital.',
-      'Junior absorbs realized losses from the shared trading pool before Senior is affected.',
-      'Junior withdrawals can be unavailable even while its shares still have value.',
-      'A sufficiently large loss can wipe out the vault completely.',
-    ],
-    address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
-  },
+function getCurrentHourEpoch(): bigint {
+  return BigInt(Math.floor(Date.now() / 3_600_000))
 }
 
 function readResult(data: readonly ContractResult[] | undefined, index: number): unknown {
@@ -549,6 +445,13 @@ function calculateLensSharePrice(sharePrice: bigint | undefined): number | undef
 function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
   const readAccount = address ?? zeroAddress
   const depositReceiver = address ?? DEPOSIT_PROBE_ACCOUNT
+  const [inferredCurrentEpoch, setInferredCurrentEpoch] = useState(getCurrentHourEpoch)
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setInferredCurrentEpoch(getCurrentHourEpoch())
+    }, 60_000)
+    return () => { window.clearInterval(interval) }
+  }, [])
   const { data, isLoading, refetch } = useReadContracts({
     // Keep each multicall within the public RPC's default two-million-gas budget.
     batchSize: 256,
@@ -861,7 +764,6 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const juniorAssets = juniorTranche?.totalAssets ?? directJuniorAssets
     const juniorSupply = juniorTranche?.totalShares ?? directJuniorSupply
     const markPrice = protocolStatus?.lastMarkPrice
-    const inferredCurrentEpoch = BigInt(Math.floor(Date.now() / 3_600_000))
     const seniorCurrentEpoch = seniorQueue?.currentEpoch ?? inferredCurrentEpoch
     const juniorCurrentEpoch = juniorQueue?.currentEpoch ?? inferredCurrentEpoch
     const seniorNextRequestEpoch = seniorQueue?.nextRequestEpoch
@@ -1046,7 +948,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         void refetch()
       },
     }
-  }, [data, isLoading, refetch])
+  }, [data, inferredCurrentEpoch, isLoading, refetch])
 }
 
 function formatCompactAssets(amount: bigint | undefined): string {
@@ -5705,5 +5607,4 @@ function LiveVaults() {
   )
 }
 
-export { TRANCHES as VAULT_TRANCHES }
 export default Vaults

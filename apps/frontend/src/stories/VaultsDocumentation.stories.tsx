@@ -8,8 +8,8 @@ import {
   VaultDetailView,
   VaultPreviewModal,
   VaultsOverview,
-  VAULT_TRANCHES,
 } from '../pages/Vaults'
+import { VAULT_TRANCHES } from '../pages/vaultTranches'
 
 type VaultsOverviewProps = Parameters<typeof VaultsOverview>[0]
 type VaultDetailViewProps = Parameters<typeof VaultDetailView>[0]

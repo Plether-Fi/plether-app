@@ -3,7 +3,7 @@ import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
 
-const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id]
 
 export function WrongNetworkBanner() {
   const chainId = useChainId()

@@ -46,7 +46,11 @@ export default defineConfig([
     },
     rules: {
       '@typescript-eslint/no-deprecated': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
       '@typescript-eslint/require-await': 'off',
+      // This app uses @vitejs/plugin-react-swc (no React Compiler), and 7.1.1
+      // misflags immutable bigint primitives in manual useMemo dependency arrays.
+      'react-hooks/preserve-manual-memoization': 'off',
     },
   },
   {

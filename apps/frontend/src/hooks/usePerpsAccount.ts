@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { multicall3Abi, zeroAddress } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import { parsePositionProtection } from '../contracts/positionProtection'
@@ -185,6 +185,23 @@ function readPendingCarryAssets(data: readonly ContractResult[] | undefined): bi
   })
 }
 
+function createLastSuccessfulPositionStore() {
+  let snapshot: { account: string; position: PerpsPosition } | undefined
+  const listeners = new Set<() => void>()
+  return {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    getSnapshot: () => snapshot,
+    set: (next: { account: string; position: PerpsPosition }) => {
+      if (snapshot?.account === next.account && snapshot.position === next.position) return
+      snapshot = next
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
 export function usePerpsAccount(markPrice?: bigint) {
   const {
     ownerAddress,
@@ -195,10 +212,11 @@ export function usePerpsAccount(markPrice?: bigint) {
   const isConnected = ownerAddress !== undefined
   const account = accountAddress ?? zeroAddress
   const owner = ownerAddress ?? zeroAddress
-  const lastSuccessfulPositionRef = useRef<{
-    account: string
-    position: PerpsPosition
-  } | undefined>(undefined)
+  const [lastSuccessfulPositionStore] = useState(createLastSuccessfulPositionStore)
+  const lastSuccessfulPosition = useSyncExternalStore(
+    lastSuccessfulPositionStore.subscribe,
+    lastSuccessfulPositionStore.getSnapshot,
+  )
 
   const {
     data: dynamicContractData,
@@ -641,18 +659,18 @@ export function usePerpsAccount(markPrice?: bigint) {
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return
 
-    lastSuccessfulPositionRef.current = {
+    lastSuccessfulPositionStore.set({
       account,
       position: freshAccount.position,
-    }
-  }, [account, freshAccount.position, isConnected])
+    })
+  }, [account, freshAccount.position, isConnected, lastSuccessfulPositionStore])
 
   return useMemo(() => {
     const stablePosition = freshAccount.position ?? (
       freshAccount.accountHasOpenPosition !== false &&
-      lastSuccessfulPositionRef.current?.account === account
+      lastSuccessfulPosition?.account === account
         ? {
-            ...lastSuccessfulPositionRef.current.position,
+            ...lastSuccessfulPosition.position,
             liquidationPrice: undefined,
             liquidationThreshold: { status: 'unavailable' as const },
             riskStatus: 'unavailable' as const,
@@ -680,5 +698,5 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsAssets(stablePosition?.unrealizedPnlAssets),
       },
     }
-  }, [freshAccount, account])
+  }, [freshAccount, account, lastSuccessfulPosition])
 }
