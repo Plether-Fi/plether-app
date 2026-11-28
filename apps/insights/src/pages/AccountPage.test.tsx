@@ -281,7 +281,7 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     expect(screen.getByRole('button', { name: '90D' })).toBeInTheDocument()
 
     // Open share card studio from header — Account Overview (with life-long balance chart) is primary, never duplicating Divisions Rank
-    fireEvent.click(screen.getByRole('button', { name: 'Share card' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Share card' })[0])
     expect(screen.getByText('Shareable social card')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Account Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Open Position' })).toBeInTheDocument()

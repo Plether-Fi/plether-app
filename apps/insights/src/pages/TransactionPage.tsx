@@ -452,7 +452,7 @@ export function TransactionPage() {
             </div>
           </div>
           <div className="flex flex-col items-start gap-2 sm:items-end">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <CopyButton
                 value={pageUrl}
                 hoverLabel="Copy link"
@@ -461,8 +461,6 @@ export function TransactionPage() {
               />
               {isClose && selectedEvent.pnlAssets != null ? (
                 <ShareCardModal
-                  compact
-                  triggerLabel="Share PnL"
                   cards={[
                     {
                       id: `trade-${selectedEvent.id}`,
@@ -491,8 +489,6 @@ export function TransactionPage() {
                 />
               ) : selectedEvent.activityType === 'Open' ? (
                 <ShareCardModal
-                  compact
-                  triggerLabel="Share Open"
                   cards={[
                     {
                       id: `open-${selectedEvent.id}`,

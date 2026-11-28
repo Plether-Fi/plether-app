@@ -78,7 +78,6 @@ export function PositionBreakdown({
           {isClose && item.pnl && shareContext ? (
             <ShareCardModal
               compact
-              triggerLabel="Share PnL"
               cards={[
                 {
                   id: `trade-${item.id}`,

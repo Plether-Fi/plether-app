@@ -624,7 +624,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                           />
                           <ShareCardModal
                             compact
-                            triggerLabel="Share position"
                             cards={shareCards}
                             initialCardId="open-position"
                           />
@@ -840,7 +839,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                               {row.activityType === 'Close' && row.pnlAssets != null ? (
                                 <ShareCardModal
                                   compact
-                                  triggerLabel="Share PnL"
                                   cards={[
                                     {
                                       id: `trade-${row.id}`,
@@ -870,7 +868,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                               {row.activityType === 'Open' ? (
                                 <ShareCardModal
                                   compact
-                                  triggerLabel="Share Open"
                                   cards={[
                                     {
                                       id: `open-${row.id}`,

@@ -432,7 +432,7 @@ function TraderDetails({ address }: { address: string }) {
             />
           </div>
           {shareCards.length > 0 ? (
-            <ShareCardModal cards={shareCards} triggerLabel="Share Divisions card" />
+            <ShareCardModal cards={shareCards} />
           ) : null}
         </div>
       </header>

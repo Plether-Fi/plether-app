@@ -186,7 +186,11 @@ describe('TransactionPage', () => {
     expect(screen.getByText('Gross VPI charge')).toBeInTheDocument()
     expect(screen.getByText('Actual account change')).toBeInTheDocument()
     expect(screen.getByText('Fully closed')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Share PnL' })).toBeInTheDocument()
+    const closeShareBtn = screen.getByRole('button', { name: 'Share card' })
+    expect(closeShareBtn).toBeInTheDocument()
+    fireEvent.click(closeShareBtn)
+    expect(screen.getByAltText('Preview of Closed Position PnL share card')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close share card modal' }))
     expect(screen.getByRole('link', { name: '0x1111…1111' })).toHaveAttribute(
       'href',
       `/wallets/${sampleAccount}`,
@@ -221,8 +225,11 @@ describe('TransactionPage', () => {
     // Switch to the first event (#1 Open · log 8)
     fireEvent.click(screen.getByRole('button', { name: /#1 Open/i }))
     expect(screen.getByText('Open / increase')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Share PnL' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Share Open' })).toBeInTheDocument()
+    const openShareBtn = screen.getByRole('button', { name: 'Share card' })
+    expect(openShareBtn).toBeInTheDocument()
+    fireEvent.click(openShareBtn)
+    expect(screen.getByAltText('Preview of Opened Position Receipt share card')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close share card modal' }))
   })
 
   it('hydrates immediately from router state even if the backend tx endpoint returns 404', () => {

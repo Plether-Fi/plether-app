@@ -190,8 +190,6 @@ export function PositionLifecyclePage() {
             <div className="flex flex-col items-start gap-2 font-mono text-xs sm:items-end">
               <div className="flex items-center gap-2">
                 <ShareCardModal
-                  compact
-                  triggerLabel="Share lifecycle"
                   cards={[
                     {
                       id: `lifecycle-${pos.positionId}`,

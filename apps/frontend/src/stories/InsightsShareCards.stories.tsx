@@ -366,7 +366,7 @@ function ShareCardsGallery({
             </p>
           </div>
           {showModalTrigger ? (
-            <ShareCardModal cards={MODAL_OPTIONS} triggerLabel="Open Interactive Share Modal" />
+            <ShareCardModal cards={MODAL_OPTIONS} />
           ) : null}
         </header>
 
