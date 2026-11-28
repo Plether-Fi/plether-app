@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
@@ -29,7 +29,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   const [selectedToken, setSelectedToken] = useState<TokenSide>('BULL')
   const [inputAmount, setInputAmount] = useState('')
   const [showPriceImpactWarning, setShowPriceImpactWarning] = useState(false)
-  const [showDetails, setShowDetails] = useState(false)
+  const [detailsOverride, setDetailsOverride] = useState<boolean | null>(null)
 
   const isBearTrade = selectedToken === 'BEAR'
   const operationKey = isBearTrade
@@ -72,11 +72,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     : Number(bullQuoteData?.data.priceImpact ?? '0') / 100
   const isQuoteLoading = isBearTrade ? bearQuoteLoading : bullQuoteLoading
 
-  useEffect(() => {
-    if (priceImpact > 1) {
-      setShowDetails(true)
-    }
-  }, [priceImpact])
+  const showDetails = detailsOverride ?? priceImpact > 1
 
   const { data: dashboardData } = useUserDashboard(address)
   const dashAllowances = dashboardData?.data.allowances
@@ -235,7 +231,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
       <div className="border-t border-brand-border/30 pt-4">
         <button
-          onClick={() => { setShowDetails(!showDetails); }}
+          onClick={() => { setDetailsOverride(!showDetails); }}
           className="flex min-h-11 w-full items-center justify-between text-sm text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
         >
           <span>Swap details</span>

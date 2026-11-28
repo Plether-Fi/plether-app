@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Skeleton, TokenAmount, TokenLabel, Tooltip } from './ui'
 import { isUpstreamApiError, useProtocolStatus } from '../api'
 import type { ProtocolStatus } from '../config/constants'
@@ -30,7 +31,13 @@ export function PriceDisplay({
   const bullChange = protocolData?.data.prices.priceChange24h?.bull ?? null
 
   const updatedAt = protocolData?.data.oracle.updatedAt ?? 0
-  const isStale = updatedAt > 0 && (Date.now() / 1000 - updatedAt) > ORACLE_STALE_SECONDS
+  const [nowMs, setNowMs] = useState(Date.now)
+  useEffect(() => {
+    if (updatedAt <= 0) return
+    const interval = window.setInterval(() => { setNowMs(Date.now()) }, 15_000)
+    return () => { window.clearInterval(interval) }
+  }, [updatedAt])
+  const isStale = updatedAt > 0 && (nowMs / 1000 - updatedAt) > ORACLE_STALE_SECONDS
 
   const apiStatus = protocolData?.data.status
   const baseStatus: ProtocolStatus = protocolUnavailable

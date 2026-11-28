@@ -45,7 +45,6 @@ import { knownSponsorshipValidUntil } from './paymasterValidity'
 import { parsePreparationStatus } from './preparedOperation'
 import { preparationIdentifier, validateNativePreparation } from './nativePreparation'
 import type {
-  ManagedUserOperation,
   SimplePerpsAaSmartAccountRuntime,
   BundlerUserOperationStatus,
   BundlerUserOperationStatusResult,
@@ -449,7 +448,7 @@ export async function createManagedAaRuntime({
           value: call.value,
           data: call.data,
         })),
-      }) as ManagedUserOperation
+      })
     }
     sendUserOperation = (operation) => {
       const hash = getUserOperationHash({ chainId: manifest.chainId, entryPointAddress: manifest.entryPoint, entryPointVersion: manifest.entryPointVersion, userOperation: operation })
@@ -499,7 +498,7 @@ export async function createManagedAaRuntime({
           value: call.value,
           data: call.data,
         })),
-      }) as ManagedUserOperation
+      })
     sendUserOperation = (operation) =>
       pimlicoClient.sendUserOperation({
         ...operation,

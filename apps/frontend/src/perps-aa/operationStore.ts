@@ -2386,8 +2386,8 @@ const sponsoredOperationStorage:
     // The legacy inbox is read-only for this app version, including through
     // Zustand's optional clearStorage API. Deleting it could erase the only
     // evidence produced by a still-open version-0 tab.
-    removeItem: (name) => {
-      void name
+    removeItem: () => {
+      // Intentional no-op: preserve legacy v0 inbox records.
     },
   }
 

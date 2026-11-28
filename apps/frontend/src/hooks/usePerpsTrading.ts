@@ -650,8 +650,7 @@ export function usePerpsTrading() {
     }
   }, [aaRuntime, identity])
 
-  const approveSettlementTokenForMargin = useCallback(async (amount: bigint) => {
-    void amount
+  const approveSettlementTokenForMargin = useCallback(async (_amount: bigint) => {
     throw new Error(
       `Direct ${PERPS_SETTLEMENT_TOKEN_LABEL} approvals are disabled. Sponsored deposits execute atomically through the Trading Account.`
     )
@@ -1296,8 +1295,7 @@ export function usePerpsTrading() {
     }
   }, [address, invalidatePerpsReads, publicClient, requireCurrentKernelQuote, requireTradingExecution, walletClient])
 
-  const executeOrder = useCallback(async (orderId: bigint): Promise<ExecuteOrderResult> => {
-    void orderId
+  const executeOrder = useCallback(async (_orderId: bigint): Promise<ExecuteOrderResult> => {
     throw new Error(
       'Order finalization is keeper-operated for sponsored Trading Accounts and never asks the owner wallet for native gas.'
     )
@@ -1445,9 +1443,8 @@ export function usePerpsTrading() {
   }, [publicClient, requireTradingExecution])
 
   const cleanupExpiredOrder = useCallback(async (
-    orderId: bigint
+    _orderId: bigint
   ): Promise<CleanupExpiredOrderResult> => {
-    void orderId
     throw new Error(
       'Expired-order cleanup is keeper-operated for sponsored Trading Accounts and never submits from the owner wallet.'
     )

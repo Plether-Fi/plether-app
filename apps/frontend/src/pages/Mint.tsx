@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useLayoutEffect, useRef } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { formatAmount, formatUsd } from '../utils/formatters'
@@ -70,27 +70,35 @@ export function Mint() {
   const usdcRequired = mintQuoteData ? BigInt(mintQuoteData.data.usdcIn) : 0n
   const usdcToReturn = burnQuoteData ? BigInt(burnQuoteData.data.usdcOut) : 0n
 
+  const handleMintRef = useRef<(() => void) | null>(null)
   const handleMint = useCallback(() => {
     if (pairAmountBigInt <= 0n) return
 
     void transactionManager.executeMint(pairAmountBigInt, usdcRequired, {
-      onRetry: handleMint,
+      onRetry: () => { handleMintRef.current?.() },
     }).then(() => {
       refetchBalances()
       setInputAmount('')
     })
   }, [pairAmountBigInt, usdcRequired, refetchBalances])
+  useLayoutEffect(() => {
+    handleMintRef.current = handleMint
+  }, [handleMint])
 
+  const handleRedeemRef = useRef<(() => void) | null>(null)
   const handleRedeem = useCallback(() => {
     if (pairAmountBigInt <= 0n) return
 
     void transactionManager.executeRedeem(pairAmountBigInt, {
-      onRetry: handleRedeem,
+      onRetry: () => { handleRedeemRef.current?.() },
     }).then(() => {
       refetchBalances()
       setInputAmount('')
     })
   }, [pairAmountBigInt, refetchBalances])
+  useLayoutEffect(() => {
+    handleRedeemRef.current = handleRedeem
+  }, [handleRedeem])
 
   const isPreviewLoading = mode === 'mint' ? previewMintLoading : previewBurnLoading
   const previewAmount = mode === 'mint' ? usdcRequired : usdcToReturn

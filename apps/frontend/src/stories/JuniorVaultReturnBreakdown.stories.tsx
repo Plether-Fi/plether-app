@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { JuniorVaultReturnBreakdown } from '../components/JuniorVaultReturnBreakdown'
-import { PerformanceTab, VAULT_TRANCHES } from '../pages/Vaults'
+import { PerformanceTab } from '../pages/Vaults'
+import { VAULT_TRANCHES } from '../pages/vaultTranches'
 import { buildJuniorReturnBreakdown } from '../utils/juniorReturnAttribution'
 import type { JuniorReturnAttribution } from '../api/types'
 import { juniorReturnExample, juniorReturnExamplePeriod } from './fixtures/juniorReturnAttribution'

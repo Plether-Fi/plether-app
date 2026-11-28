@@ -158,44 +158,69 @@ export function useVaultRequests({
   isSenior,
   currentEpoch,
 }: UseVaultRequestsOptions) {
-  const [cachedRequestIds, setCachedRequestIds] = useState<bigint[]>([])
-  const [eventRequestIds, setEventRequestIds] = useState<bigint[]>([])
-  const [discoveryStatus, setDiscoveryStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [discoveryStale, setDiscoveryStale] = useState(false)
+  const scopeKey = controller ? `${controller.toLowerCase()}:${String(isSenior)}` : undefined
   const [discoveryNonce, setDiscoveryNonce] = useState(0)
+  const [discoveryState, setDiscoveryState] = useState<{
+    scopeKey?: string
+    nonce: number
+    eventRequestIds: bigint[]
+    cachedRequestIds: bigint[]
+    status: 'success' | 'error'
+    stale: boolean
+  } | undefined>(undefined)
+
+  const initialCachedRequestIds = useMemo(
+    () => (controller ? readCachedRequestIds(controller, isSenior) : []),
+    [controller, isSenior]
+  )
 
   useEffect(() => {
-    setCachedRequestIds(controller ? readCachedRequestIds(controller, isSenior) : [])
-    setEventRequestIds([])
-    setDiscoveryStatus(controller ? 'loading' : 'idle')
-    setDiscoveryStale(false)
-  }, [controller, isSenior])
-
-  useEffect(() => {
-    if (!controller) return
+    if (!controller || !scopeKey) return
     const abortController = new AbortController()
-    setDiscoveryStatus('loading')
 
     void discoverRequestIds(controller, isSenior, abortController.signal)
       .then(({ requestIds, stale }) => {
-        setEventRequestIds(requestIds)
-        setDiscoveryStale(stale)
-        setCachedRequestIds((currentRequestIds) => {
-          const merged = [...currentRequestIds, ...requestIds]
-          writeCachedRequestIds(controller, isSenior, merged)
-          return [...new Set(merged.map(String))].map(BigInt)
+        const merged = [...new Set([...readCachedRequestIds(controller, isSenior), ...requestIds].map(String))].map(BigInt)
+        writeCachedRequestIds(controller, isSenior, merged)
+        setDiscoveryState({
+          scopeKey,
+          nonce: discoveryNonce,
+          eventRequestIds: requestIds,
+          cachedRequestIds: merged,
+          status: 'success',
+          stale,
         })
-        setDiscoveryStatus('success')
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return
-        setDiscoveryStatus('error')
+        setDiscoveryState((current) => ({
+          scopeKey,
+          nonce: discoveryNonce,
+          eventRequestIds: current?.scopeKey === scopeKey ? current.eventRequestIds : [],
+          cachedRequestIds: current?.scopeKey === scopeKey ? current.cachedRequestIds : readCachedRequestIds(controller, isSenior),
+          status: 'error',
+          stale: current?.scopeKey === scopeKey ? current.stale : false,
+        }))
       })
 
     return () => {
       abortController.abort()
     }
-  }, [controller, discoveryNonce, isSenior])
+  }, [controller, discoveryNonce, isSenior, scopeKey])
+
+  const hasCurrentScope = scopeKey !== undefined && discoveryState?.scopeKey === scopeKey
+  const hasCurrentRun = hasCurrentScope && discoveryState.nonce === discoveryNonce
+  const cachedRequestIds = hasCurrentScope ? discoveryState.cachedRequestIds : initialCachedRequestIds
+  const eventRequestIds = useMemo(
+    () => (hasCurrentScope ? discoveryState.eventRequestIds : []),
+    [discoveryState, hasCurrentScope]
+  )
+  const discoveryStatus: 'idle' | 'loading' | 'success' | 'error' = !controller
+    ? 'idle'
+    : hasCurrentRun
+      ? discoveryState.status
+      : 'loading'
+  const discoveryStale = hasCurrentScope ? discoveryState.stale : false
 
   const requestIds = useMemo(() => {
     const ids = new Set([...cachedRequestIds, ...eventRequestIds].map(String))
@@ -213,14 +238,14 @@ export function useVaultRequests({
   const readController = controller ?? zeroAddress
   const contracts = useMemo(() => [
     ...requestIds.map((requestId) => ({
-      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
+      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'getLpRequestState' as const,
       args: [isSenior, requestId, readController] as const,
     })),
     ...requestIds.map((requestId) => ({
-      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
+      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'getLpDepositCooldownState' as const,

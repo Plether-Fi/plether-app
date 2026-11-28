@@ -134,12 +134,12 @@ function ConfiguredWalletProvider({ children }: { children: ReactNode }) {
   const ready = authReady && walletsReady && !retrying
   const [initializationTimedOut, setInitializationTimedOut] = useState(false)
   useEffect(() => {
-    if (ready) {
-      setInitializationTimedOut(false)
-      return
-    }
+    if (ready) return
     const timeout = window.setTimeout(() => { setInitializationTimedOut(true) }, 20_000)
-    return () => { window.clearTimeout(timeout) }
+    return () => {
+      window.clearTimeout(timeout)
+      setInitializationTimedOut(false)
+    }
   }, [ready])
   const connectionError = !ready && (initializationError || initializationTimedOut)
     ? 'We couldn’t connect to the wallet service. Please try again in a moment.'

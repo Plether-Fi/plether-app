@@ -4,7 +4,7 @@ import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRunt
 import { useDepositOnConnect } from '../hooks/useDepositOnConnect'
 import { readinessBlocker, readinessMessage, useTradingReadiness } from '../perps-aa/readiness'
 import { restoredOrderDraft } from '../perps-aa/orderDraft'
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { formatUnits, zeroAddress, type Hex } from 'viem'
@@ -1893,7 +1893,7 @@ export function PerpsTradeTicket({
   const [isFullCloseIntent, setIsFullCloseIntent] = useState(false)
   const [isMaxOpenIntent, setIsMaxOpenIntent] = useState(false)
   const [leverage, setLeverage] = useState(initialLeverage)
-  const [leverageInputValue, setLeverageInputValue] = useState(initialLeverage.toString())
+  const [leverageInputDraft, setLeverageInputDraft] = useState<{ base: number; text: string } | undefined>(undefined)
   const [slippage, setSlippage] = useState(
     oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
   )
@@ -2013,7 +2013,9 @@ export function PerpsTradeTicket({
     orderId: bigint
   } | undefined>(undefined)
   const orderHistoryRef = useRef(orderHistory)
-  orderHistoryRef.current = orderHistory
+  useLayoutEffect(() => {
+    orderHistoryRef.current = orderHistory
+  }, [orderHistory])
   const handledMarginActionRequestRef = useRef<number | undefined>(undefined)
   const handledClosePositionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
@@ -2028,8 +2030,10 @@ export function PerpsTradeTicket({
   const simulatorMaxLeverage = simulatorEntryMaxLeverage ?? DEFAULT_MAX_LEVERAGE
   const canEnableMarginCallSimulator = simulatorEntryMaxLeverage !== undefined &&
     simulatorEntryMaxLeverage > DEFAULT_MAX_LEVERAGE
-  const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
+  const effectiveMarginCallSimulatorEnabled = canEnableMarginCallSimulator && isMarginCallSimulatorEnabled
+  const maxLeverage = effectiveMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
   const activeLeverage = isReviewOpen && reviewSnapshot ? reviewSnapshot.selectedMaxLeverageBps / 10_000 : Math.min(leverage, maxLeverage)
+  const leverageInputValue = leverageInputDraft?.base === activeLeverage ? leverageInputDraft.text : activeLeverage.toString()
   const normalizedAccountAddress = address?.toLowerCase()
   const latestSponsoredOperation = useMemo(
     () => sponsoredOperations
@@ -2090,6 +2094,7 @@ export function PerpsTradeTicket({
   useEffect(() => {
     if ((!enableLiveTrading && !showFinalizationProgress) || lifecycleState !== 'revealPending') return
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initialize keeper reveal countdown window on entering revealPending
     setKeeperRevealDeadlineMs((currentDeadline) => currentDeadline ?? Date.now() + KEEPER_REVEAL_GRACE_MS)
     setKeeperRevealNowMs(Date.now())
     finalizationShownTitlesRef.current = new Set([FINALIZATION_LOADING_MESSAGES[0].title])
@@ -2134,6 +2139,7 @@ export function PerpsTradeTicket({
         lifecycleState === 'selfExecutePending'
       )
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sponsored accounts cannot self-execute; keep lifecycle in revealPending
       setLifecycleState('revealPending')
     }
   }, [isSponsoredAccountConfigured, lifecycleState])
@@ -2334,10 +2340,12 @@ export function PerpsTradeTicket({
   }, [])
 
   useEffect(() => {
-    setKeeperExecution(undefined)
     fastExecutionProofRef.current = undefined
     fastExecutionEpochRef.current += 1
     executionCursorRef.current = undefined
+    return () => {
+      setKeeperExecution(undefined)
+    }
   }, [address, orderId])
 
   useEffect(() => {
@@ -2617,27 +2625,12 @@ export function PerpsTradeTicket({
   ])
 
   useEffect(() => {
-    setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
-  }, [maxLeverage])
-
-  useEffect(() => {
-    setLeverageInputValue(activeLeverage.toString())
-  }, [activeLeverage])
-
-  useEffect(() => {
-    if (!canEnableMarginCallSimulator) {
-      setIsMarginCallSimulatorEnabled(false)
-    }
-  }, [canEnableMarginCallSimulator])
-
-  useEffect(() => {
     if (
       lifecycleState !== 'commitPending' ||
       commitExecutionStatus !== 'awaiting-signature' ||
       commitTxHash ||
       flowError
     ) {
-      setWalletRequestWarning(undefined)
       return undefined
     }
 
@@ -2653,6 +2646,7 @@ export function PerpsTradeTicket({
 
     return () => {
       globalThis.clearTimeout(timeout)
+      setWalletRequestWarning(undefined)
     }
   }, [
     address,
@@ -2750,6 +2744,7 @@ export function PerpsTradeTicket({
     isReviewOpen,
     oracleFrozen,
   ])
+  const [initialPreviewSyncedAt] = useState(Date.now)
   const [settledPreviewMarket, setSettledPreviewMarket] = useState<{
     oraclePrice?: bigint
     availableToTrade?: bigint
@@ -2759,7 +2754,7 @@ export function PerpsTradeTicket({
     oraclePrice: oraclePriceRaw,
     availableToTrade: availableToTradeRaw,
     resetKey: previewMarketResetKey,
-    syncedAt: Date.now(),
+    syncedAt: initialPreviewSyncedAt,
   }))
   const resetKeyChanged = settledPreviewMarket.resetKey !== previewMarketResetKey
   const availableToTradeChanged = settledPreviewMarket.availableToTrade !== availableToTradeRaw
@@ -3075,16 +3070,16 @@ export function PerpsTradeTicket({
   const openPreview = !isReducingCurrentPosition
     ? (hasDirectOpenPreview
         ? parseOpenPreview(effectiveOpenMarginPreview)
-        : parseOpenPreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0)))
+        : parseOpenPreview(readResult(activeTradePreviewData, 0)))
       ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
-    ? parseClosePreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0))
+    ? parseClosePreview(readResult(activeTradePreviewData, 0))
       ?? (!enableLiveTrading ? closePreviewFixture : undefined)
     : undefined
   const tradePreviewFailure = hasDirectOpenPreview
     ? undefined
-    : readFailure(activeTradePreviewData as readonly ContractResult[] | undefined, 0)
+    : readFailure(activeTradePreviewData, 0)
   const currentTradePreview = isReducingCurrentPosition ? closePreview : openPreview
   const isTradePreviewPending = isOpenMarginBlocking || (
     shouldReadTradePreview && !hasDirectOpenPreview && (
@@ -3351,6 +3346,7 @@ export function PerpsTradeTicket({
     if (reviewIdentityRef.current === preparationIdentityKey) return
     reviewIdentityRef.current = preparationIdentityKey
     setReviewSnapshot(undefined)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- close open preview review when signing identity or chain changes
     if (lifecycleState === 'preview') setIsReviewOpen(false)
   }, [preparationIdentityKey, lifecycleState])
   const draftSnapshot = useMemo<PerpsOrderReviewSnapshot>(() => ({
@@ -3393,7 +3389,9 @@ export function PerpsTradeTicket({
     preparationIdentityKey, orderQuantity, isFullCloseIntent, isMaxOpenIntent,
   ])
   const quantityDraftKeyRef = useRef(quantityDraftKey)
-  quantityDraftKeyRef.current = quantityDraftKey
+  useLayoutEffect(() => {
+    quantityDraftKeyRef.current = quantityDraftKey
+  }, [quantityDraftKey])
   const candidateSnapshot = useMemo(() => isReviewOpen && reviewSnapshot
     ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
@@ -3462,12 +3460,14 @@ export function PerpsTradeTicket({
   // Initial-open stories and the account panel's close action also freeze inputs.
   useEffect(() => {
     if (canPrepare && isReviewOpen && !reviewSnapshot && !liveValidationError) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- freeze review inputs when review opens without an existing snapshot
       setReviewSnapshot({ ...candidateSnapshot, preparationKey: frozenPreparationKey, identityKey: preparationIdentityKey })
     }
   }, [canPrepare, isReviewOpen, reviewSnapshot, liveValidationError, candidateSnapshot, frozenPreparationKey, preparationIdentityKey])
   const preparedOrder = isReviewOpen && preparation.matches ? preparation.result : undefined
   useEffect(() => {
     if (reviewSnapshot?.maxSize && preparedOrder) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync quantity input to reviewed max-size request delta
       setOrderQuantity(formatPerpsPositionSize(preparedOrder.request.sizeDelta, 0))
     }
   }, [reviewSnapshot?.maxSize, preparedOrder])
@@ -4585,6 +4585,7 @@ export function PerpsTradeTicket({
     const retired = useSponsoredOperationStore.getState().operations.find(item => item.id === operation.id)
     if (retired?.status !== 'cancelled' || !retired.preparationResolved) return
     const { draft, incomplete } = restoredOrderDraft(retired)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- consume one-shot cancelled-order draft handoff from usePerpsUiStore
     resetReviewLifecycle()
     setIsReviewOpen(false)
     setReviewGeneration(value => value + 1)
@@ -4594,7 +4595,7 @@ export function PerpsTradeTicket({
     setIsFullCloseIntent(draft.fullClose ?? false)
     setIsMaxOpenIntent(draft.maxOpen ?? false)
     setLeverage(draft.leverage ?? initialLeverage)
-    setLeverageInputValue(String(draft.leverage ?? initialLeverage))
+    setLeverageInputDraft(undefined)
     setSlippage(draft.slippage ?? (oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE))
     setIsProtectionEnabled(draft.protectionEnabled ?? false)
     setProtectionDraft(draft.protection ?? EMPTY_PROTECTION_DRAFT)
@@ -4651,7 +4652,7 @@ export function PerpsTradeTicket({
       : activeLeverage
 
     setLeverage(nextLeverage)
-    setLeverageInputValue(nextLeverage.toString())
+    setLeverageInputDraft(undefined)
     trackPerpsButtonClicked('leverage_input_changed', commonAnalyticsProperties)
   }
 
@@ -4843,7 +4844,7 @@ export function PerpsTradeTicket({
             <input
               id="perps-margin-call-simulator"
               type="checkbox"
-              checked={isMarginCallSimulatorEnabled}
+              checked={effectiveMarginCallSimulatorEnabled}
               onChange={(event) => {
                 trackPerpsButtonClicked('toggle_margin_call_simulator', commonAnalyticsProperties)
                 if (event.target.checked) {
@@ -4851,6 +4852,7 @@ export function PerpsTradeTicket({
                 } else {
                   setIsMarginCallSimulatorEnabled(false)
                   setIsMarginCallSimulatorConfirmationOpen(false)
+                  setLeverage((currentLeverage) => Math.min(currentLeverage, DEFAULT_MAX_LEVERAGE))
                 }
               }}
               className="h-4 w-4 accent-[#FFAB96]"
@@ -4907,11 +4909,12 @@ export function PerpsTradeTicket({
                 value={leverageInputValue}
                 onChange={(event) => {
                   const nextValue = event.target.value
-                  setLeverageInputValue(nextValue)
-
                   const nextLeverage = Number(nextValue)
                   if (Number.isInteger(nextLeverage) && nextLeverage >= 1 && nextLeverage <= maxLeverage) {
                     setLeverage(nextLeverage)
+                    setLeverageInputDraft({ base: nextLeverage, text: nextValue })
+                  } else {
+                    setLeverageInputDraft({ base: activeLeverage, text: nextValue })
                   }
                 }}
                 onBlur={commitLeverageInput}
@@ -4941,7 +4944,7 @@ export function PerpsTradeTicket({
             onChange={(event) => {
               const nextLeverage = Math.min(Number(event.target.value), maxLeverage)
               setLeverage(nextLeverage)
-              setLeverageInputValue(nextLeverage.toString())
+              setLeverageInputDraft(undefined)
             }}
             onPointerUp={() => {
               trackPerpsButtonClicked('leverage_slider_changed', commonAnalyticsProperties)
