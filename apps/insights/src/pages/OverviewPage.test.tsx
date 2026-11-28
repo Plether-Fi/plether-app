@@ -23,7 +23,7 @@ vi.mock('../api', async () => {
   }
 })
 vi.mock('../divisions/query', () => ({
-  useLiveDivisions: liveQuery,
+  useLiveDivisionsSummary: liveQuery,
   useDivisions: publicationQuery,
   useDivisionsStats: statsQuery,
 }))
@@ -59,7 +59,7 @@ beforeEach(() => {
       snapshotAt: '2026-11-26T10:00:00Z',
       snapshotBlock: '325000042',
       walletCount: 2,
-      standings: [
+      topStandings: [
         { address: account(1).address, discordUsername: 'alice', rank: 1, weeklyReturnBps: 1450, activeDays: 3 },
         { address: account(2).address, discordUsername: null, rank: 2, weeklyReturnBps: -250, activeDays: 2 },
       ],

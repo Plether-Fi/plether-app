@@ -114,7 +114,7 @@ function resolvePublicApiCacheTtl(method, pathname) {
     return API_CACHE_TTLS.manifest;
   }
 
-  if (apiPath === '/divisions/stats' || apiPath === '/divisions/traders' || apiPath === '/divisions/live' || apiPath === '/divisions/current' || apiPath === '/divisions/history') {
+  if (apiPath === '/divisions/stats' || apiPath === '/divisions/traders' || apiPath === '/divisions/live' || apiPath === '/divisions/live/summary' || apiPath === '/divisions/current' || apiPath === '/divisions/history') {
     return API_CACHE_TTLS.leaderboard;
   }
 

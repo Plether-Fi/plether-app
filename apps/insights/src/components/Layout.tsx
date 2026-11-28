@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useInsightsStatus } from '../api'
-import { useLiveDivisions } from '../divisions/query'
+import { useLiveDivisionsSummary } from '../divisions/query'
 import { resolvePerpsChain } from '../utils/chain'
 import { formatUtc } from '../utils/format'
 import { GlobalSearch } from './GlobalSearch'
@@ -139,7 +139,7 @@ function OperationsDropdown({ align = 'left' }: { align?: 'left' | 'right' }) {
 
 function HeaderTelemetryPill() {
   const statusQuery = useInsightsStatus()
-  const live = useLiveDivisions()
+  const live = useLiveDivisionsSummary()
   const chain = resolvePerpsChain(statusQuery.data?.chainId)
   const snapshot = live.data?.status === 'ready' ? live.data : null
   const blockNumber = snapshot?.snapshotBlock ?? statusQuery.data?.latestIndexedBlock ?? null
@@ -225,7 +225,7 @@ function Header() {
 
 function Footer() {
   const statusQuery = useInsightsStatus()
-  const live = useLiveDivisions()
+  const live = useLiveDivisionsSummary()
   const chain = resolvePerpsChain(statusQuery.data?.chainId)
   const snapshot = live.data?.status === 'ready' ? live.data : null
   const blockNumber = snapshot?.snapshotBlock ?? statusQuery.data?.latestIndexedBlock ?? null

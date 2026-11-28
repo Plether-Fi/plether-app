@@ -15,7 +15,7 @@ import { TraderIdentity } from '../components/TraderIdentity'
 import { EmptyState, Panel } from '../components/ui'
 import { WalletSearch } from '../components/WalletSearch'
 import { CurrentBadge } from '../divisions/CurrentBadge'
-import { useDivisions, useDivisionsStats, useLiveDivisions } from '../divisions/query'
+import { useDivisions, useDivisionsStats, useLiveDivisionsSummary } from '../divisions/query'
 import { resolvePerpsChain, vaultsAppUrl } from '../utils/chain'
 import { formatRoi } from '../utils/format'
 
@@ -28,7 +28,7 @@ export function OverviewPage() {
   const statusQuery = useInsightsStatus()
   const overviewQuery = useOverview()
   const marketExposureQuery = useMarketExposure()
-  const liveQuery = useLiveDivisions()
+  const liveQuery = useLiveDivisionsSummary()
   const publicationQuery = useDivisions()
   const statsQuery = useDivisionsStats()
 
@@ -83,7 +83,7 @@ export function OverviewPage() {
               ? 'Syncing snapshots'
               : 'Checking status'
 
-  const topStandings = live?.standings?.slice(0, 5) ?? []
+  const topStandings = live?.topStandings?.slice(0, 5) ?? []
 
   return (
     <div className="space-y-6 sm:space-y-8">
