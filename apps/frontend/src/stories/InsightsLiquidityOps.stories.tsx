@@ -212,13 +212,30 @@ function LiquidityOpsCanvas({
     const qc = new QueryClient({
       defaultOptions: {
         queries: {
+          enabled: false,
           retry: false,
           staleTime: Number.POSITIVE_INFINITY,
           refetchInterval: false,
           refetchOnMount: false,
           refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
         },
       },
+    })
+    qc.setQueryData(['insights', 'status'], {
+      healthy: true,
+      latestIndexedBlock: 333410200,
+      latestIndexedAt: '2026-11-28T12:00:00Z',
+      chainId: 421614,
+    })
+    qc.setQueryData(['insights', 'divisions', 'live', 'summary'], {
+      status: 'ready',
+      scoringRelease: { version: 'v2.0.0', assetSymbol: 'USDG' },
+      weekStartsAt: '2026-11-22T21:00:00Z',
+      snapshotAt: '2026-11-28T12:00:00Z',
+      snapshotBlock: '333410200',
+      walletCount: 48,
+      topStandings: [],
     })
     qc.setQueryData(['insights', 'liquidity', 'settlements'], SAMPLE_SETTLEMENTS)
     qc.setQueryData(['insights', 'liquidity', 'forensics'], SAMPLE_FORENSICS)

@@ -362,33 +362,45 @@ export const liquidityKeys = {
 }
 
 export function useLiquidityEfficiency() {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
   return useQuery({
     queryKey: liquidityKeys.efficiency,
     queryFn: ({ signal }) => getLiquidityEfficiency(signal),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    staleTime: staticPreview ? Infinity : 30_000,
+    refetchInterval: staticPreview ? false : 30_000,
+    refetchOnMount: !staticPreview,
+    refetchOnWindowFocus: !staticPreview,
     refetchIntervalInBackground: false,
     retry: shouldRetryEndpoint,
   })
 }
 
 export function useLiquiditySettlements() {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
   return useQuery({
     queryKey: liquidityKeys.settlements,
     queryFn: ({ signal }) => getLiquiditySettlements(signal),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    staleTime: staticPreview ? Infinity : 30_000,
+    refetchInterval: staticPreview ? false : 30_000,
+    refetchOnMount: !staticPreview,
+    refetchOnWindowFocus: !staticPreview,
     refetchIntervalInBackground: false,
     retry: shouldRetryEndpoint,
   })
 }
 
 export function useLiquidityForensics() {
+  const queryClient = useQueryClient()
+  const staticPreview = queryClient.getDefaultOptions().queries?.refetchInterval === false
   return useQuery({
     queryKey: liquidityKeys.forensics,
     queryFn: ({ signal }) => getLiquidityForensics(signal),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    staleTime: staticPreview ? Infinity : 30_000,
+    refetchInterval: staticPreview ? false : 30_000,
+    refetchOnMount: !staticPreview,
+    refetchOnWindowFocus: !staticPreview,
     refetchIntervalInBackground: false,
     retry: shouldRetryEndpoint,
   })
