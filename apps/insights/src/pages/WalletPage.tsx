@@ -1,7 +1,7 @@
 import { manualFeeShareApproval, manualFeeShareExplanation } from '../feeShareApprovals'
 import { Fragment } from 'react'
 import { WalletMetric as Metric } from '../components/WalletMetric'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
 import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl, IntegrityNotice } from '../components/ui'
 import { eligibilityPresentation } from '../utils/eligibility'
@@ -9,6 +9,7 @@ import { formatCompactAssets, formatPrice, formatRoi, formatAssets, formatUtc, i
 import { TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
 import { PositionBreakdown } from '../components/PositionBreakdown'
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
+import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { arbiscanLinkKey } from '../utils/chain'
 import { calculatePnlBreakdown } from '../utils/pnl'
 
@@ -176,10 +177,16 @@ export function WalletPage() {
   const profileUrl = xProfileUrl(wallet.displayName)
   return (
     <div className="space-y-6">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Divisions', to: '/divisions' },
+          { label: 'Sept 2026 Archive', to: '/archive/september-2026' },
+          { label: wallet.displayName ?? shortAddress(wallet.address) },
+        ]}
+      />
       <IntegrityNotice competition={competition} />
       <div>
-        <Link to="/" className="text-sm text-brand-peach hover:underline">← Back to leaderboard</Link>
-        <div className="mt-5 flex flex-col items-start justify-between gap-4 sm:flex-row">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">
               {wallet.prizePlace !== null ? `Prize place #${String(wallet.prizePlace)} · ` : ''}

@@ -199,14 +199,6 @@ export function TradingAccountsPage() {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
-            <Link to="/sponsored" className="text-brand-peach hover:underline">
-              Paymaster &amp; budgets →
-            </Link>
-            <Link to="/infra" className="text-content-secondary hover:text-brand-peach hover:underline">
-              Alto &amp; infra →
-            </Link>
-          </div>
         </div>
 
         {controls && pipeline ? (

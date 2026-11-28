@@ -268,7 +268,9 @@ function renderAt(path: string) {
 describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
   it('renders live margin health, trades with PositionBreakdown receipts, protections, LP shares, and Divisions history', () => {
     renderAt(`/wallets/${testAccount}`)
-    expect(screen.getByText('@alice_fx')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '@alice_fx' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Account views' })).toBeInTheDocument()
     expect(screen.queryByText('Live Divisions standing')).not.toBeInTheDocument()
     expect(screen.getByText('LONG · 500.00 plDXY')).toBeInTheDocument()
     expect(screen.getByText('Wallet balance history')).toBeInTheDocument()
@@ -279,7 +281,7 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     expect(screen.getByRole('button', { name: '90D' })).toBeInTheDocument()
 
     // Open share card studio from header — Account Overview (with life-long balance chart) is primary, never duplicating Divisions Rank
-    fireEvent.click(screen.getByRole('button', { name: 'Share card' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Share card' })[0])
     expect(screen.getByText('Shareable social card')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Account Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Open Position' })).toBeInTheDocument()
@@ -329,7 +331,7 @@ describe('AccountPage (Stage 3 Public Trading Account Inspector)', () => {
     })
     renderAt(`/wallets/${testAccount}`)
     expect(screen.getByText(/Connected backend does not serve Stage 3 Account Summary yet/i)).toBeInTheDocument()
-    expect(screen.getByText('@alice_fx')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '@alice_fx' })).toBeInTheDocument()
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4)
   })
 })

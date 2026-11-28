@@ -12,6 +12,10 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import {
+  PageBreadcrumbBar,
+  WalletPerspectiveSwitcher,
+} from '../components/PageBreadcrumbBar'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -127,12 +131,13 @@ export function TradingAccountDetailPage() {
   if (!validAddress) {
     return (
       <div className="space-y-4">
-        <Link
-          to="/trading-accounts"
-          className="inline-flex items-center gap-1.5 font-mono text-xs text-brand-peach hover:underline"
-        >
-          ← Trading Accounts (Kernel v4)
-        </Link>
+        <PageBreadcrumbBar
+          items={[
+            { label: 'System', to: '/protocol' },
+            { label: 'Trading Accounts', to: '/trading-accounts' },
+            { label: 'Invalid address' },
+          ]}
+        />
         <Panel>
           <EmptyState
             title="Invalid smart account address"
@@ -173,6 +178,17 @@ export function TradingAccountDetailPage() {
 
   return (
     <div className="space-y-6">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'System', to: '/protocol' },
+          { label: 'Trading Accounts', to: '/trading-accounts' },
+          { label: shortAddress(normalizedAddress) },
+        ]}
+        rightSlot={
+          <WalletPerspectiveSwitcher address={normalizedAddress} active="smart-account" />
+        }
+      />
+
       <DataFreshnessBanner
         networkName={chain.name}
         isTestnet={chain.isTestnet}
@@ -190,16 +206,6 @@ export function TradingAccountDetailPage() {
                 : 'Kernel v4 gateway unconfigured'
         }
       />
-
-      {/* Breadcrumb & Cross-Navigation */}
-      <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
-        <Link to="/trading-accounts" className="text-brand-peach hover:underline">
-          ← Trading Accounts (Kernel v4)
-        </Link>
-        <Link to="/sponsored" className="text-content-secondary hover:text-content-primary">
-          Paymaster &amp; budgets →
-        </Link>
-      </div>
 
       {/* Header */}
       <header className="min-w-0 border border-brand-border/30 bg-surface-panel p-4 sm:p-6">

@@ -9,6 +9,7 @@ import {
 } from '../api'
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { ResidualAccuracyMeter } from '../components/LiquidityVisuals'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
@@ -241,6 +242,36 @@ export function LiquidityEpochPage() {
 
   return (
     <div className="space-y-6 sm:space-y-8">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Liquidity', to: '/liquidity' },
+          { label: 'LP Ops', to: '/liquidity' },
+          { label: `Epoch #${data ? data.epoch.toLocaleString('en-US') : (epoch ?? '')}` },
+        ]}
+        rightSlot={
+          data ? (
+            <div className="flex items-center gap-1.5 font-mono text-xs">
+              {data.previousEpoch != null ? (
+                <Link
+                  to={`/liquidity/epochs/${String(data.previousEpoch)}`}
+                  className="border border-brand-border/35 bg-surface-panel px-2.5 py-1 text-content-secondary transition-colors hover:border-brand-peach hover:text-content-primary"
+                >
+                  ← #{data.previousEpoch.toLocaleString('en-US')}
+                </Link>
+              ) : null}
+              {data.nextEpoch != null ? (
+                <Link
+                  to={`/liquidity/epochs/${String(data.nextEpoch)}`}
+                  className="border border-brand-border/35 bg-surface-panel px-2.5 py-1 text-content-secondary transition-colors hover:border-brand-peach hover:text-content-primary"
+                >
+                  #{data.nextEpoch.toLocaleString('en-US')} →
+                </Link>
+              ) : null}
+            </div>
+          ) : undefined
+        }
+      />
+
       <DataFreshnessBanner
         networkName={chain.name}
         isTestnet={chain.isTestnet}
@@ -251,36 +282,6 @@ export function LiquidityEpochPage() {
         statusLabel={bannerLabel}
         note={data ? `Hour boundary: ${formatUtc(data.epochUtc)}` : 'LP epoch forensic detail'}
       />
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          to="/liquidity"
-          className="text-sm font-semibold text-brand-peach hover:underline hover:underline-offset-4"
-        >
-          ← Back to LP Settlement Ops
-        </Link>
-
-        {data ? (
-          <div className="flex items-center gap-2 font-mono text-xs">
-            {data.previousEpoch != null ? (
-              <Link
-                to={`/liquidity/epochs/${String(data.previousEpoch)}`}
-                className="border border-brand-border/35 bg-surface-panel px-3 py-1.5 text-content-secondary transition-colors hover:border-brand-peach hover:text-content-primary"
-              >
-                ← #{data.previousEpoch.toLocaleString('en-US')}
-              </Link>
-            ) : null}
-            {data.nextEpoch != null ? (
-              <Link
-                to={`/liquidity/epochs/${String(data.nextEpoch)}`}
-                className="border border-brand-border/35 bg-surface-panel px-3 py-1.5 text-content-secondary transition-colors hover:border-brand-peach hover:text-content-primary"
-              >
-                #{data.nextEpoch.toLocaleString('en-US')} →
-              </Link>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
 
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-2">

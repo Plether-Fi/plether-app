@@ -2,6 +2,10 @@ import { Link, useParams } from 'react-router-dom'
 import { formatPlDxyQuantity } from '../api/wallets'
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
+import {
+  PageBreadcrumbBar,
+  WalletPerspectiveSwitcher,
+} from '../components/PageBreadcrumbBar'
 import { ShareCardModal, type ShareCardOption } from '../components/ShareCardModal'
 import { StatusPill } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
@@ -356,17 +360,14 @@ function TraderDetails({ address }: { address: string }) {
 
   return (
     <div className="space-y-6 sm:space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link to="/divisions" className="text-sm font-semibold text-brand-peach hover:underline">
-          ← Back to leaderboard
-        </Link>
-        <Link
-          to="/results"
-          className="text-xs font-semibold text-content-secondary hover:text-content-primary hover:underline"
-        >
-          Browse weekly results archive →
-        </Link>
-      </div>
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Divisions', to: '/divisions' },
+          { label: 'Live Leaderboard', to: '/divisions' },
+          { label: traderLabel },
+        ]}
+        rightSlot={<WalletPerspectiveSwitcher address={address} active="divisions" />}
+      />
 
       {/* Prominent Trader Header with Unmistakable Trading Account CTAs */}
       <header className="flex flex-col items-start justify-between gap-5 border border-brand-border/25 bg-surface-panel p-5 sm:flex-row sm:p-6">
@@ -431,7 +432,7 @@ function TraderDetails({ address }: { address: string }) {
             />
           </div>
           {shareCards.length > 0 ? (
-            <ShareCardModal cards={shareCards} triggerLabel="Share Divisions card" />
+            <ShareCardModal cards={shareCards} />
           ) : null}
         </div>
       </header>

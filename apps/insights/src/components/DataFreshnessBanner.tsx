@@ -31,7 +31,7 @@ export function DataFreshnessBanner({
   statusLabel: string
   note?: string | null
 }) {
-  if (tone === 'live') {
+  if (tone === 'live' || tone === 'ready') {
     return null
   }
   if (

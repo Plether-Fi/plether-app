@@ -18,6 +18,10 @@ import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import {
+  PageBreadcrumbBar,
+  WalletPerspectiveSwitcher,
+} from '../components/PageBreadcrumbBar'
+import {
   ActivePositionProtectionStrip,
   OrderProtectionsInlineChecklist,
 } from '../components/OrderProtectionsChecklist'
@@ -267,7 +271,15 @@ function TradingAccountInspector({ address }: { address: string }) {
   ]
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
+      <PageBreadcrumbBar
+        items={[
+          { label: 'Markets', to: '/execution' },
+          { label: traderLabel },
+        ]}
+        rightSlot={<WalletPerspectiveSwitcher address={address} active="wallet" />}
+      />
+
       <DataFreshnessBanner
         networkName={chain.name}
         isTestnet={chain.isTestnet}
@@ -278,20 +290,6 @@ function TradingAccountInspector({ address }: { address: string }) {
         statusLabel={bannerLabel}
         note="Direct Trading Account lookup · Read-only public forensics"
       />
-
-      <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <Link to="/" className="text-brand-peach hover:underline">
-          ← Protocol Pulse
-        </Link>
-        <div className="flex flex-wrap gap-4">
-          <Link to="/execution" className="text-content-secondary hover:text-brand-peach">
-            Execution tape →
-          </Link>
-          <Link to="/divisions" className="text-content-secondary hover:text-brand-peach">
-            Divisions leaderboard →
-          </Link>
-        </div>
-      </div>
 
       <header className="flex flex-col items-start justify-between gap-4 border border-brand-border/25 bg-surface-panel p-4 sm:flex-row sm:p-6">
         <div className="min-w-0 max-w-full">
@@ -318,20 +316,6 @@ function TradingAccountInspector({ address }: { address: string }) {
             </p>
             <CopyButton value={address} />
             <ArbiscanButton kind="address" value={address} chainId={chainId} />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-4 text-xs">
-            <Link
-              to={`/trading-accounts/${address}`}
-              className="text-brand-peach hover:underline"
-            >
-              Kernel v4 Smart Account →
-            </Link>
-            <Link
-              to={`/divisions/wallets/${address}`}
-              className="text-content-secondary hover:text-brand-peach"
-            >
-              Divisions card view →
-            </Link>
           </div>
         </div>
         <div className="flex flex-col items-start gap-3 sm:items-end">
@@ -640,7 +624,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                           />
                           <ShareCardModal
                             compact
-                            triggerLabel="Share position"
                             cards={shareCards}
                             initialCardId="open-position"
                           />
@@ -856,7 +839,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                               {row.activityType === 'Close' && row.pnlAssets != null ? (
                                 <ShareCardModal
                                   compact
-                                  triggerLabel="Share PnL"
                                   cards={[
                                     {
                                       id: `trade-${row.id}`,
@@ -886,7 +868,6 @@ function TradingAccountInspector({ address }: { address: string }) {
                               {row.activityType === 'Open' ? (
                                 <ShareCardModal
                                   compact
-                                  triggerLabel="Share Open"
                                   cards={[
                                     {
                                       id: `open-${row.id}`,
@@ -1389,15 +1370,18 @@ export function AccountPage() {
   if (!address || !isWalletAddress(address)) {
     return (
       <div className="space-y-6">
+        <PageBreadcrumbBar
+          items={[
+            { label: 'Markets', to: '/execution' },
+            { label: 'Invalid address' },
+          ]}
+        />
         <Panel>
           <EmptyState
             title="Invalid Trading Account address"
             message="Enter a 42-character 0x Trading Account address in the header search bar."
           />
         </Panel>
-        <Link to="/" className="inline-block text-sm text-brand-peach hover:underline">
-          ← Back to Protocol Pulse
-        </Link>
       </div>
     )
   }
