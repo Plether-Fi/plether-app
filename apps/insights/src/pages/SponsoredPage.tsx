@@ -265,7 +265,7 @@ export function SponsoredPage() {
       <Panel className="p-4 sm:p-6">
         {statusQuery.isLoading ? (
           <LoadingState rows={3} />
-        ) : !data || !data.configured ? (
+        ) : !data?.configured ? (
           <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-content-tertiary">
             <span>Sponsorship gate: <strong className="text-content-secondary">{gateCard.label ?? 'Unavailable'}</strong></span>
             <span>{gateCard.detail}</span>
