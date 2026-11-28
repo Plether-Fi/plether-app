@@ -42,7 +42,15 @@ describe('position breakdown', () => {
     expect(within(dialog).getByText('2,166,132.764800 USDG')).toBeInTheDocument()
     expect(dialog.textContent).toContain('−866.453105 USDG')
     expect(dialog.textContent).toContain('+5,474.976305 USDG')
-    expect(within(dialog).getByRole('link')).toHaveAttribute('href', `https://sepolia.arbiscan.io/tx/${rebate.receipt.transactionHash}`)
+    const links = within(dialog).getAllByRole('link')
+    expect(links.some((link) => link.getAttribute('href') === '/oracle/updates/latest')).toBe(true)
+    expect(
+      links.some(
+        (link) =>
+          link.getAttribute('href') ===
+          `https://sepolia.arbiscan.io/tx/${rebate.receipt.transactionHash}`,
+      ),
+    ).toBe(true)
     expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close position breakdown' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

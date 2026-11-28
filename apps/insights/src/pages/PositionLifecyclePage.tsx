@@ -12,6 +12,7 @@ import {
 import { ArbiscanButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { OrderProtectionsInlineChecklist } from '../components/OrderProtectionsChecklist'
 import { PositionLifecycleChart } from '../components/PositionLifecycleChart'
 import { ShareCardModal } from '../components/ShareCardModal'
@@ -219,11 +220,13 @@ export function PositionLifecyclePage() {
               <span className="text-content-tertiary">Weighted Entry → Exit / Mark</span>
               <span className="text-base font-semibold text-content-primary">
                 {formatPrice(pos.entryPrice)} →{' '}
-                {pos.exitPrice
-                  ? formatPrice(pos.exitPrice)
-                  : data.currentMarkPrice
-                    ? `${formatPrice(data.currentMarkPrice)} mark`
-                    : 'Open'}
+                {pos.exitPrice ? (
+                  formatPrice(pos.exitPrice)
+                ) : data.currentMarkPrice ? (
+                  <OraclePriceLink>{formatPrice(data.currentMarkPrice)} mark</OraclePriceLink>
+                ) : (
+                  'Open'
+                )}
               </span>
               <span className="text-content-tertiary">
                 {String(pos.fillCount)} fill{pos.fillCount === 1 ? '' : 's'}

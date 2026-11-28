@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { InsightsApiError, formatRateBps, useOracleHealth } from '../api'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OracleHealthBlocks } from '../components/OracleHealthBlocks'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -159,17 +160,24 @@ export function OraclePage() {
                   />
                 </div>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span
-                    className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
-                      data.regime === 'Live'
-                        ? 'text-positive'
-                        : data.regime === 'Frozen'
-                          ? 'text-brand-orange'
-                          : 'text-content-primary'
-                    }`}
-                  >
-                    {data.live.basketPrice ? formatPrice(data.live.basketPrice) : 'Unavailable'}
-                  </span>
+                  {data.live.basketPrice ? (
+                    <OraclePriceLink
+                      updateId={data.live.latestUpdateId}
+                      className={`font-mono text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
+                        data.regime === 'Live'
+                          ? 'text-positive'
+                          : data.regime === 'Frozen'
+                            ? 'text-brand-orange'
+                            : 'text-content-primary'
+                      }`}
+                    >
+                      {formatPrice(data.live.basketPrice)}
+                    </OraclePriceLink>
+                  ) : (
+                    <span className="font-mono text-3xl font-bold tracking-tight tabular-nums text-content-primary sm:text-4xl">
+                      Unavailable
+                    </span>
+                  )}
                   {data.live.latestUpdateId ? (
                     <Link
                       to={`/oracle/updates/${data.live.latestUpdateId}`}
@@ -568,7 +576,13 @@ export function OraclePage() {
                             {formatUtcWithSeconds(upd.maxPublishTime)}
                           </td>
                           <td className="px-4 py-3.5 font-mono text-xs font-semibold tabular-nums text-content-primary">
-                            {upd.basketPrice ? `${formatPrice(upd.basketPrice)} plDXY` : '—'}
+                            {upd.basketPrice ? (
+                              <OraclePriceLink updateId={upd.id}>
+                                {formatPrice(upd.basketPrice)} plDXY
+                              </OraclePriceLink>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td className="px-4 py-3.5 font-mono text-xs tabular-nums text-content-secondary">
                             <span

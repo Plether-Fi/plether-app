@@ -89,6 +89,7 @@ export interface LinkedPositionProtection {
   takeProfitTriggerPrice: string | null
   stopLossTriggerPrice: string | null
   triggerMarkPrice: string | null
+  triggerOracleUpdateId?: string | null
   triggerBountyAssets: string | null
   armedBlock: string | null
   updatedBlock: string | null
@@ -161,6 +162,7 @@ export interface TransactionBatchSummary {
   oracleMaxPublishTime: string | null
   oracleSpreadSeconds: number | null
   oraclePrice: string | null
+  oracleUpdateId?: string | null
   oracleFrozen: boolean
 }
 
@@ -203,6 +205,7 @@ export interface FinalizedOrderRecord {
   executionMode: string | null
   executionPrice: string | null
   oraclePrice: string | null
+  oracleUpdateId?: string | null
   oracleFrozen: boolean | null
   vpiAssets: string | null
   frozenCloseSpreadAssets: string | null

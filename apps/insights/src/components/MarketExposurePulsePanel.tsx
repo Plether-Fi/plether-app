@@ -11,6 +11,7 @@ import {
   formatPrice,
   formatSignedAssets,
 } from '../utils/format'
+import { OraclePriceLink } from './OraclePriceLink'
 import { TraderIdentity } from './TraderIdentity'
 import { EmptyState, LoadingState, Panel, Pnl } from './ui'
 
@@ -43,7 +44,10 @@ export function MarketExposurePulsePanel({
         </div>
         {data?.currentMarkPrice ? (
           <span className="font-mono text-xs text-content-secondary">
-            Mark <strong className="text-content-primary">{formatPrice(data.currentMarkPrice)}</strong>
+            Mark{' '}
+            <OraclePriceLink className="font-semibold text-content-primary">
+              {formatPrice(data.currentMarkPrice)}
+            </OraclePriceLink>
             {summary?.avgLeverageX100 != null
               ? ` · Avg lev ${formatLeverageX100(summary.avgLeverageX100)}`
               : ''}
@@ -172,7 +176,10 @@ export function MarketExposurePulsePanel({
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-xs tabular-nums text-content-secondary">
-                          {formatPrice(pos.entryPrice)} → {formatPrice(pos.markPrice)}
+                          {formatPrice(pos.entryPrice)} →{' '}
+                          <OraclePriceLink className="text-content-primary">
+                            {formatPrice(pos.markPrice)}
+                          </OraclePriceLink>
                         </td>
                         <td className={`whitespace-nowrap px-3 py-3 font-mono text-xs font-semibold tabular-nums ${liqToneClass}`}>
                           {liq.text}

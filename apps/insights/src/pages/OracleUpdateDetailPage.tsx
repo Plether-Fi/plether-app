@@ -3,6 +3,7 @@ import { InsightsApiError, isValidOracleUpdateId, useOracleUpdateDetail } from '
 import { CopyButton } from '../components/ActionButtons'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
 import { OracleBasketPieChart } from '../components/OracleBasketPieChart'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -456,9 +457,17 @@ export function OracleUpdateDetailPage() {
                   <div className="border border-brand-border/15 bg-surface-canvas/40 p-2.5">
                     <dt className="text-[11px] text-content-tertiary">Previous plDXY</dt>
                     <dd className="mt-0.5 font-semibold tabular-nums text-content-secondary">
-                      {data.update.previousBasketPrice
-                        ? formatPrice(data.update.previousBasketPrice)
-                        : '—'}
+                      {data.update.previousBasketPrice ? (
+                        data.navigation.previousId ? (
+                          <OraclePriceLink updateId={data.navigation.previousId}>
+                            {formatPrice(data.update.previousBasketPrice)}
+                          </OraclePriceLink>
+                        ) : (
+                          formatPrice(data.update.previousBasketPrice)
+                        )
+                      ) : (
+                        '—'
+                      )}
                     </dd>
                   </div>
                   <div className="border border-brand-border/15 bg-surface-canvas/40 p-2.5">

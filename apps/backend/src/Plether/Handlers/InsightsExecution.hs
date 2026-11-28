@@ -36,7 +36,7 @@ module Plether.Handlers.InsightsExecution
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Concurrently (..), mapConcurrently, runConcurrently)
 import Control.Exception (catch, throwIO)
-import Control.Monad (unless)
+import Control.Monad (forM, unless)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -503,7 +503,7 @@ computeTransactionResponse pool client cfg txHash = do
       let chainId = cfgPerpsChainId cfg
           router = T.toLower $ T.strip $ cfgPerpsOrderRouter cfg
           protBook = T.toLower Manifest.positionProtectionBookAddress
-      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender, baseProtBundle) <- withDb pool $ \conn ->
+      (rows, finalizedOrders, protocolEvents, mLpSettlement, cachedSender, baseProtBundle, oracleUpdateMap) <- withDb pool $ \conn ->
         withReadSnapshot conn $ do
           txRows <- fetchTransactionTrades conn chainId router txHash
           orders <- fetchTransactionFinalizedOrders conn chainId router txHash
@@ -514,7 +514,8 @@ computeTransactionResponse pool client cfg txHash = do
                 mapMaybe (\r -> rtrOrderId r <|> extractExecutionOrderId (rtrExecution r)) txRows
                   <> map forOrderId orders
           bundle <- fetchOrderProtectionsBundle conn chainId router protBook txOrderIds
-          pure (txRows, orders, protoEvs, lpRow, Map.lookup txHash senders, bundle)
+          oracleIds <- fetchOracleUpdateIdsForOrders conn orders
+          pure (txRows, orders, protoEvs, lpRow, Map.lookup txHash senders, bundle, oracleIds)
       if null rows && null finalizedOrders && null protocolEvents && maybe True (const False) mLpSettlement
         then
           pure $ Left $ E.notFound ("No indexed Plether Perps activity found for transaction " <> txHash)
@@ -556,7 +557,7 @@ computeTransactionResponse pool client cfg txHash = do
               mBatchSummary =
                 if null finalizedOrders
                   then Nothing
-                  else Just (batchSummaryToJson finalizedOrders)
+                  else Just (batchSummaryToJson oracleUpdateMap finalizedOrders)
           pure $
             Right $
               mkResponse blockNum chainId $
@@ -569,7 +570,7 @@ computeTransactionResponse pool client cfg txHash = do
                   , "executorAddress" .= executorAddr
                   , "batchSummary" .= mBatchSummary
                   , "latencyBenchmark" .= (protocolLatencyBenchmarkToJson <$> mLatencyBenchmark)
-                  , "finalizedOrders" .= map (finalizedOrderToJson protBundle mLatencyBenchmark) finalizedOrders
+                  , "finalizedOrders" .= map (finalizedOrderToJson oracleUpdateMap protBundle mLatencyBenchmark) finalizedOrders
                   , "protocolEvents" .= map protocolEventToJson protocolEvents
                   , "lpSettlement" .= (txLpSettlementToJson <$> mLpSettlement)
                   , "events" .= map (recentTradeToJson protBundle) rows
@@ -1801,8 +1802,38 @@ fetchTransactionLpSettlement conn chainId txHash = do
       (chainId, txHash)
   pure (listToMaybe rows)
 
-batchSummaryToJson :: [FinalizedOrderRow] -> Value
-batchSummaryToJson orders =
+fetchOracleUpdateIdsForOrders :: Connection -> [FinalizedOrderRow] -> IO (Map.Map (Integer, Integer) Integer)
+fetchOracleUpdateIdsForOrders conn orders = do
+  let windows =
+        nub
+          [ (mn, mx)
+          | o <- orders
+          , Just mn <- [forOracleMinPublishTime o]
+          , Just mx <- [forOracleMaxPublishTime o]
+          ]
+  pairs <-
+    forM windows $ \(mn, mx) -> do
+      rows <-
+        query
+          conn
+          "SELECT id FROM perps_pyth_update_payloads \
+          \WHERE min_publish_time = ? AND max_publish_time = ? \
+          \ORDER BY id DESC LIMIT 1"
+          (mn, mx)
+          :: IO [Only Integer]
+      pure $ case rows of
+        (Only pid : _) -> Just ((mn, mx), pid)
+        [] -> Nothing
+  pure $ Map.fromList (catMaybes pairs)
+
+lookupOrderOracleUpdateId :: Map.Map (Integer, Integer) Integer -> FinalizedOrderRow -> Maybe Integer
+lookupOrderOracleUpdateId updateMap order = do
+  mn <- forOracleMinPublishTime order
+  mx <- forOracleMaxPublishTime order
+  Map.lookup (mn, mx) updateMap
+
+batchSummaryToJson :: Map.Map (Integer, Integer) Integer -> [FinalizedOrderRow] -> Value
+batchSummaryToJson updateMap orders =
   let totalOrders = length orders
       executedOrders = length $ filter (\o -> forTerminalStatus o == "Executed") orders
       failedOrders = totalOrders - executedOrders
@@ -1823,6 +1854,9 @@ batchSummaryToJson orders =
         [] -> Nothing
         xs -> Just (maximum xs)
       oraclePrice = listToMaybe $ mapMaybe forOraclePrice orders
+      oracleUpdateId =
+        ((,) <$> oracleMin <*> oracleMax >>= (`Map.lookup` updateMap))
+          <|> listToMaybe (mapMaybe (lookupOrderOracleUpdateId updateMap) orders)
       oracleFrozen = any (== Just True) (map forOracleFrozen orders)
    in object
         [ "totalOrders" .= totalOrders
@@ -1837,11 +1871,12 @@ batchSummaryToJson orders =
         , "oracleMaxPublishTime" .= (isoTimestamp <$> oracleMax)
         , "oracleSpreadSeconds" .= ((\mx mn -> max 0 (mx - mn)) <$> oracleMax <*> oracleMin)
         , "oraclePrice" .= (show <$> oraclePrice)
+        , "oracleUpdateId" .= (show <$> oracleUpdateId)
         , "oracleFrozen" .= oracleFrozen
         ]
 
-finalizedOrderToJson :: OrderProtectionsBundle -> Maybe ProtocolLatencyBenchmark -> FinalizedOrderRow -> Value
-finalizedOrderToJson protBundle mBench FinalizedOrderRow {..} =
+finalizedOrderToJson :: Map.Map (Integer, Integer) Integer -> OrderProtectionsBundle -> Maybe ProtocolLatencyBenchmark -> FinalizedOrderRow -> Value
+finalizedOrderToJson updateMap protBundle mBench row@FinalizedOrderRow {..} =
   let latencySecs = (\t c -> max 0 (t - c)) <$> forTerminalTimestamp <*> forCommitTimestamp
       latencyBlks = (\t c -> max 0 (t - c)) <$> forTerminalBlock <*> forCommitBlock
       oracleSpread = (\mx mn -> max 0 (mx - mn)) <$> forOracleMaxPublishTime <*> forOracleMinPublishTime
@@ -1850,6 +1885,7 @@ finalizedOrderToJson protBundle mBench FinalizedOrderRow {..} =
       oracleToFinalize = (\t mx -> t - mx) <$> forTerminalTimestamp <*> forOracleMaxPublishTime
       mLatencyPct = latencySecs >>= \s -> mBench >>= \b -> computeLatencyPercentileRank (plbSamples b) s
       mOrderProtections = buildOrderProtectionsForOrder protBundle forOrderId
+      mOracleUpdateId = lookupOrderOracleUpdateId updateMap row
    in object
         [ "orderId" .= show forOrderId
         , "account" .= forAccount
@@ -1875,6 +1911,7 @@ finalizedOrderToJson protBundle mBench FinalizedOrderRow {..} =
         , "executionMode" .= forExecutionMode
         , "executionPrice" .= (show <$> forExecutionPrice)
         , "oraclePrice" .= (show <$> forOraclePrice)
+        , "oracleUpdateId" .= (show <$> mOracleUpdateId)
         , "oracleFrozen" .= forOracleFrozen
         , "vpiAssets" .= (show <$> forVpiAssets)
         , "frozenCloseSpreadAssets" .= (show <$> forFrozenSpreadAssets)

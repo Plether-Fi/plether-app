@@ -12,6 +12,7 @@ import {
   shortAddress,
 } from '../utils/format'
 import { ArbiscanButton, CopyButton } from './ActionButtons'
+import { OraclePriceLink } from './OraclePriceLink'
 import { StatusPill, type StatusTone } from './StatusPill'
 import { Panel } from './ui'
 
@@ -369,6 +370,7 @@ export function OrderTimingTimelinePanel({
   const pctBadge = percentileSummary(percentile, totalLatencySeconds, latencyBenchmark)
 
   const oraclePrice = selectedOrder.oraclePrice ?? batchSummary?.oraclePrice ?? null
+  const oracleUpdateId = selectedOrder.oracleUpdateId ?? batchSummary?.oracleUpdateId ?? null
   const oracleFrozen = selectedOrder.oracleFrozen ?? batchSummary?.oracleFrozen ?? false
 
   const commitExternalKey =
@@ -592,7 +594,13 @@ export function OrderTimingTimelinePanel({
               <div className="flex items-center justify-between gap-2">
                 <span className="whitespace-nowrap">Oracle mark</span>
                 <span className="whitespace-nowrap tabular-nums text-content-secondary">
-                  {oraclePrice ? `${formatPrice(oraclePrice)} plDXY` : '—'}
+                  {oraclePrice ? (
+                    <OraclePriceLink updateId={oracleUpdateId}>
+                      {formatPrice(oraclePrice)} plDXY
+                    </OraclePriceLink>
+                  ) : (
+                    '—'
+                  )}
                 </span>
               </div>
             </div>

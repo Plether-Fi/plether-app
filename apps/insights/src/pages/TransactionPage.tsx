@@ -16,6 +16,7 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
 import { OrderTimingTimelinePanel } from '../components/OrderTimingTimeline'
@@ -644,7 +645,15 @@ export function TransactionPage() {
           <div className="text-left font-mono sm:text-right">
             <p className="text-xs text-content-tertiary">Execution Price</p>
             <p className="mt-1 text-2xl font-bold tabular-nums text-content-primary">
-              {selectedEvent.price ? formatPrice(selectedEvent.price) : 'Unavailable'}
+              {selectedEvent.price ? (
+                <OraclePriceLink
+                  updateId={matchedFinalizedOrder?.oracleUpdateId ?? batchSummary?.oracleUpdateId}
+                >
+                  {formatPrice(selectedEvent.price)}
+                </OraclePriceLink>
+              ) : (
+                'Unavailable'
+              )}
             </p>
             <p className="mt-0.5 text-xs text-content-tertiary">
               {selectedEvent.oracleFrozen
@@ -780,7 +789,16 @@ export function TransactionPage() {
                 </span>
               </DetailRow>
               <DetailRow label="Final plDXY price">
-                <span className="font-mono">{formatPrice(selectedEvent.price)}</span>
+                {selectedEvent.price ? (
+                  <OraclePriceLink
+                    updateId={matchedFinalizedOrder?.oracleUpdateId ?? batchSummary?.oracleUpdateId}
+                    className="font-mono"
+                  >
+                    {formatPrice(selectedEvent.price)}
+                  </OraclePriceLink>
+                ) : (
+                  <span className="font-mono">—</span>
+                )}
               </DetailRow>
               <DetailRow label={isClose ? 'Quantity closed' : 'Quantity added'}>
                 <ExactPlDxy value={quantityDelta} />

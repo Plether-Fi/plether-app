@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   InsightsApiError,
@@ -22,6 +22,7 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
+import { OraclePriceLink } from '../components/OraclePriceLink'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -110,7 +111,7 @@ function SafetyControlTile({
   source: string
   tone: StatusTone
   statusLabel: string
-  detail: string
+  detail: ReactNode
 }) {
   return (
     <div className="flex min-w-0 flex-col justify-between gap-2.5 border border-brand-border/25 bg-app-bg p-3.5 sm:p-4">
@@ -1067,11 +1068,17 @@ export function ProtocolPage() {
                         : 'Unavailable'
                   }
                   detail={
-                    data.safety.lastMarkPrice
-                      ? `Last on-chain mark: ${formatPrice(data.safety.lastMarkPrice)}${
-                          data.safety.lastMarkTime ? ` · ${formatUtc(data.safety.lastMarkTime)}` : ''
-                        }`
-                      : 'Oracle mark telemetry unavailable from RPC.'
+                    data.safety.lastMarkPrice ? (
+                      <>
+                        Last on-chain mark:{' '}
+                        <OraclePriceLink className="font-mono font-semibold text-content-primary">
+                          {formatPrice(data.safety.lastMarkPrice)}
+                        </OraclePriceLink>
+                        {data.safety.lastMarkTime ? ` · ${formatUtc(data.safety.lastMarkTime)}` : ''}
+                      </>
+                    ) : (
+                      'Oracle mark telemetry unavailable from RPC.'
+                    )
                   }
                 />
 
