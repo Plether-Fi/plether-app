@@ -4,6 +4,7 @@ import { useMemo, type ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { Layout } from '../../../insights/src/components/Layout'
 import {
+  BreadcrumbActionLink,
   PageBreadcrumbBar,
   WalletPerspectiveSwitcher,
 } from '../../../insights/src/components/PageBreadcrumbBar'
@@ -146,6 +147,37 @@ export const WalletWithPerspectiveSwitcher: StoryObj = {
           <p className="max-w-2xl text-sm text-content-secondary">
             Switch seamlessly between Wallet Ledger, Kernel v4 smart account diagnostics, and
             Divisions profile from one consistent control.
+          </p>
+        </div>
+      </div>
+    </NavigationFrame>
+  ),
+}
+
+export const TransactionDetailBreadcrumb: StoryObj = {
+  render: () => (
+    <NavigationFrame initialPath="/tx/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">
+      <div className="space-y-6">
+        <PageBreadcrumbBar
+          items={[
+            { label: 'Markets', to: '/execution' },
+            { label: 'Execution', to: '/execution' },
+            { label: 'Tx 0xaaaa…aaaa' },
+          ]}
+          rightSlot={
+            <BreadcrumbActionLink to={`/wallets/${DEMO_WALLET}/positions/412`}>
+              Position lifecycle →
+            </BreadcrumbActionLink>
+          }
+        />
+        <div className="space-y-2">
+          <p className="font-mono text-xs uppercase tracking-[0.16em] text-brand-peach">
+            Transaction Detail Breadcrumb
+          </p>
+          <h1 className="text-2xl font-semibold">Transaction Breakdown</h1>
+          <p className="max-w-2xl text-sm text-content-secondary">
+            The breadcrumb bar stays strictly navigational with a matching bordered action link,
+            while copy, share, and Arbiscan icons live cleanly inside the transaction header panel.
           </p>
         </div>
       </div>

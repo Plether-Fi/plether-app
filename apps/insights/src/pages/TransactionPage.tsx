@@ -16,7 +16,7 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
+import { BreadcrumbActionLink, PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { OraclePriceLink } from '../components/OraclePriceLink'
 import { TraderIdentity } from '../components/TraderIdentity'
 import { OrderProtectionsChecklistPanel } from '../components/OrderProtectionsChecklist'
@@ -234,20 +234,7 @@ export function TransactionPage() {
 
     return (
       <div className="space-y-6">
-        <PageBreadcrumbBar
-          items={txCrumbs}
-          rightSlot={
-            <>
-              <CopyButton
-                value={pageUrl}
-                hoverLabel="Copy link"
-                copiedLabel="Link copied"
-                ariaLabel="Copy link"
-              />
-              <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
-            </>
-          }
-        />
+        <PageBreadcrumbBar items={txCrumbs} />
 
         <DataFreshnessBanner
           tone={lpSettlement ? 'ready' : finalizedOrders.length > 0 ? 'live' : 'unknown'}
@@ -261,15 +248,26 @@ export function TransactionPage() {
         />
 
         <Panel className="space-y-4 p-5 sm:p-6">
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
               {kindLabel}
             </p>
+            <div className="flex items-center gap-1.5">
+              <CopyButton
+                value={pageUrl}
+                hoverLabel="Copy link"
+                copiedLabel="Link copied"
+                ariaLabel="Copy link"
+              />
+              <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="break-all font-mono text-base font-semibold text-content-primary sm:text-lg">
+              {normalizedHash}
+            </h1>
             <CopyButton value={normalizedHash} ariaLabel={`Copy ${normalizedHash}`} />
           </div>
-          <h1 className="break-all font-mono text-base font-semibold text-content-primary sm:text-lg">
-            {normalizedHash}
-          </h1>
           <div className="grid gap-4 border-t border-brand-border/20 pt-4 text-xs sm:grid-cols-3">
             <div>
               <span className="text-content-tertiary">Executor / Keeper</span>
@@ -403,79 +401,9 @@ export function TransactionPage() {
       <PageBreadcrumbBar
         items={txCrumbs}
         rightSlot={
-          <>
-            <Link
-              to={positionHref}
-              className="font-mono text-xs text-content-secondary transition-colors hover:text-brand-peach hover:underline"
-            >
-              {matchedPosition ? 'Position lifecycle →' : 'Market exposure →'}
-            </Link>
-            <CopyButton
-              value={pageUrl}
-              hoverLabel="Copy link"
-              copiedLabel="Link copied"
-              ariaLabel="Copy link"
-            />
-            {isClose && selectedEvent.pnlAssets != null ? (
-              <ShareCardModal
-                compact
-                triggerLabel="Share PnL"
-                cards={[
-                  {
-                    id: `trade-${selectedEvent.id}`,
-                    label: 'Closed Position PnL',
-                    data: {
-                      kind: 'trade',
-                      traderLabel,
-                      account: selectedEvent.account,
-                      networkName: chain.name,
-                      releaseVersion,
-                      market: 'plDXY-PERP',
-                      side:
-                        selectedEvent.side === 'long' || selectedEvent.side === 'short'
-                          ? selectedEvent.side
-                          : null,
-                      realizedPnlAssets: selectedEvent.pnlAssets,
-                      price: selectedEvent.price ?? null,
-                      sizeDelta: selectedEvent.sizeDelta ?? null,
-                      notionalAssets: receipt?.executionNotionalAssets ?? selectedEvent.amountAssets ?? null,
-                      occurredAt: selectedEvent.occurredAt,
-                      txHash: selectedEvent.txHash,
-                    },
-                  },
-                ]}
-              />
-            ) : selectedEvent.activityType === 'Open' ? (
-              <ShareCardModal
-                compact
-                triggerLabel="Share Open"
-                cards={[
-                  {
-                    id: `open-${selectedEvent.id}`,
-                    label: 'Opened Position Receipt',
-                    data: {
-                      kind: 'open_trade',
-                      traderLabel,
-                      account: selectedEvent.account,
-                      networkName: chain.name,
-                      releaseVersion,
-                      market: 'plDXY-PERP',
-                      side:
-                        selectedEvent.side === 'long' || selectedEvent.side === 'short'
-                          ? selectedEvent.side
-                          : null,
-                      price: selectedEvent.price ?? null,
-                      sizeDelta: selectedEvent.sizeDelta ?? null,
-                      notionalAssets: receipt?.executionNotionalAssets ?? selectedEvent.amountAssets ?? null,
-                      occurredAt: selectedEvent.occurredAt,
-                      txHash: selectedEvent.txHash,
-                    },
-                  },
-                ]}
-              />
-            ) : null}
-            <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
-          </>
+          <BreadcrumbActionLink to={positionHref}>
+            {matchedPosition ? 'Position lifecycle →' : 'Market exposure →'}
+          </BreadcrumbActionLink>
         }
       />
 
@@ -515,18 +443,89 @@ export function TransactionPage() {
                 </span>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="break-all font-mono text-base font-semibold text-content-primary sm:text-lg">
                 {normalizedHash}
               </h1>
               <CopyButton value={normalizedHash} ariaLabel={`Copy ${normalizedHash}`} />
+              <ArbiscanButton kind="tx" value={normalizedHash} chainId={chainId} />
             </div>
           </div>
-          <div className="text-left sm:text-right">
-            <p className="text-xs text-content-tertiary">Executed at</p>
-            <p className="mt-0.5 font-mono text-sm text-content-primary">
-              {formatUtc(selectedEvent.occurredAt)}
-            </p>
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <div className="flex items-center gap-1.5">
+              <CopyButton
+                value={pageUrl}
+                hoverLabel="Copy link"
+                copiedLabel="Link copied"
+                ariaLabel="Copy link"
+              />
+              {isClose && selectedEvent.pnlAssets != null ? (
+                <ShareCardModal
+                  compact
+                  triggerLabel="Share PnL"
+                  cards={[
+                    {
+                      id: `trade-${selectedEvent.id}`,
+                      label: 'Closed Position PnL',
+                      data: {
+                        kind: 'trade',
+                        traderLabel,
+                        account: selectedEvent.account,
+                        networkName: chain.name,
+                        releaseVersion,
+                        market: 'plDXY-PERP',
+                        side:
+                          selectedEvent.side === 'long' || selectedEvent.side === 'short'
+                            ? selectedEvent.side
+                            : null,
+                        realizedPnlAssets: selectedEvent.pnlAssets,
+                        price: selectedEvent.price ?? null,
+                        sizeDelta: selectedEvent.sizeDelta ?? null,
+                        notionalAssets:
+                          receipt?.executionNotionalAssets ?? selectedEvent.amountAssets ?? null,
+                        occurredAt: selectedEvent.occurredAt,
+                        txHash: selectedEvent.txHash,
+                      },
+                    },
+                  ]}
+                />
+              ) : selectedEvent.activityType === 'Open' ? (
+                <ShareCardModal
+                  compact
+                  triggerLabel="Share Open"
+                  cards={[
+                    {
+                      id: `open-${selectedEvent.id}`,
+                      label: 'Opened Position Receipt',
+                      data: {
+                        kind: 'open_trade',
+                        traderLabel,
+                        account: selectedEvent.account,
+                        networkName: chain.name,
+                        releaseVersion,
+                        market: 'plDXY-PERP',
+                        side:
+                          selectedEvent.side === 'long' || selectedEvent.side === 'short'
+                            ? selectedEvent.side
+                            : null,
+                        price: selectedEvent.price ?? null,
+                        sizeDelta: selectedEvent.sizeDelta ?? null,
+                        notionalAssets:
+                          receipt?.executionNotionalAssets ?? selectedEvent.amountAssets ?? null,
+                        occurredAt: selectedEvent.occurredAt,
+                        txHash: selectedEvent.txHash,
+                      },
+                    },
+                  ]}
+                />
+              ) : null}
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-xs text-content-tertiary">Executed at</p>
+              <p className="mt-0.5 font-mono text-sm text-content-primary">
+                {formatUtc(selectedEvent.occurredAt)}
+              </p>
+            </div>
           </div>
         </div>
 

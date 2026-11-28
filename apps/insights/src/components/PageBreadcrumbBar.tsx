@@ -61,6 +61,28 @@ export function PageBreadcrumbBar({ items, rightSlot }: PageBreadcrumbBarProps) 
 export type WalletPerspective = 'wallet' | 'smart-account' | 'divisions'
 
 /**
+ * Compact bordered navigation link for PageBreadcrumbBar's rightSlot so
+ * cross-entity links share the exact height and chrome of segmented switchers
+ * and pagination controls instead of floating as bare text.
+ */
+export function BreadcrumbActionLink({
+  to,
+  children,
+}: {
+  to: string
+  children: ReactNode
+}) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex h-6 items-center gap-1.5 border border-brand-border/35 bg-app-bg px-2.5 font-mono text-[11px] font-semibold leading-none text-content-secondary transition-colors hover:border-brand-peach/70 hover:bg-surface-panel hover:text-brand-peach"
+    >
+      {children}
+    </Link>
+  )
+}
+
+/**
  * Compact segmented entity switcher for navigating between the 3 views of a
  * single 0x trading account address without scattered ad-hoc links.
  */

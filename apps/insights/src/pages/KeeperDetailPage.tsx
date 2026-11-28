@@ -9,7 +9,7 @@ import {
 import { ArbiscanButton, CopyButton } from '../components/ActionButtons'
 import { AddressAvatar } from '../components/AddressAvatar'
 import { DataFreshnessBanner } from '../components/DataFreshnessBanner'
-import { PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
+import { BreadcrumbActionLink, PageBreadcrumbBar } from '../components/PageBreadcrumbBar'
 import { StatusPill, type StatusTone } from '../components/StatusPill'
 import { EmptyState, ErrorState, LoadingState, Panel } from '../components/ui'
 import { useProtocolContext } from '../hooks/useProtocolContext'
@@ -81,12 +81,9 @@ export function KeeperDetailPage() {
         ]}
         rightSlot={
           validAddress ? (
-            <Link
-              to={`/wallets/${normalized}`}
-              className="font-mono text-xs text-content-secondary transition-colors hover:text-brand-peach hover:underline"
-            >
+            <BreadcrumbActionLink to={`/wallets/${normalized}`}>
               Wallet Ledger →
-            </Link>
+            </BreadcrumbActionLink>
           ) : undefined
         }
       />
