@@ -873,7 +873,7 @@ tvlSummaryToJson blockNum (Just ProtocolTvlSummary {..}) =
         [ object
             [ "key" .= ("lp_vaults" :: Text)
             , "label" .= ("LP Liquidity Pools" :: Text)
-            , "detail" .= ("HousePool, Senior Vault & Junior Vault" :: Text)
+            , "detail" .= ("Settled HousePool liquidity + Senior/Junior vault escrow" :: Text)
             , "assets" .= show ptsLpVaultsTvlAssets
             , "shareBps" .= computeTvlShareBps ptsLpVaultsTvlAssets ptsTotalTvlAssets
             , "addressCount" .= lpCount

@@ -79,7 +79,7 @@ const sampleManifest: ProtocolManifestResponse = {
       {
         key: 'lp_vaults',
         label: 'LP Liquidity Pools',
-        detail: 'HousePool, Senior Vault & Junior Vault',
+        detail: 'Settled HousePool liquidity + Senior/Junior vault escrow',
         assets: '650000000000',
         shareBps: 6500,
         addressCount: 3,

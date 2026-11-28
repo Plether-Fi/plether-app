@@ -794,20 +794,29 @@ export function ProtocolPage() {
 
                               {isLp ? (
                                 <div className="mt-2.5 space-y-0.5 border-t border-brand-border/15 pt-2 font-mono text-[10px] tabular-nums text-content-tertiary">
-                                  <div className="flex justify-between gap-2">
-                                    <span>HousePool</span>
+                                  <div
+                                    className="flex justify-between gap-2"
+                                    title="Settled Senior & Junior LP liquidity held in HousePool (USDG.balanceOf)"
+                                  >
+                                    <span>HousePool (settled)</span>
                                     <span className="text-content-secondary">
                                       {formatTvlAssetDisplay(data.tvl?.housePoolAssets)}
                                     </span>
                                   </div>
-                                  <div className="flex justify-between gap-2">
-                                    <span>Senior Vault</span>
+                                  <div
+                                    className="flex justify-between gap-2"
+                                    title="Pending deposits & claimable redemptions held directly in Senior Vault (USDG.balanceOf)"
+                                  >
+                                    <span>Senior Vault (escrow)</span>
                                     <span className="text-content-secondary">
                                       {formatTvlAssetDisplay(data.tvl?.seniorVaultAssets)}
                                     </span>
                                   </div>
-                                  <div className="flex justify-between gap-2">
-                                    <span>Junior Vault</span>
+                                  <div
+                                    className="flex justify-between gap-2"
+                                    title="Pending deposits & claimable redemptions held directly in Junior Vault (USDG.balanceOf)"
+                                  >
+                                    <span>Junior Vault (escrow)</span>
                                     <span className="text-content-secondary">
                                       {formatTvlAssetDisplay(data.tvl?.juniorVaultAssets)}
                                     </span>
